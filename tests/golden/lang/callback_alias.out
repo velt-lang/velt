@@ -1,0 +1,29 @@
+later argument 40 aaaaa
+0
+later argument 40 ccccc
+0
+later argument 40 eeeee
+0
+tuple forEach replaced-0 replaced-1
+setFirst replaced-bbb bbbbbb
+setFirst after replaced-bbb 1001
+tuple forEach growing replaced-fff 1001
+forEach 1004 element-0-,element-1-,element-2-,element-3-
+map 1004 element-0-:54,element-1-:54,element-2-:54,element-3-:54
+filter 1004 element-0-,element-2-
+some 4004 false
+every 1004 true
+find 4004 element-3-
+findIndex 4004 -1
+reduce 1004 216
+findLast 3004 element-1-
+forEach 3 element-0-:54,element-1-:54,element-2-:54
+reduce 3 162
+filter 3 element-0-,element-1-,element-2-
+every 3 true
+findLastIndex 0 0
+element forEach 1004 element-0-:54,element-1-:54,element-2-:54,element-3-:54
+element map 1005 1004 54 10
+Map forEach 103 103 k0=value-0-,k1=replaced,k3=value-3-,n0=new-0,n1=new-1
+own loop 3 element-0-:54,element-1-:54,element-2-:54
+unaliased 324

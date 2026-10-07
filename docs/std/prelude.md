@@ -54,7 +54,16 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
 ## Arrays
 
 `T[]` is a growable array ([Types](../reference/types.md#objects-arrays-tuples-and-maps)).
-Callback methods rethrow what their callback throws.
+Callback methods rethrow what their callback throws. A callback may change the array through
+another reference to it (`const ys = xs`, or an object holding it), and the element it received
+stays valid however the array changes. As in JS, the methods read the length once at the start,
+so elements pushed meanwhile are not visited. Elements removed meanwhile:
+- `forEach`, `filter`, `reduce`, `some` and `every` skip them, as JS does;
+- `find`, `findIndex`, `findLast` and `findLastIndex` skip them too, where JS calls the callback
+  with `undefined` for each missing index (a `T` cannot be `undefined`);
+- `map` panics with "the array shrank while `map` ran", where JS returns an array with holes;
+- `filter` and `find` do not return the element the callback was given when the callback
+  removed it, where JS does.
 
 | Method | Notes |
 |---|---|
@@ -119,6 +128,11 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | `keys()`, `values()`, `entries()`, `forEach((v, k) => …)` | in insertion order; the first three return arrays (JS: iterators) |
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call, like `for...of` over the map (JS's is a live view) |
 | `for (const [k, v] of map)` | |
+
+A callback of `forEach`, `upsert`, `update` or `getOrInsert` may change the map through another
+reference to it: the value the callback gets stays valid, `forEach` visits entries added
+meanwhile, and `upsert` and `getOrInsert` store their result under the key even when the
+callback deleted or added entries.
 
 ## Record
 

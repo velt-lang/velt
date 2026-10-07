@@ -42,7 +42,7 @@ impl FnLower<'_, '_> {
         if mode == UseMode::Move && self.counted_part(base) {
             // Other owners still see the field (semantics stage 2): share it instead.
             let v = self.field_expr(base, index, UseMode::Borrow);
-            let fty = self.cx.adt_field_tys(bty)[index as usize];
+            let fty = self.cx.member_ty(bty, index);
             let s = self.share_value(v, fty);
             return self.own_value(s, fty);
         }
@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
                 let v = self.expr(base);
                 let bp = self.place_of(v, bty);
                 let fp = self.field_place(&bp, bty, index);
-                let fty = self.cx.adt_field_tys(bty)[index as usize];
+                let fty = self.cx.member_ty(bty, index);
                 return self.take_part(fp, fty);
             }
         }
@@ -76,7 +76,7 @@ impl FnLower<'_, '_> {
         let p = self.field_place(&bp, bty, index);
         if mode == UseMode::Move && self.take_temp(&bp) {
             // Moving a field out of an owned temporary: the rest of it is dropped later.
-            let fty = self.cx.adt_field_tys(bty)[index as usize];
+            let fty = self.cx.member_ty(bty, index);
             self.own_rest(bp, bty, Rc::new(moved_field_pat(index, bty)));
             self.own_place(p.clone(), fty);
         }
@@ -95,7 +95,7 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let v = self.expr(base);
         let bp = self.place_of(v, bty);
-        let fty = self.cx.adt_field_tys(bty)[index as usize];
+        let fty = self.cx.member_ty(bty, index);
         let fp = self.field_place(&bp, bty, index);
         let vt = self.cx.ty(fty);
         let out = self.copy_to_temp(Operand::Copy(fp), vt);

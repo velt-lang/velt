@@ -316,6 +316,8 @@ enum DropEntry {
     /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
     /// Becomes a `Temp` once constructed.
     HalfBuilt(Place, TyId),
+    /// Owned temporary value that holds something only when the `Bool` local is true.
+    Flagged(Place, TyId, vir::Local),
     /// An owned value from which a pattern moved some parts: drop everything else.
     Rest(Place, TyId, Rc<hir::Pat>),
     /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,
@@ -387,6 +389,9 @@ struct FnLower<'c, 'h> {
     /// While lowering a stabilized borrow (stabilize.rs): every counted object a place
     /// projection goes through is retained until the end of the statement.
     retain_hops: bool,
+    /// Elements of arrays borrowed in place by the arguments being lowered when the array has
+    /// no other reference: checked again just before the call (stabilize.rs).
+    pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).

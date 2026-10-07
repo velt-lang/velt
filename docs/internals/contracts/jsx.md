@@ -214,6 +214,35 @@ provider), and offers `renderToString(el)`, `renderToStream(el, res)` (`std/http
 `Response.stream`, flushing at async component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
+## Extending `IntrinsicElements`
+A provider usually starts from std's HTML types rather than copying them: `velt:jsx/intrinsic`
+exports std's `IntrinsicElements`, and `velt:jsx/attrs` the attribute types it is made of
+(`HtmlAttrs`, `ButtonAttrs`, …). An intersection extends either one, and a field present in
+both parts merges recursively, so `Html & { button: Events }` gives `<button>` std's attributes
+plus the handlers. `Omit` replaces an attribute's type (an intersection only narrows one):
+
+```ts ignore
+import type { IntrinsicElements as Html } from "velt:jsx/intrinsic";
+import type { HtmlAttrs } from "velt:jsx/attrs";
+import type { Style } from "velt:jsx";
+
+export type Handler = () => void;
+export type AttrValue = string | i64 | f64 | bool | Style | Handler | null;
+type Events = { onClick?: Handler; onInput?: Handler };
+
+export type IntrinsicElements = Html & {
+  button: Events;                                       // std's ButtonAttrs & Events
+  input: Events;
+  section: Omit<HtmlAttrs, "style"> & { style?: string }; // only the string form
+};
+```
+
+A provider whose attributes include handlers adds the handler type to `AttrValue` (every
+attribute's type must convert to it) and decides what its `jsx` does with them; a server
+renderer drops them. TypeScript's other route, merging declarations of a global
+`JSX.IntrinsicElements` interface, does not exist: the provider module's export is the one
+definition. `tests/golden/lang/jsx_extend_intrinsic.vlt` is a complete provider.
+
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async
   element are rejected until then.

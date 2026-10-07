@@ -14,14 +14,26 @@ compiles to calls into `velt:jsx/jsx-runtime` and sees its types as `JSX.Element
 - `raw(html: string): Element`: markup inserted without escaping, the only way to emit HTML
   from a string (never pass it user input). `Fragment` is `<>…</>`.
 - Types: `Element` (what every JSX expression is), `Child` (`Element | Element[] | string |
-  i64 | f64 | bool | null`), `AttrValue` (`string | i64 | f64 | bool | null`), `Text`
+  i64 | f64 | bool | null`), `AttrValue` (`string | i64 | f64 | bool | Style | null`), `Style`
+  (`Record<string, string | f64>`, the object form of `style`), `Text`
   (`string | i64 | f64 | bool | null`, text the precompiler folds into strings),
   `IntrinsicElements`, `ElementChildrenAttribute`, `RenderError { component; message }`.
+- `velt:jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
+  (the global attributes) and one type per element with attributes of its own (`AnchorAttrs`,
+  `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`), for providers that extend them
+  ([Extending `IntrinsicElements`](../internals/contracts/jsx.md#extending-intrinsicelements)).
 
 Rendering rules:
 - Text is escaped (`&` `<` `>`), attribute values too (plus `"` and `'`), so user data cannot
   inject markup. Numbers render like `${n}`; `true`, `false` and `null` children render nothing.
 - A `true` attribute renders as the bare name (`<input disabled>`); `false` and `null` omit it.
+- `style` takes a string or an object, `style={{ fontSize: 14, color: c }}`, rendered with
+  React's rules (react-dom 19's `style` serialization, checked on the cases in the
+  `std/jsx_style` golden): camelCase names in kebab-case
+  (`font-size`; `WebkitX` and `msX` get their `-webkit-` / `-ms-` prefix; custom properties
+  such as `"--accent"` stay as written), `px` after numbers except 0 and unitless properties
+  (`lineHeight`, `opacity`, `zIndex`, `flexGrow`, `WebkitLineClamp`, …), values trimmed, empty strings left out,
+  declarations joined by `;`: `style="font-size:14px;color:teal"`.
 - Void elements (`area base br col embed hr img input link meta source track wbr`) have no end
   tag (and no children); any other empty element is written `<x></x>`. `key` is not rendered.
 - `IntrinsicElements` lists every HTML element with its attributes and the global ones, under

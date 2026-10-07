@@ -1155,3 +1155,63 @@ program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64
   ms, objects by a number field 53 → 78 ms, so about 35 and 25 ns per sort. The 1M-number sort
   of the table measured in the same session: Velt 93 ms, Rust `sort_by` 69 ms, Node 1216 ms
   (the machine was busier than for the numbers above).
+
+## Callbacks that change their array through an alias (#564, 2026-10-07)
+
+Array callback methods now pass the callback a share of the element when the array may be
+reached through another reference (an alias, an object holding it), and their loops re-check
+the length after each callback in that case; `__intrinsic_may_alias(this)` folds to false when
+no other reference to an array of that type can exist, and then the plain loop of `main` is
+all that is compiled. Instructions (valgrind cachegrind, Linux in WSL2) of programs compiled
+on Windows with LLVM `--release --target x86_64-unknown-linux-gnu` and linked against one
+Linux runtime (the change does not touch `velt_rt`); before is `main` at 8d8ea5bf (compiler
+and std). Sharing right away when a later argument runs code (`f(xs[0], wrapAndPop(xs))`)
+changed none of these: the callback methods' later arguments are an index and a cast.
+
+Each micro program has 2000 elements and runs 1000 rounds of `xs.forEach((x, i) => …)` plus
+`xs.map((x, i) => …)`: 4M callback calls. "Alias" means `const ys = xs` exists; "field" is a
+`string[]` field of an object that two variables hold. The type decides, so each row is its
+own program.
+
+| elements | main | branch | change | per call |
+|---|---:|---:|---:|---:|
+| `string[]`, no alias | 89.63M | 89.63M | 0 (same machine code) | 0 |
+| `string[]`, alias | 125.64M | 315.65M | **2.5×** | +47.5 |
+| `string[]` in a field of a shared object | 125.66M | 305.67M | **2.4×** | +45.0 |
+| `number[]`, no alias | 36.85M | 36.85M | 0 (same machine code) | 0 |
+| `number[]`, alias | 42.97M | 56.97M | +32.6% | +3.5 |
+| `[string, number][]`, no alias | 89.64M | 89.64M | 0 (same machine code) | 0 |
+| `[string, number][]`, alias (tuples now counted) | 125.66M | 147.77M | +17.6% | +5.5 |
+| objects, no alias | 89.73M | 89.73M | 0 (same machine code) | 0 |
+| objects, alias | 127.77M | 147.78M | +15.7% | +5.0 |
+
+- **Callbacks over an aliased `string[]` cost about 2.5× the instructions.** Each call shares
+  the string for the callback and drops the share afterwards (two count updates, plus the
+  fallback when the count check fails), about 45 instructions per call. That is the price of
+  the argument staying valid when the callback pushes or pops through the alias; on `main`
+  the same program reads freed memory. #592 is the follow-up: pin the buffer once per method
+  call instead of sharing per callback call.
+- Elements that are not shared (numbers, objects, whose count already keeps them alive) pay
+  only for the loop that re-reads the length after each callback: 3.5 to 5 instructions per
+  call. Counted tuples add about 0.5.
+- **Without an alias the code is unchanged**: the four unaliased programs compile to identical
+  machine code (disassembly with addresses stripped), and so do 21 of the 26 `bench/` and
+  `bench/typical` programs.
+
+The suite (same method):
+
+| program | main | branch | change |
+|---|---:|---:|---:|
+| hashmap | 551.6M | 541.7M | −1.80% |
+| typical/chains | 2111.9M | 2113.9M | +0.10% |
+| typical/keys | 589.5M | 590.0M | +0.09% |
+| typical/graph | 333.9M | 333.9M | −0.01% |
+| the other 22 | | | within ±0.005% |
+
+`hashmap` and `keys` change through Map's `edits` counter (`upsert` and `getOrInsert` look the
+key up again after a callback that changed the map); `chains` has no alias, and the
+difference is an inlining decision (`map` is now inlined into `main`), not the aliased loop,
+which is folded away. `hashmap` is faster although `upsert` does more: its longer body made
+LLVM stop inlining the string map's `append` into `main`, so the 50,000 new words pay for a
+call (+8.9M in `append`), and the word count's loop, without `append`'s code in it, runs about
+19 fewer instructions on each of its 1M `upsert`s (−18.8M in `main`; cg_annotate per function).

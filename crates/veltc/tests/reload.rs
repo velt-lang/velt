@@ -405,9 +405,9 @@ fn quiet_host_prints_no_diagnostics() {
 ///
 /// The program is stopped (SIGSTOP) before the first SIGTERM, so it cannot drain and exit by
 /// itself; only a SIGKILL ends it. `velt dev`'s graceful stop sends that too, but only after
-/// its stop grace (1.5 s), and then reaps the program itself: the second SIGTERM follows the
-/// first one's delivery within milliseconds, so the program ends as a SIGKILLed zombie handed
-/// on to the test process, and only the second-interrupt path produces that.
+/// its stop grace (set to a minute here, so a loaded machine cannot delay the second SIGTERM
+/// past it), and then reaps the program itself: the program ends as a SIGKILLed zombie handed
+/// on to the test process only through the second-interrupt path.
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
@@ -415,7 +415,7 @@ fn second_interrupt_kills_the_program() {
     apply(&root().join("tests/reload/hello_server/1"), dir.path());
     // Before `Dev`: dropped after it, so it reaps the program `Dev`'s drop kills.
     let mut reaper = Subreaper::become_one();
-    let mut dev = Dev::start(dir.path(), &[]);
+    let mut dev = Dev::start_with_env(dir.path(), &[], &[("VELT_DEV_STOP_GRACE_MS", "60000")]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
     started.unwrap_or_else(|e| panic!("{e}"));
     let port = dev.port().unwrap_or_else(|e| panic!("{e}"));

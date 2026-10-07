@@ -190,14 +190,15 @@ impl FnLower<'_, '_> {
         }
         let mut argv = vec![];
         let later = later_each(args);
-        for ((a, mode), later) in args.iter().zip(modes).zip(later) {
+        let outer = self.start_borrows();
+        for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
-                        true => self.stable_borrow(a),
+                        true => self.stable_borrow(a, &args[i + 1..]),
                         false => self.borrowed_arg(a),
                     };
                     // A value the callee modifies stays where it is (it may only be shared).
@@ -220,7 +221,7 @@ impl FnLower<'_, '_> {
                 (_, m) => {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            self.stable_borrow(a)
+                            self.stable_borrow(a, &args[i + 1..])
                         }
                         _ => self.expr(a),
                     };
@@ -228,6 +229,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.finish_borrows(outer);
         argv
     }
 
@@ -247,6 +249,7 @@ impl FnLower<'_, '_> {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
         let later = later_each(args);
+        let outer = self.start_borrows();
         for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
@@ -255,7 +258,13 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                let v = self.stable_borrow(a);
+                // A spawned call's borrows are settled right away, before the later arguments.
+                let rest = if transfer { &[][..] } else { &args[i + 1..] };
+                let v = self.stable_borrow(a, rest);
+                if transfer {
+                    // The copy for the task reads the argument now.
+                    self.finish_borrows(Vec::new());
+                }
                 match mode {
                     // A value the callee modifies stays where it is.
                     Some(PassMode::BorrowMut) if !t.is_scalar() => v,
@@ -284,6 +293,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.finish_borrows(outer);
         (argv, params)
     }
 

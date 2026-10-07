@@ -113,6 +113,9 @@ enum E { A, B = 2, }
 enum Dir { Up = \"UP\", Down = 'DOWN' }
 type Lit = \"a\" | 'b' | -1 | 2.5 | true | 1u8;
 type Obj = { kind: \"a\"; x: i64, y: { z: string } } | {};
+type Both = & A & { b: i64 } | (C | D) & E;
+type Id = string & { __brand: \"Id\" };
+type K = Both[\"b\"] | Obj[\"kind\" | \"x\"][];
 extend Foo { static make(): Foo { return new Foo(); } }
 class P { private a: i64; static readonly PI: f64 = 3.14; private static h(): i64 { return 1; } get n(): i64 { return 1; } set n(v: i64) { this.a = v; } set(k: i64) {} }
 interface Q { get area(): f64; get x(): i64 { return 1; } set area(v: f64); }",

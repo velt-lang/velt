@@ -1,40 +1,11 @@
 // std/jsx/attrs/forms: attribute types of forms, buttons and inputs
-// (internal; the global attributes are repeated from attrs/global.vlt, see there).
+// (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
+// `velt:jsx/attrs`).
+
+import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
 // `<button>`.
-export type ButtonAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type ButtonAttrs = HtmlAttrs & {
   command?: string;
   commandfor?: string;
   disabled?: bool;
@@ -52,78 +23,10 @@ export type ButtonAttrs = {
 };
 
 // `<fieldset>`.
-export type FieldsetAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  disabled?: bool;
-  form?: string;
-  name?: string;
-};
+export type FieldsetAttrs = HtmlAttrs & { disabled?: bool; form?: string; name?: string };
 
 // `<form>` (`accept-charset` is written as is: hyphenated names are not checked).
-export type FormAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type FormAttrs = HtmlAttrs & {
   action?: string;
   autocomplete?: string;
   enctype?: string;
@@ -135,39 +38,7 @@ export type FormAttrs = {
 };
 
 // `<input>`.
-export type InputAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type InputAttrs = HtmlAttrs & {
   accept?: string;
   alpha?: bool;
   alt?: string;

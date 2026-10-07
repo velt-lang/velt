@@ -16,7 +16,9 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             }
         }
         T::Array(e) => match e.kind {
-            T::Union(_) | T::Function { .. } => format!("({})[]", written(e)),
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("({})[]", written(e))
+            }
             _ => format!("{}[]", written(e)),
         },
         T::Tuple(ts) => format!("[{}]", list(ts, ", ")),
@@ -36,6 +38,15 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             format!("({}) => {}{th}", ps.join(", "), written(ret))
         }
         T::Union(ts) => list(ts, " | "),
+        T::Intersection(ts) => ts
+            .iter()
+            .map(|t| match t.kind {
+                T::Union(_) | T::Function { .. } => format!("({})", written(t)),
+                _ => written(t),
+            })
+            .collect::<Vec<_>>()
+            .join(" & "),
+        T::Indexed { object, key } => format!("{}[{}]", written(object), written(key)),
         T::Literal(l) => literal(l),
         T::Object(fs) => {
             let fs: Vec<String> = fs.iter().map(object_field).collect();

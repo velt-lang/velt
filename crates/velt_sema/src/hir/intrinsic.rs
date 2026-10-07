@@ -77,6 +77,11 @@ pub enum Intrinsic {
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
     NeedsDrop,
+    /// std only (std/prelude/array.vlt): `__intrinsic_may_alias<T>(value: borrow T) -> bool`, a
+    /// constant: can a value of type `T` that a call borrows be reached through another
+    /// reference while the call runs (lowering counts the type, or borrows values of it inside
+    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    MayAlias,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

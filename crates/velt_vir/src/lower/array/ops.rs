@@ -30,7 +30,12 @@ impl FnLower<'_, '_> {
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.
         let av = match args[1..].iter().any(may_write) {
-            true => self.stable_borrow(&args[0]),
+            true => {
+                let outer = self.start_borrows();
+                let v = self.stable_borrow(&args[0], &args[1..]);
+                self.finish_borrows(outer);
+                v
+            }
             false => self.expr(&args[0]),
         };
         let arr = self.place_of(av, aty);

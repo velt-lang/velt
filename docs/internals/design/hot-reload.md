@@ -51,7 +51,7 @@ first-launch check for programs they start. Documented in
   `WSADuplicateSocketW` records). The supervisor binds on the first request and returns the same
   socket to every later process.
 - The old process gets a stop request, drains in-flight requests, and is killed after a short
-  timeout. Interrupting the supervisor (Ctrl-C, SIGTERM, SIGHUP; console events on Windows)
+  timeout (1.5 s; tests that must act within it set `VELT_DEV_STOP_GRACE_MS`). Interrupting the supervisor (Ctrl-C, SIGTERM, SIGHUP; console events on Windows)
   stops the program the same way and waits for it before exiting.
 
 ### Phase 2: JIT dev backend (no link, no new executable)

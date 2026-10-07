@@ -139,8 +139,8 @@ contents.
   `JSON.stringify` of one that contains itself fails as in JavaScript.
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
-- `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,
-  `==` or a discriminant instead.
+- `as` converts numbers and brands a value (`"u1" as UserId`, below); there are no other type
+  assertions. Narrow with `typeof`, `instanceof`, `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
 - `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types, also through
@@ -148,6 +148,12 @@ contents.
   parameter inside a generic function, #350). `Required` also strips `null` from `a: T | null`
   fields, since `a?: T` *is* `T | null`, and `Pick` rejects a key that isn't a field (`Omit`
   warns).
+- Intersections `A & B` of object types work as in TypeScript, unions distributing over them,
+  and so do indexed access types (`User["name"]`) and branded primitives
+  (`type UserId = string & { __brand: "UserId" }`, zero-cost). Parts with no value in common
+  are an error instead of `never`; classes, type parameters (#350) and function types
+  (overloads) can't be parts; `A & B` doesn't convert to `A` without a copy (`{ ...ab }`)
+  ([Intersection types](../reference/types.md#intersection-types)).
 - Not available: `keyof`, mapped and conditional types, template literal types, the other
   utility types (`Record` aside), index signatures, declaration merging, `namespace`.
 
