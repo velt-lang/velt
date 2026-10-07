@@ -263,7 +263,7 @@ fn adt_statics(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
         .methods
         .iter()
         .filter(|(_, m)| m.is_static)
-        .map(|(n, m)| (n.clone(), m.def))
+        .map(|(n, m)| (n.strip_prefix("static ").unwrap_or(n).to_string(), m.def))
         .collect();
     methods.sort();
     let mut statics: Vec<(String, DefId)> =

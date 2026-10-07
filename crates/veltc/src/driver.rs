@@ -38,6 +38,8 @@ pub struct BuildOptions {
     pub emit: Emit,
     /// Code generator; `None` → [`Backend::resolve`] (LLVM for release builds when clang exists).
     pub backend: Option<Backend>,
+    /// `--report numbers`: add the number representation report to [`Session::reports`].
+    pub report_numbers: bool,
 }
 
 impl BuildOptions {
@@ -103,6 +105,8 @@ pub struct Session {
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
     pub show_details: bool,
+    /// Reports the build was asked for (`--report`), printed after the diagnostics.
+    pub reports: Vec<String>,
 }
 
 impl Session {
@@ -262,7 +266,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         native_inits: &native_inits,
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
-    if !opts.wants_debug_info() {
+    if !opts.wants_debug_info() && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
         program.funcs.iter_mut().for_each(|f| f.locs.clear());
@@ -298,6 +302,13 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
             "VIR verification failed after optimization:\n  {}",
             errs.join("\n  ")
         )));
+    }
+    if opts.report_numbers {
+        sess.reports.push(crate::numbers_report::render(&program));
+        if !opts.wants_debug_info() {
+            program.files.clear();
+            program.funcs.iter_mut().for_each(|f| f.locs.clear());
+        }
     }
     Ok(program)
 }

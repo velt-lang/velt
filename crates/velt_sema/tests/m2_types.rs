@@ -749,11 +749,11 @@ fn super_runs_exactly_once_before_this() {
     for (ctor, want) in [
         (
             "constructor(c: bool) { if (c) { super(1); } }",
-            "must be a statement of the constructor's body itself",
+            "must run exactly once on every path",
         ),
         (
             "constructor() { for (const i of [1]) { super(i); } }",
-            "must be a statement of the constructor's body itself",
+            "must run exactly once on every path",
         ),
         (
             "constructor() { const f = () => super(1); f(); }",
@@ -792,4 +792,13 @@ fn super_runs_exactly_once_before_this() {
     ok_src(&format!(
         "{base} class B extends A {{ constructor(readonly k: i64) {{ const j = k; super(j); }} }} function main() {{}}"
     ));
+    // Once in each branch of an `if` / `else`, as TypeScript accepts it.
+    ok_src(&format!(
+        "{base} class B extends A {{ m: i64 = 1; constructor(c: bool) {{ if (c) {{ super(1); }} else if (!c) {{ super(2); }} else {{ super(3); }} this.m += 1; }} }} function main() {{}}"
+    ));
+    let r = err_src(&format!(
+        "{base} class B extends A {{ constructor(public t: string, c: bool) {{ if (c) {{ super(1); }} else {{ super(2); }} }} }} function main() {{}}"
+    ));
+    assert_eq!(r.matches("error").count(), 1, "{r}");
+    assert!(r.contains("`t` is a parameter property of `B`"), "{r}");
 }

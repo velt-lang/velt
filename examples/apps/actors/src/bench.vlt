@@ -1,0 +1,251 @@
+// In-process benchmarks, the Velt side of `pnpm bench:run dispatch activation mem` in
+// @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
+// answered, against the `Tiny` actor (no storage on the call path).
+import { Value } from "velt:json";
+import { channel, Channel } from "velt:channel";
+import { Host, Router } from "./runtime";
+
+struct LoopResult {
+  ops: i64;
+  samples: f64[];
+}
+
+// One caller: calls `Tiny/<keys[i % keys.length]>.noop()` until the deadline `start` sends.
+async function caller(
+  router: Router,
+  keys: string[],
+  offset: usize,
+  start: Channel<f64>,
+  sample: bool,
+): Promise<LoopResult> {
+  const args: Value[] = [];
+  for (const k of keys) {
+    args.push(JsonValue.from([k]));
+  }
+  const until = (await start.receive()) ?? 0.0;
+  let ops: i64 = 0;
+  const samples: f64[] = [];
+  let i = offset;
+  while (true) {
+    const t0 = performance.now();
+    if (t0 >= until) {
+      break;
+    }
+    const k = i % keys.length;
+    const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
+    if (r.status != 200) {
+      panic(`bench call failed: ${r.body}`);
+    }
+    if (sample) {
+      samples.push(performance.now() - t0);
+    }
+    ops += 1;
+    i += 1;
+  }
+  return { ops: ops, samples: samples };
+}
+
+async function closedLoop(
+  router: Router,
+  keys: string[],
+  c: i64,
+  ms: f64,
+  sample: bool,
+): Promise<LoopResult> {
+  // The clock starts once every caller is spawned: on a busy machine the OS can stall the
+  // spawning thread for longer than a whole pass, which used to report 0 ops/s.
+  const start = channel<f64>();
+  const tasks: Promise<LoopResult>[] = [];
+  for (let i = 0; i < c; i++) {
+    tasks.push(spawn(caller(router, keys, i as usize, start, sample)));
+  }
+  const until = performance.now() + ms;
+  for (let i = 0; i < c; i++) {
+    start.trySend(until);
+  }
+  start.close();
+  const results = await Promise.all(tasks);
+  let ops: i64 = 0;
+  const samples: f64[] = [];
+  for (const r of results) {
+    ops += r.ops;
+    for (const s of r.samples) {
+      samples.push(s);
+    }
+  }
+  return { ops: ops, samples: samples };
+}
+
+function percentile(sorted: f64[], p: f64): f64 {
+  if (sorted.length == 0) {
+    return 0.0;
+  }
+  const i = Math.floor(p * ((sorted.length - 1) as f64)) as usize;
+  return sorted[i];
+}
+
+function fmtOps(x: f64): string {
+  if (x >= 1000000.0) {
+    return `${(x / 1000000.0).toFixed(2)}M`;
+  }
+  if (x >= 1000.0) {
+    return `${(x / 1000.0).toFixed(1)}k`;
+  }
+  return x.toFixed(0);
+}
+
+function fmtMs(x: f64): string {
+  if (x < 1.0) {
+    return `${(x * 1000.0).toFixed(1)}µs`;
+  }
+  return `${x.toFixed(2)}ms`;
+}
+
+// Throughput pass, then a separate latency pass (like the sigx loop's `sweepConcurrency`).
+async function sweepConcurrency(host: Host, name: string, keys: string[], ms: f64) {
+  console.log(`▸ ${name}`);
+  for (const c of [1, 64, 512]) {
+    const t = await closedLoop(host.router, keys, c, ms, false);
+    const l = await closedLoop(host.router, keys, c, ms / 2.0, true);
+    l.samples.sort();
+    console.log(`    c=${c}/ops_per_sec  ${fmtOps(t.ops as f64 / ms * 1000.0)}`);
+    console.log(
+      `    c=${c}/p50  ${fmtMs(percentile(l.samples, 0.5))}   c=${c}/p99  ${fmtMs(percentile(l.samples, 0.99))}`,
+    );
+  }
+}
+
+function rssBytes(): f64 {
+  return process.memoryUsage().rss as f64;
+}
+
+// Activates `n` new `Tiny` actors with `c` callers; returns activations per second.
+async function activateMany(host: Host, prefix: string, n: i64, c: i64): Promise<f64> {
+  const t0 = performance.now();
+  const tasks: Promise<i64>[] = [];
+  const per = Math.trunc(n / c);
+  for (let w = 0; w < c; w++) {
+    tasks.push(spawn(activateRange(host.router, prefix, w * per, (w + 1) * per)));
+  }
+  await Promise.all(tasks);
+  return (per * c) as f64 / (performance.now() - t0) * 1000.0;
+}
+
+async function activateRange(router: Router, prefix: string, from: i64, to: i64): Promise<i64> {
+  for (let i = from; i < to; i++) {
+    const k = `${prefix}-${i}`;
+    const r = await router.send("Tiny", k, "noop", JsonValue.from([k]), [], 0.0);
+    if (r.status != 200) {
+      panic(r.body);
+    }
+  }
+  return to - from;
+}
+
+// Activate a never-seen key, then deactivate it, at c=1 (activation/cold-cycle).
+async function coldCycle(host: Host, ms: f64) {
+  const until = performance.now() + ms;
+  let n: i64 = 0;
+  const samples: f64[] = [];
+  while (performance.now() < until) {
+    const t0 = performance.now();
+    const k = `cold-${n}`;
+    const args = JsonValue.from([k]);
+    const r = await host.router.send("Tiny", k, "noop", args, [], 0.0);
+    const d = await host.router.send("Tiny", k, "$deactivate", args, [], 0.0);
+    if (r.status != 200 || d.status != 200) {
+      panic(`${r.body} ${d.body}`);
+    }
+    samples.push(performance.now() - t0);
+    n += 1;
+  }
+  samples.sort();
+  console.log(`▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)`);
+  console.log(
+    `    cycles_per_sec  ${fmtOps(n as f64 / ms * 1000.0)}   p50  ${fmtMs(percentile(samples, 0.5))}`,
+  );
+}
+
+export async function runBenchmarks(host: Host, ms: f64, only: string) {
+  console.log(`velt actors: ${host.shards} shards, ${ms} ms per level`);
+  if (only == "" || only.includes("warm")) {
+    await sweepConcurrency(host, "dispatch/warm-actor (one key)", ["warm"], ms);
+  }
+  if (only == "" || only.includes("fan")) {
+    const keys: string[] = [];
+    for (let i = 0; i < 1000; i++) {
+      keys.push(`k${i}`);
+    }
+    await sweepConcurrency(host, "dispatch/fan-out-actors (1000 keys)", keys, ms);
+  }
+  if (only == "" || only.includes("cold")) {
+    await coldCycle(host, ms);
+  }
+  if (only == "" || only.includes("mem")) {
+    await host.stats("clear");
+    for (const n of [20000, 100000]) {
+      const before = rssBytes();
+      const rate = await activateMany(host, `mem${n}`, n, 64);
+      const s = await host.stats();
+      const after = rssBytes();
+      console.log(`▸ mem/per-actor-footprint n=${n} (Tiny)`);
+      console.log(
+        `    activations_per_sec(c=64)  ${fmtOps(rate)}   live ${s.live}   rss_delta/actor  ${((after - before) / (n as f64)).toFixed(0)} B`,
+      );
+      await host.stats("clear");
+    }
+  }
+  const s = await host.stats();
+  console.log(`turns ${s.turns}, activations ${s.activations}, deactivations ${s.deactivations}`);
+}
+
+// `actors calls`: a fixed amount of work for CPU-time and instruction-count comparisons, which
+// a loaded machine distorts far less than throughput. `c` callers make `n` calls in all to
+// `Tiny.noop`, on one warm key ("warm") or round robin over 1000 warm keys ("fan").
+export async function fixedCalls(host: Host, scenario: string, c: i64, n: i64) {
+  const keys: string[] = [];
+  if (scenario == "fan") {
+    for (let i = 0; i < 1000; i++) {
+      keys.push(`k${i}`);
+    }
+  } else {
+    keys.push("warm");
+  }
+  const args: Value[] = [];
+  for (const k of keys) {
+    args.push(JsonValue.from([k]));
+    const r = await host.router.send("Tiny", k, "noop", JsonValue.from([k]), [], 0.0);
+    if (r.status != 200) {
+      panic(r.body);
+    }
+  }
+  const t0 = performance.now();
+  const tasks: Promise<i64>[] = [];
+  const per = Math.trunc(n / c);
+  for (let w = 0; w < c; w++) {
+    tasks.push(spawn(fixedCaller(host.router, keys, args, w as usize, per)));
+  }
+  let done: i64 = 0;
+  for (const d of await Promise.all(tasks)) {
+    done += d;
+  }
+  const ms = performance.now() - t0;
+  console.log(`velt ${scenario} c=${c} calls=${done} ${ms.toFixed(0)} ms`);
+}
+
+async function fixedCaller(
+  router: Router,
+  keys: string[],
+  args: Value[],
+  offset: usize,
+  calls: i64,
+): Promise<i64> {
+  for (let i: i64 = 0; i < calls; i++) {
+    const k = (offset + (i as usize)) % keys.length;
+    const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
+    if (r.status != 200) {
+      panic(r.body);
+    }
+  }
+  return calls;
+}

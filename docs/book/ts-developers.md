@@ -155,7 +155,9 @@ contents.
 
 - Single inheritance; `override` is required on redefined methods; there are no abstract
   classes and no `protected` members (`private` is private to the declaring class); a
-  constructor can be `private` or `protected`, with TypeScript's rules.
+  constructor can be `private` or `protected`, with TypeScript's rules. ES private names
+  (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
+  `Object.keys`, never inherited.
 - `static readonly` constants exist; mutable statics don't.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
   once (also when the base has no constructor), and statements before it cannot use `this`.

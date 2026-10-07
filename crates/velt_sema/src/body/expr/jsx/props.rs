@@ -52,12 +52,22 @@ impl FnCx<'_, '_> {
             );
             return None;
         };
-        let shown = self.cx.display(c.props);
         let mut slots = vec![None; c.slot_names.len()];
         if let Some(span) = type_args_span(el) {
             let n = slots.len();
             self.explicit_type_args(&mut slots, n, &el.type_args, span);
         }
+        // Shown with the type arguments as written, else the component's parameter names.
+        let written = (el.type_args.len() == slots.len()).then_some(&el.type_args);
+        let names: Vec<String> = c
+            .slot_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                written.map_or_else(|| n.clone(), |ts| crate::written_types::written(&ts[i]))
+            })
+            .collect();
+        let shown = self.cx.display_in(c.props, &names);
         let mut filled = Filled {
             values: fields.iter().map(|_| None).collect(),
             fields,

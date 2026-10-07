@@ -64,7 +64,9 @@ Two lowerings, chosen by what the provider exports:
    per-node allocation: the server writes constant slices and escaped dynamic values straight
    into the response buffer. It is the default for `velt:jsx`; sigx can implement it for its
    SSR output (and emit its resumability and island markers from `jsx` at component
-   boundaries).
+   boundaries). A provider whose client hydrates text nodes one by one exports
+   `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
+   parts of the template strings (contracts/jsx.md, "Text separator").
 
 Types:
 
@@ -85,7 +87,8 @@ Types:
   the renderer; streaming providers flush finished parts while later ones load (hybrid promises
   make sibling async components run concurrently, as in JavaScript).
 - Children: `children?: JSX.Element | JSX.Element[] | string | number | null` (no `undefined`;
-  `false` and `true` render nothing, as in TypeScript and React).
+  `false` and `true` render nothing in `velt:jsx`, as in TypeScript and React; a provider may
+  render a placeholder of its own instead, as sigx does for hydration).
 - Safety: text and attribute values are **always escaped**; raw HTML only goes through an
   explicit provider API (`velt:jsx`'s `raw(html)`), so cross-site scripting by default can't
   happen.

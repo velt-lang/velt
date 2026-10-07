@@ -1,5 +1,6 @@
-// A class or struct with a private field has no JSON form, also when the field is inherited or
-// the type is nested; the error names the field. Public data converts as before.
+// `JSON.parse` cannot build a class or struct with a private field (decoding does not run the
+// constructor), also when the field is inherited or the type is nested; the error names the
+// field. `JSON.stringify` writes `private` fields, as Node does.
 class Account {
   name: string;
   private secret: string;

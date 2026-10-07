@@ -107,11 +107,14 @@ impl FnCx<'_, '_> {
         let mut t = self.narrowed_local_ty(root);
         for k in 0..path.len() {
             let (d, _) = self.cx.class_of(t)?;
+            // The field this code names (`#x` lexically: a subclass's own `#x` is another
+            // field than the base's), then whether that one is `readonly`.
+            let (i, fty) = self.cx.field_seen_from(t, &path[k], self.owner)?;
             let a = self.cx.adt(d)?;
-            if !a.fields.iter().any(|f| f.name == path[k] && f.readonly) {
+            if !a.fields.get(i as usize).is_some_and(|f| f.readonly) {
                 return None;
             }
-            t = self.cx.field_of(t, &path[k])?.1;
+            t = fty;
             let narrowed = self.find_token(root, &path[..=k]);
             if let Some(c) = narrowed.and_then(|tk| self.narrowed_class(tk)) {
                 if self.downcast_applies(t, c) {

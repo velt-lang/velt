@@ -19,12 +19,16 @@
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
+//! - `map_probe`: once the rounds are done, a `Map` probe (`lookup`, the key's string hash)
+//!   that repeats an earlier one on the same map and an equal key reuses its result, so an
+//!   inlined `m.set(k, (m.get(k) ?? 0) + 1)` probes once (#563).
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
-//! - `numrep`: after the rounds, `f64`/`i64` locals that only ever hold 32-bit integers (the
-//!   results of `x | 0` and friends) become `i32` locals, and ToInt32 of a sum of two of them
-//!   becomes a 32-bit add (design #525, step 1).
+//! - `numrep`: after the rounds (and in debug builds), `f64` locals whose values are provably
+//!   whole numbers within ±2^53 (intervals, integrality, NaN and `-0` facts, branch refinement,
+//!   widening) become `i32`/`i64` locals computed with integer operations, and `i64` locals that
+//!   only hold 32-bit values become `i32` (design #525, steps 1 and 2).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
@@ -51,6 +55,7 @@ mod frame_slots;
 mod heap_sroa;
 mod inline;
 mod locals;
+mod map_probe;
 mod noalias;
 mod numrep;
 mod scc;
@@ -60,7 +65,20 @@ mod sroa;
 mod timings;
 mod visit;
 
+pub use numrep::Unnarrowed;
 pub use timings::PassTimings;
+
+/// The `number` variables inside loops of the (optimized) `program` that stay doubles, with
+/// why, per function symbol (`velt build --report numbers`).
+pub fn number_report(program: &vir::Program) -> Vec<(String, Vec<Unnarrowed>)> {
+    let env = numrep::Env::of(&program.externs, &program.funcs);
+    program
+        .funcs
+        .iter()
+        .map(|f| (f.symbol.clone(), numrep::unnarrowed(&env, f)))
+        .filter(|(_, u)| !u.is_empty())
+        .collect()
+}
 
 #[cfg(any(test, feature = "interp"))]
 pub mod interp;
@@ -72,7 +90,8 @@ mod testkit;
 /// How hard to optimize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {
-    /// Debug builds: only cheap cleanups (CFG simplification, unused function removal).
+    /// Debug builds: only cheap passes (CFG simplification, the int32 helpers inlined,
+    /// `numrep`, unused function removal).
     None,
     /// Release builds: the full pass pipeline.
     Speed,
@@ -91,8 +110,16 @@ pub fn optimize(program: &mut vir::Program, level: OptLevel) {
 pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings) {
     match level {
         OptLevel::None => {
+            let helpers = numrep::int32_helpers(&program.funcs);
+            if helpers.contains(&true) {
+                t.time("inline", || inline::run_helpers(program, &helpers));
+            }
+            let env = numrep::Env::of(&program.externs, &program.funcs);
             for func in &mut program.funcs {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
+                if t.time("numrep", || numrep::run(&env, func)) {
+                    numrep_cleanup(&program.aggs, func, t);
+                }
             }
         }
         OptLevel::Speed => {
@@ -104,10 +131,16 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     break;
                 }
             }
+            let probes = map_probe::Probes::find(program);
+            let env = numrep::Env::of(&program.externs, &program.funcs);
             for func in &mut program.funcs {
-                if t.time("numrep", || numrep::run(&program.externs, func)) {
+                if t.time("map_probe", || map_probe::run(&program.aggs, &probes, func)) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                if t.time("numrep", || numrep::run(&env, func)) {
+                    numrep_cleanup(&program.aggs, func, t);
                 }
                 t.time("divisions", || divisions::run(func));
             }
@@ -115,6 +148,16 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
+}
+
+/// After `numrep` changed `func`: forward the copies it made, fold what that exposed (an
+/// integer compared with itself), and drop what became dead.
+fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut PassTimings) {
+    t.time("copyprop", || copyprop::run(func));
+    if t.time("numrep", || numrep::self_comparisons(func)) {
+        t.time("simplify_cfg", || simplify_cfg::run(func));
+    }
+    t.time("dce", || dce::run(aggs, func));
 }
 
 /// Promote `noalias` pointees and async frame slots (after inlining settled which bodies they

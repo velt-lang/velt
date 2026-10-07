@@ -11,8 +11,8 @@ use super::shapes::{resolve_bounds, self_type};
 use super::ItemDefs;
 use crate::ctx::Ctx;
 use crate::defs::{
-    is_setter_key, member_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind, FnSource,
-    Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
+    is_setter_key, member_key, static_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind,
+    FnSource, Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
 };
 use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
@@ -290,10 +290,20 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         self_ty,
     };
     let mut methods: HashMap<String, MethodRef> = HashMap::new();
+    let instance: Vec<&str> = decl
+        .methods
+        .iter()
+        .filter(|m| !m.is_static && !m.is_setter)
+        .map(|m| m.decl.sig.name.name.as_str())
+        .collect();
     for m in &decl.methods {
         let name = &m.decl.sig.name;
-        let key = member_key(&name.name, m.is_setter);
-        let def = method_def(cx, &owner, m);
+        let key = if m.is_static && instance.contains(&name.name.as_str()) {
+            static_key(&name.name)
+        } else {
+            member_key(&name.name, m.is_setter)
+        };
+        let def = method_def(cx, &owner, m, &key);
         if methods.contains_key(&key) {
             cx.err(
                 format!("duplicate {} `{}`", what(m.is_setter), name.name),
@@ -321,7 +331,9 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
     a.own_ctor = ctor;
 }
 
-fn method_def<'m>(cx: &mut Ctx<'m>, o: &Owner, m: &'m ast::Method) -> DefId {
+/// The def of method `m`, whose method-table key is `key` (also the last part of its qualified
+/// name, which names its symbol).
+fn method_def<'m>(cx: &mut Ctx<'m>, o: &Owner, m: &'m ast::Method, key: &str) -> DefId {
     let name = &m.decl.sig.name;
     let kind = if m.is_static {
         FnKind::Static
@@ -329,7 +341,7 @@ fn method_def<'m>(cx: &mut Ctx<'m>, o: &Owner, m: &'m ast::Method) -> DefId {
         FnKind::Method
     };
     let src = Some(FnSource::Decl(&m.decl));
-    let full = format!("{}.{}", o.qual, member_key(&name.name, m.is_setter));
+    let full = format!("{}.{key}", o.qual);
     let mut info = fn_placeholder(full, name.span, m.decl.sig.span, o.module, kind, src);
     info.owner = Some(o.d);
     info.is_private = m.is_private;

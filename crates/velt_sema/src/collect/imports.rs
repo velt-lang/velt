@@ -91,6 +91,14 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
             "`env` was removed: read a variable with `process.env.NAME` or `process.env[name]` \
              (`string | null`, no import)",
         ),
+        ("velt:http", "fetch" | "Headers") => Some(
+            "`fetch`, `Request`, `Response` and `Headers` are global, as in Node: use them without \
+             an import (`velt:http`'s own `Request` and `Response` are the server's)",
+        ),
+        ("velt:http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
+            "`fetch` is global now and returns the standard `Response` (`res.headers` is a \
+             `Headers`, the options are a `RequestInit`), as in Node",
+        ),
         _ => None,
     }
 }

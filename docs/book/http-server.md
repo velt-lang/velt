@@ -170,11 +170,10 @@ What to notice:
 ## Testing it
 
 Start the server on port 0 (any free port), read the port from `server.port`, and call it with
-`fetch`. A test file in `tests/` (`tests/api.test.vlt`), assuming `main.vlt` was split so that a
+the global [`fetch`](../std/fetch.md). A test file in `tests/` (`tests/api.test.vlt`), assuming `main.vlt` was split so that a
 `startServer(port)` function in `src/server.vlt` returns the `Server`:
 
 ```ts ignore
-import { fetch } from "velt:http";
 import { startServer } from "../src/server";
 
 export async function test_create_and_validate() {
@@ -200,8 +199,8 @@ ALPN:
 const server = await serve({ port: 8443, tls: { cert: certPem, key: keyPem } }, handler);
 ```
 
-`fetch` speaks `http://` and `https://` (trusting Mozilla's root certificates plus the PEM CAs
-you pass in `ca`), and uses HTTP/2 when the server offers it. WebSockets are in
+[`fetch`](../std/fetch.md) speaks `http://` and `https://` (trusting Mozilla's root
+certificates plus the PEM CAs you pass in `ca`), and uses HTTP/2 when the server offers it. WebSockets are in
 [`velt:websocket`](../std/websocket.md).
 
 ## Databases

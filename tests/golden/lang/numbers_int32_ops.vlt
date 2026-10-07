@@ -152,6 +152,20 @@ function nestedProducts() {
   console.log((d * d + 7) | 0, (d * 2 * d) | 0, (d * d - 0.5) | 0);
 }
 
+// Sums of inferred integers inside a bitwise operand add like doubles: past 2^53 the sum is
+// rounded before ToInt32 takes its low 32 bits (#561).
+function roundedSums() {
+  let x = 9007199254740992;
+  console.log((x + 1) | 0, (x + 3) | 0, (x - 1) | 0, (1 + x) >>> 0);
+  let y = 9007199254740991;
+  console.log((y + 2) | 0, (y + y + 1) | 0, (-y - 2) | 0, ~(x + 1));
+  let h = 0;
+  for (let i = 0; i < 100; i++) {
+    h = (h + i * 7 + x) | 0;
+  }
+  console.log(h);
+}
+
 floats();
 integers();
 products();
@@ -159,3 +173,4 @@ hashes();
 placesOnce();
 literalAssignments();
 nestedProducts();
+roundedSums();

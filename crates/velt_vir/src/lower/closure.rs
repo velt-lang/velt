@@ -4,7 +4,9 @@
 //! captures store a pointer to the captured variable, Copy/Owned captures store the value (Owned
 //! ones move it in). Environments of closures that borrow (non-escaping) live in the creating
 //! function's frame with null drop/clone, and so do those of closure literals passed directly
-//! as a borrowed argument without owned captures (their clone function makes a heap copy);
+//! as a borrowed argument without owned captures (their clone function makes a heap copy),
+//! and so do those of closures only ever called in the function creating them
+//! (frame_envs.rs), whose owned captures a frame drop function releases with the closure value;
 //! all others are counted heap boxes owning their captures (semantics stage 2: copies of a
 //! function value share its env), released through the drop function in the header and deep
 //! copied by the clone function. Closures without captures and named
@@ -65,10 +67,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();
+        let in_frame = self.frame_closures.contains(&def);
         if f.captures.is_empty() {
             let code = self.cx.func(Work::Thunk(ThunkKind::Env(None), def, targs));
             if self.cx.fn_identity() {
-                return self.identity_closure(def, ty, cfunc(code), borrowed);
+                return self.identity_closure(def, ty, cfunc(code), borrowed || in_frame);
             }
             return self.rvalue_temp(
                 Ty::Agg(ca),
@@ -78,7 +81,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let code = self.cx.func(Work::Fn(def, targs.clone()));
         let ea = self.cx.env_agg(def, &targs);
         let owns = f.captures.iter().any(|c| c.mode == PassMode::Owned);
-        let heap = (owns || !borrowed) && self.cx.closure_env_is_heap(def);
+        let heap = !in_frame && (owns || !borrowed) && self.cx.closure_env_is_heap(def);
         let (env, drop_fn, clone_fn) = if heap {
             let p = self.counted_alloc(Ty::Agg(ea));
             let d = cfunc(self.cx.func(Work::EnvDrop(def, targs.clone())));
@@ -87,12 +90,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             let s = self.temp(Ty::Agg(ea));
             let p = self.addr(Place::local(s));
-            // A frame env of value captures still clones to a proper heap env.
-            let c = match self.cx.closure_env_is_heap(def) {
-                true => cfunc(self.cx.func(Work::EnvClone(def, targs))),
+            // A frame env of value captures still clones to a proper heap env; one only ever
+            // called is never copied.
+            let c = match !in_frame && self.cx.closure_env_is_heap(def) {
+                true => cfunc(self.cx.func(Work::EnvClone(def, targs.clone()))),
                 false => cint(0, Ty::Ptr),
             };
-            (p, cint(0, Ty::Ptr), c)
+            // One that owns captures drops them with the closure value, and stays in place.
+            let owned = self
+                .value_captures(def)
+                .iter()
+                .any(|c| c.1 == PassMode::Owned)
+                || !self.cell_captures(def).is_empty();
+            let d = match owned {
+                true => cfunc(self.cx.func(Work::EnvDropFrame(def, targs))),
+                false => cint(0, Ty::Ptr),
+            };
+            (p, d, c)
         };
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let t = self.temp(Ty::Agg(ca));
@@ -148,7 +162,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&envp, Proj::Deref(Ty::Agg(ea)));
         self.assign(proj(&base, Proj::Field(0)), Rvalue::Use(drop_fn));
         self.assign(proj(&base, Proj::Field(1)), Rvalue::Use(clone_fn));
-        let transfer = match self.cx.closure_env_is_heap(def) {
+        let in_frame = self.frame_closures.contains(&def);
+        let transfer = match !in_frame && self.cx.closure_env_is_heap(def) {
             true => cfunc(self.cx.func(Work::EnvTransfer(def, targs.clone()))),
             false => cint(0, Ty::Ptr),
         };
@@ -270,6 +285,34 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.terminate(Terminator::Return(super::unit()));
         let sym = format!(
             "_Genv_drop_{}",
+            lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
+        );
+        lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
+    }
+
+    /// `(env: ptr)`: drop the owned captures of a frame env and release its cells; the env
+    /// itself lives in the frame of the function that created it (frame_envs.rs).
+    pub(super) fn build_frame_env_drop(
+        cx: &'c mut super::Cx<'h>,
+        def: DefId,
+        targs: &[TyId],
+    ) -> Function {
+        let mut lw = FnLower::bare(cx, targs.to_vec());
+        let env = lw.new_local(Ty::Ptr, Some("env".into()));
+        let ea = lw.cx.env_agg(def, targs);
+        let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
+        for (field, mode, ty) in lw.value_captures(def) {
+            if mode == PassMode::Owned {
+                lw.drop_glue(proj(&base, Proj::Field(field)), ty);
+            }
+        }
+        for (field, ty) in lw.cell_captures(def) {
+            let p = Operand::Copy(proj(&base, Proj::Field(field)));
+            lw.release_cell_ptr(p, ty);
+        }
+        lw.terminate(Terminator::Return(super::unit()));
+        let sym = format!(
+            "_Genv_drop_frame_{}",
             lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
         );
         lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
