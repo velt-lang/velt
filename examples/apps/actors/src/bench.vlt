@@ -1,7 +1,7 @@
 // In-process benchmarks, the Velt side of `pnpm bench:run dispatch activation mem` in
 // @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
 // answered, against the `Tiny` actor (no storage on the call path).
-import { Host, Router, touch } from "./runtime";
+import { Host, Router } from "./runtime";
 
 struct LoopResult {
   ops: i64;
@@ -30,7 +30,6 @@ async function caller(
     }
     const k = i % keys.length;
     const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
-    touch(router); // keeps `router` used after the async call (B3)
     if (r.status != 200) {
       panic(`bench call failed: ${r.body}`);
     }
@@ -54,7 +53,6 @@ async function closedLoop(
   const tasks: Promise<LoopResult>[] = [];
   for (let i = 0; i < c; i++) {
     tasks.push(spawn(caller(router, keys, i as usize, until, sample)));
-    touch(router); // B3
   }
   const results = await Promise.all(tasks);
   let ops: i64 = 0;
@@ -104,7 +102,6 @@ async function sweepConcurrency(host: Host, name: string, keys: string[], ms: f6
     console.log(
       `    c=${c}/p50  ${fmtMs(percentile(l.samples, 0.5))}   c=${c}/p99  ${fmtMs(percentile(l.samples, 0.99))}`,
     );
-    touch(host); // B3
   }
 }
 
@@ -119,7 +116,6 @@ async function activateMany(host: Host, prefix: string, n: i64, c: i64): Promise
   const per = Math.trunc(n / c);
   for (let w = 0; w < c; w++) {
     tasks.push(spawn(activateRange(host.router, prefix, w * per, (w + 1) * per)));
-    touch(host); // B3
   }
   await Promise.all(tasks);
   return (per * c) as f64 / (performance.now() - t0) * 1000.0;
@@ -129,7 +125,6 @@ async function activateRange(router: Router, prefix: string, from: i64, to: i64)
   for (let i = from; i < to; i++) {
     const k = `${prefix}-${i}`;
     const r = await router.send("Tiny", k, "noop", JSON.stringify([k]), [], 0.0);
-    touch(router); // B3
     if (r.status != 200) {
       panic(r.body);
     }
@@ -148,7 +143,6 @@ async function coldCycle(host: Host, ms: f64) {
     const args = JSON.stringify([k]);
     const r = await host.router.send("Tiny", k, "noop", args, [], 0.0);
     const d = await host.router.send("Tiny", k, "$deactivate", args, [], 0.0);
-    touch(host); // B3
     if (r.status != 200 || d.status != 200) {
       panic(`${r.body} ${d.body}`);
     }
@@ -189,7 +183,6 @@ export async function runBenchmarks(host: Host, ms: f64, only: string) {
         `    activations_per_sec(c=64)  ${fmtOps(rate)}   live ${s.live}   rss_delta/actor  ${((after - before) / (n as f64)).toFixed(0)} B`,
       );
       await host.stats("clear");
-      touch(host); // B3
     }
   }
   const s = await host.stats();

@@ -453,11 +453,6 @@ class Shard {
   storage: ActorStorage;
   router: Router;
   directory: Map<string, Slot> = new Map<string, Slot>();
-  // Actors with calls queued and no turn loop running yet; `runShard` starts their loops. (Not
-  // started by `accept` itself: `accept(shard, env)` was the last use of `shard` in the shard
-  // loop, and forwarding it to an async call there freed the shard — B3.)
-  ready: Deque<Slot> = new Deque<Slot>();
-  started: i64 = 0;
   activations: i64 = 0;
   deactivations: i64 = 0;
   turns: i64 = 0;
@@ -515,7 +510,8 @@ function accept(shard: Shard, env: Envelope): Reply | null {
   slot.queue.pushBack(env);
   if (!slot.running) {
     slot.running = true;
-    shard.ready.pushBack(slot);
+    // Started, not awaited: the loop runs on the shard's task, interleaved with other actors'.
+    const turns = runTurns(shard, slot);
   }
   return null;
 }
@@ -556,10 +552,8 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
     }
     const r = await turn(shard, slot, id, env);
     slot.lastActivity = performance.now();
-    await send(env, r);
-    // Also keeps `shard` used after the async call above: when such a call is the last use of
-    // a shared object in a loop body, it takes a reference it never added (B3).
     shard.turns += 1;
+    await send(env, r);
     if (slot.act == null) {
       shard.deactivations += 1;
     }
@@ -667,14 +661,6 @@ async function runShard<C extends HostConfig>(
     if (refused != null) {
       await send(env, refused);
     }
-    while (true) {
-      const slot = shard.ready.popFront();
-      if (slot == null) {
-        break;
-      }
-      const turns = runTurns(shard, slot);
-      shard.started += 1; // keeps `shard` used after the call (B3)
-    }
   }
   ticker.stop();
   await sweeper;
@@ -716,10 +702,6 @@ async function controlLoop(shard: Shard, control: Channel<Control>): Promise<voi
 function shardOf(type: string, key: string, n: i64): i64 {
   return (fnv1a64(`${type}/${key}`) % (n as u64)) as i64;
 }
-
-// A use of `x` that does nothing: placed after an async call that would otherwise be the last
-// use of a shared object in a loop body (B3).
-export function touch<T>(x: T) {}
 
 export function parseOrNull(text: string): Value | null {
   try {
@@ -811,7 +793,6 @@ export struct Host {
         total.saves += s.saves;
         total.live += s.live;
       }
-      touch(this); // B3
     }
     return total;
   }
@@ -826,7 +807,6 @@ export struct Host {
     }
     for (let i: usize = 0; i < this.controls.length; i++) {
       await this.done.receive();
-      touch(this); // B3
     }
   }
 }
