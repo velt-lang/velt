@@ -65,7 +65,7 @@ fn get(url: &str, headers: &[&str]) -> Outgoing {
     Outgoing {
         method: Method::GET,
         url: send::parse_url(url).unwrap(),
-        headers: send::header_map(&flat).unwrap(),
+        headers: send::header_map(&flat, false).unwrap(),
         body: Bytes::new(),
     }
 }
@@ -241,18 +241,29 @@ fn bad_urls_and_headers_fail_before_connecting() {
     );
     let bad: [&[u8]; 2] = [b"bad name", b"v"];
     assert_eq!(
-        send::header_map(&bad).err().unwrap().code,
+        send::header_map(&bad, false).err().unwrap().code,
         code::INVALID_INPUT
     );
     let bad: [&[u8]; 2] = [b"x", b"a\nb"];
     assert_eq!(
-        send::header_map(&bad).err().unwrap().code,
+        send::header_map(&bad, false).err().unwrap().code,
         code::INVALID_INPUT
     );
-    let set: [&[u8]; 4] = [b"accept", b"text/html", b"user-agent", b"me"];
-    let map = send::header_map(&set).unwrap();
+    let set: [&[u8]; 6] = [
+        b"accept",
+        b"text/html",
+        b"user-agent",
+        b"me",
+        b"accept-encoding",
+        b"identity",
+    ];
+    let map = send::header_map(&set, true).unwrap();
     assert_eq!(map.get("accept").unwrap(), "text/html");
     assert_eq!(map.get("user-agent").unwrap(), "me");
+    assert_eq!(map.get("accept-encoding").unwrap(), "identity");
+    let map = send::header_map(&[], true).unwrap();
+    assert_eq!(map.get("accept-encoding").unwrap(), "br, gzip, deflate");
+    assert_eq!(map.len(), 3);
 }
 
 #[test]

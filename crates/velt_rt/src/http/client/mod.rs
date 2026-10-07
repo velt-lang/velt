@@ -27,7 +27,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use futures_util::future::Either;
-use hyper::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH};
+use hyper::header::{HeaderMap, CONTENT_ENCODING, CONTENT_LENGTH};
 use hyper::Method;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -111,12 +111,12 @@ async fn abortable<T>(
 }
 
 /// Copy the flat header list `[name, value, …]` out of a Velt `string[]`.
-unsafe fn header_list(headers: *const VeltStrArray) -> Result<HeaderMap, VeltErr> {
+unsafe fn header_list(headers: *const VeltStrArray, https: bool) -> Result<HeaderMap, VeltErr> {
     let a = &*headers;
     let items: Vec<&[u8]> = (0..a.len as usize)
         .map(|i| (*a.ptr.add(i)).as_bytes())
         .collect();
-    send::header_map(&items)
+    send::header_map(&items, https)
 }
 
 async fn run(
@@ -197,12 +197,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
         let method = Method::from_bytes((*method).as_bytes())
             .map_err(|_| send::invalid("invalid HTTP method"))?;
         let url = send::parse_url(&(*url).text_lossy())?;
-        let mut headers = header_list(headers)?;
-        if !headers.contains_key(ACCEPT_ENCODING) {
-            let https = url.scheme() == "https";
-            let value = HeaderValue::from_static(decode::accept_encoding(https));
-            headers.insert(ACCEPT_ENCODING, value);
-        }
+        let headers = header_list(headers, url.scheme() == "https")?;
         Ok(Outgoing {
             method,
             url,

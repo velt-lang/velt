@@ -69,8 +69,10 @@ export class Response {
     }
   }
 
-  // The response behind runtime key `handle`, whose body aborts with `signal` (std only).
-  private static adopt(handle: u64, signal: AbortSignal | null): Response {
+  // The response behind runtime key `handle`, whose body aborts with `signal` (std only). The
+  // response to a HEAD request has no body, whatever its headers say: `body` is null and
+  // `text()` is "".
+  private static adopt(handle: u64, signal: AbortSignal | null, head: bool): Response {
     const r = new Response();
     r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
     r.#reason = velt_rt_http_fetch_resp_status_text(handle);
@@ -79,7 +81,7 @@ export class Response {
     r.headers = Headers.adopt(velt_rt_http_fetch_resp_headers(handle));
     r.headers.frozen = true;
     r.#kind = "basic";
-    r.#source = RUNTIME;
+    r.#source = head ? NONE : RUNTIME;
     r.#handle = handle;
     r.#signal = signal;
     return r;
