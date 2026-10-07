@@ -2,9 +2,7 @@ union_errors.vlt:10:12: error: no field `length` on type `string | i64`
 `string | i64` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`
 union_errors.vlt:14:12: error: no method named `meow` found for type `string | Cat`
 `string | Cat` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`
-union_errors.vlt:18:11: error: non-exhaustive switch on `typeof v`
-missing cases: "boolean"
-add `case "boolean":` or a `default:` clause
+union_errors.vlt:17:10: error: function `h` must return a value of type `string` on every path
 union_errors.vlt:27:10: error: this `typeof` test is always false: no member of `string | i64` is a "boolean"
 union_errors.vlt:31:10: error: `typeof` never returns "strng"
 union_errors.vlt:39:18: error: mismatched types

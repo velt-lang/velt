@@ -21,6 +21,7 @@ pub(crate) mod downcast;
 mod errors;
 mod fn_arity;
 mod gen_closure;
+mod hoist;
 mod iface_call;
 mod int32;
 mod intrinsics;

@@ -52,17 +52,14 @@ impl FnCx<'_, '_> {
             .iter()
             .map(|c| (c.test.as_ref().map(|t| self.case_sel(&s, t)), c.span))
             .collect();
-        self.check_duplicates(&sels);
         let has_default = cases.iter().any(|c| c.test.is_none());
         let missing = Self::uncovered(&s, &sels);
-        let mut complete = has_default || (!s.slots.is_empty() && missing.is_empty());
-        if !has_default && !missing.is_empty() && self.needs_exhaustive(&s) {
-            self.report_missing(&s, &missing, disc.span);
-            // Checked as if complete, so the missing cases are the only error.
-            complete = true;
-        }
+        let complete = has_default || (!s.slots.is_empty() && missing.is_empty());
         self.enter_loop(label, true);
-        let checked = self.case_bodies(&s, cases, sels);
+        // Without `default`, the values no case takes skip the `switch` (TypeScript accepts a
+        // switch that does not cover every member): after it they are what is left.
+        let skipped = (!complete).then_some(missing);
+        let checked = self.case_bodies(&s, cases, sels, skipped);
         let lp = self.exit_loop();
         stmts.extend(self.dispatch(s, checked, complete, span));
         let stmts = match (lp.has_break, lp.hir_label()) {
@@ -77,13 +74,16 @@ impl FnCx<'_, '_> {
         Self::push(out, S::Block(block), span);
     }
 
-    /// Check every case body (from the narrowing state before the `switch`; afterwards only
-    /// what every body kept still holds).
+    /// Check every case body (from the narrowing state before the `switch`). Afterwards only
+    /// what holds on every way out still holds: the bodies that leave the `switch` by `break`
+    /// or by completing the last one, and the values no case takes (`skipped`, without
+    /// `default`), which keep what holds before the `switch` narrowed to those members.
     fn case_bodies(
         &mut self,
         s: &Scrut,
         cases: &[ast::SwitchCase],
         sels: Vec<(Option<Sel>, Span)>,
+        skipped: Option<Vec<usize>>,
     ) -> Vec<Case> {
         let before = self.narrow_state();
         let covered: Vec<usize> = sels
@@ -91,11 +91,13 @@ impl FnCx<'_, '_> {
             .filter_map(|(sel, _)| sel.as_ref())
             .flat_map(|sel| sel.covered.iter().copied())
             .collect();
-        let mut afters = vec![];
+        let mut exits = vec![];
+        let mut breaks = false;
         let mut out = vec![];
+        let last = cases.len().saturating_sub(1);
         let mut incoming: Option<Vec<usize>> = None;
         let name = s.local.map(|l| self.f.locals[l.0 as usize].name.clone());
-        for (c, (sel, _)) in cases.iter().zip(sels) {
+        for (i, (c, (sel, _))) in cases.iter().zip(sels).enumerate() {
             self.restore_narrowing(&before);
             let mut reach: Vec<usize> = match &sel {
                 Some(sel) => sel.touched.clone(),
@@ -124,12 +126,30 @@ impl FnCx<'_, '_> {
                 (true, false) => Some(reach),
                 (true, true) => Some((0..s.slots.len()).collect()),
             };
-            afters.push(self.narrow_state());
+            // A `break` may leave before facts the rest of the body adds: only those that
+            // also held before the `switch` are kept (`before` is met below).
+            let breaks_here = breaks_out(&body);
+            breaks |= breaks_here;
+            if breaks_here || (falls && i == last) {
+                exits.push(self.narrow_state());
+            }
             out.push(Case { sel, body, falls });
         }
-        self.restore_narrowing(&before);
-        for st in &afters {
-            self.meet_narrowing(st);
+        if let Some(skipped) = skipped {
+            self.restore_narrowing(&before);
+            for f in self.slot_facts(s, &skipped) {
+                self.narrow(&f);
+            }
+            exits.push(self.narrow_state());
+        }
+        if breaks {
+            exits.push(before.clone());
+        }
+        // With no way out, what follows is unreachable: the state before is as good as any.
+        let mut exits = exits.into_iter();
+        self.restore_narrowing(&exits.next().unwrap_or(before));
+        for st in exits {
+            self.meet_narrowing(&st);
         }
         out
     }

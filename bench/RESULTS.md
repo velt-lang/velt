@@ -1108,23 +1108,50 @@ the table is from `main` at 8949f2c7):
   `string[]` pay a `velt_rt_str_eq` call per element. #531.
 - **sortcmp**: `sort(cmp)` merges in place with SymMerge, O(n log² n) swaps. #530.
 
-## Callback arguments of arrays other references reach (#564, 2026-10-06)
+## Stable sort with a comparator (#530, 2026-10-05)
 
-A call argument borrowed from an element of a boxed array (or one reached through a counted
-object or a cell) is now a share of the element whenever the array's count says another
-reference exists, so a callback that pushes onto the array or pops it cannot leave it dangling.
-Wall clock, Windows 11, i9-12900HK shared with other builds, LLVM release, best of 11: 20,000
-rounds of `forEach` plus `map` over 1,000 elements (40M callback calls); before is `main`'s
-lowering and std.
+`sort(cmp)` / `toSorted(cmp)` moved from an in-place SymMerge (O(n log² n) swaps) to a stable
+sort shaped like Rust's driftsort through a scratch buffer (std/sort/stable.vlt), and velt_opt
+now inlines the comparator through `cmp: F | null` and through every closure argument of a
+recursive helper. Instructions and branch mispredictions of the sort alone (a run with the sort
+minus a run with only the setup), valgrind cachegrind on Linux (WSL2), clang 18; before is
+`main` at d7ca61d4 (compiler and std), Rust is `sort_by` (`rustc -O`):
 
-| elements | before | after |
-|---|---:|---:|
-| `number[]` | 82 ms | 87 ms |
-| objects (`P[]`) | 81 ms | 58 ms |
-| `string[]`, type counted (an alias exists elsewhere), this array unaliased | 109 ms | 83 ms |
-| `string[]` with a live alias (`const alias = shared`) | 116 ms | 739 ms |
-| `string[]` in a program without aliases | 49 ms | 47 ms |
+| workload | Velt before | Velt after | Rust `sort_by` | after / Rust |
+|---|---:|---:|---:|---:|
+| 1M `number`s, `(a, b) => a - b` | 2537M, 38.9M mispred | 619M, 1.5M | 328M, 1.2M | 1.89 |
+| 1M `i64`, `(a, b) => a - b` | 2376M, 39.3M | 507M, 1.5M | 259M, 1.1M | 1.96 |
+| 300k objects by `age`, then `name` | 800M, 12.1M | 398M, 1.1M | 252M, 3.0M | 1.58 |
+| 100k objects by a float field | 526M, 10.0M | 146M, 0.1M | 82M, 0.0M | 1.78 |
+| 1M `number`s, `sort()` (pdqsort, unchanged) | 427M, 1.5M | 427M, 1.5M | 264M, 0.7M (`sort_unstable`) | 1.62 |
 
-Only the last-but-one row pays: one string share and drop per call (about 15 ns, two atomic
-count updates). The others are within noise: an unshared type keeps its code, and an array of a
-counted type checks its count (a load and a branch) before borrowing in place.
+Wall clock, Windows 11, i9-12900HK shared with other builds, clang 22.1.8, best of 9
+interleaved runs; before is this compiler with `main`'s std. The sort alone (timed inside the
+program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64 → 7 ms. The whole
+`bench/typical` sortcmp program (setup included, same output everywhere):
+
+| program | Velt before | Velt after | Rust -O | Node |
+|---|---:|---:|---:|---:|
+| sortcmp | 766 | 257 | 289 | 1427 |
+
+- The quicksort's partitions are branch-free (each element is written to both ends of the
+  buffer and one cursor moves), which is where the mispredictions went; merges of runs that are
+  already in order are skipped, so sorted and reversed inputs are O(n).
+- The comparator is inlined in every recursive helper only since the specialization passes all
+  closure arguments down the recursion: before, `quicksort(…, cmp, neg)` recursed into a clone
+  that knew `neg` but called `cmp` indirectly. Same std without that fix: objects by name 447M
+  (2.2M mispredictions), by score 185M; the number rows are the same either way.
+- The sort works on a buffer of its own while the comparator runs (a comparator can reach the
+  array through an alias): elements that need no drop are copied into it and written back, the
+  others moved out and back. At most 1M instructions on any row above. A short array (at most
+  20 elements) of elements that need no drop is insertion sorted in place when the comparator
+  captures nothing (`__intrinsic_fn_captures_nothing`, folded by velt_opt): 100k sorts of 10
+  numbers by `(a, b) => a - b` take 20.8M instructions (32.6M when they were copied), and of
+  8–12 numbers 40.4M (57.2M copied).
+- Short arrays of elements that need a drop are moved out like long ones (#548 review: sorted
+  in place, a comparator that pushes onto the array through an alias, or through an element
+  that holds it, left its arguments pointing into the freed buffer). Wall clock of 1M sorts of
+  a 10-element copy (`slice()` included, best of 15, LLVM release): strings by `<` 323 → 360
+  ms, objects by a number field 53 → 78 ms, so about 35 and 25 ns per sort. The 1M-number sort
+  of the table measured in the same session: Velt 93 ms, Rust `sort_by` 69 ms, Node 1216 ms
+  (the machine was busier than for the numbers above).

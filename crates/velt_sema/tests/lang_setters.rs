@@ -99,12 +99,9 @@ fn setter_errors() {
         r.contains("`||=` needs a `boolean` or nullable left side, found `string | null`"),
         "{r}"
     );
-    let r = err_src(
-        "class N { m: i64 | null = null; get n(): i64 | null { return this.m; } set n(v: i64 | null) { this.m = v; } } function main() { const x = new N(); const v = (x.n ??= 1); }",
-    );
-    assert!(
-        r.contains("`??=` on the accessor `n` cannot be used as a value"),
-        "{r}"
+    // As a value, `x.n ??= 1` is non-null (TypeScript's type).
+    ok_src(
+        "class N { m: i64 | null = null; get n(): i64 | null { return this.m; } set n(v: i64 | null) { this.m = v; } } function main() { const x = new N(); const v: i64 = (x.n ??= 1); }",
     );
     let r =
         err_src("class W { set w(v: i64) {} } function main() { const x = new W(); x.w += 1; }");
