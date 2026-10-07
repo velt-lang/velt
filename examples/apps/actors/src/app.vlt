@@ -79,8 +79,8 @@ function tinyMethods(): Methods<TinyState> {
 
 // The registry, built once per shard.
 export function actorTypes(): Map<string, ActorType> {
-  const m = new Map<string, ActorType>();
-  m.set("Counter", counterActor());
-  m.set("Tiny", tinyActor());
-  return m;
+  return new Map<string, ActorType>([
+    ["Counter", counterActor()],
+    ["Tiny", tinyActor()],
+  ]);
 }
