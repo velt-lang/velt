@@ -64,6 +64,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
+            pending_borrows: vec![],
             share_binds: false,
             transfer_args: false,
             transfer_call: false,

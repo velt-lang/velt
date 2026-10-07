@@ -54,6 +54,49 @@ impl Cx<'_> {
         }
     }
 
+    /// The value types inside a `t` (stored inline, `t` itself included) that can be changed in
+    /// place and that a share would copy: tuples, and object types stored inline whose parts
+    /// include such a type. Strings, plain values, counted objects, function and interface
+    /// values have none; options, results and unions have their payloads'.
+    pub(in crate::lower) fn in_place_parts(&mut self, t: TyId) -> Vec<TyId> {
+        let mut out = vec![];
+        self.collect_in_place(t, &mut out, &mut Vec::new());
+        out
+    }
+
+    fn collect_in_place(&mut self, t: TyId, out: &mut Vec<TyId>, seen: &mut Vec<TyId>) {
+        if seen.contains(&t) || self.counted(t) {
+            return;
+        }
+        seen.push(t);
+        match self.kind(t) {
+            TyKind::Tuple(_) => out.push(t),
+            TyKind::Option(x) => self.collect_in_place(x, out, seen),
+            TyKind::Result(a, b) => {
+                self.collect_in_place(a, out, seen);
+                self.collect_in_place(b, out, seen);
+            }
+            TyKind::Adt(d, _) => match self.hir.def(d) {
+                hir::Def::Enum(_) => {
+                    for p in self.part_types(t) {
+                        self.collect_in_place(p, out, seen);
+                    }
+                }
+                hir::Def::Adt(a) if a.kind != AdtKind::Class && !a.is_copy => {
+                    let mut inner = vec![];
+                    for p in self.part_types(t) {
+                        self.collect_in_place(p, &mut inner, seen);
+                    }
+                    if !inner.is_empty() {
+                        out.push(t);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
     /// A value type: `Value` when some part owns resources, else `Plain`.
     fn value_kind(&mut self, t: TyId) -> ShareKind {
         if self.needs_drop(t) {

@@ -189,6 +189,7 @@ impl FnLower<'_, '_> {
             ice("argument count does not match parameter count");
         }
         let mut argv = vec![];
+        let outer = self.start_borrows();
         for (i, (a, mode)) in args.iter().zip(modes).enumerate() {
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
@@ -196,7 +197,7 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
-                        true => self.stable_borrow(a),
+                        true => self.stable_borrow(a, &args[i + 1..]),
                         false => self.borrowed_arg(a),
                     };
                     argv.push(self.operand_addr(v, t));
@@ -211,7 +212,7 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Owned => self.consume(a),
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            self.stable_borrow(a)
+                            self.stable_borrow(a, &args[i + 1..])
                         }
                         _ => self.expr(a),
                     };
@@ -224,6 +225,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.finish_borrows(outer);
         argv
     }
 
@@ -242,6 +244,7 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
+        let outer = self.start_borrows();
         for (i, a) in args.iter().enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
@@ -250,7 +253,14 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                self.stable_borrow(a)
+                // A spawned call's borrows are settled right away, before the later arguments.
+                let later = if transfer { &[][..] } else { &args[i + 1..] };
+                let v = self.stable_borrow(a, later);
+                if transfer {
+                    // The copy for the task reads the argument now.
+                    self.finish_borrows(Vec::new());
+                }
+                v
             };
             let v = match transfer {
                 true => self.transfer_copy(v, a.ty),
@@ -279,6 +289,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
+        self.finish_borrows(outer);
         (argv, params)
     }
 
