@@ -48,7 +48,8 @@ async function send(ch: Channel<bool>): Promise<void> {
 
 async function main() {
   const ac = new AbortController();
-  const job = work("job", 100, ac.signal);
+  // Far more steps than the test takes: only the abort ends it.
+  const job = work("job", 1000000, ac.signal);
   await sleep(35);
   ac.abort("user cancelled");
   try {
@@ -63,14 +64,15 @@ async function main() {
   shutdown.abort();
   console.log(await worker);
 
-  // Long enough that `before:` is always read first.
-  const t = AbortSignal.timeout(1000);
+  // An hour: `before:` is read long before it could fire.
+  const t = AbortSignal.timeout(3600000);
   console.log("before:", t.aborted, t.reason == "");
-  await t.whenAborted();
-  console.log("after:", t.aborted, t.reason);
+  const soon = AbortSignal.timeout(50);
+  await soon.whenAborted();
+  console.log("after:", soon.aborted, soon.reason);
 
   const a = new AbortController();
-  const both = AbortSignal.any([a.signal, AbortSignal.timeout(1000)]);
+  const both = AbortSignal.any([a.signal, AbortSignal.timeout(3600000)]);
   a.abort("first");
   a.abort("ignored");
   console.log("any:", both.aborted, both.reason);
@@ -85,7 +87,8 @@ async function main() {
     console.log("throwIfAborted:", e.message);
   }
 
-  console.log(await timeout(slow(10), 100));
+  // An hour: `p` finishes first however long the machine takes.
+  console.log(await timeout(slow(10), 3600000));
   // `p` finishes only after the timeout rejected, and is waited for.
   const release = channel<bool>();
   const done = channel<bool>();
