@@ -9,12 +9,12 @@ import * as generic from "./_jsx_sep_page_generic";
 import * as precompiled from "./_jsx_sep_page_precompile";
 
 function main() {
-  const inputs: (string | null)[] = ["x", null];
+  const inputs: (string | null)[] = ["x", "", null];
   for (const maybe of inputs) {
     for (const flag of [true, false]) {
-      console.log(`maybe=${maybe ?? "null"} flag=${flag}`);
-      const a = generic.cases("ada", 3, maybe, flag, "");
-      const b = precompiled.cases("ada", 3, maybe, flag, "");
+      console.log(`maybe=${maybe === null ? "null" : JSON.stringify(maybe)} flag=${flag}`);
+      const a = generic.cases("ada", 3, maybe, flag, "", ["x", "y"]);
+      const b = precompiled.cases("ada", 3, maybe, flag, "", ["x", "y"]);
       for (let i: usize = 0; i < a.length; i++) {
         const x = renderToString(a[i]);
         const y = renderToString(b[i]);
@@ -23,7 +23,7 @@ function main() {
     }
   }
   console.log("templates:");
-  for (const el of precompiled.cases("ada", 3, "x", true, "")) {
+  for (const el of precompiled.cases("ada", 3, "x", true, "", ["x", "y"])) {
     console.log(`  ${templateOf(el)}`);
   }
 }
