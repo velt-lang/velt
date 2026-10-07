@@ -61,6 +61,7 @@ mod program;
 mod rc;
 mod rt;
 mod same;
+mod sequence;
 mod share;
 mod srcloc;
 mod stabilize;

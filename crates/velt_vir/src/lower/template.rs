@@ -8,6 +8,7 @@
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use super::rt::Rt;
+use super::sequence::Later;
 use super::FnLower;
 use crate::vir::{Operand, Place, Ty, STR_AGG};
 
@@ -52,6 +53,7 @@ impl FnLower<'_, '_> {
         if let [Part::Str(_) | Part::Text(_), Part::Str(_) | Part::Text(_)] = parts.as_slice() {
             // Two strings: `velt_rt_str_concat` allocates exactly once, at the exact size.
             let va = self.expr(a);
+            let va = self.hold(va, a.ty, Later::of(b));
             let vb = self.expr(b);
             let pa = self.operand_addr(va, STR);
             let pb = self.operand_addr(vb, STR);

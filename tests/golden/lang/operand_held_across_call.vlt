@@ -1,0 +1,89 @@
+// check: no leaks
+// An operand that is not a number is read before a later operand runs too (#580): a string
+// element or a class object element is shared, so a later operand that reallocates the array or
+// replaces the element leaves the earlier operand's value intact, as in JS. Where sema sees the
+// conflict (`console.log(ss[0], growS(ss))` borrows `ss` twice), the program is rejected; a
+// closure that captures the array hides it, so these go through closures.
+class P {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class Q {
+  a: string;
+  b: string;
+  constructor(a: string, b: string) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+function long(n: number): string {
+  return `a string long enough to live on the heap, number ${n}`;
+}
+
+// Reallocates `ss` and frees the string that was `ss[0]`.
+function growS(ss: string[]): string {
+  for (let i = 0; i < 1000; i++) {
+    ss.push(long(i));
+  }
+  ss[0] = long(-1);
+  return "!";
+}
+
+function both(a: string, b: string): string {
+  return a + b;
+}
+
+async function later(): Promise<number> {
+  return 4;
+}
+
+async function laterS(): Promise<string> {
+  return "?";
+}
+
+async function main() {
+  let ss = [long(0)];
+  const g = (): string => growS(ss);
+  console.log(ss[0] + g());
+  ss = [long(0)];
+  console.log(`${ss[0]}${g()}`);
+  ss = [long(0)];
+  console.log(`<${ss[0]}|${g()}>`);
+  ss = [long(0)];
+  console.log(ss[0], g());
+  ss = [long(0)];
+  console.log(both(ss[0], g()));
+  ss = [long(0)];
+  console.log(ss[0] === g(), ss.length);
+  ss = [long(0)];
+  const q = new Q(ss[0], growS(ss));
+  console.log(q.a, q.b);
+  ss = [long(0)];
+  const pair = [ss[0], growS(ss)];
+  console.log(pair[0], pair[1]);
+
+  const ps = [new P(3)];
+  const replace = (): number => {
+    ps[0] = new P(7);
+    return 1;
+  };
+  console.log(ps[0], replace(), ps[0]);
+  ps[0] = new P(3);
+  console.log(ps[0].v + replace(), ps[0].v);
+  const os: (P | null)[] = [new P(5)];
+  const swap = (): number => {
+    os[0] = new P(9);
+    return 1;
+  };
+  console.log(os[0]?.v, swap(), os[0]?.v);
+
+  const xs: number[] = [3];
+  const p = later();
+  console.log(xs[0] + (await p));
+  ss = [long(0)];
+  console.log(ss[0] + (await laterS()) + growS(ss));
+}

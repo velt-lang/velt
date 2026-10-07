@@ -5,8 +5,8 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
-use super::expr::may_write;
 use super::operand::proj;
+use super::sequence::later_each;
 use super::{ice, unit, FnLower, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -189,7 +189,8 @@ impl FnLower<'_, '_> {
             ice("argument count does not match parameter count");
         }
         let mut argv = vec![];
-        for (i, (a, mode)) in args.iter().zip(modes).enumerate() {
+        let later = later_each(args);
+        for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             match (self.vty(a.ty), mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
@@ -199,6 +200,11 @@ impl FnLower<'_, '_> {
                         true => self.stable_borrow(a),
                         false => self.borrowed_arg(a),
                     };
+                    // A value the callee modifies stays where it is (it may only be shared).
+                    let v = match mode {
+                        PassMode::Borrow => self.hold(v, a.ty, later),
+                        _ => v,
+                    };
                     argv.push(self.operand_addr(v, t));
                 }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
@@ -207,20 +213,18 @@ impl FnLower<'_, '_> {
                     let tmp = self.copy_to_temp(v, t);
                     argv.push(self.addr(Place::local(tmp)));
                 }
+                (_, PassMode::Owned) => {
+                    let v = self.consume(a);
+                    argv.push(self.hold_owned(v, a.ty, later));
+                }
                 (_, m) => {
                     let v = match m {
-                        PassMode::Owned => self.consume(a),
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
                             self.stable_borrow(a)
                         }
                         _ => self.expr(a),
                     };
-                    let v = if args[i + 1..].iter().any(may_write) {
-                        self.freeze(v, a.ty)
-                    } else {
-                        v
-                    };
-                    argv.push(v);
+                    argv.push(self.hold(v, a.ty, later));
                 }
             }
         }
@@ -242,7 +246,8 @@ impl FnLower<'_, '_> {
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
-        for (i, a) in args.iter().enumerate() {
+        let later = later_each(args);
+        for (i, (a, later)) in args.iter().zip(later).enumerate() {
             let t = self.vty(a.ty);
             let mode = modes.and_then(|m| m.get(i).copied());
             let v = if is_moved(a) {
@@ -250,7 +255,12 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                self.stable_borrow(a)
+                let v = self.stable_borrow(a);
+                match mode {
+                    // A value the callee modifies stays where it is.
+                    Some(PassMode::BorrowMut) if !t.is_scalar() => v,
+                    _ => self.hold(v, a.ty, later),
+                }
             };
             let v = match transfer {
                 true => self.transfer_copy(v, a.ty),
@@ -269,11 +279,6 @@ impl FnLower<'_, '_> {
                     params.push(Ty::Ptr);
                 }
                 s => {
-                    let v = if args[i + 1..].iter().any(may_write) {
-                        self.freeze(v, a.ty)
-                    } else {
-                        v
-                    };
                     argv.push(v);
                     params.push(s);
                 }

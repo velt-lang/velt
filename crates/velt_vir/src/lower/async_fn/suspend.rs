@@ -22,9 +22,9 @@
 use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 
 use super::AsyncInfo;
-use crate::lower::expr::may_write;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
+use crate::lower::sequence::later_each;
 use crate::lower::{cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -120,14 +120,20 @@ impl FnLower<'_, '_> {
         modes: &[PassMode],
     ) -> Vec<Option<Operand>> {
         let mut out = vec![];
-        for (i, (a, mode)) in args.iter().zip(modes).enumerate() {
+        let later = later_each(args);
+        for ((a, mode), later) in args.iter().zip(modes).zip(later) {
             let t = self.vty(a.ty);
             let v = match (t, mode) {
                 (Ty::Unit, _) => {
                     self.expr(a);
                     None
                 }
-                (Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
+                (Ty::Agg(_), PassMode::Borrow) => {
+                    let v = self.expr(a);
+                    let v = self.hold(v, a.ty, later);
+                    Some(self.operand_addr(v, t))
+                }
+                (Ty::Agg(_), PassMode::BorrowMut) => {
                     let v = self.expr(a);
                     Some(self.operand_addr(v, t))
                 }
@@ -138,15 +144,13 @@ impl FnLower<'_, '_> {
                 }
                 (_, PassMode::Owned) => {
                     let v = self.consume(a);
+                    let v = self.hold_owned(v, a.ty, later);
                     Some(self.maybe_transfer(v, a.ty))
                 }
-                _ => Some(self.expr(a)),
-            };
-            let v = match v {
-                Some(v) if t.is_scalar() && args[i + 1..].iter().any(may_write) => {
-                    Some(self.freeze(v, a.ty))
+                _ => {
+                    let v = self.expr(a);
+                    Some(self.hold(v, a.ty, later))
                 }
-                v => v,
             };
             out.push(v);
         }

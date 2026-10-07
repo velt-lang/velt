@@ -8,8 +8,8 @@ use std::rc::Rc;
 use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
-use super::expr::may_write;
 use super::operand::proj;
+use super::sequence::may_write;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 

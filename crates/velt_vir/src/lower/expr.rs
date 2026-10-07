@@ -2,40 +2,12 @@
 //! param, a projection, or an owned temporary registered for dropping); `consume` additionally
 //! takes ownership of the value for a store, return or owned argument.
 
-use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
+use super::sequence::{later_each, Later};
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{self, Const, Operand, Place, Rvalue, Ty};
-
-/// Can evaluating `e` change what an earlier operand reads? Earlier operands that are plain
-/// local reads get snapshotted when a later sibling may write (`f(i, i++)`), and so do reads of
-/// an element, which a later call may reallocate or replace (`xs[0] + grow(xs)`, #580).
-pub(super) fn may_write(e: &hir::Expr) -> bool {
-    writes_local(e) || may_change_memory(e)
-}
-
-/// Can evaluating `e` write to a local of the enclosing function?
-fn writes_local(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
-            writes_local(expr)
-        }
-        K::Field { base, .. } => writes_local(base),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            writes_local(lhs) || writes_local(rhs)
-        }
-        K::Call { callee, args } => {
-            !matches!(callee, hir::Callee::Intrinsic(_) | hir::Callee::Def(..))
-                || args.iter().any(writes_local)
-        }
-        K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
-        _ => true,
-    }
-}
 
 impl FnLower<'_, '_> {
     /// Evaluate an expression whose value will be *owned* by the consumer (not registered for
@@ -106,14 +78,11 @@ impl FnLower<'_, '_> {
     /// `consume` each of `es` in order, snapshotting a value that a later one may change
     /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
     pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
+        let later = later_each(es);
         let mut vals = Vec::with_capacity(es.len());
-        for (i, e) in es.iter().enumerate() {
+        for (e, later) in es.iter().zip(later) {
             let v = self.consume(e);
-            vals.push(if es[i + 1..].iter().any(may_write) {
-                self.freeze(v, e.ty)
-            } else {
-                v
-            });
+            vals.push(self.hold_owned(v, e.ty, later));
         }
         vals
     }
@@ -139,10 +108,8 @@ impl FnLower<'_, '_> {
                 if let Some(v) = self.float_param_ordering(*op, lhs, rhs, e.ty) {
                     return v;
                 }
-                let mut l = self.expr(lhs);
-                if may_write(rhs) {
-                    l = self.freeze(l, lhs.ty);
-                }
+                let l = self.expr(lhs);
+                let l = self.hold(l, lhs.ty, Later::of(rhs));
                 let r = self.expr(rhs);
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
