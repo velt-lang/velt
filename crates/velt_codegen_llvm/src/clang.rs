@@ -208,12 +208,11 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
     let mut stdin = child.stdin.take().expect("ICE: stdin is piped");
     // Feed the input from another thread while the output is read here: a tool may write
     // before it has read everything, and both pipes have small buffers.
-    let out = std::thread::scope(|scope| {
+    let (out, fed) = std::thread::scope(|scope| {
         let feeder = scope.spawn(move || stdin.write_all(input));
         let out = child.wait_with_output();
-        // A tool that failed may stop reading: its error is reported, not the broken pipe.
-        let _ = feeder.join();
-        out
+        let fed = feeder.join().expect("ICE: the stdin feeder panicked");
+        out.map(|out| (out, fed))
     })
     .map_err(|e| {
         format!(
@@ -227,6 +226,9 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    // A tool that failed may stop reading: then its error above is reported, not the broken
+    // pipe. One that succeeded without reading all of its input compiled only part of it.
+    fed.map_err(|e| format!("codegen: cannot write the IR to {name}: {e}"))?;
     Ok(out.stdout)
 }
 

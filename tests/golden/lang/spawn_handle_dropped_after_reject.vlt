@@ -1,18 +1,23 @@
 // check: no leaks
 // A spawn handle dropped after its task already rejected reports the rejection when it is
-// dropped (#148). The output is the same if the task is still running when the handle is
-// dropped (it is reported when it rejects), so a slow machine changes nothing: `main` waits far
-// longer than either takes, and `unreachable` would only print if the rejection were lost.
+// dropped (#148). The task reports on `throwing` just before it throws, and `main` drops the
+// handle only after that. Had the rejection not happened yet, it would be reported when it does,
+// with the same output; `unreachable` would only print if the rejection were lost (a minute is
+// a hang guard).
+import { channel, Channel } from "velt:channel";
+
 class Failed extends Error {}
 
-async function failing(): Promise<i64> {
+async function failing(throwing: Channel<bool>): Promise<i64> {
+  throwing.trySend(true);
   throw new Failed("rejected before the handle was dropped");
 }
 
 async function main() {
+  const throwing = channel<bool>(1);
   {
-    const task = spawn(failing());
-    await sleep(50);
+    const task = spawn(failing(throwing));
+    await throwing.receive();
     console.log("dropping the handle");
   }
   await sleep(60000);

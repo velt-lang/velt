@@ -2,6 +2,8 @@
 // A promise converts to a promise type whose error type allows every error it can reject with:
 // `Promise<T>` (never rejects) to `Promise<T, E>`, and `Promise<T, E1>` to `Promise<T, E1 | E2>`.
 // The converted promise starts when it is created and settles like the original.
+import { channel, Channel } from "velt:channel";
+
 class Oops extends Error {}
 
 class Other extends Error {}
@@ -15,6 +17,12 @@ async function work(name: string, ms: i64): Promise<string> {
 
 async function failing(ms: i64): Promise<i64> throws Oops {
   await sleep(ms);
+  throw new Oops("bad");
+}
+
+// Rejects once `gate` is closed.
+async function failingAfter(gate: Channel<bool>): Promise<i64> throws Oops {
+  await gate.receive();
   throw new Oops("bad");
 }
 
@@ -57,9 +65,12 @@ async function main() {
     console.log("caught", e.message);
   }
 
-  // `double` is created first and is due first, so it wins however long the creation takes.
-  const ps: Promise<i64, Oops>[] = [double(3), failing(50)];
+  // The winner comes second. The loser can only settle once `main` closes `gate` after the race
+  // (a 60 s timer would do the same, but the program would wait for it).
+  const gate = channel<bool>();
+  const ps: Promise<i64, Oops>[] = [failingAfter(gate), double(3)];
   console.log(await Promise.race(ps));
+  gate.close();
   const mixed: Promise<i64, Oops>[] = [double(4), failing(1)];
   const settled = await Promise.allSettled(mixed);
   console.log(settled.length);
