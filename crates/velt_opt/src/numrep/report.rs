@@ -64,17 +64,18 @@ pub(super) fn unnarrowed(env: &Env, flow: &Flow, func: &Function) -> Vec<Unnarro
     out
 }
 
+/// The words for each reason; `docs/tooling/cli.md` (`--report numbers`) lists the same ones.
 fn describe(r: Reason, func: &Function) -> String {
     match r {
         Reason::NotWhole => "it may hold a fraction".into(),
         Reason::MayBeNan => "it may be NaN".into(),
         Reason::Unbounded(lo, hi) => {
-            format!("it may reach ±2^53 (values in [{lo}, {hi}]); a loop bound or `| 0` limits it")
+            format!("it may reach ±2^53 (values in [{lo}, {hi}]): no loop bound or `| 0` limits it")
         }
         Reason::Form => "it is set from a division, a call or memory".into(),
         Reason::NegZero(b, s) => match func.loc(b, s) {
             Some(l) => format!("it may be -0, which line {} can tell from 0", l.line),
-            None => "it may be -0, and a use can tell -0 from 0".into(),
+            None => "it may be -0, which a use can tell from 0".into(),
         },
         Reason::Wide => "it is set from a value that is not a 32-bit integer".into(),
         Reason::NoGain => "it is only converted from an integer and used as a double".into(),
