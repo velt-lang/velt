@@ -2,7 +2,9 @@
 //!
 //! Order of the result: the prelude (`std/prelude/*.vlt`, canonical `"std/prelude/<name>"`), then
 //! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
-//! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. Specifiers resolve as
+//! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. A global loaded on
+//! demand (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first
+//! mentions one of its names. Specifiers resolve as
 //! - `"./x"`, `"../x"` → `x.vlt`, `x.ts` or `x.tsx`, else the folder module `x/index.vlt`,
 //!   `x/index.ts` or `x/index.tsx`, relative to the importing file (two of a kind existing at once
 //!   is an ambiguity error); `"./x.ts"` (any source extension) names exactly that file, and
@@ -28,6 +30,7 @@
 //! over the file system for every read, including files that do not exist on disk yet.
 
 mod case;
+mod globals;
 mod jsx;
 mod locate;
 mod pick;
@@ -110,11 +113,13 @@ pub fn load_with_roots(
         std_key: opts.std_root.as_deref().map(file_key),
         extra_phase: false,
         dir_names: case::DirNames::default(),
+        globals: vec![],
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
             loader.load_prelude(&file, std);
         }
+        loader.globals = globals::global_modules(std);
     }
     let src = match &opts.root_source {
         Some(src) => src.clone(),
@@ -155,6 +160,8 @@ struct Loader<'a, 'o> {
     extra_phase: bool,
     /// Directory listings, to match file names in case ([`case`]).
     dir_names: case::DirNames,
+    /// The globals loaded on demand ([`globals`]) not loaded yet.
+    globals: Vec<globals::Global>,
 }
 
 impl Loader<'_, '_> {
@@ -170,17 +177,41 @@ impl Loader<'_, '_> {
         }
     }
 
-    fn load_prelude(&mut self, file: &Path, std: &Path) {
+    /// Load prelude module `file`; returns its index (`None` after reporting a read error).
+    fn load_prelude(&mut self, file: &Path, std: &Path) -> Option<usize> {
         match self.read(file) {
             Ok(src) => {
                 let origin = Origin::Std(std.to_path_buf());
                 let canonical = origin.canonical(file);
-                self.add(file, file_key(file), src, canonical, origin);
+                Some(self.add(file, file_key(file), src, canonical, origin))
             }
-            Err(e) => self.diags.push(Diagnostic::error(
-                format!("cannot read prelude `{}`: {e}", file.display()),
-                Span::DUMMY,
-            )),
+            Err(e) => {
+                self.diags.push(Diagnostic::error(
+                    format!("cannot read prelude `{}`: {e}", file.display()),
+                    Span::DUMMY,
+                ));
+                None
+            }
+        }
+    }
+
+    /// Load the globals ([`globals`]) that non-std module `index` mentions.
+    fn load_globals(&mut self, index: usize, queue: &mut VecDeque<usize>) {
+        if self.modules[index].is_std || self.globals.is_empty() {
+            return;
+        }
+        let src = &self.sm.get(self.modules[index].file).src;
+        let (wanted, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.globals)
+            .into_iter()
+            .partition(|g| g.names.iter().any(|n| globals::mentions(src, n)));
+        self.globals = rest;
+        let Some(std) = self.opts.std_root.clone() else {
+            return;
+        };
+        for g in wanted {
+            if let Some(new) = self.load_prelude(&g.file, &std) {
+                queue.push_back(new);
+            }
         }
     }
 
@@ -290,6 +321,7 @@ impl Loader<'_, '_> {
             }
         }
         self.jsx_runtime(index, queue);
+        self.load_globals(index, queue);
     }
 
     /// Load the JSX runtime of module `index` if it contains JSX.
