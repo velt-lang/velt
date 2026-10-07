@@ -138,6 +138,12 @@ pub(crate) struct Ctx<'m> {
     /// the stack inferring return types may use above it (`body::returns::ret_of`).
     pub stack_base: usize,
     pub stack_budget: usize,
+    /// Closures held in a `const` and only called, and `const me = this`, may borrow instead of
+    /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
+    /// second check of a program the borrowing version rejects (`crate::check_with`).
+    pub held_borrows: bool,
+    /// Some closure or `const me = this` was made to borrow.
+    pub held_borrows_used: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -205,6 +211,8 @@ impl<'m> Ctx<'m> {
             overridden: HashSet::new(),
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
+            held_borrows: true,
+            held_borrows_used: false,
             fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

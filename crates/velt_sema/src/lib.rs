@@ -165,17 +165,24 @@ fn check_on_current_thread(
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
-    let mut cx = ctx::Ctx::new(modules, root);
-    cx.stack_budget = stack_budget;
-    if let Some(l) = &lifted {
-        cx.generic_arrow_fns = l.local_fns.clone();
-        cx.generic_arrow_all = l.all_fns.clone();
+    let new_cx = |held_borrows: bool| {
+        let mut cx = ctx::Ctx::new(modules, root);
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        (cx, entry)
+    };
+    let (mut cx, mut entry) = new_cx(true);
+    // Borrowing in held closures and `const me = this` only changes the cost, never which
+    // programs are accepted (docs/reference/functions.md "Captures"): when a borrow check fails
+    // where they borrow, the program is checked again with them sharing, as it was before.
+    if cx.held_borrows_used && cx.diags.iter().any(|d| d.is_error()) {
+        (cx, entry) = new_cx(false);
     }
-    analyze(&mut cx);
-    let entry = check_main(&mut cx, root, root_mod, opts.require_main);
-    check_imported_scripts(&mut cx, root, modules);
-    resolve::check_unused_aliases(&mut cx);
-
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
@@ -201,8 +208,23 @@ fn check_on_current_thread(
     (Some(program), diags)
 }
 
+/// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
+fn analyze(
+    cx: &mut ctx::Ctx,
+    root: usize,
+    root_mod: &SourceModule,
+    modules: &[SourceModule],
+    opts: CheckOptions,
+) -> Option<hir::DefId> {
+    analyze_bodies(cx);
+    let entry = check_main(cx, root, root_mod, opts.require_main);
+    check_imported_scripts(cx, root, modules);
+    resolve::check_unused_aliases(cx);
+    entry
+}
+
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
-fn analyze(cx: &mut ctx::Ctx) {
+fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
     fresh_returns::check(cx);

@@ -27,7 +27,10 @@ impl FnCx<'_, '_> {
         let Some(e) = v
             .init
             .as_ref()
-            .filter(|e| v.kind == ast::VarKind::Const && (is_member_or_index(e) || is_this(e)))
+            .filter(|e| {
+                v.kind == ast::VarKind::Const
+                    && (is_member_or_index(e) || (self.cx.held_borrows && is_this(e)))
+            })
         else {
             return Err(None);
         };
@@ -56,6 +59,9 @@ impl FnCx<'_, '_> {
             && !self.cx.is_copy(ty)
             && !self.cx.is_string_value(ty)
             && (self.pinned_place(&h) || self.is_this_local(&h));
+        if pinned && self.is_this_local(&h) {
+            self.cx.held_borrows_used = true;
+        }
         if !pinned {
             match &mut h.kind {
                 // A widened promise owns the promise it wraps: that place is moved (and a field

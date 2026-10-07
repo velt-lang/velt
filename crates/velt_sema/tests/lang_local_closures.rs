@@ -180,3 +180,64 @@ fn const_this_names_the_object_by_reference() {
     });
     assert!(!bound);
 }
+
+#[test]
+fn a_copy_changed_through_a_projection_is_borrowed() {
+    // `t[0] = 10` changes `t` after the closure is created: a copy would read 1 + 2.
+    let p = ok_src(
+        "function main() {
+           let t: [number, number] = [1, 2];
+           const f = (): number => t[0] + t[1];
+           t[0] = 10;
+           console.log(f());
+           let q: [number, number] = [1, 2];
+           const h = (): number => q[1];
+           q[1] = 7;
+           console.log(h());
+         }",
+    );
+    assert_eq!(
+        modes(&p, "main"),
+        vec![vec![PassMode::Borrow], vec![PassMode::Borrow]]
+    );
+    // Changed through a projection inside the closure: borrowed mutably.
+    let p = ok_src(
+        "function main() {
+           let t: [number, number] = [1, 2];
+           const f = () => { t[1] += 5; };
+           f();
+           console.log(t[1]);
+         }",
+    );
+    assert_eq!(modes(&p, "main")[0], vec![PassMode::BorrowMut]);
+}
+
+#[test]
+fn borrowing_never_rejects_a_program() {
+    // Borrowing `this` in `clear` would conflict with the loop over `c.items`, and borrowing
+    // it in `add` with the argument `a.items[0]`: the closures and `me` share instead.
+    let programs = [
+        "class Bag { items: number[] = [10, 30];
+           clear(): void { const me = this; me.items = [1]; } }
+         function main() { const c = new Bag(); let s: number = 0;
+           for (const it of c.items) { c.clear(); s += it; } console.log(s, c.items.length); }",
+        "class Pile { items: number[] = [5, 6];
+           clear(): void { const wipe = () => { this.items = [2]; }; wipe(); } }
+         function main() { const p = new Pile(); let s: number = 0;
+           for (const it of p.items) { p.clear(); s += it; } console.log(s); }",
+        "class Tags { items: string[] = [];
+           add(tag: string): void { const put = () => { this.items.push(tag); }; put(); put(); } }
+         function main() { const a = new Tags(); a.items.push(\"x\"); a.add(a.items[0]);
+           console.log(a.items.join(\",\")); }",
+    ];
+    for src in programs {
+        let p = ok_src(src);
+        assert!(
+            modes(&p, "Pile.clear")
+                .iter()
+                .chain(modes(&p, "Tags.add").iter())
+                .all(|m| m.contains(&PassMode::Owned)),
+            "should share: {src}"
+        );
+    }
+}

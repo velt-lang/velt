@@ -84,15 +84,24 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
 fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: usize) -> Analysis {
     let lifted = crate::generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
-    let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
-    cx.stack_budget = stack_budget;
-    if let Some(l) = &lifted {
-        cx.generic_arrow_fns = l.local_fns.clone();
-        cx.generic_arrow_all = l.all_fns.clone();
-    }
-    cx.ide = Some(Box::default());
-    if !modules.is_empty() {
-        crate::analyze(&mut cx);
+    let new_cx = |held_borrows: bool| {
+        let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        cx.ide = Some(Box::default());
+        if !modules.is_empty() {
+            crate::analyze_bodies(&mut cx);
+        }
+        cx
+    };
+    let mut cx = new_cx(true);
+    // As in `crate::check_with`: borrowing in held closures never rejects a program.
+    if cx.held_borrows_used && cx.diags.iter().any(|d| d.is_error()) {
+        cx = new_cx(false);
     }
     snapshot::build(cx)
 }
