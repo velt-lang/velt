@@ -27,6 +27,15 @@ function tagged<T>(value: T, tag: string): { value: T } & { tag: string } {
   return { value, tag };
 }
 
+// `A & B` doesn't convert to `A`: the spread copies the fields `A` has, and the original
+// stays usable.
+type Tagged = { name: string; tags: string[] };
+type TaggedPerson = Tagged & { age: number };
+
+function tagCount(t: Tagged): number {
+  return t.tags.length;
+}
+
 function describe(p: Person): string {
   return `${p.name} (${p.age})`;
 }
@@ -68,6 +77,11 @@ function main() {
   console.log(t.value + 1, t.tag);
   const people: (Named & Aged)[] = [ada, grace];
   console.log(people.map((p) => p.name).join(", "));
+
+  const tp: TaggedPerson = { name: "Ken", tags: ["unix"], age: 80 };
+  console.log(tagCount({ ...tp }));
+  tp.tags.push("c");
+  console.log(tp.tags.join("+"), JSON.stringify(tp));
 
   const pn: PersonName = "Linus";
   const f1: EntityField = "id";

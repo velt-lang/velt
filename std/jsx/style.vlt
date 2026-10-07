@@ -1,13 +1,13 @@
 // std/jsx/style: the `style` attribute's object form (`style={{ color: c, fontSize: 12 }}`),
-// rendered with React's rules so the markup matches: `color:red;font-size:12px`. Names are
-// camelCase CSS properties written in kebab-case (`msTransition` is `-ms-transition`; custom
-// properties such as `--accent` stay as written), numbers get `px` unless the property takes
-// plain numbers (`lineHeight`, `opacity`, `zIndex`, …) or the number is 0, strings are trimmed,
-// and empty strings are left out.
+// rendered with React's rules, so the value is react-dom 19's: `color:red;font-size:12px`.
+// Names are camelCase CSS properties written in kebab-case (`msTransition` is
+// `-ms-transition`; custom properties such as `--accent` stay as written), numbers get `px`
+// unless the property takes plain numbers (`lineHeight`, `opacity`, `zIndex`, …) or the number
+// is 0, strings are trimmed, and empty strings are left out.
 
 import type { Style } from "velt:jsx/node";
 
-// Does CSS property `name` take plain numbers (React's `isUnitlessNumber` list)?
+// Does CSS property `name` take plain numbers (react-dom 19's `unitlessNumbers` list)?
 function unitless(name: string): boolean {
   switch (name) {
     case "animationIterationCount":
@@ -54,6 +54,34 @@ function unitless(name: string): boolean {
     case "strokeMiterlimit":
     case "strokeOpacity":
     case "strokeWidth":
+    // The vendor-prefixed names React lists (`WebKitBoxFlexGroup` is spelled as React spells it).
+    case "MozAnimationIterationCount":
+    case "MozBoxFlex":
+    case "MozBoxFlexGroup":
+    case "MozLineClamp":
+    case "msAnimationIterationCount":
+    case "msFlex":
+    case "msZoom":
+    case "msFlexGrow":
+    case "msFlexNegative":
+    case "msFlexOrder":
+    case "msFlexPositive":
+    case "msFlexShrink":
+    case "msGridColumn":
+    case "msGridColumnSpan":
+    case "msGridRow":
+    case "msGridRowSpan":
+    case "WebkitAnimationIterationCount":
+    case "WebkitBoxFlex":
+    case "WebKitBoxFlexGroup":
+    case "WebkitBoxOrdinalGroup":
+    case "WebkitColumnCount":
+    case "WebkitColumns":
+    case "WebkitFlex":
+    case "WebkitFlexGrow":
+    case "WebkitFlexPositive":
+    case "WebkitFlexShrink":
+    case "WebkitLineClamp":
       return true;
     default:
       return false;

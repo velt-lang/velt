@@ -28,10 +28,11 @@ Rendering rules:
   inject markup. Numbers render like `${n}`; `true`, `false` and `null` children render nothing.
 - A `true` attribute renders as the bare name (`<input disabled>`); `false` and `null` omit it.
 - `style` takes a string or an object, `style={{ fontSize: 14, color: c }}`, rendered with
-  React's rules so the markup matches react-dom's: camelCase names in kebab-case
+  React's rules (react-dom 19's `style` serialization, checked on the cases in the
+  `std/jsx_style` golden): camelCase names in kebab-case
   (`font-size`; `WebkitX` and `msX` get their `-webkit-` / `-ms-` prefix; custom properties
   such as `"--accent"` stay as written), `px` after numbers except 0 and unitless properties
-  (`lineHeight`, `opacity`, `zIndex`, `flexGrow`, …), values trimmed, empty strings left out,
+  (`lineHeight`, `opacity`, `zIndex`, `flexGrow`, `WebkitLineClamp`, …), values trimmed, empty strings left out,
   declarations joined by `;`: `style="font-size:14px;color:teal"`.
 - Void elements (`area base br col embed hr img input link meta source track wbr`) have no end
   tag (and no children); any other empty element is written `<x></x>`. `key` is not rendered.

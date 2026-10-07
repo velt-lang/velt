@@ -18,3 +18,4 @@ intersection_types.vlt:11:15: error: `&` combines object types; `string[]` is an
   = note: write the fields as an object type `{ … }`
 intersection_types.vlt:12:18: error: intersections of function types (overloads) are not supported
   = note: declare one function type with the parameter types every call needs
+intersection_types.vlt:41:21: error: type alias `Tree` refers to itself

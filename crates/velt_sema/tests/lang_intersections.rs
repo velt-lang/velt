@@ -214,3 +214,25 @@ fn interfaces_do_not_merge_and_the_note_says_so() {
         "{e}"
     );
 }
+
+#[test]
+fn reordered_parts_are_another_type_and_the_note_says_so() {
+    let src = "type Named = { name: string }; type Aged = { age: f64 };
+         function show(p: Named & Aged): string { return p.name; }";
+    let e = err_src(&format!(
+        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
+    ));
+    assert!(e.contains("has the same fields as"), "{e}");
+    assert!(e.contains("{ ...an }") && e.contains("#651"), "{e}");
+    assert!(!e.contains("does not ()"), "{e}");
+    ok_src(&format!(
+        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
+           console.log(show({{ ...an }})); }}"
+    ));
+}
+
+#[test]
+fn an_alias_cannot_refer_to_itself_through_an_intersection() {
+    let e = err_src("type T = { kids: T[] } & { v: f64 }; function main() {}");
+    assert!(e.contains("type alias `T` refers to itself"), "{e}");
+}

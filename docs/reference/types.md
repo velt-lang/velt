@@ -451,10 +451,14 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   [discriminated union](#discriminated-unions) that narrows as usual; `Shape & { kind: "circle" }`
   keeps only the circle member, and `(A | null) & B` is `A & B`.
 - The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
-  type as the object type with those fields written out.
-- `A & B` does not convert to `A` (object types don't convert by dropping fields). Copy the
-  fields with `{ ...ab }` where an `A` is expected, or write the function generically over a
-  field-only interface (`<T extends I>(x: T)`), which takes either.
+  type as the object type with those fields written out *in the same order*. Object types are
+  told apart by their field order for now, so `B & A` (or `{ b; a }`) is a different type from
+  `A & B`, and converting between them takes a copy, `{ ...ba }` (#651).
+- `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
+  the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
+  function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.
+- An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
+  give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
 
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
@@ -466,8 +470,8 @@ Differences from TypeScript, each a compile error with a note on what to write i
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
 - A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
   yet (#350). A generic alias works, since each use has concrete type arguments.
-- Interface declarations are not merged: declare an interface once, or name the combination
-  with `&`.
+- Interface declarations are not merged (#652): declare an interface once, or name the
+  combination with `&`.
 
 ```ts error
 type Conflict = { k: string } & { k: number }; // error: no value has type ...

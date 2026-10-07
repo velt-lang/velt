@@ -303,6 +303,13 @@ impl FnCx<'_, '_> {
             H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
             _ => "value".into(),
         };
+        if extra.is_empty() {
+            // The same fields in another order (`Aged & Named` for `Named & Aged`): object types
+            // are keyed by their field order (#651).
+            return (have.len() == want.len()).then(|| format!(
+                "`{f}` has the same fields as `{e}` in another order, and object types with their fields in different orders are different types (#651); copy it with `{{ ...{src} }}` where a `{e}` is expected"
+            ));
+        }
         Some(format!(
             "`{f}` has fields `{e}` does not ({}), and object types don't convert by dropping fields; copy the fields `{e}` has with `{{ ...{src} }}`, or make the function generic over a field-only interface (`<T extends I>(x: T)`), which takes either type",
             extra.join(", ")

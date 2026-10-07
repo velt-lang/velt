@@ -28,6 +28,10 @@ function main() {
       </p>,
     ),
   );
+  // Vendor-prefixed names on React's unitless list take plain numbers; others get `px`.
+  console.log(
+    renderToStringSync(<i style={{ WebkitLineClamp: 2, msFlexGrow: 1, WebkitOpacity: 1 }} />),
+  );
   console.log(renderToStringSync(<span style="color: blue">plain</span>));
   console.log(renderToStringSync(<b style={{ content: '"<x>"' }}>escaped</b>));
 }

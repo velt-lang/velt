@@ -1,4 +1,5 @@
 <div style="font-size:14px;color:teal;line-height:1.5"></div>
 <p style="margin-top:0;padding:4px;-webkit-transition:none;-ms-transition:x;--accent:red;z-index:3;opacity:0.5;flex-grow:2;border-width:1.5px">styled</p>
+<i style="-webkit-line-clamp:2;-ms-flex-grow:1;-webkit-opacity:1px"></i>
 <span style="color: blue">plain</span>
 <b style="content:&quot;&lt;x&gt;&quot;">escaped</b>
