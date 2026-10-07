@@ -56,13 +56,15 @@ pub(crate) fn walk(
         tests: Vec::new(),
         obs,
     };
-    let mut visited = vec![false; func.blocks.len()];
+    // The walk is short (it ends at the first join): a list beats a bitmap per allocation.
+    let mut visited: Vec<usize> = Vec::new();
     let mut budget = BUDGET;
     let mut b = from;
     loop {
-        if !single[b] || std::mem::replace(&mut visited[b], true) {
+        if !single[b] || visited.contains(&b) {
             return;
         }
+        visited.push(b);
         let block = &func.blocks[b];
         for (i, s) in block.stmts.iter().enumerate() {
             budget -= 1;

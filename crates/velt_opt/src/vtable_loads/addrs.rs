@@ -10,7 +10,7 @@ use velt_vir::vir::{
 };
 
 use crate::fresh::Pos;
-use crate::visit::{rvalue_operands, successors};
+use crate::visit::{rvalue_operands, stmt_operands, successors};
 
 /// What a slot holds at a point.
 #[derive(Clone, Copy, PartialEq)]
@@ -83,19 +83,28 @@ impl Addrs {
         if let Some(first) = self.entry.first_mut() {
             *first = Some(vec![Lat::None; n]);
         }
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (b, block) in func.blocks.iter().enumerate() {
-                let Some(mut st) = self.entry[b].clone() else {
-                    continue;
-                };
-                for s in &block.stmts {
-                    self.step(&mut st, s);
-                }
-                self.step_term(&mut st, &block.term);
-                for next in successors(&block.term) {
-                    changed |= meet_into(&mut self.entry[next.0 as usize], &st);
+        // A worklist: a block is processed again only when its entry state changed.
+        let mut queued = vec![false; func.blocks.len()];
+        let mut work = vec![0];
+        if let Some(q) = queued.first_mut() {
+            *q = true;
+        }
+        while let Some(b) = work.pop() {
+            queued[b] = false;
+            let Some(mut st) = self.entry[b].clone() else {
+                continue;
+            };
+            let block = &func.blocks[b];
+            for s in &block.stmts {
+                self.step(&mut st, s);
+            }
+            self.step_term(&mut st, &block.term);
+            for next in successors(&block.term) {
+                let next = next.0 as usize;
+                if meet_into(&mut self.entry[next], &st)
+                    && !std::mem::replace(&mut queued[next], true)
+                {
+                    work.push(next);
                 }
             }
         }
@@ -270,5 +279,13 @@ fn candidates(statics: &[StaticData], func: &Function) -> Option<Vec<bool>> {
             }
         }
     }
-    cands.iter().any(|&c| c).then_some(cands)
+    // Only worth solving when a candidate is dereferenced somewhere.
+    let mut loads = false;
+    for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+        stmt_operands(s, &mut |op| {
+            loads |= matches!(op, Operand::Copy(p) if cands[p.local.0 as usize]
+                && matches!(p.proj.first(), Some(Proj::Deref(_))));
+        });
+    }
+    loads.then_some(cands)
 }

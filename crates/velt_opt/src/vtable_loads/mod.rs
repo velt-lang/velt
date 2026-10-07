@@ -16,7 +16,7 @@
 //! which the next round can inline (and `heap_sroa` then keep the object in locals).
 
 use velt_vir::vir::{
-    AggLayout, Callee, Const, Function, Operand, Place, StaticData, Terminator, Ty,
+    AggLayout, Callee, Const, Function, Operand, Place, Rvalue, StaticData, Stmt, Terminator, Ty,
 };
 
 mod addrs;
@@ -36,7 +36,7 @@ pub(crate) fn run(
     func: &mut Function,
 ) -> bool {
     // Headers first: a forwarded vtable is the static a slot load then goes through.
-    let headers = allocator.map_or_else(Vec::new, |a| header_loads(aggs, a, func));
+    let headers = allocator.map_or_else(Vec::new, |a| header_loads(aggs, statics, a, func));
     for (at, place, c) in &headers {
         replace(func, *at, place, c);
     }
@@ -51,8 +51,16 @@ pub(crate) fn run(
 type Load = (Pos, Place, Const);
 
 /// Loads of constant pointers stored in new objects (headers) before they escape.
-fn header_loads(aggs: &[AggLayout], allocator: Allocator, func: &Function) -> Vec<Load> {
+fn header_loads(
+    aggs: &[AggLayout],
+    statics: &[StaticData],
+    allocator: Allocator,
+    func: &Function,
+) -> Vec<Load> {
     let mut out = Vec::new();
+    if !stores_vtable(statics, func) {
+        return out;
+    }
     let single = single_predecessors(func);
     for block in &func.blocks {
         let Terminator::Call {
@@ -75,6 +83,16 @@ fn header_loads(aggs: &[AggLayout], allocator: Allocator, func: &Function) -> Ve
         }
     }
     out
+}
+
+/// Whether some statement stores the address of a static with relocations through a pointer:
+/// without one there is no header to forward, and no walk is needed.
+fn stores_vtable(statics: &[StaticData], func: &Function) -> bool {
+    func.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
+        matches!(s, Stmt::Assign(d, Rvalue::Use(Operand::Const(Const::Static(id), Ty::Ptr)))
+            if !d.proj.is_empty()
+                && statics.get(id.0 as usize).is_some_and(|s| !s.relocs.is_empty()))
+    })
 }
 
 /// The observer of one walk: constant pointers stored in the block, by offset.
