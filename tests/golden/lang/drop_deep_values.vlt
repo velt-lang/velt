@@ -1,0 +1,93 @@
+// check: no leaks
+// Long chains through struct values in arrays, interface values and a class hierarchy drop
+// without overflowing the stack (#543), at the end of a scope and on reassignment.
+
+struct Item {
+  id: i64;
+  rest: Item[];
+}
+
+interface Shape {
+  area(): number;
+}
+
+class Square implements Shape {
+  side: number;
+  inner: Shape | null = null;
+
+  constructor(side: number) {
+    this.side = side;
+  }
+
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+class Base {
+  next: Base | null = null;
+
+  id(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  k: number;
+
+  constructor(k: number) {
+    super();
+    this.k = k;
+  }
+
+  override id(): number {
+    return this.k;
+  }
+}
+
+function items(n: i64): Item {
+  let head: Item = { id: 0, rest: [] };
+  for (let i: i64 = 1; i < n; i++) {
+    head = { id: i, rest: [head] };
+  }
+  return head;
+}
+
+function squares(n: number): Shape {
+  let head: Shape = new Square(0);
+  for (let i = 1; i < n; i++) {
+    const s = new Square(i);
+    s.inner = head;
+    head = s;
+  }
+  return head;
+}
+
+function hierarchy(n: number): Base {
+  let head: Base = new Base();
+  for (let i = 1; i < n; i++) {
+    const d = new Derived(i);
+    d.next = head;
+    head = d;
+  }
+  return head;
+}
+
+function scopeEnd() {
+  const a = items(1000000);
+  const s = squares(1000000);
+  const h = hierarchy(1000000);
+  console.log("scope", a.id, a.rest[0].id, s.area(), h.id());
+}
+
+function main() {
+  scopeEnd();
+  console.log("scope dropped");
+  let a = items(1000000);
+  a = { id: -1, rest: [] };
+  let s = squares(1000000);
+  s = new Square(-1);
+  let h = hierarchy(1000000);
+  h = new Derived(-1);
+  console.log("reassigned", a.id, s.area(), h.id());
+}

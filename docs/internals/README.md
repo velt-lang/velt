@@ -23,7 +23,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    checks, thread-safety checks, typed `throws` inference, and JSON code generation checks. The
    output is a typed HIR. The same passes answer editor queries (`velt_sema::ide`).
 4. **Lower** (`velt_vir`): monomorphization, data layouts, vtables, drop and clone glue (a
-   self-referential class drops its chain in a loop, `lower/glue/drop_chain.rs`), async
+   self-referential class drops its chain in a loop, `lower/glue/drop_chain.rs`; other drops
+   that can nest are bounded by the runtime, `lower/glue/drop_depth.rs`), async
    functions as state machines, errors as result returns, with source locations for debug info
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,

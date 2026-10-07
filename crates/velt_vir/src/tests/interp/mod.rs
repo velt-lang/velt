@@ -8,6 +8,7 @@
 mod arith;
 mod async_rt;
 mod cancel;
+mod drops;
 mod http;
 mod json;
 mod local;
@@ -69,6 +70,8 @@ struct Interp<'p> {
     throw_loc: u64,
     /// Emulated async runtime (async_rt.rs, net.rs).
     exec: async_rt::Exec,
+    /// Bounded drop nesting (drops.rs).
+    drops: drops::Drops,
 }
 
 /// Run `velt_main` to completion (or until panic/exit).
@@ -126,6 +129,7 @@ impl<'p> Interp<'p> {
             frees: 0,
             throw_loc: 0,
             exec: async_rt::Exec::default(),
+            drops: drops::Drops::default(),
         };
         for s in &p.statics {
             let a = it.raw_alloc(s.bytes.len().max(1) as u64);

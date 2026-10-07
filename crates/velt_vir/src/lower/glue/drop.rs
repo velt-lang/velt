@@ -7,7 +7,7 @@ use velt_sema::hir::{TyId, TyKind};
 use super::{Glue, SLOT_DROP};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, unit, FnLower};
+use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -53,14 +53,8 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
-        let place = self.deref_param(p, ty);
-        self.drop_expand(&place, ty);
-        self.terminate(Terminator::Return(unit()));
-    }
-
     /// Release the parts of the value at `place` (the structural step behind `Glue::Drop`).
-    fn drop_expand(&mut self, place: &Place, ty: TyId) {
+    pub(super) fn drop_expand(&mut self, place: &Place, ty: TyId) {
         if self.cx.boxed(ty) {
             return self.drop_boxed(place, ty, |lw, v| lw.drop_inline(v, ty));
         }
@@ -267,18 +261,30 @@ impl FnLower<'_, '_> {
         self.call(vir::Callee::Func(f), vec![this], None, false);
     }
 
+    /// The object drop of class `ty`: a loop over its self fields (drop_chain.rs) or one
+    /// field after the other, bracketed for the runtime when it can nest (drop_depth.rs).
     pub(super) fn obj_drop_body(&mut self, obj: vir::Local, ty: TyId) {
-        if let Some(chain) = self.cx.drop_chain(ty) {
-            return self.obj_drop_chain_body(obj, ty, chain);
-        }
         let p = Place::local(obj);
-        self.call_dispose(Operand::Copy(p.clone()), ty);
-        let tys = self.cx.adt_field_tys(ty);
-        for (i, t) in tys.into_iter().enumerate() {
-            let fp = self.field_place(&p, ty, i as u32);
-            self.drop_glue(fp, t);
+        let chain = self.cx.drop_chain(ty);
+        let bracket = self.cx.drop_reenters(ty, chain.as_ref());
+        if bracket {
+            let glue = cfunc(self.cx.func(Work::Glue(Glue::ObjDrop, ty)));
+            self.enter_object_drop(Operand::Copy(p.clone()), glue);
         }
-        self.object_free(Operand::Copy(p), ty);
+        if let Some(chain) = chain {
+            self.obj_drop_chain_body(obj, ty, chain);
+        } else {
+            self.call_dispose(Operand::Copy(p.clone()), ty);
+            let tys = self.cx.adt_field_tys(ty);
+            for (i, t) in tys.into_iter().enumerate() {
+                let fp = self.field_place(&p, ty, i as u32);
+                self.drop_glue(fp, t);
+            }
+            self.object_free(Operand::Copy(p), ty);
+        }
+        if bracket {
+            self.leave_drop();
+        }
         self.terminate(Terminator::Return(unit()));
     }
 

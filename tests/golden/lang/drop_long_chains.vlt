@@ -1,6 +1,7 @@
 // check: no leaks
 // Dropping a long chain of objects does not overflow the stack (#543): a linked list or a
-// degenerate tree of a million nodes is freed by a loop, not by one nested call per node.
+// degenerate tree of a million nodes is freed by a loop, not by one nested call per node, at
+// the end of a scope and on reassignment.
 
 class Node {
   value: number;
@@ -75,17 +76,31 @@ function insert(root: Tree, key: number) {
 function size(t: Tree | null): number {
   let n = 0;
   const stack: Tree[] = [];
-  if (t !== null) stack.push(t);
+  if (t !== null) {
+    stack.push(t);
+  }
   while (stack.length > 0) {
     const cur = stack.pop()!;
     n++;
-    if (cur.left !== null) stack.push(cur.left);
-    if (cur.right !== null) stack.push(cur.right);
+    if (cur.left !== null) {
+      stack.push(cur.left);
+    }
+    if (cur.right !== null) {
+      stack.push(cur.right);
+    }
   }
   return n;
 }
 
+function scopeEnd() {
+  const head = list(1000000);
+  console.log("scope", length(head));
+}
+
 function main() {
+  scopeEnd();
+  console.log("scope dropped");
+
   let head = list(1000000);
   console.log("list", length(head), head!.value);
   head = null;
@@ -122,7 +137,9 @@ function main() {
     const l = new Link(i);
     l.next = chain;
     chain = l;
-    if (i === 400000) kept.push(l);
+    if (i === 400000) {
+      kept.push(l);
+    }
   }
   chain = null;
   let alive = 0;

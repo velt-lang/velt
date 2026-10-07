@@ -270,7 +270,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
         let caps = lw.value_captures(def);
         let cells = lw.cell_captures(def);
+        // A capture that holds a function value may lead back to an env like this one, as far
+        // as a chain of closures goes: the drop is bracketed for the runtime (drop_depth.rs).
+        let mut held: Vec<TyId> = caps
+            .iter()
+            .filter(|c| c.1 == PassMode::Owned)
+            .map(|c| c.2)
+            .collect();
+        held.extend(cells.iter().map(|c| c.1));
+        let bracket = held.into_iter().any(|t| lw.cx.drop_runs_unknown(t));
+        let glue = bracket.then(|| cfunc(lw.cx.func(Work::EnvDrop(def, targs.to_vec()))));
         lw.release(Operand::Copy(Place::local(env)), |lw| {
+            if let Some(glue) = glue.clone() {
+                lw.enter_object_drop(Operand::Copy(Place::local(env)), glue);
+            }
             for (field, mode, ty) in caps {
                 if mode == PassMode::Owned {
                     lw.drop_glue(proj(&base, Proj::Field(field)), ty);
@@ -281,6 +294,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.release_cell_ptr(p, ty);
             }
             lw.counted_free(Operand::Copy(Place::local(env)), Ty::Agg(ea));
+            if glue.is_some() {
+                lw.leave_drop();
+            }
         });
         lw.terminate(Terminator::Return(super::unit()));
         let sym = format!(

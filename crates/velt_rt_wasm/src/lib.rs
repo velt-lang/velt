@@ -26,6 +26,8 @@ pub mod bigint;
 pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
 pub mod bytes_ops;
+#[path = "../../velt_rt/src/drop_depth.rs"]
+pub mod drop_depth;
 pub mod entry;
 #[path = "../../velt_rt/src/fmt.rs"]
 pub mod fmt;

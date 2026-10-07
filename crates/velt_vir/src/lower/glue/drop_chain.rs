@@ -24,8 +24,8 @@ use std::collections::HashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
-use crate::lower::{cint, unit, Cx, FnLower};
-use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty};
+use crate::lower::{cint, Cx, FnLower};
+use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 
 /// How the object drop of a self-referential class walks its nodes.
 pub(super) struct Chain {
@@ -34,6 +34,13 @@ pub(super) struct Chain {
     /// The other fields of the class's own type, rotated onto the chain (empty unless nothing in
     /// the drop is observable: they then drop recursively, in their place).
     rotate: Vec<u32>,
+}
+
+impl Chain {
+    /// Is field `f` one the loop walks (rather than dropping it in its place)?
+    pub(super) fn loops_over(&self, f: u32) -> bool {
+        f == self.tail || self.rotate.contains(&f)
+    }
 }
 
 impl Cx<'_> {
@@ -99,8 +106,8 @@ impl Cx<'_> {
             .filter(|(i, _)| !own.contains(&(*i as u32)) && *i as u32 != tail)
             .map(|(_, &t)| t)
             .collect();
-        let silent = self.dispose_of(d).is_none()
-            && others.into_iter().all(|t| self.drop_is_silent(t));
+        let silent =
+            self.dispose_of(d).is_none() && others.into_iter().all(|t| self.drop_is_silent(t));
         Some(Chain {
             tail,
             rotate: if silent { own } else { vec![] },
@@ -109,7 +116,8 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The object drop of class `ty` as a loop over its nodes (module docs), from `obj`.
+    /// The object drop of class `ty` as a loop over its nodes (module docs), from `obj`; ends in
+    /// the block after the last node.
     pub(super) fn obj_drop_chain_body(&mut self, obj: vir::Local, ty: TyId, chain: Chain) {
         let cur = Place::local(self.temp(Ty::Ptr));
         self.assign(cur.clone(), Rvalue::Use(Operand::Copy(Place::local(obj))));
@@ -140,7 +148,6 @@ impl FnLower<'_, '_> {
         self.call_dispose(Operand::Copy(cur.clone()), ty);
         self.goto(top);
         self.switch_to(done);
-        self.terminate(Terminator::Return(unit()));
     }
 
     /// One rotation step for self field `f` of the node at `cur`: when it holds a node this drop

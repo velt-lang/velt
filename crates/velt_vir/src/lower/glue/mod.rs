@@ -12,6 +12,7 @@
 //! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
+//! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b`, free it (drop_depth.rs) |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
 //! | ObjFormat | `(buf: ptr, obj: ptr, depth: u32)` | append `Name { field: value, … }`        |
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
@@ -31,6 +32,7 @@
 mod clone;
 mod drop;
 mod drop_chain;
+mod drop_depth;
 mod eq;
 mod format;
 mod format_array;
@@ -66,6 +68,7 @@ pub(crate) enum Glue {
     KeyEq,
     Hash,
     ObjDrop,
+    QueuedDrop,
     ObjClone,
     ObjFormat,
     DynDrop,
@@ -105,6 +108,7 @@ impl Glue {
             Glue::KeyEq => "keyeq",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
+            Glue::QueuedDrop => "queueddrop",
             Glue::ObjClone => "objclone",
             Glue::ObjFormat => "objformat",
             Glue::DynDrop => "dyndrop",
@@ -128,6 +132,7 @@ impl Glue {
         match self {
             Glue::Drop
             | Glue::ObjDrop
+            | Glue::QueuedDrop
             | Glue::DynDrop
             | Glue::Transfer
             | Glue::TransferRoot
@@ -164,6 +169,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
+            Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
             Glue::ObjClone => lw.obj_clone_body(args[0], ty),
             Glue::ObjFormat => lw.obj_format_body(a(0), args[1], a(2), ty),
             Glue::DynDrop => lw.dyn_drop_body(args[0], ty),
