@@ -1,13 +1,13 @@
 //! Operands read before the operands after them run (JS order). An operand is lowered to a lazy
 //! read of a place where it can; when a later sibling may change that place, the operand is
-//! *held* first: a number is copied, a string or a counted object is shared, so a later operand
-//! that reassigns a local (`f(i, i++)`), reallocates an array or replaces an element
+//! *held* first: a value that owns nothing is copied, anything else gets a reference of its own
+//! (a string, an object, a `T | null`, a tuple, a function value), so a later operand that
+//! reassigns a local (`f(i, i++)`), reallocates an array or replaces an element
 //! (`console.log(ss[0], grow(ss))`, #580) leaves the earlier value as it was.
 
 use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, TyId};
 
-use super::boxing::ShareKind;
 use super::FnLower;
 use crate::vir::{Operand, Place, Rvalue, Ty};
 
@@ -82,7 +82,10 @@ fn writes_local(e: &hir::Expr) -> bool {
 
 impl FnLower<'_, '_> {
     /// Hold the borrowed operand `op` (of type `ty`) against the operands after it (`later`):
-    /// a number is copied, a string or counted object is shared into an owned temporary.
+    /// a value that owns nothing is copied; anything else gets a reference of its own in an
+    /// owned temporary, so the parts it points at outlive what the later operands free. That
+    /// reference is a share (`share_value`), or a deep copy (`clone_value`) where a share would
+    /// count a type that is not counted yet: holding never changes the program's counted types.
     pub(super) fn hold(&mut self, op: Operand, ty: TyId, later: Later) -> Operand {
         self.hold_as(op, ty, later, false)
     }
@@ -111,12 +114,15 @@ impl FnLower<'_, '_> {
             };
         }
         let cty = self.sub(ty);
-        if !owned && self.held_by_share(cty) {
-            let s = self.share_value(op, cty);
-            return self.own_value(s, cty);
+        if owned || !self.cx.needs_drop(cty) {
+            let tmp = self.copy_to_temp(op, t);
+            return Operand::Copy(Place::local(tmp));
         }
-        let tmp = self.copy_to_temp(op, t);
-        Operand::Copy(Place::local(tmp))
+        let held = match self.cx.shares_as_counted(cty) {
+            true => self.share_value(op, cty),
+            false => self.clone_value(op, cty),
+        };
+        self.own_value(held, cty)
     }
 
     /// Can what `p` holds be changed by operands that do `later`? A temporary of the lowering
@@ -128,16 +134,5 @@ impl FnLower<'_, '_> {
         }
         let named = self.locals[p.local.0 as usize].name.is_some();
         named && later.locals
-    }
-
-    /// Is a held value of type `ty` kept alive by a share? Strings and counted objects are (a
-    /// count increment); other values are copied as they are, without changing which types
-    /// are counted.
-    fn held_by_share(&mut self, ty: TyId) -> bool {
-        match self.cx.share_kind(ty) {
-            ShareKind::Str => true,
-            ShareKind::Object => self.cx.counted(ty),
-            _ => false,
-        }
     }
 }

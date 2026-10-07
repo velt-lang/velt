@@ -1,13 +1,23 @@
 // check: no leaks
-// An operand that is not a number is read before a later operand runs too (#580): a string
-// element or a class object element is shared, so a later operand that reallocates the array or
-// replaces the element leaves the earlier operand's value intact, as in JS. Where sema sees the
-// conflict (`console.log(ss[0], growS(ss))` borrows `ss` twice), the program is rejected; a
-// closure that captures the array hides it, so these go through closures.
+// An operand that is not a number is read before a later operand runs too (#580): a string,
+// a class object, a `T | null`, a tuple, an inner array or a function value element is held (a
+// reference of its own), so a later operand that reallocates the array or replaces the element
+// leaves the earlier operand's value intact, as in JS. Where sema sees the conflict
+// (`console.log(ss[0], growS(ss))` borrows `ss` twice), the program is rejected; a closure that
+// captures the array hides it, so these go through closures.
 class P {
   v: number;
   constructor(v: number) {
     this.v = v;
+  }
+}
+
+class R {
+  v: number;
+  name: string;
+  constructor(v: number) {
+    this.v = v;
+    this.name = long(v);
   }
 }
 
@@ -45,6 +55,10 @@ async function laterS(): Promise<string> {
   return "?";
 }
 
+function callIt(f: () => string, n: number): string {
+  return `${f()}${n}`;
+}
+
 async function main() {
   let ss = [long(0)];
   const g = (): string => growS(ss);
@@ -80,6 +94,46 @@ async function main() {
     return 1;
   };
   console.log(os[0]?.v, swap(), os[0]?.v);
+
+  // Values that are not strings or objects but own parts are held too.
+  const ns: (string | null)[] = [long(1)];
+  const r = (): number => {
+    ns[0] = "x";
+    return 1;
+  };
+  console.log(ns[0], r(), ns[0]);
+  const rs: (R | null)[] = [new R(5)];
+  const swapR = (): number => {
+    rs[0] = new R(9);
+    return 1;
+  };
+  console.log(rs[0], swapR(), rs[0]?.v);
+  const ts: [string, number][] = [[long(2), 1]];
+  const growT = (): number => {
+    for (let i = 0; i < 100; i++) {
+      ts.push([long(i), i]);
+    }
+    ts[0] = [long(-2), 2];
+    return 1;
+  };
+  console.log(ts[0], growT(), ts[0][1]);
+  const aa: string[][] = [[long(3)]];
+  const growA = (): number => {
+    for (let i = 0; i < 100; i++) {
+      aa.push([long(i)]);
+    }
+    aa[0] = [long(-3)];
+    return 1;
+  };
+  console.log(aa[0], growA(), aa[0][0]);
+  const tag = long(4);
+  const fs = [(): string => tag];
+  const replaceF = (): number => {
+    const other = long(-4);
+    fs[0] = (): string => other;
+    return 1;
+  };
+  console.log(callIt(fs[0], replaceF()), fs[0]());
 
   const xs: number[] = [3];
   const p = later();
