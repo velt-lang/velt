@@ -145,6 +145,9 @@ impl Moves<'_> {
                     self.expr(c, st);
                 }
                 self.operands(args, st);
+                if let Callee::Indirect(c) = callee {
+                    self.held_call(c, e.span, st);
+                }
                 // The call may throw: a handler (and `finally`) can start from here.
                 self.record_throw(st);
             }
@@ -236,6 +239,26 @@ impl Moves<'_> {
                 }
             }
             None => self.expr(place, st),
+        }
+    }
+
+    /// A call through `callee`, a local holding a non-escaping closure, uses the variables the
+    /// closure borrows (a variable moved before the call is used again there).
+    fn held_call(&mut self, callee: &Expr, span: Span, st: &mut Flow) {
+        let ExprKind::Local(l, _) = callee.kind else {
+            return;
+        };
+        let Some(caps) = self.held.get(&l).and_then(|d| self.captures.get(d)) else {
+            return;
+        };
+        for c in caps.clone() {
+            if !matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut) {
+                continue;
+            }
+            if c.mode == PassMode::BorrowMut {
+                self.assigned(c.outer, span, st);
+            }
+            self.use_path(c.outer, &[], UseMode::Borrow, span, st, false);
         }
     }
 

@@ -1,16 +1,16 @@
 //! The channel itself: a FIFO of items of one size (every operation passes it; a `Channel<T>`
-//! only ever holds `T`s) (the bytes of Velt values, moved in and out)
+//! only ever holds `T`s), the bytes of Velt values moved in and out of a [`Ring`] of slots
 //! under a mutex, plus two `Notify`s for the tasks waiting for an item or for space.
 //!
 //! `Notify::notify_one` stores a permit when nobody waits and forwards it to another waiter when
 //! a notified waiter is dropped, so a cancelled `receive` never swallows a wake-up meant for
 //! another receiver.
 
-use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use tokio::sync::Notify;
 
+use super::ring::Ring;
 use crate::task::SendPtr;
 
 /// What [`Chan::try_push`] did with an item.
@@ -29,10 +29,7 @@ pub(super) enum Pop {
 }
 
 struct State {
-    /// Items back to back.
-    bytes: VecDeque<u8>,
-    /// Number of items (also for zero-sized items).
-    len: usize,
+    items: Ring,
     closed: bool,
 }
 
@@ -51,8 +48,7 @@ impl Chan {
         Chan {
             capacity,
             state: Mutex::new(State {
-                bytes: VecDeque::new(),
-                len: 0,
+                items: Ring::new(),
                 closed: false,
             }),
             items: Notify::new(),
@@ -77,12 +73,10 @@ impl Chan {
         if s.closed {
             return Push::Closed;
         }
-        if self.capacity != 0 && s.len >= self.capacity {
+        if self.capacity != 0 && s.items.len() >= self.capacity {
             return Push::Full;
         }
-        s.bytes
-            .extend(std::slice::from_raw_parts(src, size).iter().copied());
-        s.len += 1;
+        s.items.push(src, size);
         drop(s);
         self.items.notify_one();
         Push::Sent
@@ -98,13 +92,10 @@ impl Chan {
             crate::io::publish_before_handoff();
         }
         let mut s = self.lock();
-        if s.len == 0 {
+        if s.items.is_empty() {
             return if s.closed { Pop::Closed } else { Pop::Empty };
         }
-        for (i, b) in s.bytes.drain(..size).enumerate() {
-            *dst.add(i) = b;
-        }
-        s.len -= 1;
+        s.items.pop(dst, size);
         drop(s);
         if self.capacity != 0 {
             self.space.notify_one();
@@ -131,7 +122,7 @@ impl Chan {
 
     /// Number of items waiting.
     pub(super) fn len(&self) -> usize {
-        self.lock().len
+        self.lock().items.len()
     }
 
     /// Wait for an item into `dst`; false once the channel is closed and drained.

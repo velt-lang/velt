@@ -166,10 +166,11 @@ fn closures_capture_modes() {
         .iter()
         .map(|c| c.captures.iter().map(|x| x.mode).collect())
         .collect();
-    // forEach(total += x), apply(x * factor), greet (moves `name`), map/filter/reduce (none).
+    // forEach(total += x), apply(x * factor), greet (only called: borrows `name`),
+    // map/filter/reduce (none).
     assert!(modes.contains(&vec![PassMode::BorrowMut]));
     assert!(modes.contains(&vec![PassMode::Copy]));
-    assert!(modes.contains(&vec![PassMode::Owned]));
+    assert!(modes.contains(&vec![PassMode::Borrow]));
     let main = func(&p, "main");
     assert!(has_callee(main, |c| matches!(c, Callee::Indirect(_))));
     for c in main_closures {
