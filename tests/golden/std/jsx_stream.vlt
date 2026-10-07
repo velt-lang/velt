@@ -7,7 +7,7 @@
 // that `main` prints from, so the order of the lines doesn't depend on timing.
 import { jsx, Fragment, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
 import { Element, renderToString, renderToStream } from "velt:jsx";
-import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+import { serve, Request, Response, ResponseWriter } from "velt:http";
 import { connect } from "velt:net";
 import { channel, Channel } from "velt:channel";
 

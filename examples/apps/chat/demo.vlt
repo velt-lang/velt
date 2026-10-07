@@ -1,6 +1,5 @@
 // A scripted chat (golden: demo.out): three clients on a real server, each step waiting until
 // every client has received what the server broadcast, so the transcript is deterministic.
-import { fetch } from "velt:http";
 import { WebSocket, connectWebSocket } from "velt:websocket";
 import { startChat } from "./src/server";
 import { nextLine, sendJoin, sendSay, sendLeave } from "./src/client";

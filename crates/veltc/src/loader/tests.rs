@@ -93,6 +93,77 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
 }
 
 #[test]
+fn globals_load_when_a_user_module_names_them() {
+    let t = Tree::new();
+    let std = t.path("std");
+    t.write(
+        "std/prelude/core.vlt",
+        "export function id(): i64 { return 0; }
+",
+    );
+    t.write(
+        "std/prelude/global/web.vlt",
+        "export { fetch, Response } from \"velt:web\";
+",
+    );
+    t.write(
+        "std/prelude/global/url.vlt",
+        "export { URL } from \"velt:url\";
+",
+    );
+    // A std module that mentions a global's name does not load it.
+    t.write(
+        "std/web.vlt",
+        "// URL
+export function fetch() {}
+export class Response {}
+",
+    );
+    t.write(
+        "std/url.vlt",
+        "export class URL {}
+",
+    );
+    let opts = || LoadOptions {
+        std_root: Some(std.clone()),
+        ..Default::default()
+    };
+    let plain = t.write(
+        "p/plain.vlt",
+        "// prefetch
+function main() {}
+",
+    );
+    let (l, diags, _) = load(&plain, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["std/prelude/core", "main"]);
+
+    t.write(
+        "p/lib.vlt",
+        "export async function get() { await fetch(); }
+",
+    );
+    let root = t.write(
+        "p/main.vlt",
+        "import { get } from \"./lib\";
+function main() {}
+",
+    );
+    let (l, diags, _) = load(&root, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(
+        paths(&l),
+        [
+            "std/prelude/core",
+            "main",
+            "lib",
+            "std/prelude/global/web",
+            "std/web"
+        ]
+    );
+}
+
+#[test]
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");

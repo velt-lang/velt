@@ -64,6 +64,17 @@ impl FnCx<'_, '_> {
     /// The error for a `super(args)` that is not a root-level statement of a derived class's
     /// constructor (or is a second one), saying where it is.
     fn misplaced_super(&mut self, derived: bool, span: Span) {
+        if self
+            .f
+            .super_silent
+            .iter()
+            .any(|s| s.lo <= span.lo && span.hi <= s.hi)
+        {
+            // Its `if` was reported as a whole (`body::ctor`).
+            self.f.super_called = true;
+            self.f.before_super = false;
+            return;
+        }
         let msg = if self.f.kind == FnKind::Closure {
             "`super(...)` cannot be called inside a closure; call it as a statement of the constructor's body"
         } else if !derived {
@@ -73,7 +84,7 @@ impl FnCx<'_, '_> {
         } else if self.f.super_called {
             "`super(...)` is called once, as a statement of the constructor's body"
         } else if self.f.stmt_depth > 1 {
-            "`super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop"
+            "`super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips"
         } else {
             "`super(...)` must be a statement of its own in the constructor's body, not part of an expression"
         };

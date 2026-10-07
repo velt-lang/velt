@@ -1,5 +1,5 @@
 // check: no leaks
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
 async function main() {
