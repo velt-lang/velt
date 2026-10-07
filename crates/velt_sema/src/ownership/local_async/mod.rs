@@ -8,16 +8,19 @@
 //! promise settled for another task. An async closure is **non-local** when its value may
 //! reach one of them ([`graph`]):
 //! - spawned: a spawned closure literal (`spawn(async () => …)`), the callee of a spawned call
-//!   (`spawn(f())`) or an argument of one (`spawn(run(f))`);
+//!   (`spawn(f())`), an argument of one (`spawn(run(f))`) or what the spawned function returns;
 //! - the argument of `shared(...)` or `new Mutex(...)`, a channel send, a value settling a
 //!   promise (`Intrinsic::Transfer`) or an HTTP handler (`Intrinsic::HttpHandler`);
 //! - passed directly to a function value, an interface method or an overridden method, whose
 //!   callee is unknown and may keep it;
 //! - through locals, parameters (from every direct caller), return values, and the captures of
 //!   a closure that is itself non-local (or passed to an unknown callee);
+//! - an argument of a call through a function value that may be a closure whose parameter
+//!   crosses (`resolve(x)`), matched by type in each instantiation of the closure's function;
 //! - through the heap, by type ([`types`]): a closure stored in a field, element or map value
 //!   is non-local when a value crossing a boundary has a type reaching a function type of the
-//!   same shape.
+//!   same shape. A value of unknown origin keeps the type it had where it flowed in, so a
+//!   generic parameter that crosses brings its callers' concrete types.
 //!
 //! A local async closure (`FnDef::shares_captures`) shares its by-value captures with each call
 //! (lowering's `take_capture`) and its assigned captured variables live in cells
@@ -64,15 +67,18 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             {
                 continue;
             }
+            // Several crossing types may match: report one in user code, the earliest.
             let why = fns
                 .iter()
-                .find(|(t, _)| types::may_be(cx, g.tys[n], **t))
-                .map(|(_, w)| *w);
+                .filter(|(t, _)| types::may_be(cx, g.tys[n], **t))
+                .map(|(_, w)| *w)
+                .min_by_key(|w| (w.std, w.span.file, w.span.lo));
             if let Some(w) = why {
                 p.set(n, CROSSES, Some(w));
                 changed = true;
             }
         }
+        changed |= crossing_params(cx, &g, &mut p);
         if !changed {
             break;
         }
@@ -83,6 +89,96 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
         finish(cx, c, local, why);
     }
+}
+
+/// A closure whose declared parameter crosses (the prelude's `resolve`, a callback that spawns
+/// its argument) is called through function values: the argument at that position of every
+/// such call whose callee may be the closure crosses too. Returns whether a flag changed.
+fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
+    let mut found = vec![];
+    for (n, node) in g.nodes.iter().enumerate() {
+        let Node::Lit(c) = *node else { continue };
+        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+            continue;
+        };
+        let declared: Vec<_> = f
+            .params
+            .iter()
+            .skip(f.captures.len())
+            .map(|p| p.local)
+            .collect();
+        for (k, local) in declared.into_iter().enumerate() {
+            let Some(&i) = g.ids.get(&Node::Local(c, local)) else {
+                continue;
+            };
+            if p.flags[i] & CROSSES != 0 {
+                for ty in instances(cx, g, c, g.tys[n]) {
+                    found.push((ty, k, p.why[i][0]));
+                }
+            }
+        }
+    }
+    let mut changed = false;
+    for (ty, k, why) in found {
+        for (callee, args, span, std) in &g.indirect {
+            if let Some(&a) = args.get(k) {
+                if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
+                    p.set(a, CROSSES, why.map(|w| w.through(Some((*span, *std)))));
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// The types closure literal `c` (of type `ty`) has in the instantiations of the generic
+/// function that creates it: `(value: T) => void` in `withResolvers<T>` is `(value: Job) =>
+/// void` where the program calls `withResolvers<Job>()`. Generic parameters of callers that
+/// are generic themselves are followed to their own callers; where that gives no answer (or too
+/// many), the generic type itself, whose parameters match anything; a generic standard library
+/// function the program never calls gives none.
+fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
+    let mut owner = c;
+    let mut hops = 0;
+    while let (Some(&p), true) = (g.parent.get(&owner), hops < 64) {
+        owner = p;
+        hops += 1;
+    }
+    let mut out = vec![];
+    let mut work = vec![(owner, ty, 0)];
+    while let Some((f, t, depth)) = work.pop() {
+        let mut params = vec![];
+        crate::types::collect_params(&cx.ty, t, &mut params);
+        if params.is_empty() {
+            out.push(t);
+            continue;
+        }
+        let sites = g.insts.get(&f).cloned().unwrap_or_default();
+        // A generic function of the standard library that the program never calls directly
+        // makes no such closure (its methods are called with their type arguments too).
+        let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
+        if sites.is_empty() && std {
+            continue;
+        }
+        if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {
+            out.push(t);
+            continue;
+        }
+        for (caller, targs) in sites {
+            let mut caller_owner = caller;
+            let mut hops = 0;
+            while let (Some(&p), true) = (g.parent.get(&caller_owner), hops < 64) {
+                caller_owner = p;
+                hops += 1;
+            }
+            let s = cx.ty.subst(t, &targs);
+            work.push((caller_owner, s, depth + 1));
+        }
+    }
+    out.sort_by_key(|t| t.0);
+    out.dedup();
+    out
 }
 
 /// Record what was decided for async closure `c`.
@@ -107,8 +203,20 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
             let label = reaches(cx, &w);
             d = d.with_label(w.span, label);
         }
+        let runs = match why.map(|w| w.boundary) {
+            Some(Boundary::Spawn) => "the spawned task runs it on another thread",
+            Some(Boundary::Handler) => "requests run it on several threads at once",
+            Some(Boundary::Shared | Boundary::Mutex) => {
+                "every thread holding the `shared` value may call it"
+            }
+            Some(Boundary::Channel) => "the task receiving it runs it on another thread",
+            Some(Boundary::Settle) => "the task awaiting the promise may run it on another thread",
+            Some(Boundary::FnValue) | None => {
+                "the function it is passed to may keep it and run it on another thread"
+            }
+        };
         cx.error(d.with_note(format!(
-            "a spawned task, an HTTP handler or a `shared` value may run the closure on another thread: pass `{name}` as a parameter instead, or share it with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
+            "{runs}, with its own copy of what it captured: pass `{name}` as a parameter instead, or share it with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
         )));
     }
 }
@@ -200,6 +308,18 @@ impl Propagation {
         };
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));
+        }
+        // What flowed in from places the graph does not follow, with the types it had there:
+        // a generic parameter's node gets its callers' concrete types.
+        for &(t, site) in &g.inflows[n] {
+            let take = match f {
+                CROSSES => true,
+                INDIRECT => types::fn_like(cx, t),
+                _ => false,
+            };
+            if take && t != ty {
+                self.roots.push((t, w.through(site)));
+            }
         }
     }
 }

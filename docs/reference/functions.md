@@ -502,7 +502,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   it``). The compiler proves which closures stay: one may leave when it is spawned
   (`spawn(async () => …)`, `spawn(f())`, an argument of a spawned call), is an HTTP handler, goes
   into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
-  is passed to, a variable holding it or a closure capturing it does; when it is stored in an
+  is passed to (a generic one included), a variable holding it, a closure capturing it or a
+  task returning it does; when it is stored in an
   object, array or map whose type reaches one of those places; and when it is passed directly to
   a function value or an interface or overridden method, which may keep it. A timer callback
   (`setTimeout`) runs as a spawned task, so it is one too.

@@ -158,3 +158,32 @@ fn closures_passed_to_function_values_are_not_local() {
     );
     assert!(r.contains("passed to a function value"), "{r}");
 }
+
+#[test]
+fn a_spawned_tasks_result_crosses() {
+    let r = err_src(
+        "async function make(): Promise<() => Promise<i64>> {
+           let n = 0;
+           return async (): Promise<i64> => { n += 1; return n; };
+         }
+         async function main() { const f = await spawn(make()); console.log(await f()); }",
+    );
+    assert!(r.contains("modifies captured `n`"), "{r}");
+    assert!(r.contains("reaches `spawn` here"), "{r}");
+}
+
+#[test]
+fn generic_parameters_keep_the_callers_types() {
+    let r = err_src(
+        "class Job { run: () => Promise<void>; constructor(r: () => Promise<void>) { this.run = r; } }
+         function wrap<T>(x: T): shared<Mutex<T>> { return shared(new Mutex<T>(x)); }
+         async function main() {
+           let n = 0;
+           const w = wrap<Job>(new Job(async () => { n += 1; }));
+         }",
+    );
+    assert!(
+        r.contains("is stored in a `Job`, which is put in a `Mutex` here"),
+        "{r}"
+    );
+}

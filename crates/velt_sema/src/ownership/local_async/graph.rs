@@ -27,6 +27,8 @@ pub(super) enum Node {
     Local(DefId, LocalId),
     /// What function `def` returns.
     Ret(DefId),
+    /// Argument `1` of the call through a function value numbered `0` (`Graph::indirect`).
+    Arg(u32, u32),
 }
 
 /// Where a value leaves the task that made it.
@@ -95,6 +97,17 @@ pub(super) struct Graph {
     pub srcs: Vec<Vec<(usize, Site)>>,
     /// Per node: may it hold a value of unknown origin?
     pub unknown: Vec<bool>,
+    /// Per node: the types of the values of unknown origin flowing into it, as written where
+    /// they flow in (a generic parameter's node gets its callers' concrete types).
+    pub inflows: Vec<Vec<(TyId, Site)>>,
+    /// Calls through a function value: the callee's type, the argument nodes, and the call
+    /// (span, in std). A closure whose parameter crosses makes the matching argument cross.
+    pub indirect: Vec<(TyId, Vec<usize>, Span, bool)>,
+    /// The function creating each closure literal.
+    pub parent: HashMap<DefId, DefId>,
+    /// The type arguments of every direct call of each generic function, with the function
+    /// making the call (its own generic parameters may appear in them).
+    pub insts: HashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
     /// Nodes whose values reach a flag's sink directly.
     pub seeds: Vec<(usize, u8, Option<Why>)>,
     /// Values of unknown origin that cross (or reach an unknown callee, for function values).
@@ -114,6 +127,7 @@ impl Graph {
         self.tys.push(ty);
         self.srcs.push(vec![]);
         self.unknown.push(false);
+        self.inflows.push(vec![]);
         i
     }
 }
@@ -203,7 +217,12 @@ impl Walk<'_, '_> {
     /// The value of `e` has an origin the graph does not follow.
     fn unknown(&mut self, e: &Expr, to: To) {
         match to {
-            To::Node(m, _) => self.g.unknown[m] = true,
+            To::Node(m, site) => {
+                self.g.unknown[m] = true;
+                if !self.g.inflows[m].contains(&(e.ty, site)) {
+                    self.g.inflows[m].push((e.ty, site));
+                }
+            }
             To::Flag(CROSSES, Some(why)) => self.g.roots.push((e.ty, why)),
             To::Flag(INDIRECT, Some(why)) if super::types::fn_like(self.cx, e.ty) => {
                 self.g.roots.push((e.ty, why))
@@ -407,6 +426,7 @@ impl Walk<'_, '_> {
 
     /// A closure literal: its captured variables flow into its capture locals.
     fn closure(&mut self, c: DefId, ty: TyId, to: To) {
+        self.g.parent.insert(c, self.d);
         let n = self.g.node(Node::Lit(c), ty);
         if !self.g.captures.contains_key(&n) {
             let mut inner = vec![];
@@ -453,7 +473,11 @@ impl Walk<'_, '_> {
 
     fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr], to: To) {
         match callee {
-            Callee::Def(g, _) => {
+            Callee::Def(g, targs) => {
+                if !targs.is_empty() {
+                    let site = (self.d, targs.clone());
+                    self.g.insts.entry(*g).or_default().push(site);
+                }
                 let direct = matches!(&self.cx.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.params.len() >= args.len());
                 self.pass_to_params(Some(*g), args, e.span);
                 if direct {
@@ -466,9 +490,15 @@ impl Walk<'_, '_> {
             Callee::Indirect(f) => {
                 self.value(f, To::Drop);
                 let why = self.why(e.span, Boundary::FnValue);
-                for a in args {
-                    self.value(a, To::Flag(INDIRECT, why));
+                let call = self.g.indirect.len() as u32;
+                let mut nodes = vec![];
+                for (i, a) in args.iter().enumerate() {
+                    let n = self.g.node(Node::Arg(call, i as u32), a.ty);
+                    self.value(a, To::Node(n, None));
+                    self.g.seeds.push((n, INDIRECT, why));
+                    nodes.push(n);
                 }
+                self.g.indirect.push((f.ty, nodes, e.span, self.std));
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
@@ -537,11 +567,16 @@ impl Walk<'_, '_> {
             }
             E::Closure(_) => self.value(p, cross),
             E::Call {
-                callee: Callee::Def(..),
+                callee: Callee::Def(g, _),
                 args,
             } => {
                 for a in args {
                     self.value(a, cross);
+                }
+                // The task's result comes back to whoever awaits its handle on another task.
+                if matches!(&self.cx.defs[g.0 as usize], Some(Def::Fn(_))) {
+                    let n = self.ret_node(*g);
+                    self.connect(n, cross);
                 }
                 self.value(p, To::Drop);
             }
