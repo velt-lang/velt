@@ -35,6 +35,7 @@ mod ctx;
 mod defs;
 mod discriminants;
 mod dispatch;
+pub mod effects;
 mod finalize;
 mod flow;
 mod fresh_returns;

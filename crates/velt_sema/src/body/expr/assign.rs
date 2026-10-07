@@ -386,7 +386,7 @@ impl FnCx<'_, '_> {
             self.hoist_indices(&mut place, &mut stmts);
             let v = self.expr_coerce(value, lty, Want::Borrow);
             let mut cur = self.place_read(&place, Want::Borrow);
-            if Self::may_write(&v) && Self::through_element(&place) {
+            if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=
                 // grow(rows)`): take the current value first, as JS reads it before `v` (#580).
                 // A variable or field path is appended in place by lowering, which keeps its old

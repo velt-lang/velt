@@ -40,6 +40,31 @@ function growS(ss: string[]): string {
   return "!";
 }
 
+function bitwise() {
+  const a: number[] = [5, 6];
+  a[0] += a.pop()!;
+  console.log(a.length, a[0]);
+  const b: number[] = [3];
+  b[0] |= grow(b);
+  console.log(b.length, b[0]);
+  const c: number[] = [3];
+  c[0] ^= grow(c);
+  console.log(c.length, c[0]);
+  const d: number[] = [3];
+  d[0] **= grow(d);
+  console.log(d.length, d[0]);
+  const ns: (number | null)[] = [null, 1];
+  const grow2 = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      ns.push(i);
+    }
+    return 4;
+  };
+  ns[0] ??= grow2();
+  ns[1] ??= grow2();
+  console.log(ns.length, ns[0], ns[1]);
+}
+
 function strings() {
   let s = "a";
   const g = (): string => {
@@ -125,5 +150,6 @@ function main() {
   };
   ws[idx()]++;
   console.log(ws.length, ws[0]);
+  bitwise();
   strings();
 }

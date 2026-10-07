@@ -7,16 +7,6 @@ use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, UseMode};
 
-/// Is `a` a place passed to modify or move it (an intrinsic argument like `push`'s receiver)?
-fn writes_place(a: &hir::Expr) -> bool {
-    let mode = match &a.kind {
-        H::Local(_, m) | H::Field { mode: m, .. } | H::Index { mode: m, .. } => *m,
-        H::UnwrapSome(_, m) | H::UnwrapVariant { mode: m, .. } => *m,
-        _ => return false,
-    };
-    matches!(mode, UseMode::BorrowMut | UseMode::Move)
-}
-
 impl FnCx<'_, '_> {
     /// Binds each index of `place` that is not a literal (`xs[next()]`), and each object that
     /// is not itself a place (`f().out`), to a temporary (appended to `stmts` as `let`s), so
@@ -80,35 +70,6 @@ impl FnCx<'_, '_> {
             span,
         });
         self.mk(H::Local(tmp, UseMode::Move), ty, span)
-    }
-
-    /// Can evaluating `e` run code that changes a place (an assignment, a call that is not a
-    /// read-only intrinsic, an `await`)? Conservative: anything else but reads, literals and
-    /// arithmetic counts.
-    pub(super) fn may_write(e: &hir::Expr) -> bool {
-        match &e.kind {
-            H::Lit(_) | H::Local(..) | H::Global(_) | H::FnRef(..) => false,
-            H::Unary { expr: x, .. }
-            | H::Cast(x)
-            | H::WrapSome(x)
-            | H::Upcast(x)
-            | H::Downcast(x)
-            | H::UnwrapSome(x, _)
-            | H::UnwrapVariant { expr: x, .. }
-            | H::Field { base: x, .. } => Self::may_write(x),
-            H::Index { base, index, .. } => Self::may_write(base) || Self::may_write(index),
-            H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
-                Self::may_write(lhs) || Self::may_write(rhs)
-            }
-            H::If { cond, then, els } => {
-                Self::may_write(cond) || Self::may_write(then) || Self::may_write(els)
-            }
-            H::Call {
-                callee: hir::Callee::Intrinsic(_),
-                args,
-            } => args.iter().any(|a| Self::may_write(a) || writes_place(a)),
-            _ => true,
-        }
     }
 
     /// `e` after the statements `stmts` (as a block when there are any).

@@ -2,54 +2,37 @@
 //! param, a projection, or an owned temporary registered for dropping); `consume` additionally
 //! takes ownership of the value for a store, return or owned argument.
 
+use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{self, Const, Operand, Place, Rvalue, Ty};
 
-/// Can evaluating `e` write to a local of the enclosing function? Earlier operands that are plain
-/// local reads get snapshotted when a later sibling may write (`f(i, i++)`).
+/// Can evaluating `e` change what an earlier operand reads? Earlier operands that are plain
+/// local reads get snapshotted when a later sibling may write (`f(i, i++)`), and so do reads of
+/// an element, which a later call may reallocate or replace (`xs[0] + grow(xs)`, #580).
 pub(super) fn may_write(e: &hir::Expr) -> bool {
+    writes_local(e) || may_change_memory(e)
+}
+
+/// Can evaluating `e` write to a local of the enclosing function?
+fn writes_local(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
         K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
-            may_write(expr)
+            writes_local(expr)
         }
-        K::Field { base, .. } => may_write(base),
+        K::Field { base, .. } => writes_local(base),
         K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            may_write(lhs) || may_write(rhs)
+            writes_local(lhs) || writes_local(rhs)
         }
         K::Call { callee, args } => {
             !matches!(callee, hir::Callee::Intrinsic(_) | hir::Callee::Def(..))
-                || args.iter().any(may_write)
+                || args.iter().any(writes_local)
         }
-        K::If { cond, then, els } => may_write(cond) || may_write(then) || may_write(els),
-        _ => true,
-    }
-}
-
-/// Can evaluating `e` run user code or change memory (any call other than an intrinsic, an
-/// assignment, `new`, `await`)? Then an address computed before `e` may be stale after it: a
-/// call may reallocate the array it points into (#580).
-pub(super) fn runs_code(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
-            runs_code(expr)
-        }
-        K::Field { base, .. } | K::UnwrapSome(base, _) => runs_code(base),
-        K::Index { base, index, .. } => runs_code(base) || runs_code(index),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            runs_code(lhs) || runs_code(rhs)
-        }
-        K::Call {
-            callee: hir::Callee::Intrinsic(_),
-            args,
-        } => args.iter().any(runs_code),
-        K::If { cond, then, els } => runs_code(cond) || runs_code(then) || runs_code(els),
+        K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
         _ => true,
     }
 }
@@ -118,6 +101,21 @@ impl FnLower<'_, '_> {
             }
         }
         Operand::Copy(Place::local(out))
+    }
+
+    /// `consume` each of `es` in order, snapshotting a value that a later one may change
+    /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
+    pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
+        let mut vals = Vec::with_capacity(es.len());
+        for (i, e) in es.iter().enumerate() {
+            let v = self.consume(e);
+            vals.push(if es[i + 1..].iter().any(may_write) {
+                self.freeze(v, e.ty)
+            } else {
+                v
+            });
+        }
+        vals
     }
 
     pub(super) fn expr(&mut self, e: &hir::Expr) -> Operand {
