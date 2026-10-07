@@ -3,7 +3,7 @@
 // connection goes back to the pool (it used to be cancelled at its next `await`, leaking the
 // connection: with `max: 1` every later request then hung).
 import { createPool } from "velt:postgres";
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 import { connect } from "velt:net";
 
 class Row {

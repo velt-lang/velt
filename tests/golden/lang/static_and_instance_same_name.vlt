@@ -1,0 +1,30 @@
+// A class may have a static method and an instance method of the same name, as in TypeScript
+// (`Response.json(data)` builds a response, `res.json()` reads one).
+class Temp {
+  c: f64;
+
+  constructor(c: f64) {
+    this.c = c;
+  }
+
+  static from(text: string): Temp {
+    return new Temp(parseFloat(text));
+  }
+
+  from(): string {
+    return `${this.c} C`;
+  }
+
+  static describe(): string {
+    return "temperatures";
+  }
+
+  describe(): string {
+    return `${Temp.describe()}: ${this.from()}`;
+  }
+}
+
+function main() {
+  const t = Temp.from("21.5");
+  console.log(t.from(), t.describe(), Temp.describe());
+}

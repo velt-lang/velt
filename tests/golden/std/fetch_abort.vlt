@@ -1,0 +1,73 @@
+// check: no leaks
+// An `AbortSignal` cancels a `fetch`: before it starts, while it waits for the response, and
+// while the body is received (`fetch` resolves once the headers are in, as in JS). A timeout
+// signal rejects with `TimeoutError`. Events are ordered by signals, not by sleeps: the server
+// reports each request's arrival and holds it until the client is done.
+import {
+  serve,
+  Request as ServerRequest,
+  Response as ServerResponse,
+  ResponseWriter,
+} from "velt:http";
+import { AbortError, TimeoutError } from "velt:task";
+
+async function main() {
+  const arrived = new AbortController();
+  const release = new AbortController();
+  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
+    if (req.path == "/stream") {
+      return ServerResponse.stream(async (w: ResponseWriter) => {
+        w.write("first part ");
+        await w.flush();
+        await release.signal.whenAborted();
+        w.write("never read");
+      });
+    }
+    arrived.abort("arrived");
+    await release.signal.whenAborted();
+    return ServerResponse.text("late");
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  // Already aborted: rejected at once, nothing is sent.
+  const early = new AbortController();
+  early.abort("not needed");
+  try {
+    await fetch(`${base}/hang`, { signal: early.signal });
+  } catch (e) {
+    console.log("before:", e instanceof AbortError, e.message);
+  }
+
+  // Aborted while the server holds the request.
+  const ac = new AbortController();
+  const pending = fetch(`${base}/hang`, { signal: ac.signal });
+  await arrived.signal.whenAborted();
+  ac.abort("user cancelled");
+  try {
+    await pending;
+  } catch (e) {
+    console.log("waiting:", e instanceof AbortError, e.message);
+  }
+
+  // A timeout signal.
+  try {
+    await fetch(`${base}/hang`, { signal: AbortSignal.timeout(30) });
+  } catch (e) {
+    console.log("timeout:", e instanceof TimeoutError, e.message);
+  }
+
+  // Aborted while the body is received.
+  const body = new AbortController();
+  const res = await fetch(`${base}/stream`, { signal: body.signal });
+  console.log("headers:", res.status, res.headers.get("transfer-encoding"));
+  const text = res.text();
+  body.abort("enough");
+  try {
+    await text;
+  } catch (e) {
+    console.log("body:", e instanceof AbortError, e.message);
+  }
+  release.abort();
+  await server.shutdown();
+  console.log("done");
+}

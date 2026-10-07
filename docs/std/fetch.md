@@ -1,0 +1,139 @@
+# fetch
+
+`fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
+WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
+connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
+HTTPS, and redirects followed as the standard says. `velt:fetch` exports the same names and
+the option types (`RequestInit`, `ResponseInit`, `HeadersInit`, `BodyInit`).
+
+```ts
+type User = { id: number; name: string };
+
+async function users(base: string): Promise<User[]> {
+  const res = await fetch(`${base}/users`, { headers: { accept: "application/json" } });
+  if (!res.ok) {
+    throw new Error(`GET /users: ${res.status} ${res.statusText}`);
+  }
+  return await res.json<User[]>();
+}
+```
+
+## `fetch(input, init?)`
+
+`fetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response, IoError |
+AbortError>` sends a request and resolves once the response's status and headers have arrived;
+the body is received when you read it. An HTTP error status (404, 500) is a response, not an
+error: check `res.ok`. `fetch` rejects when there is no response:
+
+- `IoError` (from [`velt:io`](io.md)) when the request fails: `code` is `"ECONNREFUSED"`,
+  `"ETIMEDOUT"` (connecting takes more than 10 s), `"ECONNRESET"`, … and the message starts with
+  `fetch failed`, as Node's does. An invalid URL, header name or value, a GET or HEAD request
+  with a body, and a scheme other than `http:` / `https:` fail with `"EINVAL"` / `"ENOTSUP"`
+  before anything is sent. A redirect loop (more than 20) or a redirect with `redirect: "error"`
+  fails with `fetch failed: …`.
+- The signal's `AbortError` (from [`velt:task`](task.md)) when `init.signal` is aborted: a
+  `TimeoutError`, which extends `AbortError`, for `AbortSignal.timeout(ms)`. Aborting cancels
+  the request in the runtime (it is dropped and its connection closed), also while the body is
+  received.
+
+`RequestInit` has the standard's fields that make sense outside a browser:
+
+| Field | Type | |
+|---|---|---|
+| `method` | `string` | default `"GET"`; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased |
+| `headers` | `Headers \| Record<string, string>` | an object literal works: `{ "content-type": "text/csv" }` |
+| `body` | `string \| u8[] \| URLSearchParams` | a string sets `content-type: text/plain;charset=UTF-8` and form fields `application/x-www-form-urlencoded;charset=UTF-8`, unless one is set |
+| `redirect` | `"follow" \| "error" \| "manual"` | default `"follow"` (at most 20); `"manual"` returns the 3xx response |
+| `signal` | `AbortSignal` | cancels the request |
+| `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
+
+Requests send `accept: */*` and `user-agent: velt` unless you set them. Following a redirect
+works as in browsers and Node: a 303 (and a 301 or 302 after a POST) becomes a GET without a
+body, and `authorization` and `cookie` headers are not sent to another origin.
+
+HTTPS trusts Mozilla's root certificates (compiled in, so the result does not depend on the
+machine) plus `ca`. An untrusted certificate fails with `IoError`.
+
+## `Response`
+
+- `status: number`, `ok: bool` (200–299), `statusText` (the server's reason phrase),
+  `headers: Headers`, `url` (the final URL, after redirects), `redirected`, `type` (`"basic"`
+  for a fetched response, `"default"` for one you made, `"error"`), `bodyUsed`.
+- Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD, as in JS),
+  `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS
+  returns an `ArrayBuffer`). A body is read once: a second read throws `IoError`
+  (`Body is unusable: Body has already been read`). A large body is received into one buffer
+  sized from `content-length`, so `bytes()` copies it once.
+- `json<T>()` decodes the body as `T` and checks it (`JsonError` names what doesn't match),
+  so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
+  or give the variable one (`const users: User[] = await res.json()`); an untyped
+  `res.json()` is a compile error that says so.
+- The status, URL and headers are copied when the head arrives, so they stay readable after
+  the body was read. Dropping a response whose body was not read closes its connection.
+- `new Response(body?: string | u8[] | URLSearchParams | null, init?: ResponseInit { status?;
+  statusText?; headers? })`, `Response.json(data, init?)` (`content-type: application/json`),
+  `Response.error()` and `Response.redirect(url, status = 302)` build responses, e.g. for
+  tests.
+
+## `Request`
+
+`new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
+`url`, `method`, `headers`, `redirect`, `signal` (`AbortSignal | null`: JS gives every request
+a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`.
+`fetch(request)` sends it (its body counts as read afterwards); `fetch(request, init)`
+overrides fields of it.
+
+## `Headers`
+
+Case-insensitive, in insertion order, with repeated names: `new Headers(init?: Headers |
+Record<string, string>)`, `append(name, value)`, `set`, `delete`, `get(name): string | null`
+(repeated values joined with `", "`), `has`, `getSetCookie(): string[]`, `forEach((value,
+name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the names
+lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values have
+surrounding whitespace removed. Unlike JS, an invalid name or value is not rejected when it is
+added: `fetch` rejects it with `IoError` `"EINVAL"`.
+
+```ts
+const h = new Headers({ "Content-Type": "text/plain" });
+h.append("Set-Cookie", "a=1");
+h.append("set-cookie", "b=2");
+for (const [name, value] of h) {
+  console.log(name, value); // content-type text/plain, then set-cookie a=1, set-cookie b=2
+}
+```
+
+## Timeouts and cancellation
+
+```ts
+import { AbortError, TimeoutError } from "velt:task";
+
+async function status(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return `${res.status}`;
+  } catch (e) {
+    if (e instanceof TimeoutError) {
+      return "timed out";
+    }
+    if (e instanceof AbortError) {
+      return "cancelled";
+    }
+    return `failed: ${e.message}`; // IoError
+  }
+}
+```
+
+`AbortController`, `AbortSignal` (with `AbortSignal.timeout` and `AbortSignal.any`) are global
+too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`](task.md).
+
+## Differences from Node
+
+- Errors are typed: an `IoError` with a `code` where Node throws `TypeError: fetch failed`
+  with a `cause`, and the signal's `AbortError` / `TimeoutError` where Node throws a
+  `DOMException` (or the abort reason).
+- `res.json()` needs the type of the data (above).
+- Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
+  without a signal has `signal == null`.
+- **Planned**: `res.body` as a stream of chunks, `clone()`, decoding of `gzip` / `br`
+  responses (no `accept-encoding` is sent today, so servers send them unencoded), and header
+  pairs as an array of `[name, value]` tuples.

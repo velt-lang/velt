@@ -339,15 +339,19 @@ impl FnCx<'_, '_> {
 
     fn widening_fix(&mut self, found: &hir::Expr, expected: TyId, array: bool) -> String {
         let e = self.cx.display(expected);
-        let name = self.place_text(found).unwrap_or_else(|| "xs".into());
-        match self.cx.ty.array_elem(expected).filter(|_| array) {
-            Some(el) => {
+        let name = self.place_text(found);
+        match (self.cx.ty.array_elem(expected).filter(|_| array), name) {
+            (Some(el), Some(name)) => {
                 let el = self.cx.display(el);
                 format!(
                     "convert a copy instead: `[...{name}]` or `{name}.map((x): {el} => x)` (a new `{e}`)"
                 )
             }
-            None => format!("create a new `{e}` from its fields instead"),
+            (Some(el), None) => {
+                let el = self.cx.display(el);
+                format!("convert a copy instead: `(…).map((x): {el} => x)` (a new `{e}`)")
+            }
+            (None, _) => format!("create a new `{e}` from its fields instead"),
         }
     }
 }

@@ -1,0 +1,9 @@
+// `res.json()` and `JSON.parse(text)` need the type the data must have: Velt has no `any`, and
+// the note says how to name it.
+async function load(url: string) {
+  const res = await fetch(url);
+  const data = await res.json();
+  const again = JSON.parse("[]");
+}
+
+function main() {}
