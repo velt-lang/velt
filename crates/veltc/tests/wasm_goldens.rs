@@ -16,8 +16,8 @@ mod work_dir;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets.
-const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server"];
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt:http`).
+const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server", "console_std_handles"];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
