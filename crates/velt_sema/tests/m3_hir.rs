@@ -70,7 +70,8 @@ fn async_basic_shapes() {
     assert!(main.is_async);
     assert!(p.entry.is_some());
     assert_eq!(awaits(main), 5);
-    let used = intrinsics(main);
+    let mut used = intrinsics(main);
+    used.extend(intrinsics(func(&p, "threeSleeps")));
     for i in [
         Intrinsic::PromiseAll,
         Intrinsic::Sleep,

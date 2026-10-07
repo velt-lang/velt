@@ -30,7 +30,7 @@ async function main() {
   // end at 600 ms. Sleeps never end early.
   const start = performance.now();
   const first = await Promise.race([threeSleeps(), delayed(450, 0)]);
-  console.log(first, performance.now() - start >= 199.0);
+  console.log(performance.now() - start >= 199.0, first == 1);
 
   const h = spawn(delayed(5, 42));
   console.log(await h);

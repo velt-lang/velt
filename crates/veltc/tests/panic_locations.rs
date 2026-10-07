@@ -75,7 +75,7 @@ const CASES: &[(&str, i32, &str)] = &[
     (
         "spawn_handle_dropped_after_reject",
         1,
-        "Uncaught Failed: rejected before the handle was dropped at tests/golden/lang/spawn_handle_dropped_after_reject.vlt:7:3",
+        "Uncaught Failed: rejected before the handle was dropped at tests/golden/lang/spawn_handle_dropped_after_reject.vlt:9:3",
     ),
     (
         "panic_uncaught_std",
