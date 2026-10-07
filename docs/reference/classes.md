@@ -105,7 +105,9 @@ hidden classes and no runtime shape checks.
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`).
+  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
+  hide an inherited instance method `m()`, and a class below it can still `override` that method.
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
