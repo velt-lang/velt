@@ -53,7 +53,13 @@ pub struct Dev {
 impl Dev {
     /// `velt dev <mode flags> main.vlt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
+        Dev::start_with_env(dir, mode, &[])
+    }
+
+    /// [`Dev::start`] with extra environment variables.
+    pub fn start_with_env(dir: &Path, mode: &[&str], env: &[(&str, &str)]) -> Dev {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.envs(env.iter().copied());
         cmd.arg("dev")
             .args(mode)
             .arg("main.vlt")

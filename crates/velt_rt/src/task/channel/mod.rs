@@ -16,7 +16,6 @@
 
 mod fut;
 mod queue;
-mod ring;
 
 use self::fut::{done_op, new_op, ItemBuf, NOT_SENT, SENT};
 use self::queue::{Chan, Pop, Push};

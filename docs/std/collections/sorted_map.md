@@ -6,7 +6,10 @@ and deletes are O(n).
 
 - `new SortedMap<K, V>()`, `size`, `isEmpty()`, `clear()`.
 - `set(k, v)`, `get(k): V | null` (a clone), `has(k)`, `delete(k): bool`.
-- `keys()`, `values()`, `entries(): [K, V][]`, all in key order. `forEach((v, k) => …)`.
+- `keys()`, `values()`, `entries(): [K, V][]`, all in key order. `forEach((v, k) => …)` visits
+  the entries by position in key order and reads the size again after each call: when the
+  callback sets or deletes keys through another reference, entries added after the current
+  position are visited, and a key added or deleted before it shifts the entries still to come.
 - Ordered queries: `first()`, `last()`, `floorKey(k)`, `ceilingKey(k)`, and `range(from, to)`,
   which returns the half-open range `from <= key < to`.
 

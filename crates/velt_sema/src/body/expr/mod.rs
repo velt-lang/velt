@@ -146,7 +146,7 @@ impl FnCx<'_, '_> {
             // `xs as const`: TS narrows the type to literals and `readonly`; the value is the
             // same, and Velt's arrays and literal types need no annotation for it.
             A::Cast { expr, ty } if member::is_as_const(ty) => self.expr(expr, exp, want),
-            A::Cast { expr, ty } => self.cast(expr, ty, span),
+            A::Cast { expr, ty } => self.cast(expr, ty, want, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),
             A::NonNull(inner) => self.non_null(inner, exp, span),

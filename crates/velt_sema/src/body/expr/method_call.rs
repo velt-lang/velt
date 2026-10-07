@@ -22,6 +22,8 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        // A branded value has its primitive's methods.
+        let recv = self.unbrand(recv);
         self.method_call_at(recv, prop, type_args, args, exp, span, false)
     }
 

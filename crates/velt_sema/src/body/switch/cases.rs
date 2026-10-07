@@ -109,6 +109,8 @@ impl FnCx<'_, '_> {
         what: String,
         pre: &mut Vec<hir::Stmt>,
     ) -> Scrut {
+        // A branded value is compared as its primitive (`case "admin":` on a `UserId`).
+        let h = self.unbrand(h);
         let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
         let kind = if self.cx.union_def(inner).is_some() {
             ScrutKind::Union

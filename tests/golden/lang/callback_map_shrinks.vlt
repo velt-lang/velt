@@ -1,0 +1,26 @@
+// `map` whose callback shortens the array through another reference (#571 review): JS returns
+// an array with holes for the elements removed meanwhile, which a `U[]` cannot hold, so Velt
+// panics with a clear message instead of returning a shorter result. Node prints the first two
+// lines, then `4 undefined`.
+
+function main() {
+  const xs: string[] = ["a".repeat(40), "b".repeat(40), "c".repeat(40), "d".repeat(40)];
+  const ys = xs;
+  // Shrinking at the last element leaves nothing unvisited: no hole, no panic.
+  const lengths = xs.map((x, i) => {
+    if (i === 3) {
+      ys.pop();
+    }
+    return x.length;
+  });
+  console.log(lengths.join(","), xs.length);
+  ys.push("e".repeat(40));
+  console.log(xs.length);
+  const firsts = xs.map((x, i) => {
+    if (i === 0) {
+      ys.pop();
+    }
+    return x.slice(0, 1);
+  });
+  console.log(firsts.length, firsts[3]);
+}

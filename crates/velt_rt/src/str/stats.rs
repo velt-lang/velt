@@ -55,6 +55,29 @@ hook!(free, FREE);
 hook!(block_alloc, BLOCK_ALLOC);
 hook!(block_free, BLOCK_FREE);
 
+/// Before [`report`] when `main` returned normally (debug runtime with `VELT_RC_STATS=1` only):
+/// tasks still running then (a task whose handle was dropped, the loser of a race) free their
+/// blocks when they finish, so wait while blocks are unfreed and tasks are alive, instead of
+/// counting a straggler as a leak. Up to a minute: a hang guard, which a real leak waits out.
+/// `tasks_alive`: whether any task is still alive.
+pub fn settle(tasks_alive: impl Fn() -> bool) {
+    #[cfg(debug_assertions)]
+    if counters::enabled() {
+        use counters::*;
+        use std::sync::atomic::Ordering::SeqCst;
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while BLOCK_ALLOC.load(SeqCst) != BLOCK_FREE.load(SeqCst)
+            && tasks_alive()
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = tasks_alive;
+}
+
 /// Print the counters (debug runtime with `VELT_RC_STATS=1` only). Called at process exit.
 pub fn report() {
     #[cfg(debug_assertions)]

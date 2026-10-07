@@ -96,6 +96,10 @@ pub fn ty(t: &TypeExpr) -> String {
         TypeExprKind::Union(ts) => {
             format!("({})", ts.iter().map(ty).collect::<Vec<_>>().join(" | "))
         }
+        TypeExprKind::Intersection(ts) => {
+            format!("({})", ts.iter().map(ty).collect::<Vec<_>>().join(" & "))
+        }
+        TypeExprKind::Indexed { object, key } => format!("{}[{}]", ty(object), ty(key)),
         TypeExprKind::Literal(l) => pat_lit(l),
         TypeExprKind::Object(fs) => {
             let parts: Vec<String> = fs

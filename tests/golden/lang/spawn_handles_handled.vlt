@@ -51,8 +51,7 @@ async function main() {
   } catch (e) {
     console.log(`scope: ${e.message}`);
   }
-  // Time for the losers to fail and be dropped quietly before the process ends (a grace
-  // period, not an ordering: if they are late, there is just nothing to report).
-  await sleep(100);
+  // The losers may fail after `main` returned (quietly either way); the leak check waits for
+  // them.
   console.log("done");
 }

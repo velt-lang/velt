@@ -95,7 +95,15 @@ counted value is shared into a statement temporary; anything else is read throug
 retained for the statement (`retained_hop`). This applies to call arguments and receivers (not
 runtime externs), by-reference `const`s, `switch`/`match` scrutinees, compound assignments
 (the place is formed again after the right-hand side) and assignments (the new value is stored
-before the old one is dropped). `for...of` over a boxed array, or one reached through a counted
+before the old one is dropped). Retaining does not keep an array element in place (a push
+through another reference moves the buffer; `pop`, `truncate` and stores drop the element), so
+a value that lies in the buffer of such an array, not behind a counted object inside it, is
+shared into the temporary (a string clone, a copy for plain values; #564). A share would copy
+the parts a callee can change in place (tuples, object types stored inline), so those types are
+counted when they are borrowed this way, and the share is the same counted object. When the
+array is a boxed local or param that no cell holds, its count is read after the last argument
+is evaluated: 1 means nothing else reaches it, and the element is borrowed in place.
+`for...of` over a boxed array, or one reached through a counted
 object, works like JS's array iterator (for_of_shared.rs): the loop holds a reference to the
 array, re-reads the length every iteration and shares each element into the binding. Moving a
 part out of a counted value shares it instead, and pattern bindings inside a counted value are
