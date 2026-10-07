@@ -234,8 +234,14 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    /// Move the `ty` value at `place` to a heap box of its own and queue that.
+    /// Queue the `ty` value at `place`: a boxed value is its box pointer (its reference moves
+    /// to the queue); any other value moves to a heap box of its own.
     fn queue_value(&mut self, place: Place, ty: TyId) {
+        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        if self.cx.boxed(ty) {
+            let b = Operand::Copy(place);
+            return self.call_rt(Rt::DropQueue, vec![b, glue], None);
+        }
         let vt = self.cx.ty(ty);
         let b = self.alloc(vt);
         let bp = self.operand_place(b.clone(), Ty::Ptr);
@@ -243,7 +249,6 @@ impl FnLower<'_, '_> {
             proj(&bp, Proj::Deref(vt)),
             Rvalue::Use(Operand::Copy(place)),
         );
-        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
         self.call_rt(Rt::DropQueue, vec![b, glue], None);
     }
 
