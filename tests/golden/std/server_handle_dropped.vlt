@@ -1,5 +1,5 @@
 // Dropping a `Server` value keeps it serving (like Node); only `close()` stops it.
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 import { exit } from "velt:process";
 
 async function start(): Promise<i64> {

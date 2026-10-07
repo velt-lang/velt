@@ -1,0 +1,3 @@
+// Global (loaded when a module names one of these): Node's `URL` and `URLSearchParams`
+// (docs/std/url.md).
+export { URL, URLSearchParams } from "velt:url";

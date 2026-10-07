@@ -212,7 +212,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The member of union `u` an object literal builds: the one whose discriminants match the
-    /// literal's (`kind: "circle"`), else the one with exactly the literal's fields. `Ok(None)`
+    /// literal's (`kind: "circle"`), else the one with exactly the literal's fields, else the
+    /// union's only `Record` member. `Ok(None)`
     /// leaves the literal to the ordinary checks; `Err` after reporting a wrong discriminant.
     pub(super) fn union_member_for(
         &mut self,
@@ -270,7 +271,8 @@ impl FnCx<'_, '_> {
             );
             return Err(());
         }
-        if cands.len() == 1 {
+        // With a `Record` member as well, a struct member takes only a literal of its shape.
+        if cands.len() == 1 && self.only_record_member(u).is_none() {
             return Ok(cands.pop());
         }
         let names: Vec<&str> = props
@@ -289,7 +291,23 @@ impl FnCx<'_, '_> {
                     .is_some_and(|fs| same_names(&fs, &names))
             })
             .collect();
-        Ok((exact.len() == 1).then(|| exact[0]))
+        if exact.len() == 1 {
+            return Ok(Some(exact[0]));
+        }
+        Ok(self.only_record_member(u))
+    }
+
+    /// The `Record` member of union `u` when it has exactly one: an object literal no struct
+    /// member takes builds it (`Headers | Record<string, string>` given `{ "x-id": "1" }`).
+    fn only_record_member(&mut self, u: TyId) -> Option<TyId> {
+        let records: Vec<TyId> = self
+            .cx
+            .union_members(u)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| self.record_args(*m).is_some())
+            .collect();
+        (records.len() == 1).then(|| records[0])
     }
 
     fn field_names(&self, t: TyId) -> Option<Vec<String>> {

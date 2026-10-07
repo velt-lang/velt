@@ -251,10 +251,8 @@ fn collect_prelude(cx: &mut Ctx) {
         if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
             continue;
         }
-        let mut names: Vec<&String> = cx.scopes[m].exports.iter().collect();
-        names.sort();
-        for name in names {
-            let it = cx.scopes[m].items[name];
+        // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
+        for (name, it) in super::exports::all_exports(cx, m) {
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

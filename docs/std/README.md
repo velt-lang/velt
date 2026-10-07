@@ -9,7 +9,8 @@ import { Set } from "velt:collections/set";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
-scope everywhere without an import. `velt doc --std` generates HTML API documentation from the
+scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
+`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL` and `URLSearchParams`. `velt doc --std` generates HTML API documentation from the
 sources.
 
 ## Conventions
@@ -42,7 +43,7 @@ sources.
 | Area | Modules |
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
+| Network | [fetch](fetch.md) (global) · [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
 | Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
@@ -63,7 +64,7 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
+| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
 | `velt:websocket` | tokio-tungstenite connections and server upgrades |
 | `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
 | `velt:regex` | Rust's `regex` engine |
