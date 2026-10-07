@@ -700,14 +700,10 @@ function sweep(shard: Shard) {
   }
 }
 
-// Sweeps every `sweepIntervalMs`. The ticker runs at most once a second whatever the interval,
-// because `Ticker.stop()` only takes effect at the next tick and the shard waits for it.
+// Sweeps every `sweepIntervalMs`.
 async function sweepLoop(shard: Shard, ticker: Ticker): Promise<void> {
-  let last = performance.now();
   while (await ticker.tick()) {
-    const now = performance.now();
-    if (shard.opts.sweepIntervalMs > 0 && now - last >= (shard.opts.sweepIntervalMs as f64)) {
-      last = now;
+    if (shard.opts.sweepIntervalMs > 0) {
       sweep(shard);
     }
   }
@@ -729,9 +725,8 @@ async function runShard<C extends HostConfig>(
   done: Channel<i64>,
 ): Promise<void> {
   const shard = new Shard(id, opts, config.types(), config.storage(), router);
-  const ticker = new Ticker(
-    opts.sweepIntervalMs > 0 && opts.sweepIntervalMs < 1000 ? opts.sweepIntervalMs : 1000,
-  );
+  // With the sweep disabled the ticker still runs, once an hour; `stop()` ends it at once.
+  const ticker = new Ticker(opts.sweepIntervalMs > 0 ? opts.sweepIntervalMs : 3600000);
   const sweeper = sweepLoop(shard, ticker);
   const controller = controlLoop(shard, control);
   while (true) {
