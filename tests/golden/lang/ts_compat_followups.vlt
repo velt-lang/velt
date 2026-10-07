@@ -151,8 +151,64 @@ function interfaceKeys() {
 }
 
 function main() {
+  initializersOnce();
   superBranches();
   initializersAfterBranches();
   spreads();
   interfaceKeys();
+}
+
+// Field initializers run once per construction, after whichever branch calls `super(...)`.
+function trace(what: string, v: number): number {
+  console.log("init", what);
+  return v;
+}
+
+class TracedBase {
+  tag: string;
+  constructor(tag: string) {
+    console.log("base", tag);
+    this.tag = tag;
+  }
+}
+
+class TracedDerived extends TracedBase {
+  a: number = trace("a", 1);
+  b: number = trace("b", 2);
+  constructor(flag: boolean, deep: boolean) {
+    console.log("before");
+    if (flag) {
+      super("then");
+      console.log("then", this.a, this.b);
+    } else {
+      if (deep) {
+        super("else-if");
+      } else {
+        super("else");
+      }
+      this.b += 10;
+      console.log("else", this.a, this.b);
+    }
+    console.log("after", this.tag);
+  }
+}
+
+class TracedLeaf extends TracedDerived {
+  c: number = trace("c", 3);
+  constructor(flag: boolean) {
+    if (flag) {
+      super(true, false);
+    } else {
+      super(false, true);
+    }
+    console.log("leaf", this.a, this.b, this.c);
+  }
+}
+
+function initializersOnce() {
+  new TracedDerived(true, false);
+  new TracedDerived(false, true);
+  new TracedDerived(false, false);
+  new TracedLeaf(true);
+  new TracedLeaf(false);
 }

@@ -155,3 +155,39 @@ class InitInBranches extends Init {
 function main() {
   console.log(new Fine(true).x);
 }
+
+// Each branch starts before `super(...)`: `this` before that branch's call is an error, also
+// through a method or a closure.
+class ElseThis extends A {
+  constructor(c: bool) {
+    if (c) {
+      super(1);
+    } else {
+      console.log(this.x);
+      super(2);
+    }
+  }
+}
+
+class ElseMethod extends A {
+  constructor(c: bool) {
+    if (c) {
+      super(1);
+    } else {
+      this.get();
+      super(2);
+    }
+  }
+}
+
+class ElseClosure extends A {
+  constructor(c: bool) {
+    if (c) {
+      super(1);
+    } else {
+      const f = () => this.x;
+      super(2);
+      f();
+    }
+  }
+}

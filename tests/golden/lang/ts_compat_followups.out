@@ -1,3 +1,37 @@
+before
+base then
+init a
+init b
+then 1 2
+after then
+before
+base else-if
+init a
+init b
+else 1 12
+after else-if
+before
+base else
+init a
+init b
+else 1 12
+after else
+before
+base then
+init a
+init b
+then 1 2
+after then
+init c
+leaf 1 2 3
+before
+base else-if
+init a
+init b
+else 1 12
+after else-if
+init c
+leaf 1 12 3
 after b1:yes
 after b2:no
 b1:yes b2:no

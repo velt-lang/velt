@@ -28,3 +28,6 @@ call `super(...)` once before the `if`, choosing its arguments with a conditiona
 super_placement.vlt:150:7: error: `super(...)` must be a statement of the constructor's body itself in this class, not one in each branch of an `if`
 no base class of `InitInBranches` has a constructor, so the initializer of the field `v` runs right after the call
 call `super(...)` once before the `if`, choosing its arguments with a conditional: `super(c ? a : b);`
+super_placement.vlt:166:19: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_placement.vlt:177:7: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_placement.vlt:188:23: error: 'super' must be called before accessing 'this' in the constructor of a derived class
