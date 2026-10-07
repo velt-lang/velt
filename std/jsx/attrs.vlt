@@ -2,11 +2,51 @@
 // (docs/internals/contracts/jsx.md "Extending `IntrinsicElements`"). `HtmlAttrs` holds the
 // global attributes; every other type is `HtmlAttrs & { … }` with the element's own.
 
-export type { LabelAttrs, MeterAttrs, OptgroupAttrs, OptionAttrs, OutputAttrs, ProgressAttrs, SelectAttrs, TextareaAttrs } from "velt:jsx/attrs/controls";
-export type { IframeAttrs, EmbedAttrs, ObjectAttrs, MapAttrs, SlotAttrs, TemplateAttrs } from "velt:jsx/attrs/embedded";
+export type {
+  LabelAttrs,
+  MeterAttrs,
+  OptgroupAttrs,
+  OptionAttrs,
+  OutputAttrs,
+  ProgressAttrs,
+  SelectAttrs,
+  TextareaAttrs,
+} from "velt:jsx/attrs/controls";
+export type {
+  IframeAttrs,
+  EmbedAttrs,
+  ObjectAttrs,
+  MapAttrs,
+  SlotAttrs,
+  TemplateAttrs,
+} from "velt:jsx/attrs/embedded";
 export type { ButtonAttrs, FieldsetAttrs, FormAttrs, InputAttrs } from "velt:jsx/attrs/forms";
 export type { HtmlAttrs } from "velt:jsx/attrs/global";
-export type { AnchorAttrs, AreaAttrs, BaseAttrs, LinkAttrs, MetaAttrs, ScriptAttrs, StyleAttrs } from "velt:jsx/attrs/links";
-export type { AudioAttrs, VideoAttrs, ImgAttrs, SourceAttrs, TrackAttrs, CanvasAttrs } from "velt:jsx/attrs/media";
+export type {
+  AnchorAttrs,
+  AreaAttrs,
+  BaseAttrs,
+  LinkAttrs,
+  MetaAttrs,
+  ScriptAttrs,
+  StyleAttrs,
+} from "velt:jsx/attrs/links";
+export type {
+  AudioAttrs,
+  VideoAttrs,
+  ImgAttrs,
+  SourceAttrs,
+  TrackAttrs,
+  CanvasAttrs,
+} from "velt:jsx/attrs/media";
 export type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
-export type { QuoteAttrs, EditAttrs, DataAttrs, TimeAttrs, LiAttrs, OlAttrs, DetailsAttrs, DialogAttrs } from "velt:jsx/attrs/text";
+export type {
+  QuoteAttrs,
+  EditAttrs,
+  DataAttrs,
+  TimeAttrs,
+  LiAttrs,
+  OlAttrs,
+  DetailsAttrs,
+  DialogAttrs,
+} from "velt:jsx/attrs/text";

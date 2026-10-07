@@ -23,11 +23,7 @@ export type ButtonAttrs = HtmlAttrs & {
 };
 
 // `<fieldset>`.
-export type FieldsetAttrs = HtmlAttrs & {
-  disabled?: bool;
-  form?: string;
-  name?: string;
-};
+export type FieldsetAttrs = HtmlAttrs & { disabled?: bool; form?: string; name?: string };
 
 // `<form>` (`accept-charset` is written as is: hyphenated names are not checked).
 export type FormAttrs = HtmlAttrs & {

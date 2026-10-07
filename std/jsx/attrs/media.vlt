@@ -70,7 +70,4 @@ export type TrackAttrs = HtmlAttrs & {
 };
 
 // `<canvas>`.
-export type CanvasAttrs = HtmlAttrs & {
-  width?: string | i64 | f64;
-  height?: string | i64 | f64;
-};
+export type CanvasAttrs = HtmlAttrs & { width?: string | i64 | f64; height?: string | i64 | f64 };

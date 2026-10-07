@@ -37,14 +37,10 @@ export type ObjectAttrs = HtmlAttrs & {
 };
 
 // `<map>`.
-export type MapAttrs = HtmlAttrs & {
-  name?: string;
-};
+export type MapAttrs = HtmlAttrs & { name?: string };
 
 // `<slot>`.
-export type SlotAttrs = HtmlAttrs & {
-  name?: string;
-};
+export type SlotAttrs = HtmlAttrs & { name?: string };
 
 // `<template>`.
 export type TemplateAttrs = HtmlAttrs & {

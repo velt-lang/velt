@@ -5,9 +5,7 @@
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
 // `<col>` and `<colgroup>`.
-export type ColAttrs = HtmlAttrs & {
-  span?: string | i64 | f64;
-};
+export type ColAttrs = HtmlAttrs & { span?: string | i64 | f64 };
 
 // `<td>`.
 export type TdAttrs = HtmlAttrs & {

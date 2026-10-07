@@ -30,10 +30,7 @@ export type AreaAttrs = HtmlAttrs & {
 };
 
 // `<base>`.
-export type BaseAttrs = HtmlAttrs & {
-  href?: string;
-  target?: string;
-};
+export type BaseAttrs = HtmlAttrs & { href?: string; target?: string };
 
 // `<link>`.
 export type LinkAttrs = HtmlAttrs & {
@@ -78,7 +75,4 @@ export type ScriptAttrs = HtmlAttrs & {
 };
 
 // `<style>`.
-export type StyleAttrs = HtmlAttrs & {
-  media?: string;
-  blocking?: string;
-};
+export type StyleAttrs = HtmlAttrs & { media?: string; blocking?: string };

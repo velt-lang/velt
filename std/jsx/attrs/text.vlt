@@ -5,46 +5,25 @@
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
 // `<blockquote>` and `<q>`.
-export type QuoteAttrs = HtmlAttrs & {
-  cite?: string;
-};
+export type QuoteAttrs = HtmlAttrs & { cite?: string };
 
 // `<del>` and `<ins>`.
-export type EditAttrs = HtmlAttrs & {
-  cite?: string;
-  datetime?: string;
-};
+export type EditAttrs = HtmlAttrs & { cite?: string; datetime?: string };
 
 // `<data>`.
-export type DataAttrs = HtmlAttrs & {
-  value?: string | i64 | f64;
-};
+export type DataAttrs = HtmlAttrs & { value?: string | i64 | f64 };
 
 // `<time>`.
-export type TimeAttrs = HtmlAttrs & {
-  datetime?: string;
-};
+export type TimeAttrs = HtmlAttrs & { datetime?: string };
 
 // `<li>`.
-export type LiAttrs = HtmlAttrs & {
-  value?: string | i64 | f64;
-};
+export type LiAttrs = HtmlAttrs & { value?: string | i64 | f64 };
 
 // `<ol>`.
-export type OlAttrs = HtmlAttrs & {
-  reversed?: bool;
-  start?: string | i64 | f64;
-  type?: string;
-};
+export type OlAttrs = HtmlAttrs & { reversed?: bool; start?: string | i64 | f64; type?: string };
 
 // `<details>`.
-export type DetailsAttrs = HtmlAttrs & {
-  open?: bool;
-  name?: string;
-};
+export type DetailsAttrs = HtmlAttrs & { open?: bool; name?: string };
 
 // `<dialog>`.
-export type DialogAttrs = HtmlAttrs & {
-  open?: bool;
-  closedby?: string;
-};
+export type DialogAttrs = HtmlAttrs & { open?: bool; closedby?: string };
