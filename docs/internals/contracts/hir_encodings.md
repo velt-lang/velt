@@ -30,6 +30,10 @@ Maintainer-owned, like hir.rs.
 - Function values (`TyKind::FnPtr`) are closures: `{ code: Ptr, env: Ptr }`; `env` is null for
   named functions. `ExprKind::Closure(def)` captures per `FnDef::captures`: Borrow/BorrowMut
   captures store pointers (non-escaping closures), Copy/Owned captures store values (escaping).
+  A non-escaping closure is a direct call argument, called immediately, or the initializer of a
+  `StmtKind::Let` whose local is used only as the callee of `Callee::Indirect` calls in the same
+  (non-async, non-generator) function (`const f = () => this.n; f()`): its env may live in the
+  frame, and a call through the local borrows the captured variables.
   An Owned capture with `Capture::share` stores a share (`Intrinsic::Share` semantics) and
   leaves the enclosing local initialized (a shared value still used after the closure is created;
   see "Sharing"). A capture whose local is `LocalDef::boxed` stores the cell pointer instead.

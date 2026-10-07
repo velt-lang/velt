@@ -210,6 +210,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    ownership::demote_local_closures(cx);
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
