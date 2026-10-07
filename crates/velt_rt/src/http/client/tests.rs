@@ -64,7 +64,7 @@ fn get(url: &str, headers: &[&str]) -> Outgoing {
     let flat: Vec<&[u8]> = headers.iter().map(|h| h.as_bytes()).collect();
     Outgoing {
         method: Method::GET,
-        url: send::parse_url(url).unwrap(),
+        url: target::Target::parse(url).unwrap(),
         headers: send::header_map(&flat, false).unwrap(),
         body: Bytes::new(),
     }
@@ -233,10 +233,10 @@ fn reason_phrase_and_bodies() {
 
 #[test]
 fn bad_urls_and_headers_fail_before_connecting() {
-    let e = send::parse_url("ftp://example.com/").err().unwrap();
+    let e = target::Target::parse("ftp://example.com/").err().unwrap();
     assert_eq!(e.code, code::UNSUPPORTED);
     assert_eq!(
-        send::parse_url("not a url").err().unwrap().code,
+        target::Target::parse("not a url").err().unwrap().code,
         code::INVALID_INPUT
     );
     let bad: [&[u8]; 2] = [b"bad name", b"v"];

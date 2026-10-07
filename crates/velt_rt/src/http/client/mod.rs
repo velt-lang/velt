@@ -14,6 +14,7 @@
 mod body;
 mod decode;
 mod send;
+mod target;
 #[cfg(test)]
 mod tests;
 
@@ -159,7 +160,7 @@ async fn run(
         len,
         status: parts.status.as_u16(),
         status_text,
-        url: r.url.into(),
+        url: r.url,
         redirected: r.redirected,
         headers: Mutex::new(parts.headers),
         body: Mutex::new(Some(reader)),
@@ -197,8 +198,8 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
     let outgoing = (|| {
         let method = Method::from_bytes((*method).as_bytes())
             .map_err(|_| send::invalid("invalid HTTP method"))?;
-        let url = send::parse_url(&(*url).text_lossy())?;
-        let headers = header_list(headers, url.scheme() == "https")?;
+        let url = target::Target::parse(&(*url).text_lossy())?;
+        let headers = header_list(headers, url.is_https())?;
         Ok(Outgoing {
             method,
             url,
