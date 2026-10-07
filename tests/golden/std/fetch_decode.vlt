@@ -15,6 +15,14 @@ async function client(base: string) {
     const res = await fetch(`${base}/${enc}`);
     console.log(enc, res.headers.get("content-encoding"), await res.text());
   }
+  // Several codings, undone last first.
+  const twice = await fetch(`${base}/twice`);
+  console.log(twice.headers.get("content-encoding"), await twice.text());
+  // No body to decode: a HEAD request, a 304.
+  const head = await fetch(`${base}/gzip`, { method: "HEAD" });
+  console.log("head", head.status, JSON.stringify(await head.text()), head.body == null);
+  const same = await fetch(`${base}/not-modified`);
+  console.log("not modified", same.status, JSON.stringify(await same.text()));
   // A leading byte order mark is not text.
   console.log(JSON.stringify(await (await fetch(`${base}/bom`)).text()));
   // What `fetch` asks for, unless the request names something.
@@ -95,11 +103,67 @@ function encoded(name: string): u8[] {
   return [203, 72, 205, 201, 201, 87, 40, 74, 44, 7, 0];
 }
 
+// "hello twice", deflated, then gzipped (Node's `zlib`).
+function twice(): u8[] {
+  return [
+    31,
+    139,
+    8,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    10,
+    171,
+    152,
+    115,
+    218,
+    227,
+    236,
+    201,
+    147,
+    225,
+    26,
+    154,
+    231,
+    125,
+    252,
+    88,
+    25,
+    36,
+    63,
+    176,
+    4,
+    2,
+    0,
+    53,
+    123,
+    115,
+    204,
+    19,
+    0,
+    0,
+    0,
+  ];
+}
+
 async function handle(req: ServerRequest): Promise<ServerResponse> {
   const p = req.path.slice(1);
   if (p == "gzip" || p == "br" || p == "deflate" || p == "raw") {
     const r = ServerResponse.bytes(encoded(p));
     r.setHeader("content-encoding", p == "raw" ? "deflate" : p);
+    return r;
+  }
+  if (p == "twice") {
+    const r = ServerResponse.bytes(twice());
+    r.setHeader("content-encoding", "deflate, gzip");
+    return r;
+  }
+  if (p == "not-modified") {
+    const r = ServerResponse.text("", 304);
+    r.setHeader("content-encoding", "gzip");
     return r;
   }
   if (p == "bom") {

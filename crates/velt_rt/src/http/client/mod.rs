@@ -126,7 +126,10 @@ async fn run(
     signal: Option<Arc<Signal>>,
 ) -> Result<FetchResp, VeltErr> {
     let client = send::client(&ca)?;
-    let r = abortable(signal.as_deref(), send::send(&client, o?, mode)).await?;
+    let o = o?;
+    // A redirect keeps HEAD a HEAD (and nothing becomes one).
+    let head = o.method == Method::HEAD || o.method == Method::CONNECT;
+    let r = abortable(signal.as_deref(), send::send(&client, o, mode)).await?;
     let (parts, body) = r.response.into_parts();
     let status_text = parts
         .extensions
@@ -139,14 +142,17 @@ async fn run(
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
-    let encoding = parts
-        .headers
-        .get(CONTENT_ENCODING)
+    // A response without a body has nothing to decode, whatever it says (undici too).
+    let bodiless = head || matches!(parts.status.as_u16(), 101 | 204 | 205 | 304);
+    let encoding = (!bodiless)
+        .then(|| parts.headers.get(CONTENT_ENCODING))
+        .flatten()
         .and_then(|v| v.to_str().ok());
     let reader = body::Reader {
         incoming: body,
         decoder: decode::Decoder::for_encoding(encoding),
         done: false,
+        rest: Bytes::new(),
     };
     Ok(FetchResp {
         len,

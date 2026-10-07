@@ -180,7 +180,17 @@ fn credentials_stay_on_their_origin() {
     rt().block_on(async {
         let (port, log) = server(redirects).await;
         let url = format!("http://127.0.0.1:{port}/other");
-        let o = get(&url, &["authorization", "Bearer t", "x-keep", "1"]);
+        let o = get(
+            &url,
+            &[
+                "authorization",
+                "Bearer t",
+                "x-keep",
+                "1",
+                "host",
+                "app.test",
+            ],
+        );
         let r = fetch(o, Redirect::Follow).await.unwrap();
         assert_eq!(r.url, format!("http://localhost:{port}/b"));
         let seen = log.lock().unwrap().clone();
@@ -190,6 +200,9 @@ fn credentials_stay_on_their_origin() {
             .iter()
             .any(|h| h.starts_with("authorization")));
         assert!(seen[1].headers.contains(&"x-keep: 1".into()));
+        // A `host` the request set is the first origin's: the next hop names its own.
+        assert!(seen[0].headers.contains(&"host: app.test".into()));
+        assert!(seen[1].headers.contains(&format!("host: localhost:{port}")));
     });
 }
 

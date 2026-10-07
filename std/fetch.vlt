@@ -72,5 +72,10 @@ export async function fetch(
   if (r.code != 0 && signal != null) {
     signal.throwIfAborted();
   }
-  return Response.adopt(unwrapIo(r), signal);
+  const res = Response.adopt(unwrapIo(r), signal);
+  if (req.method == "HEAD") {
+    // No body, whatever the headers say: `res.body` is null and `text()` is "".
+    res.source = 0;
+  }
+  return res;
 }

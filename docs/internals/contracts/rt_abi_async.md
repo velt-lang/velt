@@ -394,8 +394,11 @@ standard says (at most 20; 303, and 301/302 after a POST, become GET without a b
 are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
 received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
 signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
-with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br` is decoded frame by
-frame for every body read; one that does not decode fails with `INVALID_DATA`.
+with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
+five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
+per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
+with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
+fails with `INVALID_DATA`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -407,7 +410,7 @@ frame for every body read; one that does not decode fails with `INVALID_DATA`.
 | `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
 | `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
 | `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
-| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk, never empty; `[]` once the body is complete (or taken by another read) |
+| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
 | `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
 
 ## 8. Process

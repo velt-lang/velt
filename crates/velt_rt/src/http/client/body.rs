@@ -2,7 +2,7 @@
 //! from `content-length` up front so a large download is copied once, never re-grown; or chunk
 //! by chunk (`res.body`), each frame decoded as it arrives (`decode.rs`).
 
-use super::decode::Decoder;
+use super::decode::{Decoder, Pull, CHUNK};
 use super::send::body_failed;
 use crate::result::VeltErr;
 use bytes::Bytes;
@@ -42,6 +42,8 @@ pub(super) struct Reader {
     pub decoder: Decoder,
     /// The decoder has been finished: the body is complete.
     pub done: bool,
+    /// What is left of a frame larger than a chunk.
+    pub rest: Bytes,
 }
 
 impl Reader {
@@ -55,18 +57,34 @@ impl Reader {
         Ok(None)
     }
 
-    /// The next decoded chunk, never empty; `None` once the body is complete.
+    /// The next chunk, never empty (a decoded one at most [`CHUNK`] bytes); `None` once
+    /// the body is complete.
     pub async fn next(&mut self) -> Result<Option<Vec<u8>>, VeltErr> {
-        while !self.done {
-            let out = match self.frame().await? {
-                Some(data) => self.decoder.push(&data)?,
-                None => {
-                    self.done = true;
-                    self.decoder.finish()?
+        if self.decoder.is_identity() {
+            while !self.done || !self.rest.is_empty() {
+                if !self.rest.is_empty() {
+                    let n = self.rest.len().min(CHUNK);
+                    return Ok(Some(self.rest.split_to(n).to_vec()));
                 }
-            };
-            if !out.is_empty() {
-                return Ok(Some(out));
+                match self.frame().await? {
+                    Some(data) if data.len() > CHUNK => self.rest = data,
+                    Some(data) if !data.is_empty() => return Ok(Some(Vec::from(data))),
+                    Some(_) => {}
+                    None => self.done = true,
+                }
+            }
+            return Ok(None);
+        }
+        while !self.done {
+            match self.decoder.pull()? {
+                Pull::Data(chunk) => return Ok(Some(chunk)),
+                Pull::End => self.done = true,
+                // Empty frames are skipped: `deflate` decides its format on the first byte.
+                Pull::NeedInput => match self.frame().await? {
+                    Some(data) if !data.is_empty() => self.decoder.push(data),
+                    Some(_) => {}
+                    None => self.decoder.end_input(),
+                },
             }
         }
         Ok(None)
@@ -81,7 +99,8 @@ impl Reader {
             }
             return Ok(Whole::Gathered(buf));
         }
-        let mut first: Option<Bytes> = None;
+        let rest = std::mem::take(&mut self.rest);
+        let mut first: Option<Bytes> = (!rest.is_empty()).then_some(rest);
         let mut buf: Vec<u8> = Vec::new();
         while let Some(data) = self.frame().await? {
             if data.is_empty() {
