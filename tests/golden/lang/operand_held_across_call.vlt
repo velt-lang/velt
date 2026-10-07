@@ -55,6 +55,22 @@ async function laterS(): Promise<string> {
   return "?";
 }
 
+type V = { n: number };
+
+extend V {
+  bump(k: number): void {
+    this.n += k;
+  }
+}
+
+function bumpV(v: V, k: number): void {
+  v.n += k;
+}
+
+async function bumpLater(v: V, k: number): Promise<void> {
+  v.n += k;
+}
+
 function callIt(f: () => string, n: number): string {
   return `${f()}${n}`;
 }
@@ -134,6 +150,33 @@ async function main() {
     return 1;
   };
   console.log(callIt(fs[0], replaceF()), fs[0]());
+
+  // An argument the callee modifies, followed by one that grows or replaces its array: the
+  // callee modifies the element the argument read, as in JS.
+  const vs: V[] = [{ n: 1 }];
+  const growV = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      vs.push({ n: i });
+    }
+    vs[0] = { n: 100 };
+    return 5;
+  };
+  const v0 = vs[0];
+  vs[0].bump(growV());
+  bumpV(vs[0], growV());
+  await bumpLater(vs[0], growV());
+  console.log(v0.n, vs[0].n, vs.length);
+  const aa2: number[][] = [[1, 2]];
+  const growAA = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      aa2.push([i]);
+    }
+    aa2[0] = [100, 101];
+    return 5;
+  };
+  const a0 = aa2[0];
+  aa2[0].push(growAA());
+  console.log(a0, aa2[0], aa2.length);
 
   const xs: number[] = [3];
   const p = later();
