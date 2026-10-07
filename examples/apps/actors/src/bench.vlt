@@ -198,3 +198,54 @@ export async function runBenchmarks(host: Host, ms: f64, only: string) {
   const s = await host.stats();
   console.log(`turns ${s.turns}, activations ${s.activations}, deactivations ${s.deactivations}`);
 }
+
+// `actors calls`: a fixed amount of work for CPU-time and instruction-count comparisons, which
+// a loaded machine distorts far less than throughput. `c` callers make `n` calls in all to
+// `Tiny.noop`, on one warm key ("warm") or round robin over 1000 warm keys ("fan").
+export async function fixedCalls(host: Host, scenario: string, c: i64, n: i64) {
+  const keys: string[] = [];
+  if (scenario == "fan") {
+    for (let i = 0; i < 1000; i++) {
+      keys.push(`k${i}`);
+    }
+  } else {
+    keys.push("warm");
+  }
+  const args: Value[] = [];
+  for (const k of keys) {
+    args.push(JsonValue.from([k]));
+    const r = await host.router.send("Tiny", k, "noop", JsonValue.from([k]), [], 0.0);
+    if (r.status != 200) {
+      panic(r.body);
+    }
+  }
+  const t0 = performance.now();
+  const tasks: Promise<i64>[] = [];
+  const per = Math.trunc(n / c);
+  for (let w = 0; w < c; w++) {
+    tasks.push(spawn(fixedCaller(host.router, keys, args, w as usize, per)));
+  }
+  let done: i64 = 0;
+  for (const d of await Promise.all(tasks)) {
+    done += d;
+  }
+  const ms = performance.now() - t0;
+  console.log(`velt ${scenario} c=${c} calls=${done} ${ms.toFixed(0)} ms`);
+}
+
+async function fixedCaller(
+  router: Router,
+  keys: string[],
+  args: Value[],
+  offset: usize,
+  calls: i64,
+): Promise<i64> {
+  for (let i: i64 = 0; i < calls; i++) {
+    const k = (offset + (i as usize)) % keys.length;
+    const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
+    if (r.status != 200) {
+      panic(r.body);
+    }
+  }
+  return calls;
+}

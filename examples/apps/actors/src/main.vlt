@@ -1,6 +1,8 @@
 // actors: a virtual-actor runtime in Velt, after @sigx/actors (see README.md).
 //   actors serve [--port 5199] [--shards N]     the wire endpoint
 //   actors bench [--duration 2000] [--shards N] in-process benchmarks
+//   actors calls [--scenario warm|fan] [--c 64] [--n 100000] [--shards N]
+//                                               a fixed number of calls, for CPU-time comparisons
 import { args } from "velt:process";
 import { availableParallelism } from "velt:os";
 import {
@@ -13,7 +15,7 @@ import {
 } from "./runtime";
 import { actorTypes } from "./app";
 import { serveActors } from "./wire";
-import { runBenchmarks } from "./bench";
+import { fixedCalls, runBenchmarks } from "./bench";
 
 struct AppConfig implements HostConfig {
   types(): Map<string, ActorType> {
@@ -52,5 +54,12 @@ async function main() {
     await host.stop();
     return;
   }
-  console.log(`unknown command ${command}: serve | bench`);
+  if (command == "calls") {
+    const c = parseInt(flag(argv, "c", "64")) as i64;
+    const n = parseInt(flag(argv, "n", "100000")) as i64;
+    await fixedCalls(host, flag(argv, "scenario", "warm"), c, n);
+    await host.stop();
+    return;
+  }
+  console.log(`unknown command ${command}: serve | bench | calls`);
 }
