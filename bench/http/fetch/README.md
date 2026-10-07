@@ -32,12 +32,15 @@ shared Windows machine. Wall-clock times on that machine vary by ±30% between r
 are not shown. The Velt clients come from five compilers: `main` before the global `fetch`
 (080387d, calling `fetch` from `velt:http`), the global `fetch` (#577, a0b9bd5), the base of
 #594 (d52bf62, #577 plus #557), the decoding of #594 (891150d) and this benchmark's pull
-request (#600). Node is not counted: V8's JIT under cachegrind says little about its speed.
+request (#600). `seq` and `conc` were counted again after both were merged with `main`: those
+two rows show `main` at 4b459dc as #594's base, #594 at 683cdbe (which sizes the request's
+header map for its three default headers) and #600 on top of it. Node is not counted: V8's JIT
+under cachegrind says little about its speed.
 
 | Scenario | `main` | #577 | #594's base | #594 | #600 | reqwest 0.12 |
 |---|---|---|---|---|---|---|
-| `seq` | 341.0 | 463.8 | 463.8 | 482.9 | 482.7 | 666.8 |
-| `conc` | 3,110 | 4,350 | 4,351 | 4,541 | 4,540 | 5,955 |
+| `seq` | 341.0 | 463.8 | 463.5 | 477.9 | 477.2 | 666.8 |
+| `conc` | 3,110 | 4,350 | 4,347 | 4,493 | 4,482 | 5,955 |
 | `big` | 121.7 | 107.7 | 107.6 | 107.7 | 107.8 | 107.9 |
 | `json` | 673.4 | 805.4 | 805.5 | 805.4 | 805.7 | 787.4 |
 | `gzip` | – | – | – | 1,055.4 | 1,055.4 | 984.0 |
@@ -47,10 +50,11 @@ request (#600). Node is not counted: V8's JIT under cachegrind says little about
   (`Request`, a `Headers` copy; about 1,000), makes Velt strings of the header values and the
   URL (lossy UTF-8 decoding and UTF-16 lengths: about 1,700), adds `accept` and `user-agent`,
   and copies the status, URL and headers when the head arrives. #601 tracks this.
-- `seq` and `conc` (#594: +4.1% and +4.4%, about 1,960 instructions per request): sending
-  `accept-encoding` (the header map grows past its initial capacity for it: about 800 with the
-  allocations), deciding how to decode the response (`content-encoding`, HEAD and bodiless
-  statuses), and the `Reader` that yields chunks (about 150 more than the plain read).
+- `seq` and `conc` (#594: +3.1% and +3.3%, about 1,450 instructions per request): sending
+  `accept-encoding`, deciding how to decode the response (`content-encoding`, HEAD and bodiless
+  statuses), and the `Reader` that yields chunks (about 150 more than the plain read). The
+  request's header map has room for `accept`, `user-agent` and `accept-encoding`; at 891150d it
+  grew for the third, and the request cost about 1,910.
 - `big` (#577: −11.5%): the body is received into one buffer sized from `content-length` and
   copied once, where `main` copied it twice (peak memory on Windows: 318 MB before, 110 MB after).
 - `json` (#577: +20%, 6.6 million per 1 MB response): `text()` decodes with
@@ -60,5 +64,5 @@ request (#600). Node is not counted: V8's JIT under cachegrind says little about
 - `gzip`: before #594 the body was not decoded, so the JSON did not parse. Decoding the 1 MB
   takes about 12.5 million instructions in Velt and 9.8 million in reqwest (both through
   `flate2`).
-- #600 against #594: within 0.05% everywhere. Its header move (`send.rs`) applies only to
-  requests that don't follow redirects, and these do.
+- #600 against #594: `seq` −0.15% and `conc` −0.24%, the others within 0.1%. Its header move
+  (`send.rs`) applies only to requests that don't follow redirects, and these do.
