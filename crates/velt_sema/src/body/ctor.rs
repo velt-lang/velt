@@ -2,8 +2,11 @@
 //! when no base class has a constructor. Statements that use neither `this` nor `super` may come
 //! before it (`stmt` and `expr/supers` check its placement), also when the class has
 //! initialized fields or parameter properties: those are set right after `super(...)` returns,
-//! as in JavaScript (TypeScript 4.6+). Every own field without a default is assigned on every
-//! path.
+//! as in JavaScript (TypeScript 4.6+). It must run exactly once on every path: a statement of
+//! the body itself, or one in each branch of an `if` / `else` (nested `if`s too), as TypeScript
+//! accepts it, unless the class has parameter properties or no ancestor has a constructor and
+//! some field has an initializer (those are set right after a root-level call). Every own field
+//! without a default is assigned on every path.
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
@@ -19,9 +22,65 @@ impl FnCx<'_, '_> {
         if f.owner.is_none() || self.this_base().is_none() {
             return;
         }
-        // Until `super(...)`. Without a root-level call, the missing call is reported (not every
-        // use of `this`).
-        self.f.before_super = decl.body.stmts.iter().any(is_super_call);
+        // Until `super(...)`. Without a call on every path, the missing call is reported (not
+        // every use of `this`).
+        let stmts = &decl.body.stmts;
+        self.f.before_super = stmts.iter().any(super_on_every_path);
+        let mut nested = vec![];
+        for st in stmts {
+            if is_super_call(st) {
+                self.f.super_sites.push(st.span);
+            } else if super_on_every_path(st) {
+                super_sites(st, &mut nested);
+            }
+        }
+        if nested.is_empty() {
+            return;
+        }
+        match self.branch_super_blocker(f, decl) {
+            None => self.f.super_sites.extend(nested),
+            Some(why) => {
+                self.cx.error(
+                    Diagnostic::error(
+                        "`super(...)` must be a statement of the constructor's body itself in this class, not one in each branch of an `if`",
+                        nested[0],
+                    )
+                    .with_note(why)
+                    .with_note("call `super(...)` once before the `if`, choosing its arguments with a conditional: `super(c ? a : b);`"),
+                );
+                self.f.super_silent.extend(nested);
+                // Reported once: not every use of `this` (a parameter property's store) too.
+                self.f.before_super = false;
+            }
+        }
+    }
+
+    /// Why `super(...)` cannot be called in branches in constructor `f`'s class, if it cannot.
+    /// After a call of a base class's constructor, wherever it is, this class's initializers
+    /// run (lowering's `ctor_init`); parameter properties and, when no ancestor has a
+    /// constructor, the initializers are placed after a root-level call.
+    fn branch_super_blocker(&mut self, f: &FnInfo, decl: &ast::FnDecl) -> Option<String> {
+        let a = self.cx.adt(f.owner?)?;
+        let own = &a.fields[a.own_fields_start..];
+        let class = a.name.clone();
+        let mut props = decl.sig.params.iter();
+        if let Some(p) = props.find(|p| own.iter().any(|fl| fl.span == p.name.span)) {
+            return Some(format!(
+                "`{}` is a parameter property of `{class}`, assigned right after the call",
+                p.name.name
+            ));
+        }
+        let initialized = a
+            .fields
+            .iter()
+            .find(|fl| fl.has_default)
+            .map(|fl| fl.name.clone());
+        match (self.base_ctor(f), initialized) {
+            (None, Some(name)) => Some(format!(
+                "no base class of `{class}` has a constructor, so the initializer of the field `{name}` runs right after the call"
+            )),
+            _ => None,
+        }
     }
 
     /// The constructor of the base class of constructor `f`'s class, if any.
@@ -107,6 +166,47 @@ impl FnCx<'_, '_> {
             ))
             .with_note(fix),
         );
+    }
+}
+
+/// Does `s` call `super(...)` exactly once on every path: the call itself, an `if` / `else`
+/// each of whose branches does, or a block with one such statement?
+fn super_on_every_path(s: &ast::Stmt) -> bool {
+    match &s.kind {
+        _ if is_super_call(s) => true,
+        ast::StmtKind::If {
+            then,
+            els: Some(els),
+            ..
+        } => once_in(&then.stmts) && super_on_every_path(els),
+        ast::StmtKind::Block(b) => once_in(&b.stmts),
+        _ => false,
+    }
+}
+
+fn once_in(stmts: &[ast::Stmt]) -> bool {
+    stmts.iter().filter(|s| super_on_every_path(s)).count() == 1
+}
+
+/// The `super(...);` statements of `s` (which calls it on every path), appended to `out`.
+fn super_sites(s: &ast::Stmt, out: &mut Vec<velt_common::Span>) {
+    let branches: Vec<&[ast::Stmt]> = match &s.kind {
+        _ if is_super_call(s) => return out.push(s.span),
+        ast::StmtKind::If {
+            then,
+            els: Some(els),
+            ..
+        } => {
+            super_sites(els, out);
+            vec![&then.stmts]
+        }
+        ast::StmtKind::Block(b) => vec![&b.stmts],
+        _ => return,
+    };
+    for st in branches.into_iter().flatten() {
+        if super_on_every_path(st) {
+            super_sites(st, out);
+        }
     }
 }
 

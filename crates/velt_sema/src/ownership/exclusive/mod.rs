@@ -22,9 +22,12 @@
 
 mod iteration;
 mod let_borrow;
+mod this_alias;
 mod uses;
 
-use velt_common::Diagnostic;
+use std::collections::HashMap;
+
+use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
@@ -60,10 +63,12 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             .map(|l| cx.is_shared_value(l.ty))
             .collect();
         let aliases = aliasing_params(cx, d, &f);
+        let held = crate::ownership::held_closures(cx, &f.body.block);
         let col = Collector {
             cx,
             locals: &f.body.locals,
             aliases: &aliases,
+            held: &held,
         };
         let_borrow::check_body(
             &col,
@@ -77,6 +82,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             cx,
             locals: &f.body.locals,
             aliases,
+            held: &held,
             errors: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
@@ -111,6 +117,8 @@ struct Checker<'a, 'm> {
     cx: &'a Ctx<'m>,
     locals: &'a [LocalDef],
     aliases: Aliases,
+    /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
+    held: &'a HashMap<LocalId, DefId>,
     errors: Vec<Diagnostic>,
 }
 
@@ -123,6 +131,7 @@ impl Checker<'_, '_> {
             cx: self.cx,
             locals: self.locals,
             aliases: &self.aliases,
+            held: self.held,
         }
     }
 
@@ -142,12 +151,19 @@ impl Checker<'_, '_> {
         }
     }
 
-    fn check_call(&mut self, args: &mut [Expr], mutex_with: bool) {
-        if args.len() < 2 {
-            return;
-        }
+    /// `held`: the call runs a non-escaping closure held in a local, whose borrowed captures
+    /// are passed along with the arguments (the first entry of the uses).
+    fn check_call(&mut self, args: &mut [Expr], mutex_with: bool, held: Option<(DefId, Span)>) {
         let col = self.collector();
         let mut uses: ArgUses = vec![];
+        if let Some((c, span)) = held {
+            let mut caps = vec![];
+            col.captures(c, span, false, &mut caps);
+            uses.push((caps, vec![]));
+        }
+        if args.len() + uses.len() < 2 {
+            return;
+        }
         for a in args.iter_mut() {
             let (mut direct, mut nested) = (vec![], vec![]);
             col.direct(a, &mut direct, &mut nested);
@@ -159,7 +175,8 @@ impl Checker<'_, '_> {
         // and one that may change or move the handle still conflicts with the borrow (#459).
         let behind_shared = matches!(self.cx.ty.kind(args[0].ty), TyKind::Shared(_));
         if mutex_with && !behind_shared {
-            for u in &mut uses[0].0 {
+            let first = usize::from(held.is_some());
+            for u in &mut uses[first].0 {
                 u.access = Access::Unique;
             }
         }
@@ -286,9 +303,10 @@ impl VisitMut for Checker<'_, '_> {
             }
             E::Call { callee, args } => {
                 let mutex_with = matches!(callee, Callee::Intrinsic(Intrinsic::MutexWith));
-                self.check_call(args, mutex_with);
+                let held = self.collector().held_call(callee).map(|c| (c, e.span));
+                self.check_call(args, mutex_with, held);
             }
-            E::New { args, .. } => self.check_call(args, false),
+            E::New { args, .. } => self.check_call(args, false, None),
             _ => {}
         }
     }

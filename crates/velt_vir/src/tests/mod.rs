@@ -9,6 +9,7 @@ mod builder_prelude;
 mod control;
 mod drops;
 mod for_of_consume;
+mod frame_envs;
 mod goldens;
 mod hybrid;
 mod interp;

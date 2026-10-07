@@ -1,0 +1,196 @@
+maybe="x" flag=true
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t-->x<!--t-->b</p>
+  <p>x<!--t-->x</p>
+  <p>ada<!--t-->x<!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="x">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p>x<!--t--> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!--t-->x<!--t-->ada</p>
+  <p>ada</p>
+  <p>a<!--t-->ada<!--t-->b</p>
+  <p>ada</p>
+  <p>ada<!--t-->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+maybe="x" flag=false
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t-->x<!--t-->b</p>
+  <p>x<!--t-->x</p>
+  <p>ada<!--t-->x<!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="x">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p>x<!--t--> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!--t-->x<!--t-->ada</p>
+  <p><!----></p>
+  <p>a<!---->b</p>
+  <p><!----></p>
+  <p><!---->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+maybe="" flag=true
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p><!--t--></p>
+  <p>ada<!--t--><!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!--t--> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada</p>
+  <p>a<!--t-->ada<!--t-->b</p>
+  <p>ada</p>
+  <p>ada<!--t-->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+maybe="" flag=false
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p><!--t--></p>
+  <p>ada<!--t--><!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!--t--> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p><!----></p>
+  <p>a<!---->b</p>
+  <p><!----></p>
+  <p><!---->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+maybe=null flag=true
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!---->b</p>
+  <p><!----><!----></p>
+  <p>ada<!---->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span>3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!----> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!---->ada</p>
+  <p>ada</p>
+  <p>a<!--t-->ada<!--t-->b</p>
+  <p>ada</p>
+  <p>ada<!--t-->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+maybe=null flag=false
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!---->b</p>
+  <p><!----><!----></p>
+  <p>ada<!---->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span>3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!----> and <!----></p>
+  <p><!--t-->ada</p>
+  <p>a<!--t--><!--t-->ada</p>
+  <p>ada<!--t--></p>
+  <p>ada<!--t--><!--t-->ada</p>
+  <p>ada<!---->ada</p>
+  <p><!----></p>
+  <p>a<!---->b</p>
+  <p><!----></p>
+  <p><!---->3</p>
+  <p>a<span>x</span><span>y</span>c</p>
+templates:
+  ["<p>Count: <!--t-->3</p>"]
+  ["<p>ada<!--t-->3</p>"]
+  ["<p>3<!--t--> items</p>"]
+  ["<p>a<!--t-->x<!--t-->b</p>"]
+  ["<p>x<!--t-->x</p>"]
+  ["<p>ada<!--t-->x<!--t-->3</p>"]
+  ["<p><!---->3</p>"]
+  ["<p>","","</p>"]
+  ["<p>a<!--t--><!--t-->b</p>"]
+  ["<p>","","</p>"]
+  ["<p>Hi ","</p>"]
+  ["<p>","!</p>"]
+  ["<p>","","</p>"]
+  ["<p>ada<span title=\"x\">3</span>ada</p>"]
+  ["<p>ada<!--t-->3</p>"]
+  ["<ul><li>ada</li><li>3</li></ul>"]
+  (no template)
+  ["<p>","","</p>"]
+  ["<p>a","","</p>"]
+  ["<p>","","</p>"]
+  ["<p>","","","</p>"]
+  ["<p>","","","</p>"]
+  ["<p>","</p>"]
+  ["<p>a","b</p>"]
+  ["<p>","</p>"]
+  ["<p>","3</p>"]
+  ["<p>a","c</p>"]

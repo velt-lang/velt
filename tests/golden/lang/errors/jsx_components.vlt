@@ -25,4 +25,11 @@ function main() {
   const notComponent = <Count n={1} />;
   const unknownComponent = <Missing />;
   const twice = <Badge tone="a" tone="b" />;
+  const generic = <List<number> label={null} />;
+  const inferred = <List items={[1]} label={null} extra={1} />;
+}
+
+// A generic component's props are shown with the type arguments as written.
+function List<T>(props: { items: T[]; label: string | null }): JSX.Element {
+  return <ul>{props.label}</ul>;
 }

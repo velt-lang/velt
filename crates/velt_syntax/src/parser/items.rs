@@ -330,6 +330,12 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         self.reject_mut_modifier();
         let rest = self.eat(Tok::DotDotDot);
+        if self.at(Tok::PrivateName) {
+            let span = self.cur_span();
+            self.error("private names cannot be parameters", span);
+            self.bump();
+            return Err(Fail);
+        }
         let name = self.parse_binding_ident()?;
         let optional = self.eat(Tok::Question);
         if !self.eat(Tok::Colon) {

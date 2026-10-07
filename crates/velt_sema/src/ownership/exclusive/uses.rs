@@ -52,7 +52,7 @@ pub(super) enum Access {
     Move,
 }
 
-fn access_of(m: UseMode) -> Option<Access> {
+pub(super) fn access_of(m: UseMode) -> Option<Access> {
     match m {
         UseMode::Copy => None,
         UseMode::Borrow => Some(Access::Shared),
@@ -81,6 +81,9 @@ pub(super) struct Collector<'a, 'm> {
     pub cx: &'a Ctx<'m>,
     pub locals: &'a [LocalDef],
     pub aliases: &'a Aliases,
+    /// Non-escaping closures held in a local (`crate::ownership::held_closures`): a call
+    /// through one uses the variables it borrows, as a closure argument would.
+    pub held: &'a HashMap<LocalId, DefId>,
 }
 
 impl Collector<'_, '_> {
@@ -201,9 +204,20 @@ impl Collector<'_, '_> {
         }
     }
 
+    /// The closure a call with `callee` runs, when it is a non-escaping one held in a local.
+    pub fn held_call(&self, callee: &crate::hir::Callee) -> Option<DefId> {
+        match callee {
+            crate::hir::Callee::Indirect(c) => match c.kind {
+                E::Local(l, _) => self.held.get(&l).copied(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The variables closure `def` captures, as uses at `span` (only the mutating / moving
     /// captures when `mutating_only`).
-    fn captures(&self, def: DefId, span: Span, mutating_only: bool, out: &mut Vec<Use>) {
+    pub fn captures(&self, def: DefId, span: Span, mutating_only: bool, out: &mut Vec<Use>) {
         let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] else {
             return;
         };
@@ -271,6 +285,11 @@ impl VisitMut for Nested<'_, '_, '_> {
                 }
             }
             E::Closure(def) => self.col.captures(*def, e.span, true, self.out),
+            E::Call { callee, .. } if self.col.held_call(callee).is_some() => {
+                if let Some(c) = self.col.held_call(callee) {
+                    self.col.captures(c, e.span, true, self.out);
+                }
+            }
             _ => {
                 if let Some((p, mode)) = self.col.place_of(e) {
                     if matches!(mode, UseMode::BorrowMut | UseMode::Move) {

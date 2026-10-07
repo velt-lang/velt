@@ -11,7 +11,7 @@
 use velt_syntax::ast;
 
 use super::FnCx;
-use crate::hir::{LocalId, TyId};
+use crate::hir::{DefId, LocalId, TyId};
 
 /// What a condition establishes about a local.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +77,15 @@ impl FnCx<'_, '_> {
                 }
             }
             ast::ExprKind::InstanceOf { expr, ty } => self.instanceof_facts(expr, ty),
+            // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
+            ast::ExprKind::Binary {
+                op: B::In,
+                lhs,
+                rhs,
+            } => match self.brand_class(lhs, false) {
+                Some(class) => self.class_facts(rhs, class),
+                None => (vec![], vec![]),
+            },
             // `if (r.done)` on a union discriminated by a `bool` literal field.
             ast::ExprKind::Member {
                 optional: false, ..
@@ -240,10 +249,15 @@ impl FnCx<'_, '_> {
     }
 
     fn instanceof_facts(&mut self, e: &ast::Expr, ty: &ast::TypeExpr) -> (Vec<Fact>, Vec<Fact>) {
+        match self.instanceof_class_quiet(ty) {
+            Some(class) => self.class_facts(e, class),
+            None => (vec![], vec![]),
+        }
+    }
+
+    /// Facts for `e instanceof class`.
+    fn class_facts(&mut self, e: &ast::Expr, class: DefId) -> (Vec<Fact>, Vec<Fact>) {
         use super::expr::downcast::Instance;
-        let Some(class) = self.instanceof_class_quiet(ty) else {
-            return (vec![], vec![]);
-        };
         let found = match self.local_with_members(e) {
             Some(x) => Some(x),
             None => self

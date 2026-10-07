@@ -85,48 +85,48 @@ export struct ServeOptions {
 // handler, an async closure value, used to copy its class arguments, which ruled that out; it
 // passes the same object since #196.)
 export class Request {
-  private raw: u64 = 0;
+  #raw: u64 = 0;
 
   // The request behind runtime key `raw` (only std builds requests; `new Request()` is none).
   private static adopt(raw: u64): Request {
     const r = new Request();
-    r.raw = raw;
+    r.#raw = raw;
     return r;
   }
 
   get method(): string {
-    return velt_rt_http_req_method(this.raw);
+    return velt_rt_http_req_method(this.#raw);
   }
 
   // Without the query string.
   get path(): string {
-    return velt_rt_http_req_path(this.raw);
+    return velt_rt_http_req_path(this.#raw);
   }
 
   // Without the leading `?`.
   get query(): string {
-    return velt_rt_http_req_query(this.raw);
+    return velt_rt_http_req_query(this.#raw);
   }
 
   get body(): string {
-    return velt_rt_http_req_body(this.raw);
+    return velt_rt_http_req_body(this.#raw);
   }
 
   // Every header, copied into the global `Headers`; `header(name)` looks up one without copying
   // the rest.
   get headers(): Headers {
-    return Headers.adopt(velt_rt_http_req_headers(this.raw));
+    return Headers.adopt(velt_rt_http_req_headers(this.#raw));
   }
 
   // Runtime key of a requested protocol upgrade (0 = none); consumed by std/websocket.
   get upgrade(): u64 {
-    return velt_rt_http_req_upgrade(this.raw);
+    return velt_rt_http_req_upgrade(this.#raw);
   }
 
   // The first value of header `name` (case-insensitive), or null.
   header(name: string): string | null {
     let out = "";
-    if (velt_rt_http_req_header(this.raw, name, out)) {
+    if (velt_rt_http_req_header(this.#raw, name, out)) {
       return out;
     }
     return null;
@@ -138,12 +138,12 @@ export class Request {
 // The handle is private: user code can't build a response from a number, and `new Response()` is
 // an empty one (a handler that returns it answers 500).
 export class Response {
-  private raw: u64 = 0;
+  #raw: u64 = 0;
 
   // The response behind runtime key `raw` (std only).
   private static adopt(raw: u64): Response {
     const r = new Response();
-    r.raw = raw;
+    r.#raw = raw;
     return r;
   }
 
@@ -195,27 +195,27 @@ export class Response {
 
   // Appends a header; false if the name or value is not valid in HTTP.
   header(name: string, value: string): bool {
-    return velt_rt_http_resp_header(this.raw, name, value);
+    return velt_rt_http_resp_header(this.#raw, name, value);
   }
 
   // Sets a header, replacing earlier values (such as the default `content-type`); false if the
   // name or value is not valid in HTTP.
   setHeader(name: string, value: string): bool {
-    return velt_rt_http_resp_set_header(this.raw, name, value);
+    return velt_rt_http_resp_set_header(this.#raw, name, value);
   }
 
   // Gives up the runtime response (the handler adapter returns it to the runtime).
   private intoRaw(): u64 {
-    const r = this.raw;
-    this.raw = 0;
+    const r = this.#raw;
+    this.#raw = 0;
     return r;
   }
 
   // Drop hook: frees a response that was not returned from a handler.
   [Symbol.dispose]() {
-    if (this.raw != 0) {
-      velt_rt_http_resp_drop(this.raw);
-      this.raw = 0;
+    if (this.#raw != 0) {
+      velt_rt_http_resp_drop(this.#raw);
+      this.#raw = 0;
     }
   }
 }
@@ -224,31 +224,31 @@ export class Response {
 export class Server {
   // The real port (useful after `port: 0`).
   port: i64 = 0;
-  private handle: u64 = 0;
+  #handle: u64 = 0;
 
   // The server behind runtime key `handle` (std only).
   private static adopt(handle: u64): Server {
     const s = new Server();
     s.port = velt_rt_http_server_port(handle) as i64;
-    s.handle = handle;
+    s.#handle = handle;
     return s;
   }
 
   // Stops accepting, lets in-flight requests finish, closes idle connections. Idempotent. The
   // handler (and whatever it captured) is dropped once the last request finished.
   close() {
-    if (this.handle != 0) {
-      velt_rt_http_server_close(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_server_close(this.#handle);
+      this.#handle = 0;
     }
   }
 
   // `close()`, then waits until every in-flight request has finished and the handler (with
   // everything it captured) was dropped. Consumes the server (an async method takes `this`).
   async shutdown() {
-    if (this.handle != 0) {
-      const handle = this.handle;
-      this.handle = 0;
+    if (this.#handle != 0) {
+      const handle = this.#handle;
+      this.#handle = 0;
       await velt_rt_http_server_shutdown(handle);
     }
   }
@@ -256,9 +256,9 @@ export class Server {
   // Drop hook: releasing the handle does NOT stop the server (like Node: it keeps serving, and
   // keeps the process alive, until `close()` or process exit).
   [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_http_server_detach(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_server_detach(this.#handle);
+      this.#handle = 0;
     }
   }
 }

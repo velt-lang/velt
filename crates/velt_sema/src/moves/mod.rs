@@ -33,6 +33,9 @@ struct Moves<'a> {
     captures: &'a HashMap<DefId, Vec<Capture>>,
     /// Closures that are stored or returned (they capture by value).
     escaping: &'a HashSet<DefId>,
+    /// Non-escaping closures held in a local, by local (`crate::ownership::held_closures`):
+    /// each call through the local uses what the closure borrows.
+    held: HashMap<LocalId, DefId>,
     /// The local a `let` being checked binds (the holder of a closure literal initializer).
     holder: Option<LocalId>,
     /// The `let` locals of each block being checked (innermost last).
@@ -131,6 +134,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             using,
             captures: &captures,
             escaping: &escaping,
+            held: crate::ownership::held_closures(cx, &f.body.block),
             in_step: false,
             holder: None,
             open: vec![],

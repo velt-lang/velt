@@ -215,7 +215,11 @@ impl<'a> Parser<'a> {
     /// Binary operators with precedence >= `min_prec`.
     fn parse_binary(&mut self, min_prec: u8) -> PResult<Expr> {
         let lo = self.cur_lo();
-        let mut lhs = self.parse_unary()?;
+        let mut lhs = if self.at(Tok::PrivateName) && self.nth(1) == Tok::Kw(Kw::In) {
+            self.parse_private_in(lo)?
+        } else {
+            self.parse_unary()?
+        };
         while let Some((op, prec, ntoks)) = self.peek_binop() {
             if prec < min_prec {
                 break;
@@ -246,6 +250,23 @@ impl<'a> Parser<'a> {
             lhs = self.mk_expr(kind, span);
         }
         Ok(lhs)
+    }
+
+    /// `#x in o`: an ES brand check (`in` is a binary operator only after a private name). It
+    /// is a relational operand, so the operators that follow apply to it as usual.
+    fn parse_private_in(&mut self, lo: u32) -> PResult<Expr> {
+        let name = self.take_ident();
+        let span = name.span;
+        let lhs = self.mk_expr(ExprKind::Ident(name), span);
+        self.bump(); // in
+        let rhs = self.guarded(|p| p.parse_binary(PREC_REL + 1))?;
+        let span = self.span_from(lo);
+        let kind = ExprKind::Binary {
+            op: BinaryOp::In,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        };
+        Ok(self.mk_expr(kind, span))
     }
 
     pub(super) fn parse_unary(&mut self) -> PResult<Expr> {
