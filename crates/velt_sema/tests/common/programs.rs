@@ -135,12 +135,33 @@ impl Loader {
                 continue;
             }
             let text = std::fs::read_to_string(&f).unwrap();
-            if reexports(&text).iter().any(|n| mentions(&src, n)) {
+            let own = bound(&self.modules[m].ast);
+            if reexports(&text)
+                .iter()
+                .any(|n| !own.contains(n) && mentions(&src, n))
+            {
                 let i = self.add(&canonical, &f, text);
                 queue.push_back(i);
             }
         }
     }
+}
+
+/// The names module `m` imports or declares at its top level (they hide a global).
+fn bound(m: &ast::Module) -> Vec<String> {
+    let mut names = vec![];
+    for item in &m.items {
+        match &item.kind {
+            ast::ItemKind::Import(imp) if !item.exported => {
+                let local = |n: &ast::ImportName| n.alias.as_ref().unwrap_or(&n.name).name.clone();
+                names.extend(imp.names.iter().map(local));
+            }
+            ast::ItemKind::Class(t) | ast::ItemKind::Struct(t) => names.push(t.name.name.clone()),
+            ast::ItemKind::Function(f) => names.push(f.sig.name.name.clone()),
+            _ => {}
+        }
+    }
+    names
 }
 
 /// The names `export { … } from "…"` items of `src` re-export.

@@ -24,7 +24,22 @@ class Temp {
   }
 }
 
+// The namespaces are separate through inheritance too: a subclass's static method does not
+// hide the instance method it inherits.
+class Reading {
+  label(): string {
+    return "reading";
+  }
+}
+
+class Sensor extends Reading {
+  static label(): string {
+    return "sensors";
+  }
+}
+
 function main() {
   const t = Temp.from("21.5");
   console.log(t.from(), t.describe(), Temp.describe());
+  console.log(new Sensor().label(), Sensor.label());
 }

@@ -12,12 +12,14 @@
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
 //!   `Target::wide_pointer_slots`): identical layouts, identical behavior.
 //! - **own**: `platform` (host services per target), `entry`, `io`, `localtime` (UTC),
-//!   `memory_usage`, `panic`, `prng`, `process`, `shared` and the current-thread executor in
+//!   `memory_usage`, `panic`, `prng`, `process`, `shared`, `fetch` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.vlt` declares (WebAssembly links only exact
 //!   matches; crates/velt_rt/tests/std_externs.rs checks both runtimes).
 //!
-//! Not provided: TCP, HTTP and child processes (programs using them fail to link, with a note).
+//! Not provided: TCP, the HTTP server and child processes (programs using them fail to link,
+//! with a note). `fetch` links and fails with `ENOTSUP` (`fetch.rs`), so programs that only
+//! build `Response`s run.
 #![allow(clippy::missing_safety_doc)]
 
 #[path = "../../velt_rt/src/bigint.rs"]
@@ -27,6 +29,7 @@ pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
 pub mod bytes_ops;
 pub mod entry;
+pub mod fetch;
 #[path = "../../velt_rt/src/fmt.rs"]
 pub mod fmt;
 #[path = "../../velt_rt/src/fnv.rs"]

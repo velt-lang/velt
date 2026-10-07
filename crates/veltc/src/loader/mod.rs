@@ -201,9 +201,14 @@ impl Loader<'_, '_> {
             return;
         }
         let src = &self.sm.get(self.modules[index].file).src;
+        let own = globals::bound_names(&self.modules[index].ast);
         let (wanted, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.globals)
             .into_iter()
-            .partition(|g| g.names.iter().any(|n| globals::mentions(src, n)));
+            .partition(|g| {
+                g.names
+                    .iter()
+                    .any(|n| !own.contains(n.as_str()) && globals::mentions(src, n))
+            });
         self.globals = rest;
         let Some(std) = self.opts.std_root.clone() else {
             return;
