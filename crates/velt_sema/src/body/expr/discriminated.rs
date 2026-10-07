@@ -51,8 +51,19 @@ impl FnCx<'_, '_> {
         if !without.is_empty() && !value_or_null {
             return Err(obj);
         }
-        // Every member's field must be usable here (`private`, `#x`), as on a single value.
+        // Every member's field must be usable here (`private`, `#x`), as on a single value. A
+        // `private` field is reported once (its message does not name the class); each `#x`
+        // names the class that declares it.
+        let mut private_reported = false;
         for &(_, m, i, _) in &fields {
+            if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+                let denied = self
+                    .field_private_to(m, i)
+                    .is_some_and(|o| !self.private_allowed(o));
+                if denied && std::mem::replace(&mut private_reported, true) {
+                    continue;
+                }
+            }
             self.check_field_private(m, i, prop);
         }
         let owns = fields.iter().any(|f| self.cx.owns_resource(f.3));

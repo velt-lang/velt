@@ -113,12 +113,16 @@ impl FnCx<'_, '_> {
 
     /// `private` check for field `index` of struct/class values of type `t`.
     pub(crate) fn check_field_private(&mut self, t: TyId, index: u32, name: &ast::Ident) {
-        let private_to = self
-            .adt_of(t)
+        let private_to = self.field_private_to(t, index);
+        self.check_private(private_to, &name.name, name.span);
+    }
+
+    /// The type field `index` of struct/class values of type `t` is private to, if any.
+    pub(crate) fn field_private_to(&mut self, t: TyId, index: u32) -> Option<DefId> {
+        self.adt_of(t)
             .and_then(|(d, _)| self.cx.adt(d))
             .and_then(|a| a.fields.get(index as usize))
-            .and_then(|f| f.private_to);
-        self.check_private(private_to, &name.name, name.span);
+            .and_then(|f| f.private_to)
     }
 
     /// The type a method is private to, if it is `private`.

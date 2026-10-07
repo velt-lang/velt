@@ -1,5 +1,4 @@
 private_names_unions.vlt:7:44: error: property `#x` is not accessible outside class `A` because it has a private name
 private_names_unions.vlt:7:44: error: property `#x` is not accessible outside class `C` because it has a private name
 private_names_unions.vlt:8:45: error: `s` is private
-private_names_unions.vlt:8:45: error: `s` is private
 private_names_unions.vlt:13:42: error: no field `#x` on type `B6 | Other`
