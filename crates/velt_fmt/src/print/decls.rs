@@ -156,7 +156,8 @@ impl<'a> Printer<'a> {
             }
             Member::Method(m) => {
                 let mut mods = String::new();
-                if m.is_private {
+                // A `#m` is private by its name; `private #m` is not valid.
+                if m.is_private && !m.decl.sig.name.is_private_name() {
                     mods.push_str("private ");
                 }
                 if m.is_static {
@@ -197,7 +198,11 @@ impl<'a> Printer<'a> {
     }
 
     fn field(&mut self, f: &Field) -> Doc {
-        let private = if f.is_private { "private " } else { "" };
+        let private = if f.is_private && !f.name.is_private_name() {
+            "private "
+        } else {
+            ""
+        };
         let is_static = if f.is_static { "static " } else { "" };
         let readonly = if f.readonly { "readonly " } else { "" };
         let optional = if f.optional { "?" } else { "" };

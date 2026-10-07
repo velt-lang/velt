@@ -82,6 +82,39 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
     changed
 }
 
+/// Inline every direct call to a function marked in `helpers` (debug builds: the compiler's
+/// small helpers only, so user code keeps its calls and stays debuggable). Helpers must not
+/// call each other.
+pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
+    let mut changed = false;
+    for fi in 0..program.funcs.len() {
+        if helpers[fi] {
+            continue;
+        }
+        let original_blocks = program.funcs[fi].blocks.len();
+        for bi in 0..original_blocks {
+            let Terminator::Call {
+                callee: Callee::Func(callee),
+                args,
+                ..
+            } = &program.funcs[fi].blocks[bi].term
+            else {
+                continue;
+            };
+            let ci = callee.0 as usize;
+            if !helpers.get(ci).copied().unwrap_or(false)
+                || !splice::arity_matches(args, &program.funcs[ci])
+            {
+                continue;
+            }
+            let body = program.funcs[ci].clone();
+            splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body);
+            changed = true;
+        }
+    }
+    changed
+}
+
 struct State {
     recursive: Vec<bool>,
     /// Live count of direct call sites per function, updated as bodies are copied.

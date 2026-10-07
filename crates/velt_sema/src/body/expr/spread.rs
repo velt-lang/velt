@@ -115,7 +115,12 @@ impl FnCx<'_, '_> {
     }
 
     /// A fresh temporary initialized with `init` (appended to `lets`), read as `Local(Borrow)`.
-    fn temp(&mut self, name: &str, init: hir::Expr, lets: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         lets.push(hir::Stmt {
@@ -158,7 +163,10 @@ impl FnCx<'_, '_> {
         let fields = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
         let mut out = vec![];
         for (i, f) in fields.iter().enumerate() {
-            if f.private_to.is_some_and(|o| !self.private_allowed(o)) {
+            // ES private fields (`#x`) are never copied, as in JavaScript.
+            if f.name.starts_with(ast::PRIVATE_NAME_PREFIX)
+                || f.private_to.is_some_and(|o| !self.private_allowed(o))
+            {
                 continue;
             }
             let fty = self.cx.ty.subst(f.ty, &args);

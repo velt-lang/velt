@@ -6,6 +6,8 @@
 //! Only `Element` parts are slots: components, fragments, elements that are not precompiled (a
 //! spread or a `key`), `Element`-typed expressions as they are, and any other child as
 //! `Fragment([v], null)`.
+//!
+//! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -16,6 +18,7 @@ use super::escape::escape_html;
 use super::intrinsic_tag;
 use super::key::is_key;
 use super::provider::{Precompile, Provider};
+use super::text_run::{TextPart, Textness};
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H};
 
@@ -28,13 +31,17 @@ const VOID_ELEMENTS: &[&str] = &[
 /// A template being built: the parts of the current string (static text is merged), the
 /// finished strings and the slots between them.
 #[derive(Default)]
-struct Template {
-    strings: Vec<hir::Expr>,
+pub(super) struct Template {
+    pub(super) strings: Vec<hir::Expr>,
     /// Parts of the current string: static text and `string`-typed calls.
-    parts: Vec<hir::Expr>,
+    pub(super) parts: Vec<hir::Expr>,
     /// Static text not yet added to `parts`.
-    text: String,
-    slots: Vec<hir::Expr>,
+    pub(super) text: String,
+    pub(super) slots: Vec<hir::Expr>,
+    /// The provider's `jsxTextSeparator`.
+    pub(super) sep: Option<String>,
+    /// With a separator: the adjacent text children not written yet.
+    pub(super) run: Vec<TextPart>,
 }
 
 /// Is `tag` an HTML void element?
@@ -61,11 +68,14 @@ impl FnCx<'_, '_> {
         tag: &str,
         tag_span: Span,
     ) -> hir::Expr {
-        let mut t = Template::default();
+        let mut t = Template {
+            sep: p.text_separator.clone(),
+            ..Template::default()
+        };
         if !self.template_element(p, pc, el, tag, tag_span, &mut t) {
             return self.error_expr(el.span);
         }
-        self.end_string(&mut t, el.span);
+        self.end_string(p, pc, &mut t, el.span);
         let str_ = self.cx.ty.str_;
         let strings_ty = self.cx.ty.array(str_);
         let strings = self.mk(H::ArrayLit(t.strings), strings_ty, el.span);
@@ -90,6 +100,7 @@ impl FnCx<'_, '_> {
             self.jsx_loose(p, el);
             return false;
         };
+        self.end_run(p, pc, t, el.span, false);
         t.text.push('<');
         t.text.push_str(tag);
         for a in attrs {
@@ -114,6 +125,7 @@ impl FnCx<'_, '_> {
         for c in &el.children {
             self.template_child(p, pc, c, t);
         }
+        self.end_run(p, pc, t, el.span, false);
         t.text.push_str(&format!("</{tag}>"));
         true
     }
@@ -126,7 +138,14 @@ impl FnCx<'_, '_> {
         t: &mut Template,
     ) {
         match c {
-            ast::JsxChild::Text { value, .. } => t.text.push_str(&escape_html(value)),
+            ast::JsxChild::Text { value, .. } => {
+                let text = escape_html(value);
+                if t.sep.is_some() {
+                    t.run.push(TextPart::Static(text));
+                } else {
+                    t.text.push_str(&text);
+                }
+            }
             ast::JsxChild::Expr { expr: None, .. } => {}
             ast::JsxChild::Expr { span, .. } | ast::JsxChild::Spread { span, .. } => {
                 let h = self.child_value(p, c, p.child);
@@ -139,12 +158,12 @@ impl FnCx<'_, '_> {
                         let tag_span = inner.name.as_ref().map_or(inner.span, |n| n.span());
                         if !self.template_element(p, pc, inner, &tag, tag_span, t) {
                             let e = self.error_expr(inner.span);
-                            self.add_slot(t, e);
+                            self.add_slot(p, pc, t, e);
                         }
                     }
                     _ => {
                         let h = self.jsx_element(p, inner);
-                        self.add_slot(t, h);
+                        self.add_slot(p, pc, t, h);
                     }
                 }
             }
@@ -163,35 +182,52 @@ impl FnCx<'_, '_> {
     ) {
         if self.cx.ty.is_bottom(h.ty) || self.compatible(p.element, h.ty) {
             let h = self.coerce(h, p.element);
-            return self.add_slot(t, h);
+            return self.add_slot(p, pc, t, h);
         }
+        let (textness, may_be_empty) = match t.sep {
+            Some(_) => (self.textness(&h), self.may_be_empty(&h)),
+            None => (Textness::Always, false),
+        };
         match self.try_coerce(h, pc.text) {
+            Ok(h) if t.sep.is_some() => t.run.push(TextPart::Value(h, textness, may_be_empty)),
             Ok(h) => {
-                let s = self.jsx_call(p, pc.escape, "jsxEscape", vec![h], span);
+                let s = self.escape_call(p, pc, h, span);
                 self.add_part(t, s);
             }
             Err(h) => {
-                let child = self.as_child(p, h);
-                let ty = self.cx.ty.array(p.child);
-                let children = self.mk(H::ArrayLit(vec![child]), ty, span);
-                let opt_str = self.cx.ty.option(self.cx.ty.str_);
-                let key = self.mk(H::Lit(hir::Lit::Null), opt_str, span);
-                let frag = self.jsx_call(p, p.fragment, "Fragment", vec![children, key], span);
-                self.add_slot(t, frag);
+                let frag = self.fragment_of(p, h, span);
+                self.add_slot(p, pc, t, frag);
             }
         }
     }
 
+    /// `Fragment([h], null)`.
+    pub(super) fn fragment_of(&mut self, p: &Provider, h: hir::Expr, span: Span) -> hir::Expr {
+        let child = self.as_child(p, h);
+        let ty = self.cx.ty.array(p.child);
+        let children = self.mk(H::ArrayLit(vec![child]), ty, span);
+        let opt_str = self.cx.ty.option(self.cx.ty.str_);
+        let key = self.mk(H::Lit(hir::Lit::Null), opt_str, span);
+        self.jsx_call(p, p.fragment, "Fragment", vec![children, key], span)
+    }
+
     /// A `string`-typed part of the current template string.
-    fn add_part(&mut self, t: &mut Template, h: hir::Expr) {
+    pub(super) fn add_part(&mut self, t: &mut Template, h: hir::Expr) {
         self.flush_text(t, h.span);
         t.parts.push(h);
     }
 
     /// An `Element` slot: ends the current string.
-    fn add_slot(&mut self, t: &mut Template, h: hir::Expr) {
+    pub(super) fn add_slot(
+        &mut self,
+        p: &Provider,
+        pc: Precompile,
+        t: &mut Template,
+        h: hir::Expr,
+    ) {
         let span = h.span;
-        self.end_string(t, span);
+        self.end_run(p, pc, t, span, true);
+        self.end_string(p, pc, t, span);
         t.slots.push(h);
     }
 
@@ -203,7 +239,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Finish the current string (a literal, or a template literal of its parts).
-    fn end_string(&mut self, t: &mut Template, span: Span) {
+    fn end_string(&mut self, p: &Provider, pc: Precompile, t: &mut Template, span: Span) {
+        self.end_run(p, pc, t, span, false);
         self.flush_text(t, span);
         let parts = std::mem::take(&mut t.parts);
         let s = match parts.len() {
@@ -214,6 +251,17 @@ impl FnCx<'_, '_> {
             _ => self.concat_parts(parts, span),
         };
         t.strings.push(s);
+    }
+
+    /// `jsxEscape(h)`.
+    pub(super) fn escape_call(
+        &mut self,
+        p: &Provider,
+        pc: Precompile,
+        h: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        self.jsx_call(p, pc.escape, "jsxEscape", vec![h], span)
     }
 }
 

@@ -38,9 +38,10 @@ impl FnLower<'_, '_> {
         });
     }
 
-    /// The fields an object prints: (index, name, type). Private zero-sized fields are hidden
-    /// (std's `runtime: RuntimeHandle` marker, which only makes a handle type opaque to JSON);
-    /// other private fields show, as Node shows a TypeScript `private` field.
+    /// The fields an object prints: (index, name, type). ES private fields (`#x`) are hidden, as
+    /// Node hides them, and so are private zero-sized fields (a marker such as std's
+    /// `runtime: RuntimeHandle`); other private fields show, as Node shows a TypeScript
+    /// `private` field.
     fn shown_fields(&mut self, ty: TyId) -> Vec<(u32, String, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
@@ -56,7 +57,9 @@ impl FnLower<'_, '_> {
             .map(|(i, ((n, private), t))| (i as u32, n, t, private))
             .collect();
         all.into_iter()
-            .filter(|(_, _, t, private)| !(*private && self.is_empty_struct(*t)))
+            .filter(|(_, n, t, private)| {
+                !n.starts_with('#') && !(*private && self.is_empty_struct(*t))
+            })
             .map(|(i, n, t, _)| (i, n, t))
             .collect()
     }
