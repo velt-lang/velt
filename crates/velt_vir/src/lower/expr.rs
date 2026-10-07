@@ -30,6 +30,30 @@ pub(super) fn may_write(e: &hir::Expr) -> bool {
     }
 }
 
+/// Can evaluating `e` run user code or change memory (any call other than an intrinsic, an
+/// assignment, `new`, `await`)? Then an address computed before `e` may be stale after it: a
+/// call may reallocate the array it points into (#580).
+pub(super) fn runs_code(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
+        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
+            runs_code(expr)
+        }
+        K::Field { base, .. } | K::UnwrapSome(base, _) => runs_code(base),
+        K::Index { base, index, .. } => runs_code(base) || runs_code(index),
+        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
+            runs_code(lhs) || runs_code(rhs)
+        }
+        K::Call {
+            callee: hir::Callee::Intrinsic(_),
+            args,
+        } => args.iter().any(runs_code),
+        K::If { cond, then, els } => runs_code(cond) || runs_code(then) || runs_code(els),
+        _ => true,
+    }
+}
+
 impl FnLower<'_, '_> {
     /// Evaluate an expression whose value will be *owned* by the consumer (not registered for
     /// dropping anywhere).

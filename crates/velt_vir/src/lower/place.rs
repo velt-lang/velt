@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
-use super::expr::may_write;
+use super::expr::{may_write, runs_code};
 use super::operand::proj;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -412,7 +412,10 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         let pty = self.sub(place.ty);
-        if local.is_none() && self.through_counted(place, pty) {
+        // Through a counted object, or with a right-hand side that may change the container
+        // (`xs[0] += grow(xs)` reallocates `xs`): read the element, evaluate the right-hand
+        // side, then form the element's address again for the write (#580).
+        if local.is_none() && (self.through_counted(place, pty) || runs_code(value)) {
             return self.compound_assign_shared(op, place, value, pty);
         }
         let p = match local {
