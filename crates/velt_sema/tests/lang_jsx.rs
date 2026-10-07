@@ -214,6 +214,23 @@ fn text_separator_after_a_nullable_or_boolean_value_is_decided_at_run_time() {
     );
 }
 
+/// Regression (#637 review): an empty string at a slot edge rendered no separator in the
+/// precompile lowering, as the provider only sees the template string's edge.
+#[test]
+fn text_separator_a_string_that_may_be_empty_next_to_a_slot_is_a_slot() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(s: string, n: i64) {{
+            const a = <p>a{{s}}<>{{n}}</>{{s}}</p>;
+            const b = <p>{{n}}<>{{n}}</>{{\"x\"}}</p>;
+        }}
+        function main() {{ view(\"\", 3); }}"
+    ));
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(strings(&t[0][0]), ["<p>a", "", "", "</p>"]);
+    // Each `s` is a `Fragment` slot; `n` and `"x"` (never empty) stay in the strings.
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 4);
+}
+
 #[test]
 fn no_text_separator_without_the_export() {
     let p = ok(&format!(

@@ -181,6 +181,18 @@ and dynamic `Text` children, in any combination (`<p>Count: {n}</p>` →
   with `>` (escaped text contains neither, and the separator and placeholders are comments),
   and an empty one is no boundary. This is how the separator crosses fragments and components
   (`<p>{a}<>{b}</></p>` → `a<!--t-->b`).
+- An empty string at a slot edge would be invisible there (`<p>{s}<Name/></p>` with `s == ""`
+  must render `<p><!--t-->ada</p>`, as in the generic lowering). So a dynamic text child whose
+  type has a `string` member (other than a non-empty literal) and that is next to a slot,
+  possibly through other such children, is a slot `Fragment([v], null)` itself, and the
+  provider renders it as in the generic lowering. Numbers, booleans, `null` and static text are
+  never empty and stay in the strings. Like any slot, it is evaluated after the template's
+  strings.
+- A provider that exports a separator must render `true`, `false` and `null` as a non-empty
+  placeholder that starts with `<` and ends with `>` (sigx: `<!---->`). The compiler does not
+  check this. If it rendered them as `""`, a `null` would be a boundary inside a template
+  string (`<p>{a}{null}{b}</p>` → `ab`) but invisible to the provider next to a slot
+  (`<p>{a}{null}<Name/></p>` → `a<!--t-->ada`), and no generic renderer matches both.
 - Without the export nothing changes. The generic lowering ignores it.
 
 The golden `lang/jsx_text_separator` renders the cases above through a provider in both
