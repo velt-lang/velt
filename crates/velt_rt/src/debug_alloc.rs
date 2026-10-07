@@ -6,8 +6,9 @@
 //! freeing a pointer that was never allocated, wrong size) and the canaries (buffer overflow /
 //! underflow), fills the block with `FREE_FILL` and parks it in a quarantine instead of
 //! releasing it, so a use after free reads the poison pattern (and does not corrupt a reused
-//! block); when a block leaves the quarantine its poison is checked (write after free). The
-//! first violation prints `velt debug-alloc: <what>` to stderr and aborts.
+//! block); when a block leaves the quarantine, and for the blocks still in it when the program
+//! ends ([`check_quarantine`]), its poison is checked (write after free). The first violation
+//! prints `velt debug-alloc: <what>` to stderr and aborts.
 //!
 //! The mode is read once, on the first allocation, without allocating (the environment is read
 //! through the OS directly). With the variable unset every call goes straight to the inner
@@ -22,9 +23,12 @@ use std::sync::Mutex;
 /// Header magic of a live block, and of a block already freed (in quarantine).
 const LIVE: u64 = 0x5641_4953_4c49_5645;
 const FREED: u64 = 0x5641_4953_4652_4545;
-/// Fill bytes: fresh allocation, freed block, canaries.
+/// Fill bytes: fresh allocation, freed block, canaries. A freed block reads as a tiny number
+/// (`-1.5e-130` as an `f64`), so arithmetic written back into it changes its bytes and is
+/// caught (`0xDD` read as a huge `f64`, and `x + 7` wrote the same bits back, #580); as a pointer
+/// it is non-canonical, so following one faults.
 const ALLOC_FILL: u8 = 0xCD;
-const FREE_FILL: u8 = 0xDD;
+const FREE_FILL: u8 = 0xA5;
 const CANARY: u8 = 0xFD;
 /// Header size (magic + size) and trailing canary size.
 const HEADER: usize = 16;
@@ -225,6 +229,28 @@ impl<A: GlobalAlloc> DebugAlloc<A> {
     }
 }
 
+/// Check every block still in quarantine for writes after it was freed (debug runtime with
+/// `VELT_RT_DEBUG_ALLOC=1`). Called when the program ends: a block freed late enough never
+/// leaves the quarantine, so without this a write after free into it went unnoticed.
+pub fn check_quarantine() {
+    if MODE.load(Ordering::Relaxed) != 2 {
+        return;
+    }
+    if let Some((p, size)) = modified_in_quarantine() {
+        fail("write after free: a freed block was modified", p, size);
+    }
+}
+
+/// The first quarantined block whose poison was overwritten: `(address, size)`.
+fn modified_in_quarantine() -> Option<(usize, usize)> {
+    let q = QUARANTINE.lock().unwrap_or_else(|e| e.into_inner());
+    (0..q.len)
+        .map(|k| q.blocks[(q.head + k) % QUARANTINE_BLOCKS])
+        // SAFETY: quarantined blocks stay allocated (and poisoned) until they are evicted.
+        .find(|&(p, size, _)| !unsafe { all_are(p as *const u8, FREE_FILL, size) })
+        .map(|(p, size, _)| (p, size))
+}
+
 // SAFETY: every block handed out is a valid, suitably aligned block of the inner allocator
 // (offset by a multiple of the alignment); frees are routed back to the inner allocator with
 // the layout the block was allocated with.
@@ -292,6 +318,22 @@ mod tests {
             let b = a.checked_alloc(big);
             assert_eq!(b as usize % 64, 0);
             a.checked_free(b, big);
+        }
+    }
+
+    /// A write into a block that is still in quarantine when the program ends is found then.
+    #[test]
+    fn writes_into_quarantined_blocks_are_found() {
+        let a = DebugAlloc(System);
+        unsafe {
+            let l = Layout::from_size_align(40, 8).unwrap();
+            let p = a.checked_alloc(l);
+            a.checked_free(p, l);
+            p.add(3).write(1);
+            let hit = modified_in_quarantine();
+            // Put the poison back before anything else looks at the quarantine.
+            p.add(3).write(FREE_FILL);
+            assert_eq!(hit, Some((p as usize, 40)));
         }
     }
 
