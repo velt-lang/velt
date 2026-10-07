@@ -24,8 +24,11 @@ Promises behave like JavaScript's, at Rust's cost:
   matches Node. Only `spawn` puts work on another core.
 - Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
   So the started promises (and the task itself) waiting for timers that are due together resume
-  in the order their timers were created, like `setTimeout` callbacks in Node. Timers of
-  different tasks have no order between them, since the tasks run in parallel.
+  in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
+  already due when it is first waited for (`sleep(0)`, or a `sleep` awaited after its delay
+  passed) also waits for its turn: the code after it never runs before the synchronous code
+  that started it, nor before timers due earlier. Timers of different tasks have no order
+  between them, since the tasks run in parallel.
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous

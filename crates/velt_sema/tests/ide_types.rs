@@ -211,10 +211,10 @@ fn object_types_are_records() {
         .into_iter()
         .map(|f| (f.name, f.optional))
         .collect();
-    // `{ host?: string }` is `{ host: string | null }`: the type doesn't keep `?`.
+    // `{ host?: string }` keeps the `?` (#463: `JSON.stringify` leaves the field out when null).
     assert_eq!(
         fields,
-        [("host".to_string(), false), ("port".to_string(), false)]
+        [("host".to_string(), true), ("port".to_string(), false)]
     );
 }
 

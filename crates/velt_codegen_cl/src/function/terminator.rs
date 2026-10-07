@@ -7,6 +7,7 @@ use cranelift_frontend::Switch;
 use cranelift_module::Module;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
+use super::rounding::Rounding;
 use super::{Translator, Val};
 use crate::abi::{as_int, int_bits, make_signature};
 use crate::CodegenResult;
@@ -159,9 +160,8 @@ impl<M: Module> Translator<'_, '_, M> {
     }
 
     /// The runtime math functions that are exactly one Cranelift instruction
-    /// (rt_abi_async.md §9, `Math.clz32`, JS's int32 multiply) are emitted inline instead of
-    /// called. `Math.round` is not: JS
-    /// rounds ties toward +Infinity, unlike `nearest`.
+    /// (rt_abi_async.md §9, `Math.clz32`, JS's int32 multiply) or a short sequence (the
+    /// rounding functions, `rounding.rs`) are emitted inline instead of called.
     fn inline_math(
         &mut self,
         callee: &Callee,
@@ -190,12 +190,12 @@ impl<M: Module> Translator<'_, '_, M> {
             return None;
         }
         let x = args[0];
+        if let Some(how) = Rounding::of_symbol(symbol) {
+            return Some(self.round_f64(x, how));
+        }
         let ins = self.builder.ins();
         Some(match symbol {
             "velt_rt_math_sqrt" => ins.sqrt(x),
-            "velt_rt_math_floor" => ins.floor(x),
-            "velt_rt_math_ceil" => ins.ceil(x),
-            "velt_rt_math_trunc" => ins.trunc(x),
             "velt_rt_math_fabs" => ins.fabs(x),
             _ => return None,
         })

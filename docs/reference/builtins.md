@@ -28,8 +28,13 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
+| `fetch(input, init)`, `Request`, `Response`, `Headers` | the WHATWG Fetch API, as in Node ([fetch](../std/fetch.md)) |
+| `AbortController`, `AbortSignal` | cancellation, e.g. of a `fetch` ([velt:task](../std/task.md)) |
+| `URL`, `URLSearchParams` | WHATWG URLs ([velt:url](../std/url.md)) |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
-Integer helpers (`gcd`, `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is
-imported from the [standard library](../std/README.md).
+The modules behind `fetch` and the names after it are loaded only by programs that mention
+one of those names, so the others don't pay for compiling them. Integer helpers (`gcd`,
+`clamp`, …) are in [`velt:math`](../std/math.md). Everything else is imported from the
+[standard library](../std/README.md).

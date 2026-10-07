@@ -112,7 +112,10 @@ console.log(text, m.cents); // {"cents":250} 250
   the byte offset still points at the exact place.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
-  `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.
+  `JSON.stringify` omits an optional field (`a?: T`) of a class, object type or interface while
+  it is `null`, as JavaScript omits an absent property, and writes other `null`s (a
+  `b: T | null` field, a `null` array element). Velt has no `undefined`, so an optional field
+  assigned `null` is left out too, where JavaScript writes `"a":null`.
 - `Value`:
   - navigation: `get(key)`, `at(i)`, both returning `Value | null`; `has(key)` (the key is
     present, even with a `null` value: absent vs explicit `null` is only visible here, as

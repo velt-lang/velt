@@ -228,10 +228,12 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional class
-  or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
-  object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+  (callers may leave it out or pass `null`; it cannot also have a default), an optional field
+  of a class, interface or object type starts as `null` (and `JSON.stringify` leaves it out
+  while it is `null`, as JavaScript leaves out an absent property, but writes a `b: T | null`
+  field), and an object literal may leave out any `T | null` field of an object type
+  (`{ port: i64; host?: string }` accepts `{ port: 80 }`). As in TypeScript, `{ a?: T }` and
+  `{ a: T | null }` are different object types: a value of one is not a value of the other.
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
   missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
@@ -570,7 +572,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
   listed only when it is not `null`. On a class with subclasses it lists the fields of the
-  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too). `console.log` and `JSON` treat a record as an object. A class
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
+  interface value those of the class it holds (an interface also implemented by a struct is an
+  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

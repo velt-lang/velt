@@ -1,15 +1,14 @@
 // The HTTP and WebSocket handles of std have no JSON form.
-import { Response, Server, FetchResponse, FetchHeaders } from "velt:http";
+import { Response as ServerResponse, Server } from "velt:http";
 import { ResponseWriter } from "velt:http/stream";
 import { WebSocket } from "velt:websocket";
 
-function write(r: Response, w: ResponseWriter): string {
+function write(r: ServerResponse, w: ResponseWriter): string {
   return JSON.stringify(r) + JSON.stringify(w);
 }
 
 function main() {
   const s = JSON.parse<Server>('{"port":1,"handle":1}');
-  const f = JSON.parse<FetchResponse>("{}");
-  const h = JSON.parse<FetchHeaders>('{"handle":1}');
+  const f = JSON.parse<Response>("{}");
   const ws = JSON.parse<WebSocket>('{"handle":1}');
 }

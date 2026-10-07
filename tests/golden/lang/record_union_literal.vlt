@@ -1,0 +1,33 @@
+// An object literal where a union with one `Record` member is expected builds the record, unless
+// a struct member has exactly its fields (TypeScript's `HeadersInit` shape).
+class Box {
+  n: i64 = 0;
+}
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+function describe(v: Box | Record<string, string>): string {
+  if (v instanceof Box) {
+    return `box ${v.n}`;
+  }
+  return `record ${Object.keys(v).join(",")}`;
+}
+
+function where(v: Point | Record<string, i64>): string {
+  if (v instanceof Record) {
+    return `record ${Object.keys(v).length}`;
+  }
+  return `point ${v.x},${v.y}`;
+}
+
+function main() {
+  console.log(describe({ "Content-Type": "text/plain", accept: "*/*" }));
+  console.log(describe(new Box()));
+  console.log(where({ x: 1, y: 2 }));
+  console.log(where({ x: 1, z: 2, w: 3 }));
+  const h: Box | Record<string, string> | null = { a: "1" };
+  console.log(h == null ? "none" : describe(h));
+}

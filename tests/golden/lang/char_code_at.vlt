@@ -1,0 +1,27 @@
+// charCodeAt returns UTF-16 code units, as in JavaScript: ASCII, two- and three-byte UTF-8
+// characters, both halves of a surrogate pair and lone surrogates, in inline (short) and heap
+// (long) strings, also summed in a loop. Expected output from node 22. (Out of range, Velt
+// returns -1 where JavaScript returns NaN: docs/std/prelude.md.)
+function codes(s: string): string {
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(s.charCodeAt(i));
+  }
+  return out.join(",");
+}
+
+function main() {
+  const hi = String.fromCharCode(0xd83d);
+  const lo = String.fromCharCode(0xde00);
+  console.log(codes("az09 ~"));
+  console.log(codes("é"), codes("€"), codes("😀"), codes("a😀b"));
+  console.log(codes(hi), codes(lo), codes(lo + hi), codes("x" + hi));
+  const long = "naïve café — 日本語 😀 and plain ASCII text past the inline limit";
+  console.log(long.length, codes(long));
+  let sum = 0;
+  const text = "héllo wörld 😀 ".repeat(50);
+  for (let i = 0; i < text.length; i++) {
+    sum += text.charCodeAt(i);
+  }
+  console.log(sum);
+}

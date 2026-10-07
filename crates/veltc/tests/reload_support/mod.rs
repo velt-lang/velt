@@ -257,8 +257,9 @@ pub fn get(port: u16, path: &str) -> Result<String, String> {
 
 fn request(port: u16, path: &str) -> std::io::Result<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
-    // Long enough for a slow handler left running across a reload (tests/reload/in_flight).
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    // A hang guard: a handler held across a reload (tests/reload/in_flight) answers once the
+    // test releases it.
+    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
     write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"

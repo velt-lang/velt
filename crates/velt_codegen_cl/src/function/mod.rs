@@ -19,6 +19,7 @@ mod binary;
 mod cast;
 mod operand;
 mod place;
+mod rounding;
 mod stmt;
 mod terminator;
 
@@ -104,6 +105,8 @@ struct Translator<'a, 'b, M: Module> {
     /// Materialize symbol addresses with absolute relocations instead of PC-relative page
     /// addressing: cranelift-object cannot emit ADRP relocations for aarch64 COFF.
     far_addresses: bool,
+    /// `floor`/`ceil`/`trunc` are instructions (not C runtime calls) on this ISA (`rounding`).
+    rounding_instructions: bool,
     /// Source locations of the instructions (debug info; empty when the VIR has none): a
     /// Cranelift `SourceLoc` is an index into this table.
     srclocs: Vec<SrcLoc>,
@@ -168,6 +171,7 @@ fn translate_once<M: Module>(
     let triple = module.isa().triple();
     let far_addresses = matches!(triple.architecture, Architecture::Aarch64(_))
         && triple.binary_format == BinaryFormat::Coff;
+    let rounding_instructions = rounding::has_rounding_instructions(module.isa());
     let mut builder = FunctionBuilder::new(func, builder_ctx);
     let storage = allocate_locals(&mut builder, program, function, in_memory, single)?;
     let mut translator = Translator {
@@ -186,6 +190,7 @@ fn translate_once<M: Module>(
         addr_refs: HashMap::new(),
         data_refs: HashMap::new(),
         far_addresses,
+        rounding_instructions,
         srclocs: Vec::new(),
         srcloc_ids: HashMap::new(),
     };

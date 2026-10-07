@@ -27,8 +27,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification. The passes and their order are listed in `crates/velt_opt/src/lib.rs`. Two
-   that change how objects are represented:
+   simplification, Map probe reuse (a `get` and `set` of the same key probe once). The passes
+   and their order are listed in `crates/velt_opt/src/lib.rs`. Two that change how objects are
+   represented:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
      gets its own copy; a write through one name is copied to the other names that hold the
