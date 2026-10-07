@@ -170,6 +170,7 @@ fn spawned_closures_keep_heap_envs() {
         let mut f = FB::new("main", t.unit);
         let (s_, fl) = (f.local("s", t.str), f.local("f", v2p));
         let (tl, gl) = (f.local("t", t.str), f.local("g", v2p));
+        let cl = f.local("c", t.bool);
         let mut fc = FB::new("main::{closure#0}", pi);
         let cap = fc.param("cap0", t.str, PassMode::Owned);
         fc.captures.push(velt_sema::hir::Capture {
@@ -196,9 +197,10 @@ fn spawned_closures_keep_heap_envs() {
             let_(gl, closure(gd, v2p)),
         ];
         if conditional {
+            body.push(let_(cl, boolean(true, t)));
             let pick = ex(
                 ExprKind::If {
-                    cond: Box::new(boolean(true, t)),
+                    cond: Box::new(f.cp(cl)),
                     then: Box::new(call_g(&f)),
                     els: Box::new(call_g(&f)),
                 },
