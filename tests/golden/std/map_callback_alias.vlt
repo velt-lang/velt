@@ -1,5 +1,5 @@
 // Map methods whose callback changes the map through another reference (#564): the value the
-// callback gets stays valid, and `getOrInsert` / `upsert` find the key again afterwards instead
+// callback gets stays valid (and changes made to it in place stay), and `getOrInsert` / `upsert` find the key again afterwards instead
 // of writing to a slot or entry position that changed meanwhile.
 function main() {
   const m = new Map<string, string>();
@@ -30,4 +30,22 @@ function main() {
     console.log(old.length, old.slice(0, 7));
   });
   console.log(m.size, m.has("k2"));
+
+  // `update` changes a tuple value in place, with and without growing the map meanwhile.
+  const t = new Map<string, [string, string]>();
+  t.set("k", ["a".repeat(40), "b".repeat(40)]);
+  t.update("k", (v) => {
+    v[0] = "replaced";
+  });
+  const got = t.get("k");
+  console.log(got == null ? "none" : got[0]);
+  const talias = t;
+  t.update("k", (v) => {
+    for (let i = 0; i < 1000; i++) {
+      talias.set(`n${i}`, ["z".repeat(40), "y".repeat(40)]);
+    }
+    v[0] = "replaced-" + v[1].slice(0, 3);
+  });
+  const again = t.get("k");
+  console.log(again == null ? "none" : again[0], t.size);
 }

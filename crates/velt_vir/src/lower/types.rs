@@ -201,6 +201,14 @@ impl<'h> Cx<'h> {
         }
     }
 
+    /// Type of field `index` of an object type or tuple.
+    pub(super) fn member_ty(&mut self, t: TyId, index: u32) -> TyId {
+        match self.kind(t) {
+            TyKind::Tuple(es) => es[index as usize],
+            _ => self.adt_field_tys(t)[index as usize],
+        }
+    }
+
     /// Field types of a struct/class/anon instance, substituted with its type args.
     pub(super) fn adt_field_tys(&mut self, t: TyId) -> Vec<TyId> {
         let TyKind::Adt(d, args) = self.kind(t) else {

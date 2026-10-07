@@ -18,9 +18,8 @@ use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
-    /// A borrowed argument (or receiver) of a call that may run user code (see the module docs);
-    /// `mutable`: the callee may change it in place.
-    pub(super) fn stable_borrow(&mut self, a: &hir::Expr, mutable: bool) -> Operand {
+    /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
+    pub(super) fn stable_borrow(&mut self, a: &hir::Expr) -> Operand {
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
         if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
@@ -31,17 +30,29 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        if !mutable && self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
+        if self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
-            // that own nothing), as JavaScript passes the value.
-            if let Some(v) = self.unique_array_elem(a, ty) {
-                return v;
+            // that own nothing), as JavaScript passes the value. A share would copy the parts
+            // that can be changed in place (tuples, object types stored inline), and any callee
+            // may change those (a borrowed param handed to a function value is not read-only),
+            // so they are counted instead (`Cx::note_identity_borrow`): in the next pass the
+            // element is a counted object, shared above, and the callee changes the element
+            // itself, as in JavaScript.
+            let parts = self.cx.in_place_parts(ty);
+            if !parts.is_empty() {
+                for t in parts {
+                    self.cx.note_identity_borrow(t);
+                }
+            } else {
+                if let Some(v) = self.unique_array_elem(a, ty) {
+                    return v;
+                }
+                let v = self.expr(a);
+                let s = self.share_value(v, ty);
+                return self.own_value(s, ty);
             }
-            let v = self.expr(a);
-            let s = self.share_value(v, ty);
-            return self.own_value(s, ty);
         }
         let prev = std::mem::replace(&mut self.retain_hops, true);
         let v = self.borrowed_arg(a);
@@ -108,10 +119,13 @@ impl FnLower<'_, '_> {
     }
 
     /// An element `xs[i]` of a boxed array held by a local (or param) that no cell holds:
-    /// when the array's count is 1 nothing else reaches it (borrows through counted objects
-    /// and cells share it for the call), so the element is borrowed in place; otherwise it is
-    /// shared into a temporary, dropped after the call only then. The common case, an array no
-    /// alias exists for, costs a load and a branch.
+    /// when the array's count is 1 just before the call, nothing else reaches it (borrows
+    /// through counted objects and cells share it for the call), so the element is borrowed in
+    /// place; otherwise it is shared into a temporary, dropped after the call only then. The
+    /// count is read after every argument is evaluated ([`Self::finish_borrows`]): a later
+    /// argument may create another reference (`show(xs[0], new Holder(xs))`), but none can
+    /// change the array, which this argument borrows. The common case, an array no alias
+    /// exists for, costs a load and a branch.
     fn unique_array_elem(&mut self, a: &hir::Expr, ty: TyId) -> Option<Operand> {
         let hir::ExprKind::Index { base, .. } = &a.kind else {
             return None;
@@ -120,40 +134,64 @@ impl FnLower<'_, '_> {
             return None;
         };
         let aty = self.sub(base.ty);
-        if !self.cx.boxed(aty) || self.info[l.0 as usize].in_cell {
+        let vt = self.cx.ty(ty);
+        if !self.cx.boxed(aty)
+            || self.info[l.0 as usize].in_cell
+            || !matches!(vt, Ty::Agg(_))
+            || self.cx.share_kind(ty) == ShareKind::Plain
+        {
             return None;
         }
         let bp = self.expr(base);
-        let count = self.count_place(bp);
-        let unique = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(count), cint(1, Ty::U64)),
-        );
+        let bp = Operand::Copy(Place::local(self.copy_to_temp(bp, Ty::Ptr)));
         let v = self.expr(a);
-        let vt = self.cx.ty(ty);
         let elem = self.operand_place(v, vt);
         let tmp = self.temp(vt);
-        let shared_flag = self.temp(Ty::Bool);
+        let shared = self.temp(Ty::Bool);
         let ptr = self.temp(Ty::Ptr);
-        let (in_place, shared, join) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(unique, in_place, shared);
-        self.switch_to(in_place);
-        self.assign(Place::local(ptr), Rvalue::AddrOf(elem.clone()));
-        self.assign(
-            Place::local(shared_flag),
-            Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
-        );
-        self.goto(join);
-        self.switch_to(shared);
-        self.cx.note_share(ty);
-        self.share_into(elem, Place::local(tmp), ty);
-        let tmp_addr = self.addr(Place::local(tmp));
-        self.assign(Place::local(ptr), Rvalue::Use(tmp_addr));
-        self.assign(Place::local(shared_flag), Rvalue::Use(Self::ctrue()));
-        self.goto(join);
-        self.switch_to(join);
-        self.own_flagged(Place::local(tmp), ty, shared_flag);
+        self.assign(Place::local(shared), Rvalue::Use(cbool(false)));
+        self.own_flagged(Place::local(tmp), ty, shared);
+        self.pending_borrows.push(PendingBorrow {
+            array: bp,
+            elem,
+            tmp,
+            shared,
+            ptr,
+            ty,
+        });
         Some(Operand::Copy(proj(&Place::local(ptr), Proj::Deref(vt))))
+    }
+
+    /// Start lowering the arguments of a call: the pending borrows of an enclosing call's
+    /// arguments are set aside.
+    pub(super) fn start_borrows(&mut self) -> Vec<PendingBorrow> {
+        std::mem::take(&mut self.pending_borrows)
+    }
+
+    /// Every argument of the call is evaluated: choose between borrowing each pending element
+    /// in place and sharing it (see [`Self::unique_array_elem`]), then restore `outer`.
+    pub(super) fn finish_borrows(&mut self, outer: Vec<PendingBorrow>) {
+        let mine = std::mem::replace(&mut self.pending_borrows, outer);
+        for p in mine {
+            let count = self.count_place(p.array);
+            let unique = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Eq, Operand::Copy(count), cint(1, Ty::U64)),
+            );
+            let (in_place, shared, join) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(unique, in_place, shared);
+            self.switch_to(in_place);
+            self.assign(Place::local(p.ptr), Rvalue::AddrOf(p.elem.clone()));
+            self.goto(join);
+            self.switch_to(shared);
+            self.cx.note_share(p.ty);
+            self.share_into(p.elem, Place::local(p.tmp), p.ty);
+            let tmp_addr = self.addr(Place::local(p.tmp));
+            self.assign(Place::local(p.ptr), Rvalue::Use(tmp_addr));
+            self.assign(Place::local(p.shared), Rvalue::Use(cbool(true)));
+            self.goto(join);
+            self.switch_to(join);
+        }
     }
 
     /// Is the value of `e` (a place) counted itself or a part of a counted value? Moving out of
@@ -176,4 +214,24 @@ impl FnLower<'_, '_> {
         self.own_temp(t, ty);
         Place::local(t)
     }
+}
+
+/// An element borrowed by an argument whose borrow-or-share choice waits for the call
+/// ([`FnLower::finish_borrows`]).
+pub(super) struct PendingBorrow {
+    /// The array's box pointer.
+    array: Operand,
+    /// The element.
+    elem: Place,
+    /// The share, when one is taken.
+    tmp: crate::vir::Local,
+    /// Whether `tmp` holds a share (its flagged drop).
+    shared: crate::vir::Local,
+    /// The pointer the call receives.
+    ptr: crate::vir::Local,
+    ty: TyId,
+}
+
+fn cbool(b: bool) -> Operand {
+    Operand::Const(Const::Bool(b), Ty::Bool)
 }

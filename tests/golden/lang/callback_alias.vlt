@@ -8,6 +8,27 @@ class Holder {
   items: [string, Holder][] = [];
 }
 
+class Wrapper {
+  items: string[];
+  constructor(items: string[]) {
+    this.items = items;
+  }
+  grow() {
+    for (let k = 0; k < 1000; k++) {
+      this.items.push("z".repeat(40));
+    }
+  }
+  shrink() {
+    while (this.items.length > 0) {
+      this.items.pop();
+    }
+  }
+}
+
+class Box {
+  items: string[] = [];
+}
+
 function words(n: number): string[] {
   const xs: string[] = [];
   for (let i = 0; i < n; i++) {
@@ -172,11 +193,11 @@ function throughElement() {
   console.log("element forEach", h.items.length, seen.join(","));
   const lengths = h.items.map((e, i) => {
     if (i === 1) {
-      e[1].items.pop();
+      e[1].items.push([`pushed-again`, e[1]]);
     }
     return e[0].length;
   });
-  console.log("element map", h.items.length, lengths[0], lengths[1002]);
+  console.log("element map", h.items.length, lengths.length, lengths[0], lengths[1003]);
   h.items = [];
 }
 
@@ -234,7 +255,80 @@ function userLoop() {
   console.log("unaliased", chars);
 }
 
+// A later argument of the same call creates the second reference to the array.
+function show(x: string, w: Wrapper) {
+  w.grow();
+  w.shrink();
+  console.log("later argument", x.length, x.slice(0, 5));
+}
+
+function wrap(xs: string[]): Box {
+  const b = new Box();
+  b.items = xs;
+  return b;
+}
+
+function showBox(x: string, b: Box) {
+  for (let k = 0; k < 1000; k++) {
+    b.items.push("z".repeat(40));
+  }
+  while (b.items.length > 0) {
+    b.items.pop();
+  }
+  console.log("later argument", x.length, x.slice(0, 5));
+}
+
+function laterArgument() {
+  const xs: string[] = ["a".repeat(40), "b".repeat(40)];
+  show(xs[0], new Wrapper(xs));
+  console.log(xs.length);
+  const ys: string[] = ["c".repeat(40), "d".repeat(40)];
+  showBox(ys[0], wrap(ys));
+  console.log(ys.length);
+}
+
+// Tuple elements a callback changes in place: the change is made to the element itself, also
+// when the callback grows the array meanwhile.
+function setFirst(t: [string, string], g: () => void) {
+  g();
+  t[0] = "replaced-" + t[1];
+  console.log("setFirst", t[0].slice(0, 12), t[1].slice(0, 6));
+}
+
+function tupleWrites() {
+  const xs: [string, string][] = [
+    ["a".repeat(40), "c".repeat(40)],
+    ["b".repeat(40), "d".repeat(40)],
+  ];
+  const alias = xs;
+  xs.forEach((t, i) => {
+    t[0] = `replaced-${i}`;
+  });
+  console.log("tuple forEach", alias[0][0].slice(0, 12), alias[1][0].slice(0, 12));
+
+  const ys: [string, string][] = [["a".repeat(40), "b".repeat(40)]];
+  const yalias = ys;
+  setFirst(ys[0], () => {
+    for (let k = 0; k < 1000; k++) {
+      yalias.push(["z".repeat(40), "y".repeat(40)]);
+    }
+  });
+  console.log("setFirst after", ys[0][0].slice(0, 12), ys.length);
+
+  const zs: [string, string][] = [["e".repeat(40), "f".repeat(40)]];
+  const zalias = zs;
+  zs.forEach((t) => {
+    for (let k = 0; k < 1000; k++) {
+      zalias.push(["z".repeat(40), "y".repeat(40)]);
+    }
+    t[0] = "replaced-" + t[1];
+  });
+  console.log("tuple forEach growing", zs[0][0].slice(0, 12), zs.length);
+}
+
 function main() {
+  laterArgument();
+  tupleWrites();
   growing();
   shrinking();
   throughElement();

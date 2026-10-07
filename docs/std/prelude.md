@@ -55,10 +55,15 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
 
 `T[]` is a growable array ([Types](../reference/types.md#objects-arrays-tuples-and-maps)).
 Callback methods rethrow what their callback throws. A callback may change the array through
-another reference to it (`const ys = xs`, or an object holding it): as in JS, the methods read
-the length once at the start, so elements pushed meanwhile are not visited and elements removed
-meanwhile are skipped (`map`'s result is then shorter, where JS leaves holes), and the element a
-callback received stays valid however the array changes.
+another reference to it (`const ys = xs`, or an object holding it), and the element it received
+stays valid however the array changes. As in JS, the methods read the length once at the start,
+so elements pushed meanwhile are not visited. Elements removed meanwhile:
+- `forEach`, `filter`, `reduce`, `some` and `every` skip them, as JS does;
+- `find`, `findIndex`, `findLast` and `findLastIndex` skip them too, where JS calls the callback
+  with `undefined` for each missing index (a `T` cannot be `undefined`);
+- `map` panics with "the array shrank while `map` ran", where JS returns an array with holes;
+- `filter` and `find` do not return the element the callback was given when the callback
+  removed it, where JS does.
 
 | Method | Notes |
 |---|---|

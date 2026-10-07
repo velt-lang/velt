@@ -384,6 +384,9 @@ struct FnLower<'c, 'h> {
     /// While lowering a stabilized borrow (stabilize.rs): every counted object a place
     /// projection goes through is retained until the end of the statement.
     retain_hops: bool,
+    /// Elements of arrays borrowed in place by the arguments being lowered when the array has
+    /// no other reference: checked again just before the call (stabilize.rs).
+    pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
