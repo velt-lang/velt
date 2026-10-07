@@ -75,6 +75,17 @@ function seesLaterChanges() {
   n += 10;
   inc();
   console.log(n);
+
+  // A Copy tuple changed through an element after the closure is created.
+  let t: [number, number] = [1, 2];
+  const f = (): number => t[0] + t[1];
+  t[0] = 10;
+  console.log(f());
+
+  let q: [number, number] = [1, 2];
+  const h = (): number => q[1];
+  q[1] = 7;
+  console.log(h());
 }
 
 function aliasesAndMoves() {

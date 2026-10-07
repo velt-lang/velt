@@ -39,6 +39,9 @@ use crate::hir::{
 
 /// Demote the `const`-bound closures of every function that are only called (module docs).
 pub(crate) fn demote_local_closures(cx: &mut Ctx) {
+    if !cx.held_borrows {
+        return;
+    }
     let fns: Vec<DefId> = cx
         .fn_defs
         .iter()
@@ -230,14 +233,16 @@ fn demote(cx: &mut Ctx, f: &FnDef, c: DefId) {
         }
     }
     cx.fn_info_mut(c).escaping = false;
+    cx.held_borrows_used = true;
 }
 
-/// Is local `l` assigned anywhere in `b`, directly or by a closure capturing it?
+/// Is local `l` assigned anywhere in `b`, as a whole or through a projection (`t[0] = 10`,
+/// `p.x += 1`), directly or by a closure capturing it?
 fn assigned(cx: &Ctx, b: &Block, l: LocalId) -> bool {
     let mut hit = false;
     each_expr(b, &mut |e: &Expr| match &e.kind {
         E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
-            hit |= matches!(place.kind, E::Local(x, _) if x == l);
+            hit |= crate::body::places::place_root(place) == Some(l);
         }
         E::Closure(k) => {
             if let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] {
