@@ -6,6 +6,7 @@ use velt_sema::hir::{BinOp as B, ExprKind, PassMode, Program};
 
 use super::builder::*;
 use super::builder_m2::*;
+use super::builder_m3::*;
 use super::{lower_ok, run};
 
 /// How `main` uses the closure `(x) => x * k` (capturing `k` by copy) it creates.
@@ -150,4 +151,68 @@ fn owned_captures_of_frame_envs_are_dropped() {
     let vir = lower_ok(&p).to_string();
     assert!(vir.contains("_Genv_drop_frame_"), "{vir}");
     assert_eq!(run(&p).stdout, "hi velt\nhi velt\n");
+}
+
+/// `spawn` takes a copy of the function value it calls through (async_fn/spawn.rs), so a closure
+/// spawned there keeps a heap env even when every use is a call: `const f = async () => …;
+/// spawn(f())`, `const g = () => len(t); spawn(g()); spawn(g())`, and `g` called in both
+/// branches of `spawn(c ? g() : g())`.
+#[test]
+fn spawned_closures_keep_heap_envs() {
+    for conditional in [false, true] {
+        let mut pb = PB::new();
+        let t = pb.t;
+        let pi = pb.promise(t.i64);
+        let v2p = pb.fn_ty(vec![], pi);
+        let mut lf = FB::new("len", pi);
+        lf.param("s", t.str, PassMode::Borrow);
+        let len = pb.add_fn(lf.build_async(vec![ret(Some(int(6, t.i64)))]));
+        let mut f = FB::new("main", t.unit);
+        let (s_, fl) = (f.local("s", t.str), f.local("f", v2p));
+        let (tl, gl) = (f.local("t", t.str), f.local("g", v2p));
+        let mut fc = FB::new("main::{closure#0}", pi);
+        let cap = fc.param("cap0", t.str, PassMode::Owned);
+        fc.captures.push(velt_sema::hir::Capture {
+            outer: s_,
+            inner: cap,
+            mode: PassMode::Owned,
+            share: false,
+        });
+        let fd = pb.add_fn(fc.build_async(vec![ret(Some(int(6, t.i64)))]));
+        let gd = closure_def(
+            &mut pb,
+            "main::{closure#1}",
+            pi,
+            &[(tl, t.str, PassMode::Owned)],
+            &[],
+            |f, caps, _| vec![ret(Some(call(len, vec![f.bw(caps[0])], pi)))],
+        );
+        let call_g = |f: &FB| call_ptr(f.bw(gl), vec![], pi);
+        let mut body = vec![
+            let_(s_, concat(s("a", t), s("b", t), t)),
+            let_(fl, closure(fd, v2p)),
+            se(spawn(call_ptr(f.bw(fl), vec![], pi), pi)),
+            let_(tl, concat(s("x", t), s("y", t), t)),
+            let_(gl, closure(gd, v2p)),
+        ];
+        if conditional {
+            let pick = ex(
+                ExprKind::If {
+                    cond: Box::new(boolean(true, t)),
+                    then: Box::new(call_g(&f)),
+                    els: Box::new(call_g(&f)),
+                },
+                pi,
+            );
+            body.push(se(spawn(pick, pi)));
+        } else {
+            body.push(se(spawn(call_g(&f), pi)));
+            body.push(se(spawn(call_g(&f), pi)));
+        }
+        pb.add_main(f.build(body));
+        let p = pb.finish();
+        let vir = lower_ok(&p).to_string();
+        assert!(!vir.contains("_Genv_drop_frame_"), "{vir}");
+        assert!(main_allocates(&p));
+    }
 }

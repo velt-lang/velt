@@ -5,6 +5,10 @@
 //! - a closure literal initializing a `let` / `const` local whose every use is the callee of a
 //!   call through it (`const f = (x) => x * k; f(1); f(2)`), and that no closure captures.
 //!
+//! A call `spawn` starts (`spawn(f())`, either branch of `spawn(c ? f() : g())`) is not such a
+//! call: the task gets a copy of the function value (async_fn/spawn.rs, callee.rs
+//! `call_indirect`), which a frame env cannot give.
+//!
 //! Neither may be an async or generator closure: calling one creates a promise or generator
 //! that keeps (or sends to another thread) the closure's environment beyond the call. Async
 //! functions and generators themselves are lowered as state machines whose frames move between
@@ -18,7 +22,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, LocalId, StmtKind as S};
+use velt_sema::hir::{
+    self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S,
+};
 
 /// The closures of `f`'s body that get a frame environment.
 pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
@@ -143,8 +149,36 @@ impl Scan<'_> {
                 self.expr(c);
                 args.iter().for_each(|a| self.expr(a));
             }
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Spawn | Intrinsic::SpawnHandled),
+                args,
+            } => args.iter().for_each(|a| self.spawned(a)),
             E::Block(b) => self.block(b),
             _ => children(e, &mut |x| self.expr(x)),
+        }
+    }
+
+    /// The promise `spawn` starts (async_fn/spawn.rs): a call through a function value there is
+    /// a use of the callee, not a call, in either branch of a conditional and through a block
+    /// holding only a value.
+    fn spawned(&mut self, e: &Expr) {
+        match &e.kind {
+            E::If { cond, then, els } => {
+                self.expr(cond);
+                self.spawned(then);
+                self.spawned(els);
+            }
+            E::Block(b) if b.stmts.is_empty() && b.value.is_some() => {
+                b.value.iter().for_each(|v| self.spawned(v));
+            }
+            E::Call {
+                callee: Callee::Indirect(c),
+                args,
+            } => {
+                self.expr(c);
+                args.iter().for_each(|a| self.expr(a));
+            }
+            _ => self.expr(e),
         }
     }
 }
