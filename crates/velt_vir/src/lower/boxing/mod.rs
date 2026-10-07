@@ -209,7 +209,8 @@ impl Cx<'_> {
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
             .collect();
         next.identity_dyns.extend(dyns);
-        next.boxes.extend(self.facts.identity_borrows.iter().copied());
+        next.boxes
+            .extend(self.facts.identity_borrows.iter().copied());
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         let mut seen = HashSet::new();
         loop {

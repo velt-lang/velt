@@ -400,6 +400,11 @@ Maintainer-owned, like hir.rs.
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such
   elements instead of moving them.
+  `Intrinsic::MayAlias(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type borrowed by a call can be reached through another reference while
+  the call runs (lowering counts the type or borrows values of it inside counted objects, so
+  params of it are never `noalias`). The array callback methods re-check the length after a
+  callback only then.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no
