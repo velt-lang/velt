@@ -23,6 +23,16 @@ async function client(base: string) {
   console.log("head", head.status, JSON.stringify(await head.text()), head.body == null);
   const same = await fetch(`${base}/not-modified`);
   console.log("not modified", same.status, JSON.stringify(await same.text()));
+  // An empty body is empty in any coding.
+  for (const enc of ["gzip", "br"]) {
+    const none = await fetch(`${base}/nothing-${enc}`);
+    console.log(
+      "empty",
+      enc,
+      none.headers.get("content-encoding"),
+      JSON.stringify(await none.text()),
+    );
+  }
   // A leading byte order mark is not text.
   console.log(JSON.stringify(await (await fetch(`${base}/bom`)).text()));
   // What `fetch` asks for, unless the request names something.
@@ -164,6 +174,11 @@ async function handle(req: ServerRequest): Promise<ServerResponse> {
   if (p == "not-modified") {
     const r = ServerResponse.text("", 304);
     r.setHeader("content-encoding", "gzip");
+    return r;
+  }
+  if (p == "nothing-gzip" || p == "nothing-br") {
+    const r = ServerResponse.text("");
+    r.setHeader("content-encoding", p.slice(8));
     return r;
   }
   if (p == "bom") {
