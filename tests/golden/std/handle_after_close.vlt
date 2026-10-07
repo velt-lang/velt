@@ -9,6 +9,7 @@ import { bindUdp } from "velt:udp";
 import { openRead, openWrite } from "velt:fs_stream";
 import { removeSync } from "velt:fs";
 import { IoError } from "velt:io";
+import { channel, Channel } from "velt:channel";
 
 async function session(ws: WebSocket): Promise<void> {
   let m = await ws.receive();
@@ -30,10 +31,12 @@ async function receive(ws: WebSocket): Promise<string | null> {
   }
 }
 
-async function receiver(ws: WebSocket): Promise<void> {
+// Reports each message on `got` after printing it.
+async function receiver(ws: WebSocket, got: Channel<bool>): Promise<void> {
   let m = await receive(ws);
   while (m != null) {
     console.log("received", m);
+    got.trySend(true);
     m = await receive(ws);
   }
   console.log("receiver: connection closed");
@@ -50,12 +53,15 @@ async function websocket() {
     return up.response;
   });
   const ws = await connectWebSocket(`ws://127.0.0.1:${server.port}/`);
-  const task = spawn(receiver(ws));
+  const got = channel<bool>();
+  const task = spawn(receiver(ws, got));
   await ws.send("hi");
-  await sleep(50);
+  // The echo arrived before the socket is closed.
+  await got.receive();
   const copy = ws;
   await ws.close();
   await task;
+  got.close();
   try {
     await copy.send("after close");
   } catch (e) {

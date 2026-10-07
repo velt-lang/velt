@@ -18,6 +18,7 @@ use super::connect::{self, Endpoint, Stream};
 use super::error::RedisErr;
 use super::resp::{Parser, Value};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, oneshot};
@@ -66,6 +67,8 @@ pub struct Conn {
     pub endpoint: Endpoint,
     requests: mpsc::UnboundedSender<Request>,
     driver: AbortHandle,
+    /// Connections the reader saw end (each failed its queue first).
+    lost: Arc<AtomicU64>,
 }
 
 impl Drop for Conn {
@@ -80,14 +83,22 @@ impl Conn {
     pub async fn open(endpoint: Endpoint) -> Result<Conn, RedisErr> {
         let stream = connect::open(&endpoint).await?;
         let (requests, rx) = mpsc::unbounded_channel();
+        let lost = Arc::new(AtomicU64::new(0));
         let driver = crate::task::runtime::handle()
-            .spawn(drive(endpoint.clone(), stream, rx))
+            .spawn(drive(endpoint.clone(), stream, rx, lost.clone()))
             .abort_handle();
         Ok(Conn {
             endpoint,
             requests,
             driver,
+            lost,
         })
+    }
+
+    /// How many connections have ended so far: a request sent after that goes to a new one.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn connections_lost(&self) -> u64 {
+        self.lost.load(Ordering::Acquire)
     }
 
     /// Send already encoded commands producing `replies` replies and wait for them.
@@ -112,7 +123,12 @@ enum Ended {
 }
 
 /// The client's lifetime: serve connections, reconnecting on demand (module docs).
-async fn drive(endpoint: Endpoint, first: Stream, mut rx: mpsc::UnboundedReceiver<Request>) {
+async fn drive(
+    endpoint: Endpoint,
+    first: Stream,
+    mut rx: mpsc::UnboundedReceiver<Request>,
+    lost: Arc<AtomicU64>,
+) {
     let mut stream = Some(first);
     let mut carried = None;
     loop {
@@ -141,7 +157,7 @@ async fn drive(endpoint: Endpoint, first: Stream, mut rx: mpsc::UnboundedReceive
                 }
             }
         };
-        match serve(s, &mut rx, carried.take()).await {
+        match serve(s, &mut rx, carried.take(), &lost).await {
             Ended::Released => return,
             Ended::Failed(unsent) => carried = unsent,
         }
@@ -153,10 +169,11 @@ async fn serve(
     stream: Stream,
     rx: &mut mpsc::UnboundedReceiver<Request>,
     first: Option<Request>,
+    lost: &Arc<AtomicU64>,
 ) -> Ended {
     let (rd, wr) = tokio::io::split(stream);
     let queue = SharedQueue::default();
-    let reader = crate::task::runtime::handle().spawn(read_loop(rd, queue.clone()));
+    let reader = crate::task::runtime::handle().spawn(read_loop(rd, queue.clone(), lost.clone()));
     let ended = write_loop(wr, rx, &queue, first).await;
     reader.abort();
     ended
@@ -223,9 +240,10 @@ fn enqueue(queue: &SharedQueue, req: Request, batch: &mut Vec<u8>) -> Result<(),
     Ok(())
 }
 
-async fn read_loop(mut rd: ReadHalf<Stream>, queue: SharedQueue) {
+async fn read_loop(mut rd: ReadHalf<Stream>, queue: SharedQueue, lost: Arc<AtomicU64>) {
     let e = read_replies(&mut rd, &queue).await.err();
     fail(&queue, e.unwrap_or_else(RedisErr::closed));
+    lost.fetch_add(1, Ordering::Release);
 }
 
 /// Deliver replies until the stream ends (`Ok`) or fails.
@@ -270,13 +288,18 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// A fake server that answers each `PING` with `:n` (its count so far on that connection),
-    /// closes a connection after `limit` commands, and accepts `connections` connections.
+    /// closes a connection after `limit` commands, and accepts `connections` connections (it
+    /// stops listening when it accepts the last one).
     async fn fake_server(limit: usize, connections: usize) -> u16 {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
         tokio::spawn(async move {
-            for _ in 0..connections {
-                let (mut s, _) = l.accept().await.unwrap();
+            let mut l = Some(l);
+            for i in 0..connections {
+                let (mut s, _) = l.as_ref().unwrap().accept().await.unwrap();
+                if i + 1 == connections {
+                    l = None;
+                }
                 let (mut seen, mut buf) = (0, vec![0u8; 4096]);
                 while seen < limit {
                     let n = s.read(&mut buf).await.unwrap();
@@ -301,6 +324,15 @@ mod tests {
         p
     }
 
+    /// Wait until `conn` saw `n` connections end (a hang guard of a minute, not a time limit).
+    async fn lost(conn: &Conn, n: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while conn.connections_lost() < n {
+            assert!(std::time::Instant::now() < deadline, "the connection never ended");
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    }
+
     async fn open(port: u16) -> Conn {
         let target = url::parse(&format!("redis://127.0.0.1:{port}")).unwrap();
         Conn::open(Endpoint { target, ca: vec![] }).await.unwrap()
@@ -317,7 +349,7 @@ mod tests {
                 Ok(vec![Value::Int(2), Value::Int(3)])
             );
             // The server closed the first connection; the next command gets a new one.
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            lost(&conn, 1).await;
             assert_eq!(conn.send(ping(1), 1).await, Ok(vec![Value::Int(1)]));
         });
     }
@@ -328,7 +360,7 @@ mod tests {
             let port = fake_server(1, 1).await;
             let conn = open(port).await;
             assert_eq!(conn.send(ping(1), 1).await, Ok(vec![Value::Int(1)]));
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            lost(&conn, 1).await;
             let e = conn.send(ping(1), 1).await.unwrap_err();
             assert_eq!(e.code, crate::result::code::CONNECTION_REFUSED);
         });

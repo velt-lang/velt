@@ -1,6 +1,8 @@
 // check: no leaks
 // A spawn handle dropped after its task already rejected reports the rejection when it is
-// dropped (#148).
+// dropped (#148). The output is the same if the task is still running when the handle is
+// dropped (it is reported when it rejects), so a slow machine changes nothing: `main` waits far
+// longer than either takes, and `unreachable` would only print if the rejection were lost.
 class Failed extends Error {}
 
 async function failing(): Promise<i64> {
@@ -13,5 +15,6 @@ async function main() {
     await sleep(50);
     console.log("dropping the handle");
   }
+  await sleep(60000);
   console.log("unreachable");
 }
