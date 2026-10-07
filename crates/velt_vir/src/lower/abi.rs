@@ -71,6 +71,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             key_mode: false,
             ctor_self: None,
             init_stack: vec![],
+            frame_closures: HashSet::new(),
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -84,6 +85,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Glue(g, t) => Self::build_glue(cx, *g, *t),
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
+            Work::EnvDropFrame(def, targs) => Self::build_frame_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
             Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
@@ -158,6 +160,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.ctor_self = lw.ctor_class(def, f);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
+        lw.frame_closures = super::frame_envs::scan(hir_prog, f);
         let (params, attrs) = lw.declare_locals(def, f);
         lw.declare_drop_flags(f, &scan);
         if !lw.cx.by_ref_params.contains(&(def, lw.targs.clone())) {
