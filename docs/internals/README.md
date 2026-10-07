@@ -28,7 +28,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once). The passes
-   and their order are listed in `crates/velt_opt/src/lib.rs`. Three that change how objects
+   and their order are listed in `crates/velt_opt/src/lib.rs`. Four that change how objects
    are represented:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
