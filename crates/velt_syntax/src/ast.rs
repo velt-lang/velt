@@ -294,8 +294,9 @@ pub struct ObjectTypeField {
     pub name: Ident,
     /// For an optional field, the written type plus `| null`.
     pub ty: TypeExpr,
-    /// `name?: T` — parsed as `name: T | null` (the flag only keeps the spelling); an object
-    /// literal may leave out any `T | null` field of an object type.
+    /// `name?: T` — parsed as `name: T | null`; the flag makes it an optional field of the object
+    /// type (left out by `JSON.stringify` while `null`). An object literal may leave out any
+    /// `T | null` field of an object type.
     pub optional: bool,
     /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
     pub readonly: bool,

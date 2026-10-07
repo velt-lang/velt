@@ -16,7 +16,7 @@ use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
 
 use super::operand::proj;
 use super::{cfunc, cint, FnLower, LInfo, LState, ThunkKind, Work};
-use crate::vir::{Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// Header fields of a closure environment in front of its captures: drop, clone and transfer
 /// entries (module docs).
@@ -42,6 +42,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
             hir::ExprKind::Closure(def) => self.closure_value(def, a.ty, true),
             _ => self.expr(a),
         }
+    }
+
+    /// `__intrinsic_fn_captures_nothing(f)`: `f.env == null` (module docs: only closures without
+    /// captures and named functions have a null env).
+    pub(super) fn fn_captures_nothing(&mut self, f: &hir::Expr) -> Operand {
+        let fty = self.sub(f.ty);
+        let fv = self.expr(f);
+        let fp = self.place_of(fv, fty);
+        let env = Operand::Copy(proj(&fp, Proj::Field(1)));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, env, cint(0, Ty::Ptr)))
     }
 
     /// `ExprKind::Closure(def)`: build `{ code, env }` (instantiated with the current type args).

@@ -86,5 +86,7 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `=>` | arrow function |
 
 The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
-right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). A postfix `!` after an
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). As in JavaScript, a compound
+assignment or `++` / `--` evaluates its target's object and indices once, before the right
+side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. A postfix `!` after an
 expression on the same line is the non-null assertion (`m.get(k)!`).

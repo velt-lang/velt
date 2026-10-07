@@ -1,19 +1,9 @@
-switch_errors.vlt:15:11: error: non-exhaustive switch on `s.kind`
-missing cases: "rect", "tri"
-add `case "rect":`, `case "tri":` or a `default:` clause
-switch_errors.vlt:23:11: error: non-exhaustive switch on `d`
-missing cases: "down", "left"
-add `case "down":`, `case "left":` or a `default:` clause
-switch_errors.vlt:31:11: error: non-exhaustive switch on `c`
-missing cases: Color.Green
-add `case Color.Green:` or a `default:` clause
-switch_errors.vlt:40:11: error: non-exhaustive switch on `typeof v`
-missing cases: "object", "string"
-add `case "object":`, `case "string":` or a `default:` clause
-switch_errors.vlt:49:10: error: `"square"` is not a possible value of `s.kind`
+switch_errors.vlt:8:10: error: `"square"` is not a possible value of `s.kind`
 possible values: "circle", "rect", "tri"
-switch_errors.vlt:60:5: error: duplicate `case` value
-switch_errors.vlt:68:10: error: mismatched types: this literal can never equal a value of type `i64`
-switch_errors.vlt:78:9: error: `continue` cannot target a `switch`
-switch_errors.vlt:86:10: error: mismatched types
+switch_errors.vlt:17:10: error: mismatched types: this literal can never equal a value of type `i64`
+switch_errors.vlt:27:9: error: `continue` cannot target a `switch`
+switch_errors.vlt:35:10: error: mismatched types
 expected string, found i64
+switch_errors.vlt:60:14: error: mismatched types
+expected f64 | null, found f64
+switch_errors.vlt:80:14: error: mismatched types
