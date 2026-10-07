@@ -21,6 +21,7 @@ use crate::locals::Usage;
 use crate::srclocs::rewrite_stmts;
 use parity::Parity;
 use range::Ranges;
+pub(crate) use range::{binary as interval_binary, Interval};
 
 /// A division this pass can make cheaper.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

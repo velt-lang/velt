@@ -39,29 +39,29 @@ const RUNTIME: i64 = 3;
 
 export class Response {
   headers: Headers = new Headers();
-  private code: i64 = 200;
-  private reason: string = "";
-  private where: string = "";
-  private hops: bool = false;
-  private kind: string = "default";
-  private used: bool = false;
-  private source: i64 = 0;
-  private str: string = "";
-  private data: u8[] = [];
-  private handle: u64 = 0;
-  private signal: AbortSignal | null = null;
+  #code: i64 = 200;
+  #reason: string = "";
+  #where: string = "";
+  #hops: bool = false;
+  #kind: string = "default";
+  #used: bool = false;
+  #source: i64 = 0;
+  #str: string = "";
+  #data: u8[] = [];
+  #handle: u64 = 0;
+  #signal: AbortSignal | null = null;
 
   constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
     const parts = bodyParts(body);
-    this.source = parts.kind as i64;
-    this.str = parts.text;
-    this.data = parts.bytes;
+    this.#source = parts.kind as i64;
+    this.#str = parts.text;
+    this.#data = parts.bytes;
     const status = init.status ?? 200;
     if (status < 200 || status > 599) {
       panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
     }
-    this.code = status;
-    this.reason = init.statusText ?? "";
+    this.#code = status;
+    this.#reason = init.statusText ?? "";
     this.headers = new Headers(init.headers);
     const ct = parts.contentType;
     if (ct != null && !this.headers.has("content-type")) {
@@ -69,19 +69,21 @@ export class Response {
     }
   }
 
-  // The response behind runtime key `handle`, whose body aborts with `signal` (std only).
-  private static adopt(handle: u64, signal: AbortSignal | null): Response {
+  // The response behind runtime key `handle`, whose body aborts with `signal` (std only). The
+  // response to a HEAD request has no body, whatever its headers say: `body` is null and
+  // `text()` is "".
+  private static adopt(handle: u64, signal: AbortSignal | null, head: bool): Response {
     const r = new Response();
-    r.code = velt_rt_http_fetch_resp_status(handle) as i64;
-    r.reason = velt_rt_http_fetch_resp_status_text(handle);
-    r.where = velt_rt_http_fetch_resp_url(handle);
-    r.hops = velt_rt_http_fetch_resp_redirected(handle);
+    r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
+    r.#reason = velt_rt_http_fetch_resp_status_text(handle);
+    r.#where = velt_rt_http_fetch_resp_url(handle);
+    r.#hops = velt_rt_http_fetch_resp_redirected(handle);
     r.headers = Headers.adopt(velt_rt_http_fetch_resp_headers(handle));
     r.headers.frozen = true;
-    r.kind = "basic";
-    r.source = RUNTIME;
-    r.handle = handle;
-    r.signal = signal;
+    r.#kind = "basic";
+    r.#source = head ? NONE : RUNTIME;
+    r.#handle = handle;
+    r.#signal = signal;
     return r;
   }
 
@@ -100,8 +102,8 @@ export class Response {
   // A network error: status 0, type "error".
   static error(): Response {
     const r = new Response();
-    r.code = 0;
-    r.kind = "error";
+    r.#code = 0;
+    r.#kind = "error";
     return r;
   }
 
@@ -116,40 +118,41 @@ export class Response {
   }
 
   get status(): i64 {
-    return this.code;
+    return this.#code;
   }
 
   // Whether the status is 200–299.
   get ok(): bool {
-    return this.code >= 200 && this.code <= 299;
+    return this.#code >= 200 && this.#code <= 299;
   }
 
   // The server's status message (`OK`, `Not Found`), "" if it sent none.
   get statusText(): string {
-    return this.reason;
+    return this.#reason;
   }
 
   // The URL the response came from, after redirects ("" for a constructed response).
   get url(): string {
-    return this.where;
+    return this.#where;
   }
 
   // Whether `fetch` followed a redirect to get it.
   get redirected(): bool {
-    return this.hops;
+    return this.#hops;
   }
 
   // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
   get type(): string {
-    return this.kind;
+    return this.#kind;
   }
 
   // The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
   // `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
   // 304) and for a response made without one.
   get body(): BodyStream | null {
-    const none = this.code == 101 || this.code == 103 || this.code == 204 || this.code == 205;
-    if (none || this.code == 304 || this.source == NONE) {
+    const code = this.#code;
+    const none = code == 101 || code == 103 || code == 204 || code == 205;
+    if (none || code == 304 || this.#source == NONE) {
       return null;
     }
     return new BodyStream(this);
@@ -157,24 +160,24 @@ export class Response {
 
   // Whether the body has been read.
   get bodyUsed(): bool {
-    return this.used;
+    return this.#used;
   }
 
   // The body as text (invalid UTF-8 becomes U+FFFD, as in JS).
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
-    if (this.source == RUNTIME) {
-      const r = await velt_rt_http_fetch_resp_text(this.handle);
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_text(this.#handle);
       this.check(r.code);
       return unwrapIo(r);
     }
-    if (this.source == BYTES) {
-      const d = this.data;
+    if (this.#source == BYTES) {
+      const d = this.#data;
       // A leading byte order mark is not text, as in JS.
       const bom = d.length >= 3 && d[0] == 239 && d[1] == 187 && d[2] == 191;
       return utf8DecodeLossy(bom ? d.slice(3) : d);
     }
-    return this.str;
+    return this.#str;
   }
 
   // `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
@@ -186,15 +189,15 @@ export class Response {
 
   async bytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
-    if (this.source == RUNTIME) {
-      const r = await velt_rt_http_fetch_resp_bytes(this.handle);
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_bytes(this.#handle);
       this.check(r.code);
       return unwrapIo(r);
     }
-    if (this.source == TEXT) {
-      return utf8Encode(this.str);
+    if (this.#source == TEXT) {
+      return utf8Encode(this.#str);
     }
-    return this.data;
+    return this.#data;
   }
 
   // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
@@ -202,21 +205,42 @@ export class Response {
     return await this.bytes();
   }
 
+  // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
+  private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      while (true) {
+        const r = await velt_rt_http_fetch_resp_chunk(this.#handle);
+        this.check(r.code);
+        const chunk = unwrapIo(r);
+        if (chunk.length == 0) {
+          return;
+        }
+        yield chunk;
+      }
+    }
+    if (this.#source == TEXT) {
+      yield utf8Encode(this.#str);
+    } else if (this.#data.length > 0) {
+      yield this.#data;
+    }
+  }
+
   // Marks the body read; throws if it was already. A response without a body can be read any
   // number of times, as in JS.
   private claim() throws IoError {
-    if (this.source == NONE) {
+    if (this.#source == NONE) {
       return;
     }
-    if (this.used) {
+    if (this.#used) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
     }
-    this.used = true;
+    this.#used = true;
   }
 
   // After a failed body read: the signal's `AbortError` if it was aborted.
   private check(code: i32) throws AbortError {
-    const s = this.signal;
+    const s = this.#signal;
     if (code != 0 && s != null) {
       s.throwIfAborted();
     }
@@ -224,9 +248,9 @@ export class Response {
 
   // Drop hook: releases the runtime response.
   [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_http_fetch_resp_drop(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_fetch_resp_drop(this.#handle);
+      this.#handle = 0;
     }
   }
 }
@@ -241,24 +265,7 @@ export class BodyStream {
     this.res = res;
   }
 
-  async *[Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
-    const res = this.res;
-    res.claim();
-    if (res.source == RUNTIME) {
-      while (true) {
-        const r = await velt_rt_http_fetch_resp_chunk(res.handle);
-        res.check(r.code);
-        const chunk = unwrapIo(r);
-        if (chunk.length == 0) {
-          return;
-        }
-        yield chunk;
-      }
-    }
-    if (res.source == TEXT) {
-      yield utf8Encode(res.str);
-    } else if (res.data.length > 0) {
-      yield res.data;
-    }
+  [Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
+    return this.res.chunks();
   }
 }

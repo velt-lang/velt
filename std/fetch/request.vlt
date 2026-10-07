@@ -38,93 +38,93 @@ function normalizeMethod(m: string): string {
 
 export class Request {
   headers: Headers = new Headers();
-  private target: string = "";
-  private verb: string = "GET";
-  private follow: RequestRedirect = "follow";
-  private abort: AbortSignal | null = null;
-  private trust: string = "";
-  private body: BodyParts = { kind: 0, text: "", bytes: [], contentType: null };
-  private used: bool = false;
+  #target: string = "";
+  #verb: string = "GET";
+  #follow: RequestRedirect = "follow";
+  #abort: AbortSignal | null = null;
+  #trust: string = "";
+  #body: BodyParts = { kind: 0, text: "", bytes: [], contentType: null };
+  #used: bool = false;
 
   // Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
   // for a `Request` input whose body was already used.
   constructor(input: string | URL | Request, init: RequestInit = {}) throws IoError {
     if (typeof input == "string") {
-      this.target = input;
+      this.#target = input;
     } else if (input instanceof URL) {
-      this.target = input.href;
+      this.#target = input.href;
     } else {
-      this.target = input.target;
-      this.verb = input.verb;
-      this.follow = input.follow;
-      this.abort = input.abort;
-      this.trust = input.trust;
+      this.#target = input.#target;
+      this.#verb = input.#verb;
+      this.#follow = input.#follow;
+      this.#abort = input.#abort;
+      this.#trust = input.#trust;
       this.headers = new Headers(input.headers);
-      if (input.body.kind != 0) {
-        if (input.used) {
+      if (input.#body.kind != 0) {
+        if (input.#used) {
           throw new IoError(
             "EINVAL",
             "Cannot construct a Request with a Request object that has already been used.",
           );
         }
-        this.body = input.body;
-        input.used = true;
+        this.#body = input.#body;
+        input.#used = true;
       }
     }
     const method = init.method;
     if (method != null) {
-      this.verb = normalizeMethod(method);
+      this.#verb = normalizeMethod(method);
     }
     const headers = init.headers;
     if (headers != null) {
       this.headers = new Headers(headers);
     }
     if (init.body != null) {
-      this.body = bodyParts(init.body);
+      this.#body = bodyParts(init.body);
     }
-    this.follow = init.redirect ?? this.follow;
+    this.#follow = init.redirect ?? this.#follow;
     const signal = init.signal;
     if (signal != null) {
-      this.abort = signal;
+      this.#abort = signal;
     }
-    this.trust = init.ca ?? this.trust;
-    if (this.body.kind != 0 && (this.verb == "GET" || this.verb == "HEAD")) {
+    this.#trust = init.ca ?? this.#trust;
+    if (this.#body.kind != 0 && (this.#verb == "GET" || this.#verb == "HEAD")) {
       throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
     }
-    const ct = this.body.contentType;
+    const ct = this.#body.contentType;
     if (ct != null && !this.headers.has("content-type")) {
       this.headers.set("content-type", ct);
     }
   }
 
   get url(): string {
-    return this.target;
+    return this.#target;
   }
 
   get method(): string {
-    return this.verb;
+    return this.#verb;
   }
 
   get redirect(): RequestRedirect {
-    return this.follow;
+    return this.#follow;
   }
 
   // The signal passed in `init` (JS gives every request a signal; Velt's is null without one).
   get signal(): AbortSignal | null {
-    return this.abort;
+    return this.#abort;
   }
 
   get bodyUsed(): bool {
-    return this.used;
+    return this.#used;
   }
 
   // The body as text.
   async text(): Promise<string, IoError> {
     this.claim();
-    if (this.body.kind == 2) {
-      return utf8DecodeLossy(this.body.bytes);
+    if (this.#body.kind == 2) {
+      return utf8DecodeLossy(this.#body.bytes);
     }
-    return this.body.text;
+    return this.#body.text;
   }
 
   // `JSON.parse<T>` of the body (see `Response.json`).
@@ -134,10 +134,10 @@ export class Request {
 
   async bytes(): Promise<u8[], IoError> {
     this.claim();
-    if (this.body.kind == 1) {
-      return utf8Encode(this.body.text);
+    if (this.#body.kind == 1) {
+      return utf8Encode(this.#body.text);
     }
-    return this.body.bytes;
+    return this.#body.bytes;
   }
 
   // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
@@ -148,20 +148,20 @@ export class Request {
   // What `fetch` sends (std only): marks the body used, as sending it does in JS.
   private parts(): BodyParts throws IoError {
     this.claim();
-    return this.body;
+    return this.#body;
   }
 
   private ca(): string {
-    return this.trust;
+    return this.#trust;
   }
 
   private claim() throws IoError {
-    if (this.body.kind == 0) {
+    if (this.#body.kind == 0) {
       return;
     }
-    if (this.used) {
+    if (this.#used) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
     }
-    this.used = true;
+    this.#used = true;
   }
 }

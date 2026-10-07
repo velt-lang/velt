@@ -117,9 +117,9 @@ impl FnLower<'_, '_> {
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
-                // Sema rejects these; writing one would leak private data (runtime handles).
-                if self.cx.adt_def(d).private_fields {
-                    ice("JSON of a type with private fields");
+                // Sema rejects these; writing one would leak std's runtime handles.
+                if self.cx.adt_def(d).opaque {
+                    ice("JSON of a type holding std's private state");
                 }
                 self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
             }
@@ -215,6 +215,10 @@ impl FnLower<'_, '_> {
         self.push_text(buf, "{");
         let mut sep = Sep::First;
         for (i, ((name, optional), fty)) in names.into_iter().zip(tys).enumerate() {
+            // ES private fields (`#x`) are not written, as in JavaScript.
+            if name.starts_with('#') {
+                continue;
+            }
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
             match (optional, self.cx.kind(fty)) {

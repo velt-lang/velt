@@ -1,0 +1,46 @@
+// ES private fields (`#x`): usable only inside the class body, on any instance of the class;
+// hidden from `console.log` (also nested and in template literals), `JSON.stringify`,
+// `Object.keys` and spread, as in Node. A TypeScript `private` field stays visible at run time.
+class Account {
+  #pin: string;
+  private balance: number;
+  owner: string;
+  constructor(owner: string, pin: string, balance: number) {
+    this.owner = owner;
+    this.#pin = pin;
+    this.balance = balance;
+  }
+  unlock(pin: string): boolean {
+    return this.#pin === pin;
+  }
+  samePin(o: Account): boolean {
+    return this.#pin === o.#pin;
+  }
+  total(): number {
+    return this.balance;
+  }
+}
+
+class Point {
+  #x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.#x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.#x + this.y;
+  }
+}
+
+function main() {
+  const a = new Account("ann", "1234", 5);
+  console.log(a.unlock("1234"), a.unlock("0000"), a.samePin(new Account("bo", "1234", 1)));
+  console.log(a);
+  console.log([new Point(1, 2)], { p: new Point(3, 4) });
+  console.log(`${new Point(5, 6).sum()}`);
+  console.log(JSON.stringify(a), JSON.stringify([new Point(1, 2)]));
+  console.log(Object.keys(new Point(1, 2)));
+  const copy = { ...new Point(7, 8) };
+  console.log(copy, a.total());
+}

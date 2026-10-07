@@ -53,6 +53,10 @@ const TIMINGS: (&str, &str) = (
     "--timings",
     "like -v, plus the time of each optimizer pass and codegen step",
 );
+const REPORT: (&str, &str) = (
+    "--report numbers",
+    "list the `number` variables in loops that stay doubles (not integers), and why",
+);
 const TEMPLATE: (&str, &str) = (
     "--template <name>",
     "app | cli | api | websocket | lib (default: app)",
@@ -95,7 +99,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [-v] [--timings]"],
+        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [-v] [--timings] [--report numbers]"],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
@@ -109,12 +113,14 @@ pub const COMMANDS: &[CommandHelp] = &[
             LOCKED,
             VERBOSE,
             TIMINGS,
+            REPORT,
         ],
         examples: &[
             ("velt build", "build the current package"),
             ("velt build --release", "optimized build"),
             ("velt build hello.vlt -o hello", "build one file"),
             ("velt build app.vlt --target wasm32-wasip1", "build WebAssembly"),
+            ("velt build --release --report numbers", "which loop variables stay doubles"),
         ],
     },
     CommandHelp {

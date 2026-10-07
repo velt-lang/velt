@@ -464,12 +464,26 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   and that parameter of the enclosing function becomes owned. Where that parameter cannot become
   owned (in a closure, or an overridden or interface method), this is the error
   ``cannot keep a copy of `next`, a borrowed function parameter``.
+- A closure held in a `const` that is only ever called (`const add = (n: number) => {
+  this.total += n; }; add(1); add(2);`) is non-escaping too: it captures by reference, sees
+  every later change of what it captures, and lives in the frame, so capturing `this` does not
+  make the class reference-counted. The compiler proves it: the closure's variable is used only
+  as `f(...)` (never copied, stored, returned, passed on or captured by another closure), the
+  enclosing function is not `async` or a generator, and no call runs while a reference into a
+  captured object is held (the call's own arguments do not use what it captures, and it is not
+  inside a `for...of` over such an object, a `match` on one, or next to an argument borrowing
+  one). Otherwise it is escaping, as below; the results are the same, only the cost differs.
+  Borrowing never makes a program an error: where a closure borrowing `this` (or `const me =
+  this`) would conflict with a caller's borrow, such as a `for...of` over `c.items` around a
+  `c.clear()` that replaces `items`, the closure and `me` share instead. The fallback is for
+  the whole program: one such conflict makes every held closure and every `const me = this` in
+  it share, as if none of them borrowed.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
   into the closure, so it is released (and disposed) when the closure is, even if other captures
   are still used afterwards. A variable that the closure or the enclosing code assigns
-  while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
+  while the other still uses it (`let count = 0; const incs = [() => { count++; }]; incs[0]();
   console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps
   a plain copy. A `for (let …)` loop's step runs on a fresh binding per iteration, as in JS. A

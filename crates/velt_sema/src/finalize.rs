@@ -181,6 +181,10 @@ fn adt_def(
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
     let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
+    let opaque = a
+        .fields
+        .iter()
+        .any(|f| f.private_to.is_some_and(|o| cx.declared_in_std(o)));
     let fields = a
         .fields
         .iter()
@@ -214,6 +218,7 @@ fn adt_def(
         fields,
         is_copy: cx.is_copy(st),
         private_fields,
+        opaque,
         assigned,
         base,
         ctor,
