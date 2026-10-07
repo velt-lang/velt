@@ -484,3 +484,39 @@ fn a_write_through_a_name_skipped_by_an_earlier_write_sees_that_write() {
     env.pb.add(fb.finish());
     check(env.pb.finish(), &[1, 40], true);
 }
+
+#[test]
+fn a_name_that_holds_the_object_on_loop_entry_only_keeps_the_heap() {
+    // `t = new(5, 2); p = new(3, 4); q = t; for i < n { t.0 = t.0 + 10; s += q.0 + q.1; q = p }`:
+    // `q` holds `t`'s object when the loop is entered but `p`'s after the back edge, so a copy
+    // of the write to `q` is right on the first iteration only.
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let n = fb.param(0);
+    let (t, p, q) = (fb.local(Ptr), fb.local(Ptr), fb.local(Ptr));
+    let (i, s, c) = (fb.local(I64), fb.local(I64), fb.local(Bool));
+    let b = fb.block();
+    fb.assign(b, i, Rvalue::Use(int(0, I64)));
+    fb.assign(b, s, Rvalue::Use(int(0, I64)));
+    let b = env.new_obj(&mut fb, b, t, int(5, I64), int(2, I64));
+    let b = env.new_obj(&mut fb, b, p, int(3, I64), int(4, I64));
+    fb.assign(b, q, Rvalue::Use(copy_local(t)));
+    let (head, body, exit) = (fb.block(), fb.block(), fb.block());
+    fb.goto(b, head);
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
+    fb.branch(head, c, body, exit);
+    let x = fb.local(I64);
+    let bumped = bin(BinOp::Add, copy_place(env.field(t, 0)), int(10, I64));
+    fb.assign(body, x, bumped);
+    fb.push(body, Stmt::Assign(env.field(t, 0), Rvalue::Use(copy_local(x))));
+    let r = env.sum(&mut fb, body, q);
+    fb.assign(body, s, bin(BinOp::Add, copy_local(s), copy_local(r)));
+    fb.assign(body, q, Rvalue::Use(copy_local(p)));
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, I64)));
+    fb.goto(body, head);
+    let b = env.drop_obj(&mut fb, exit, t);
+    let b = env.drop_obj(&mut fb, b, p);
+    fb.ret(b, copy_local(s));
+    env.pb.add(fb.finish());
+    check(env.pb.finish(), &[0, 1, 2, 5], false);
+}
