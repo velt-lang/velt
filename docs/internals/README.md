@@ -29,8 +29,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
    The passes and their order are listed in `crates/velt_opt/src/lib.rs`: the inlining rounds
-   run `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep` and `divisions` run
-   once each. Three change how values are represented:
+   run `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep`, `divisions` and
+   `dead_fills` run once each. Four change how values are represented:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
      gets its own copy; a write through one name is copied to the other names that hold the
@@ -42,6 +42,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      never NaN, `-0` unobservable) prove the integer computes the same values
      ([design #525](https://github.com/velt-lang/velt/issues/525)). It runs after the two
      above, so the fields they turned into locals can become integers too.
+   - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
+     code right after the allocation writes every field (padding aside) before anything can
+     read the object: before a branch, and before the pointer is passed, stored or compared.
 
    Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined, and
    `numrep`.
