@@ -22,7 +22,7 @@ use velt_vir::vir::{
 mod addrs;
 
 use crate::fresh::access::{self, size, Access, Touch};
-use crate::fresh::{single_predecessors, walk, Observer, Pos};
+use crate::fresh::{walk, Observer, Pos, Shape};
 use crate::heap_sroa::Allocator;
 use crate::visit::{stmt_operands, stmt_operands_mut, term_operands, term_operands_mut};
 use addrs::Addrs;
@@ -61,7 +61,7 @@ fn header_loads(
     if !stores_vtable(statics, func) {
         return out;
     }
-    let single = single_predecessors(func);
+    let shape = Shape::of(func);
     for block in &func.blocks {
         let Terminator::Call {
             callee: Callee::Extern(e),
@@ -78,7 +78,7 @@ fn header_loads(
                 known: Vec::new(),
                 loads: Vec::new(),
             };
-            walk(aggs, func, &single, d.local, next.0 as usize, &mut slots);
+            walk(aggs, func, &shape, d.local, next.0 as usize, &mut slots);
             out.extend(slots.loads);
         }
     }

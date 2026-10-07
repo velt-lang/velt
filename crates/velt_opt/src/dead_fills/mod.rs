@@ -20,7 +20,7 @@ mod fill;
 use velt_vir::vir::{AggLayout, Callee, Function, Operand, Place, Terminator};
 
 use crate::fresh::access::Access;
-use crate::fresh::{single_predecessors, walk, Observer, Pos};
+use crate::fresh::{walk, Observer, Pos, Shape};
 use crate::heap_sroa::Allocator;
 use crate::srclocs::retain_stmts;
 use fill::Fill;
@@ -33,7 +33,7 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
     let Some(allocator) = allocator else {
         return false;
     };
-    let single = single_predecessors(func);
+    let shape = Shape::of(func);
     let mut dead = Vec::new();
     for block in &func.blocks {
         let Terminator::Call {
@@ -51,7 +51,7 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
                 fill: None,
                 dead: None,
             };
-            walk(aggs, func, &single, d.local, next.0 as usize, &mut fills);
+            walk(aggs, func, &shape, d.local, next.0 as usize, &mut fills);
             dead.extend(fills.dead);
         }
     }

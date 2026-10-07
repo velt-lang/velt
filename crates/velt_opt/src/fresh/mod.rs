@@ -13,7 +13,9 @@
 //!
 //! Any other mention (a call argument, a stored or compared pointer, `&q.f`) ends the walk, as
 //! does the observer. Calls that do not receive a tracked pointer cannot see the block, so the
-//! walk goes on past them.
+//! walk goes on past them. A local whose address is taken anywhere in the function is never
+//! tracked (as a pointer or a null test): a store through that address could change it, or a
+//! read through it see the block, without the walk seeing either.
 
 pub(crate) mod access;
 
@@ -21,6 +23,7 @@ use velt_vir::vir::{
     AggLayout, BinOp, Const, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty,
 };
 
+use crate::locals::Usage;
 use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
 use access::{Access, Touch};
 
@@ -40,18 +43,58 @@ pub(crate) trait Observer {
     fn read(&mut self, at: Pos, p: &Place, a: &Access) -> bool;
 }
 
-/// Walk from the start of block `from`, where `ptr` points at the new block; `single` is
-/// [`single_predecessors`] of `func`.
+/// What every walk in one function needs, computed once per function.
+pub(crate) struct Shape {
+    /// Per block: whether exactly one edge enters it (the entry block is also entered by the
+    /// call). The walk enters only those: a block that another path also reaches runs its
+    /// statements for objects the walk knows nothing about, so what the walk learned does not
+    /// hold there.
+    single: Vec<bool>,
+    /// Per local: whether `AddrOf` takes its address somewhere in the function.
+    taken: Vec<bool>,
+}
+
+impl Shape {
+    /// Scan `func` once.
+    pub(crate) fn of(func: &Function) -> Shape {
+        let mut preds = vec![0u32; func.blocks.len()];
+        if let Some(entry) = preds.first_mut() {
+            *entry = 1;
+        }
+        for block in &func.blocks {
+            for s in successors(&block.term) {
+                preds[s.0 as usize] += 1;
+            }
+        }
+        let usage = Usage::of(func);
+        Shape {
+            single: preds.into_iter().map(|n| n == 1).collect(),
+            taken: usage.locals.iter().map(|u| u.address_taken).collect(),
+        }
+    }
+
+    fn taken(&self, l: Local) -> bool {
+        self.taken.get(l.0 as usize).copied().unwrap_or(true)
+    }
+}
+
+/// Walk from the start of block `from`, where `ptr` points at the new block; `shape` is
+/// [`Shape::of`] `func`.
 pub(crate) fn walk(
     aggs: &[AggLayout],
     func: &Function,
-    single: &[bool],
+    shape: &Shape,
     ptr: Local,
     from: usize,
     obs: &mut impl Observer,
 ) {
+    if shape.taken(ptr) {
+        return;
+    }
+    let single = &shape.single;
     let mut walk = Walk {
         aggs,
+        shape,
         ptrs: vec![(ptr, 0)],
         tests: Vec::new(),
         obs,
@@ -80,25 +123,10 @@ pub(crate) fn walk(
     }
 }
 
-/// Per block: whether exactly one edge enters it (the entry block is also entered by the call).
-/// The walk enters only those: a block that another path also reaches runs its statements for
-/// objects the walk knows nothing about, so what the walk learned does not hold there.
-pub(crate) fn single_predecessors(func: &Function) -> Vec<bool> {
-    let mut preds = vec![0u32; func.blocks.len()];
-    if let Some(entry) = preds.first_mut() {
-        *entry = 1;
-    }
-    for block in &func.blocks {
-        for s in successors(&block.term) {
-            preds[s.0 as usize] += 1;
-        }
-    }
-    preds.into_iter().map(|n| n == 1).collect()
-}
-
 /// The state of one walk.
 struct Walk<'a, O> {
     aggs: &'a [AggLayout],
+    shape: &'a Shape,
     /// Locals pointing into the block, with their offsets.
     ptrs: Vec<(Local, i128)>,
     /// Bool locals holding a null test of a tracked pointer, with their value: the allocator
@@ -122,11 +150,17 @@ impl<O: Observer> Walk<'_, O> {
             .map(|&(_, off)| off)
     }
 
-    /// `l` now points at `off` into the block (`Some`), or elsewhere.
-    fn set(&mut self, l: Local, off: Option<i128>) {
+    /// `l` now points at `off` into the block (`Some`), or elsewhere; false when the pointer
+    /// escapes into an address-taken `l`.
+    fn set(&mut self, l: Local, off: Option<i128>) -> bool {
         self.ptrs.retain(|&(p, _)| p != l);
-        if let Some(off) = off {
-            self.ptrs.push((l, off));
+        match off {
+            Some(_) if self.shape.taken(l) => false,
+            Some(off) => {
+                self.ptrs.push((l, off));
+                true
+            }
+            None => true,
         }
     }
 
@@ -182,8 +216,8 @@ impl<O: Observer> Walk<'_, O> {
     /// A write of place `p` (with the stored operand of a plain use).
     fn store(&mut self, at: Pos, p: &Place, value: Option<&Operand>) -> bool {
         if p.proj.is_empty() {
-            self.set(p.local, None);
-            return true;
+            self.tests.retain(|&(l, _)| l != p.local);
+            return self.set(p.local, None);
         }
         match self.touch(p) {
             Touch::Elsewhere => true,
@@ -197,14 +231,17 @@ impl<O: Observer> Walk<'_, O> {
         match s {
             Stmt::Assign(dst, rv) => {
                 if dst.proj.is_empty() {
-                    self.tests.retain(|&(l, _)| l != dst.local);
                     if let Some(off) = self.derived(rv) {
-                        self.set(dst.local, Some(off));
-                        return true;
+                        self.tests.retain(|&(l, _)| l != dst.local);
+                        return self.set(dst.local, Some(off));
                     }
                     if let Some(nonnull) = self.null_test(rv) {
-                        self.set(dst.local, None);
-                        self.tests.push((dst.local, nonnull));
+                        if !self.store(at, dst, None) {
+                            return false;
+                        }
+                        if !self.shape.taken(dst.local) {
+                            self.tests.push((dst.local, nonnull));
+                        }
                         return true;
                     }
                 }
