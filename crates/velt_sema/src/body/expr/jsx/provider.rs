@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use crate::body::FnCx;
 use crate::collect::export_of;
 use crate::ctx::{Ctx, Item};
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The SSR precompile exports (docs/contracts/jsx.md "SSR precompile"); a runtime has all of
@@ -33,6 +33,8 @@ pub(crate) struct Provider {
     pub component: DefId,
     pub async_component: Option<DefId>,
     pub precompile: Option<Precompile>,
+    /// `jsxTextSeparator` (precompile only): markup written between adjacent text parts.
+    pub text_separator: Option<String>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -106,9 +108,15 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         return None;
     }
     let children_field = children_field(cx, t, &source, at)?;
+    let precompile = precompile(cx, t, at);
+    let text_separator = match precompile {
+        Some(_) => text_separator(cx, t, &source, at)?,
+        None => None,
+    };
     Some(Provider {
         async_component: function(cx, t, "jsxAsyncComponent"),
-        precompile: precompile(cx, t, at),
+        precompile,
+        text_separator,
         source,
         jsx: jsx?,
         fragment: fragment?,
@@ -157,6 +165,52 @@ fn precompile(cx: &mut Ctx, t: usize, at: Span) -> Option<Precompile> {
         attr: function(cx, t, "jsxAttr")?,
         text: type_export(cx, t, "Text", at)?,
     })
+}
+
+/// The value of the optional `jsxTextSeparator` export: `Some(None)` without one, `None` once an
+/// export that is not a string constant was reported.
+fn text_separator(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Option<String>> {
+    const NAME: &str = "jsxTextSeparator";
+    let Some(item) = export_of(cx, t, NAME) else {
+        return Some(None);
+    };
+    let mut value = None;
+    if let Item::Def(mut d) = item {
+        // `export const jsxTextSeparator = OTHER;` reads `OTHER` (a bounded chain).
+        for _ in 0..16 {
+            if cx.global(d).is_none() {
+                break;
+            }
+            crate::body::driver::ensure_global(cx, d);
+            let Some(g) = cx.global(d) else { break };
+            match g.init.as_ref().map(|i| &i.kind) {
+                Some(H::Lit(Lit::Str(s))) => value = Some(s.clone()),
+                Some(H::Global(next)) => {
+                    d = *next;
+                    continue;
+                }
+                _ => {
+                    if let TyKind::Literal(LitValue::Str(s)) = cx.ty.kind(g.ty) {
+                        value = Some(s.clone());
+                    }
+                }
+            }
+            break;
+        }
+    }
+    if value.is_none() {
+        cx.error(
+            Diagnostic::error(
+                format!("`{NAME}` of the JSX provider '{source}' must be a string constant"),
+                at,
+            )
+            .with_note(format!(
+                "write it as `export const {NAME} = \"<!--t-->\";`: the compiler folds it into the template strings (docs/contracts/jsx.md)"
+            )),
+        );
+        return None;
+    }
+    Some(value)
 }
 
 /// The one field name of `ElementChildrenAttribute`, or `children` without one.
