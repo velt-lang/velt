@@ -4,9 +4,10 @@
 // A fetched response holds a runtime response (`VeltFetchResp`, a registry key) whose head has
 // arrived; its body is received by the first `text()`, `json()`, `bytes()` or `arrayBuffer()`,
 // or chunk by chunk through `res.body` (a second read throws, as in JS). A compressed body
-// (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. The handle is released when the response is dropped,
-// which closes the connection of a body nobody read. The status, URL and headers are copied
-// out when the response is adopted, so they stay readable after the body was read.
+// (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. The handle is released when the
+// response is dropped, which closes the connection of a body nobody read. The status text, URL
+// and headers are copied out of the runtime the first time they are read (most programs read
+// none of them), and stay readable after the body was read.
 
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
@@ -38,10 +39,12 @@ const BYTES: i64 = 2;
 const RUNTIME: i64 = 3;
 
 export class Response {
-  headers: Headers = new Headers();
   #code: i64 = 200;
-  #reason: string = "";
-  #where: string = "";
+  // Null until `headers` is first read.
+  #fields: Headers | null = null;
+  // A fetched response's status text and URL: null until first read.
+  #reason: string | null = "";
+  #where: string | null = "";
   #hops: bool = false;
   #kind: string = "default";
   #used: bool = false;
@@ -62,7 +65,10 @@ export class Response {
     }
     this.#code = status;
     this.#reason = init.statusText ?? "";
-    this.headers = new Headers(init.headers);
+    const given = init.headers;
+    if (given != null) {
+      this.#fields = new Headers(given);
+    }
     const ct = parts.contentType;
     if (ct != null && !this.headers.has("content-type")) {
       this.headers.set("content-type", ct);
@@ -75,11 +81,9 @@ export class Response {
   private static adopt(handle: u64, signal: AbortSignal | null, head: bool): Response {
     const r = new Response();
     r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
-    r.#reason = velt_rt_http_fetch_resp_status_text(handle);
-    r.#where = velt_rt_http_fetch_resp_url(handle);
+    r.#reason = null;
+    r.#where = null;
     r.#hops = velt_rt_http_fetch_resp_redirected(handle);
-    r.headers = Headers.adopt(velt_rt_http_fetch_resp_headers(handle));
-    r.headers.frozen = true;
     r.#kind = "basic";
     r.#source = head ? NONE : RUNTIME;
     r.#handle = handle;
@@ -117,6 +121,21 @@ export class Response {
     return r;
   }
 
+  // The headers; a fetched response's are immutable.
+  get headers(): Headers {
+    const known = this.#fields;
+    if (known != null) {
+      return known;
+    }
+    let h = new Headers();
+    if (this.#handle != 0) {
+      h = Headers.adopt(velt_rt_http_fetch_resp_headers(this.#handle));
+      h.frozen = true;
+    }
+    this.#fields = h;
+    return h;
+  }
+
   get status(): i64 {
     return this.#code;
   }
@@ -128,12 +147,24 @@ export class Response {
 
   // The server's status message (`OK`, `Not Found`), "" if it sent none.
   get statusText(): string {
-    return this.#reason;
+    const known = this.#reason;
+    if (known != null) {
+      return known;
+    }
+    const s = velt_rt_http_fetch_resp_status_text(this.#handle);
+    this.#reason = s;
+    return s;
   }
 
   // The URL the response came from, after redirects ("" for a constructed response).
   get url(): string {
-    return this.#where;
+    const known = this.#where;
+    if (known != null) {
+      return known;
+    }
+    const s = velt_rt_http_fetch_resp_url(this.#handle);
+    this.#where = s;
+    return s;
   }
 
   // Whether `fetch` followed a redirect to get it.

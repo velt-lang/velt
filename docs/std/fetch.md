@@ -82,8 +82,11 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   body is `""` in any coding, as in Node. A body
   that does not decode fails the read with `IoError` (`fetch failed: invalid compressed body:
   …`).
-- The status, URL and headers are copied when the head arrives, so they stay readable after
-  the body was read. Dropping a response whose body was not read closes its connection.
+- The status text, URL and headers stay readable after the body was read; they are copied out
+  of the runtime the first time you read them, so a response whose headers you never look at
+  costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
+  returns, not the property. Dropping a response whose body was not read closes its
+  connection.
 - `new Response(body?: string | u8[] | URLSearchParams | null, init?: ResponseInit { status?;
   statusText?; headers? })`, `Response.json(data, init?)` (`content-type: application/json`),
   `Response.error()` and `Response.redirect(url, status = 302)` build responses, e.g. for
