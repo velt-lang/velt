@@ -214,7 +214,7 @@ fn reason_phrase_and_bodies() {
         let r = fetch(get(&format!("{base}/teapot"), &[]), Redirect::Follow)
             .await
             .unwrap();
-        assert_eq!((r.status, r.status_text.as_str()), (418, "Teapot Time"));
+        assert_eq!((r.status, &*r.status_text), (418, "Teapot Time"));
         let r = Arc::new(r);
         let w = receive(r.clone()).await.unwrap();
         assert_eq!(w.as_slice(), b"short and stout");

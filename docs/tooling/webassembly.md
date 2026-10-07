@@ -49,8 +49,10 @@ The language and the standard library as on native targets, single-threaded:
   there is no time zone;
 - panics print `panic: …` and exit with 101, like native programs.
 
-**Not available**: TCP, HTTP, child processes and the database drivers; the link fails with a
-note naming the missing runtime function. Browser modules have no file system.
+**Not available**: TCP, the HTTP server, child processes and the database drivers; the link
+fails with a note naming the missing runtime function. `fetch` links but rejects with
+`IoError` `ENOTSUP` (there is no network), so code that only builds `Response`s runs. Browser
+modules have no file system.
 
 ## In the browser
 

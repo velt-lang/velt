@@ -135,12 +135,47 @@ impl Loader {
                 continue;
             }
             let text = std::fs::read_to_string(&f).unwrap();
-            if reexports(&text).iter().any(|n| mentions(&src, n)) {
+            let own = bound(&self.modules[m].ast);
+            if reexports(&text)
+                .iter()
+                .any(|n| !own.contains(n) && mentions(&src, n))
+            {
                 let i = self.add(&canonical, &f, text);
                 queue.push_back(i);
             }
         }
     }
+}
+
+/// The names module `m` imports or declares at its top level (they hide a global), as the
+/// driver's loader counts them (`veltc::loader::globals::bound_names`).
+fn bound(m: &ast::Module) -> Vec<String> {
+    let mut names = vec![];
+    for item in &m.items {
+        match &item.kind {
+            ast::ItemKind::Import(imp) => {
+                if !item.exported || imp.from.is_empty() {
+                    let local =
+                        |n: &ast::ImportName| n.alias.as_ref().unwrap_or(&n.name).name.clone();
+                    names.extend(imp.names.iter().map(local));
+                }
+                names.extend(imp.namespace.iter().map(|n| n.name.clone()));
+            }
+            ast::ItemKind::Class(t) | ast::ItemKind::Struct(t) => names.push(t.name.name.clone()),
+            ast::ItemKind::Function(f) => names.push(f.sig.name.name.clone()),
+            ast::ItemKind::ExternFn(f) => names.push(f.name.name.clone()),
+            ast::ItemKind::Interface(i) => names.push(i.name.name.clone()),
+            ast::ItemKind::Enum(e) => names.push(e.name.name.clone()),
+            ast::ItemKind::TypeAlias(a) => names.push(a.name.name.clone()),
+            ast::ItemKind::Var(v) => {
+                if let ast::PatternKind::Ident(id) = &v.pattern.kind {
+                    names.push(id.name.clone());
+                }
+            }
+            ast::ItemKind::Extend(_) => {}
+        }
+    }
+    names
 }
 
 /// The names `export { … } from "…"` items of `src` re-export.

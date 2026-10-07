@@ -58,7 +58,8 @@ impl Redirect {
 /// A response whose head has arrived (`VeltFetchResp` in the ABI docs).
 pub struct FetchResp {
     status: u16,
-    status_text: String,
+    /// Usually the standard phrase, which needs no allocation.
+    status_text: std::borrow::Cow<'static, str>,
     url: String,
     redirected: bool,
     /// The `content-length`, if the server sent one.
@@ -134,8 +135,8 @@ async fn run(
     let status_text = parts
         .extensions
         .get::<hyper::ext::ReasonPhrase>()
-        .map(|p| String::from_utf8_lossy(p.as_bytes()).into_owned())
-        .or_else(|| parts.status.canonical_reason().map(str::to_string))
+        .map(|p| String::from_utf8_lossy(p.as_bytes()).into_owned().into())
+        .or_else(|| parts.status.canonical_reason().map(Into::into))
         .unwrap_or_default();
     let len = parts
         .headers

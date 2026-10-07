@@ -82,8 +82,9 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     out
 }
 
-/// The ancestor of `d` (excluding `d`) that first declares `name` without `override`, or
-/// that gets it as the default method of an interface it implements.
+/// The ancestor of `d` (excluding `d`) that first declares the instance method `name` without
+/// `override`, or that gets it as the default method of an interface it implements (static
+/// methods of the name are skipped).
 fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
     let mut cur = base_of_def(cx, d);
     let mut found = None;
@@ -94,10 +95,9 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
             break;
         }
         let a = cx.adt(c)?;
-        if let Some(m) = a.methods.get(name) {
-            if m.is_static {
-                return None;
-            }
+        // A static of the name is another namespace: look past it, as method lookup does.
+        let instance = a.methods.get(name).filter(|m| !m.is_static);
+        if instance.is_some() {
             let is_override = a.decl.is_some_and(|t| {
                 t.methods.iter().any(|x| {
                     x.is_override && member_key(&x.decl.sig.name.name, x.is_setter) == name

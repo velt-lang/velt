@@ -35,6 +35,8 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
 The modules behind `fetch` and the names after it are loaded only by programs that mention
-one of those names, so the others don't pay for compiling them. Integer helpers (`gcd`,
+one of those names, so the others don't pay for compiling them; a module that imports or
+declares such a name itself (`import { Request, Response } from "velt:http"`) uses its own and
+doesn't load the global. Integer helpers (`gcd`,
 `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is imported from the
 [standard library](../std/README.md).

@@ -127,7 +127,9 @@ hidden classes and no runtime shape checks.
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`).
+  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
+  hide an inherited instance method `m()`, and a class below it can still `override` that method.
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`

@@ -156,6 +156,7 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
   changing a fetched response's (immutable) headers.
 - A compressed body cut off before its stream ends fails the read with `IoError`; Node returns
   the part that decoded. Silently truncated data is a bug source Velt does not copy.
+- WebAssembly programs have no network: `fetch` rejects with `IoError` `ENOTSUP`.
 - **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
 
 ```ts
