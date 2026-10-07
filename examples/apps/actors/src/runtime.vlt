@@ -155,8 +155,9 @@ export function decode<T>(json: string): T throws ActorError {
 }
 
 // One method of an actor of state `S`, type-erased over its argument and result types.
+// `invoke` answers the result as JSON.
 export interface Method<S> {
-  invoke(ctx: Ctx<S>, args: Value): Promise<Reply>;
+  invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError;
 }
 
 function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
@@ -181,13 +182,8 @@ export class Method0<S, R> implements Method<S> {
     this.f = f;
   }
 
-  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    try {
-      const r = await this.f(ctx);
-      return okReply(JSON.stringify(r));
-    } catch (e) {
-      return fromError(e);
-    }
+  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
+    return JSON.stringify(await this.f(ctx));
   }
 }
 
@@ -201,13 +197,8 @@ export class Method1<S, A, R> implements Method<S> {
     this.f = f;
   }
 
-  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    try {
-      const r = await this.f(ctx, argAt<A>(args, 1, this.name));
-      return okReply(JSON.stringify(r));
-    } catch (e) {
-      return fromError(e);
-    }
+  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
+    return JSON.stringify(await this.f(ctx, argAt<A>(args, 1, this.name)));
   }
 }
 
@@ -221,15 +212,10 @@ export class Method2<S, A, B, R> implements Method<S> {
     this.f = f;
   }
 
-  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    try {
-      const a = argAt<A>(args, 1, this.name);
-      const b = argAt<B>(args, 2, this.name);
-      const r = await this.f(ctx, a, b);
-      return okReply(JSON.stringify(r));
-    } catch (e) {
-      return fromError(e);
-    }
+  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
+    const a = argAt<A>(args, 1, this.name);
+    const b = argAt<B>(args, 2, this.name);
+    return JSON.stringify(await this.f(ctx, a, b));
   }
 }
 
@@ -343,7 +329,11 @@ class Live<S> implements Activation {
     }
     this.ctx.chain = chain;
     this.ctx.deadline = deadline;
-    return await m.invoke(this.ctx, args);
+    try {
+      return okReply(await m.invoke(this.ctx, args));
+    } catch (e) {
+      return fromError(e);
+    }
   }
 
   snapshot(): string {
