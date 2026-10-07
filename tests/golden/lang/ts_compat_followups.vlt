@@ -1,0 +1,214 @@
+// Follow-ups of #454 (#506): `super(...)` once in each branch of an `if` / `else` (field
+// initializers run after either), integers spread into a `(number | null)[]`, and `Object.keys`
+// on interface values (the fields of the class the value holds). Expected output: Node's.
+class A {
+  name: string;
+  constructor(n: string) {
+    this.name = n;
+  }
+}
+
+class B extends A {
+  constructor(c: boolean) {
+    const tag = c ? "yes" : "no";
+    if (c) {
+      super("b1:" + tag);
+    } else {
+      super("b2:" + tag);
+    }
+    console.log("after", this.name);
+  }
+}
+
+class Plain {}
+
+class D extends Plain {
+  v: number;
+  constructor(k: number) {
+    if (k > 1) {
+      super();
+      console.log("big");
+    } else if (k > 0) {
+      super();
+    } else {
+      super();
+    }
+    this.v = k;
+  }
+}
+
+function superBranches() {
+  console.log(new B(true).name, new B(false).name);
+  console.log(new D(2).v, new D(1).v, new D(0).v);
+  const ns: (number | null)[] = [...[1, 2], null];
+  console.log(ns.length, ns[0], ns[2]);
+}
+
+class Base {
+  name: string;
+  constructor(n: string) {
+    console.log("Base", n);
+    this.name = n;
+  }
+}
+
+class WithField extends Base {
+  extra: string = "init";
+  constructor(c: boolean) {
+    console.log("before");
+    if (c) {
+      super("x");
+      console.log("then", this.extra);
+    } else {
+      if (c) {
+        super("never");
+      } else {
+        super("y");
+      }
+      this.extra += "!";
+    }
+    console.log("after", this.name, this.extra);
+  }
+}
+
+class Deeper extends WithField {
+  more: number = 2;
+  constructor(n: number) {
+    if (n > 0) {
+      super(true);
+    } else {
+      super(false);
+    }
+    console.log("deeper", this.more, this.extra);
+  }
+}
+
+function initializersAfterBranches() {
+  new WithField(true);
+  new WithField(false);
+  new Deeper(0);
+}
+
+function ints(): number[] {
+  return [4, 5];
+}
+
+function spreads() {
+  const xs = [1, 2];
+  const ns: (number | null)[] = [...[1, 2], null, ...xs];
+  const ms: (number | null)[] = [null, ...ints()];
+  const fs: number[] = [...xs, 2.5];
+  console.log(ns.length, ns[0], ns[2], ns[4], ms[1], fs[2]);
+}
+
+interface Shape {
+  area(): number;
+}
+
+class Circle implements Shape {
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return 3 * this.r * this.r;
+  }
+}
+
+class Rect implements Shape {
+  w: number = 1;
+  h: number = 2;
+  area(): number {
+    return this.w * this.h;
+  }
+}
+
+class Square extends Rect {
+  label: string = "sq";
+}
+
+class Pair<T> implements Shape {
+  a: T;
+  b: T;
+  constructor(a: T, b: T) {
+    this.a = a;
+    this.b = b;
+  }
+  area(): number {
+    return 0;
+  }
+}
+
+function keysOf(s: Shape): string {
+  return Object.keys(s).join(",");
+}
+
+function interfaceKeys() {
+  const shapes: Shape[] = [new Circle(1), new Rect(), new Square(), new Pair<string>("x", "y")];
+  for (const s of shapes) {
+    console.log(keysOf(s), s.area());
+  }
+}
+
+function main() {
+  initializersOnce();
+  superBranches();
+  initializersAfterBranches();
+  spreads();
+  interfaceKeys();
+}
+
+// Field initializers run once per construction, after whichever branch calls `super(...)`.
+function trace(what: string, v: number): number {
+  console.log("init", what);
+  return v;
+}
+
+class TracedBase {
+  tag: string;
+  constructor(tag: string) {
+    console.log("base", tag);
+    this.tag = tag;
+  }
+}
+
+class TracedDerived extends TracedBase {
+  a: number = trace("a", 1);
+  b: number = trace("b", 2);
+  constructor(flag: boolean, deep: boolean) {
+    console.log("before");
+    if (flag) {
+      super("then");
+      console.log("then", this.a, this.b);
+    } else {
+      if (deep) {
+        super("else-if");
+      } else {
+        super("else");
+      }
+      this.b += 10;
+      console.log("else", this.a, this.b);
+    }
+    console.log("after", this.tag);
+  }
+}
+
+class TracedLeaf extends TracedDerived {
+  c: number = trace("c", 3);
+  constructor(flag: boolean) {
+    if (flag) {
+      super(true, false);
+    } else {
+      super(false, true);
+    }
+    console.log("leaf", this.a, this.b, this.c);
+  }
+}
+
+function initializersOnce() {
+  new TracedDerived(true, false);
+  new TracedDerived(false, true);
+  new TracedDerived(false, false);
+  new TracedLeaf(true);
+  new TracedLeaf(false);
+}

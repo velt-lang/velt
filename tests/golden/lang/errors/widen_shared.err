@@ -10,3 +10,5 @@ widen_shared.vlt:34:30: error: cannot use `xs` (`i64[]`) as `(i64 | null)[]`
 widen_shared.vlt:36:9: error: cannot use `h.items` (`C[]`) as `Named[]`
   = note: TypeScript allows this, but other code still sees `h.items` as `C[]`: storing a `Named` that is not a `C` into it through the `Named[]` would break that
   = note: convert a copy instead: `[...h.items]` or `h.items.map((x): Named => x)` (a new `Named[]`)
+widen_shared.vlt:37:27: error: cannot use this value (`C[]`) as `Named[]`
+  = note: convert a copy instead: `(…).map((x): Named => x)` (a new `Named[]`)
