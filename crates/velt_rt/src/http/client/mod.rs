@@ -152,8 +152,8 @@ async fn run(
 
 /// `fetch(url, init)` → result slot `IoResult<VeltFetchResp>`, ready once the response's status
 /// and headers have arrived. `headers` is the flat list `[name, value, …]` (copied); the body
-/// is `text` (`kind` 1) or `bytes` (`kind` 2), taken without a copy (the caller's value is left
-/// empty), or none (`kind` 0). `redirect`: 0 follow, 1 error, 2 manual. `signal`: an abort
+/// is `text` (`kind` 1, taken without a copy: the caller's value is left empty), `bytes` (`kind`
+/// 2, copied), or none (`kind` 0). `redirect`: 0 follow, 1 error, 2 manual. `signal`: an abort
 /// signal handle or 0. `ca`: extra trusted PEM CA certificates ("" = none).
 ///
 /// # Safety
@@ -173,7 +173,8 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
 ) -> *mut VeltFut {
     let body = match kind {
         1 => super::take_text(text),
-        2 => super::take_bytes(bytes),
+        // Copied: a `u8[]` the caller borrowed is still freed by its owner.
+        2 => Bytes::copy_from_slice((*bytes).as_bytes()),
         _ => Bytes::new(),
     };
     let outgoing = (|| {

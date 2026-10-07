@@ -21,5 +21,7 @@ x-one one
 201 true Made b
 text/plain;charset=UTF-8 made
 202 application/json {"a":1}
+application/json 1
+application/problem+json
 refused: true
 Request with GET/HEAD method cannot have body.

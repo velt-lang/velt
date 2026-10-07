@@ -19,18 +19,8 @@ pub mod upgrade;
 #[cfg(test)]
 mod stream_tests;
 
-use crate::bytes::VeltBytes;
 use crate::str::VeltStr;
 use bytes::Bytes;
-
-/// Take a `u8[]` argument's buffer without copying when it is owned (`cap > 0`); the caller's
-/// value is left empty. Static/borrowed bytes are copied.
-///
-/// # Safety
-/// `b` must point to a valid `VeltBytes`.
-pub(crate) unsafe fn take_bytes(b: *mut VeltBytes) -> Bytes {
-    Bytes::from((*b).take_vec())
-}
 
 /// Take a string argument (the caller's value is left empty): a well-formed heap string's
 /// buffer becomes the body without copying (the `Bytes` holds the reference); short and static

@@ -84,6 +84,10 @@ async function client(base: string) {
   console.log(made.headers.get("content-type"), await made.text());
   const j = Response.json({ a: 1 }, { status: 202 });
   console.log(j.status, j.headers.get("content-type"), await j.text());
+  const jh = Response.json([1], { headers: { "x-id": "1" } });
+  console.log(jh.headers.get("content-type"), jh.headers.get("x-id"));
+  const jt = Response.json([1], { headers: { "content-type": "application/problem+json" } });
+  console.log(jt.headers.get("content-type"));
 
   // No response at all.
   try {

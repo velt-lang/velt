@@ -52,7 +52,7 @@ declare function velt_rt_http_req_drop(r: u64);
 declare function velt_rt_http_resp_new(status: u32): u64;
 declare function velt_rt_http_resp_header(r: u64, name: string, value: string): bool;
 declare function velt_rt_http_resp_set_header(r: u64, name: string, value: string): bool;
-// These three take the body: the string/array is moved out and left empty.
+// The text and JSON setters take the string (moved out, left empty); the bytes setter copies.
 declare function velt_rt_http_resp_body_text(r: u64, body: string);
 declare function velt_rt_http_resp_body_bytes(r: u64, body: u8[]);
 declare function velt_rt_http_resp_json(r: u64, json: string);

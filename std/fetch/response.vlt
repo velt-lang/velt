@@ -80,8 +80,11 @@ export class Response {
 
   // A response whose body is `JSON.stringify(data)`, with `content-type: application/json`.
   static json<T>(data: T, init: ResponseInit = {}): Response {
+    // The caller's own `content-type` wins; the string body's default does not.
+    const own = init.headers;
+    const typed = own != null && new Headers(own).has("content-type");
     const r = new Response(JSON.stringify(data), init);
-    if (init.headers == null || !r.headers.has("content-type")) {
+    if (!typed) {
       r.headers.set("content-type", "application/json");
     }
     return r;

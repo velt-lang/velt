@@ -16,17 +16,19 @@ class HttpError extends Error {
   }
 }
 
-async function getUser(url: string): Promise<User> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(200) });
+async function getUser(url: string, ms: i64): Promise<User> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(ms) });
   if (!res.ok) {
     throw new HttpError(res.status, res.statusText);
   }
   return await res.json<User>();
 }
 
-async function show(url: string) {
+// `ms`: a minute for the paths that answer (a hang guard, never reached), a short timeout only
+// for the one that never answers until the end.
+async function show(url: string, ms: i64 = 60000) {
   try {
-    const u = await getUser(url);
+    const u = await getUser(url, ms);
     console.log("user", u.id, u.name);
   } catch (e) {
     if (e instanceof HttpError) {
@@ -62,7 +64,7 @@ async function main() {
   await show(`${base}/ok`);
   await show(`${base}/missing`);
   await show(`${base}/bad`);
-  await show(`${base}/slow`);
+  await show(`${base}/slow`, 50);
   release.abort();
   await server.shutdown();
 }
