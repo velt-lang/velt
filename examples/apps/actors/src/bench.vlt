@@ -1,7 +1,6 @@
 // In-process benchmarks, the Velt side of `pnpm bench:run dispatch activation mem` in
 // @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
 // answered, against the `Tiny` actor (no storage on the call path).
-import { readFileSync } from "velt:fs";
 import { Host, Router, touch } from "./runtime";
 
 struct LoopResult {
@@ -110,12 +109,7 @@ async function sweepConcurrency(host: Host, name: string, keys: string[], ms: f6
 }
 
 function rssBytes(): f64 {
-  try {
-    const statm = readFileSync("/proc/self/statm").split(" ");
-    return parseFloat(statm[1]) * 4096.0;
-  } catch (e) {
-    return 0.0;
-  }
+  return process.memoryUsage().rss as f64;
 }
 
 // Activates `n` new `Tiny` actors with `c` callers; returns activations per second.

@@ -26,6 +26,7 @@ import { Value } from "velt:json";
 import { channel, Channel, ChannelClosed } from "velt:channel";
 import { Ticker } from "velt:timers";
 import { Deque } from "velt:collections/deque";
+import { fnv1a64 } from "velt:hash";
 
 // ---------------------------------------------------------------------------------------------
 // Errors and replies
@@ -787,16 +788,9 @@ async function controlLoop(shard: Shard, control: Channel<Control>): Promise<voi
 // ---------------------------------------------------------------------------------------------
 // Routing: which shard owns an actor, and a call from any task.
 
-// FNV-1a over `type/key`.
+// FNV-1a over `type/key` (velt:hash).
 function shardOf(type: string, key: string, n: i64): i64 {
-  let h: u64 = 14695981039346656037u64;
-  const id = `${type}/${key}`;
-  const len = id.length as i64;
-  for (let i: i64 = 0; i < len; i++) {
-    h = h ^ (id.charCodeAt(i) as u64);
-    h = h * 1099511628211u64;
-  }
-  return (h % (n as u64)) as i64;
+  return (fnv1a64(`${type}/${key}`) % (n as u64)) as i64;
 }
 
 // A use of `x` that does nothing: placed after an async call that would otherwise be the last
