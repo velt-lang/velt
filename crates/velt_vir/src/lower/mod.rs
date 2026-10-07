@@ -44,6 +44,7 @@ mod flags;
 mod for_of;
 mod for_of_shared;
 mod foreign;
+mod frame_envs;
 mod glue;
 mod intrinsics;
 mod json;
@@ -166,6 +167,9 @@ enum Work {
     Thunk(ThunkKind, DefId, Vec<TyId>),
     /// Drop / clone of a heap closure environment for closure `(def, targs)`.
     EnvDrop(DefId, Vec<TyId>),
+    /// `(env: ptr)`: drop the owned captures of a frame environment (frame_envs.rs), which is
+    /// not freed.
+    EnvDropFrame(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
@@ -405,4 +409,7 @@ struct FnLower<'c, 'h> {
     /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
     /// them inside them calls an out-of-line initializer function instead.
     init_stack: Vec<TyId>,
+    /// Closures of this body only ever called here: their envs live in the frame
+    /// (frame_envs.rs).
+    frame_closures: HashSet<DefId>,
 }
