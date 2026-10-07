@@ -5,12 +5,12 @@
 //! Parameters, locals whose address is taken and call results are never known.
 
 use velt_vir::vir::{
-    AggLayout, BinOp, Const, Function, Local, Operand, Place, Proj, Rvalue, StaticId, Stmt,
-    Terminator, Ty,
+    AggLayout, BinOp, Const, Function, Local, Operand, Place, Proj, Rvalue, StaticData, StaticId,
+    Stmt, Terminator, Ty,
 };
 
 use crate::fresh::Pos;
-use crate::visit::{stmt_operands, successors};
+use crate::visit::{rvalue_operands, successors};
 
 /// What a slot holds at a point.
 #[derive(Clone, Copy, PartialEq)]
@@ -50,37 +50,26 @@ pub(super) struct Addrs {
 type State = Vec<Lat>;
 
 impl Addrs {
-    /// The analysis of `func`, or `None` when no statement mentions a static.
-    pub fn of(aggs: &[AggLayout], func: &Function) -> Option<Addrs> {
-        let mut mentions_static = false;
-        for s in func.blocks.iter().flat_map(|b| &b.stmts) {
-            stmt_operands(s, &mut |op| {
-                mentions_static |= matches!(op, Operand::Const(Const::Static(_), Ty::Ptr));
-            });
-        }
-        if !mentions_static {
-            return None;
-        }
+    /// The analysis of `func`, or `None` when no local can hold the address of a static with
+    /// relocations (a vtable; string literals and other plain data do not matter here).
+    pub fn of(aggs: &[AggLayout], statics: &[StaticData], func: &Function) -> Option<Addrs> {
+        let cands = candidates(statics, func)?;
         let mut slots = vec![None; func.locals.len()];
         let mut n = 0;
-        for (i, decl) in func.locals.iter().enumerate().skip(func.params.len()) {
-            slots[i] = match decl.ty {
-                Ty::Ptr => Some(Slots::Ptr(n)),
-                Ty::Agg(id) => aggs
-                    .get(id.0 as usize)
-                    .map(|a| Slots::Agg(n, a.fields.len())),
-                _ => None,
-            };
-            n += match slots[i] {
-                Some(Slots::Ptr(_)) => 1,
-                Some(Slots::Agg(_, len)) => len,
-                None => 0,
-            };
-        }
-        for s in func.blocks.iter().flat_map(|b| &b.stmts) {
-            if let Stmt::Assign(_, Rvalue::AddrOf(p)) = s {
-                slots[p.local.0 as usize] = None;
+        for (i, decl) in func.locals.iter().enumerate() {
+            if !cands[i] {
+                continue;
             }
+            let (s, len) = match decl.ty {
+                Ty::Ptr => (Slots::Ptr(n), 1),
+                Ty::Agg(id) => match aggs.get(id.0 as usize) {
+                    Some(a) => (Slots::Agg(n, a.fields.len()), a.fields.len()),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            slots[i] = Some(s);
+            n += len;
         }
         let mut addrs = Addrs {
             slots,
@@ -235,4 +224,51 @@ fn meet_into(entry: &mut Option<State>, st: &[Lat]) -> bool {
             changed
         }
     }
+}
+
+/// The locals that may hold a vtable address: assigned (wholly or a field) from an operand
+/// that is a relocated static or such a local, transitively. Parameters and locals whose
+/// address is taken are left out; `None` when there is no such local.
+fn candidates(statics: &[StaticData], func: &Function) -> Option<Vec<bool>> {
+    let vtable = |id: &StaticId| {
+        statics
+            .get(id.0 as usize)
+            .is_some_and(|s| !s.relocs.is_empty())
+    };
+    let n = func.locals.len();
+    let mut excluded = vec![false; n];
+    excluded
+        .iter_mut()
+        .take(func.params.len())
+        .for_each(|e| *e = true);
+    for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+        if let Stmt::Assign(_, Rvalue::AddrOf(p)) = s {
+            excluded[p.local.0 as usize] = true;
+        }
+    }
+    let mut cands = vec![false; n];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for s in func.blocks.iter().flat_map(|b| &b.stmts) {
+            let Stmt::Assign(d, rv) = s else { continue };
+            let l = d.local.0 as usize;
+            if cands[l] || excluded[l] {
+                continue;
+            }
+            let mut feeds = false;
+            rvalue_operands(rv, &mut |op| {
+                feeds |= match op {
+                    Operand::Const(Const::Static(id), Ty::Ptr) => vtable(id),
+                    Operand::Copy(p) => cands[p.local.0 as usize],
+                    _ => false,
+                };
+            });
+            if feeds {
+                cands[l] = true;
+                changed = true;
+            }
+        }
+    }
+    cands.iter().any(|&c| c).then_some(cands)
 }

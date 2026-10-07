@@ -127,7 +127,7 @@ impl Observer for Slots<'_> {
 
 /// Loads of relocated slots of statics through locals that hold `static + offset` there.
 fn slot_loads(aggs: &[AggLayout], statics: &[StaticData], func: &Function) -> Vec<Load> {
-    let Some(addrs) = Addrs::of(aggs, func) else {
+    let Some(addrs) = Addrs::of(aggs, statics, func) else {
         return Vec::new();
     };
     let mut out = Vec::new();
