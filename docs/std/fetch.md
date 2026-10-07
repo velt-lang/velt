@@ -47,7 +47,8 @@ error: check `res.ok`. `fetch` rejects when there is no response:
 | `signal` | `AbortSignal` | cancels the request |
 | `ca` | `string` | Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA |
 
-Requests send `accept: */*` and `user-agent: velt` unless you set them. Following a redirect
+Requests send `accept: */*`, `user-agent: velt` and, like Node, `accept-encoding: gzip,
+deflate` (`br, gzip, deflate` over HTTPS) unless you set them. Following a redirect
 works as in browsers and Node: a 303 (and a 301 or 302 after a POST) becomes a GET without a
 body, and `authorization` and `cookie` headers are not sent to another origin.
 
@@ -68,6 +69,13 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
   or give the variable one (`const users: User[] = await res.json()`); an untyped
   `res.json()` is a compile error that says so.
+- `res.body` is the body as it arrives: `for await (const chunk of res.body)` yields `u8[]`
+  chunks (JS: a `ReadableStream` of `Uint8Array`s), so a large download need not be held in
+  memory. It is a `BodyStream | null`: null for a status without a body (101, 103, 204, 205,
+  304) and for a response made without one. Reading it uses the body up, as `text()` does.
+- A body the server compressed (`content-encoding: gzip`, `deflate` or `br`) is decoded as it
+  arrives, whichever way you read it; the headers stay as received. A body that does not
+  decode fails the read with `IoError` (`fetch failed: invalid compressed body: …`).
 - The status, URL and headers are copied when the head arrives, so they stay readable after
   the body was read. Dropping a response whose body was not read closes its connection.
 - `new Response(body?: string | u8[] | URLSearchParams | null, init?: ResponseInit { status?;
@@ -134,6 +142,20 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
 - `res.json()` needs the type of the data (above).
 - Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
   without a signal has `signal == null`.
-- **Planned**: `res.body` as a stream of chunks, `clone()`, decoding of `gzip` / `br`
-  responses (no `accept-encoding` is sent today, so servers send them unencoded), and header
-  pairs as an array of `[name, value]` tuples.
+- `res.body` is an async iterable of `u8[]`, not a `ReadableStream` (no `getReader()`,
+  `pipeTo()`).
+- **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
+
+```ts
+async function download(url: string): Promise<i64> {
+  const res = await fetch(url);
+  let size = 0;
+  const body = res.body;
+  if (body != null) {
+    for await (const chunk of body) {
+      size += chunk.length; // or write it to a file
+    }
+  }
+  return size;
+}
+```

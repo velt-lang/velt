@@ -201,6 +201,7 @@ fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), Vel
             header::AUTHORIZATION,
             header::COOKIE,
             header::PROXY_AUTHORIZATION,
+            header::HOST,
         ] {
             o.headers.remove(h);
         }

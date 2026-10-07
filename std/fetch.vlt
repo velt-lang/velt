@@ -16,7 +16,7 @@ import { Response } from "velt:fetch/response";
 export { BodyInit } from "velt:fetch/body";
 export { Headers, HeadersInit } from "velt:fetch/headers";
 export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
-export { Response, ResponseInit } from "velt:fetch/response";
+export { BodyStream, Response, ResponseInit } from "velt:fetch/response";
 
 // The runtime takes `text` / `bytes` (moved: left empty) and copies the rest; `headers` is the
 // flat list `[name, value, …]`.

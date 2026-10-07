@@ -3,7 +3,6 @@
 
 use super::send::{self, Outgoing};
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -245,17 +244,27 @@ fn bad_urls_and_headers_fail_before_connecting() {
 
 #[test]
 fn an_aborted_signal_drops_the_request() {
-    static ACCEPTED: AtomicUsize = AtomicUsize::new(0);
     rt().block_on(async {
-        // Accepts and never answers.
+        // Reads the request, never answers, and reports when the client closes the connection.
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
+        let (arrived_tx, arrived) = tokio::sync::oneshot::channel::<()>();
+        let (closed_tx, closed) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
-            let mut held = vec![];
-            while let Ok((s, _)) = l.accept().await {
-                ACCEPTED.fetch_add(1, Ordering::SeqCst);
-                held.push(s);
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let mut arrived_tx = Some(arrived_tx);
+            loop {
+                match s.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Some(tx) = arrived_tx.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+                }
             }
+            let _ = closed_tx.send(());
         });
         let signal = Arc::new(Signal::default());
         let url = format!("http://127.0.0.1:{port}/");
@@ -265,11 +274,13 @@ fn an_aborted_signal_drops_the_request() {
             Redirect::Follow,
             Some(signal.clone()),
         ));
-        while ACCEPTED.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
+        // Hang guards, not assertions: each step completes at once.
+        let guard = std::time::Duration::from_secs(60);
+        tokio::time::timeout(guard, arrived).await.unwrap().unwrap();
         crate::task::abort::abort_for_test(&signal);
         let e = work.await.unwrap().err().unwrap();
         assert_eq!(message(e), "This operation was aborted");
+        // The request was dropped, not abandoned: its connection is closed.
+        tokio::time::timeout(guard, closed).await.unwrap().unwrap();
     });
 }
