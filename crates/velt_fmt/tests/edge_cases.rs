@@ -225,3 +225,17 @@ fn readonly_fields_in_object_types() {
     let out = velt_fmt::format_source("type U = {readonly   id : i64};\n").unwrap();
     assert_eq!(out, "type U = { readonly id: i64 };\n");
 }
+
+#[test]
+fn private_names() {
+    holds(
+        "class A {
+  #x = 1;
+  static readonly #K: i64 = 2;
+  #m(): i64 { return this.#x + A.#K; }
+  get #v(): i64 { return this.#x; }
+  set #v(n: i64) { this.#x = n; }
+  has(o: A | null): boolean { return o != null && #x in o && o.#x > 0; }
+}",
+    );
+}

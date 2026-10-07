@@ -71,6 +71,7 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
             .collect(),
         is_copy,
         private_fields: false,
+        opaque: false,
         assigned: false,
         base: None,
         ctor: None,

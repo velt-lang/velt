@@ -34,6 +34,17 @@ pub struct Ident {
     pub span: Span,
 }
 
+/// The first character of an ES private name (`#x`), kept in [`Ident::name`]: no identifier
+/// can start with it, so `#x` and `x` are different members.
+pub const PRIVATE_NAME_PREFIX: char = '#';
+
+impl Ident {
+    /// Is this an ES private name (`#x`)?
+    pub fn is_private_name(&self) -> bool {
+        self.name.starts_with(PRIVATE_NAME_PREFIX)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Module {
     pub items: Vec<Item>,
@@ -471,6 +482,9 @@ pub enum BinaryOp {
     Shl,
     Shr,
     UShr,
+    /// `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the parser
+    /// builds one, only here).
+    In,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

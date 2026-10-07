@@ -310,7 +310,7 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) if self.cx.is_union(ty) => {
                 self.json_read_union(r, place, ctx, ty, fail)
             }
-            // `JsonValue` takes any value as a tree, never its private `handle` field.
+            // `JsonValue` takes any value as a tree, never its `#handle` field.
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
                 self.json_read_value(r, place, ctx, ty, fail)
             }

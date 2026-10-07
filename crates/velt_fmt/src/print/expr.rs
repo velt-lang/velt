@@ -247,5 +247,6 @@ pub(super) fn binary_op(op: BinaryOp) -> &'static str {
         Shl => "<<",
         Shr => ">>",
         UShr => ">>>",
+        In => "in",
     }
 }

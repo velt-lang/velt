@@ -1,0 +1,18 @@
+// A closure created in each iteration, held in a `const` and only called there, capturing
+// numbers and a string: it borrows what it captures, so its environment owns no copies (#444).
+function score(name: string, base: number, scale: number): number {
+  const weigh = (k: number): number => {
+    const n = name.length + k;
+    return (base * scale + n) % 9973;
+  };
+  return weigh(1) + weigh(2);
+}
+
+function main() {
+  const names = ["ada", "grace", "linus", "barbara", "ken"];
+  let total: number = 0;
+  for (let i: number = 0; i < 3000000; i++) {
+    total = (total + score(names[i % 5], i % 1000, (i % 13) + 1)) % 1000003;
+  }
+  console.log(total);
+}

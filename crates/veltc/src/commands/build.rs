@@ -121,6 +121,9 @@ pub fn report(sess: &Session, verbose: bool) {
     if !diags.is_empty() {
         eprintln!("{diags}");
     }
+    for r in &sess.reports {
+        eprint!("{r}");
+    }
     if verbose {
         eprint!("{}", sess.render_timings());
     }
@@ -166,6 +169,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
         target: args.target.clone(),
         emit: args.emit,
         backend,
+        report_numbers: args.report_numbers,
         ..Default::default()
     };
     match &args.input {

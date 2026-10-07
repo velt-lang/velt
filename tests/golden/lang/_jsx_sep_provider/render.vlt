@@ -1,0 +1,209 @@
+// A JSX provider for the text separator goldens (docs/contracts/jsx.md "Text separator"),
+// rendering text the way a hydrating client needs it: `<!--t-->` between adjacent text nodes of
+// one parent (the HTML parser would merge them), also across fragments and components, and a
+// `<!---->` placeholder for `true`, `false` and `null` children. Elements are lists of parts;
+// components run when the renderer reaches them.
+
+import { escapeHtml } from "velt:html";
+
+export const SEPARATOR = "<!--t-->";
+export const PLACEHOLDER = "<!---->";
+
+export class Element {
+  parts: Part[] = [];
+}
+
+// Markup: tags and comments, never text.
+export class Markup {
+  html: string;
+
+  constructor(html: string) {
+    this.html = html;
+  }
+}
+
+// One escaped text node.
+export class TextNode {
+  text: string;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+
+// A precompiled template: `strings[0] slots[0] strings[1] … strings[n]`.
+export class Template {
+  strings: string[];
+  slots: Element[];
+
+  constructor(strings: string[], slots: Element[]) {
+    this.strings = strings;
+    this.slots = slots;
+  }
+}
+
+// A component call the renderer makes when it reaches it.
+export class Later {
+  run: () => Element;
+
+  constructor(run: () => Element) {
+    this.run = run;
+  }
+}
+
+export type Part = Markup | TextNode | Template | Element | Later;
+export type Text = string | i64 | f64 | bool | null;
+export type Child = Element | Element[] | Text;
+export type AttrValue = Text;
+
+const VOID_TAGS = "|area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr|";
+
+// Pass an array along by value, so `for...of` consumes it.
+function own<T>(xs: T[]): T[] {
+  return xs;
+}
+
+function plain(v: string | i64 | f64): string {
+  if (typeof v === "string") {
+    return v;
+  }
+  return JSON.stringify(v);
+}
+
+// The escaped text of a text child, or the placeholder for `true`, `false` and `null`.
+export function textOf(v: Text): string {
+  if (v === null) {
+    return PLACEHOLDER;
+  }
+  if (typeof v === "boolean") {
+    return PLACEHOLDER;
+  }
+  return escapeHtml(plain(v));
+}
+
+export function addChild(el: Element, c: Child) {
+  if (c === null) {
+    el.parts.push(new Markup(PLACEHOLDER));
+  } else if (c instanceof Element) {
+    el.parts.push(c);
+  } else if (typeof c === "object") {
+    for (const e of own(c)) {
+      el.parts.push(e);
+    }
+  } else if (typeof c === "boolean") {
+    el.parts.push(new Markup(PLACEHOLDER));
+  } else {
+    el.parts.push(new TextNode(textOf(c)));
+  }
+}
+
+// ` name="value"`, ` name` for `true`, nothing for `false` / `null`.
+export function attr(name: string, v: AttrValue): string {
+  if (v === null) {
+    return "";
+  }
+  if (typeof v === "boolean") {
+    return v ? ` ${name}` : "";
+  }
+  return ` ${name}="${escapeHtml(plain(v))}"`;
+}
+
+export function element(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+): Element {
+  let open = `<${tag}`;
+  for (let i: usize = 0; i < names.length; i++) {
+    open += attr(names[i], values[i]);
+  }
+  const el = new Element();
+  el.parts.push(new Markup(`${open}>`));
+  if (VOID_TAGS.includes(`|${tag}|`)) {
+    return el;
+  }
+  for (const c of own(children)) {
+    addChild(el, c);
+  }
+  el.parts.push(new Markup(`</${tag}>`));
+  return el;
+}
+
+export function fragment(children: Child[]): Element {
+  const el = new Element();
+  for (const c of own(children)) {
+    addChild(el, c);
+  }
+  return el;
+}
+
+// The strings of the first template in `el`, as JSON (what the compiler folded).
+export function templateOf(el: Element): string {
+  for (const p of own(el.parts)) {
+    if (p instanceof Template) {
+      return JSON.stringify(p.strings);
+    }
+  }
+  return "(no template)";
+}
+
+class Renderer {
+  out: string[] = [];
+  lastText: bool = false;
+
+  markup(s: string) {
+    this.out.push(s);
+    this.lastText = false;
+  }
+
+  text(s: string) {
+    if (this.lastText) {
+      this.out.push(SEPARATOR);
+    }
+    this.out.push(s);
+    this.lastText = true;
+  }
+
+  // A template string: the compiler put the separators inside it; at its edges, escaped text
+  // never contains `<` or `>`, so it starts with text unless it starts with `<` and ends with
+  // text unless it ends with `>`. An empty string is no boundary.
+  piece(s: string) {
+    if (s == "") {
+      return;
+    }
+    if (this.lastText && !s.startsWith("<")) {
+      this.out.push(SEPARATOR);
+    }
+    this.out.push(s);
+    this.lastText = !s.endsWith(">");
+  }
+
+  render(el: Element) {
+    for (const p of own(el.parts)) {
+      if (p instanceof Markup) {
+        this.markup(p.html);
+      } else if (p instanceof TextNode) {
+        this.text(p.text);
+      } else if (p instanceof Template) {
+        this.piece(p.strings[0]);
+        let i: usize = 0;
+        for (const s of own(p.slots)) {
+          this.render(s);
+          i++;
+          this.piece(p.strings[i]);
+        }
+      } else if (p instanceof Element) {
+        this.render(p);
+      } else {
+        this.render(p.run());
+      }
+    }
+  }
+}
+
+export function renderToString(el: Element): string {
+  const r = new Renderer();
+  r.render(el);
+  return r.out.join("");
+}

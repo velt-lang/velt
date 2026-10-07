@@ -43,12 +43,17 @@ fn called_closures_get_a_frame_env() {
            }
            const s = `x${t}`;
            const len = (): number => s.length;
-           console.log(t, len(), ((y: number): number => y * k)(2));
+           const xs: string[] = [s];
+           const grow = () => { xs.push(s); };
+           for (const x of xs) {
+             if (xs.length < 3) { grow(); }
+           }
+           console.log(t, len(), ((y: number): number => y * k)(2), xs.length);
          }",
     );
-    assert!(!body(&vir, "_V4main").contains("velt_rt_alloc"), "{vir}");
     assert!(!vir.contains("_Genv_clone_"), "{vir}");
-    // The string moved into `len` is dropped with it.
+    // `len` borrows `s` (#444). `grow`, called inside a loop over the array it changes, owns
+    // what it captures; that is dropped with it.
     assert!(vir.contains("_Genv_drop_frame_"), "{vir}");
 }
 
@@ -63,4 +68,25 @@ fn stored_closures_keep_a_heap_env() {
          }",
     );
     assert!(body(&vir, "_V4main").contains("velt_rt_alloc"), "{vir}");
+}
+
+#[test]
+fn borrowing_held_closures_get_a_frame_env() {
+    // `step` and `line` borrow `this` and `me` (#444) and are only called (#34).
+    let vir = vir_of(
+        "class T {
+           n: number = 0;
+           bump(k: number): number {
+             const step = () => { this.n += k; };
+             step();
+             const me = this;
+             const line = (): number => me.n * 2;
+             return line();
+           }
+         }
+         function main() { const t = new T(); console.log(t.bump(2)); }",
+    );
+    assert!(!body(&vir, "_V1TM4bump").contains("velt_rt_alloc"), "{vir}");
+    assert!(!vir.contains("_Genv_clone_"), "{vir}");
+    assert!(!vir.contains("_Genv_drop_"), "{vir}");
 }
