@@ -703,17 +703,17 @@ export struct Router {
   ): Promise<Reply> {
     const { promise, resolve } = Promise.withResolvers<Reply>();
     const shard = shardOf(type, key, this.inboxes.length as i64) as usize;
-    try {
-      await this.inboxes[shard].send({
-        type: type,
-        key: key,
-        method: method,
-        args: args,
-        deadline: deadline,
-        chain: chain,
-        reply: resolve,
-      });
-    } catch (e) {
+    // The inboxes are unbounded, so `trySend` fails only once the host is stopping.
+    const queued = this.inboxes[shard].trySend({
+      type: type,
+      key: key,
+      method: method,
+      args: args,
+      deadline: deadline,
+      chain: chain,
+      reply: resolve,
+    });
+    if (!queued) {
       return errorReply(503, "shutdown", "the host is stopping");
     }
     return await promise;
