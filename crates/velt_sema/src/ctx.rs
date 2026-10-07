@@ -57,6 +57,10 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Branded type definitions → their primitive (`crate::brands`).
+    pub brands: HashMap<DefId, TyId>,
+    /// (primitive, object part) → the brand's definition.
+    pub brand_keys: HashMap<(TyId, TyId), DefId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: HashMap<DefId, DefId>,
     /// The reverse of `field_only`.
@@ -179,6 +183,8 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
+            brands: HashMap::new(),
+            brand_keys: HashMap::new(),
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
@@ -492,6 +498,9 @@ impl<'m> Ctx<'m> {
     fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 32 {
             return false;
+        }
+        if let Some(base) = self.brand_base(t) {
+            return self.is_copy_depth(base, depth + 1);
         }
         match self.ty.kind(t).clone() {
             TyKind::Int(_)

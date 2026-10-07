@@ -396,6 +396,7 @@ impl FnCx<'_, '_> {
         }
         let hint = self.value_hint(&place, value);
         let v = self.expr(value, hint, Want::Borrow);
+        let v = self.unbrand(v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
             Ok(v) => {

@@ -230,6 +230,7 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.expr(e, None, Want::Borrow);
+                let h = self.unbrand(h);
                 let h = self.own_to_string(h, "toString");
                 let t = h.ty;
                 if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {

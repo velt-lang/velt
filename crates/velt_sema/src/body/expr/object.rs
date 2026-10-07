@@ -326,9 +326,22 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let a = self.cx.adt(d).expect("ICE: struct");
-        let (sname, fields) = (a.name.clone(), a.fields.clone());
+        let fields = a.fields.clone();
+        let sname = self.literal_name(d);
         let values = self.struct_values(d, &sname, &fields, (&mut slots, hints), props);
         self.finish_struct(d, slots, values, exp, span)
+    }
+
+    /// The name of `d` for messages about a literal of it: the alias an anonymous object type is
+    /// declared as (`AB` for `type AB = A & B`), else `d`'s own name.
+    fn literal_name(&mut self, d: DefId) -> String {
+        let a = self.cx.adt(d).expect("ICE: struct");
+        let name = a.name.clone();
+        if a.kind != AdtKind::Anon || !a.generics.names.is_empty() {
+            return name;
+        }
+        let t = self.cx.ty.intern(TyKind::Adt(d, vec![]));
+        self.cx.alias_names.get(&t).cloned().unwrap_or(name)
     }
 
     /// A struct literal from its values by field index (omitted ones take their default).
@@ -342,9 +355,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         crate::body::field_defaults(self.cx, d);
         let a = self.cx.adt(d).expect("ICE: struct");
-        let (sname, fields) = (a.name.clone(), a.fields.clone());
+        let fields = a.fields.clone();
+        let anon_kind = a.kind == AdtKind::Anon;
+        let sname = self.literal_name(d);
         // Object types (anonymous ones and field-only interfaces) may leave out nullable fields.
-        let anon = a.kind == AdtKind::Anon || self.cx.field_only_of.contains_key(&d);
+        let anon = anon_kind || self.cx.field_only_of.contains_key(&d);
         if let Some(e) = exp {
             let pat = crate::collect::self_type(self.cx, d, slots.len());
             self.cx.match_ty(pat, e, &mut slots);

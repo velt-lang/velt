@@ -182,10 +182,18 @@ pub(super) fn new_def<'m>(
 
 fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
     if cx.scopes[m].items.contains_key(&name.name) {
-        cx.err(
+        let mut d = Diagnostic::error(
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
+        if matches!(item.kind, ast::ItemKind::Interface(_)) {
+            // TypeScript merges the declarations of an interface (#384).
+            d = d.with_note(format!(
+                "Velt does not merge interface declarations: declare `{0}` once with every member, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
+                name.name
+            ));
+        }
+        cx.error(d);
         return;
     }
     cx.scopes[m].items.insert(name.name.clone(), it);

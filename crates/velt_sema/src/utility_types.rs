@@ -84,6 +84,41 @@ impl Ctx<'_> {
         self.anon_type_with(&fields, env.module)
     }
 
+    /// `T["k"]` (or `T["a" | "b"]`): the type of field `k` of concrete object type `T` (the
+    /// union of the fields' types for several keys), as TypeScript's indexed access.
+    pub(crate) fn resolve_indexed(
+        &mut self,
+        object: &ast::TypeExpr,
+        key: &ast::TypeExpr,
+        env: &TyEnv,
+    ) -> TyId {
+        let t = self.resolve_type(object, env);
+        let t = self.ty.subst(t, &env.args);
+        let k = self.resolve_type(key, env);
+        if t == self.ty.error || k == self.ty.error {
+            return self.ty.error;
+        }
+        let op = "an indexed access type";
+        let written = match &object.kind {
+            ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
+            _ => None,
+        };
+        let Some(fields) = self.object_fields(op, t, written, object.span) else {
+            return self.ty.error;
+        };
+        let Some(keys) = self.utility_keys(op, t, &fields, k, key.span) else {
+            return self.ty.error;
+        };
+        let tys: Vec<TyId> = keys
+            .iter()
+            .filter_map(|k| fields.iter().find(|f| &f.name == k).map(|f| f.ty))
+            .collect();
+        match tys.as_slice() {
+            [one] => *one,
+            _ => self.union_of(&tys, false, key.span),
+        }
+    }
+
     /// The public fields of object type `t` (anonymous, a field-only interface, a struct or a
     /// class), with `t`'s type arguments substituted.
     fn object_fields(
@@ -157,7 +192,7 @@ impl Ctx<'_> {
     /// interface's object type is filled after interfaces are flattened, so until then its
     /// fields come from the interface and the ones it extends (inherited first, as
     /// `collect::field_only` orders them).
-    fn fields_now(&mut self, d: DefId) -> Result<Vec<(ShapeField, bool)>, DefId> {
+    pub(crate) fn fields_now(&mut self, d: DefId) -> Result<Vec<(ShapeField, bool)>, DefId> {
         crate::collect::shapes::ensure_fields(self, d)?;
         let a = self.adt(d).expect("ICE: adt");
         if let Some(&iface) = self.field_only_of.get(&d) {
@@ -246,8 +281,10 @@ impl Ctx<'_> {
                 continue;
             }
             let shown = self.display(t);
-            let mut d =
-                Diagnostic::error(format!("`{shown}` has no field `{key}` (in `{op}`)"), span);
+            let mut d = Diagnostic::error(
+                format!("`{shown}` has no field `{key}` ({})", in_op(op)),
+                span,
+            );
             if op == "Omit" {
                 d.severity = velt_common::Severity::Warning;
                 d = d.with_note("there is nothing to omit; TypeScript accepts this too");
@@ -260,6 +297,14 @@ impl Ctx<'_> {
             self.error(d);
         }
         ok.then_some(keys)
+    }
+}
+
+/// Where a key is used, for messages: "in `Pick`", "in an indexed access type".
+fn in_op(op: &str) -> String {
+    match op.starts_with(char::is_uppercase) {
+        true => format!("in `{op}`"),
+        false => format!("in {op}"),
     }
 }
 

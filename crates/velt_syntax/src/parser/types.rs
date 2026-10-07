@@ -8,23 +8,42 @@ use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
 impl<'a> Parser<'a> {
-    /// Full type including unions: `A | B | null` (a leading `|` is allowed).
+    /// Full type including unions: `A | B | null` (a leading `|` is allowed), whose members may
+    /// be intersections (`A & B | C` is `(A & B) | C`).
     pub(super) fn parse_type(&mut self) -> PResult<TypeExpr> {
         self.guarded(|p| {
             let lo = p.cur_lo();
             p.eat(Tok::Pipe);
-            let first = p.parse_type_no_union()?;
+            let first = p.parse_intersection()?;
             if !p.at(Tok::Pipe) {
                 return Ok(first);
             }
             let mut members = vec![first];
             while p.eat(Tok::Pipe) {
-                members.push(p.parse_type_no_union()?);
+                members.push(p.parse_intersection()?);
             }
             Ok(TypeExpr {
                 kind: TypeExprKind::Union(members),
                 span: p.span_from(lo),
             })
+        })
+    }
+
+    /// `A & B & …` (a leading `&` is allowed), or one type without a top-level union.
+    fn parse_intersection(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.eat(Tok::Amp);
+        let first = self.parse_type_no_union()?;
+        if !self.at(Tok::Amp) {
+            return Ok(first);
+        }
+        let mut members = vec![first];
+        while self.eat(Tok::Amp) {
+            members.push(self.parse_type_no_union()?);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Intersection(members),
+            span: self.span_from(lo),
         })
     }
 
@@ -85,7 +104,23 @@ impl<'a> Parser<'a> {
         self.guarded(|p| {
             let lo = p.cur_lo();
             let prim = p.parse_type_prim()?;
-            Ok(p.parse_array_suffixes(lo, prim))
+            let mut ty = p.parse_array_suffixes(lo, prim);
+            // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
+            // and the like keep their meaning).
+            while p.at(Tok::LBracket) && matches!(p.nth(1), Tok::Str(_)) {
+                p.bump();
+                let key = p.parse_type()?;
+                p.expect(Tok::RBracket)?;
+                let indexed = TypeExpr {
+                    kind: TypeExprKind::Indexed {
+                        object: Box::new(ty),
+                        key: Box::new(key),
+                    },
+                    span: p.span_from(lo),
+                };
+                ty = p.parse_array_suffixes(lo, indexed);
+            }
+            Ok(ty)
         })
     }
 
