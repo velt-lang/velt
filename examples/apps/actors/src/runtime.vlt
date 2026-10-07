@@ -171,8 +171,7 @@ function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
   }
 }
 
-// A method without arguments. (`invoke` forwards to a free async function rather than being
-// `async` itself: see `ActorStorage` and B2.)
+// A method without arguments.
 export class Method0<S, R> implements Method<S> {
   name: string;
   f: (ctx: Ctx<S>) => Promise<R> throws ActorError;
@@ -182,20 +181,13 @@ export class Method0<S, R> implements Method<S> {
     this.f = f;
   }
 
-  invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    return call0<S, R>(this.f, ctx);
-  }
-}
-
-async function call0<S, R>(
-  f: (ctx: Ctx<S>) => Promise<R> throws ActorError,
-  ctx: Ctx<S>,
-): Promise<Reply> {
-  try {
-    const r = await f(ctx);
-    return okReply(JSON.stringify(r));
-  } catch (e) {
-    return fromError(e);
+  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
+    try {
+      const r = await this.f(ctx);
+      return okReply(JSON.stringify(r));
+    } catch (e) {
+      return fromError(e);
+    }
   }
 }
 
@@ -209,22 +201,13 @@ export class Method1<S, A, R> implements Method<S> {
     this.f = f;
   }
 
-  invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    return call1<S, A, R>(this.name, this.f, ctx, args);
-  }
-}
-
-async function call1<S, A, R>(
-  name: string,
-  f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError,
-  ctx: Ctx<S>,
-  args: Value,
-): Promise<Reply> {
-  try {
-    const r = await f(ctx, argAt<A>(args, 1, name));
-    return okReply(JSON.stringify(r));
-  } catch (e) {
-    return fromError(e);
+  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
+    try {
+      const r = await this.f(ctx, argAt<A>(args, 1, this.name));
+      return okReply(JSON.stringify(r));
+    } catch (e) {
+      return fromError(e);
+    }
   }
 }
 
@@ -238,24 +221,15 @@ export class Method2<S, A, B, R> implements Method<S> {
     this.f = f;
   }
 
-  invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
-    return call2<S, A, B, R>(this.name, this.f, ctx, args);
-  }
-}
-
-async function call2<S, A, B, R>(
-  name: string,
-  f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError,
-  ctx: Ctx<S>,
-  args: Value,
-): Promise<Reply> {
-  try {
-    const a = argAt<A>(args, 1, name);
-    const b = argAt<B>(args, 2, name);
-    const r = await f(ctx, a, b);
-    return okReply(JSON.stringify(r));
-  } catch (e) {
-    return fromError(e);
+  async invoke(ctx: Ctx<S>, args: Value): Promise<Reply> {
+    try {
+      const a = argAt<A>(args, 1, this.name);
+      const b = argAt<B>(args, 2, this.name);
+      const r = await this.f(ctx, a, b);
+      return okReply(JSON.stringify(r));
+    } catch (e) {
+      return fromError(e);
+    }
   }
 }
 
@@ -347,28 +321,6 @@ export class ActorDef<S> implements ActorType {
   }
 }
 
-async function runMethod<S>(
-  typeName: string,
-  methods: Map<string, Method<S>>,
-  ctx: Ctx<S>,
-  method: string,
-  args: Value,
-  chain: string[],
-  deadline: f64,
-): Promise<Reply> {
-  if (method == "$deactivate") {
-    ctx.deactivate();
-    return okReply("true");
-  }
-  const m = methods.get(method);
-  if (m == null) {
-    return errorReply(404, "method-not-found", `${typeName} has no method ${method}`);
-  }
-  ctx.chain = chain;
-  ctx.deadline = deadline;
-  return await m.invoke(ctx, args);
-}
-
 class Live<S> implements Activation {
   typeName: string;
   methods: Map<string, Method<S>>;
@@ -380,10 +332,18 @@ class Live<S> implements Activation {
     this.ctx = ctx;
   }
 
-  // Not `async`: an async method called through an `Activation` held in a field drops the
-  // activation when the call ends (B2), so the turn runs in a free function instead.
-  invoke(method: string, args: Value, chain: string[], deadline: f64): Promise<Reply> {
-    return runMethod<S>(this.typeName, this.methods, this.ctx, method, args, chain, deadline);
+  async invoke(method: string, args: Value, chain: string[], deadline: f64): Promise<Reply> {
+    if (method == "$deactivate") {
+      this.ctx.deactivate();
+      return okReply("true");
+    }
+    const m = this.methods.get(method);
+    if (m == null) {
+      return errorReply(404, "method-not-found", `${this.typeName} has no method ${method}`);
+    }
+    this.ctx.chain = chain;
+    this.ctx.deadline = deadline;
+    return await m.invoke(this.ctx, args);
   }
 
   snapshot(): string {
@@ -419,58 +379,37 @@ export struct SaveResult {
 
 // `ActorStorage`: load and etag-CAS save of one actor's JSON state. Each shard owns its own
 // storage value (`HostConfig.storage` makes one per shard).
-//
-// The methods return promises but are not `async` themselves: an async method called through
-// an interface value that lives in a field drops that value when the call ends (B2), so
-// implementations forward to free async functions.
 export interface ActorStorage {
   load(type: string, key: string): Promise<StoredRecord | null>;
   save(type: string, key: string, json: string, expectedEtag: string | null): Promise<SaveResult>;
 }
 
-class MemoryRecords {
-  records: Map<string, StoredRecord> = new Map<string, StoredRecord>();
-  next: i64 = 0;
-}
-
 // In memory. Keys are partitioned by shard, so one map per shard is the whole store's slice.
 export class MemoryStorage implements ActorStorage {
-  data: MemoryRecords = new MemoryRecords();
+  records: Map<string, StoredRecord> = new Map<string, StoredRecord>();
+  next: i64 = 0;
 
-  load(type: string, key: string): Promise<StoredRecord | null> {
-    return memoryLoad(this.data, type, key);
+  async load(type: string, key: string): Promise<StoredRecord | null> {
+    return this.records.get(`${type}\u0000${key}`);
   }
 
-  save(type: string, key: string, json: string, expectedEtag: string | null): Promise<SaveResult> {
-    return memorySave(this.data, type, key, json, expectedEtag);
+  async save(
+    type: string,
+    key: string,
+    json: string,
+    expectedEtag: string | null,
+  ): Promise<SaveResult> {
+    const id = `${type}\u0000${key}`;
+    const current = this.records.get(id);
+    const currentEtag = current?.etag;
+    if (currentEtag != expectedEtag) {
+      return { conflict: true, etag: currentEtag ?? "" };
+    }
+    this.next += 1;
+    const etag = `${this.next}`;
+    this.records.set(id, { state: json, etag: etag });
+    return { conflict: false, etag: etag };
   }
-}
-
-async function memoryLoad(
-  data: MemoryRecords,
-  type: string,
-  key: string,
-): Promise<StoredRecord | null> {
-  return data.records.get(`${type}\u0000${key}`);
-}
-
-async function memorySave(
-  data: MemoryRecords,
-  type: string,
-  key: string,
-  json: string,
-  expectedEtag: string | null,
-): Promise<SaveResult> {
-  const id = `${type}\u0000${key}`;
-  const current = data.records.get(id);
-  const currentEtag = current?.etag;
-  if (currentEtag != expectedEtag) {
-    return { conflict: true, etag: currentEtag ?? "" };
-  }
-  data.next += 1;
-  const etag = `${data.next}`;
-  data.records.set(id, { state: json, etag: etag });
-  return { conflict: false, etag: etag };
 }
 
 // ---------------------------------------------------------------------------------------------
