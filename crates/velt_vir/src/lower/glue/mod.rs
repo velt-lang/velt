@@ -12,7 +12,7 @@
 //! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
-//! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b`, free it (drop_depth.rs) |
+//! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b` and free it, or the boxed value `b` (drop_depth.rs) |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
 //! | ObjFormat | `(buf: ptr, obj: ptr, depth: u32)` | append `Name { field: value, … }`        |
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |

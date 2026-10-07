@@ -10,6 +10,9 @@
 //! - The drop of a struct or enum value that leads back to its own type (through an array).
 //!   The value lives in a slot that is freed right after (an array's buffer), so a queued value
 //!   is moved to a heap box of its own first (`Glue::QueuedDrop` drops and frees it).
+//! - The drop of a boxed object type that leads back to itself (`interface Node { next?: Node
+//!   }`): the bracket is in the branch that releases the last reference, and the box itself is
+//!   queued, still holding that reference (`Glue::QueuedDrop` releases it again).
 //! - The drop of a closure env whose captures lead to a function value: every chain through
 //!   closures passes through an env, so classes and structs need not count function values.
 
@@ -36,9 +39,10 @@ impl Cx<'_> {
         })
     }
 
-    /// Can dropping a struct or enum value of `ty` nest another drop of a `ty` value?
+    /// Can dropping a struct, enum or object type value of `ty` nest another drop of a `ty`
+    /// value?
     fn value_drop_reenters(&mut self, ty: TyId) -> bool {
-        if self.is_class(ty) || self.boxed(ty) || !matches!(self.kind(ty), TyKind::Adt(..)) {
+        if self.is_class(ty) || !matches!(self.kind(ty), TyKind::Adt(..)) {
             return false;
         }
         let parts = self.part_types(ty);
@@ -124,6 +128,17 @@ impl FnLower<'_, '_> {
     pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
         let bracket = self.cx.value_drop_reenters(ty);
+        if bracket && self.cx.boxed(ty) {
+            let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+            let boxed = Operand::Copy(place.clone());
+            self.drop_boxed(&place, ty, |lw, v| {
+                lw.enter_object_drop(boxed, glue);
+                lw.drop_inline(v, ty);
+                lw.leave_drop();
+            });
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         if bracket {
             let at = place.clone();
             self.enter_drop(|lw| lw.queue_value(at, ty));
@@ -148,8 +163,14 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::DropQueue, vec![b, glue], None);
     }
 
-    /// `Glue::QueuedDrop`: drop the `ty` value in the heap box `b` and free the box.
+    /// `Glue::QueuedDrop`: drop the `ty` value in the heap box `b` and free the box; for a
+    /// boxed type, `b` is the value itself (a box with its last reference).
     pub(super) fn queued_drop_body(&mut self, b: vir::Local, ty: TyId) {
+        if self.cx.boxed(ty) {
+            self.drop_glue(Place::local(b), ty);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         let place = self.deref_param(b, ty);
         self.drop_glue(place, ty);
         let vt = self.cx.ty(ty);

@@ -70,8 +70,8 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
 | `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
 | `velt_rt_drop_enter` | `() -> u8` | start a drop that can nest (glue whose type leads back to itself, #543): `1` to go ahead, then `velt_rt_drop_leave` when done; `0` when this thread is 128 drops deep: the glue `drop_queue`s what it was dropping and returns (additive) |
-| `velt_rt_drop_queue` | `(void* obj, void (*drop)(void* obj))` | drop `obj` with `drop` (glue that takes it over: a class object's or env's drop, or a struct value moved to a heap box) when the outermost drop on this thread is done (additive) |
-| `velt_rt_drop_leave` | `()` | end a drop `enter` let through; the outermost one drops the queued objects, in the order they were queued (additive) |
+| `velt_rt_drop_queue` | `(void* obj, void (*drop)(void* obj))` | drop `obj` with `drop` (glue that takes it over: a class object's or env's drop, or a struct value moved to a heap box) when the outermost drop on this thread is done; at once while the thread is torn down (additive) |
+| `velt_rt_drop_leave` | `()` | end a drop `enter` let through; the outermost one drops the queued objects, if any, in the order they were queued (additive) |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |

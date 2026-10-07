@@ -146,7 +146,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the inline value of a boxed array / object type (`dispose()` first).
-    fn drop_inline(&mut self, v: &Place, ty: TyId) {
+    pub(super) fn drop_inline(&mut self, v: &Place, ty: TyId) {
         if let TyKind::Array(e) = self.cx.kind(ty) {
             return self.drop_array(v, e);
         }

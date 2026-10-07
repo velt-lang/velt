@@ -17,59 +17,75 @@ type DropFn = unsafe extern "C" fn(*mut u8);
 
 /// Nested drops a thread runs before it queues the next one. A level is a few small frames of
 /// drop glue (plus whatever a `[Symbol.dispose]()` hook calls), so this stays far below the
-/// smallest stack (WebAssembly's 1 MiB).
+/// smallest stack a program runs on (1 MiB: the main thread on Windows; WebAssembly modules
+/// are linked with 8 MiB).
 pub const MAX_DEPTH: u32 = 128;
 
 /// Capacity kept for the next drop that queues objects.
 const KEEP: usize = 1024;
 
+/// [`STATE`]: the outermost `leave` is draining the queue.
+const DRAINING: u32 = 1 << 31;
+/// [`STATE`]: something was queued since the queue was last drained.
+const QUEUED: u32 = 1 << 30;
+/// [`STATE`]: nested drops under way.
+const DEPTH: u32 = QUEUED - 1;
+
 thread_local! {
-    /// Nested drops under way on this thread, and whether the outermost `leave` is draining
-    /// the queue (bit 31).
+    /// Nested drops under way on this thread, with the [`DRAINING`] and [`QUEUED`] bits.
     static STATE: Cell<u32> = const { Cell::new(0) };
-    /// Objects queued by `enter`, dropped by the outermost `leave`.
+    /// Objects queued by `queue`, dropped by the outermost `leave`.
     static QUEUE: RefCell<VecDeque<(usize, DropFn)>> = const { RefCell::new(VecDeque::new()) };
 }
-
-const DRAINING: u32 = 1 << 31;
 
 /// Start a drop: 1 to go ahead (then `leave` when done), or 0 when the thread is
 /// [`MAX_DEPTH`] drops deep: the caller then `queue`s what it was dropping and returns.
 #[no_mangle]
 pub extern "C" fn velt_rt_drop_enter() -> u8 {
     let state = STATE.with(Cell::get);
-    if state & !DRAINING >= MAX_DEPTH {
+    if state & DEPTH >= MAX_DEPTH {
         return 0;
     }
     STATE.with(|s| s.set(state + 1));
     1
 }
 
-/// Drop `obj` with `drop` (drop glue that takes it over) when the outermost drop is done.
+/// Drop `obj` with `drop` (drop glue that takes it over) when the outermost drop is done; at
+/// once while the thread is being torn down (its queue is gone).
+///
+/// # Safety
+/// `drop` must take over `obj`: the compiler queues only objects whose last reference it was
+/// dropping.
 #[no_mangle]
-pub extern "C" fn velt_rt_drop_queue(obj: *mut u8, drop: DropFn) {
-    QUEUE.with(|q| q.borrow_mut().push_back((obj as usize, drop)));
+pub unsafe extern "C" fn velt_rt_drop_queue(obj: *mut u8, drop: DropFn) {
+    let queued = QUEUE.try_with(|q| q.borrow_mut().push_back((obj as usize, drop)));
+    if queued.is_err() {
+        return drop(obj);
+    }
+    STATE.with(|s| s.set(s.get() | QUEUED));
 }
 
 /// Done with a drop `enter` let through: the outermost `leave` drops the queued objects (which
-/// may queue more), unless it runs inside that draining already.
+/// may queue more), unless it runs inside that draining already or nothing was queued.
 ///
 /// # Safety
-/// Every queued object must still be owned by the queue: the compiler queues only objects
-/// whose last reference it was dropping.
+/// Every queued object must still be owned by the queue (see `velt_rt_drop_queue`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_drop_leave() {
     let state = STATE.with(Cell::get) - 1;
-    STATE.with(|s| s.set(state));
-    if state != 0 {
-        return;
+    if state != QUEUED {
+        return STATE.with(|s| s.set(state));
     }
     STATE.with(|s| s.set(DRAINING));
     // The drop glue runs with nothing borrowed: it queues objects of its own.
-    while let Some((obj, drop)) = QUEUE.with(|q| q.borrow_mut().pop_front()) {
+    while let Some((obj, drop)) = QUEUE
+        .try_with(|q| q.borrow_mut().pop_front())
+        .ok()
+        .flatten()
+    {
         drop(obj as *mut u8);
     }
-    QUEUE.with(|q| {
+    let _ = QUEUE.try_with(|q| {
         let mut q = q.borrow_mut();
         if q.capacity() > KEEP {
             *q = VecDeque::new();
@@ -97,7 +113,7 @@ mod tests {
         if velt_rt_drop_enter() == 0 {
             return velt_rt_drop_queue(obj, drop_link);
         }
-        let depth = STATE.with(Cell::get) & !DRAINING;
+        let depth = STATE.with(Cell::get) & DEPTH;
         MAX_SEEN.with(|m| m.set(m.get().max(depth)));
         let link = Box::from_raw(obj as *mut Link);
         DROPPED.with(|d| d.borrow_mut().push(link.id));

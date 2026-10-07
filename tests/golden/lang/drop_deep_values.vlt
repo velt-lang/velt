@@ -1,10 +1,21 @@
 // check: no leaks
-// Long chains through struct values in arrays, interface values and a class hierarchy drop
-// without overflowing the stack (#543), at the end of a scope and on reassignment.
+// Long chains through struct values in arrays, interface values, a class hierarchy and
+// recursive object types (the usual TypeScript linked list) drop without overflowing the stack
+// (#543), at the end of a scope and on reassignment.
 
 struct Item {
   id: i64;
   rest: Item[];
+}
+
+interface ListNode {
+  value: number;
+  next?: ListNode;
+}
+
+interface Cons {
+  head: number;
+  tail: Cons | null;
 }
 
 interface Shape {
@@ -53,6 +64,22 @@ function items(n: i64): Item {
   return head;
 }
 
+function listNodes(n: number): ListNode {
+  let head: ListNode = { value: 0 };
+  for (let i = 1; i < n; i++) {
+    head = { value: i, next: head };
+  }
+  return head;
+}
+
+function conses(n: number): Cons {
+  let list: Cons = { head: 0, tail: null };
+  for (let i = 1; i < n; i++) {
+    list = { head: i, tail: list };
+  }
+  return list;
+}
+
 function squares(n: number): Shape {
   let head: Shape = new Square(0);
   for (let i = 1; i < n; i++) {
@@ -77,7 +104,10 @@ function scopeEnd() {
   const a = items(1000000);
   const s = squares(1000000);
   const h = hierarchy(1000000);
+  const l = listNodes(1000000);
+  const c = conses(1000000);
   console.log("scope", a.id, a.rest[0].id, s.area(), h.id());
+  console.log("objects", l.value, l.next!.value, c.head, c.tail!.head);
 }
 
 function main() {
@@ -90,4 +120,9 @@ function main() {
   let h = hierarchy(1000000);
   h = new Derived(-1);
   console.log("reassigned", a.id, s.area(), h.id());
+  let l = listNodes(1000000);
+  l = { value: -1 };
+  let c = conses(1000000);
+  c = conses(1);
+  console.log("objects reassigned", l.value, c.head);
 }
