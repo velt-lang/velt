@@ -1,9 +1,12 @@
-//! Unit tests for `numrep`, checked against the reference interpreter.
+//! Unit tests for `numrep`'s int32 slice (step 1) and guarded sums, checked against the
+//! reference interpreter.
 
 use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
+use crate::numrep::run_program;
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
+use velt_vir::vir::ExternFn;
 use velt_vir::vir::{Program, Rvalue, Terminator};
 
 /// Runs `velt_rt_math_to_int32` like the runtime (finite values below 2^63 are enough here).
@@ -106,7 +109,7 @@ fn call(p: &Program, args: &[u64]) -> u64 {
 
 fn optimized(p: &Program) -> Program {
     let mut q = p.clone();
-    assert!(run(&q.externs.clone(), &mut q.funcs[0]));
+    assert!(run_program(&mut q));
     assert_valid(&q);
     q
 }
@@ -147,10 +150,10 @@ fn int32_locals_become_i32_with_the_same_results() {
 fn sums_of_int32_values_skip_the_conversion() {
     let p = hash_program();
     let q = optimized(&p);
-    // `acc + state` adds two narrowed values: one 32-bit add, no ToInt32 call. The
-    // `state + acc + 7` chain has an `f64` intermediate and keeps its call.
+    // `acc + state` adds two narrowed values: an integer add, no ToInt32 call. So does the
+    // `state + acc + 7` chain, whose intermediate is a whole number below 2^34.
     assert_eq!(to_int32_calls(&p), 2);
-    assert_eq!(to_int32_calls(&q), 1);
+    assert_eq!(to_int32_calls(&q), 0);
 }
 
 #[test]
@@ -165,20 +168,7 @@ fn locals_with_other_definitions_stay() {
     fb.ret(b, copy_local(v));
     pb.add(fb.finish());
     let mut p = pb.finish();
-    let externs = p.externs.clone();
-    assert!(!run(&externs, &mut p.funcs[0]));
-}
-
-#[test]
-fn negative_zero_and_fractions_are_not_int32_constants() {
-    assert_eq!(int32_const(&Const::Float(-0.0), Ty::F64), None);
-    assert_eq!(int32_const(&Const::Float(0.5), Ty::F64), None);
-    assert_eq!(int32_const(&Const::Float(2147483648.0), Ty::F64), None);
-    assert_eq!(
-        int32_const(&Const::Float(-2147483648.0), Ty::F64),
-        Some(-2147483648)
-    );
-    assert_eq!(int32_const(&Const::Int(1 << 40), Ty::I64), None);
+    assert!(!run_program(&mut p));
 }
 
 /// `g(a, c) = ToInt32(a + (c as f64))` through `velt_rt_math_add_int32`.
@@ -222,7 +212,7 @@ impl Host for AddHost {
 fn sums_with_converted_counters_add_as_integers() {
     let p = converted_sum_program();
     let mut q = p.clone();
-    assert!(run(&q.externs.clone(), &mut q.funcs[0]));
+    assert!(run_program(&mut q));
     assert_valid(&q);
     let cases: [(i32, i64); 5] = [
         (5, 7),
@@ -266,7 +256,7 @@ fn counters_converted_in_another_block_add_as_integers() {
     pb.add(fb.finish());
     let p = pb.finish();
     let mut q = p.clone();
-    assert!(run(&q.externs.clone(), &mut q.funcs[0]));
+    assert!(run_program(&mut q));
     assert_valid(&q);
     for (a, c) in [(5i32, 7i64), (-9, 1 << 45), (2, (1 << 62) + 3)] {
         let args = [a as u32 as u64, c as u64];

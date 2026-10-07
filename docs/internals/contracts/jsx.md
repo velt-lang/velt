@@ -43,9 +43,10 @@ A component written in the TS/Velt common subset (docs/design/tsx.md, "Sharing c
 the client") must type-check and **behave identically** under `tsc` with the provider's TS
 runtime and under `velt` with its Velt runtime: same props object, same children shape (one
 child → the child, several → an array, none → field absent/`null`), same `key` handling, same
-evaluation order (props first; the component runs when the provider calls it), booleans/`null`
-render nothing. Anything the compiler cannot match is a compile error, never a silent
-difference. Known gaps are listed at the end.
+evaluation order (props first; the component runs when the provider calls it), the same output
+for booleans and `null` (nothing, or the provider's placeholder: "Children" below). Anything the
+compiler cannot match is a compile error, never a silent difference. Known gaps are listed at
+the end.
 
 ## Required exports of `<source>/jsx-runtime`
 Types (any declaration kind that `import * as JSX` can name):
@@ -118,7 +119,10 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   field's type; children with no children field in `P` are an error.
 - **Children:** text (after JSX whitespace rules and entity decoding) becomes a `string` child;
   `{expr}` is coerced to `Child`; `{...xs}` passes `xs` as one child; `{/* */}` and `{}` vanish.
-  `true`, `false` and `null` must render nothing (provider responsibility).
+  What `true`, `false` and `null` children render is the provider's choice: nothing (`std/jsx`,
+  as in React), or a placeholder of its own, e.g. the empty comment `<!---->` that a hydrating
+  client aligns its children on (sigx). A provider renders them the same way in both lowerings
+  (its `jsxEscape` returns the placeholder) and in its TS runtime.
 - **Async:** a component whose return type is `Promise<…>` uses `jsxAsyncComponent`. A
   provider that calls it at creation stores the promise (hybrid promises start it immediately, so siblings load
   concurrently) and awaits it while rendering.
@@ -128,7 +132,7 @@ When the runtime also exports all of
 
 ```ts
 type Text = string | number | boolean | null;                      // provider-defined union
-function jsxEscape(value: Text): string;                           // escaped text ("" for bool/null)
+function jsxEscape(value: Text): string;                           // escaped text; bool/null: "" or a placeholder
 function jsxAttr(name: string, value: AttrValue): string;           // ` name="…"`, ` name`, or ""
 function jsxTemplate(strings: string[], slots: Element[]): Element; // strings.length == slots.length + 1
 ```
@@ -149,6 +153,50 @@ shape of Deno's precompile transform, with text folded into the strings):
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
   `std/jsx_precompile_equals_generic` checks `std/jsx`).
+
+### Text separator (optional export)
+The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
+by one writes a separator between them (sigx: `<!--t-->`). The generic lowering passes every
+child, so the provider inserts it itself; in a template string the compiler has folded the text
+together, so a precompiling provider declares the separator instead:
+
+```ts
+export const jsxTextSeparator = "<!--t-->";   // a string constant (an error otherwise)
+```
+The compiler then writes it between two adjacent **text parts** of one element: static text
+and dynamic `Text` children, in any combination (`<p>Count: {n}</p>` →
+`"<p>Count: <!--t-->" + jsxEscape(n) + "</p>"`, `<p>{name}{n}</p>` →
+`jsxEscape(name) + "<!--t-->" + jsxEscape(n)`).
+- Tags break adjacency (`<p>a<b>x</b>c</p>` has no separator); `{}` and `{/* */}` do not, as
+  they are no children.
+- `true`, `false` and `null` are boundaries, not text: no separator goes next to them (the
+  provider renders its placeholder, "Children"). A child whose type is only `boolean` or `null`
+  is a boundary at compile time; one whose type mixes them with text (`string | null`) is tested
+  at run time, with the value read once. All other separators are part of the constant strings,
+  so a template costs nothing extra.
+- An empty string is text (`a{""}b` → `a<!--t--><!--t-->b`, as sigx renders it).
+- Between a template string and a slot (a fragment, a component, an element child), only the
+  provider knows what the slot renders, so the separator there is the provider's: a non-empty
+  template string starts with text unless it starts with `<`, and ends with text unless it ends
+  with `>` (escaped text contains neither, and the separator and placeholders are comments),
+  and an empty one is no boundary. This is how the separator crosses fragments and components
+  (`<p>{a}<>{b}</></p>` → `a<!--t-->b`).
+- An empty string at a slot edge would be invisible there (`<p>{s}<Name/></p>` with `s == ""`
+  must render `<p><!--t-->ada</p>`, as in the generic lowering). So a dynamic text child whose
+  type has a `string` member (other than a non-empty literal) and that is next to a slot,
+  possibly through other such children, is a slot `Fragment([v], null)` itself, and the
+  provider renders it as in the generic lowering. Numbers, booleans, `null` and static text are
+  never empty and stay in the strings. Like any slot, it is evaluated after the template's
+  strings.
+- A provider that exports a separator must render `true`, `false` and `null` as a non-empty
+  placeholder that starts with `<` and ends with `>` (sigx: `<!---->`). The compiler does not
+  check this. If it rendered them as `""`, a `null` would be a boundary inside a template
+  string (`<p>{a}{null}{b}</p>` → `ab`) but invisible to the provider next to a slot
+  (`<p>{a}{null}<Name/></p>` → `a<!--t-->ada`), and no generic renderer matches both.
+- Without the export nothing changes. The generic lowering ignores it.
+
+The golden `lang/jsx_text_separator` renders the cases above through a provider in both
+lowerings.
 
 ## Escaping (all providers that render HTML)
 - Text: `&` `<` `>` → `&amp;` `&lt;` `&gt;`; attribute values additionally `"` → `&quot;` and
