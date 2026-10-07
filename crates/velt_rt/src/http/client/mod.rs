@@ -139,7 +139,10 @@ async fn run(
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
-    let encoding = parts.headers.get(CONTENT_ENCODING).and_then(|v| v.to_str().ok());
+    let encoding = parts
+        .headers
+        .get(CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok());
     let reader = body::Reader {
         incoming: body,
         decoder: decode::Decoder::for_encoding(encoding),

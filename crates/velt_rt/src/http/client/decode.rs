@@ -31,7 +31,10 @@ pub(super) enum DeflateKind {
 }
 
 fn failed(e: &dyn std::fmt::Display) -> VeltErr {
-    VeltErr::new(code::INVALID_DATA, &format!("fetch failed: invalid compressed body: {e}"))
+    VeltErr::new(
+        code::INVALID_DATA,
+        &format!("fetch failed: invalid compressed body: {e}"),
+    )
 }
 
 impl Decoder {
@@ -41,9 +44,10 @@ impl Decoder {
         match encoding.map(|e| e.trim().to_ascii_lowercase()).as_deref() {
             Some("gzip" | "x-gzip") => Decoder::Gzip(flate2::write::MultiGzDecoder::new(vec![])),
             Some("deflate") => Decoder::Deflate(None),
-            Some("br") => Decoder::Brotli(Box::new(
-                brotli_decompressor::DecompressorWriter::new(vec![], 16 << 10),
-            )),
+            Some("br") => Decoder::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(
+                vec![],
+                16 << 10,
+            ))),
             _ => Decoder::Identity,
         }
     }
@@ -165,10 +169,16 @@ mod tests {
 
     #[test]
     fn corrupt_and_truncated_bodies_fail() {
-        assert_eq!(decode("gzip", b"not gzip at all", 4).err().unwrap().code, code::INVALID_DATA);
+        assert_eq!(
+            decode("gzip", b"not gzip at all", 4).err().unwrap().code,
+            code::INVALID_DATA
+        );
         let gz = gzip(TEXT);
         let cut = &gz[..gz.len() - 6];
-        assert_eq!(decode("gzip", cut, 8).err().unwrap().code, code::INVALID_DATA);
+        assert_eq!(
+            decode("gzip", cut, 8).err().unwrap().code,
+            code::INVALID_DATA
+        );
     }
 
     #[test]

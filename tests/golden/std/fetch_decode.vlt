@@ -3,7 +3,12 @@
 // streams a body chunk by chunk (`for await (const chunk of res.body)`). The client half is
 // valid TypeScript and prints what Node 22 prints for it (against an equivalent `node:http`
 // server).
-import { serve, Request as ServerRequest, Response as ServerResponse, ResponseWriter } from "velt:http";
+import {
+  serve,
+  Request as ServerRequest,
+  Response as ServerResponse,
+  ResponseWriter,
+} from "velt:http";
 
 async function client(base: string) {
   for (const enc of ["gzip", "br", "deflate", "raw"]) {
@@ -48,7 +53,38 @@ async function client(base: string) {
 
 function encoded(name: string): u8[] {
   if (name == "gzip") {
-    return [31, 139, 8, 0, 0, 0, 0, 0, 0, 10, 203, 72, 205, 201, 201, 87, 72, 175, 202, 44, 0, 0, 25, 106, 210, 223, 10, 0, 0, 0];
+    return [
+      31,
+      139,
+      8,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      10,
+      203,
+      72,
+      205,
+      201,
+      201,
+      87,
+      72,
+      175,
+      202,
+      44,
+      0,
+      0,
+      25,
+      106,
+      210,
+      223,
+      10,
+      0,
+      0,
+      0,
+    ];
   }
   if (name == "br") {
     return [139, 3, 128, 104, 101, 108, 108, 111, 32, 98, 114, 3];
