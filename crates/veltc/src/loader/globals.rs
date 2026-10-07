@@ -8,8 +8,11 @@
 //! the names it re-exports are its triggers. A non-std module whose source contains one of them
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
-//! with `std/prelude/`). std modules import what they use, so they never trigger one.
+//! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
+//! as `import { Response } from "velt:http"` does, or a declaration), which hides the global.
+//! std modules import what they use, so they never trigger one.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use velt_common::SourceMap;
@@ -60,9 +63,54 @@ fn reexported_names(src: &str) -> Vec<String> {
     names
 }
 
-/// Whether `src` contains `name` as a whole identifier (not as part of a longer one).
+/// The names `module` binds at its top level: what it imports and what it declares.
+pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
+    let mut names = HashSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Import(imp) => {
+                if !item.exported || imp.from.is_empty() {
+                    names.extend(
+                        imp.names
+                            .iter()
+                            .map(|n| n.alias.as_ref().unwrap_or(&n.name).name.as_str()),
+                    );
+                }
+                names.extend(imp.namespace.iter().map(|n| n.name.as_str()));
+            }
+            ast::ItemKind::Function(f) => {
+                names.insert(f.sig.name.name.as_str());
+            }
+            ast::ItemKind::ExternFn(f) => {
+                names.insert(f.name.name.as_str());
+            }
+            ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => {
+                names.insert(t.name.name.as_str());
+            }
+            ast::ItemKind::Interface(i) => {
+                names.insert(i.name.name.as_str());
+            }
+            ast::ItemKind::Enum(e) => {
+                names.insert(e.name.name.as_str());
+            }
+            ast::ItemKind::TypeAlias(a) => {
+                names.insert(a.name.name.as_str());
+            }
+            ast::ItemKind::Var(v) => {
+                if let ast::PatternKind::Ident(id) = &v.pattern.kind {
+                    names.insert(id.name.as_str());
+                }
+            }
+            ast::ItemKind::Extend(_) => {}
+        }
+    }
+    names
+}
+
+/// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
+/// characters are ASCII letters, digits, `_` and `$`, as the lexer reads them).
 pub(super) fn mentions(src: &str, name: &str) -> bool {
-    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
     src.match_indices(name).any(|(at, _)| {
         let before = src[..at].chars().next_back();
         let after = src[at + name.len()..].chars().next();
@@ -83,7 +131,9 @@ mod tests {
             "fetch"
         ));
         assert!(mentions("prefetch(); fetch()", "fetch"));
-        assert!(!mentions("const é = Responseé;", "Response"));
+        // Identifiers are ASCII (as the lexer reads them): any other character ends one.
+        assert!(mentions("Responseé", "Response"));
+        assert!(!mentions("Response_x", "Response"));
     }
 
     #[test]

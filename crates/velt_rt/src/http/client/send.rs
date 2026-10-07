@@ -91,9 +91,10 @@ pub(super) fn parse_url(url: &str) -> Result<Url, VeltErr> {
 }
 
 /// The header list `[name, value, …]` as a header map; what Node adds when it is missing
-/// (`accept`, `user-agent`).
-pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
-    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 2);
+/// (`accept`, `user-agent`, and `accept-encoding` with the codings `https` can decode). The map
+/// has room for all three defaults, so adding them never grows it.
+pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltErr> {
+    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 3);
     for [name, value] in flat.as_chunks::<2>().0 {
         let name = HeaderName::from_bytes(name)
             .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(name))))?;
@@ -107,6 +108,10 @@ pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
     if !map.contains_key(header::USER_AGENT) {
         map.insert(header::USER_AGENT, HeaderValue::from_static("velt"));
     }
+    if !map.contains_key(header::ACCEPT_ENCODING) {
+        let codings = HeaderValue::from_static(super::decode::accept_encoding(https));
+        map.insert(header::ACCEPT_ENCODING, codings);
+    }
     Ok(map)
 }
 
@@ -114,7 +119,9 @@ fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-fn request(o: &Outgoing) -> Result<Request<Full<Bytes>>, VeltErr> {
+/// The request to send for `o`. Its headers are moved into it unless a redirect may need them
+/// again (`keep`), so a request that is not followed copies none.
+fn request(o: &mut Outgoing, keep: bool) -> Result<Request<Full<Bytes>>, VeltErr> {
     let uri: Uri = o
         .url
         .as_str()
@@ -123,7 +130,11 @@ fn request(o: &Outgoing) -> Result<Request<Full<Bytes>>, VeltErr> {
     let mut req = Request::new(Full::new(o.body.clone()));
     *req.method_mut() = o.method.clone();
     *req.uri_mut() = uri;
-    *req.headers_mut() = o.headers.clone();
+    *req.headers_mut() = if keep {
+        o.headers.clone()
+    } else {
+        std::mem::take(&mut o.headers)
+    };
     Ok(req)
 }
 
@@ -142,7 +153,8 @@ pub(super) async fn send(
 ) -> Result<Received, VeltErr> {
     let mut redirected = false;
     for _ in 0..=MAX_REDIRECTS {
-        let response = client.request(request(&o)?).await.map_err(|e| failed(&e))?;
+        let req = request(&mut o, mode == Redirect::Follow)?;
+        let response = client.request(req).await.map_err(|e| failed(&e))?;
         let status = response.status();
         let location = response.headers().get(header::LOCATION);
         if !status.is_redirection() || mode == Redirect::Manual || location.is_none() {
@@ -201,6 +213,7 @@ fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), Vel
             header::AUTHORIZATION,
             header::COOKIE,
             header::PROXY_AUTHORIZATION,
+            header::HOST,
         ] {
             o.headers.remove(h);
         }

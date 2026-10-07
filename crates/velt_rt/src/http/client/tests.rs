@@ -3,7 +3,6 @@
 
 use super::send::{self, Outgoing};
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -66,7 +65,7 @@ fn get(url: &str, headers: &[&str]) -> Outgoing {
     Outgoing {
         method: Method::GET,
         url: send::parse_url(url).unwrap(),
-        headers: send::header_map(&flat).unwrap(),
+        headers: send::header_map(&flat, false).unwrap(),
         body: Bytes::new(),
     }
 }
@@ -181,7 +180,17 @@ fn credentials_stay_on_their_origin() {
     rt().block_on(async {
         let (port, log) = server(redirects).await;
         let url = format!("http://127.0.0.1:{port}/other");
-        let o = get(&url, &["authorization", "Bearer t", "x-keep", "1"]);
+        let o = get(
+            &url,
+            &[
+                "authorization",
+                "Bearer t",
+                "x-keep",
+                "1",
+                "host",
+                "app.test",
+            ],
+        );
         let r = fetch(o, Redirect::Follow).await.unwrap();
         assert_eq!(r.url, format!("http://localhost:{port}/b"));
         let seen = log.lock().unwrap().clone();
@@ -191,6 +200,9 @@ fn credentials_stay_on_their_origin() {
             .iter()
             .any(|h| h.starts_with("authorization")));
         assert!(seen[1].headers.contains(&"x-keep: 1".into()));
+        // A `host` the request set is the first origin's: the next hop names its own.
+        assert!(seen[0].headers.contains(&"host: app.test".into()));
+        assert!(seen[1].headers.contains(&format!("host: localhost:{port}")));
     });
 }
 
@@ -202,7 +214,7 @@ fn reason_phrase_and_bodies() {
         let r = fetch(get(&format!("{base}/teapot"), &[]), Redirect::Follow)
             .await
             .unwrap();
-        assert_eq!((r.status, r.status_text.as_str()), (418, "Teapot Time"));
+        assert_eq!((r.status, &*r.status_text), (418, "Teapot Time"));
         let r = Arc::new(r);
         let w = receive(r.clone()).await.unwrap();
         assert_eq!(w.as_slice(), b"short and stout");
@@ -229,33 +241,54 @@ fn bad_urls_and_headers_fail_before_connecting() {
     );
     let bad: [&[u8]; 2] = [b"bad name", b"v"];
     assert_eq!(
-        send::header_map(&bad).err().unwrap().code,
+        send::header_map(&bad, false).err().unwrap().code,
         code::INVALID_INPUT
     );
     let bad: [&[u8]; 2] = [b"x", b"a\nb"];
     assert_eq!(
-        send::header_map(&bad).err().unwrap().code,
+        send::header_map(&bad, false).err().unwrap().code,
         code::INVALID_INPUT
     );
-    let set: [&[u8]; 4] = [b"accept", b"text/html", b"user-agent", b"me"];
-    let map = send::header_map(&set).unwrap();
+    let set: [&[u8]; 6] = [
+        b"accept",
+        b"text/html",
+        b"user-agent",
+        b"me",
+        b"accept-encoding",
+        b"identity",
+    ];
+    let map = send::header_map(&set, true).unwrap();
     assert_eq!(map.get("accept").unwrap(), "text/html");
     assert_eq!(map.get("user-agent").unwrap(), "me");
+    assert_eq!(map.get("accept-encoding").unwrap(), "identity");
+    let map = send::header_map(&[], true).unwrap();
+    assert_eq!(map.get("accept-encoding").unwrap(), "br, gzip, deflate");
+    assert_eq!(map.len(), 3);
 }
 
 #[test]
 fn an_aborted_signal_drops_the_request() {
-    static ACCEPTED: AtomicUsize = AtomicUsize::new(0);
     rt().block_on(async {
-        // Accepts and never answers.
+        // Reads the request, never answers, and reports when the client closes the connection.
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
+        let (arrived_tx, arrived) = tokio::sync::oneshot::channel::<()>();
+        let (closed_tx, closed) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
-            let mut held = vec![];
-            while let Ok((s, _)) = l.accept().await {
-                ACCEPTED.fetch_add(1, Ordering::SeqCst);
-                held.push(s);
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let mut arrived_tx = Some(arrived_tx);
+            loop {
+                match s.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Some(tx) = arrived_tx.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+                }
             }
+            let _ = closed_tx.send(());
         });
         let signal = Arc::new(Signal::default());
         let url = format!("http://127.0.0.1:{port}/");
@@ -265,11 +298,13 @@ fn an_aborted_signal_drops_the_request() {
             Redirect::Follow,
             Some(signal.clone()),
         ));
-        while ACCEPTED.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
+        // Hang guards, not assertions: each step completes at once.
+        let guard = std::time::Duration::from_secs(60);
+        tokio::time::timeout(guard, arrived).await.unwrap().unwrap();
         crate::task::abort::abort_for_test(&signal);
         let e = work.await.unwrap().err().unwrap();
         assert_eq!(message(e), "This operation was aborted");
+        // The request was dropped, not abandoned: its connection is closed.
+        tokio::time::timeout(guard, closed).await.unwrap().unwrap();
     });
 }

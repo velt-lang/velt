@@ -16,8 +16,10 @@ test = false
 doctest = false
 
 [dependencies]
+brotli-decompressor = "6.0.1"
 bytes = "1.12.1"
 dashu-int = "0.6.1"
+flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
