@@ -75,7 +75,7 @@ migrations, auth and principals, clustering and placement, and file storage.
 ## Results
 
 **Read these as relative, not absolute.** They were measured on 2026-10-07 with the compiler at
-`8d8ea5bf`, on a Windows i9-12900HK (20 threads) that sat at 100% load from other builds the
+`4992a14f`, on a Windows i9-12900HK (20 threads) that sat at 100% load from other builds the
 whole time. The OS descheduled even a busy loop for 50–180 ms at a time. So the tables report
 **CPU time per call** (user + system, all threads): it is distorted by load much less than
 throughput. Velt is built with `velt build --release` (LLVM), Node is 22.22, and @sigx/actors is
