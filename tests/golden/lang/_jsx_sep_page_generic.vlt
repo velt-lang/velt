@@ -1,0 +1,60 @@
+// @jsxImportSource ./_jsx_sep_provider
+
+// The page of `jsx_text_separator`. `_jsx_sep_page_generic.vlt` and `_jsx_sep_page_precompile.vlt`
+// are the same source under the generic and the precompiling runtime.
+
+function Name(props: { name: string }): JSX.Element {
+  return <>{props.name}</>;
+}
+
+function Wrapped(props: { children: JSX.Element }): JSX.Element {
+  return <>{props.children}</>;
+}
+
+// One case per line: what the separator rules cover.
+export function cases(
+  name: string,
+  n: i64,
+  maybe: string | null,
+  flag: bool,
+  empty: string,
+  names: string[],
+): JSX.Element[] {
+  return [
+    <p>Count: {n}</p>,
+    <p>{name}{n}</p>,
+    <p>{n} items</p>,
+    <p>a{maybe}b</p>,
+    <p>{maybe}{maybe}</p>,
+    <p>{name}{maybe}{n}</p>,
+    <p>{flag}{n}</p>,
+    <p>{null}{name}</p>,
+    <p>a{empty}b</p>,
+    <p>{name}<>{n}</></p>,
+    <p>Hi <Name name={name} /></p>,
+    <p><Name name={name} />!</p>,
+    <p><Name name={name} /><Name name={name} /></p>,
+    <p>{name}<span title={maybe}>{n}</span>{name}</p>,
+    <p>
+      {name}
+      {/* a comment is no child */}
+      {n}
+    </p>,
+    <ul><li>{name}</li><li>{n}</li></ul>,
+    <Wrapped><p>{maybe} and {flag}</p></Wrapped>,
+    // An empty string next to a slot is a text node there too.
+    <p>{empty}<Name name={name} /></p>,
+    <p>a{empty}<Name name={name} /></p>,
+    <p><Name name={name} />{empty}</p>,
+    <p><Name name={name} />{empty}<Name name={name} /></p>,
+    <p>{name}{maybe}<Name name={name} /></p>,
+    // Conditional children: the branch not taken is `null` or `false`, a boundary.
+    <p>{flag ? name : null}</p>,
+    <p>a{flag ? name : null}b</p>,
+    // `{flag && name}` is a compile error in Velt (a string is no condition); TS gives `false`.
+    <p>{flag ? name : false}</p>,
+    <p>{flag ? name : false}{n}</p>,
+    // An array child is a slot; the elements in it are no text.
+    <p>a{names.map((s) => <span>{s}</span>)}c</p>,
+  ];
+}

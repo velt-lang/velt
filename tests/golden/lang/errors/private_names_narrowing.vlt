@@ -1,0 +1,18 @@
+// `instanceof` narrows only a readonly field path: `B`'s own `#x` is mutable even though the
+// base class has a `readonly #x` of its own, so the narrowing ends at the call that may reassign it
+// (TypeScript accepts this and Node throws; Velt reads the right field).
+class Animal { name: string = "a"; }
+class Dog extends Animal { tag: string = "dog"; bark(): string { return this.tag; } }
+class A { readonly #x: Animal = new Animal(); }
+class B extends A {
+  #x: Animal = new Dog();
+  reset() { this.#x = new Animal(); }
+  f(): string {
+    if (this.#x instanceof Dog) {
+      this.reset();
+      return this.#x.bark();
+    }
+    return "no";
+  }
+}
+function main() { const b = new B(); console.log(b.f()); }

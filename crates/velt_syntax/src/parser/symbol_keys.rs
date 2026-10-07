@@ -54,6 +54,9 @@ impl<'a> Parser<'a> {
         if self.at_symbol_key() {
             return self.parse_symbol_key();
         }
+        if self.at(Tok::PrivateName) {
+            return Ok(self.take_ident());
+        }
         self.parse_prop_name()
     }
 

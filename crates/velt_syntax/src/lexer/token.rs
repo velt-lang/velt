@@ -148,6 +148,8 @@ pub(crate) enum TplPart {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tok {
     Ident,
+    /// An ES private name, `#x` (the text includes the `#`).
+    PrivateName,
     Kw(Kw),
     Int(u32),
     Float(u32),
@@ -233,6 +235,7 @@ impl Tok {
         use Tok::*;
         match self {
             Ident => "identifier",
+            PrivateName => "private name",
             Kw(_) => "keyword",
             Int(_) | Float(_) => "number",
             Str(_) => "string literal",
