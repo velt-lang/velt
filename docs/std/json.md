@@ -19,12 +19,14 @@
   skips ES private fields (`#x`), as JavaScript does. `JSON.parse<T>` cannot build a class or
   struct with a `private` or `#` field (own or inherited), wherever it appears in `T`: decoding
   fills fields without running the constructor, so it could not initialize them; the error
-  names the field. std types keep their runtime handles in private fields (`BigInt`, `RegExp`,
-  `Mutex`, sockets, files, HTTP, database clients…), and have no JSON form in either direction,
-  so untrusted JSON can never produce one. To send such a value, convert it to a type with
-  public fields first (`n.toString()` for a `BigInt`, or an object literal of the data you
-  need). A class value is written as its dynamic class (a subclass's fields too), unless that
-  class has no JSON form (a std type with private fields): then as its static class.
+  names the field. A type with a private field declared by a std type has no JSON form in either
+  direction: std keeps runtime handles there (`#` fields of `BigInt`, `RegExp`, HTTP requests
+  and responses, SQLite statements; `private` fields of `Mutex`, sockets, files and database
+  clients), also when a user class extends one. So JSON can never carry or forge a handle. To
+  send such a value, convert it to a type with public fields first (`n.toString()` for a
+  `BigInt`, or an object literal of the data you need). A class value is written as its
+  dynamic class (a subclass's fields too), unless that class holds std private state: then as
+  its static class.
 
 ```ts
 class Account {

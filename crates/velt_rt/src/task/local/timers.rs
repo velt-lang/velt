@@ -293,9 +293,13 @@ impl Future for TimerLeaf {
             // First poll, or polled by another task now: (re-)register here. Once out of the
             // old queue (under its lock), the leaf can no longer be fired there.
             this.deregister();
-            if this.fired.load(Ordering::Acquire) || Instant::now() >= this.deadline {
+            if this.fired.load(Ordering::Acquire) {
                 return Poll::Ready(());
             }
+            // Not ready just because the deadline passed (#589): like a Node `setTimeout`, a due
+            // timer fires at the task's next poll, in (deadline, creation) order, so code after
+            // `await sleep(0)` never runs before the synchronous code that started it, and a
+            // timer whose start was delayed (a loaded machine) doesn't overtake earlier ones.
             let seq = if this.seq == 0 {
                 timers.next_seq()
             } else {

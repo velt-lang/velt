@@ -179,7 +179,7 @@ fn interpret(program: &Program, s: &Subject, prefix: &str) -> Vec<Expected> {
 }
 
 /// Compile all `.ll` files with `clang -O3`, several at a time.
-fn compile_all(clang: &Path, lls: &[PathBuf]) -> Vec<PathBuf> {
+pub fn compile_all(clang: &Path, lls: &[PathBuf]) -> Vec<PathBuf> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = lls.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
@@ -347,7 +347,7 @@ fn show(tag: u8, bits: u64) -> String {
 }
 "#;
 
-fn link_and_run(rustc: &str, dir: &Path, harness: &Path, objects: &[PathBuf]) -> String {
+pub fn link_and_run(rustc: &str, dir: &Path, harness: &Path, objects: &[PathBuf]) -> String {
     let exe = dir.join(format!("harness{}", std::env::consts::EXE_SUFFIX));
     // Object paths go through an argument file: hundreds of them exceed Windows' command line.
     let mut args = String::new();

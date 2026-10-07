@@ -1,7 +1,8 @@
-private_names_syntax.vlt:4:11: error: an accessibility modifier cannot be used with a private name
-private_names_syntax.vlt:7:3: error: private names are only allowed in class bodies
-private_names_syntax.vlt:9:12: error: private names are only allowed in class bodies
-private_names_syntax.vlt:11:3: error: private names are only allowed in class bodies
-private_names_syntax.vlt:14:15: error: private names cannot be parameters
-private_names_syntax.vlt:17:3: error: '#constructor' is a reserved word
-private_names_syntax.vlt:19:13: error: private names are only allowed in class bodies
+private_names_syntax.vlt:5:11: error: an accessibility modifier cannot be used with a private name
+private_names_syntax.vlt:8:3: error: private names are only allowed in class bodies
+private_names_syntax.vlt:10:12: error: private names are only allowed in class bodies
+private_names_syntax.vlt:12:3: error: private names are only allowed in class bodies
+private_names_syntax.vlt:15:15: error: private names cannot be parameters
+private_names_syntax.vlt:18:3: error: '#constructor' is a reserved word
+private_names_syntax.vlt:20:13: error: private names are only allowed in class bodies
+private_names_syntax.vlt:24:15: error: an optional chain cannot contain private names

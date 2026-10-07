@@ -29,29 +29,8 @@ impl FnCx<'_, '_> {
 
     /// Field `name` of struct / class / object values of type `t`: (index, field type).
     pub(crate) fn field_of(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
-        if name.starts_with(ast::PRIVATE_NAME_PREFIX) {
-            if let Some(found) = self.private_name_field(t, name) {
-                return Some(found);
-            }
-        }
-        self.cx.field_of(t, name)
-    }
-
-    /// The field `#x` of type `t` that the class whose body this is declares (a class and its
-    /// subclass may each have one).
-    fn private_name_field(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
-        let owner = self.owner?;
-        let TyKind::Adt(d, args) = self.cx.ty.kind(t).clone() else {
-            return None;
-        };
-        let a = self.cx.adt(d)?;
-        let (i, f) = a
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.name == name && f.private_to == Some(owner))?;
-        let fty = f.ty;
-        Some((i as u32, self.cx.ty.subst(fty, &args)))
+        // A class and its subclass may each have a field `#x` (`Ctx::field_seen_from`).
+        self.cx.field_seen_from(t, name, self.owner)
     }
 
     /// `x.field` on an interface value or bounded generic: a call of the field's getter slot

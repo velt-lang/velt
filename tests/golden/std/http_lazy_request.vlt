@@ -2,7 +2,7 @@
 // `Request` reads its properties from the runtime request on access: getters, `header(name)`,
 // `headers`, an empty and a non-empty body. A constant response header (interned by the
 // runtime) and a varying one come back right on every response.
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -16,11 +16,11 @@ async function main() {
     return res;
   });
   const base = `http://127.0.0.1:${server.port}`;
-  const probe = new Map<string, string>();
-  probe.set("x-probe", "yes");
+  const probe = new Headers();
+  probe.set("X-Probe", "yes");
   const urls = [`${base}/a?x=1`, `${base}/b`, `${base}/c`];
   for (const url of urls) {
-    const r = await fetch(url, { headers: probe.clone() });
+    const r = await fetch(url, { headers: probe });
     console.log(r.headers.get("server") ?? "", r.headers.get("x-path") ?? "", await r.text());
   }
   const post = await fetch(`${base}/post`, { method: "POST", body: "payload" });

@@ -3,7 +3,7 @@
 // own copy of what it captured: a resource is copied by its `clone()` and each copy released
 // once (a resource without `clone()` is a compile error: errors/http_handler_captures_resource).
 // The original is released when the server shuts down.
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 
 class Store {
   name: string;

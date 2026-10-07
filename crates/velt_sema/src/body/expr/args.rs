@@ -501,10 +501,9 @@ impl FnCx<'_, '_> {
             [one] => format!("type parameter {one}"),
             [init @ .., last] => format!("type parameters {} and {last}", init.join(", ")),
         };
+        let note = uninferred_note(c);
         self.cx.error(
-            Diagnostic::error(format!("cannot infer {list} of {}", c.what), span).with_note(
-                "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result",
-            ),
+            Diagnostic::error(format!("cannot infer {list} of {}", c.what), span).with_note(note),
         );
     }
 
@@ -554,4 +553,29 @@ fn has_float_lit(e: &ast::Expr) -> bool {
         ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
         _ => false,
     }
+}
+
+/// How to fix a call whose type arguments nothing inferred. A JSON decoder's type is what the
+/// data is checked against (TypeScript's `any` from `res.json()` has no Velt counterpart); a type
+/// that only the result mentions is written at the call or on the variable receiving it.
+fn uninferred_note(c: &Callable) -> String {
+    if c.what == "method `json`" || c.what == "`JSON.parse`" {
+        let call = if c.what == "method `json`" {
+            "await res.json"
+        } else {
+            "JSON.parse"
+        };
+        let arg = if c.params.is_empty() { "" } else { "text" };
+        return format!(
+            "Velt has no `any`: name the type the JSON must have (the data is checked against \
+             it): `{call}<User[]>({arg})`, or annotate the variable: \
+             `const users: User[] = {call}({arg})`"
+        );
+    }
+    if c.params.is_empty() {
+        return "only the result's type mentions it: write it at the call, e.g. `f<User>()`, or \
+                annotate the variable receiving the result"
+            .to_string();
+    }
+    "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result".to_string()
 }

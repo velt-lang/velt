@@ -117,6 +117,10 @@ impl FnLower<'_, '_> {
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
+                // Sema rejects these; writing one would leak std's runtime handles.
+                if self.cx.adt_def(d).opaque {
+                    ice("JSON of a type holding std's private state");
+                }
                 self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
             }
             // A union is written as its active member.

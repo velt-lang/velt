@@ -423,9 +423,15 @@ Maintainer-owned, like hir.rs.
   `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
   is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
   is written as `null`.
-- `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
-  no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
-  value of it dynamically (a subclass with private fields is written as its static class).
+- `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
+  `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
+  internal error).
+- `AdtDef::opaque` (additive): some private field, own or inherited, is declared by a std type
+  (a runtime handle or other internal state: `BigInt`, `RegExp`, sockets, database clients).
+  Such a type has no JSON form at all: sema rejects writing it, lowering's writer treats one as
+  an internal error, and a base class value whose dynamic class is opaque (or holds an opaque
+  value) is written as its static class (`json/dynamic.rs`). Other `private` fields are
+  written, as in Node.
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
@@ -443,4 +449,7 @@ A class member declared `#x` keeps the `#` in its name: `FieldDef::name` is `"#x
 the prefix: `console.log` (`glue/format_object.rs`), `JSON.stringify` (`json/write.rs`,
 `json/dynamic.rs`), `Object.keys` and spread leave `#` fields out. `#m` methods never get a
 vtable slot. `#x in o` reaches HIR as the class test of `o instanceof C` (`PatKind::InstanceOf`).
-`AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type.
+`AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type. std's
+handle classes (`BigInt`, `RegExp`, `Request`, `Response`, `Server`, `Statement`, generators)
+keep their state in `#` fields; handle types that are structs keep `private` fields, and
+`AdtDef::opaque` keeps every std type with private state out of JSON.

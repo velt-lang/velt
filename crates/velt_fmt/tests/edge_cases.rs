@@ -235,7 +235,7 @@ fn private_names() {
   #m(): i64 { return this.#x + A.#K; }
   get #v(): i64 { return this.#x; }
   set #v(n: i64) { this.#x = n; }
-  has(o: A | null): boolean { return o != null && #x in o && o?.#x > 0; }
+  has(o: A | null): boolean { return o != null && #x in o && o.#x > 0; }
 }",
     );
 }

@@ -1,7 +1,8 @@
 //! Load real `.vlt` programs for tests: the std prelude (`std/prelude/*.vlt`), the root file
 //! and every module it imports (`./relative` and `std/x` specifiers), parsed with the real parser.
 //! A module with a `// @jsxImportSource <source>` comment also loads `<source>/jsx-runtime` as
-//! its JSX runtime (like the driver's loader; tests always name the source).
+//! its JSX runtime (like the driver's loader; tests always name the source), and a non-std module
+//! that mentions a global loaded on demand (`std/prelude/global/*.vlt`) loads its module.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ impl Loader {
         let std_dir = repo_root().join("std");
         let mut queue: VecDeque<usize> = (0..self.modules.len()).collect();
         while let Some(m) = queue.pop_front() {
+            self.globals(m, &mut queue);
             let mut specs: Vec<String> = self.modules[m]
                 .ast
                 .items
@@ -111,6 +113,63 @@ impl Loader {
             }
         }
     }
+}
+
+impl Loader {
+    /// Load the global modules (`std/prelude/global/*.vlt`) whose re-exported names non-std
+    /// module `m` mentions as whole words, as the driver's loader does.
+    fn globals(&mut self, m: usize, queue: &mut VecDeque<usize>) {
+        if self.modules[m].is_std {
+            return;
+        }
+        let src = self.sm.get(self.modules[m].file).src.clone();
+        let dir = repo_root().join("std/prelude/global");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map(|rd| rd.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        files.sort();
+        for f in files {
+            let name = f.file_stem().unwrap().to_string_lossy().to_string();
+            let canonical = format!("std/prelude/global/{name}");
+            if self.modules.iter().any(|x| x.path == canonical) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&f).unwrap();
+            if reexports(&text).iter().any(|n| mentions(&src, n)) {
+                let i = self.add(&canonical, &f, text);
+                queue.push_back(i);
+            }
+        }
+    }
+}
+
+/// The names `export { … } from "…"` items of `src` re-export.
+fn reexports(src: &str) -> Vec<String> {
+    let mut sm = SourceMap::new();
+    let id = sm.add("global.vlt".to_string(), src.to_string());
+    let (module, _) = velt_syntax::parse_file(id, src);
+    let mut names = vec![];
+    for item in &module.items {
+        if let ast::ItemKind::Import(imp) = &item.kind {
+            if item.exported {
+                names.extend(
+                    imp.names
+                        .iter()
+                        .map(|n| n.alias.as_ref().unwrap_or(&n.name).name.clone()),
+                );
+            }
+        }
+    }
+    names
+}
+
+/// Whether `src` contains `name` as a whole identifier.
+fn mentions(src: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    src.match_indices(name).any(|(at, _)| {
+        !src[..at].chars().next_back().is_some_and(ident)
+            && !src[at + name.len()..].chars().next().is_some_and(ident)
+    })
 }
 
 /// `p` without `.` / `..` components (so `a/../b` and `b` are the same module).

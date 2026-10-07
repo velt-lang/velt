@@ -342,10 +342,14 @@ pub struct AdtDef {
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
     /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
-    /// the `#`). `JSON.parse` cannot build such a type (decoding could forge the runtime
-    /// handles std types keep in `#` fields); `JSON.stringify` writes `private` fields and
-    /// skips `#` ones, as JavaScript does.
+    /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
+    /// and could forge the runtime handles std types keep in private fields.
     pub private_fields: bool,
+    /// Some private field (own or inherited) is declared by a std type: a runtime handle or
+    /// other internal state. Such a type has no JSON form at all (sema rejects writing it, and
+    /// `JSON.stringify` of a base class value holding one writes the static class). Other
+    /// `private` fields are written, as in Node, and `#` fields never are.
+    pub opaque: bool,
     /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
     /// to one value must see the same fields, so sharing it needs one counted object
     /// (hir_encodings.md "Sharing"); otherwise a share may copy it field by field.

@@ -30,8 +30,9 @@ impl FnCx<'_, '_> {
     /// Report a use of a private member of `private_to` outside that type's body.
     pub(crate) fn check_private(&mut self, private_to: Option<DefId>, name: &str, span: Span) {
         let Some(owner) = private_to else { return };
-        if name.starts_with(ast::PRIVATE_NAME_PREFIX) {
-            return self.check_private_name(owner, name, span);
+        if crate::defs::is_private_key(name) {
+            let name = crate::defs::key_member_name(name).to_string();
+            return self.check_private_name(owner, &name, span);
         }
         if self.private_allowed(owner) {
             return;

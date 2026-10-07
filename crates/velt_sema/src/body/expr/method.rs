@@ -7,7 +7,6 @@
 //! `Callee::Virtual`; everything else on concrete types is a direct `Callee::Def`.
 
 use velt_common::{Diagnostic, Span};
-use velt_syntax::ast;
 
 use crate::body::FnCx;
 use crate::collect::lookup_method;
@@ -87,7 +86,7 @@ impl FnCx<'_, '_> {
     fn own_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         // `o.#m()` in the body of class `C` is `C`'s `#m`, also on a subclass instance that
         // declares a `#m` of its own (never virtual).
-        let recv = match (self.owner, name.starts_with(ast::PRIVATE_NAME_PREFIX)) {
+        let recv = match (self.owner, crate::defs::is_private_key(name)) {
             (Some(owner), true) => self.ancestor(recv, owner),
             _ => recv,
         };

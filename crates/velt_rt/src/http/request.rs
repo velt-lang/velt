@@ -130,28 +130,17 @@ pub unsafe extern "C" fn velt_rt_http_req_header_at(
     value.write(owned_str(&String::from_utf8_lossy(v.as_bytes())));
 }
 
-/// Every header name (lowercase), in received order per name: `req.headers` in one call (std
-/// pairs it with [`velt_rt_http_req_header_values`]; `header_at` per index is O(n) each).
+/// Every header as the flat list `[name, value, …]` (lowercase names, received order; values
+/// that are not UTF-8 decoded lossily): `req.headers` (the global `Headers`) in one call.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_names(req: ReqHandle, out: *mut VeltStrArray) {
+pub unsafe extern "C" fn velt_rt_http_req_headers(req: ReqHandle, out: *mut VeltStrArray) {
     let r = obj(req);
-    let headers = r.parts.headers.iter();
-    out.write(VeltStrArray::from_vec(
-        headers.map(|(n, _)| owned_str(n.as_str())).collect(),
-    ));
-}
-
-/// Every header value, in the order of [`velt_rt_http_req_header_names`] (non-UTF-8 bytes
-/// decoded lossily).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_values(req: ReqHandle, out: *mut VeltStrArray) {
-    let r = obj(req);
-    let headers = r.parts.headers.iter();
-    out.write(VeltStrArray::from_vec(
-        headers
-            .map(|(_, v)| owned_str(&String::from_utf8_lossy(v.as_bytes())))
-            .collect(),
-    ));
+    let mut flat = Vec::with_capacity(r.parts.headers.len() * 2);
+    for (name, value) in r.parts.headers.iter() {
+        flat.push(owned_str(name.as_str()));
+        flat.push(owned_str(&String::from_utf8_lossy(value.as_bytes())));
+    }
+    out.write(VeltStrArray::from_vec(flat));
 }
 
 /// `req.body` as text (invalid UTF-8 decoded lossily to U+FFFD).

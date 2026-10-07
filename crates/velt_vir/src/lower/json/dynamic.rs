@@ -104,7 +104,7 @@ impl Cx<'_> {
 
     /// The parts of ADT `d<args>` that must be writable: fields, union members' payloads, or
     /// the value type of a `Map<string, V>`, or nothing for C-like enums. `None`: no JSON form
-    /// (other maps, payload enums).
+    /// (other maps, payload enums, types holding std's private state).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
             // `Record<K, V>` is an object (sema checked its keys).
@@ -117,8 +117,9 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
-            // ES private fields (`#x`, std's runtime handles too) are never written; `private x`
-            // is, as in Node.
+            // std's private state (runtime handles) has no JSON form.
+            hir::Def::Adt(a) if a.opaque => return None,
+            // ES private fields (`#x`) are never written; `private x` is, as in Node.
             hir::Def::Adt(a) => a
                 .fields
                 .iter()

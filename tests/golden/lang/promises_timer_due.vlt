@@ -1,0 +1,36 @@
+// check: no leaks
+// A timer that is already due when it is first waited for still waits for its turn, like a
+// Node `setTimeout`: the code after the `sleep` runs in a later turn of the task, after the
+// synchronous code that started it and after timers due before it.
+async function log(msg: string, ms: i64): Promise<void> {
+  await sleep(ms);
+  console.log(msg);
+}
+
+// Spins until `ms` milliseconds have passed: the timers created before are due afterwards.
+function busy(ms: f64) {
+  const start = performance.now();
+  while (performance.now() - start < ms) {}
+}
+
+async function main() {
+  // Due at once, but the caller's synchronous code runs first.
+  const zero = log("a 0 ms timer", 0);
+  console.log("the caller goes on");
+  await zero;
+
+  // Due before `main`'s own `sleep(0)`, which comes after it.
+  const early = log("a 5 ms timer created first", 5);
+  busy(20);
+  await sleep(0);
+  console.log("main's 0 ms timer");
+  await early;
+
+  // A sleep created first but awaited after its deadline passed keeps its place.
+  const mine = sleep(5);
+  const theirs = log("a 5 ms timer created second", 5);
+  busy(20);
+  await mine;
+  console.log("main's 5 ms timer created first");
+  await theirs;
+}

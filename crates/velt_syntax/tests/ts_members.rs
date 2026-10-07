@@ -107,7 +107,7 @@ fn constructor_modifiers_and_protected_members_are_rejected() {
 #[test]
 fn private_names_are_class_members() {
     let m = parse_ok(
-        "class A { #x = 1; readonly #y: i64; #m(): i64 { return this.#x; } get #v(): i64 { return 1; } static #s(): void {} static readonly #K: i64 = 2; has(o: A): boolean { return #x in o && o?.#y > 0; } }",
+        "class A { #x = 1; readonly #y: i64; #m(): i64 { return this.#x; } get #v(): i64 { return 1; } static #s(): void {} static readonly #K: i64 = 2; has(o: A): boolean { return #x in o && o.#y > 0; } }",
     );
     let c = class(&m);
     let fields: Vec<(&str, bool)> = c

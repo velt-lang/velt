@@ -112,7 +112,13 @@ impl<'a> Parser<'a> {
                 object,
                 optional: true,
             }),
-            t if Self::is_name(t) || t == Tok::PrivateName => Ok(ExprKind::Member {
+            Tok::PrivateName => {
+                // TS18030.
+                let span = self.cur_span();
+                self.error("an optional chain cannot contain private names", span);
+                Err(Fail)
+            }
+            t if Self::is_name(t) => Ok(ExprKind::Member {
                 prop: self.take_ident(),
                 object,
                 optional: true,

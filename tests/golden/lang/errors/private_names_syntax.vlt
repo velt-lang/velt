@@ -1,5 +1,6 @@
 // ES private names are allowed only in class bodies (TS18016), never with an accessibility
-// modifier (TS18010) or as parameters (TS18009); `#constructor` is reserved (TS18012).
+// modifier (TS18010) or as parameters (TS18009); `#constructor` is reserved (TS18012); an
+// optional chain cannot use one (TS18030).
 class A {
   private #p: number = 2;
 }
@@ -17,4 +18,10 @@ class Q {
   #constructor(): void {}
 }
 const o = { #k() {} };
+class R {
+  #x: number = 1;
+  get(o: R | null): number {
+    return o?.#x ?? 0;
+  }
+}
 function main() {}

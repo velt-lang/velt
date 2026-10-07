@@ -242,7 +242,7 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         );
         return true;
     }
-    let private = private_field(cx, bad);
+    let private = private_field(cx, bad, parse);
     // Decoding cannot set private fields; writing is refused only for std's types (handles).
     let what = match (&private, t == bad, parse) {
         (Some((field, _)), true, true) => {
@@ -314,8 +314,9 @@ fn report_restricted_ctor(cx: &mut Ctx, t: TyId, bad: TyId, span: Span) -> bool 
     true
 }
 
-/// The first private field of struct or class type `t` (name and declaration), if it has one.
-fn private_field(cx: &Ctx, t: TyId) -> Option<(String, Span)> {
+/// The first private field of struct or class type `t` (name and declaration) that rules out
+/// JSON (`parse`: any, else one a std type declares), if it has one.
+fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
     let TyKind::Adt(d, _) = cx.ty.kind(t) else {
         return None;
     };
@@ -328,9 +329,16 @@ fn private_field(cx: &Ctx, t: TyId) -> Option<(String, Span)> {
         DefInfo::Adt(a) => a
             .fields
             .iter()
-            .find(|f| f.private_to.is_some())
+            .find(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o)))
             .map(|f| (f.name.clone(), f.span)),
         _ => None,
+    }
+}
+
+impl Ctx<'_> {
+    /// Is type definition `d` declared in a std module?
+    pub(crate) fn declared_in_std(&self, d: DefId) -> bool {
+        self.adt(d).is_some_and(|a| self.scopes[a.module].is_std)
     }
 }
 
@@ -378,11 +386,12 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
             }
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
                 // Decoding fills fields without running the constructor: it cannot set what a
-                // type keeps to itself. A std type keeps its runtime handles and internals in
-                // private fields, so it has no JSON form at all.
+                // type keeps to itself. A private field declared by a std type (a runtime
+                // handle, also inherited by a user class) has no JSON form at all.
                 DefInfo::Adt(a)
-                    if (parse || cx.scopes[a.module].is_std)
-                        && a.fields.iter().any(|f| f.private_to.is_some()) =>
+                    if a.fields
+                        .iter()
+                        .any(|f| f.private_to.is_some_and(|o| parse || cx.declared_in_std(o))) =>
                 {
                     return Some(t)
                 }
