@@ -175,3 +175,67 @@ fn hand_offs_publish_this_threads_output_first() {
     assert!(!published());
     crate::io::publish_before_handoff();
 }
+
+/// A 37-byte item (odd size) carrying `n` in every byte.
+fn big_item(n: u8) -> [u8; 37] {
+    [n; 37]
+}
+
+#[test]
+fn odd_sized_items_cross_a_bounded_channel_whole_and_in_order() {
+    let h = velt_rt_chan_new(3);
+    let hb = h.bits();
+    run(async move {
+        let consumer = tokio::spawn(async move {
+            let h = Key::<Chan>::from_bits(hb);
+            let mut got = vec![];
+            loop {
+                // `[u8; 37] | null`: present flag @0, item @1.
+                // SAFETY: `h` is live until closed and drained.
+                let f = Await::<38>(SendPtr(unsafe { velt_rt_chan_receive(h, 37, 1, 38) }));
+                let b = f.await;
+                if b[0] == 0 {
+                    break got;
+                }
+                assert_eq!(b[1..], big_item(b[1]), "a whole item");
+                got.push(b[1]);
+            }
+        });
+        let h = Key::<Chan>::from_bits(hb);
+        for n in 0..200u8 {
+            let v = big_item(n);
+            // SAFETY: a 37-byte item; no drop glue.
+            let f = Await::<1>(SendPtr(unsafe {
+                velt_rt_chan_send(h, v.as_ptr(), 37, None)
+            }));
+            assert_eq!(f.await, [1]);
+            assert!(velt_rt_chan_len(h) <= 3, "never more than the capacity");
+        }
+        velt_rt_chan_close(h);
+        let got = consumer.await.expect("consumer");
+        assert_eq!(got, (0..200u8).collect::<Vec<_>>());
+        assert!(CHANNELS.get(h).is_none(), "closed and drained");
+    });
+}
+
+#[test]
+fn items_queued_before_close_are_still_received_whole() {
+    let h = velt_rt_chan_new(0);
+    for n in 1..=9u8 {
+        let v = big_item(n);
+        // SAFETY: a 37-byte item; no drop glue.
+        assert!(unsafe { velt_rt_chan_try_send(h, v.as_ptr(), 37, None) });
+    }
+    velt_rt_chan_close(h);
+    for n in 1..=9u8 {
+        let mut slot = [0u8; 38];
+        // SAFETY: a 38-byte `[u8; 37] | null` slot, item @1.
+        unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 37, 1) };
+        assert_eq!((slot[0], &slot[1..]), (1, &big_item(n)[..]));
+    }
+    let mut slot = [0xffu8; 38];
+    // SAFETY: as above.
+    unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 37, 1) };
+    assert_eq!(slot[0], 0, "drained: null");
+    assert!(CHANNELS.get(h).is_none());
+}
