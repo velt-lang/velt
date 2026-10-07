@@ -58,7 +58,7 @@ export async function handleActorRequest(
     budget = parseFloat(header);
   }
   const deadline = budget > 0.0 ? performance.now() + budget : 0.0;
-  return respond(await router.send(type, key, method, args.stringify(), [], deadline));
+  return respond(await router.send(type, key, method, args, [], deadline));
 }
 
 export async function serveActors(router: Router, port: i64, host: string): Promise<Server> {

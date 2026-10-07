@@ -72,9 +72,8 @@ export struct Envelope {
   type: string;
   key: string;
   method: string;
-  // The JSON array `[key, ...args]`, as text. (A parsed `Value` arrived empty on the shard in
-  // some call paths — B3 — so it crosses as text and is parsed by the shard.)
-  args: string;
+  // The JSON array `[key, ...args]`.
+  args: Value;
   // Absolute `performance.now()` deadline; 0 = none. A turn that starts after it is skipped.
   deadline: f64;
   // Actor ids (`type/key`) of the calls in progress above this one, for deadlock detection.
@@ -113,14 +112,10 @@ export class Ctx<S> {
     this.deactivateRequested = true;
   }
 
-  // Calls another actor. The answer is the raw JSON result; decode it with `JSON.parse<T>`.
-  async call(
-    type: string,
-    key: string,
-    method: string,
-    argsJson: string,
-  ): Promise<string> throws ActorError {
-    const r = await this.router.call(type, key, method, argsJson, this.chain, this.deadline);
+  // Calls another actor with `args`, the JSON array of the arguments after the key. The answer
+  // is the raw JSON result; decode it with `JSON.parse<T>`.
+  async call(type: string, key: string, method: string, args: Value): Promise<string> throws ActorError {
+    const r = await this.router.call(type, key, method, args, this.chain, this.deadline);
     if (r.status != 200) {
       throw remoteError(r);
     }
@@ -198,7 +193,7 @@ export class Methods<S> {
       }
       let a: A;
       try {
-        a = JSON.parse<A>(raw.stringify());
+        a = raw.as<A>();
       } catch (e) {
         throw badArgument(name, 1, e.message);
       }
@@ -220,12 +215,12 @@ export class Methods<S> {
       let a: A;
       let b: B;
       try {
-        a = JSON.parse<A>(rawA.stringify());
+        a = rawA.as<A>();
       } catch (e) {
         throw badArgument(name, 1, e.message);
       }
       try {
-        b = JSON.parse<B>(rawB.stringify());
+        b = rawB.as<B>();
       } catch (e) {
         throw badArgument(name, 2, e.message);
       }
@@ -558,13 +553,9 @@ async function turn(shard: Shard, slot: Slot, id: string, env: Envelope): Promis
   if (slot.act == null) {
     return errorReply(500, "activation", `${id} is not active`);
   }
-  const args = parseOrNull(env.args);
-  if (args == null || !args.isArray()) {
-    return errorReply(400, "bad-request", `${id}.${env.method}: arguments are not a JSON array`);
-  }
   const chain = env.chain.clone();
   chain.push(id);
-  const r = await slot.act.invoke(env.method, args, chain, env.deadline);
+  const r = await slot.act.invoke(env.method, env.args, chain, env.deadline);
   if (slot.act == null) {
     return r;
   }
@@ -690,17 +681,24 @@ export function parseOrNull(text: string): Value | null {
 export struct Router {
   inboxes: Channel<Envelope>[];
 
-  // Calls `type/key`.`method` with `argsJson`, the JSON array of the arguments after the key.
+  // Calls `type/key`.`method` with `args`, the JSON array of the arguments after the key.
   async call(
     type: string,
     key: string,
     method: string,
-    argsJson: string,
+    args: Value,
     chain: string[],
     deadline: f64,
   ): Promise<Reply> {
-    const rest = argsJson == "[]" ? "" : `,${argsJson.slice(1, (argsJson.length as i64) - 1)}`;
-    return await this.send(type, key, method, `[${JSON.stringify(key)}${rest}]`, chain, deadline);
+    const all = JsonValue.array();
+    all.push(JsonValue.of(key));
+    for (let i: i64 = 0; i < args.len(); i++) {
+      const a = args.at(i);
+      if (a != null) {
+        all.push(a);
+      }
+    }
+    return await this.send(type, key, method, all, chain, deadline);
   }
 
   // Like `call`, with the wire's whole `[key, ...args]` array.
@@ -708,7 +706,7 @@ export struct Router {
     type: string,
     key: string,
     method: string,
-    args: string,
+    args: Value,
     chain: string[],
     deadline: f64,
   ): Promise<Reply> {

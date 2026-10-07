@@ -34,7 +34,7 @@ function counterMethods(): Methods<CounterState> {
       // Calls another counter: actor-to-actor, across shards when the keys hash apart.
       "pull",
       async (ctx: Ctx<CounterState>, from: string): Promise<i64> throws ActorError => {
-        const json = await ctx.call("Counter", from, "current", "[]");
+        const json = await ctx.call("Counter", from, "current", JsonValue.array());
         let theirs: CounterState;
         try {
           theirs = JSON.parse<CounterState>(json);
@@ -50,14 +50,14 @@ function counterMethods(): Methods<CounterState> {
       // Calls back into itself through another actor: a deadlock the runtime must refuse.
       "loop",
       async (ctx: Ctx<CounterState>, via: string): Promise<i64> throws ActorError => {
-        return decode<i64>(await ctx.call("Counter", via, "pullFrom", JSON.stringify([ctx.key])));
+        return decode<i64>(await ctx.call("Counter", via, "pullFrom", JsonValue.from([ctx.key])));
       },
     )
     .method1<string, i64>("pullFrom", async (
       ctx: Ctx<CounterState>,
       from: string,
     ): Promise<i64> throws ActorError => {
-      return decode<i64>(await ctx.call("Counter", from, "current", "[]"));
+      return decode<i64>(await ctx.call("Counter", from, "current", JsonValue.array()));
     })
     .method0<bool>("sleep", async (ctx: Ctx<CounterState>): Promise<bool> throws ActorError => {
       ctx.deactivate();

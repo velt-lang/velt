@@ -1,6 +1,7 @@
 // In-process benchmarks, the Velt side of `pnpm bench:run dispatch activation mem` in
 // @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
 // answered, against the `Tiny` actor (no storage on the call path).
+import { Value } from "velt:json";
 import { Host, Router } from "./runtime";
 
 struct LoopResult {
@@ -16,9 +17,9 @@ async function caller(
   until: f64,
   sample: bool,
 ): Promise<LoopResult> {
-  const args: string[] = [];
+  const args: Value[] = [];
   for (const k of keys) {
-    args.push(JSON.stringify([k]));
+    args.push(JsonValue.from([k]));
   }
   let ops: i64 = 0;
   const samples: f64[] = [];
@@ -124,7 +125,7 @@ async function activateMany(host: Host, prefix: string, n: i64, c: i64): Promise
 async function activateRange(router: Router, prefix: string, from: i64, to: i64): Promise<i64> {
   for (let i = from; i < to; i++) {
     const k = `${prefix}-${i}`;
-    const r = await router.send("Tiny", k, "noop", JSON.stringify([k]), [], 0.0);
+    const r = await router.send("Tiny", k, "noop", JsonValue.from([k]), [], 0.0);
     if (r.status != 200) {
       panic(r.body);
     }
@@ -140,7 +141,7 @@ async function coldCycle(host: Host, ms: f64) {
   while (performance.now() < until) {
     const t0 = performance.now();
     const k = `cold-${n}`;
-    const args = JSON.stringify([k]);
+    const args = JsonValue.from([k]);
     const r = await host.router.send("Tiny", k, "noop", args, [], 0.0);
     const d = await host.router.send("Tiny", k, "$deactivate", args, [], 0.0);
     if (r.status != 200 || d.status != 200) {
