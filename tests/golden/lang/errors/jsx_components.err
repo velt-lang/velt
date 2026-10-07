@@ -8,3 +8,5 @@ jsx_components.vlt:24:39: error: This JSX tag's 'children' prop expects a single
 jsx_components.vlt:25:25: error: 'Count' cannot be used as a JSX component.
 jsx_components.vlt:26:29: error: cannot find `Missing` in this scope
 jsx_components.vlt:27:33: error: JSX elements cannot have multiple attributes with the same name.
+jsx_components.vlt:28:20: error: Property 'items' is missing in type '{ label: string | null }' but required in type '{ items: number[]; label: string | null }'.
+jsx_components.vlt:29:51: error: Property 'extra' does not exist on type '{ items: T[]; label: string | null }'.

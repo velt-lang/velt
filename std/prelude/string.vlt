@@ -147,7 +147,8 @@ extend string {
   // out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
   // (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
   charAt(i: i64 = 0): string {
-    if (i < 0 || i >= (this.length as i64)) {
+    // Past the end, the slice is empty (its bounds are clamped): no length to compute first.
+    if (i < 0 || i == END) {
       return "";
     }
     return velt_rt_str_slice(this, i, i + 1);

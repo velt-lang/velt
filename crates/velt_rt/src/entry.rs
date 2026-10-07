@@ -60,7 +60,7 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     crate::str::stats::report();
     crate::io::stats::report();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
-    crate::debug_alloc::check_quarantine();
+    crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     code
 }
 

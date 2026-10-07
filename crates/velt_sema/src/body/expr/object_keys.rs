@@ -14,7 +14,8 @@
 //!
 //! A value of a class with subclasses may hold a subclass instance, whose own fields JS lists
 //! too: the names are chosen by the dynamic class, testing the subclasses deepest first
-//! (`PatKind::InstanceOf`, a vtable read; `expr::downcast`).
+//! (`PatKind::InstanceOf`, a vtable read; `expr::downcast`). An interface value is tested the
+//! same way against every class whose instances it can hold.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -100,15 +101,26 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
-        let Some(keys) = self.object_key_names(obj.ty, obj.span) else {
-            return self.error_expr(span);
+        // An interface value lists the fields of the class it holds (none can hold anything
+        // else: see `iface_classes`).
+        let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {
+            TyKind::Dyn(i, _) => match self.iface_classes(i, obj.ty, obj.span) {
+                Some(classes) => (vec![], Some(classes)),
+                None => return self.error_expr(span),
+            },
+            _ => {
+                let Some(keys) = self.object_key_names(obj.ty, obj.span) else {
+                    return self.error_expr(span);
+                };
+                (keys, self.class_subclasses(obj.ty))
+            }
         };
         let str_array = self.cx.ty.array(self.cx.ty.str_);
         let (l, mode) = self.option_binding(&obj, obj.ty, "<keys>", false);
         let names = if keys.iter().any(|k| k.optional) {
             self.present_keys(l, &keys, str_array, span)
-        } else if let Some(subs) = self.class_subclasses(obj.ty) {
-            self.dynamic_class_keys(l, obj.ty, &keys, subs, span)
+        } else if let Some(classes) = classes {
+            self.dynamic_class_keys(l, obj.ty, &keys, classes, span)
         } else {
             self.name_array(&keys, span)
         };
@@ -147,6 +159,60 @@ impl FnCx<'_, '_> {
             .collect();
         subs.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
         (!subs.is_empty()).then(|| subs.into_iter().map(|(_, s)| s).collect())
+    }
+
+    /// The classes whose instances an interface value of `iface` (type `t`) can hold, deepest
+    /// first; `None` (reported at `span`) when a type that is not a class implements it, whose
+    /// values carry no class to tell them apart.
+    fn iface_classes(&mut self, iface: DefId, t: TyId, span: Span) -> Option<Vec<DefId>> {
+        let mut classes = vec![];
+        for d in (0..self.cx.info.len() as u32).map(DefId) {
+            let Some(a) = self.cx.adt(d) else { continue };
+            if self.cx.scopes[a.module].is_std {
+                continue;
+            }
+            let (kind, name) = (a.kind, a.name.clone());
+            if kind == AdtKind::Class {
+                if self.holds_class(d, iface) {
+                    classes.push((self.class_depth(d), d));
+                }
+                continue;
+            }
+            if self.implements(d, iface) {
+                let tn = self.cx.display(t);
+                self.cx.err(
+                    format!("`Object.keys` cannot list the keys of a `{tn}`: `{name}` implements it and is not a class, so its values cannot be told apart at run time"),
+                    span,
+                );
+                return None;
+            }
+        }
+        classes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
+        Some(classes.into_iter().map(|(_, d)| d).collect())
+    }
+
+    /// May an interface value of `iface` hold an instance of class `d`: does `d`, a base class
+    /// of it or one of its subclasses implement `iface`?
+    fn holds_class(&mut self, d: DefId, iface: DefId) -> bool {
+        if self.class_tree_implements(d, iface) {
+            return true;
+        }
+        let mut cur = self.cx.adt(d).and_then(|a| a.base);
+        while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
+            if self.implements(b, iface) {
+                return true;
+            }
+            cur = self.cx.adt(b).and_then(|a| a.base);
+        }
+        false
+    }
+
+    /// Does type definition `d` (over its own type parameters) implement `iface`?
+    fn implements(&mut self, d: DefId, iface: DefId) -> bool {
+        let n = self.cx.adt(d).map_or(0, |a| a.generics.len());
+        let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
+        let t = self.cx.ty.intern(TyKind::Adt(d, params));
+        self.cx.find_impl(t, iface).is_some()
     }
 
     /// The number of base classes of class `d`.

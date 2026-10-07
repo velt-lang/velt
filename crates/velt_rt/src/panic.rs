@@ -129,7 +129,7 @@ pub extern "C" fn velt_rt_exit(code: i32) -> ! {
     crate::str::stats::report();
     io::stats::report();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
-    crate::debug_alloc::check_quarantine();
+    crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     std::process::exit(code)
 }
 
