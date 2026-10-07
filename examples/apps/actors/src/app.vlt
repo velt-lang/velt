@@ -34,7 +34,13 @@ function counterMethods(): Methods<CounterState> {
       // Calls another counter: actor-to-actor, across shards when the keys hash apart.
       "pull",
       async (ctx: Ctx<CounterState>, from: string): Promise<i64> throws ActorError => {
-        const theirs = decode<CounterState>(await ctx.call("Counter", from, "current", "[]"));
+        const json = await ctx.call("Counter", from, "current", "[]");
+        let theirs: CounterState;
+        try {
+          theirs = JSON.parse<CounterState>(json);
+        } catch (e) {
+          throw new ActorError(500, "decode", e.message);
+        }
         ctx.state.count += theirs.count;
         ctx.save();
         return ctx.state.count;

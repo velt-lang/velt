@@ -154,16 +154,12 @@ export function decode<T>(json: string): T throws ActorError {
 // decodes its arguments from the wire array `[key, ...args]` and answers the result as JSON.
 export type Method<S> = (ctx: Ctx<S>, args: Value) => Promise<string> throws ActorError;
 
-function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
-  const raw = args.at(i);
-  if (raw == null) {
-    throw new ActorError(400, "bad-request", `${method}: missing argument ${i}`);
-  }
-  try {
-    return JSON.parse<A>(raw.stringify());
-  } catch (e) {
-    throw new ActorError(400, "bad-request", `${method}: argument ${i}: ${e.message}`);
-  }
+function missing(method: string, i: i64): ActorError {
+  return new ActorError(400, "bad-request", `${method}: missing argument ${i}`);
+}
+
+function badArgument(method: string, i: i64, message: string): ActorError {
+  return new ActorError(400, "bad-request", `${method}: argument ${i}: ${message}`);
 }
 
 // A live actor, type-erased over its state.
@@ -196,7 +192,17 @@ export class Methods<S> {
 
   method1<A, R>(name: string, f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError): Methods<S> {
     this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
-      return JSON.stringify(await f(ctx, argAt<A>(args, 1, name)));
+      const raw = args.at(1);
+      if (raw == null) {
+        throw missing(name, 1);
+      }
+      let a: A;
+      try {
+        a = JSON.parse<A>(raw.stringify());
+      } catch (e) {
+        throw badArgument(name, 1, e.message);
+      }
+      return JSON.stringify(await f(ctx, a));
     });
     return this;
   }
@@ -206,8 +212,23 @@ export class Methods<S> {
     f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError,
   ): Methods<S> {
     this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
-      const a = argAt<A>(args, 1, name);
-      const b = argAt<B>(args, 2, name);
+      const rawA = args.at(1);
+      const rawB = args.at(2);
+      if (rawA == null || rawB == null) {
+        throw missing(name, rawA == null ? 1 : 2);
+      }
+      let a: A;
+      let b: B;
+      try {
+        a = JSON.parse<A>(rawA.stringify());
+      } catch (e) {
+        throw badArgument(name, 1, e.message);
+      }
+      try {
+        b = JSON.parse<B>(rawB.stringify());
+      } catch (e) {
+        throw badArgument(name, 2, e.message);
+      }
       return JSON.stringify(await f(ctx, a, b));
     });
     return this;
