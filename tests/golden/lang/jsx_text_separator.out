@@ -1,0 +1,90 @@
+maybe=x flag=true
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t-->x<!--t-->b</p>
+  <p>x<!--t-->x</p>
+  <p>ada<!--t-->x<!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="x">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p>x<!--t--> and <!----></p>
+maybe=x flag=false
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!--t-->x<!--t-->b</p>
+  <p>x<!--t-->x</p>
+  <p>ada<!--t-->x<!--t-->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span title="x">3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p>x<!--t--> and <!----></p>
+maybe=null flag=true
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!---->b</p>
+  <p><!----><!----></p>
+  <p>ada<!---->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span>3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!----> and <!----></p>
+maybe=null flag=false
+  <p>Count: <!--t-->3</p>
+  <p>ada<!--t-->3</p>
+  <p>3<!--t--> items</p>
+  <p>a<!---->b</p>
+  <p><!----><!----></p>
+  <p>ada<!---->3</p>
+  <p><!---->3</p>
+  <p><!---->ada</p>
+  <p>a<!--t--><!--t-->b</p>
+  <p>ada<!--t-->3</p>
+  <p>Hi <!--t-->ada</p>
+  <p>ada<!--t-->!</p>
+  <p>ada<!--t-->ada</p>
+  <p>ada<span>3</span>ada</p>
+  <p>ada<!--t-->3</p>
+  <ul><li>ada</li><li>3</li></ul>
+  <p><!----> and <!----></p>
+templates:
+  ["<p>Count: <!--t-->3</p>"]
+  ["<p>ada<!--t-->3</p>"]
+  ["<p>3<!--t--> items</p>"]
+  ["<p>a<!--t-->x<!--t-->b</p>"]
+  ["<p>x<!--t-->x</p>"]
+  ["<p>ada<!--t-->x<!--t-->3</p>"]
+  ["<p><!---->3</p>"]
+  ["<p>","ada</p>"]
+  ["<p>a<!--t--><!--t-->b</p>"]
+  ["<p>ada","</p>"]
+  ["<p>Hi ","</p>"]
+  ["<p>","!</p>"]
+  ["<p>","","</p>"]
+  ["<p>ada<span title=\"x\">3</span>ada</p>"]
+  ["<p>ada<!--t-->3</p>"]
+  ["<ul><li>ada</li><li>3</li></ul>"]
+  (no template)

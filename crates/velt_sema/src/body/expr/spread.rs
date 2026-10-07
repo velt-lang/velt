@@ -115,7 +115,12 @@ impl FnCx<'_, '_> {
     }
 
     /// A fresh temporary initialized with `init` (appended to `lets`), read as `Local(Borrow)`.
-    fn temp(&mut self, name: &str, init: hir::Expr, lets: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         lets.push(hir::Stmt {

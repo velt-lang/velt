@@ -1,0 +1,29 @@
+// A provider's `jsxTextSeparator` (docs/internals/contracts/jsx.md "Text separator"): the
+// precompiled templates carry `<!--t-->` between adjacent text parts, so they render
+// byte-identical to the generic lowering, whose renderer inserts the separators itself. `true`,
+// `false` and `null` are boundaries (rendered as the `<!---->` placeholder), and a separator
+// next to a template slot (a fragment, a component) is the renderer's.
+
+import { renderToString, templateOf } from "./_jsx_sep_provider/render";
+import * as generic from "./_jsx_sep_page_generic";
+import * as precompiled from "./_jsx_sep_page_precompile";
+
+function main() {
+  const inputs: (string | null)[] = ["x", null];
+  for (const maybe of inputs) {
+    for (const flag of [true, false]) {
+      console.log(`maybe=${maybe ?? "null"} flag=${flag}`);
+      const a = generic.cases("ada", 3, maybe, flag, "");
+      const b = precompiled.cases("ada", 3, maybe, flag, "");
+      for (let i: usize = 0; i < a.length; i++) {
+        const x = renderToString(a[i]);
+        const y = renderToString(b[i]);
+        console.log(x == y ? `  ${x}` : `  different: ${x} vs ${y}`);
+      }
+    }
+  }
+  console.log("templates:");
+  for (const el of precompiled.cases("ada", 3, "x", true, "")) {
+    console.log(`  ${templateOf(el)}`);
+  }
+}
