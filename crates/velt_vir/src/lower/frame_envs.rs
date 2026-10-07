@@ -1,13 +1,20 @@
 //! Closures whose environment can live in the creating function's frame whatever their capture
 //! modes (#34): the closure value never outlives the frame, because it is only ever called
-//! there. Two shapes qualify (docs/internals/contracts/hir_encodings.md, "Function values"):
+//! there. Two shapes qualify (a lowering layout choice; HIR is unchanged):
 //! - an immediately called closure (`(() => x * k)()`): `Call { callee: Indirect(Closure) }`;
 //! - a closure literal initializing a `let` / `const` local whose every use is the callee of a
 //!   call through it (`const f = (x) => x * k; f(1); f(2)`), and that no closure captures.
 //!
-//! Async functions and generators are lowered as state machines whose frames move between
-//! polls; they are never scanned (`lower_fn` handles them before reaching the scan). The env's
-//! value captures are owned by the frame env, dropped with the closure value (closure.rs).
+//! Neither may be an async or generator closure: calling one creates a promise or generator
+//! that keeps (or sends to another thread) the closure's environment beyond the call. Async
+//! functions and generators themselves are lowered as state machines whose frames move between
+//! polls; they are never scanned (`lower_fn` handles them before reaching the scan).
+//!
+//! Such an env is a frame temporary laid out like a heap env (closure.rs): Copy captures are
+//! values, owned captures and cells are moved or retained into it, and its drop entry is a
+//! frame drop function (`Work::EnvDropFrame`) that releases them without freeing the env,
+//! called when the closure value is dropped. Its clone and transfer entries are null: nothing
+//! copies or transfers a closure that is only called.
 
 use std::collections::{HashMap, HashSet};
 
@@ -49,6 +56,11 @@ struct Scan<'h> {
 }
 
 impl Scan<'_> {
+    /// Neither async nor a generator: calling it runs it to completion.
+    fn plain(&self, d: DefId) -> bool {
+        matches!(self.hir.def(d), hir::Def::Fn(c) if !c.is_async && !c.is_generator)
+    }
+
     fn block(&mut self, b: &hir::Block) {
         for s in &b.stmts {
             self.stmt(s);
@@ -63,7 +75,9 @@ impl Scan<'_> {
             S::Let { local, init } => {
                 if let Some(e) = init {
                     if let E::Closure(d) = e.kind {
-                        self.lets.insert(*local, d);
+                        if self.plain(d) {
+                            self.lets.insert(*local, d);
+                        }
                     }
                     self.expr(e);
                 }
@@ -121,7 +135,7 @@ impl Scan<'_> {
             } => {
                 match c.kind {
                     E::Local(l, _) => *self.calls.entry(l).or_default() += 1,
-                    E::Closure(d) => {
+                    E::Closure(d) if self.plain(d) => {
                         self.immediate.insert(d);
                     }
                     _ => {}
