@@ -1,5 +1,6 @@
 // String comparisons against one-character literals, in both operand orders, with empty,
-// longer and non-ASCII strings, compared with Node.
+// longer and non-ASCII strings, compared with Node. Empty strings the runtime makes (slices,
+// trim, join, split, JSON) may have no data pointer at all.
 function rank(c: string): string {
   const parts: string[] = [];
   parts.push(c >= "0" ? "ge0" : "lt0");
@@ -33,6 +34,19 @@ function main() {
     "9z",
   ]) {
     console.log(JSON.stringify(c), rank(c));
+  }
+  const none: string[] = [];
+  const empties = [
+    "abc".slice(3),
+    "   ".trim(),
+    none.join(""),
+    "abc".substring(1, 1),
+    "abc".charAt(10),
+    "a,".split(",")[1],
+    JSON.parse<string>('""'),
+  ];
+  for (const e of empties) {
+    console.log(rank(e), e < "a", "a" < e, e >= "0", "0" >= e);
   }
   const words = ["b", "a", "", "ab", "é", "B", "aa", "😀", "z"];
   words.sort();

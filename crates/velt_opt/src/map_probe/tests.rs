@@ -232,3 +232,117 @@ fn the_kept_probe_feeds_the_replaced_one() {
     assert!(!run(&aggs, &probes, &mut p.funcs[1]));
     assert_valid(&p);
 }
+
+/// What [`key_in_a_local`] puts between its two probes.
+#[derive(Clone, Copy, PartialEq)]
+enum Middle {
+    Nothing,
+    /// `velt_rt_str_clone(other, &z)` overwrites the key local.
+    CloneOverKey,
+    /// `z.0 = 0`: a partial write of the key local.
+    PartialKeyWrite,
+    /// `(*holder).0 = other`: the field the map pointer is loaded from changes.
+    StoreToMapField,
+    /// A store into memory allocated between the probes.
+    FreshStore,
+    /// A store into memory allocated before the first probe.
+    OldStore,
+}
+
+/// `f(holder, k, other)`: the key is cloned into local `z` once and both probes pass `&z`; the
+/// map pointer is loaded from `(*holder).0` before each probe. `middle` goes in between.
+fn key_in_a_local(middle: Middle) -> Program {
+    let mut kit = kit();
+    let alloc = kit
+        .pb
+        .ext("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr, false);
+    let mut fb = FuncBuilder::export("f", &[Ty::Ptr, Ty::Ptr, Ty::Ptr], Ty::I64);
+    let (holder, k, other) = (fb.param(0), fb.param(1), fb.param(2));
+    let entry = fb.block();
+    let old = fb.local(Ty::Ptr);
+    let b = fb.call(
+        entry,
+        Callee::Extern(alloc),
+        vec![int(16, Ty::U64), int(8, Ty::U64)],
+        Some(old),
+    );
+    let (z, zp) = (fb.local(Ty::Agg(STR_AGG)), fb.local(Ty::Ptr));
+    fb.assign(b, zp, Rvalue::AddrOf(Place::local(z)));
+    let b = fb.call(
+        b,
+        Callee::Extern(kit.clone),
+        vec![copy_local(k), copy_local(zp)],
+        None,
+    );
+    let map_field = || Place {
+        local: holder,
+        proj: vec![Proj::Deref(Ty::Ptr)],
+    };
+    let m1 = fb.local(Ty::Ptr);
+    fb.assign(b, m1, Rvalue::Use(copy_place(map_field())));
+    let (b, r1) = probe(&mut fb, &kit, b, m1, zp);
+    let b = match middle {
+        Middle::Nothing => b,
+        Middle::CloneOverKey => {
+            let again = fb.local(Ty::Ptr);
+            fb.assign(b, again, Rvalue::AddrOf(Place::local(z)));
+            let args = vec![copy_local(other), copy_local(again)];
+            fb.call(b, Callee::Extern(kit.clone), args, None)
+        }
+        Middle::PartialKeyWrite => {
+            fb.push(b, Stmt::Assign(field(z, 0), Rvalue::Use(int(0, Ty::U64))));
+            b
+        }
+        Middle::StoreToMapField => {
+            fb.push(b, Stmt::Assign(map_field(), Rvalue::Use(copy_local(other))));
+            b
+        }
+        Middle::FreshStore => {
+            let fresh = fb.local(Ty::Ptr);
+            let args = vec![int(16, Ty::U64), int(8, Ty::U64)];
+            let b = fb.call(b, Callee::Extern(alloc), args, Some(fresh));
+            fb.push(
+                b,
+                Stmt::Assign(deref(fresh, Ty::I64), Rvalue::Use(int(1, Ty::I64))),
+            );
+            b
+        }
+        Middle::OldStore => {
+            fb.push(
+                b,
+                Stmt::Assign(deref(old, Ty::I64), Rvalue::Use(int(1, Ty::I64))),
+            );
+            b
+        }
+    };
+    let m2 = fb.local(Ty::Ptr);
+    fb.assign(b, m2, Rvalue::Use(copy_place(map_field())));
+    let (b, r2) = probe(&mut fb, &kit, b, m2, zp);
+    let sum = fb.local(Ty::I64);
+    fb.assign(b, sum, bin(BinOp::Add, copy_local(r1), copy_local(r2)));
+    fb.ret(b, copy_local(sum));
+    kit.pb.add(fb.finish());
+    kit.pb.finish()
+}
+
+#[test]
+fn a_key_local_and_a_reloaded_map_pointer_merge_when_untouched() {
+    assert_eq!(probes_left(key_in_a_local(Middle::Nothing)), (1, 1));
+}
+
+#[test]
+fn overwriting_the_key_local_keeps_both_probes() {
+    assert_eq!(probes_left(key_in_a_local(Middle::CloneOverKey)), (2, 2));
+    assert_eq!(probes_left(key_in_a_local(Middle::PartialKeyWrite)), (2, 2));
+}
+
+#[test]
+fn a_store_to_the_field_holding_the_map_keeps_both_probes() {
+    assert_eq!(probes_left(key_in_a_local(Middle::StoreToMapField)), (2, 2));
+}
+
+#[test]
+fn only_stores_into_memory_allocated_in_between_are_harmless() {
+    assert_eq!(probes_left(key_in_a_local(Middle::FreshStore)), (1, 1));
+    assert_eq!(probes_left(key_in_a_local(Middle::OldStore)), (2, 2));
+}

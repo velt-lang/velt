@@ -40,7 +40,9 @@ pub(crate) fn literal_compare(
 }
 
 /// `velt.str_cmp_byte(s, lit)`, or with `literal_first` `velt.str_byte_cmp(lit, s)`: the
-/// comparison of `s` with the one-byte `lit` (negated when the literal is the left operand).
+/// comparison of `s` with the one-byte `lit` (negated when the literal is the left operand). An
+/// empty `s` may have no data at all (the all-zero empty string), so its first byte is read
+/// from the literal instead and the result is -1 regardless.
 fn helper(literal_first: bool) -> String {
     let (name, params, result) = if literal_first {
         (
@@ -54,7 +56,8 @@ fn helper(literal_first: bool) -> String {
     format!(
         "define internal i32 @velt.{name}({params}) alwaysinline nounwind {{
 {}{}  %empty = icmp eq i64 %s.len, 0
-  %x = load i8, ptr %s.data, align 1
+  %x.at = select i1 %empty, ptr %l.data, ptr %s.data
+  %x = load i8, ptr %x.at, align 1
   %y = load i8, ptr %l.data, align 1
   %lt = icmp ult i8 %x, %y
   %ne = icmp ne i8 %x, %y
@@ -242,6 +245,12 @@ mod tests {
         )
         .unwrap();
         assert!(def.contains("@velt.str_cmp_byte(ptr %s, ptr %l)"), "{def}");
+        // An empty string's data pointer may be null: never loaded from unselected.
+        assert!(!def.contains("load i8, ptr %s.data"), "{def}");
+        assert!(
+            def.contains("%x.at = select i1 %empty, ptr %l.data, ptr %s.data"),
+            "{def}"
+        );
         assert!(!def.contains("velt_rt_str_cmp"), "{def}");
     }
 }
