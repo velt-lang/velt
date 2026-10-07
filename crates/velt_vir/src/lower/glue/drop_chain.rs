@@ -133,9 +133,8 @@ impl FnLower<'_, '_> {
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
             let i = i as u32;
-            if i != chain.tail && !chain.rotate.contains(&i) && self.cx.needs_drop(t) {
-                let fp = self.field_place(&cur, ty, i);
-                self.drop_glue(fp, t);
+            if !chain.loops_over(i) && self.cx.needs_drop(t) {
+                self.drop_field(&cur, ty, i, t, Some(&chain));
             }
         }
         let tail = self.field_place(&cur, ty, chain.tail);

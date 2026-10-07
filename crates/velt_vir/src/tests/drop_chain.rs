@@ -119,7 +119,7 @@ fn drop_glue_bracketed(v: &vir::Program) -> bool {
     let (_, glue) = node_drop_glue(v);
     glue.blocks.iter().any(|b| {
         matches!(&b.term, Terminator::Call { callee: Callee::Extern(e), .. }
-            if v.externs[e.0 as usize].symbol == "velt_rt_drop_enter")
+            if v.externs[e.0 as usize].symbol == "velt_rt_drop_state")
     })
 }
 

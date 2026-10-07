@@ -280,10 +280,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         held.extend(cells.iter().map(|c| c.1));
         let bracket = held.into_iter().any(|t| lw.cx.drop_runs_unknown(t));
         let glue = bracket.then(|| cfunc(lw.cx.func(Work::EnvDrop(def, targs.to_vec()))));
-        lw.release(Operand::Copy(Place::local(env)), |lw| {
-            if let Some(glue) = glue.clone() {
-                lw.enter_object_drop(Operand::Copy(Place::local(env)), glue);
-            }
+        let drop = move |lw: &mut FnLower<'c, 'h>| {
             for (field, mode, ty) in caps {
                 if mode == PassMode::Owned {
                     lw.drop_glue(proj(&base, Proj::Field(field)), ty);
@@ -294,9 +291,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.release_cell_ptr(p, ty);
             }
             lw.counted_free(Operand::Copy(Place::local(env)), Ty::Agg(ea));
-            if glue.is_some() {
-                lw.leave_drop();
-            }
+        };
+        lw.release(Operand::Copy(Place::local(env)), |lw| match glue {
+            Some(glue) => lw.bracket_object(Operand::Copy(Place::local(env)), glue, drop),
+            None => drop(lw),
         });
         lw.terminate(Terminator::Return(super::unit()));
         let sym = format!(

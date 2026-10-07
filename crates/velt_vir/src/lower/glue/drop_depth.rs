@@ -1,12 +1,16 @@
-//! Drops that can nest without bound (#543). Drop glue that can lead back to itself brackets
-//! its work with velt_rt's `drop_enter` / `drop_leave` (`velt_rt/src/drop_depth.rs`): past a
-//! fixed depth `enter` says no, the glue `drop_queue`s what it was dropping, and the runtime
-//! drops it when the outermost drop is done, so a long chain never overflows the stack.
+//! Drops that can nest without bound (#543). A drop that can lead back to itself is bracketed:
+//! it counts itself inline in the thread's drop state word (velt_rt `drop_state`, see
+//! `velt_rt/src/drop_depth.rs`), and past [`MAX_DEPTH`] nested drops it hands the value to
+//! velt_rt's queue instead; the outermost drop drains the queue when it ends, so a long chain
+//! never overflows the stack. The common case costs one call for the word's address and a few
+//! instructions.
 //!
-//! - The object drop of a class whose fields lead back to the class: through arrays, `Map`s,
-//!   options, structs or other classes, or through drop glue chosen at run time (interfaces,
-//!   classes with subclasses, promises). Self fields that `drop_chain.rs` walks in a loop do
-//!   not count: a plain list or tree needs no bracket.
+//! - In the object drop of a class, each field that leads back to the class: through arrays,
+//!   `Map`s, options, structs or other classes, or through drop glue chosen at run time
+//!   (interfaces, classes with subclasses, promises). An empty array or a null field skips the
+//!   bracket (the leaves of a tree pay nothing), and a queued field is moved to a heap box.
+//!   Self fields that `drop_chain.rs` walks in a loop do not count: a plain list or tree needs
+//!   no bracket.
 //! - The drop of a struct or enum value that leads back to its own type (through an array).
 //!   The value lives in a slot that is freed right after (an array's buffer), so a queued value
 //!   is moved to a heap box of its own first (`Glue::QueuedDrop` drops and frees it).
@@ -22,21 +26,33 @@ use velt_sema::hir::{TyId, TyKind};
 
 use super::drop_chain::Chain;
 use super::Glue;
+use crate::lower::cint;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cfunc, unit, Cx, FnLower, Work};
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// Nested bracketed drops before the next one is queued (velt_rt's `MAX_DEPTH`; small in unit
+/// tests, so that the interpreter's short chains already queue).
+const MAX_DEPTH: i128 = if cfg!(test) { 4 } else { 128 };
+/// The state word's bit for "something was queued" (velt_rt's `QUEUED`).
+const QUEUED: i128 = 1 << 30;
+/// The state word's depth bits (velt_rt's `DEPTH`).
+const DEPTH: i128 = QUEUED - 1;
 
 impl Cx<'_> {
-    /// Can dropping a class `ty` object nest another drop of a `ty` object (or run glue chosen
-    /// at run time), other than through the self fields `chain` loops over?
-    pub(super) fn drop_reenters(&mut self, ty: TyId, chain: Option<&Chain>) -> bool {
-        let tys = self.adt_field_tys(ty);
-        let mut seen = HashSet::new();
-        tys.into_iter().enumerate().any(|(i, t)| {
-            !chain.is_some_and(|c| c.loops_over(i as u32))
-                && self.leads_to(t, Some(ty), false, &mut seen)
-        })
+    /// Can dropping field `f` (of type `t`) of a class `ty` object nest another drop of a `ty`
+    /// object (or run glue chosen at run time), other than through the self fields `chain`
+    /// loops over?
+    pub(super) fn field_drop_reenters(
+        &mut self,
+        ty: TyId,
+        f: u32,
+        t: TyId,
+        chain: Option<&Chain>,
+    ) -> bool {
+        !chain.is_some_and(|c| c.loops_over(f))
+            && self.leads_to(t, Some(ty), false, &mut HashSet::new())
     }
 
     /// Can dropping a struct, enum or object type value of `ty` nest another drop of a `ty`
@@ -100,61 +116,129 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    /// Start a drop (velt_rt `drop_enter`): when the thread is too deep in nested drops,
-    /// `queue` hands the value to the runtime and this function returns; else the drop goes
-    /// on, and must end with [`Self::leave_drop`].
-    fn enter_drop(&mut self, queue: impl FnOnce(&mut Self)) {
-        let go = self.rt_u8(Rt::DropEnter, vec![]);
-        let (run, queued) = (self.new_block(), self.new_block());
-        self.branch(go, run, queued);
+    /// A bracketed drop (module docs): `body` drops the value, unless the thread is
+    /// [`MAX_DEPTH`] drops deep, in which case `queue` hands it to the runtime instead. Either
+    /// way, code continues after it.
+    fn bracket(&mut self, queue: impl FnOnce(&mut Self), body: impl FnOnce(&mut Self)) {
+        let state = Place::local(self.temp(Ty::Ptr));
+        self.call_rt(Rt::DropState, vec![], Some(state.clone()));
+        let sp = self.operand_place(Operand::Copy(state), Ty::Ptr);
+        let word = proj(&sp, Proj::Deref(Ty::U32));
+        let n = self.rvalue_temp(Ty::U32, Rvalue::Use(Operand::Copy(word.clone())));
+        let depth = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::BitAnd, n.clone(), cint(DEPTH, Ty::U32)),
+        );
+        let deep = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ge, depth, cint(MAX_DEPTH, Ty::U32)),
+        );
+        let (queued, run, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(deep, queued, run);
         self.switch_to(queued);
         queue(self);
-        self.terminate(Terminator::Return(unit()));
+        self.goto(join);
         self.switch_to(run);
+        let up = self.rvalue_temp(Ty::U32, Rvalue::Binary(BinOp::Add, n, cint(1, Ty::U32)));
+        self.assign(word.clone(), Rvalue::Use(up));
+        body(self);
+        // Nested drops leave the depth as they found it, but may have set the queued bit.
+        let m = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::Sub, Operand::Copy(word.clone()), cint(1, Ty::U32)),
+        );
+        self.assign(word, Rvalue::Use(m.clone()));
+        let drain = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, m, cint(QUEUED, Ty::U32)),
+        );
+        self.when(drain, join);
+        self.call_rt(Rt::DropDrain, vec![], None);
+        self.goto(join);
+        self.switch_to(join);
     }
 
-    /// [`Self::enter_drop`] for the heap object `obj` (a class object or a closure env) that
-    /// the drop function `glue` drops: it is queued as it is.
-    pub(in crate::lower) fn enter_object_drop(&mut self, obj: Operand, glue: Operand) {
-        self.enter_drop(|lw| lw.call_rt(Rt::DropQueue, vec![obj, glue], None));
+    /// A bracketed drop of the heap object `obj` (a closure env with its last reference), which
+    /// the drop function `glue` drops if it is queued (as it is).
+    pub(in crate::lower) fn bracket_object(
+        &mut self,
+        obj: Operand,
+        glue: Operand,
+        body: impl FnOnce(&mut Self),
+    ) {
+        self.bracket(|lw| lw.call_rt(Rt::DropQueue, vec![obj, glue], None), body);
     }
 
-    /// End a drop [`Self::enter_drop`] started (the outermost one drops the queued values).
-    pub(in crate::lower) fn leave_drop(&mut self) {
-        self.call_rt(Rt::DropLeave, vec![], None);
+    /// Drop field `fp` (of type `t`) of an object being dropped, bracketed: an empty array or
+    /// a null pointer drops at once, anything else may be queued (moved to a heap box).
+    pub(super) fn drop_field_bracketed(&mut self, fp: Place, t: TyId) {
+        let join = self.new_block();
+        if self.cx.ty(t) == Ty::Ptr {
+            let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(fp.clone())));
+            let nn = self.non_null(v);
+            self.when(nn, join);
+        } else if matches!(self.cx.kind(t), TyKind::Array(_)) {
+            let len = Operand::Copy(proj(&fp, Proj::Field(1)));
+            let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, len, cint(0, Ty::U64)));
+            let (empty, full) = (self.new_block(), self.new_block());
+            self.branch(some, full, empty);
+            self.switch_to(empty);
+            self.drop_glue(fp.clone(), t);
+            self.goto(join);
+            self.switch_to(full);
+        }
+        let at = fp.clone();
+        self.bracket(|lw| lw.queue_value(at, t), |lw| lw.drop_glue(fp, t));
+        self.goto(join);
+        self.switch_to(join);
     }
 
     /// The `Glue::Drop` body of `ty` for the value at `*p`, bracketed when it can nest.
     pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
-        let bracket = self.cx.value_drop_reenters(ty);
-        if bracket && self.cx.boxed(ty) {
-            let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
-            let boxed = Operand::Copy(place.clone());
-            self.drop_boxed(&place, ty, |lw, v| {
-                lw.enter_object_drop(boxed, glue);
-                lw.drop_inline(v, ty);
-                lw.leave_drop();
-            });
-            self.terminate(Terminator::Return(unit()));
-            return;
-        }
-        if bracket {
+        if !self.cx.value_drop_reenters(ty) {
+            self.drop_expand(&place, ty);
+        } else if self.cx.boxed(ty) {
+            self.drop_boxed_bracketed(&place, ty);
+        } else {
             let at = place.clone();
-            self.enter_drop(|lw| lw.queue_value(at, ty));
-        }
-        self.drop_expand(&place, ty);
-        if bracket {
-            self.leave_drop();
+            self.bracket(|lw| lw.queue_value(at, ty), |lw| lw.drop_expand(&place, ty));
         }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// The drop of the boxed `ty` value at `place` (the box pointer), bracketed in the branch
+    /// that releases the last reference: a queued box keeps that reference
+    /// (`Glue::QueuedDrop` releases it again).
+    fn drop_boxed_bracketed(&mut self, place: &Place, ty: TyId) {
+        let payload = self.cx.payload_ty(ty);
+        let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+        let done = self.new_block();
+        let nn = self.non_null(p.clone());
+        self.when(nn, done);
+        let pp = self.operand_place(p.clone(), Ty::Ptr);
+        let value = proj(&pp, Proj::Deref(payload));
+        let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
+        let q = p.clone();
+        self.release(p, |lw| {
+            let boxed = q.clone();
+            lw.bracket(
+                |lw| lw.call_rt(Rt::DropQueue, vec![boxed, glue], None),
+                |lw| {
+                    lw.drop_inline(&value, ty);
+                    lw.counted_free(q, payload);
+                },
+            );
+        });
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// Move the `ty` value at `place` to a heap box of its own and queue that.
     fn queue_value(&mut self, place: Place, ty: TyId) {
         let vt = self.cx.ty(ty);
         let b = self.alloc(vt);
-        let bp = self.operand_place(b.clone(), vir::Ty::Ptr);
+        let bp = self.operand_place(b.clone(), Ty::Ptr);
         self.assign(
             proj(&bp, Proj::Deref(vt)),
             Rvalue::Use(Operand::Copy(place)),

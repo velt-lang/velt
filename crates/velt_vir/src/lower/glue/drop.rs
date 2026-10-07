@@ -7,7 +7,7 @@ use velt_sema::hir::{TyId, TyKind};
 use super::{Glue, SLOT_DROP};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cfunc, cint, unit, FnLower, Work};
+use crate::lower::{cint, unit, FnLower};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -262,30 +262,38 @@ impl FnLower<'_, '_> {
     }
 
     /// The object drop of class `ty`: a loop over its self fields (drop_chain.rs) or one
-    /// field after the other, bracketed for the runtime when it can nest (drop_depth.rs).
+    /// field after the other, each bracketed for the runtime when it can nest (drop_depth.rs).
     pub(super) fn obj_drop_body(&mut self, obj: vir::Local, ty: TyId) {
-        let p = Place::local(obj);
-        let chain = self.cx.drop_chain(ty);
-        let bracket = self.cx.drop_reenters(ty, chain.as_ref());
-        if bracket {
-            let glue = cfunc(self.cx.func(Work::Glue(Glue::ObjDrop, ty)));
-            self.enter_object_drop(Operand::Copy(p.clone()), glue);
-        }
-        if let Some(chain) = chain {
+        if let Some(chain) = self.cx.drop_chain(ty) {
             self.obj_drop_chain_body(obj, ty, chain);
         } else {
+            let p = Place::local(obj);
             self.call_dispose(Operand::Copy(p.clone()), ty);
             let tys = self.cx.adt_field_tys(ty);
             for (i, t) in tys.into_iter().enumerate() {
-                let fp = self.field_place(&p, ty, i as u32);
-                self.drop_glue(fp, t);
+                self.drop_field(&p, ty, i as u32, t, None);
             }
             self.object_free(Operand::Copy(p), ty);
         }
-        if bracket {
-            self.leave_drop();
-        }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// Drop field `f` (of type `t`) of the class `ty` object at `obj`, bracketed when it can
+    /// lead back to a `ty` object other than through the self fields `chain` loops over.
+    pub(super) fn drop_field(
+        &mut self,
+        obj: &Place,
+        ty: TyId,
+        f: u32,
+        t: TyId,
+        chain: Option<&super::drop_chain::Chain>,
+    ) {
+        let fp = self.field_place(obj, ty, f);
+        if self.cx.field_drop_reenters(ty, f, t, chain) {
+            self.drop_field_bracketed(fp, t);
+        } else {
+            self.drop_glue(fp, t);
+        }
     }
 
     /// Interface value data: class objects and boxed values are their own data pointer; others
