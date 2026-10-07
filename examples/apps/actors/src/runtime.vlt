@@ -6,19 +6,17 @@
 // directory (`hash(type, key) % shards`); inside it, turns of different actors interleave at
 // their `await`s exactly like Node's single thread, so no actor state is ever touched by two
 // threads and nothing needs a lock. Callers on any thread reach a shard through its channel and
-// get the answer back on a one-slot reply channel.
+// get the answer back through a `Promise.withResolvers` promise.
 //
-// Things this file works around (FINDINGS.md has the list; B<n> are its bugs, with minimal
-// repros in findings/):
-// - async interface methods must not declare `throws` (B1: calling one through an interface
-//   value crashes), so the dynamic seams (`Method`, `Activation`, `ActorStorage`) return errors
-//   as values (`Reply`, `SaveResult`);
-// - async closures cannot modify captured objects (FINDINGS §2.1), so methods receive `ctx` as a
-//   parameter instead of closing over it the way `methods: (ctx) => ({ ... })` does in TS.
-// - an async method called through an interface value drops its receiver (B2), so those seams'
-//   methods are sync and return the promise of a free async function;
-// - a shared object passed to an async call as its last use in a loop body loses a reference
-//   (B3), so such loops `touch` the object afterwards, and call arguments travel as JSON text.
+// Where this differs from the TypeScript original because Velt lacks something (issue #182):
+// - methods receive `ctx` as a parameter instead of closing over it the way
+//   `methods: (ctx) => ({ ... })` does, because an async closure cannot change what it
+//   captures (#208);
+// - methods are registered by hand per arity (`method0/1/2`) and actor-to-actor calls are
+//   untyped (`ctx.call(type, key, method, args)`): there are no variadic tuple generics or
+//   `Parameters<F>` (#209);
+// - `Host` is a struct of channel handles, not a class holding the shards' promises: a promise
+//   has one owner (#212).
 import { Value } from "velt:json";
 import { channel, Channel } from "velt:channel";
 import { Ticker } from "velt:timers";
@@ -115,7 +113,12 @@ export class Ctx<S> {
 
   // Calls another actor with `args`, the JSON array of the arguments after the key. The answer
   // is the raw JSON result; decode it with `JSON.parse<T>`.
-  async call(type: string, key: string, method: string, args: Value): Promise<string> throws ActorError {
+  async call(
+    type: string,
+    key: string,
+    method: string,
+    args: Value,
+  ): Promise<string> throws ActorError {
     const r = await this.router.call(type, key, method, args, this.chain, this.deadline);
     if (r.status != 200) {
       throw remoteError(r);
@@ -724,7 +727,7 @@ export struct Router {
 // The host
 
 // Copies freely: every copy refers to the same shards. (A class holding the shards' join
-// handles could not be shared: a promise has one owner — FINDINGS §2.7.)
+// handles could not be shared: a promise has one owner, #212.)
 export struct Host {
   router: Router;
   controls: Channel<Control>[];

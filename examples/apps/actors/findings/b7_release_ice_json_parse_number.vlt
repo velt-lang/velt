@@ -1,6 +1,0 @@
-// B7: `velt build --release` fails with "internal compiler error: VIR verification failed after
-// optimization" on `JSON.parse` into a number or `bool` (i64, f64, bool); string, arrays,
-// classes and `i64 | null` are fine. `velt run` prints 42.
-function main() {
-  console.log(JSON.parse<i64>("41") + 1);
-}
