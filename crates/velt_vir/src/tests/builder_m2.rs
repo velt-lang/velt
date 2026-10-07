@@ -57,6 +57,14 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
             .map(|(n, ty, default)| FieldDef {
                 name: n.into(),
                 ty,
+                // Like sema: a `null` default is what an optional field (`a?: T`) gets.
+                optional: matches!(
+                    default,
+                    Some(Expr {
+                        kind: ExprKind::Lit(Lit::Null),
+                        ..
+                    })
+                ),
                 default,
                 private: false,
             })

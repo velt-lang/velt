@@ -419,6 +419,10 @@ Maintainer-owned, like hir.rs.
 - `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
   that declares it; interface fields never are). `console.log` / `inspect` leave out private
   fields of zero size (std's `runtime` markers); other private fields show, as in Node.
+- `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
+  `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
+  is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
+  is written as `null`.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
   no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
   value of it dynamically (a subclass with private fields is written as its static class).

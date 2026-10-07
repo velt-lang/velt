@@ -51,7 +51,7 @@ pub(crate) struct Ctx<'m> {
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
     /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
-    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    pub anon: HashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
     /// `readonly` fields → their twin without, and field-only interfaces' object types → the
     /// anonymous object type of their fields. With a template, the twin's type arguments are

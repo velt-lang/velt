@@ -6,7 +6,9 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use crate::anon::ShapeField;
 use crate::ctx::Ctx;
+use crate::defs::FieldInfo;
 use crate::hir::{DefId, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
@@ -57,24 +59,26 @@ impl Ctx<'_> {
         match name {
             "Partial" => {
                 for f in &mut fields {
-                    if self.ty.opt_payload(f.1).is_none() {
-                        f.1 = self.ty.option(f.1);
+                    if self.ty.opt_payload(f.ty).is_none() {
+                        f.ty = self.ty.option(f.ty);
                     }
+                    f.optional = true;
                 }
             }
             "Required" => {
                 for f in &mut fields {
-                    f.1 = self.ty.opt_payload(f.1).unwrap_or(f.1);
+                    f.ty = self.ty.opt_payload(f.ty).unwrap_or(f.ty);
+                    f.optional = false;
                 }
             }
-            "Readonly" => fields.iter_mut().for_each(|f| f.2 = true),
+            "Readonly" => fields.iter_mut().for_each(|f| f.readonly = true),
             _ => {
                 let Some(keys) = self.utility_keys(name, tys[0], &fields, tys[1], args[1].span)
                 else {
                     return self.ty.error;
                 };
                 let pick = name == "Pick";
-                fields.retain(|f| keys.contains(&f.0) == pick);
+                fields.retain(|f| keys.contains(&f.name) == pick);
             }
         }
         self.anon_type_with(&fields, env.module)
@@ -88,7 +92,7 @@ impl Ctx<'_> {
         t: TyId,
         written: Option<String>,
         span: Span,
-    ) -> Option<Vec<(String, TyId, bool)>> {
+    ) -> Option<Vec<ShapeField>> {
         let shown = self.display(t);
         match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) if self.adt(d).is_some() => {
@@ -115,8 +119,11 @@ impl Ctx<'_> {
                 Some(
                     fields
                         .into_iter()
-                        .filter(|f| f.3)
-                        .map(|(n, ty, r, _)| (n, self.ty.subst(ty, &args), r))
+                        .filter(|(_, public)| *public)
+                        .map(|(f, _)| ShapeField {
+                            ty: self.ty.subst(f.ty, &args),
+                            ..f
+                        })
                         .collect(),
                 )
             }
@@ -150,7 +157,7 @@ impl Ctx<'_> {
     /// interface's object type is filled after interfaces are flattened, so until then its
     /// fields come from the interface and the ones it extends (inherited first, as
     /// `collect::field_only` orders them).
-    fn fields_now(&mut self, d: DefId) -> Result<Vec<(String, TyId, bool, bool)>, DefId> {
+    fn fields_now(&mut self, d: DefId) -> Result<Vec<(ShapeField, bool)>, DefId> {
         crate::collect::shapes::ensure_fields(self, d)?;
         let a = self.adt(d).expect("ICE: adt");
         if let Some(&iface) = self.field_only_of.get(&d) {
@@ -160,7 +167,7 @@ impl Ctx<'_> {
         }
         Ok(a.fields
             .iter()
-            .map(|f| (f.name.clone(), f.ty, f.readonly, f.private_to.is_none()))
+            .map(|f| (shape_field(f), f.private_to.is_none()))
             .collect())
     }
 
@@ -171,33 +178,31 @@ impl Ctx<'_> {
         iface: DefId,
         args: &[TyId],
         stack: &mut Vec<DefId>,
-    ) -> Vec<(String, TyId, bool, bool)> {
+    ) -> Vec<(ShapeField, bool)> {
         let Some(i) = self.iface(iface).filter(|_| !stack.contains(&iface)) else {
             return vec![]; // a cycle is reported by `collect::iface_extends`
         };
         let declared = i.decl.map_or(0, |d| d.fields.len());
         let parents = i.parents.clone();
-        let own: Vec<(String, TyId, bool)> = i
-            .fields
-            .iter()
-            .take(declared)
-            .map(|f| (f.name.clone(), f.ty, f.readonly))
-            .collect();
+        let own: Vec<ShapeField> = i.fields.iter().take(declared).map(shape_field).collect();
         stack.push(iface);
         let mut out = vec![];
         for p in parents {
             let pargs: Vec<TyId> = p.args.iter().map(|t| self.ty.subst(*t, args)).collect();
             for f in self.iface_fields_now(p.iface, &pargs, stack) {
-                if !out.iter().any(|g: &(String, TyId, bool, bool)| g.0 == f.0) {
+                if !out
+                    .iter()
+                    .any(|g: &(ShapeField, bool)| g.0.name == f.0.name)
+                {
                     out.push(f);
                 }
             }
         }
         stack.pop();
-        for (n, ty, r) in own {
-            let ty = self.ty.subst(ty, args);
-            out.retain(|g| g.0 != n);
-            out.push((n, ty, r, true));
+        for f in own {
+            let ty = self.ty.subst(f.ty, args);
+            out.retain(|g| g.0.name != f.name);
+            out.push((ShapeField { ty, ..f }, true));
         }
         out
     }
@@ -209,7 +214,7 @@ impl Ctx<'_> {
         &mut self,
         op: &str,
         t: TyId,
-        fields: &[(String, TyId, bool)],
+        fields: &[ShapeField],
         k: TyId,
         span: Span,
     ) -> Option<Vec<String>> {
@@ -234,7 +239,7 @@ impl Ctx<'_> {
             );
             return None;
         };
-        let names: Vec<String> = fields.iter().map(|f| f.0.clone()).collect();
+        let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
         let mut ok = true;
         for key in &keys {
             if names.contains(key) {
@@ -255,5 +260,15 @@ impl Ctx<'_> {
             self.error(d);
         }
         ok.then_some(keys)
+    }
+}
+
+/// The shape of field `f` (its name, type and flags).
+fn shape_field(f: &FieldInfo) -> ShapeField {
+    ShapeField {
+        name: f.name.clone(),
+        ty: f.ty,
+        readonly: f.readonly,
+        optional: f.optional,
     }
 }
