@@ -325,6 +325,9 @@ pub struct FieldDef {
     pub ty: TyId,
     /// Default initializer (class field `= expr`, or `null` for optional fields).
     pub default: Option<Expr>,
+    /// Declared optional (`x?: T`): JavaScript leaves such a field out of `JSON.stringify`
+    /// while it is absent, whereas a `T | null` field holding `null` is written.
+    pub optional: bool,
     /// Declared `private` (in this type or the base class that declares it). Interface fields
     /// are never private.
     pub private: bool,

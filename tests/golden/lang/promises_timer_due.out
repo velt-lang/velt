@@ -1,0 +1,6 @@
+the caller goes on
+a 0 ms timer
+a 5 ms timer created first
+main's 0 ms timer
+main's 5 ms timer created first
+a 5 ms timer created second

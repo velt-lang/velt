@@ -6,7 +6,9 @@ use std::collections::HashSet;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
 use super::{Emitter, Val};
+use crate::rounding;
 use crate::runtime;
+use crate::string_compare;
 use crate::strings;
 use crate::types::{abi_ret, abi_type, as_int, global_name, int_bits, int_literal, scalar_type};
 use crate::CodegenResult;
@@ -113,7 +115,7 @@ impl Emitter<'_> {
         }
         let target = match self.math_intrinsic(callee, &params, ret) {
             Some(name) => name,
-            None => match self.string_fast_path(callee, &params, ret) {
+            None => match self.string_fast_path(callee, &params, ret, args) {
                 Some(name) => name,
                 None => self.call_target(callee)?,
             },
@@ -155,12 +157,21 @@ impl Emitter<'_> {
 
     /// `@llvm.<op>.f64` when `callee` is a runtime math function with an exact intrinsic
     /// equivalent (declaring the intrinsic), or the module's inline helper for it
-    /// (`runtime::inline_helper`, defining the helper).
+    /// (`rounding::helper`, `runtime::inline_helper`, defining the helper).
     fn math_intrinsic(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
         let Callee::Extern(id) = callee else {
             return None;
         };
         let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
+        if let Some((name, definitions)) = rounding::helper(symbol, self.rounds_by_conversion) {
+            if params != [Ty::F64] || ret != Ty::F64 {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d.to_string());
+            }
+            return Some(name.to_string());
+        }
         if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
             if params != want_params || ret != want_ret {
                 return None;
@@ -181,11 +192,23 @@ impl Emitter<'_> {
 
     /// The inline helper (`strings.rs`) to call instead of a runtime string function with a
     /// fast path, defining it in the module.
-    fn string_fast_path(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
+    fn string_fast_path(
+        &mut self,
+        callee: &Callee,
+        params: &[Ty],
+        ret: Ty,
+        args: &[Operand],
+    ) -> Option<String> {
         let Callee::Extern(id) = callee else {
             return None;
         };
         let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
+        if let Some((name, def)) =
+            string_compare::literal_compare(self.function, symbol, params, ret, args)
+        {
+            self.intrinsics.need(def);
+            return Some(name.to_string());
+        }
         let (name, defs) = strings::fast_path(symbol, params, ret, self.wide_pointer_slots)?;
         for d in defs {
             self.intrinsics.need(d);

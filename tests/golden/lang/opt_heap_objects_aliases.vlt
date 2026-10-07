@@ -36,14 +36,39 @@ function addInto(dst: Acc, src: Acc) {
   dst.y = dst.y + src.y;
 }
 
-// Shared by several variables: reference counted, on the heap.
-class Pair {
+class Cell {
   x: number;
   y: number;
   constructor(x: number, y: number) {
     this.x = x;
     this.y = y;
   }
+  addY(v: number) {
+    this.y = this.y + v;
+  }
+}
+
+// Written through a parameter and through `this` in a loop, then through the variable.
+function poke(m: Cell, k: number) {
+  m.x = 5;
+  for (let i = 0; i < k; i++) {
+    m.addY(m.x);
+  }
+}
+
+class Two {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function update(first: boolean, a: Two, b: Two) {
+  const q = first ? a : b;
+  a.x = 50;
+  q.y = q.y + q.x;
 }
 
 // Builder-style code: methods write `this`, the caller reads the variable.
@@ -73,23 +98,20 @@ function accumulated(n: number): string {
   return `${a.x} ${a.y} ${d.x} ${d.y}`;
 }
 
-// Three names for one object, each written; every one sees every write.
+// Three names for one object (the variable, `poke`'s parameter, `addY`'s `this`), each
+// written; every one sees every write.
 function renamed(k: number): number {
-  const w = new Pair(k, 2);
-  const j = w;
-  const m = w;
-  m.x = 5;
-  w.y = 7;
-  return j.x + j.y + m.y;
+  const w = new Cell(k, 2);
+  poke(w, k);
+  w.y = w.y + 7;
+  return w.x + w.y;
 }
 
 // `q` holds `a` on one path only: the write through `a` must be seen through `q` there.
 function partial(first: boolean): string {
-  const a = new Pair(1, 1);
-  const b = new Pair(2, 2);
-  const q = first ? a : b;
-  a.x = 50;
-  q.y = q.y + q.x;
+  const a = new Two(1, 1);
+  const b = new Two(2, 2);
+  update(first, a, b);
   return `${a.x} ${a.y} ${b.x} ${b.y}`;
 }
 

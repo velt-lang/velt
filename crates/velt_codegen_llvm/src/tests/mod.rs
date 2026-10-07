@@ -246,7 +246,7 @@ fn relocated_statics_and_memory_intrinsics() {
 }
 
 /// `velt_main` calling runtime functions the backend knows: math with an exact intrinsic,
-/// `Math.round` (no exact intrinsic, but pure), a read-only string compare and the allocator.
+/// `Math.round` (an inline helper), a read-only string compare and the allocator.
 fn runtime_sample() -> Program {
     let mut pb = ProgramBuilder::new();
     let sqrt = pb.ext("velt_rt_math_sqrt", &[F64], F64, false);
@@ -277,7 +277,9 @@ fn runtime_functions_get_intrinsics_and_attributes() {
     for needle in [
         "declare double @llvm.sqrt.f64(double)",
         "call double @llvm.sqrt.f64(double 0x4000000000000000)",
-        "call double @\"velt_rt_math_round\"(double %",
+        "call double @velt.round(double %",
+        "define internal double @velt.round(double %x) alwaysinline nounwind {",
+        "define internal double @velt.floor(double %x) alwaysinline nounwind {",
         "declare double @\"velt_rt_math_round\"(double) #3",
         "declare i32 @\"velt_rt_str_cmp\"(ptr, ptr) #4",
         "declare noalias noundef ptr @\"velt_rt_alloc\"(i64 noundef, i64 noundef allocalign) #5",
@@ -291,6 +293,14 @@ fn runtime_functions_get_intrinsics_and_attributes() {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }
     assert!(!ir.contains("call double @\"velt_rt_math_sqrt\""));
+    assert!(!ir.contains("call double @\"velt_rt_math_round\""));
+    // Elsewhere `Math.round` floors with the one-instruction intrinsic.
+    let arm = emit_ir(&runtime_sample(), "aarch64-unknown-linux-gnu").unwrap();
+    assert!(
+        arm.contains("call double @llvm.floor.f64(double %x)"),
+        "{arm}"
+    );
+    assert!(!arm.contains("@velt.floor"));
 }
 
 #[test]

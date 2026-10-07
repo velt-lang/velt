@@ -13,7 +13,7 @@
 
 use super::body::RespBody;
 use super::interned::header_value;
-use super::{take_bytes, take_text};
+use super::take_text;
 use crate::bytes::VeltBytes;
 use crate::registry::{Key, Registry};
 use crate::str::VeltStr;
@@ -138,10 +138,15 @@ pub unsafe extern "C" fn velt_rt_http_resp_body_text(r: RespHandle, body: *mut V
     set_body(r, take_text(body), "text/plain; charset=utf-8");
 }
 
-/// Bytes body (takes `body`, a `VeltBytes`); default `content-type: application/octet-stream`.
+/// Bytes body (a copy of `body`: the array may be borrowed, and its owner frees it); default
+/// `content-type: application/octet-stream`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_body_bytes(r: RespHandle, body: *mut VeltBytes) {
-    set_body(r, take_bytes(body), "application/octet-stream");
+    set_body(
+        r,
+        Bytes::copy_from_slice((*body).as_bytes()),
+        "application/octet-stream",
+    );
 }
 
 /// JSON body (takes `body`, already serialized); sets `content-type: application/json`.

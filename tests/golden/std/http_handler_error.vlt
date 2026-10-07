@@ -1,7 +1,7 @@
 // check: no leaks
 // A request handler that throws (its promise rejects) gets a 500 response; the error is printed
 // to stderr and the server keeps serving.
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 
 class NotAllowed extends Error {}
 

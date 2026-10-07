@@ -76,7 +76,9 @@ impl FnLower<'_, '_> {
                 | I::ArrayPop
                 | I::ArraySwap
                 | I::ArrayRemove
-                | I::ArrayTruncate,
+                | I::ArrayTruncate
+                | I::ArrayMove
+                | I::ArraySetLen,
                 [_, ..],
             ) => self.array_intrinsic(i, args, ty),
             (I::Clone, [a]) => {
@@ -95,6 +97,10 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
             }
+            (I::NeedsDrop, [a]) => {
+                Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
+            }
+            (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

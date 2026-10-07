@@ -1,0 +1,134 @@
+// check: no leaks
+// The global `fetch` API against a local server; the client half is valid TypeScript and prints
+// what Node 22 prints for it (against an equivalent `node:http` server).
+import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+
+type Info = { name: string; tags: string[] };
+
+async function client(base: string) {
+  const res = await fetch(`${base}/json`);
+  console.log(
+    res.status,
+    res.ok,
+    res.statusText,
+    res.url == `${base}/json`,
+    res.redirected,
+    res.type,
+  );
+  console.log(res.headers.get("Content-Type"), res.headers.has("content-length"), res.bodyUsed);
+  const info: Info = await res.json();
+  console.log(info.name, info.tags.join("+"), res.bodyUsed);
+  try {
+    await res.text();
+  } catch (e) {
+    console.log("second read:", e.message);
+  }
+
+  // An HTTP error status is a response, not an error.
+  const missing = await fetch(`${base}/missing`);
+  console.log(missing.status, missing.ok, missing.statusText, await missing.text());
+
+  // Bodies and headers: an object literal, a `Headers`, form fields, a `Request`, a `URL`.
+  const post = await fetch(`${base}/echo`, {
+    method: "post",
+    headers: { "X-A": "1" },
+    body: "hello",
+  });
+  console.log(await post.text());
+  const h = new Headers({ "Content-Type": "application/json" });
+  h.append("x-a", "2");
+  const put = await fetch(`${base}/echo`, {
+    method: "PUT",
+    headers: h,
+    body: JSON.stringify({ k: 1 }),
+  });
+  console.log(await put.text());
+  const form = await fetch(new URL(`${base}/echo`), {
+    method: "POST",
+    body: new URLSearchParams("a=1&b=x+y"),
+  });
+  console.log(await form.text());
+  const req = new Request(`${base}/echo`, { method: "PATCH", body: "from a request" });
+  console.log(req.method, req.url == `${base}/echo`, req.headers.get("content-type"));
+  const viaReq = await fetch(req);
+  console.log(await viaReq.text());
+  const bytes = await (await fetch(`${base}/json`)).bytes();
+  console.log(bytes.length, bytes[0]);
+
+  // Redirects: followed (303 turns a POST into a GET without a body), returned, or an error.
+  const r1 = await fetch(`${base}/redirect`);
+  console.log(r1.status, r1.redirected, r1.url == `${base}/json`);
+  await r1.text();
+  const r2 = await fetch(`${base}/redirect`, { redirect: "manual" });
+  console.log(r2.status, r2.redirected, r2.headers.get("location"));
+  try {
+    await fetch(`${base}/redirect`, { redirect: "error" });
+  } catch (e) {
+    console.log("redirect: error");
+  }
+  const r3 = await fetch(`${base}/see-other`, { method: "POST", body: "data" });
+  console.log(await r3.text());
+
+  // Repeated headers: iteration is sorted, joins repeats, keeps each set-cookie.
+  const multi = await fetch(`${base}/headers`);
+  for (const [k, v] of multi.headers) {
+    if (k.startsWith("x-") || k == "set-cookie") {
+      console.log(k, v);
+    }
+  }
+  console.log(multi.headers.get("x-multi"), multi.headers.getSetCookie().length);
+
+  // Responses made by the program.
+  const made = new Response("made", { status: 201, statusText: "Made", headers: { "X-B": "b" } });
+  console.log(made.status, made.ok, made.statusText, made.headers.get("x-b"));
+  console.log(made.headers.get("content-type"), await made.text());
+  const j = Response.json({ a: 1 }, { status: 202 });
+  console.log(j.status, j.headers.get("content-type"), await j.text());
+  const jh = Response.json([1], { headers: { "x-id": "1" } });
+  console.log(jh.headers.get("content-type"), jh.headers.get("x-id"));
+  const jt = Response.json([1], { headers: { "content-type": "application/problem+json" } });
+  console.log(jt.headers.get("content-type"));
+
+  // No response at all.
+  try {
+    await fetch("http://127.0.0.1:1/");
+  } catch (e) {
+    console.log("refused:", e.message.startsWith("fetch failed"));
+  }
+  try {
+    await fetch(`${base}/echo`, { method: "GET", body: "x" });
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+async function handle(req: ServerRequest): Promise<ServerResponse> {
+  if (req.path == "/json") {
+    return ServerResponse.json({ name: "velt", tags: ["a", "b"] });
+  }
+  if (req.path == "/echo") {
+    const ct = req.header("content-type") ?? "-";
+    return ServerResponse.text(`${req.method} ${ct} ${req.header("x-a") ?? "-"} ${req.body}`);
+  }
+  if (req.path == "/redirect" || req.path == "/see-other") {
+    const r = ServerResponse.text("", req.path == "/redirect" ? 302 : 303);
+    r.header("location", req.path == "/redirect" ? "/json" : "/echo");
+    return r;
+  }
+  if (req.path == "/headers") {
+    const r = ServerResponse.text("ok");
+    r.header("x-multi", "1");
+    r.header("x-multi", "2");
+    r.header("set-cookie", "a=1");
+    r.header("set-cookie", "b=2");
+    r.header("x-one", "one");
+    return r;
+  }
+  return ServerResponse.text("nope", 404);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, handle);
+  await client(`http://127.0.0.1:${server.port}`);
+  await server.shutdown();
+}

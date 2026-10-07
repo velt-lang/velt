@@ -86,15 +86,37 @@ hidden classes and no runtime shape checks.
   new Square(2);
   ```
 
-  The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
-  `try`, `switch`, loop or closure, and not part of an expression. TypeScript allows a nested
-  call (it reports TS2401 only for targets before ES2022 or with `useDefineForClassFields:
-  false`). Velt requires a statement of the body always: the field initializers run right
-  after the call and every field must be initialized, so the call has to run exactly once on
-  every path. This is the one place Velt is stricter than TypeScript here. When a constructor
-  throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the
-  object it allocated, dropping the fields that were set, without running the class's
-  `[Symbol.dispose]()`: like JavaScript, nothing disposes an object `new` never returned.
+  The call runs exactly once on every path: a statement of the constructor's body, or one in
+  each branch of an `if` / `else` (nested `if`s too), as TypeScript accepts it; not in an `if`
+  without `else`, a `try`, `switch`, loop or closure, and not part of an expression. The field
+  initializers run right after the call, in either branch, and every field must be initialized,
+  so a path that skips the call or makes it twice is an error, where TypeScript only fails at
+  run time. A class with parameter properties, or with field initializers when no base class has
+  a constructor, needs the call as a statement of the body itself (choose its arguments with a
+  conditional: `super(c ? a : b)`).
+
+  ```ts
+  class Named {
+    constructor(public name: string) {}
+  }
+  class Tagged extends Named {
+    tag: string = "t";
+    constructor(short: boolean) {
+      if (short) {
+        super("s");
+      } else {
+        super("long");
+      }
+      console.log(this.name, this.tag); // s t
+    }
+  }
+  new Tagged(true);
+  ```
+
+  When a constructor throws (before `super(…)`, in the base constructor or in a field
+  initializer), `new` frees the object it allocated, dropping the fields that were set,
+  without running the class's `[Symbol.dispose]()`: like JavaScript, nothing disposes an
+  object `new` never returned.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
@@ -111,7 +133,9 @@ hidden classes and no runtime shape checks.
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). A getter may change its object (a signal recording who
-  read it). `x.size ??= v` cannot be used as a value. Implementations and overrides of a
+  read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
+  non-null when `v` is). Implementations and overrides of a
   getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
   type may be inferred from its `return` like a method's
   ([Return types](functions.md#return-types)); an interface getter writes it.
