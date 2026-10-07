@@ -18,7 +18,8 @@
 //! - any other mention (a call argument, a stored or compared pointer, `&q.f`) ends the scan.
 //!
 //! Calls that do not receive a tracked pointer cannot read the block, so the scan goes on past
-//! them. The fill is removed once every byte of it that holds data has been written
+//! them. A local whose address is taken anywhere in the function is never tracked: a store
+//! through that address could repoint it, or a read through it see the block, unseen. The fill is removed once every byte of it that holds data has been written
 //! after it: every byte but the padding of the object aggregate, when every store into the
 //! filled range goes through that aggregate (aggregate copies need not preserve padding,
 //! vir.rs), every byte otherwise. Bytes written before the fill do not count; the fill
@@ -31,6 +32,7 @@ use velt_vir::vir::{
 };
 
 use crate::heap_sroa::Allocator;
+use crate::locals::Usage;
 use crate::srclocs::retain_stmts;
 use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
 use access::{Access, Fill, Touch};
@@ -47,6 +49,8 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
         return false;
     };
     let single = single_predecessors(func);
+    let usage = Usage::of(func);
+    let taken: Vec<bool> = usage.locals.iter().map(|u| u.address_taken).collect();
     let mut dead = Vec::new();
     for block in &func.blocks {
         let Terminator::Call {
@@ -59,7 +63,10 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
             continue;
         };
         if *e == allocator.alloc && d.proj.is_empty() {
-            let mut scan = Scan::new(aggs, d.local);
+            if taken[d.local.0 as usize] {
+                continue;
+            }
+            let mut scan = Scan::new(aggs, &taken, d.local);
             if let Some(at) = scan.from(func, &single, next.0 as usize) {
                 dead.push(at);
             }
@@ -103,6 +110,8 @@ enum Flow {
 /// The state of one scan from an allocation.
 struct Scan<'a> {
     aggs: &'a [AggLayout],
+    /// Per local: whether its address is taken (never tracked).
+    taken: &'a [bool],
     /// Locals pointing into the block, with their offsets.
     ptrs: Vec<(Local, i128)>,
     fill: Option<Fill>,
@@ -119,9 +128,10 @@ fn constant(op: &Operand) -> Option<i128> {
 }
 
 impl<'a> Scan<'a> {
-    fn new(aggs: &'a [AggLayout], ptr: Local) -> Scan<'a> {
+    fn new(aggs: &'a [AggLayout], taken: &'a [bool], ptr: Local) -> Scan<'a> {
         Scan {
             aggs,
+            taken,
             ptrs: vec![(ptr, 0)],
             fill: None,
             dirty: false,
@@ -172,12 +182,20 @@ impl<'a> Scan<'a> {
             .map(|&(_, off)| off)
     }
 
-    /// `l` now points at `off` into the block (`Some`), or elsewhere.
-    fn set(&mut self, l: Local, off: Option<i128>) {
+    /// `l` now points at `off` into the block (`Some`), or elsewhere. An address-taken `l`
+    /// is not tracked; a later use of it is then an escape.
+    fn set(&mut self, l: Local, off: Option<i128>) -> Flow {
         self.ptrs.retain(|&(p, _)| p != l);
+        if self.taken[l.0 as usize] {
+            return match off {
+                Some(_) => Flow::Stop,
+                None => Flow::Go,
+            };
+        }
         if let Some(off) = off {
             self.ptrs.push((l, off));
         }
+        Flow::Go
     }
 
     fn touch(&self, p: &Place) -> Touch {
@@ -229,8 +247,7 @@ impl<'a> Scan<'a> {
     /// A write of place `p`.
     fn store(&mut self, p: &Place) -> Flow {
         if p.proj.is_empty() {
-            self.set(p.local, None);
-            return Flow::Go;
+            return self.set(p.local, None);
         }
         match self.touch(p) {
             Touch::Elsewhere => Flow::Go,
@@ -253,8 +270,7 @@ impl<'a> Scan<'a> {
             Stmt::Assign(dst, rv) => {
                 if dst.proj.is_empty() {
                     if let Some(off) = self.derived(rv) {
-                        self.set(dst.local, Some(off));
-                        return Flow::Go;
+                        return self.set(dst.local, Some(off));
                     }
                 }
                 if !self.reads_rvalue(rv) {
