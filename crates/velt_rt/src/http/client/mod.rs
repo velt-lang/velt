@@ -136,7 +136,7 @@ async fn run(
     let status_text = parts
         .extensions
         .get::<hyper::ext::ReasonPhrase>()
-        .map(|p| String::from_utf8_lossy(p.as_bytes()).into_owned().into())
+        .map(|p| lossy(p.as_bytes()).into_owned().into())
         .or_else(|| parts.status.canonical_reason().map(Into::into))
         .unwrap_or_default();
     let len = parts
@@ -264,12 +264,31 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_headers(
     let headers = std::mem::take(&mut *lock(&obj(r).headers));
     let mut flat = Vec::with_capacity(headers.len() * 2);
     for (name, value) in headers.iter() {
-        flat.push(VeltStr::from_text(name.as_str()));
-        flat.push(VeltStr::from_text(&String::from_utf8_lossy(
-            value.as_bytes(),
-        )));
+        flat.push(text_of(name.as_str().as_bytes()));
+        flat.push(text_of(value.as_bytes()));
     }
     out.write(VeltStrArray::from_vec(flat));
+}
+
+/// `bytes` decoded as UTF-8, invalid sequences as U+FFFD (as JS decodes). Valid text, nearly
+/// all of it, is only validated (ASCII, the most common, only scanned) and copied once, where
+/// [`String::from_utf8_lossy`] would walk it chunk by chunk at several times the cost.
+fn text_of(bytes: &[u8]) -> VeltStr {
+    if bytes.is_ascii() {
+        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
+        return unsafe {
+            VeltStr::from_text_counted(std::str::from_utf8_unchecked(bytes), bytes.len())
+        };
+    }
+    VeltStr::from_text(&lossy(bytes))
+}
+
+/// [`String::from_utf8_lossy`], with std's fast validation first: it borrows valid UTF-8.
+fn lossy(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.into(),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
 }
 
 /// Receive the whole body (each response's body is received once: a second read is `EINVAL`).
@@ -294,7 +313,7 @@ pub extern "C" fn velt_rt_http_fetch_resp_text(r: FetchRespHandle) -> *mut VeltF
                 let bytes = w.as_slice();
                 // A leading byte order mark is not text (JS's UTF-8 decode drops it too).
                 let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-                IoResult::ok(VeltStr::from_text(&String::from_utf8_lossy(bytes)))
+                IoResult::ok(text_of(bytes))
             }
             Err(e) => IoResult::<VeltStr>::err(e),
         }

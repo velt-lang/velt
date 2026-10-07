@@ -308,3 +308,21 @@ fn an_aborted_signal_drops_the_request() {
         tokio::time::timeout(guard, closed).await.unwrap().unwrap();
     });
 }
+
+#[test]
+fn text_decodes_valid_utf8_as_is_and_invalid_lossily() {
+    for (bytes, want) in [
+        (&b"plain ascii"[..], "plain ascii"),
+        ("h\u{e9}j \u{1f600}".as_bytes(), "h\u{e9}j \u{1f600}"),
+        (&b"a\xffb\xe2\x82"[..], "a\u{fffd}b\u{fffd}"),
+    ] {
+        let s = text_of(bytes);
+        // SAFETY: an owned string just made.
+        unsafe {
+            assert_eq!(s.as_bytes(), want.as_bytes());
+            assert_eq!(s.units(), want.encode_utf16().count());
+            let mut s = s;
+            s.release();
+        }
+    }
+}
