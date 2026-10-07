@@ -74,9 +74,8 @@ What it shows:
   turns this from a whole-program inference into a guarantee.
 - **Classes**, the TypeScript way of writing the same values, execute 4–18× the instructions
   of the flat code and allocate one block per value (1M to 95M blocks; in mapkey, the string
-  keys): `heap_sroa` removes
-  allocations only where inlining puts an object's whole life in one function, never for
-  objects stored in arrays or maps.
+  keys): `heap_sroa` removes allocations only where inlining puts an object's whole life in one
+  function, never for objects stored in arrays or maps.
 - **One shared value** (`particles_shared`) makes a struct type whose fields are assigned a
   counted object everywhere: every element becomes its own heap block (20,002 blocks) and the
   arrays hold pointers. Immutable structs cannot reach this state.
