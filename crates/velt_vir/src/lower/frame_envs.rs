@@ -22,9 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_sema::hir::{
-    self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S,
-};
+use velt_sema::hir::{self, Callee, DefId, Expr, ExprKind as E, Intrinsic, LocalId, StmtKind as S};
 
 /// The closures of `f`'s body that get a frame environment.
 pub(super) fn scan(hir: &hir::Program, f: &hir::FnDef) -> HashSet<DefId> {
