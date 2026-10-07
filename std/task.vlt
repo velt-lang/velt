@@ -78,18 +78,18 @@ function signalCell(handle: u64): SignalCell {
 // The receiving half: tells work that it should stop.
 export class AbortSignal {
   // Keeps the runtime signal alive; `h` is its handle, valid as long as `cell` is.
-  private cell: SignalCell;
-  private h: u64;
+  #cell: SignalCell;
+  #h: u64;
 
   // Made by `AbortController`, `taskScope` and the static constructors (`SignalCell` is
   // internal).
   constructor(cell: SignalCell) {
-    this.h = cell.with((s) => s.raw());
-    this.cell = cell;
+    this.#h = cell.with((s) => s.raw());
+    this.#cell = cell;
   }
 
   private handle(): u64 {
-    return this.h;
+    return this.#h;
   }
 
   // Whether `abort()` was called (or the timeout elapsed).
@@ -139,23 +139,23 @@ export class AbortSignal {
 
 // The sending half: `abort()` aborts its `signal`.
 export class AbortController {
-  private sig: AbortSignal;
-  private h: u64;
+  #sig: AbortSignal;
+  #h: u64;
 
   constructor() {
     const cell = signalCell(velt_rt_signal_new());
-    this.h = cell.with((s) => s.raw());
-    this.sig = new AbortSignal(cell);
+    this.#h = cell.with((s) => s.raw());
+    this.#sig = new AbortSignal(cell);
   }
 
   // The controller's signal (the same object every time, like JS).
   get signal(): AbortSignal {
-    return this.sig;
+    return this.#sig;
   }
 
   // Aborts the signal (a no-op if it already is).
   abort(reason: string = DEFAULT_REASON) {
-    velt_rt_signal_abort(this.h, reason);
+    velt_rt_signal_abort(this.#h, reason);
   }
 }
 
@@ -240,13 +240,13 @@ function recordFirst<E>(errors: FirstError<E>, e: E) {
 // is the error type of the scope, its body and its children.
 export class TaskScope<E> {
   // Ends the group at its last reference; `g` is its registry key (safe to use when stale).
-  private group: shared<Mutex<GroupObj>>;
-  private g: u64;
-  private sig: AbortSignal;
+  #group: shared<Mutex<GroupObj>>;
+  #g: u64;
+  #sig: AbortSignal;
   // The scope's runtime signal (alive as long as `group`); each child retains its own.
-  private sigH: u64;
-  private errors: FirstError<E>;
-  private cancelOnError: bool;
+  #sigH: u64;
+  #errors: FirstError<E>;
+  #cancelOnError: bool;
 
   // Made by `taskScope` (`GroupObj` is internal).
   constructor(
@@ -255,40 +255,40 @@ export class TaskScope<E> {
     errors: FirstError<E>,
     cancelOnError: bool,
   ) {
-    this.g = group.with((o) => o.key());
-    this.sigH = group.with((o) => o.signal());
-    this.group = group;
-    this.sig = sig;
-    this.errors = errors;
-    this.cancelOnError = cancelOnError;
+    this.#g = group.with((o) => o.key());
+    this.#sigH = group.with((o) => o.signal());
+    this.#group = group;
+    this.#sig = sig;
+    this.#errors = errors;
+    this.#cancelOnError = cancelOnError;
   }
 
   // The scope's signal: aborted when the body or a child fails (with `cancelOnError`), on
   // `cancel()`, and when the scope's task is cancelled. Pass it to the children so they stop
   // cooperatively.
   get signal(): AbortSignal {
-    return this.sig;
+    return this.#sig;
   }
 
   // Adds `p` as a child task of the scope (`spawn(p)`; a call starts on this task, as any
   // promise value); the scope waits for it. A promise that cannot fail (`Promise<T>`) is
   // accepted too.
   spawn<T>(p: Promise<T, E>): Promise<T, E> {
-    if (!velt_rt_group_enter(this.g)) {
+    if (!velt_rt_group_enter(this.#g)) {
       panic("scope.spawn after its taskScope ended");
     }
     // Only plain values and shared cells go to the child (its own signal reference), so
     // `scope.spawn(work(scope.signal))` doesn't hand the task anything reachable from `scope`.
-    const sig = velt_rt_signal_retain(this.sigH);
+    const sig = velt_rt_signal_retain(this.#sigH);
     // The scope fails with the child's error, so a handle nobody awaits drops it quietly.
     return __intrinsic_spawn_handled(
-      scopeChild<T, E>(this.g, sig, this.errors, this.cancelOnError, p),
+      scopeChild<T, E>(this.#g, sig, this.#errors, this.#cancelOnError, p),
     );
   }
 
   // Aborts the scope's signal.
   cancel(reason: string = DEFAULT_REASON) {
-    velt_rt_signal_abort(this.sigH, reason);
+    velt_rt_signal_abort(this.#sigH, reason);
   }
 }
 

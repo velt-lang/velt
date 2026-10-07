@@ -450,6 +450,8 @@ the prefix: `console.log` (`glue/format_object.rs`), `JSON.stringify` (`json/wri
 `json/dynamic.rs`), `Object.keys` and spread leave `#` fields out. `#m` methods never get a
 vtable slot. `#x in o` reaches HIR as the class test of `o instanceof C` (`PatKind::InstanceOf`).
 `AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type. std's
-handle classes (`BigInt`, `RegExp`, `Request`, `Response`, `Server`, `Statement`, generators)
-keep their state in `#` fields; handle types that are structs keep `private` fields, and
-`AdtDef::opaque` keeps every std type with private state out of JSON.
+exported handle classes (`BigInt`, `RegExp`, `JsonValue`, `Request`, `Response`, `Server`,
+`Statement`, generators, `AbortSignal`, `AbortController`, `TaskScope`, `RedisPipeline`) keep
+their state in `#` fields. Handle types that are structs (sockets, files, database clients,
+`Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
+every std type with private state, `private` or `#`, out of JSON.
