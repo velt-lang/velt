@@ -44,3 +44,90 @@ fn writes_place(a: &hir::Expr) -> bool {
     };
     matches!(mode, UseMode::BorrowMut | UseMode::Move)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::may_change_memory;
+    use crate::hir::UseMode;
+    use crate::hir::{BinOp, Callee, DefId, Expr, ExprKind as H, Intrinsic, Lit, LocalId, TyId};
+    use velt_common::Span;
+
+    fn mk(kind: H) -> Expr {
+        Expr {
+            kind,
+            ty: TyId(0),
+            span: Span::default(),
+        }
+    }
+
+    fn local(mode: UseMode) -> Expr {
+        mk(H::Local(LocalId(0), mode))
+    }
+
+    /// `xs[0]`, read with `mode`.
+    fn element(mode: UseMode) -> Expr {
+        mk(H::Index {
+            base: Box::new(local(UseMode::Borrow)),
+            index: Box::new(mk(H::Lit(Lit::Int(0)))),
+            mode,
+        })
+    }
+
+    fn intrinsic(i: Intrinsic, args: Vec<Expr>) -> Expr {
+        mk(H::Call {
+            callee: Callee::Intrinsic(i),
+            args,
+        })
+    }
+
+    #[test]
+    fn reads_and_arithmetic_change_nothing() {
+        let sum = mk(H::Binary {
+            op: BinOp::Add,
+            lhs: Box::new(element(UseMode::Copy)),
+            rhs: Box::new(mk(H::Lit(Lit::Float(1.0)))),
+        });
+        assert!(!may_change_memory(&sum));
+        assert!(!may_change_memory(&intrinsic(
+            Intrinsic::ArrayLen,
+            vec![local(UseMode::Borrow)]
+        )));
+    }
+
+    #[test]
+    fn an_intrinsic_handed_a_place_to_modify_changes_memory() {
+        // `xs.pop()`: the receiver is borrowed mutably.
+        let pop = intrinsic(Intrinsic::ArrayPop, vec![local(UseMode::BorrowMut)]);
+        assert!(may_change_memory(&pop));
+        // Moving an element out of its place changes the place too.
+        let moved = intrinsic(Intrinsic::ArrayLen, vec![element(UseMode::Move)]);
+        assert!(may_change_memory(&moved));
+    }
+
+    #[test]
+    fn a_call_to_a_function_or_getter_changes_memory() {
+        // A getter is a call of its `Def::Fn` (`p.x` with `get x()`).
+        let getter = mk(H::Call {
+            callee: Callee::Def(DefId(1), vec![]),
+            args: vec![local(UseMode::Borrow)],
+        });
+        assert!(may_change_memory(&getter));
+        // An argument that runs code counts inside an intrinsic as well.
+        let len = intrinsic(Intrinsic::ArrayLen, vec![getter]);
+        assert!(may_change_memory(&len));
+    }
+
+    #[test]
+    fn closures_and_await_change_memory() {
+        let through_value = mk(H::Call {
+            callee: Callee::Indirect(Box::new(local(UseMode::Borrow))),
+            args: vec![],
+        });
+        assert!(may_change_memory(&through_value));
+        // Creating a closure may move its captures: conservative.
+        assert!(may_change_memory(&mk(H::Closure(DefId(2)))));
+        assert!(may_change_memory(&mk(H::Await(Box::new(local(
+            UseMode::Move
+        ))))));
+    }
+}
