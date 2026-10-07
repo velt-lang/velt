@@ -1164,8 +1164,9 @@ the length after each callback in that case; `__intrinsic_may_alias(this)` folds
 no other reference to an array of that type can exist, and then the plain loop of `main` is
 all that is compiled. Instructions (valgrind cachegrind, Linux in WSL2) of programs compiled
 on Windows with LLVM `--release --target x86_64-unknown-linux-gnu` and linked against one
-Linux runtime (the change does not touch `velt_rt`); before is `main` at 2cce7b99 (compiler
-and std).
+Linux runtime (the change does not touch `velt_rt`); before is `main` at 8d8ea5bf (compiler
+and std). Sharing right away when a later argument runs code (`f(xs[0], wrapAndPop(xs))`)
+changed none of these: the callback methods' later arguments are an index and a cast.
 
 Each micro program has 2000 elements and runs 1000 rounds of `xs.forEach((x, i) => …)` plus
 `xs.map((x, i) => …)`: 4M callback calls. "Alias" means `const ys = xs` exists; "field" is a
@@ -1202,12 +1203,15 @@ The suite (same method):
 | program | main | branch | change |
 |---|---:|---:|---:|
 | hashmap | 551.6M | 541.7M | −1.80% |
-| typical/chains | 2111.9M | 2114.0M | +0.10% |
+| typical/chains | 2111.9M | 2113.9M | +0.10% |
 | typical/keys | 589.5M | 590.0M | +0.09% |
-| typical/graph | 333.9M | 333.9M | +0.01% |
+| typical/graph | 333.9M | 333.9M | −0.01% |
 | the other 22 | | | within ±0.005% |
 
 `hashmap` and `keys` change through Map's `edits` counter (`upsert` and `getOrInsert` look the
 key up again after a callback that changed the map); `chains` has no alias, and the
 difference is an inlining decision (`map` is now inlined into `main`), not the aliased loop,
-which is folded away.
+which is folded away. `hashmap` is faster although `upsert` does more: its longer body made
+LLVM stop inlining the string map's `append` into `main`, so the 50,000 new words pay for a
+call (+8.9M in `append`), and the word count's loop, without `append`'s code in it, runs about
+19 fewer instructions on each of its 1M `upsert`s (−18.8M in `main`; cg_annotate per function).
