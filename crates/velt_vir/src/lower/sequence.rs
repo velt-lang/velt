@@ -64,10 +64,15 @@ fn writes_local(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
-            writes_local(expr)
-        }
+        K::Unary { expr, .. }
+        | K::Cast(expr)
+        | K::Upcast(expr)
+        | K::Downcast(expr)
+        | K::WrapSome(expr)
+        | K::UnwrapSome(expr, _)
+        | K::UnwrapVariant { expr, .. } => writes_local(expr),
         K::Field { base, .. } => writes_local(base),
+        K::Index { base, index, .. } => writes_local(base) || writes_local(index),
         K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
             writes_local(lhs) || writes_local(rhs)
         }
@@ -142,5 +147,57 @@ impl FnLower<'_, '_> {
         }
         let named = self.locals[p.local.0 as usize].name.is_some();
         named && later.locals
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{later_each, writes_local, Later};
+    use velt_common::Span;
+    use velt_sema::hir::{Callee, Expr, ExprKind as H, Lit, LocalId, TyId, UseMode};
+
+    fn mk(kind: H) -> Expr {
+        Expr {
+            kind,
+            ty: TyId(0),
+            span: Span::default(),
+        }
+    }
+
+    fn local() -> Expr {
+        mk(H::Local(LocalId(0), UseMode::Borrow))
+    }
+
+    /// `xs[0]`.
+    fn element() -> Expr {
+        mk(H::Index {
+            base: Box::new(local()),
+            index: Box::new(mk(H::Lit(Lit::Int(0)))),
+            mode: UseMode::Borrow,
+        })
+    }
+
+    #[test]
+    fn reads_write_no_local() {
+        // `cmp(xs[b], xs[a])`: the second element read does not make the first one held.
+        assert!(!writes_local(&element()));
+        assert!(!writes_local(&mk(H::UnwrapSome(
+            Box::new(element()),
+            UseMode::Borrow
+        ))));
+        assert_eq!(
+            later_each(&[element(), element()]),
+            vec![Later::default(); 2]
+        );
+    }
+
+    #[test]
+    fn a_call_through_a_value_may_write_a_local() {
+        let call = mk(H::Call {
+            callee: Callee::Indirect(Box::new(local())),
+            args: vec![],
+        });
+        assert!(writes_local(&call));
+        assert!(Later::of(&call).any());
     }
 }
