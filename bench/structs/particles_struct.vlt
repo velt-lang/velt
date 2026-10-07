@@ -1,0 +1,45 @@
+// A particle update over `Vec2[]` arrays with today's `struct`: every step replaces each
+// position and velocity with a new value computed by small methods.
+struct Vec2 {
+  x: number;
+  y: number;
+
+  add(o: Vec2): Vec2 {
+    return { x: this.x + o.x, y: this.y + o.y };
+  }
+
+  scale(k: number): Vec2 {
+    return { x: this.x * k, y: this.y * k };
+  }
+}
+
+function main() {
+  const n = 10000;
+  const pos: Vec2[] = [];
+  const vel: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    pos.push({ x: (i % 100) * 0.1, y: 1 + (i % 37) * 0.25 });
+    vel.push({ x: ((i % 7) - 3) * 0.5, y: (i % 11) * 0.2 });
+  }
+  const g: Vec2 = { x: 0, y: -9.81 };
+  const dt = 0.001;
+  for (let s = 0; s < 500; s++) {
+    for (let i = 0; i < n; i++) {
+      let v = vel[i].add(g.scale(dt));
+      let p = pos[i].add(v.scale(dt));
+      if (p.y < 0) {
+        p = { x: p.x, y: -p.y };
+        v = { x: v.x, y: -v.y * 0.9 };
+      }
+      pos[i] = p;
+      vel[i] = v;
+    }
+  }
+  let sx: number = 0;
+  let sy: number = 0;
+  for (let i = 0; i < n; i++) {
+    sx += pos[i].x;
+    sy += pos[i].y + vel[i].y;
+  }
+  console.log(sx.toFixed(6), sy.toFixed(6));
+}

@@ -1,0 +1,41 @@
+// A particle update flattened by hand: one `number[]` per coordinate, updated in place. The
+// code a guaranteed-inline `Vec2[]` should reach.
+function main() {
+  const n = 10000;
+  const px = new Array<number>(n).fill(0);
+  const py = new Array<number>(n).fill(0);
+  const vx = new Array<number>(n).fill(0);
+  const vy = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    px[i] = (i % 100) * 0.1;
+    py[i] = 1 + (i % 37) * 0.25;
+    vx[i] = ((i % 7) - 3) * 0.5;
+    vy[i] = (i % 11) * 0.2;
+  }
+  const gx = 0;
+  const gy = -9.81;
+  const dt = 0.001;
+  for (let s = 0; s < 500; s++) {
+    for (let i = 0; i < n; i++) {
+      let vxi = vx[i] + gx * dt;
+      let vyi = vy[i] + gy * dt;
+      const pxi = px[i] + vxi * dt;
+      let pyi = py[i] + vyi * dt;
+      if (pyi < 0) {
+        pyi = -pyi;
+        vyi = -vyi * 0.9;
+      }
+      px[i] = pxi;
+      py[i] = pyi;
+      vx[i] = vxi;
+      vy[i] = vyi;
+    }
+  }
+  let sx: number = 0;
+  let sy: number = 0;
+  for (let i = 0; i < n; i++) {
+    sx += px[i];
+    sy += py[i] + vy[i];
+  }
+  console.log(sx.toFixed(6), sy.toFixed(6));
+}

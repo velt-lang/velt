@@ -1,0 +1,87 @@
+// Vector math in a loop, n-body style, flattened by hand: one `number[]` per coordinate and
+// scalar locals instead of vector values. The code a guaranteed-inline `struct` should reach.
+function step(
+  px: number[],
+  py: number[],
+  pz: number[],
+  vx: number[],
+  vy: number[],
+  vz: number[],
+  m: number[],
+  dt: number,
+) {
+  const n = px.length;
+  for (let i = 0; i < n; i++) {
+    let ax: number = 0;
+    let ay: number = 0;
+    let az: number = 0;
+    for (let j = 0; j < n; j++) {
+      if (j == i) continue;
+      const dx = px[j] - px[i];
+      const dy = py[j] - py[i];
+      const dz = pz[j] - pz[i];
+      const r2 = dx * dx + dy * dy + dz * dz + 0.01;
+      const k = m[j] / (r2 * Math.sqrt(r2));
+      ax += dx * k;
+      ay += dy * k;
+      az += dz * k;
+    }
+    vx[i] += ax * dt;
+    vy[i] += ay * dt;
+    vz[i] += az * dt;
+  }
+  for (let i = 0; i < n; i++) {
+    px[i] += vx[i] * dt;
+    py[i] += vy[i] * dt;
+    pz[i] += vz[i] * dt;
+  }
+}
+
+function energy(
+  px: number[],
+  py: number[],
+  pz: number[],
+  vx: number[],
+  vy: number[],
+  vz: number[],
+  m: number[],
+): number {
+  let e: number = 0;
+  const n = px.length;
+  for (let i = 0; i < n; i++) {
+    e += 0.5 * m[i] * (vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i]);
+    for (let j = i + 1; j < n; j++) {
+      const dx = px[i] - px[j];
+      const dy = py[i] - py[j];
+      const dz = pz[i] - pz[j];
+      e -= (m[i] * m[j]) / Math.sqrt(dx * dx + dy * dy + dz * dz + 0.01);
+    }
+  }
+  return e;
+}
+
+function main() {
+  const n = 5;
+  const px: number[] = [];
+  const py: number[] = [];
+  const pz: number[] = [];
+  const vx: number[] = [];
+  const vy: number[] = [];
+  const vz: number[] = [];
+  const m: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const sign = i % 2 == 0 ? 1.0 : -1.0;
+    px.push(i * 1.5);
+    py.push(i * 0.5 - 1);
+    pz.push(0.1 * i);
+    vx.push(0.01 * i);
+    vy.push(0.3 * sign);
+    vz.push(-0.02 * i);
+    m.push(1 + i * 0.25);
+  }
+  console.log(energy(px, py, pz, vx, vy, vz, m).toFixed(9));
+  for (let s = 0; s < 1000000; s++) {
+    step(px, py, pz, vx, vy, vz, m, 0.001);
+  }
+  console.log(energy(px, py, pz, vx, vy, vz, m).toFixed(9));
+}
