@@ -3,6 +3,8 @@
 //! binds `x` by reference, like a `for...of` element, instead of being "cannot move a field out
 //! of a class instance". In JS both names see the same object, so reads agree; the exclusive
 //! check (`crate::ownership::exclusive`) rejects changing the place while `x` is in scope.
+//! `const me = this` in a method or constructor binds `me` by reference too: it names the
+//! object `this` points to, and sharing it would make the class reference-counted.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -22,11 +24,10 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) -> Result<(), Option<hir::Expr>> {
-        let Some(e) = v
-            .init
-            .as_ref()
-            .filter(|e| v.kind == ast::VarKind::Const && is_member_or_index(e))
-        else {
+        let Some(e) = v.init.as_ref().filter(|e| {
+            v.kind == ast::VarKind::Const
+                && (is_member_or_index(e) || (self.cx.held_borrows && is_this(e)))
+        }) else {
             return Err(None);
         };
         let mut h = match ann {
@@ -53,7 +54,10 @@ impl FnCx<'_, '_> {
         let pinned = is_place(&h)
             && !self.cx.is_copy(ty)
             && !self.cx.is_string_value(ty)
-            && self.pinned_place(&h);
+            && (self.pinned_place(&h) || self.is_this_local(&h));
+        if pinned && self.is_this_local(&h) {
+            self.cx.held_borrows_used = true;
+        }
         if !pinned {
             match &mut h.kind {
                 // A widened promise owns the promise it wraps: that place is moved (and a field
@@ -71,6 +75,14 @@ impl FnCx<'_, '_> {
         let pat = self.pat(P::Binding(local, UseMode::Borrow), ty, name.span);
         Self::push(out, S::LetPat { pat, init: h }, span);
         Ok(())
+    }
+
+    /// Is `h` the method's or constructor's own `this` (an object: `const me = this` names the
+    /// same object, so it refers to `this` instead of sharing it; `ownership::exclusive`
+    /// makes it a share where the two names are used together)?
+    fn is_this_local(&self, h: &hir::Expr) -> bool {
+        matches!(h.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This)
+            && self.cx.class_of(h.ty).is_some()
     }
 
     /// Is place `h` rooted at a local (not a temporary) and does it go through a class instance
@@ -95,6 +107,14 @@ impl FnCx<'_, '_> {
                 _ => return false,
             }
         }
+    }
+}
+
+fn is_this(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => is_this(inner),
+        _ => false,
     }
 }
 

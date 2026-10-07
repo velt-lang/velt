@@ -23,6 +23,9 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   then stored behind a pointer). Freeing is deterministic. An array type iterated through an
   `Iterable<T>` (a value or a bound: `sum(xs)` with `sum(xs: Iterable<i64>)`) counts as shared
   for the whole program, since its iterator holds the array; nothing else about it changes.
+  Naming an object again inside one function does not share it: `const me = this`, or a
+  closure that captures `this` and is only called where it is created
+  ([Captures](functions.md#captures)), refers to the same object without a count.
 - **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
   nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
   it. A parameter the body stores or returns takes ownership: a caller that does not use its

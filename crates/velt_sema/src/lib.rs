@@ -167,17 +167,21 @@ fn check_on_current_thread(
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
-    let mut cx = ctx::Ctx::new(modules, root);
-    cx.stack_budget = stack_budget;
-    if let Some(l) = &lifted {
-        cx.generic_arrow_fns = l.local_fns.clone();
-        cx.generic_arrow_all = l.all_fns.clone();
+    let new_cx = |held_borrows: bool| {
+        let mut cx = ctx::Ctx::new(modules, root);
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        (cx, entry)
+    };
+    let (mut cx, mut entry) = new_cx(true);
+    if retry_sharing(&cx) {
+        (cx, entry) = new_cx(false);
     }
-    analyze(&mut cx);
-    let entry = check_main(&mut cx, root, root_mod, opts.require_main);
-    check_imported_scripts(&mut cx, root, modules);
-    resolve::check_unused_aliases(&mut cx);
-
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
@@ -203,8 +207,37 @@ fn check_on_current_thread(
     (Some(program), diags)
 }
 
+/// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
+fn analyze(
+    cx: &mut ctx::Ctx,
+    root: usize,
+    root_mod: &SourceModule,
+    modules: &[SourceModule],
+    opts: CheckOptions,
+) -> Option<hir::DefId> {
+    analyze_bodies(cx);
+    let entry = check_main(cx, root, root_mod, opts.require_main);
+    check_imported_scripts(cx, root, modules);
+    resolve::check_unused_aliases(cx);
+    entry
+}
+
+/// Should the program be checked again with held closures and `const me = this` sharing?
+/// Borrowing in them only changes the cost, never which programs are accepted
+/// (docs/reference/functions.md "Captures"). So when some of them borrowed and a pass from
+/// `demote_local_closures` on reported an error, the program is checked again with them
+/// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
+/// borrowing and never cause a second check. The CLI and the IDE both use this rule.
+fn retry_sharing(cx: &ctx::Ctx) -> bool {
+    cx.held_borrows_used && cx.borrow_pass_errors
+}
+
+fn error_count(cx: &ctx::Ctx) -> usize {
+    cx.diags.iter().filter(|d| d.is_error()).count()
+}
+
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
-fn analyze(cx: &mut ctx::Ctx) {
+fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
     fresh_returns::check(cx);
@@ -213,6 +246,15 @@ fn analyze(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    let before = error_count(cx);
+    ownership_passes(cx);
+    cx.borrow_pass_errors = error_count(cx) > before;
+}
+
+/// The passes from `demote_local_closures` on: the ones whose errors may come from a held
+/// closure or `const me = this` borrowing ([`retry_sharing`]).
+fn ownership_passes(cx: &mut ctx::Ctx) {
+    ownership::demote_local_closures(cx);
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
