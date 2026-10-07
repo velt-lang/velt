@@ -38,7 +38,8 @@ Ordered by how much they shape the design.
 1. **Local async closures that may change their captures** (#208). In sigx an actor is
    `methods: (ctx) => ({ async increment(by) { ctx.state.count += by; … } })`: closures over a
    per-activation `ctx`. Velt rejects an async closure that changes a captured object, even when
-   nothing spawns it, so every method takes `ctx` as a parameter.
+   nothing spawns it, so every method takes `ctx` as a parameter. Fixed by #208: an async
+   closure that stays on its task may now change what it captured.
 2. **A typed RPC surface** (#209). sigx infers the dispatch table, argument decoding and a typed
    client proxy (`actor(Counter, key).increment(1)`) from one `defineActor` call. Without
    variadic tuple generics or `Parameters<F>` / `ReturnType<F>`, methods are registered per

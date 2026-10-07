@@ -253,6 +253,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
 /// closure or `const me = this` borrowing ([`retry_sharing`]).
 fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::demote_local_closures(cx);
+    ownership::infer_local_async(cx);
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);

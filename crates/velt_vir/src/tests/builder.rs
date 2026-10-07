@@ -169,6 +169,7 @@ impl FB {
             throws: self.throws,
             self_ty: self.self_ty,
             captures: self.captures,
+            shares_captures: false,
             body: Body {
                 locals: self.locals,
                 block: block(stmts),

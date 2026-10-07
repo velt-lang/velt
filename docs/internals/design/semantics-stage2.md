@@ -133,8 +133,10 @@ within the copy).
   closure's capture local are indirect through the cell; closures hold one reference each; the
   function releases its own at scope end; reassignment drops the old value in place. A closure
   that is the only remaining user (`makeCounter`) keeps a plain copy. Variables captured by
-  async closures keep their own copies (they may run on other threads): assigning one after the
-  capture stays an error.
+  async closures that may run on other threads keep their own copies: assigning one after the
+  capture stays an error. A local async closure (#208, sema `ownership/local_async`) never
+  leaves its task: like a generator closure, a variable it assigns, or one assigned after the
+  capture, lives in a cell, and each call shares its captured objects.
 
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
@@ -178,7 +180,7 @@ the returned object still shares are deep-copied, and one that is not a new obje
 spawned capture that is still used afterwards, and one passed through a function value,
 vtable or interface (ownership/boundary.rs); a copy that only turns out to be needed at run
 time panics. A borrow-ABI argument of a call through a function value, vtable or interface
-(the caller keeps its reference) is always copied. Async closures copy what they capture per
+(the caller keeps its reference) is always copied. Async closures that may reach another thread (all but local ones, #208) copy what they capture per
 call (deep copies of shared captures, `validate`), since an HTTP handler runs them
 concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
 instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned

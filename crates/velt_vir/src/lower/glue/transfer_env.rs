@@ -69,10 +69,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .iter()
             .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty))
             .map(|c| c.2);
+        // A local async closure's calls share what it captured (async_fn/ctor.rs
+        // `take_capture`): calls from several threads would update the counts at once. Sema
+        // keeps such closures away from these places (ownership/local_async); this catches a
+        // path it does not follow.
+        let local = lw.cx.fn_def(def).shares_captures
+            && (!cells.is_empty()
+                || caps
+                    .iter()
+                    .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty)));
         let (caps2, cells2) = (caps.clone(), cells.clone());
         lw.check_if_tagged(env, |lw, e| {
             if let Some(t) = uncopyable {
                 lw.panic_many_threads(t);
+            }
+            if local {
+                lw.panic_msg(
+                    "an async closure that changes or shares what it captured is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): its calls would use the captured values from several threads at once; capture `shared` values instead",
+                );
             }
             let ep = lw.operand_place(e, Ty::Ptr);
             let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
