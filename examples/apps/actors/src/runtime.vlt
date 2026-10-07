@@ -147,21 +147,10 @@ function unwrapData(body: string): string {
 // `JSON.parse<T>` for method bodies: a malformed answer from another actor is an `ActorError`.
 export function decode<T>(json: string): T throws ActorError {
   try {
-    return parseOne<T>(json);
+    return JSON.parse<T>(json);
   } catch (e) {
     throw new ActorError(500, "decode", e.message);
   }
-}
-
-// `JSON.parse<T>(json)`, through a one-element array: `velt build --release` fails with an
-// internal compiler error on `JSON.parse` into a number or `bool` (B7).
-function parseOne<T>(json: string): T throws JsonError {
-  const one = JSON.parse<T[]>(`[${json}]`);
-  const v = one.pop();
-  if (v == null || one.length != 0) {
-    throw new JsonError(`expected one value, got ${json}`);
-  }
-  return v;
 }
 
 // One method of an actor of state `S`, type-erased over its argument and result types.
@@ -175,7 +164,7 @@ function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
     throw new ActorError(400, "bad-request", `${method}: missing argument ${i}`);
   }
   try {
-    return parseOne<A>(raw.stringify());
+    return JSON.parse<A>(raw.stringify());
   } catch (e) {
     throw new ActorError(400, "bad-request", `${method}: argument ${i}: ${e.message}`);
   }

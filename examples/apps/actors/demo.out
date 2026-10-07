@@ -9,7 +9,7 @@ POST Counter/pull {"args":["a","b"]} -> 200 {"data":16}
 POST Counter/loop {"args":["a","b"]} -> 500 {"error":{"status":500,"message":"call cycle: Counter/a -> Counter/b -> Counter/a","data":{"kind":"deadlock"}}}
 -- errors
 POST Counter/increment {"args":["a",-1]} -> 400 {"error":{"status":400,"message":"increment: by must not be negative","data":{"kind":"bad-request"}}}
-POST Counter/increment {"args":["a","x"]} -> 400 {"error":{"status":400,"message":"increment: argument 1: expected i64 at $[0]","data":{"kind":"bad-request"}}}
+POST Counter/increment {"args":["a","x"]} -> 400 {"error":{"status":400,"message":"increment: argument 1: expected i64 at $","data":{"kind":"bad-request"}}}
 POST Counter/nope {"args":["a"]} -> 404 {"error":{"status":404,"message":"Counter has no method nope","data":{"kind":"method-not-found"}}}
 POST Nope/increment {"args":["a"]} -> 404 {"error":{"status":404,"message":"no actor type Nope","data":{"kind":"actor-not-found"}}}
 POST Counter/increment {"args":[]} -> 400 {"error":{"status":400,"message":"the first argument must be the actor key","data":{"kind":"bad-request"}}}
