@@ -13,9 +13,6 @@
 // - async interface methods must not declare `throws` (B1: calling one through an interface
 //   value crashes), so the dynamic seams (`Method`, `Activation`, `ActorStorage`) return errors
 //   as values (`Reply`, `SaveResult`);
-// - an async closure must not forward an object parameter to a captured async function value
-//   (B4: the object is silently copied), so typed methods are classes (`Method0/1/2`), not
-//   wrapping closures;
 // - async closures cannot modify captured objects (FINDINGS §2.1), so methods receive `ctx` as a
 //   parameter instead of closing over it the way `methods: (ctx) => ({ ... })` does in TS.
 // - an async method called through an interface value drops its receiver (B2), so those seams'
@@ -153,11 +150,9 @@ export function decode<T>(json: string): T throws ActorError {
   }
 }
 
-// One method of an actor of state `S`, type-erased over its argument and result types.
-// `invoke` answers the result as JSON.
-export interface Method<S> {
-  invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError;
-}
+// One method of an actor of state `S`, type-erased over its argument and result types: it
+// decodes its arguments from the wire array `[key, ...args]` and answers the result as JSON.
+export type Method<S> = (ctx: Ctx<S>, args: Value) => Promise<string> throws ActorError;
 
 function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
   const raw = args.at(i);
@@ -168,53 +163,6 @@ function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
     return JSON.parse<A>(raw.stringify());
   } catch (e) {
     throw new ActorError(400, "bad-request", `${method}: argument ${i}: ${e.message}`);
-  }
-}
-
-// A method without arguments.
-export class Method0<S, R> implements Method<S> {
-  name: string;
-  f: (ctx: Ctx<S>) => Promise<R> throws ActorError;
-
-  constructor(name: string, f: (ctx: Ctx<S>) => Promise<R> throws ActorError) {
-    this.name = name;
-    this.f = f;
-  }
-
-  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
-    return JSON.stringify(await this.f(ctx));
-  }
-}
-
-// A method with one argument (`args[1]`).
-export class Method1<S, A, R> implements Method<S> {
-  name: string;
-  f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError;
-
-  constructor(name: string, f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError) {
-    this.name = name;
-    this.f = f;
-  }
-
-  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
-    return JSON.stringify(await this.f(ctx, argAt<A>(args, 1, this.name)));
-  }
-}
-
-// A method with two arguments (`args[1]`, `args[2]`).
-export class Method2<S, A, B, R> implements Method<S> {
-  name: string;
-  f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError;
-
-  constructor(name: string, f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError) {
-    this.name = name;
-    this.f = f;
-  }
-
-  async invoke(ctx: Ctx<S>, args: Value): Promise<string> throws ActorError {
-    const a = argAt<A>(args, 1, this.name);
-    const b = argAt<B>(args, 2, this.name);
-    return JSON.stringify(await this.f(ctx, a, b));
   }
 }
 
@@ -240,12 +188,16 @@ export class Methods<S> {
   table: Map<string, Method<S>> = new Map<string, Method<S>>();
 
   method0<R>(name: string, f: (ctx: Ctx<S>) => Promise<R> throws ActorError): Methods<S> {
-    this.table.set(name, new Method0<S, R>(name, f));
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      return JSON.stringify(await f(ctx));
+    });
     return this;
   }
 
   method1<A, R>(name: string, f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError): Methods<S> {
-    this.table.set(name, new Method1<S, A, R>(name, f));
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      return JSON.stringify(await f(ctx, argAt<A>(args, 1, name)));
+    });
     return this;
   }
 
@@ -253,7 +205,11 @@ export class Methods<S> {
     name: string,
     f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError,
   ): Methods<S> {
-    this.table.set(name, new Method2<S, A, B, R>(name, f));
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      const a = argAt<A>(args, 1, name);
+      const b = argAt<B>(args, 2, name);
+      return JSON.stringify(await f(ctx, a, b));
+    });
     return this;
   }
 }
@@ -329,7 +285,7 @@ class Live<S> implements Activation {
     this.ctx.chain = chain;
     this.ctx.deadline = deadline;
     try {
-      return okReply(await m.invoke(this.ctx, args));
+      return okReply(await m(this.ctx, args));
     } catch (e) {
       return fromError(e);
     }
