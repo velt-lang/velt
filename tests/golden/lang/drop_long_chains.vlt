@@ -1,0 +1,137 @@
+// check: no leaks
+// Dropping a long chain of objects does not overflow the stack (#543): a linked list or a
+// degenerate tree of a million nodes is freed by a loop, not by one nested call per node.
+
+class Node {
+  value: number;
+  next: Node | null = null;
+
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+
+class Tree {
+  key: number;
+  label: string;
+  left: Tree | null = null;
+  right: Tree | null = null;
+
+  constructor(key: number) {
+    this.key = key;
+    this.label = `node ${key} of the tree`;
+  }
+}
+
+// Shared nodes: some are also held by an array, so the class is reference counted.
+class Link {
+  id: number;
+  next: Link | null = null;
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+function list(n: number): Node | null {
+  let head: Node | null = null;
+  for (let i = 0; i < n; i++) {
+    const node = new Node(i);
+    node.next = head;
+    head = node;
+  }
+  return head;
+}
+
+function length(head: Node | null): number {
+  let n = 0;
+  let cur = head;
+  while (cur !== null) {
+    n++;
+    cur = cur.next;
+  }
+  return n;
+}
+
+function insert(root: Tree, key: number) {
+  let cur = root;
+  while (true) {
+    if (key < cur.key) {
+      if (cur.left === null) {
+        cur.left = new Tree(key);
+        return;
+      }
+      cur = cur.left;
+    } else {
+      if (cur.right === null) {
+        cur.right = new Tree(key);
+        return;
+      }
+      cur = cur.right;
+    }
+  }
+}
+
+function size(t: Tree | null): number {
+  let n = 0;
+  const stack: Tree[] = [];
+  if (t !== null) stack.push(t);
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    n++;
+    if (cur.left !== null) stack.push(cur.left);
+    if (cur.right !== null) stack.push(cur.right);
+  }
+  return n;
+}
+
+function main() {
+  let head = list(1000000);
+  console.log("list", length(head), head!.value);
+  head = null;
+  console.log("list dropped");
+
+  // A tree that is one long left spine, one long right spine, and a random search tree.
+  let left = new Tree(0);
+  for (let i = 1; i < 1000000; i++) {
+    const t = new Tree(i);
+    t.left = left;
+    left = t;
+  }
+  let right = new Tree(0);
+  for (let i = 1; i < 300000; i++) {
+    const t = new Tree(i);
+    t.right = right;
+    right = t;
+  }
+  const random = new Tree(500000);
+  let x = 1;
+  for (let i = 0; i < 200000; i++) {
+    x = (x * 48271) % 2147483647;
+    insert(random, x % 1000000);
+  }
+  console.log("trees", size(left), size(right), size(random), left.label);
+  left = new Tree(-1);
+  right = new Tree(-2);
+  console.log("trees dropped", size(left) + size(right));
+
+  // Drop a chain whose middle is still held elsewhere: the rest stays alive.
+  let chain: Link | null = null;
+  const kept: Link[] = [];
+  for (let i = 0; i < 1000000; i++) {
+    const l = new Link(i);
+    l.next = chain;
+    chain = l;
+    if (i === 400000) kept.push(l);
+  }
+  chain = null;
+  let alive = 0;
+  let cur: Link | null = kept[0];
+  while (cur !== null) {
+    alive++;
+    cur = cur.next;
+  }
+  console.log("kept", kept[0].id, alive);
+  kept.pop();
+  console.log("done", kept.length);
+}

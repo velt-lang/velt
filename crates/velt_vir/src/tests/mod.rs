@@ -7,6 +7,7 @@ mod builder_m2;
 mod builder_m3;
 mod builder_prelude;
 mod control;
+mod drop_chain;
 mod drops;
 mod for_of_consume;
 mod goldens;

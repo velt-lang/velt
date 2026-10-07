@@ -255,7 +255,7 @@ impl FnLower<'_, '_> {
 
     /// Run the type's `[Symbol.dispose]()` hook (if it has one) on the value `this` points to (the
     /// object pointer for classes), before its fields are dropped.
-    fn call_dispose(&mut self, this: Operand, ty: TyId) {
+    pub(super) fn call_dispose(&mut self, this: Operand, ty: TyId) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return;
         };
@@ -268,6 +268,9 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_drop_body(&mut self, obj: vir::Local, ty: TyId) {
+        if let Some(chain) = self.cx.drop_chain(ty) {
+            return self.obj_drop_chain_body(obj, ty, chain);
+        }
         let p = Place::local(obj);
         self.call_dispose(Operand::Copy(p.clone()), ty);
         let tys = self.cx.adt_field_tys(ty);

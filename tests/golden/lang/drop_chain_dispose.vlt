@@ -1,0 +1,47 @@
+// check: no leaks
+// A long chain whose nodes have a `[Symbol.dispose]()` hook (#543): dropping it runs every
+// hook, in the order the nested drops would (each node before the rest of the chain, after
+// the fields declared before the link), without one nested call per node.
+
+let disposed = 0;
+let order = "";
+
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    if (order.length < 40) order += `${this.name} `;
+  }
+}
+
+class Cell {
+  id: number;
+  res: Res;
+  next: Cell | null = null;
+
+  constructor(id: number) {
+    this.id = id;
+    this.res = new Res(`r${id}`);
+  }
+
+  [Symbol.dispose]() {
+    disposed++;
+    if (order.length < 40) order += `c${this.id} `;
+  }
+}
+
+function main() {
+  let head: Cell | null = null;
+  for (let i = 0; i < 500000; i++) {
+    const c = new Cell(i);
+    c.next = head;
+    head = c;
+  }
+  head = null;
+  console.log(disposed);
+  console.log(order);
+}

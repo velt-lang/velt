@@ -1,0 +1,6 @@
+list 1000000 999999
+list dropped
+trees 1000000 300000 200001 node 999999 of the tree
+trees dropped 2
+kept 400000 400001
+done 0

@@ -30,6 +30,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
+- Dropping a long chain of objects of one class (a linked list through a `next: Node | null`
+  field, or a tree through `left` and `right`) frees it in a loop, so a million-node list or a
+  degenerate tree never overflows the stack. Self references through arrays, maps, object
+  types or a class hierarchy with subclasses are still dropped recursively.
 - Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
   holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
   or method: the closure refers to the object, the object to the closure); replace the field

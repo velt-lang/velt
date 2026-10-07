@@ -30,6 +30,7 @@
 
 mod clone;
 mod drop;
+mod drop_chain;
 mod eq;
 mod format;
 mod format_array;
