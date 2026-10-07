@@ -26,8 +26,7 @@ impl FnLower<'_, '_> {
         let stream = cint(stream, Ty::U32);
         let mut vals = vec![];
         for (a, later) in args.iter().zip(later_each(args)) {
-            let v = self.expr(a);
-            let v = self.hold(v, a.ty, later);
+            let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
             vals.push((v, t));
         }

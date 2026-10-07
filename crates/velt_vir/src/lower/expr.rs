@@ -108,8 +108,7 @@ impl FnLower<'_, '_> {
                 if let Some(v) = self.float_param_ordering(*op, lhs, rhs, e.ty) {
                     return v;
                 }
-                let l = self.expr(lhs);
-                let l = self.hold(l, lhs.ty, Later::of(rhs));
+                let l = self.expr_held(lhs, Later::of(rhs));
                 let r = self.expr(rhs);
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }

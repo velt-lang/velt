@@ -71,6 +71,15 @@ async function bumpLater(v: V, k: number): Promise<void> {
   v.n += k;
 }
 
+class Item {
+  v: number;
+  name: string;
+  constructor(v: number) {
+    this.v = v;
+    this.name = long(v);
+  }
+}
+
 class Counter {
   n: number = 0;
   add(k: number): void {
@@ -187,6 +196,32 @@ async function main() {
   const a0 = aa2[0];
   aa2[0].push(growAA());
   console.log(a0, aa2[0], aa2.length);
+
+  // An element a later operand removes through another reference (a closure) is held too.
+  const items = [new Item(10)];
+  const clear = (): number => {
+    items.pop();
+    return 1;
+  };
+  console.log(items[0], clear(), items.length);
+  const cut = [new Item(11), new Item(12)];
+  const splice = (): number => {
+    cut.splice(0, 1);
+    return 1;
+  };
+  console.log(cut[0], splice(), cut[0].v);
+  let cell = [new Item(13)];
+  const reset = (): number => {
+    cell = [];
+    return 1;
+  };
+  console.log(cell[0], reset(), cell.length);
+  const sum = [new Item(14)];
+  const drop = (): number => {
+    sum.pop();
+    return 1;
+  };
+  console.log(sum[0].v + drop(), `${sum.length}`);
 
   // A receiver held across a later call is the same object, not a copy.
   const counts = new Map<string, number>();

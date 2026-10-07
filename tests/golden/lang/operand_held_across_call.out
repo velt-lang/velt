@@ -16,6 +16,19 @@ R { v: 5, name: 'a string long enough to live on the heap, number 5' } 1 9
 a string long enough to live on the heap, number 41 a string long enough to live on the heap, number -4
 6 100 3001
 [ 1, 2, 5 ] [ 100, 101 ] 1001
+Item {
+  v: 10,
+  name: 'a string long enough to live on the heap, number 10'
+} 1 0
+Item {
+  v: 11,
+  name: 'a string long enough to live on the heap, number 11'
+} 1 12
+Item {
+  v: 13,
+  name: 'a string long enough to live on the heap, number 13'
+} 1 0
+15 0
 2 2 3
 7
 a string long enough to live on the heap, number 0?!

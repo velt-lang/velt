@@ -221,11 +221,12 @@ impl FnLower<'_, '_> {
                 (_, m) => {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            self.stable_borrow(a, &args[i + 1..])
+                            let v = self.stable_borrow(a, &args[i + 1..]);
+                            self.hold(v, a.ty, later)
                         }
-                        _ => self.expr(a),
+                        _ => self.expr_held(a, later),
                     };
-                    argv.push(self.hold(v, a.ty, later));
+                    argv.push(v);
                 }
             }
         }

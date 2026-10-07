@@ -129,8 +129,7 @@ impl FnLower<'_, '_> {
                     None
                 }
                 (Ty::Agg(_), PassMode::Borrow) => {
-                    let v = self.expr(a);
-                    let v = self.hold(v, a.ty, later);
+                    let v = self.expr_held(a, later);
                     Some(self.operand_addr(v, t))
                 }
                 (Ty::Agg(_), PassMode::BorrowMut) => {
@@ -147,10 +146,7 @@ impl FnLower<'_, '_> {
                     let v = self.hold_owned(v, a.ty, later);
                     Some(self.maybe_transfer(v, a.ty))
                 }
-                _ => {
-                    let v = self.expr(a);
-                    Some(self.hold(v, a.ty, later))
-                }
+                _ => Some(self.expr_held(a, later)),
             };
             out.push(v);
         }

@@ -95,6 +95,22 @@ impl FnLower<'_, '_> {
         self.hold_as(op, ty, later, false)
     }
 
+    /// Evaluate the operand `e` and [`hold`](Self::hold) it against the operands after it. When
+    /// those may change memory, the path to `e`'s value is recorded first, as `stable_borrow`
+    /// records a call argument's: a value reached through a counted container or a shared cell
+    /// can be freed by a later operand through another reference (`console.log(ps[0], clear())`
+    /// where `clear` pops `ps` through a closure), so its type is counted and the hold shares it.
+    pub(super) fn expr_held(&mut self, e: &hir::Expr, later: Later) -> Operand {
+        if later.memory && !self.dead() {
+            let ty = self.sub(e.ty);
+            if self.cx.needs_drop(ty) && !self.through_counted(e, ty) {
+                self.in_shared_cell(e);
+            }
+        }
+        let v = self.expr(e);
+        self.hold(v, e.ty, later)
+    }
+
     /// [`hold`](Self::hold) for an operand the consumer owns (from `consume`): it is already
     /// a share of its own, so a value still in a place is only copied out of it.
     pub(super) fn hold_owned(&mut self, op: Operand, ty: TyId, later: Later) -> Operand {

@@ -52,8 +52,7 @@ impl FnLower<'_, '_> {
         let ty = self.sub(ty);
         if let [Part::Str(_) | Part::Text(_), Part::Str(_) | Part::Text(_)] = parts.as_slice() {
             // Two strings: `velt_rt_str_concat` allocates exactly once, at the exact size.
-            let va = self.expr(a);
-            let va = self.hold(va, a.ty, Later::of(b));
+            let va = self.expr_held(a, Later::of(b));
             let vb = self.expr(b);
             let pa = self.operand_addr(va, STR);
             let pb = self.operand_addr(vb, STR);
