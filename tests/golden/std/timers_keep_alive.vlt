@@ -24,7 +24,9 @@ async function tick(runs: shared<i64>, timers: Channel<Timer>): Promise<void> {
   }
 }
 
-async function later(): Promise<void> {
+// Waits until `main` printed its last line (`printed`), so the output has one order.
+async function later(printed: Channel<bool>): Promise<void> {
+  await printed.receive();
   console.log("timeout fired after main returned");
   await sleep(10);
   console.log("its callback's own timer fired");
@@ -43,6 +45,8 @@ async function main() {
   const toggled = setInterval(() => never("interval"), 3600000).unref().ref();
   console.log("refs:", cleared.hasRef(), unrefd.hasRef(), toggled.hasRef());
   toggled.unref();
-  setTimeout(() => later(), 10);
+  const printed = channel<bool>(1);
+  setTimeout(() => later(printed), 10);
   console.log("main returns");
+  printed.trySend(true);
 }

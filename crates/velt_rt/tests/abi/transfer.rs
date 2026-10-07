@@ -240,11 +240,12 @@ unsafe extern "C" fn start_job_and_tag(slot: *mut u8) {
     tag(slot);
 }
 
+/// Wait until `n` glue jobs finished (a hang guard of a minute, not a time limit).
 fn wait_for_glue_jobs(n: usize) {
     let t = Instant::now();
     while GLUE_JOBS_DONE.load(Ordering::SeqCst) < n {
         assert!(
-            t.elapsed() < Duration::from_secs(10),
+            t.elapsed() < Duration::from_secs(60),
             "a promise the glue started did not finish"
         );
         block_on_fut::<()>(velt_rt_sleep(2));

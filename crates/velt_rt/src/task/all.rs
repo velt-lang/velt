@@ -376,10 +376,12 @@ mod tests {
                 })
             };
             Await(all).await;
-            // The pending children are dropped (their timers cancelled), so this ends at once.
+            // The pending children are dropped (their timers cancelled), so this ends at once:
+            // waiting for either of them would take 20 s at least. A bound that wide is a hang
+            // guard, not a time limit.
             assert!(
-                t.elapsed() < Duration::from_secs(10),
-                "long before the 20 s and 30 s children"
+                t.elapsed() < Duration::from_secs(20),
+                "the join waited for the 20 s and 30 s children"
             );
             assert_eq!(
                 results[0],

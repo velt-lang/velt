@@ -1,8 +1,41 @@
 // requires-env: VELT_TEST_REDIS_URL
 // std/redis: a client whose connection was killed reconnects on its next command instead of
 // failing with ECONNRESET from then on.
-import { connect } from "velt:redis";
+import { connect, RedisClient } from "velt:redis";
 import { redisUrl, freshPrefix, cleanup } from "./_redis";
+
+// Whether the server reports client `id` waiting in `BLPOP`.
+async function blockedInBlpop(admin: RedisClient, id: i64): Promise<bool> {
+  const list = await admin.call(["CLIENT", "LIST"]);
+  for (const line of list.text.split("\n")) {
+    if (line.startsWith(`id=${id} `)) {
+      return line.includes(" cmd=blpop");
+    }
+  }
+  return false;
+}
+
+// Kills `c`'s connection while it waits in a `BLPOP` nothing answers, and returns once `c` saw
+// the connection end (the `BLPOP` failed): the next command can only go to a new connection.
+// It waits for the server to report the `BLPOP` first (a minute is a hang guard, not a limit).
+async function kill(c: RedisClient, admin: RedisClient, p: string): Promise<i64> {
+  const id = (await c.call(["CLIENT", "ID"])).int;
+  const blocked = c.call(["BLPOP", `${p}never`, "0"]);
+  for (let t = 0; t < 60000; t++) {
+    if (await blockedInBlpop(admin, id)) {
+      break;
+    }
+    await sleep(1);
+  }
+  const killed = await admin.call(["CLIENT", "KILL", "ID", `${id}`]);
+  try {
+    await blocked;
+    console.log("unexpected: the BLPOP returned");
+  } catch (e) {
+    console.log("blocked command failed");
+  }
+  return killed.int;
+}
 
 async function main() {
   const url = redisUrl();
@@ -11,15 +44,12 @@ async function main() {
   const admin = await connect(url);
   await c.set(`${p}k`, "before");
   const id = await c.call(["CLIENT", "ID"]);
-  const killed = await admin.call(["CLIENT", "KILL", "ID", `${id.int}`]);
-  console.log("killed:", killed.int);
-  await sleep(100);
+  console.log("killed:", await kill(c, admin, p));
   console.log("after the kill:", await c.get(`${p}k`));
   const newId = await c.call(["CLIENT", "ID"]);
   console.log("new connection:", newId.int != id.int);
   // Several tasks on the reconnected client still share one pipelined connection.
-  await admin.call(["CLIENT", "KILL", "ID", `${newId.int}`]);
-  await sleep(100);
+  await kill(c, admin, p);
   const all = await Promise.all([c.incr(`${p}n`), c.incr(`${p}n`), c.incr(`${p}n`)]);
   console.log("incr after a second kill:", all.length, await c.get(`${p}n`));
   console.log("cleaned:", await cleanup(c, p));
