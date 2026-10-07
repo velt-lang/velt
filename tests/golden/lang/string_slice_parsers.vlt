@@ -10,7 +10,9 @@ function words(text: string): number {
   let n = 0;
   while (rest.length > 0) {
     const sp = rest.indexOf(" ");
-    if (sp < 0) break;
+    if (sp < 0) {
+      break;
+    }
     n++;
     rest = rest.slice(sp + 1);
   }
@@ -28,7 +30,9 @@ function tokens(src: string): string[] {
       rest = rest.substring(3);
     } else if (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57) {
       let i = 0;
-      while (i < rest.length && rest.charCodeAt(i) >= 48 && rest.charCodeAt(i) <= 57) i++;
+      while (i < rest.length && rest.charCodeAt(i) >= 48 && rest.charCodeAt(i) <= 57) {
+        i++;
+      }
       out.push(rest.slice(0, i));
       rest = rest.slice(i);
     } else {
@@ -88,7 +92,9 @@ function main() {
   console.log(keys.join(" "), counts.get("alpha"), counts.get("beta"));
   const tails: string[] = [];
   const long = "the quick brown fox jumps over the lazy dog and keeps running";
-  for (let i = 0; i < 6; i++) tails.push(long.slice(i * 3));
+  for (let i = 0; i < 6; i++) {
+    tails.push(long.slice(i * 3));
+  }
   tails.sort();
   console.log(tails[0].slice(0, 12), "|", tails[5].slice(0, 12));
 
@@ -96,7 +102,9 @@ function main() {
   let keep = "";
   {
     let tmp = "";
-    for (let i = 0; i < 100; i++) tmp += `${i},`;
+    for (let i = 0; i < 100; i++) {
+      tmp += `${i},`;
+    }
     keep = tmp.slice(10);
   }
   console.log(keep.length, keep.slice(0, 12), JSON.stringify(keep.slice(-8)));
@@ -104,7 +112,12 @@ function main() {
   // Halves of a surrogate pair at the slice's ends.
   const emoji = "x".repeat(30) + "😀".repeat(30);
   const half = emoji.slice(31);
-  console.log(half.length, half.charCodeAt(0), half.charCodeAt(1), JSON.stringify(half.slice(0, 2)));
+  console.log(
+    half.length,
+    half.charCodeAt(0),
+    half.charCodeAt(1),
+    JSON.stringify(half.slice(0, 2)),
+  );
   const rejoined = emoji.slice(0, 31) + half;
   console.log(rejoined === emoji, rejoined.length, rejoined.charCodeAt(31));
   const trimmed = ("   " + "padded text ".repeat(5) + "   ").trim();

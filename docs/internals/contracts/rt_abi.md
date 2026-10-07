@@ -50,7 +50,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   static strings may borrow them (same lifetime).
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
   byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
-  is always the 8 bytes before it:
+  is always the 8 bytes before the buffer's first byte:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
     `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
@@ -72,18 +72,50 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   after a plain load; an increment happens only when a string is copied while its source stays
   alive (the compiler moves instead when the source is dead).
 - A **slice** (#402) is a heap string whose bytes lie inside another heap string's buffer, which
-  it shares through the buffer's count: `{ptr, units << 32 | len, w2}` with `ptr` at its first
-  byte; `w2` has bit 62 set, bit 61 when the buffer has a header (its text is not ASCII,
-  whatever the slice's is), the byte offset of `ptr` from the buffer's first byte in bits
-  31..60 and the buffer's capacity in bits 0..29. The buffer is at `ptr - ((w2 >> 31) & (2^30 - 1))` for every
-  heap string (the offset of a plain one reads as 0). Generated code needs no change: a slice
-  tests as a heap string (`(int64_t)w2 > 0`), and `w0`/`w1` read as for any heap string. A
-  slice is never appended to in place, has no breadcrumbs of its own, and knows its lone
-  surrogates only as "none" when its buffer has none. `slice`/`substring` share when the piece
-  is at least a quarter of the buffer's capacity and the buffer is below 1 GiB, and copy
-  otherwise (inline when short).
+  it shares through the buffer's count: `{ptr, units << 32 | len, w2}`, with `ptr` at the
+  slice's first byte and `w1` its own counts. `w2` tells the two heap forms apart:
+
+  | bits of `w2` | plain heap string | slice |
+  |---|---|---|
+  | 63 | 0 | 0 |
+  | 62 | 0 | 1 |
+  | 61 | 0 | 1 when the buffer has a header (its text is not ASCII, whatever the slice's is) |
+  | 31..60 | 0 | the byte offset of `ptr` from the buffer's first byte |
+  | 30 | capacity (bits 0..30) | 0 |
+  | 0..29 | capacity | the buffer's capacity |
+
+  For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
+  plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
+- **Which pieces share.** Every runtime function that returns a piece of a heap string
+  (`slice`, `substring`, `trim`/`trimStart`/`trimEnd`, the pieces of `split`) returns a slice
+  when the piece is too long to be inline, at least a quarter of the buffer's capacity, and the
+  buffer is below 1 GiB (2^30 bytes); otherwise it copies (inline when short).
+  The whole string is shared as it is (count +1, same value), a piece of a static string
+  borrows it, and a piece that ends between the halves of a surrogate pair is a copy (the half
+  is re-encoded). So live slices pin at most four times their own size (a short piece of a huge
+  string never keeps it alive), and a parser that consumes its input from the front
+  (`rest = rest.slice(n)`) copies at most a third of it in all.
+- **Counts and threads.** A buffer's count counts every string that references it, slices
+  included: a slice retains the buffer when made and releases it when dropped, and the last
+  reference, plain or slice, frees it with the buffer's layout (bit 61 says which for a
+  slice). Counts are atomic, so slices cross threads like any string.
+- **Never written in place.** A slice is never appended to in place, nor moved behind a header:
+  appending to one copies it, even when it holds the buffer's only reference. A plain heap
+  string is appended to in place only when its count is 1, which a live slice of it prevents.
+  So neither a slice nor its parent ever writes bytes the other can see.
+- **Header fields.** A slice has no breadcrumbs of its own: the buffer's describe the whole text,
+  and positions in a non-ASCII slice are translated by scanning from its nearer end and the
+  per-thread cursor (remembering a position in a slice sets the buffer's `crumbs` field to 1
+  unless it has a table, so freeing the buffer bumps the epoch). The buffer's `lone` counts the
+  whole buffer, so a slice reads it only as "none" when it is 0, and otherwise counts its own
+  text when asked, without recording it.
+- **Generated code** needs no change for slices and must not assume more: a slice tests as a
+  heap string (`(int64_t)w2 > 0`), its `w0`/`w1` read as for any heap string, and dropping it
+  calls `velt_rt_str_drop`. `w2` of a heap string is not its capacity, and its count is not at
+  `w0 - 8`: only the runtime finds the buffer.
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
-  place only to an inline string with room or a heap buffer with count 1 (of the right layout).
+  place only to an inline string with room or a plain heap string (not a slice) whose buffer has
+  count 1 (of the right layout).
 - Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including
   `velt_rt_str_append` and the builder's pushes, ends there), which keeps the unit count, the lone
   count and the form in step in O(1) per append (geometric growth), and joins a high surrogate ending the string with a

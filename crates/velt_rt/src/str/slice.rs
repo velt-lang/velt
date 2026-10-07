@@ -11,8 +11,9 @@
 //! | 63 | 0 | 0 |
 //! | 62 | 0 | 1 ([`SLICE`]) |
 //! | 61 | 0 | the buffer has a header ([`SLICE_HEADER`]: its text is not ASCII) |
-//! | 31..61 | 0 | byte offset of `w0` from the buffer's first byte |
-//! | 0..30 | capacity | the buffer's capacity |
+//! | 31..60 | 0 | byte offset of `w0` from the buffer's first byte |
+//! | 30 | capacity (bits 0..30, below 2³¹) | 0 |
+//! | 0..29 | capacity | the buffer's capacity (below [`SLICE_MAX_CAP`]) |
 //!
 //! The offset of a plain heap string reads as 0 (its capacity is below 2³¹), so finding the
 //! buffer, and through it the count, is the same few instructions for both. A slice is never

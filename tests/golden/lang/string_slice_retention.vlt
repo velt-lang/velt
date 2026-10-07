@@ -1,0 +1,35 @@
+// Memory retention of slices (#402): a slice shares its parent's buffer only when it is at least a
+// quarter of it, so a short piece of a huge string is a copy and does not keep the huge string
+// alive. Keeping a 1 KB piece of each of 256 strings of 1 MB holds about 256 KB, not 256 MB.
+// (V8's sliced strings do pin their parents, so Node prints only the stdout lines; the verdict
+// on retention goes to stderr, which `.stderr` checks.)
+
+function piece(i: number): string {
+  const huge = `${i}:` + "x".repeat(1 << 20);
+  return huge.slice(1000, 2024);
+}
+
+function main() {
+  const before = process.memoryUsage().heapUsed;
+  const kept: string[] = [];
+  for (let i = 0; i < 256; i++) {
+    kept.push(piece(i));
+  }
+  const grown = process.memoryUsage().heapUsed - before;
+  let total = 0;
+  for (const k of kept) {
+    total += k.length;
+  }
+  console.log(kept.length, total, kept[255].slice(0, 4));
+  // Pinned parents would be 256 MB; copies stay far below 160 MB (the debug allocator's
+  // quarantine holds up to 64 MB of freed blocks).
+  console.error(grown < 160 * 1024 * 1024 ? "retention: bounded" : `retention: ${grown} bytes`);
+  // Large pieces share instead: a third of each string, a few at a time.
+  let shared = 0;
+  for (let i = 0; i < 8; i++) {
+    const huge = `${i}:` + "y".repeat(1 << 20);
+    const third = huge.slice(0, 350000);
+    shared += third.length;
+  }
+  console.log(shared);
+}
