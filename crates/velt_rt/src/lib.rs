@@ -78,7 +78,11 @@ static GLOBAL: InnerAlloc = InnerAlloc {};
 // The debug runtime linked into programs can check every allocation (`VELT_RT_DEBUG_ALLOC=1`).
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 #[global_allocator]
-static GLOBAL: debug_alloc::DebugAlloc<InnerAlloc> = debug_alloc::DebugAlloc(InnerAlloc {});
+static GLOBAL: debug_alloc::DebugAlloc<InnerAlloc> =
+    debug_alloc::DebugAlloc::new(InnerAlloc {}, &GLOBAL_QUARANTINE);
+
+#[cfg(all(debug_assertions, not(velt_rt_host)))]
+static GLOBAL_QUARANTINE: debug_alloc::Quarantine = debug_alloc::Quarantine::new();
 
 /// ABI tests written as a "fake compiler": hand-written C-ABI state machines driven through the
 /// public ABI. They live under tests/abi/ but are compiled into the unit-test binary because the

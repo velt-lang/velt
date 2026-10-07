@@ -17,8 +17,9 @@ use std::collections::HashMap;
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind, RetSource};
+use crate::defs::{BodyState, FnKind, FnSource, RetSource};
 use crate::hir::DefId;
+use crate::written_types::written_param;
 
 #[derive(Default)]
 pub(crate) struct RecState {
@@ -202,10 +203,26 @@ fn annotated_signature(cx: &Ctx, d: DefId) -> String {
     } else {
         format!("<{}>", own.join(", "))
     };
+    // As written where the declaration is at hand (`n: number`, not the resolved `f64`).
+    let written = match f.source {
+        Some(FnSource::Decl(decl)) => Some(&decl.sig),
+        Some(FnSource::Default(sig, _)) => Some(sig),
+        None => None,
+    }
+    .filter(|sig| sig.params.len() == f.params.len());
     let params: Vec<String> = f
         .params
         .iter()
-        .map(|p| format!("{}: {}", p.name, cx.display_in(p.ty, names)))
+        .enumerate()
+        .map(|(i, p)| match written {
+            Some(sig) => {
+                let wp = &sig.params[i];
+                let q = if wp.optional { "?" } else { "" };
+                let rest = if wp.rest { "..." } else { "" };
+                format!("{rest}{}{q}: {}", p.name, written_param(wp))
+            }
+            None => format!("{}: {}", p.name, cx.display_in(p.ty, names)),
+        })
         .collect();
     let params = params.join(", ");
     let name = short_name(cx, d);
