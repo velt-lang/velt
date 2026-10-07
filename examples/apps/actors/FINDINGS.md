@@ -22,7 +22,7 @@ too.
 | B5 | Ownership inference never settled for an async method called on a local copied out of an array | #197 | Turn queues are arrays with `shift()` |
 | B6 | Release ICE: a variable assigned in `try` and read after an `await` | #198 | Decoding is inline `let x; try { x = … } catch { throw … }` |
 | B7 | Release ICE: `JSON.parse<i64>` | #199 | `JSON.parse<T>` and `Value.as<T>()` directly |
-| B8 | ICE: a field initializer that calls a throwing function | #200 | — |
+| B8 | ICE: a field initializer that calls a throwing function | #200 | Fixed (#257). The port never had such a field, so nothing changed here |
 
 The small library gaps of the first round are fixed and used too: `Ticker.stop()` takes effect
 at once (#201), `Promise.withResolvers` replaces a one-slot reply channel per call (#203),
@@ -62,10 +62,11 @@ Ordered by how much they shape the design.
 
 The numbers are in [README.md](README.md#results). In short:
 
-- **HTTP:** Velt spends 4–5× less CPU per request than @sigx/actors on Node (12× less in user
-  mode), and less than a bare `node:http` handler. It needs a tenth of sigx's memory.
-- **In process:** Velt spends 2.2–6× the CPU per call of sigx's `host.dispatch` on one thread,
-  and 4–7× with 4 shards. The instruction count is the same with 1 shard or 4 (11–13k per call),
+- **HTTP:** Velt spends 5–6× less CPU per request than @sigx/actors on Node (10–13× less in
+  user mode), and 1.13–1.5× less than a bare `node:http` handler. Its peak memory is 13–32 MB
+  against sigx's 209–271 MB.
+- **In process:** Velt spends 2.1–3.3× the CPU per call of sigx's `host.dispatch` on one
+  thread, and 3.1–7.5× with 4 shards. The instruction count is the same with 1 shard or 4 (11–13k per call),
   so the gap between them is thread wakeups.
 
 Where an in-process call's instructions go (callgrind, one thread, warm actor), and what would
@@ -76,10 +77,4 @@ remove them:
 | Envelope through the shard's channel, one byte at a time | ~20% | #635 (new): copy items whole. Registry lock and `Arc` clone per operation: #146 |
 | Allocation: the turn loop's promise for an idle actor, the `withResolvers` slot and settlers, the envelope, the chain array | ~13% | Fewer allocations per call in the runtime; a cheaper one-shot reply |
 | Strings: the `type/key` id and the `{"data":…}` reply body, formatted per call | ~8% | In the port: intern ids, and pass replies as values instead of wire text |
-| Two cross-thread wakeups per call with several shards | 2–3× CPU, not instructions | #211 task placement |
-
-A finding about measuring, not about Velt: on a machine at 100% load, the OS deschedules
-threads for 50–180 ms at a time, Node's as much as Velt's. The bench used to compute its
-deadline before spawning its callers, so one such stall during the spawn loop could swallow a
-whole 200 ms pass and report 0 calls/s. That is the `warm c=64 = 0 ops/s` of an earlier smoke
-run. The callers now start on a channel once all of them exist.
+| Two cross-thread wakeups per call with several shards | 1.2–2.5× CPU, not instructions | #211 task placement |

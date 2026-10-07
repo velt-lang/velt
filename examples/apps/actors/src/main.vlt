@@ -3,6 +3,7 @@
 //   actors bench [--duration 2000] [--shards N] in-process benchmarks
 //   actors calls [--scenario warm|fan] [--c 64] [--n 100000] [--shards N]
 //                                               a fixed number of calls, for CPU-time comparisons
+// `cli.vlt` is a golden that compiles this module (and so src/bench.vlt) and runs `cli`.
 import { args } from "velt:process";
 import { availableParallelism } from "velt:os";
 import {
@@ -35,31 +36,35 @@ function flag(argv: string[], name: string, fallback: string): string {
   return fallback;
 }
 
-async function main() {
-  const argv = args();
+// The command line, apart from `main` so that the `cli` golden compiles all of it.
+export async function cli(argv: string[]) {
   const command = argv.length > 0 ? argv[0] : "serve";
+  if (command != "serve" && command != "bench" && command != "calls") {
+    console.log(`unknown command ${command}: serve | bench | calls`);
+    return;
+  }
   const opts = defaultHostOptions();
   opts.shards = parseInt(flag(argv, "shards", "0")) as i64;
   const host = startHost<AppConfig>(opts, availableParallelism(), {});
   if (command == "serve") {
     const port = parseInt(flag(argv, "port", "5199")) as i64;
-    const server = await serveActors(host.router, port, flag(argv, "host", "127.0.0.1"));
+    const hostname = flag(argv, "host", "127.0.0.1");
+    const server = await serveActors(host.router, port, hostname);
     console.log(
-      `actors: ${host.shards} shards, listening on http://127.0.0.1:${server.port}/_sigx/actor/`,
+      `actors: ${host.shards} shards, listening on http://${hostname}:${server.port}/_sigx/actor/`,
     );
     return;
   }
   if (command == "bench") {
     await runBenchmarks(host, parseFloat(flag(argv, "duration", "2000")), flag(argv, "only", ""));
-    await host.stop();
-    return;
-  }
-  if (command == "calls") {
+  } else {
     const c = parseInt(flag(argv, "c", "64")) as i64;
     const n = parseInt(flag(argv, "n", "100000")) as i64;
     await fixedCalls(host, flag(argv, "scenario", "warm"), c, n);
-    await host.stop();
-    return;
   }
-  console.log(`unknown command ${command}: serve | bench | calls`);
+  await host.stop();
+}
+
+async function main() {
+  await cli(args());
 }

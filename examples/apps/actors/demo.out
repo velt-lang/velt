@@ -6,6 +6,7 @@ POST Counter/increment {"args":["a",3]} -> 200 {"data":6}
 -- actor to actor
 POST Counter/increment {"args":["b",10]} -> 200 {"data":10}
 POST Counter/pull {"args":["a","b"]} -> 200 {"data":16}
+POST Counter/pullFrom {"args":["b","a"]} -> 200 {"data":16}
 POST Counter/loop {"args":["a","b"]} -> 500 {"error":{"status":500,"message":"call cycle: Counter/a -> Counter/b -> Counter/a","data":{"kind":"deadlock"}}}
 -- errors
 POST Counter/increment {"args":["a",-1]} -> 400 {"error":{"status":400,"message":"increment: by must not be negative","data":{"kind":"bad-request"}}}

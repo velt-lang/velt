@@ -88,4 +88,4 @@ conditions: production · commit 6a94345 · 3 runs × 400ms
     gc/collections         140.00 count
     gc/major_collections    18.00 count
 
-results → /home/user/velt/examples/apps/actors/bench/results/inproc-node.json
+results → bench/results/inproc-node.json

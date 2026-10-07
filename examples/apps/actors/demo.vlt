@@ -48,6 +48,7 @@ async function main() {
   console.log("-- actor to actor");
   await post(port, "Counter/increment", `{"args":["b",10]}`);
   await post(port, "Counter/pull", `{"args":["a","b"]}`);
+  await post(port, "Counter/pullFrom", `{"args":["b","a"]}`);
   await post(port, "Counter/loop", `{"args":["a","b"]}`);
 
   console.log("-- errors");

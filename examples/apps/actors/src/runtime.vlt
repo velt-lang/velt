@@ -477,6 +477,8 @@ function accept(shard: Shard, env: Envelope): Reply | null {
   if (!slot.running) {
     slot.running = true;
     // Started, not awaited: the loop runs on the shard's task, interleaved with other actors'.
+    // The binding is never read, but it is needed: a bare call is a "floating promise" error,
+    // and `spawn` would move the loop to another worker, off the shard that owns the slot.
     const turns = runTurns(shard, slot);
   }
   return null;

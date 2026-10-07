@@ -35,12 +35,7 @@ function counterMethods(): Methods<CounterState> {
       "pull",
       async (ctx: Ctx<CounterState>, from: string): Promise<i64> throws ActorError => {
         const json = await ctx.call("Counter", from, "current", JsonValue.array());
-        let theirs: CounterState;
-        try {
-          theirs = JSON.parse<CounterState>(json);
-        } catch (e) {
-          throw new ActorError(500, "decode", e.message);
-        }
+        const theirs = decode<CounterState>(json);
         ctx.state.count += theirs.count;
         ctx.save();
         return ctx.state.count;
@@ -57,7 +52,9 @@ function counterMethods(): Methods<CounterState> {
       ctx: Ctx<CounterState>,
       from: string,
     ): Promise<i64> throws ActorError => {
-      return decode<i64>(await ctx.call("Counter", from, "current", JsonValue.array()));
+      return decode<CounterState>(
+        await ctx.call("Counter", from, "current", JsonValue.array()),
+      ).count;
     })
     .method0<bool>("sleep", async (ctx: Ctx<CounterState>): Promise<bool> throws ActorError => {
       ctx.deactivate();
