@@ -1,303 +1,50 @@
 // std/jsx/attrs/text: attribute types of quotations, edits, lists, dates and disclosure widgets
-// (internal; the global attributes are repeated from attrs/global.vlt, see there).
+// (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
+// `velt:jsx/attrs`).
+
+import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
 // `<blockquote>` and `<q>`.
-export type QuoteAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type QuoteAttrs = HtmlAttrs & {
   cite?: string;
 };
 
 // `<del>` and `<ins>`.
-export type EditAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type EditAttrs = HtmlAttrs & {
   cite?: string;
   datetime?: string;
 };
 
 // `<data>`.
-export type DataAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type DataAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
 };
 
 // `<time>`.
-export type TimeAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type TimeAttrs = HtmlAttrs & {
   datetime?: string;
 };
 
 // `<li>`.
-export type LiAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type LiAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
 };
 
 // `<ol>`.
-export type OlAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type OlAttrs = HtmlAttrs & {
   reversed?: bool;
   start?: string | i64 | f64;
   type?: string;
 };
 
 // `<details>`.
-export type DetailsAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type DetailsAttrs = HtmlAttrs & {
   open?: bool;
   name?: string;
 };
 
 // `<dialog>`.
-export type DialogAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type DialogAttrs = HtmlAttrs & {
   open?: bool;
   closedby?: string;
 };

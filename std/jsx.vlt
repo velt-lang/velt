@@ -7,7 +7,7 @@
 // void_elements.vlt, render.vlt, intrinsic*.vlt (the HTML tags and attributes).
 
 export { Element, RenderError } from "velt:jsx/node";
-export type { Child, AttrValue, Text } from "velt:jsx/node";
+export type { Child, AttrValue, Style, Text } from "velt:jsx/node";
 export type { IntrinsicElements, ElementChildrenAttribute } from "velt:jsx/intrinsic";
 export { Fragment, raw } from "velt:jsx/factory";
 export { renderToString, renderToStringSync, renderToStream } from "velt:jsx/render";

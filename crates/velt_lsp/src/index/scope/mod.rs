@@ -306,7 +306,13 @@ impl<'a> Walker<'a> {
                 args.iter().for_each(|a| self.ty(a));
             }
             ast::TypeExprKind::Array(elem) => self.ty(elem),
-            ast::TypeExprKind::Tuple(tys) | ast::TypeExprKind::Union(tys) => {
+            ast::TypeExprKind::Indexed { object, key } => {
+                self.ty(object);
+                self.ty(key);
+            }
+            ast::TypeExprKind::Tuple(tys)
+            | ast::TypeExprKind::Union(tys)
+            | ast::TypeExprKind::Intersection(tys) => {
                 tys.iter().for_each(|t| self.ty(t))
             }
             ast::TypeExprKind::Function {

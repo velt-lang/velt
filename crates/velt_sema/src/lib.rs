@@ -27,6 +27,7 @@
 pub mod hir;
 
 mod anon;
+mod brands;
 mod assigned_fields;
 mod ast_walk;
 mod body;
@@ -41,6 +42,7 @@ mod fresh_returns;
 mod generic_arrows;
 pub mod ide;
 mod infer;
+mod intersections;
 mod instantiation_cycles;
 mod json;
 mod known;

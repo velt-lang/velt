@@ -34,6 +34,11 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        // A branded value converts like its primitive (a primitive never converts to a brand).
+        if self.cx.brand_base(h.ty).is_some() {
+            let h = self.unbrand(h);
+            return self.try_coerce(h, exp);
+        }
         if self.widens_promise(h.ty, exp) {
             let span = h.span;
             let call = H::Call {
@@ -223,6 +228,15 @@ impl FnCx<'_, '_> {
                 d = d.with_note(note);
             }
         }
+        if let Some(base) = self.cx.brand_base(expected) {
+            let b = self.cx.display(base);
+            d = d.with_note(format!(
+                "`{e}` is a branded `{b}`: a plain `{b}` does not convert to it; brand a value with `x as {e}`"
+            ));
+        }
+        if let Some(note) = self.wider_object_note(expected, found) {
+            d = d.with_note(note);
+        }
         if let Some(note) = self.class_to_data_note(expected, found) {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
@@ -235,6 +249,46 @@ impl FnCx<'_, '_> {
             );
         }
         self.cx.error(d);
+    }
+
+    /// For an object type with more fields than the expected one (an intersection `A & B` where
+    /// `A` is expected): object types don't convert by dropping fields, so how to get an `A`.
+    fn wider_object_note(&mut self, expected: TyId, found: &hir::Expr) -> Option<String> {
+        if !self.cx.is_object_type(expected) || !self.cx.is_object_type(found.ty) {
+            return None;
+        }
+        let (TyKind::Adt(ed, eargs), TyKind::Adt(fd, fargs)) = (
+            self.cx.ty.kind(expected).clone(),
+            self.cx.ty.kind(found.ty).clone(),
+        ) else {
+            return None;
+        };
+        let field_tys = |cx: &mut crate::ctx::Ctx, d, args: &[TyId]| -> Vec<(String, TyId)> {
+            let fields = cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
+            fields
+                .into_iter()
+                .map(|f| (f.name, cx.ty.subst(f.ty, args)))
+                .collect()
+        };
+        let want = field_tys(self.cx, ed, &eargs);
+        let have = field_tys(self.cx, fd, &fargs);
+        if want.is_empty() || !want.iter().all(|w| have.contains(w)) {
+            return None;
+        }
+        let extra: Vec<String> = have
+            .iter()
+            .filter(|h| !want.iter().any(|w| w.0 == h.0))
+            .map(|h| format!("`{}`", h.0))
+            .collect();
+        let (e, f) = (self.cx.display(expected), self.cx.display(found.ty));
+        let src = match &found.kind {
+            H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
+            _ => "value".into(),
+        };
+        Some(format!(
+            "`{f}` has fields `{e}` does not ({}), and object types don't convert by dropping fields: copy the ones it needs with `{{ ...{src} }}` where a `{e}` is expected, or take a generic parameter `<T extends I>` with `I` a field-only interface",
+            extra.join(", ")
+        ))
     }
 
     /// For an interface value where an interface it extends is expected (`IterableIterator<T>`

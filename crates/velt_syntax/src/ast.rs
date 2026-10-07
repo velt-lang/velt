@@ -278,6 +278,14 @@ pub enum TypeExprKind {
     },
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
+    /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)
+    /// are [`GenericParam::bounds`] instead.
+    Intersection(Vec<TypeExpr>),
+    /// `T["k"]` (an indexed access type; the key is a string literal type or a union of them).
+    Indexed {
+        object: Box<TypeExpr>,
+        key: Box<TypeExpr>,
+    },
     /// Literal type: `"circle"`, `42`, `-1`, `1.5`, `true`.
     Literal(SignedLit),
     /// Object type `{ kind: "circle"; r: f64 }` (an anonymous object type).

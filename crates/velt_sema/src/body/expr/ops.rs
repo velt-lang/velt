@@ -243,6 +243,8 @@ impl FnCx<'_, '_> {
             Some(LitEq::Operands(l, r)) => (l, r),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        // Branded values are operands as their primitives.
+        let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
             let (l, r) = self.nullable_operands(l, r);
             self.identity_operands(l, r)

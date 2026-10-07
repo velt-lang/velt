@@ -289,7 +289,19 @@ impl FnCx<'_, '_> {
                     .is_some_and(|fs| same_names(&fs, &names))
             })
             .collect();
-        Ok((exact.len() == 1).then(|| exact[0]))
+        if exact.len() == 1 {
+            return Ok(Some(exact[0]));
+        }
+        // No object member has these fields: a `Record` member takes any keys
+        // (`style={{ color: c }}` for `string | Record<string, string | number>`).
+        let records: Vec<TyId> = self
+            .cx
+            .union_members(u)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| self.record_args(*m).is_some())
+            .collect();
+        Ok((exact.is_empty() && records.len() == 1).then(|| records[0]))
     }
 
     fn field_names(&self, t: TyId) -> Option<Vec<String>> {
