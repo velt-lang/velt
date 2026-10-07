@@ -20,7 +20,7 @@
 // - a shared object passed to an async call as its last use in a loop body loses a reference
 //   (B3), so such loops `touch` the object afterwards, and call arguments travel as JSON text.
 import { Value } from "velt:json";
-import { channel, Channel, ChannelClosed } from "velt:channel";
+import { channel, Channel } from "velt:channel";
 import { Ticker } from "velt:timers";
 import { fnv1a64 } from "velt:hash";
 
@@ -78,7 +78,8 @@ export struct Envelope {
   deadline: f64;
   // Actor ids (`type/key`) of the calls in progress above this one, for deadlock detection.
   chain: string[];
-  reply: Channel<Reply>;
+  // Settles the caller's promise (`Promise.withResolvers`).
+  reply: (r: Reply) => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -443,14 +444,6 @@ class Shard {
   }
 }
 
-async function send(env: Envelope, r: Reply): Promise<void> {
-  try {
-    await env.reply.send(r);
-  } catch (e) {
-    // The caller went away; nothing to do.
-  }
-}
-
 function slotFor(shard: Shard, type: string, key: string, id: string): Slot | null {
   const found = shard.directory.get(id);
   if (found != null) {
@@ -511,7 +504,7 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
           if (env == null) {
             break;
           }
-          await send(env, failure);
+          env.reply(failure);
         }
         break;
       }
@@ -523,7 +516,7 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
     const r = await turn(shard, slot, id, env);
     slot.lastActivity = performance.now();
     shard.turns += 1;
-    await send(env, r);
+    env.reply(r);
     if (slot.act == null) {
       shard.deactivations += 1;
     }
@@ -601,7 +594,7 @@ async function sweepLoop(shard: Shard, ticker: Ticker): Promise<void> {
 // Control messages a shard answers besides calls.
 export struct Control {
   op: string;
-  reply: Channel<ShardStats>;
+  reply: (s: ShardStats) => void;
 }
 
 async function runShard<C extends HostConfig>(
@@ -625,7 +618,7 @@ async function runShard<C extends HostConfig>(
     }
     const refused = accept(shard, env);
     if (refused != null) {
-      await send(env, refused);
+      env.reply(refused);
     }
   }
   ticker.stop();
@@ -649,15 +642,13 @@ async function controlLoop(shard: Shard, control: Channel<Control>): Promise<voi
       shard.deactivations += shard.directory.size as i64;
       shard.directory.clear();
     }
-    try {
-      await c.reply.send({
-        activations: shard.activations,
-        deactivations: shard.deactivations,
-        turns: shard.turns,
-        saves: shard.saves,
-        live: shard.directory.size as i64,
-      });
-    } catch (e) {}
+    c.reply({
+      activations: shard.activations,
+      deactivations: shard.deactivations,
+      turns: shard.turns,
+      saves: shard.saves,
+      live: shard.directory.size as i64,
+    });
   }
 }
 
@@ -710,7 +701,7 @@ export struct Router {
     chain: string[],
     deadline: f64,
   ): Promise<Reply> {
-    const reply = channel<Reply>(1);
+    const { promise, resolve } = Promise.withResolvers<Reply>();
     const shard = shardOf(type, key, this.inboxes.length as i64) as usize;
     try {
       await this.inboxes[shard].send({
@@ -720,15 +711,12 @@ export struct Router {
         args: args,
         deadline: deadline,
         chain: chain,
-        reply: reply,
+        reply: resolve,
       });
     } catch (e) {
-      reply.close();
       return errorReply(503, "shutdown", "the host is stopping");
     }
-    const r = await reply.receive();
-    reply.close();
-    return r ?? errorReply(503, "shutdown", "the host is stopping");
+    return await promise;
   }
 }
 
@@ -751,21 +739,18 @@ export struct Host {
   async stats(op: string = "stats"): Promise<ShardStats> {
     const total: ShardStats = { activations: 0, deactivations: 0, turns: 0, saves: 0, live: 0 };
     for (let i: usize = 0; i < this.controls.length; i++) {
-      const reply = channel<ShardStats>(1);
+      const { promise, resolve } = Promise.withResolvers<ShardStats>();
       try {
-        await this.controls[i].send({ op: op, reply: reply });
+        await this.controls[i].send({ op: op, reply: resolve });
       } catch (e) {
         continue;
       }
-      const s = await reply.receive();
-      reply.close();
-      if (s != null) {
-        total.activations += s.activations;
-        total.deactivations += s.deactivations;
-        total.turns += s.turns;
-        total.saves += s.saves;
-        total.live += s.live;
-      }
+      const s = await promise;
+      total.activations += s.activations;
+      total.deactivations += s.deactivations;
+      total.turns += s.turns;
+      total.saves += s.saves;
+      total.live += s.live;
     }
     return total;
   }
