@@ -11,7 +11,9 @@
 //!   `0x20` when it may hold lone surrogates. No heap, copying is a 24-byte copy.
 //! - **heap** (`w2 > 0` as `i64`): `{ptr, units << 32 | len, cap}` where `ptr` points into a
 //!   reference-counted buffer (`heap`) of `cap` bytes; copying bumps the count, dropping the last
-//!   copy frees it. Non-ASCII buffers carry a header with the lone-surrogate count.
+//!   copy frees it. Non-ASCII buffers carry a header with the lone-surrogate count. A **slice**
+//!   (`slice`) is a heap string whose bytes lie inside another string's buffer, which it shares;
+//!   its `w2` also locates the buffer.
 //!
 //! Bytes enter a string through one function, [`VeltStr::push_wtf8`] (`push`), or through the
 //! constructors here, which use the same counting and layout helpers.
@@ -28,6 +30,7 @@ mod join;
 mod order;
 mod push;
 mod recent;
+mod slice;
 pub mod stats;
 #[cfg(test)]
 mod tests;
@@ -94,6 +97,8 @@ impl std::fmt::Debug for VeltStr {
         let text = wtf8::to_utf8_lossy(unsafe { self.as_bytes() });
         let form = if self.is_inline() {
             "inline"
+        } else if self.is_slice() {
+            "slice"
         } else if self.is_heap() {
             "heap"
         } else {
@@ -311,13 +316,13 @@ impl VeltStr {
     ///
     /// # Safety
     /// `self` must be valid.
-    #[inline]
+    #[inline(always)]
     unsafe fn lone(&self) -> usize {
         let tag = self.tag();
         if (tag & INLINE != 0 && tag & INLINE_LONE == 0) || self.is_ascii() {
             0
         } else if self.is_heap() {
-            heap::lone(self.ptr())
+            self.heap_lone()
         } else if self.is_inline() {
             wtf8::count_lone(self.as_bytes())
         } else {
@@ -341,7 +346,7 @@ impl VeltStr {
         } else if self.is_ascii() {
             false
         } else if self.w2 != 0 {
-            heap::lone(self.ptr()) > 0
+            self.heap_lone() > 0
         } else {
             true
         }
@@ -362,7 +367,7 @@ impl VeltStr {
         } else if (self.w1 >> 32) as u32 == self.w1 as u32 {
             true
         } else if self.w2 != 0 {
-            let n = heap::lone(self.ptr());
+            let n = self.heap_lone();
             n == 0 || (n == wtf8::LONE_UNKNOWN && self.resolve_lone() == 0)
         } else {
             wtf8::count_lone(self.as_bytes()) == 0
@@ -370,12 +375,14 @@ impl VeltStr {
     }
 
     /// Count the lone surrogates of a non-ASCII heap string whose header doesn't know them, and
-    /// record the count.
+    /// record the count (not for a slice: the header counts the whole buffer's).
     #[cold]
     #[inline(never)]
     unsafe fn resolve_lone(&self) -> usize {
         let n = wtf8::count_lone(self.as_bytes());
-        heap::resolve_lone(self.ptr(), n);
+        if !self.is_slice() {
+            heap::resolve_lone(self.ptr(), n);
+        }
         n
     }
 
@@ -479,59 +486,13 @@ impl VeltStr {
         }
     }
 
-    /// Bytes `start..end` as a string: a borrowed sub-range of a static string, the whole string
-    /// shared (count +1), else a fresh copy. A piece of an ASCII string is ASCII, so only a piece
-    /// of a non-ASCII one is counted.
-    ///
-    /// # Safety
-    /// `self` must be valid and `start <= end <= len`, both at code point boundaries.
-    pub unsafe fn substring(&self, start: usize, end: usize) -> VeltStr {
-        if start >= end {
-            return VeltStr::empty();
-        }
-        let piece = &self.as_bytes()[start..end];
-        if self.is_static() {
-            let units = if self.is_ascii() {
-                piece.len()
-            } else {
-                wtf8::count_units(piece)
-            };
-            return VeltStr::borrowed_counted(piece.as_ptr(), piece.len(), units);
-        }
-        if start == 0 && end == self.len() {
-            return self.share();
-        }
-        VeltStr::owned_counted(piece, self.piece_summary(piece))
-    }
-
-    /// The summary of `piece`, a sub-range of `self`: ASCII if `self` is, and without lone
-    /// surrogates if `self` is known to have none (its heap header or inline flag says so);
-    /// otherwise the piece is counted.
-    ///
-    /// # Safety
-    /// `self` must be valid.
-    unsafe fn piece_summary(&self, piece: &[u8]) -> Summary {
-        if self.is_ascii() {
-            return Summary::ascii(piece.len());
-        }
-        let lone_free = !self.may_have_lone();
-        Summary {
-            units: wtf8::count_units(piece),
-            lone: if lone_free {
-                0
-            } else {
-                wtf8::count_lone(piece)
-            },
-        }
-    }
-
     /// Another reference to the same string (count +1 for heap strings).
     ///
     /// # Safety
     /// `self` must be valid.
     pub unsafe fn share(&self) -> VeltStr {
         if self.is_heap() {
-            heap::retain(self.ptr());
+            heap::retain(self.buffer());
         }
         VeltStr {
             w0: self.w0,
@@ -542,17 +503,24 @@ impl VeltStr {
 
     /// Do `bytes` start in `self`'s heap buffer (text `self` is about to grow, move or rewrite)?
     fn buffer_holds(&self, bytes: &[u8]) -> bool {
-        let start = self.w0 as usize;
-        self.is_heap() && (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize))
+        if !self.is_heap() {
+            return false;
+        }
+        let start = self.buffer() as usize;
+        let (cap, _) = self.buffer_kind();
+        (start..start + cap).contains(&(bytes.as_ptr() as usize))
     }
 
     /// Give up this reference (frees the buffer with the last one) and leave `self` empty.
     ///
     /// # Safety
     /// `self` must be valid and not used afterwards except as the empty string.
+    #[inline]
     pub unsafe fn release(&mut self) {
-        if self.is_heap() {
+        if self.is_plain_heap() {
             heap::release(self.ptr(), self.w2 as usize, !self.is_ascii());
+        } else if self.is_slice() {
+            self.release_slice();
         }
         *self = VeltStr::empty();
     }

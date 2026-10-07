@@ -39,7 +39,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, units << 32 \| len, 0}` | bitwise copy / nothing |
 | inline, ASCII (≤ 23 bytes) | byte 23 ≥ 0x80, bit 0x40 clear | bytes 0..len hold the text, byte 23 = `0x80 \| len` (units = len) | bitwise copy / nothing |
 | inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len`, plus `0x20` when it may hold lone surrogates | bitwise copy / nothing |
-| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
+| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer; a **slice** has bit 62 of `w2` set and other bits there (below) | count +1 / count −1, free at 0 |
 
 - `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
   in its low 32 bits. A string is shorter than 2 GiB (at most `i32::MAX` bytes): allocating a
@@ -49,14 +49,16 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
   static strings may borrow them (same lifetime).
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
-  byte, and the count is always the 8 bytes before it:
+  byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
+  is always the 8 bytes before it:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
     `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
     absorbed text from a static string, which has no room to record its count; whoever needs the
     number counts then, and records it: the field is accessed atomically, relaxed); `crumbs` is
     the breadcrumb table (below), null until a position in the string is first translated, and
-    freed with the buffer.
+    freed with the buffer (or the value 1 when there is no table but a thread remembers a
+    position in a slice of the buffer, which makes freeing it bump the epoch, as a table does).
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
   `ptr`, and release, growth and free derive the header from the value. An inline string has
@@ -69,6 +71,17 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   common case pays no atomic read-modify-write: dropping the only reference (count 1) frees
   after a plain load; an increment happens only when a string is copied while its source stays
   alive (the compiler moves instead when the source is dead).
+- A **slice** (#402) is a heap string whose bytes lie inside another heap string's buffer, which
+  it shares through the buffer's count: `{ptr, units << 32 | len, w2}` with `ptr` at its first
+  byte; `w2` has bit 62 set, bit 61 when the buffer has a header (its text is not ASCII,
+  whatever the slice's is), the byte offset of `ptr` from the buffer's first byte in bits
+  31..60 and the buffer's capacity in bits 0..29. The buffer is at `ptr - ((w2 >> 31) & (2^30 - 1))` for every
+  heap string (the offset of a plain one reads as 0). Generated code needs no change: a slice
+  tests as a heap string (`(int64_t)w2 > 0`), and `w0`/`w1` read as for any heap string. A
+  slice is never appended to in place, has no breadcrumbs of its own, and knows its lone
+  surrogates only as "none" when its buffer has none. `slice`/`substring` share when the piece
+  is at least a quarter of the buffer's capacity and the buffer is below 1 GiB, and copy
+  otherwise (inline when short).
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
   place only to an inline string with room or a heap buffer with count 1 (of the right layout).
 - Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including

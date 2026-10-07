@@ -159,6 +159,11 @@ usable and no copy method is needed.
   lookup in a table built for long strings plus a scan of at most 63 units (random access to
   long non-ASCII text is several times slower than in JS engines; in a long non-ASCII literal,
   which has no table, it scans from the closer end).
+- A `slice` or `substring` of a heap string that is at least a quarter of its buffer shares the
+  buffer instead of copying (as JS engines' sliced strings do), so a parser that consumes its
+  input with `rest = rest.slice(n)` runs in linear time. A smaller piece is copied, so a short
+  slice never keeps a much larger string alive: live slices hold at most four times their own
+  size.
 - A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
   the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 
