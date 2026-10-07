@@ -7,7 +7,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::body::places::is_place;
+use crate::body::places::{is_place, place_root, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, PatKind as P, TyId, UseMode};
 
@@ -205,7 +205,13 @@ impl FnCx<'_, '_> {
             m => m,
         };
         let v = self.mk(H::Local(l, use_mode), payload, span);
-        let r = f(self, v);
+        let mut r = f(self, v);
+        // A binding that borrows the object (a place) does not own the payload: the rest reads
+        // through it without moving out of it, so a consumer shares what it reads
+        // (`const s = rec?.state` moved the string out of `rec`, which released it again).
+        if mode == UseMode::Borrow && place_root(&r) == Some(l) && moves_out(&r) {
+            set_place_mode(&mut r, UseMode::Borrow);
+        }
         self.chain_match(s, l, mode, payload, r, span)
     }
 
@@ -253,5 +259,17 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, ty, span)
+    }
+}
+
+/// Does the place `e` move its value out (its outermost use is `Move`)?
+fn moves_out(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Field { mode, .. } | H::Index { mode, .. } | H::UnwrapSome(_, mode) => {
+            *mode == UseMode::Move
+        }
+        H::UnwrapVariant { mode, .. } => *mode == UseMode::Move,
+        H::Downcast(x) => moves_out(x),
+        _ => false,
     }
 }
