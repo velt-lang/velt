@@ -125,6 +125,13 @@ impl Target {
         !matches!(self.os, Os::Windows | Os::Wasi | Os::WasmBrowser)
     }
 
+    /// Whether `Math.floor`, `Math.ceil` and `Math.trunc` round through a conversion to `i64`
+    /// (`rounding.rs`): the baseline x86-64 CPU has no rounding instruction (`roundsd` is
+    /// SSE4.1), so `llvm.floor` & co. would be calls into the C runtime.
+    pub fn rounds_by_conversion(&self) -> bool {
+        self.triple.starts_with("x86_64")
+    }
+
     /// Whether this is a WebAssembly target.
     pub fn is_wasm(&self) -> bool {
         matches!(self.os, Os::Wasi | Os::WasmBrowser)

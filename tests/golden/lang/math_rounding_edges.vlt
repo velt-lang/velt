@@ -1,0 +1,51 @@
+// Math.floor, Math.ceil, Math.trunc and Math.round at their edges: signed zeros, halves,
+// 2^52 and 2^53 (where every double is whole), the int64 limits, the extremes, infinities and
+// NaN. x86-64 builds compute them inline without a rounding instruction (#535).
+function show(r: number): string {
+  if (r === 0) {
+    return 1 / r > 0 ? "0" : "-0";
+  }
+  return `${r}`;
+}
+
+function main(): void {
+  const xs: number[] = [
+    0,
+    -0.0,
+    0.5,
+    -0.5,
+    0.49999999999999994,
+    -0.49999999999999994,
+    1.5,
+    -1.5,
+    2.5,
+    -2.5,
+    -2.7,
+    1e-300,
+    -1e-300,
+    4503599627370495.5,
+    -4503599627370495.5,
+    4503599627370496,
+    -4503599627370497,
+    9007199254740993,
+    9223372036854775807,
+    -9223372036854775808,
+    1e19,
+    -1e300,
+    Number.MAX_VALUE,
+    -Number.MAX_VALUE,
+    Infinity,
+    -Infinity,
+    NaN,
+  ];
+  for (const x of xs) {
+    const line = [Math.floor(x), Math.ceil(x), Math.trunc(x), Math.round(x)].map(show);
+    console.log(show(x), line.join(" "));
+  }
+  let s: number = 0;
+  for (let i = -500; i < 500; i++) {
+    const x = i * 0.37;
+    s += Math.floor(x) * 3 + Math.ceil(x) * 5 + Math.trunc(x) * 7 + Math.round(x) * 11;
+  }
+  console.log(s);
+}
