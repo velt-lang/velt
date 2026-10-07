@@ -24,14 +24,10 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) -> Result<(), Option<hir::Expr>> {
-        let Some(e) = v
-            .init
-            .as_ref()
-            .filter(|e| {
-                v.kind == ast::VarKind::Const
-                    && (is_member_or_index(e) || (self.cx.held_borrows && is_this(e)))
-            })
-        else {
+        let Some(e) = v.init.as_ref().filter(|e| {
+            v.kind == ast::VarKind::Const
+                && (is_member_or_index(e) || (self.cx.held_borrows && is_this(e)))
+        }) else {
             return Err(None);
         };
         let mut h = match ann {
