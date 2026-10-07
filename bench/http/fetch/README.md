@@ -1,7 +1,7 @@
 # fetch client benchmark
 
 Velt's global `fetch` against Node's (undici) and Rust's reqwest, all calling one local hyper
-server (`rust/src/bin/server.rs`), in four scenarios:
+server (`rust/src/bin/server.rs`), in five scenarios:
 
 | Scenario | What the client does |
 |---|---|
@@ -9,27 +9,56 @@ server (`rust/src/bin/server.rs`), in four scenarios:
 | `conc` | 100 concurrent workers × 1,000 `GET /small` |
 | `big` | one `GET /big` (100 MB), read with `bytes()` |
 | `json` | 20 × `GET /json` (a 1 MB array of users), decoded into a typed array |
+| `gzip` | as `json`, from `GET /json-gzip`: the same 1 MB gzip-compressed (`content-encoding: gzip`), so the client decodes it |
 
 Run `bench/http/fetch/run.sh` (Linux, macOS; it adds the instructions each client executed
 when `perf` is available) or `pwsh bench/http/fetch/run.ps1` (Windows). Both build the Rust
 server and the reqwest client in a temporary target directory (`BENCH_TARGET_DIR` overrides
 it), build `client.vlt` with a release `velt`, and print each client's own result with its CPU
-time and peak memory.
+time and peak memory. `COUNT=valgrind bench/http/fetch/run.sh` runs each client once under
+cachegrind instead and prints the instructions it executed (`I refs`). It needs no PMU, so it
+works in WSL and VMs where `perf` can't count, and the count varies far less between runs than
+times on a busy machine.
+
+The reqwest client is built with reqwest's `gzip` feature (for `gzip`), so it sends
+`accept-encoding: gzip` in every scenario; Velt and Node send `accept-encoding: gzip, deflate`.
+The server ignores it except on `/json-gzip`.
 
 ## Results
 
-Windows 11, 20 logical cores, on a machine shared with other builds at full load, so wall-clock
-results vary by ±30% between runs; best of 2–5 interleaved runs, with the process's CPU time
-(user + system) and peak RSS.
+Instructions each client executed in user space (`COUNT=valgrind`: cachegrind's `I refs`, in
+millions, the mean of 2 runs, which differed by less than 0.1%), Ubuntu 20.04 in WSL 2 on a
+shared Windows machine. Wall-clock times on that machine vary by ±30% between runs, so they
+are not shown. The Velt clients come from five compilers: `main` before the global `fetch`
+(080387d, calling `fetch` from `velt:http`), the global `fetch` (#577, a0b9bd5), the base of
+#594 (d52bf62, #577 plus #557), the decoding of #594 (891150d) and this benchmark's pull
+request (#600). Node is not counted: V8's JIT under cachegrind says little about its speed.
 
-| Scenario | Velt | Node 22.22 | Rust reqwest 0.12 |
-|---|---|---|---|
-| `seq` | 7,440 req/s · 1.1 s CPU · 8 MB | 2,024 req/s · 6.4 s · 113 MB | 4,582 req/s · 2.2 s · 6 MB |
-| `conc` | 46,221 req/s · 11 s · 24 MB | 2,314 req/s · 45 s · 141 MB | 43,741 req/s · 11.5 s · 15 MB |
-| `big` | 598 MB/s · 0.2 s · 110 MB | 106 MB/s · 1.0 s · 281 MB | 259 MB/s · 0.2 s · 112 MB |
-| `json` | 7.0 ms per 1 MB · 0.1 s · 26 MB | 31 ms · 0.8 s · 92 MB | 17 ms (serde) · 0.2 s · 9 MB |
+| Scenario | `main` | #577 | #594's base | #594 | #600 | reqwest 0.12 |
+|---|---|---|---|---|---|---|
+| `seq` | 341.0 | 463.8 | 463.8 | 482.9 | 482.7 | 666.8 |
+| `conc` | 3,110 | 4,350 | 4,351 | 4,541 | 4,540 | 5,955 |
+| `big` | 121.7 | 107.7 | 107.6 | 107.7 | 107.8 | 107.9 |
+| `json` | 673.4 | 805.4 | 805.5 | 805.4 | 805.7 | 787.4 |
+| `gzip` | – | – | – | 1,055.4 | 1,055.4 | 984.0 |
 
-Before the global `fetch` (#577), `big` peaked at 318 MB: the body was copied twice. On this
-machine the per-request CPU of `seq` is 0.97–1.6 s for 10,000 requests both before and after;
-a difference smaller than that spread needs the instruction counts of `run.sh` on a quiet Linux
-machine.
+- `seq` and `conc` (#577: +36% and +40%, about 12,300 instructions per request): the global
+  `fetch` parses the URL as WHATWG URL (`url` and `idna`, about 3,600), builds the std objects
+  (`Request`, a `Headers` copy; about 1,000), makes Velt strings of the header values and the
+  URL (lossy UTF-8 decoding and UTF-16 lengths: about 1,700), adds `accept` and `user-agent`,
+  and copies the status, URL and headers when the head arrives. #601 tracks this.
+- `seq` and `conc` (#594: +4.1% and +4.4%, about 1,960 instructions per request): sending
+  `accept-encoding` (the header map grows past its initial capacity for it: about 800 with the
+  allocations), deciding how to decode the response (`content-encoding`, HEAD and bodiless
+  statuses), and the `Reader` that yields chunks (about 150 more than the plain read).
+- `big` (#577: −11.5%): the body is received into one buffer sized from `content-length` and
+  copied once, where `main` copied it twice (peak memory on Windows: 318 MB before, 110 MB after).
+- `json` (#577: +20%, 6.6 million per 1 MB response): `text()` decodes with
+  `String::from_utf8_lossy` (invalid UTF-8 becomes U+FFFD, as in JS), about 7 instructions per
+  byte, where `main` validated with `str::from_utf8` (under 0.5 per byte) and failed on invalid
+  UTF-8.
+- `gzip`: before #594 the body was not decoded, so the JSON did not parse. Decoding the 1 MB
+  takes about 12.5 million instructions in Velt and 9.8 million in reqwest (both through
+  `flate2`).
+- #600 against #594: within 0.05% everywhere. Its header move (`send.rs`) applies only to
+  requests that don't follow redirects, and these do.
