@@ -243,20 +243,30 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         return true;
     }
     let private = private_field(cx, bad);
-    let what = match (&private, t == bad) {
-        (Some((field, _)), true) => {
+    // Decoding cannot set private fields; writing is refused only for std's types (handles).
+    let what = match (&private, t == bad, parse) {
+        (Some((field, _)), true, true) => {
+            format!("`{tn}` has a private field `{field}`, which decoding cannot set")
+        }
+        (Some((field, _)), false, true) => {
+            format!("`{tn}` contains `{bn}`, whose private field `{field}` decoding cannot set")
+        }
+        (Some((field, _)), true, false) => {
             format!("`{tn}` has a private field `{field}`, so it has no JSON form")
         }
-        (Some((field, _)), false) => format!(
+        (Some((field, _)), false, false) => format!(
             "`{tn}` contains `{bn}`, which has a private field `{field}`, so it has no JSON form"
         ),
-        (None, true) => format!("`{tn}` has no JSON form"),
-        (None, false) => format!("`{tn}` contains `{bn}`, which has no JSON form"),
+        (None, true, _) => format!("`{tn}` has no JSON form"),
+        (None, false, _) => format!("`{tn}` contains `{bn}`, which has no JSON form"),
     };
     let mut d = Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span);
     d = match private {
+        Some((_, field_span)) if parse => d.with_label(field_span, "private field").with_note(
+            "decoding fills fields without running the constructor, so it cannot build a type with private fields; decode into a type with public fields and construct it from that",
+        ),
         Some((_, field_span)) => d.with_label(field_span, "private field").with_note(
-            "a type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
+            "a std type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
         ),
         None => d.with_note(
             "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
@@ -367,14 +377,25 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 return Some(t);
             }
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
-                // Private fields hold what a type keeps to itself (runtime handles in std).
-                DefInfo::Adt(a) if a.fields.iter().any(|f| f.private_to.is_some()) => {
+                // Decoding fills fields without running the constructor: it cannot set what a
+                // type keeps to itself. A std type keeps its runtime handles and internals in
+                // private fields, so it has no JSON form at all.
+                DefInfo::Adt(a)
+                    if (parse || cx.scopes[a.module].is_std)
+                        && a.fields.iter().any(|f| f.private_to.is_some()) =>
+                {
                     return Some(t)
                 }
+                // Writing skips ES private fields (`#x`), as JavaScript does; `private x` is
+                // written, as in Node.
                 DefInfo::Adt(a)
                     if matches!(a.kind, AdtKind::Struct | AdtKind::Class | AdtKind::Anon) =>
                 {
-                    a.fields.iter().map(|f| f.ty).collect()
+                    a.fields
+                        .iter()
+                        .filter(|f| parse || !f.name.starts_with(ast::PRIVATE_NAME_PREFIX))
+                        .map(|f| f.ty)
+                        .collect()
                 }
                 // Numeric enums are numbers (their discriminants), string enums their strings.
                 DefInfo::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => return None,

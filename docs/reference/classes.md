@@ -106,6 +106,47 @@ hidden classes and no runtime shape checks.
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
   and `protected` members don't exist (only a constructor can be `protected`).
+- **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
+  (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
+  (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
+  names the member that the class whose body the code is in declares, on any instance of that
+  class or a subclass, not only `this`; elsewhere, also in a subclass, it is an error (``
+  property `#x` is not accessible outside class `A` because it has a private name ``). A
+  subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
+  method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides
+  nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
+  the class declaring `#x`, and narrows like `instanceof`. Private names exist only in class
+  bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
+  with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
+  slot, a direct call); they differ where Node differs:
+
+  | | `#x` | `private x` |
+  |---|---|---|
+  | `console.log`, template literals | hidden: `A { y: 2 }` | shown |
+  | `JSON.stringify` | skipped | written |
+  | `JSON.parse<C>` | error: decoding cannot set it | error, the same |
+  | `Object.keys` | skipped | listed |
+  | `{ ...o }` | skipped | copied, unless private to another type |
+  | `x.clone()` | copied | copied |
+  | name space | `#x` and `x` coexist; a subclass may reuse `#x` | one name per class chain |
+
+  ```ts
+  class Counter {
+    #count = 0;
+    label: string = "clicks";
+    inc(): number {
+      this.#count++;
+      return this.#count;
+    }
+    static isCounter(o: Counter | string): boolean {
+      return typeof o !== "string" && #count in o;
+    }
+  }
+  const c = new Counter();
+  c.inc();
+  const n = c.inc();
+  console.log(c, n, JSON.stringify(c)); // Counter { label: 'clicks' } 2 {"label":"clicks"}
+  ```
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,

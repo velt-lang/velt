@@ -7,6 +7,7 @@
 //! `Callee::Virtual`; everything else on concrete types is a direct `Callee::Def`.
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::body::FnCx;
 use crate::collect::lookup_method;
@@ -84,6 +85,12 @@ impl FnCx<'_, '_> {
     /// interfaces they implement. A class receiver whose static class has a vtable slot for the
     /// method dispatches virtually.
     fn own_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        // `o.#m()` in the body of class `C` is `C`'s `#m`, also on a subclass instance that
+        // declares a `#m` of its own (never virtual).
+        let recv = match (self.owner, name.starts_with(ast::PRIVATE_NAME_PREFIX)) {
+            (Some(owner), true) => self.ancestor(recv, owner),
+            _ => recv,
+        };
         let (d, args) = self.adt_of(recv)?;
         let found = lookup_method(self.cx, d, &args, name)?;
         let slots = self.own_generic_slots(found.def(), &found.owner_args());

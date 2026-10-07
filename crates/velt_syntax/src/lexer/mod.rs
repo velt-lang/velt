@@ -284,6 +284,11 @@ impl<'a> Lexer<'a> {
         let c = self.src[start];
         let tok = if is_ident_start(c) {
             self.ident()
+        } else if c == b'#' && is_ident_start(self.at(1)) {
+            // `#x`: an ES private name, one token.
+            self.pos += 1;
+            self.ident();
+            Tok::PrivateName
         } else if c.is_ascii_digit() || (c == b'.' && self.at(1).is_ascii_digit()) {
             self.number()
         } else if c == b'"' || c == b'\'' {

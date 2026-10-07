@@ -1,0 +1,20 @@
+// ES private names are allowed only in class bodies (TS18016), never with an accessibility
+// modifier (TS18010) or as parameters (TS18009); `#constructor` is reserved (TS18012).
+class A {
+  private #p: number = 2;
+}
+interface I {
+  #f: number;
+}
+type O = { #g: number };
+struct S {
+  #h: number;
+}
+class P {
+  constructor(#q: number) {}
+}
+class Q {
+  #constructor(): void {}
+}
+const o = { #k() {} };
+function main() {}

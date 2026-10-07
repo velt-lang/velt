@@ -433,3 +433,14 @@ Maintainer-owned, like hir.rs.
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
   (`__intrinsic_eq`, `deepEqual`, `assertEq`, `Map` keys). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
+
+## ES private names
+
+A class member declared `#x` keeps the `#` in its name: `FieldDef::name` is `"#x"` (and
+`FieldDef::private` is set), a method's name ends in `.#m`. No identifier starts with `#`, so
+`#x` and `x` are different members, and a class and its subclass may each have a field `#x`
+(two slots with the same name; sema picks the one the code's class declares). Readers act on
+the prefix: `console.log` (`glue/format_object.rs`), `JSON.stringify` (`json/write.rs`,
+`json/dynamic.rs`), `Object.keys` and spread leave `#` fields out. `#m` methods never get a
+vtable slot. `#x in o` reaches HIR as the class test of `o instanceof C` (`PatKind::InstanceOf`).
+`AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type.

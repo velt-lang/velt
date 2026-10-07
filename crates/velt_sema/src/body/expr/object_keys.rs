@@ -173,7 +173,7 @@ impl FnCx<'_, '_> {
         let mut arms = vec![];
         for s in subs {
             let names: Vec<Key> = self.cx.adt(s).map_or(vec![], |a| {
-                let fields = a.fields.iter();
+                let fields = a.fields.iter().filter(|f| !is_private_name(&f.name));
                 fields
                     .map(|f| Key {
                         name: f.name.clone(),
@@ -273,10 +273,14 @@ impl FnCx<'_, '_> {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;
-        let keys = a.fields.iter().map(|f| Key {
-            name: f.name.clone(),
-            optional: f.optional && !class,
-        });
+        let keys = a
+            .fields
+            .iter()
+            .filter(|f| !is_private_name(&f.name))
+            .map(|f| Key {
+                name: f.name.clone(),
+                optional: f.optional && !class,
+            });
         Some(keys.collect())
     }
 
@@ -313,4 +317,9 @@ fn is_object_lit(e: &ast::Expr) -> bool {
         ast::ExprKind::Object(_) => true,
         _ => false,
     }
+}
+
+/// An ES private field (`#x`): `Object.keys` does not list it, as in JavaScript.
+fn is_private_name(name: &str) -> bool {
+    name.starts_with(ast::PRIVATE_NAME_PREFIX)
 }

@@ -15,13 +15,26 @@
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
   enums (from their strings) and numeric enums (from their values). Anything else fails with
   the allowed values, e.g. `expected one of "low", "normal", "high" at $.tags[1]`.
-- **Private fields:** a class or struct with a `private` field (own or inherited) has no JSON
-  form, for `JSON.parse<T>` and `JSON.stringify` alike; the error names the field. std types
-  keep their runtime handles that way (`BigInt`, `RegExp`, `Mutex`, sockets, files, HTTP,
-  database clients…), so untrusted JSON can never produce one. To send such a value, convert it
-  to a type with public fields first (`n.toString()` for a `BigInt`, or an object literal of the
-  data you need). A value whose static class has a JSON form but whose dynamic class has
-  private fields is written as its static class.
+- **Private fields:** `JSON.stringify` writes a class's `private` fields, as Node does, and
+  skips ES private fields (`#x`), as JavaScript does. `JSON.parse<T>` cannot build a class or
+  struct with a `private` or `#` field (own or inherited), wherever it appears in `T`: decoding
+  fills fields without running the constructor, so it could not initialize them; the error
+  names the field. std types keep their runtime handles in private fields (`BigInt`, `RegExp`,
+  `Mutex`, sockets, files, HTTP, database clients…), and have no JSON form in either direction,
+  so untrusted JSON can never produce one. To send such a value, convert it to a type with
+  public fields first (`n.toString()` for a `BigInt`, or an object literal of the data you
+  need). A class value is written as its dynamic class (a subclass's fields too), unless that
+  class has no JSON form (a std type with private fields): then as its static class.
+
+```ts
+class Account {
+  name: string = "ada";
+  private secret: string = "pw";
+  #pin: string = "1234";
+}
+
+console.log(JSON.stringify(new Account())); // {"name":"ada","secret":"pw"}
+```
 
 ```ts error
 class Account {
@@ -29,8 +42,8 @@ class Account {
   private secret: string = "pw";
 }
 
-// error: cannot convert to or from JSON: `Account` has a private field `secret`, so it has no JSON form
-const text = JSON.stringify(new Account());
+// error: cannot convert to or from JSON: `Account` has a private field `secret`, which decoding cannot set
+const a = JSON.parse<Account>('{"name":"ada","secret":"pw"}');
 ```
 
 - **Private and protected constructors:** `JSON.parse<T>` (and `v.as<T>()`) cannot decode a

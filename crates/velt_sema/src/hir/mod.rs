@@ -328,8 +328,8 @@ pub struct FieldDef {
     /// Declared optional (`x?: T`): JavaScript leaves such a field out of `JSON.stringify`
     /// while it is absent, whereas a `T | null` field holding `null` is written.
     pub optional: bool,
-    /// Declared `private` (in this type or the base class that declares it). Interface fields
-    /// are never private.
+    /// Declared `private` (in this type or the base class that declares it), or an ES private
+    /// field (`#x`). Interface fields are never private.
     pub private: bool,
 }
 
@@ -341,8 +341,10 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
-    /// Some field (own or inherited) is `private`. Such a type has no JSON form: decoding could
-    /// forge the runtime handles std types keep in private fields, and writing would leak them.
+    /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
+    /// the `#`). `JSON.parse` cannot build such a type (decoding could forge the runtime
+    /// handles std types keep in `#` fields); `JSON.stringify` writes `private` fields and
+    /// skips `#` ones, as JavaScript does.
     pub private_fields: bool,
     /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
     /// to one value must see the same fields, so sharing it needs one counted object

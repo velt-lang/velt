@@ -30,6 +30,9 @@ impl FnCx<'_, '_> {
     /// Report a use of a private member of `private_to` outside that type's body.
     pub(crate) fn check_private(&mut self, private_to: Option<DefId>, name: &str, span: Span) {
         let Some(owner) = private_to else { return };
+        if name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return self.check_private_name(owner, name, span);
+        }
         if self.private_allowed(owner) {
             return;
         }
@@ -41,6 +44,29 @@ impl FnCx<'_, '_> {
         self.cx.error(
             Diagnostic::error(format!("`{name}` is private"), span)
                 .with_note(format!("it can only be used inside the body of `{tn}`")),
+        );
+    }
+
+    /// TS18013: an ES private name `#x` declared by class `owner` is usable only in that class's
+    /// body (not in subclasses, and with no exemption for std).
+    fn check_private_name(&mut self, owner: DefId, name: &str, span: Span) {
+        if self.owner == Some(owner) {
+            return;
+        }
+        let tn = self
+            .cx
+            .adt(owner)
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        let plain = name.trim_start_matches(ast::PRIVATE_NAME_PREFIX);
+        self.cx.error(
+            Diagnostic::error(
+                format!("property `{name}` is not accessible outside class `{tn}` because it has a private name"),
+                span,
+            )
+            .with_note(format!(
+                "declare it `private {plain}` or add a public getter to use it elsewhere"
+            )),
         );
     }
 
