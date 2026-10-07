@@ -1,0 +1,15 @@
+// Closures held in locals (#34): every iteration creates two closures and only calls them, one
+// capturing numbers, one capturing a string. Their environments can live in the frame.
+function main() {
+  const words = ["alpha", "beta", "gamma", "delta"];
+  let total = 0;
+  for (let i = 0; i < 3000000; i++) {
+    const k = i % 7 + 1;
+    const m = i % 3;
+    const scale = (x: i64) => x * k + m;
+    const w = words[i % 4];
+    const score = (n: i64) => n + w.length * k;
+    total = (total + scale(i) + scale(i + 1) + score(i)) % 1000000007;
+  }
+  console.log(total);
+}

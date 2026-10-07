@@ -12,23 +12,18 @@ use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }`: a heap env goes through its transfer entry; a null env (no captures)
-    /// or one in a frame (null drop entry: it only borrows) has nothing of its own to move.
+    /// or one without a transfer entry (a frame env, closure.rs) has nothing of its own to move.
     pub(super) fn transfer_closure(&mut self, place: &Place) {
-        let hdr = self.cx.closure_agg();
         let envp = proj(place, Proj::Field(1));
         let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(envp.clone())));
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
-        let ep = self.operand_place(env.clone(), Ty::Ptr);
-        let header = proj(&ep, Proj::Deref(Ty::Agg(hdr)));
-        let drop = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&header, Proj::Field(0)))),
-        );
-        let heap = self.non_null(drop);
-        self.when(heap, done);
+        // The transfer entry, not the drop entry, tells: a frame env that owns captures has a
+        // drop entry (its frame drop) but never a transfer entry.
         let f = self.env_transfer_entry(env.clone());
+        let has = self.non_null(f.clone());
+        self.when(has, done);
         let new = self.call_entry(f, vec![env], vec![Ty::Ptr], Ty::Ptr);
         self.assign(envp, Rvalue::Use(new));
         self.goto(done);
