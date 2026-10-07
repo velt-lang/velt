@@ -475,7 +475,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   one). Otherwise it is escaping, as below; the results are the same, only the cost differs.
   Borrowing never makes a program an error: where a closure borrowing `this` (or `const me =
   this`) would conflict with a caller's borrow, such as a `for...of` over `c.items` around a
-  `c.clear()` that replaces `items`, the closure and `me` share instead.
+  `c.clear()` that replaces `items`, the closure and `me` share instead. The fallback is for
+  the whole program: one such conflict makes every held closure and every `const me = this` in
+  it share, as if none of them borrowed.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves

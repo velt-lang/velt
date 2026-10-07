@@ -241,3 +241,22 @@ fn borrowing_never_rejects_a_program() {
         );
     }
 }
+
+#[test]
+fn a_field_write_does_not_block_a_nested_capturing_closure() {
+    // `this.n = 1` writes the object, not the variable `this`: the closure inside `f` that
+    // recaptures `this` needs no cell, so `f` still borrows.
+    let p = ok_src(
+        "class A {
+           n: number = 0;
+           items: number[] = [1, 2];
+           run(): number[] {
+             const f = (): number[] => this.items.map((x: number) => x + this.n);
+             this.n = 1;
+             return f();
+           }
+         }
+         function main() { const a = new A(); console.log(a.run()); }",
+    );
+    assert!(borrows(&p, "A.run"), "{:?}", modes(&p, "A.run"));
+}

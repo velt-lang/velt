@@ -144,6 +144,8 @@ pub(crate) struct Ctx<'m> {
     pub held_borrows: bool,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
+    /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
+    pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -213,6 +215,7 @@ impl<'m> Ctx<'m> {
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
             held_borrows_used: false,
+            borrow_pass_errors: false,
             fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

@@ -177,10 +177,7 @@ fn check_on_current_thread(
         (cx, entry)
     };
     let (mut cx, mut entry) = new_cx(true);
-    // Borrowing in held closures and `const me = this` only changes the cost, never which
-    // programs are accepted (docs/reference/functions.md "Captures"): when a borrow check fails
-    // where they borrow, the program is checked again with them sharing, as it was before.
-    if cx.held_borrows_used && cx.diags.iter().any(|d| d.is_error()) {
+    if retry_sharing(&cx) {
         (cx, entry) = new_cx(false);
     }
     if cx.diags.iter().any(|d| d.is_error()) {
@@ -223,6 +220,20 @@ fn analyze(
     entry
 }
 
+/// Should the program be checked again with held closures and `const me = this` sharing?
+/// Borrowing in them only changes the cost, never which programs are accepted
+/// (docs/reference/functions.md "Captures"). So when some of them borrowed and a pass from
+/// `demote_local_closures` on reported an error, the program is checked again with them
+/// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
+/// borrowing and never cause a second check. The CLI and the IDE both use this rule.
+fn retry_sharing(cx: &ctx::Ctx) -> bool {
+    cx.held_borrows_used && cx.borrow_pass_errors
+}
+
+fn error_count(cx: &ctx::Ctx) -> usize {
+    cx.diags.iter().filter(|d| d.is_error()).count()
+}
+
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
@@ -233,6 +244,14 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    let before = error_count(cx);
+    ownership_passes(cx);
+    cx.borrow_pass_errors = error_count(cx) > before;
+}
+
+/// The passes from `demote_local_closures` on: the ones whose errors may come from a held
+/// closure or `const me = this` borrowing ([`retry_sharing`]).
+fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::demote_local_closures(cx);
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);

@@ -124,14 +124,21 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
         .iter()
         .map(|cap| (cap.outer, cf.body.locals[cap.inner.0 as usize].ty))
         .collect();
+    let copies: Vec<bool> = caps.iter().map(|&(_, ty)| cx.is_copy(ty)).collect();
+    let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] else {
+        return false;
+    };
     // A closure created inside it that captures one of its variables keeps it by value when it
     // escapes; if the enclosing function assigns that variable, the two must share a cell,
-    // which only a closure capturing by value can pass on.
+    // which only a closure capturing by value can pass on. Only a Copy value needs a cell when
+    // it is changed through a projection (`t[0] = 10`); an object's field (`this.x = …`) is
+    // written in the shared object itself.
     let reassigned: HashSet<LocalId> = cf
         .captures
         .iter()
-        .filter(|cap| assigned(cx, &f.body.block, cap.outer))
-        .map(|cap| cap.inner)
+        .zip(&copies)
+        .filter(|&(cap, &copy)| assigned_as(cx, &f.body.block, cap.outer, copy))
+        .map(|(cap, _)| cap.inner)
         .collect();
     if !reassigned.is_empty() && recaptures(cx, &cf.body.block, &reassigned) {
         return false;
@@ -239,15 +246,24 @@ fn demote(cx: &mut Ctx, f: &FnDef, c: DefId) {
 /// Is local `l` assigned anywhere in `b`, as a whole or through a projection (`t[0] = 10`,
 /// `p.x += 1`), directly or by a closure capturing it?
 fn assigned(cx: &Ctx, b: &Block, l: LocalId) -> bool {
+    assigned_as(cx, b, l, true)
+}
+
+/// [`assigned`]; with `projections` false only an assignment of `l` as a whole counts.
+fn assigned_as(cx: &Ctx, b: &Block, l: LocalId, projections: bool) -> bool {
     let mut hit = false;
     each_expr(b, &mut |e: &Expr| match &e.kind {
         E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
-            hit |= crate::body::places::place_root(place) == Some(l);
+            hit |= if projections {
+                crate::body::places::place_root(place) == Some(l)
+            } else {
+                matches!(place.kind, E::Local(p, _) if p == l)
+            };
         }
         E::Closure(k) => {
             if let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] {
                 for cap in kf.captures.iter().filter(|cap| cap.outer == l) {
-                    hit |= assigned(cx, &kf.body.block, cap.inner);
+                    hit |= assigned_as(cx, &kf.body.block, cap.inner, projections);
                 }
             }
         }
