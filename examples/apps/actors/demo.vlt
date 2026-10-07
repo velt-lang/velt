@@ -1,0 +1,66 @@
+// A scripted walk through the runtime (golden: demo.out): the wire endpoint on a real socket,
+// state that survives deactivation through storage, actor-to-actor calls across shards, and the
+// errors the sigx wire protocol defines.
+import {
+  ActorStorage,
+  ActorType,
+  HostConfig,
+  MemoryStorage,
+  defaultHostOptions,
+  startHost,
+} from "./src/runtime";
+import { actorTypes } from "./src/app";
+import { serveActors } from "./src/wire";
+
+struct DemoConfig implements HostConfig {
+  types(): Map<string, ActorType> {
+    return actorTypes();
+  }
+
+  storage(): ActorStorage {
+    return new MemoryStorage();
+  }
+}
+
+async function post(port: i64, route: string, body: string) {
+  const res = await fetch(`http://127.0.0.1:${port}/_sigx/actor/${route}`, {
+    method: "POST",
+    body: body,
+    headers: { "content-type": "application/json" },
+  });
+  console.log(`POST ${route} ${body} -> ${res.status} ${await res.text()}`);
+}
+
+async function main() {
+  const opts = defaultHostOptions();
+  opts.shards = 4;
+  opts.sweepIntervalMs = 0;
+  const host = startHost<DemoConfig>(opts, 4, {});
+  const server = await serveActors(host.router, 0, "127.0.0.1");
+  const port = server.port;
+
+  console.log("-- calls and persistence");
+  await post(port, "Counter/increment", `{"args":["a",1]}`);
+  await post(port, "Counter/increment", `{"args":["a",2]}`);
+  await post(port, "Counter/sleep", `{"args":["a"]}`);
+  await post(port, "Counter/increment", `{"args":["a",3]}`);
+
+  console.log("-- actor to actor");
+  await post(port, "Counter/increment", `{"args":["b",10]}`);
+  await post(port, "Counter/pull", `{"args":["a","b"]}`);
+  await post(port, "Counter/loop", `{"args":["a","b"]}`);
+
+  console.log("-- errors");
+  await post(port, "Counter/increment", `{"args":["a",-1]}`);
+  await post(port, "Counter/increment", `{"args":["a","x"]}`);
+  await post(port, "Counter/nope", `{"args":["a"]}`);
+  await post(port, "Nope/increment", `{"args":["a"]}`);
+  await post(port, "Counter/increment", `{"args":[]}`);
+
+  const s = await host.stats();
+  console.log(
+    `-- stats: activations ${s.activations}, deactivations ${s.deactivations}, saves ${s.saves}, live ${s.live}`,
+  );
+  server.close();
+  await host.stop();
+}

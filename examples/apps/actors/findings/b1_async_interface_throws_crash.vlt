@@ -1,0 +1,26 @@
+// B1: calling an async interface method that has a `throws` clause through an interface value
+// crashes (SIGSEGV) in every build mode. Expected: "ok 1", then "caught negative".
+class E extends Error {}
+
+interface Method {
+  invoke(x: i64): Promise<string> throws E;
+}
+
+class Impl implements Method {
+  async invoke(x: i64): Promise<string> throws E {
+    if (x < 0) {
+      throw new E("negative");
+    }
+    return `ok ${x}`;
+  }
+}
+
+async function main() {
+  const m: Method = new Impl();
+  try {
+    console.log(await m.invoke(1));
+    console.log(await m.invoke(-1));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+}

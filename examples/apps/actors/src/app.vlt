@@ -1,0 +1,86 @@
+// The actors of the example, mirroring examples/counter in @sigx/actors, plus the `Tiny` actor
+// its benchmarks use.
+import { ActorDef, ActorError, ActorType, Ctx, Methods, decode } from "./runtime";
+
+export class CounterState {
+  count: i64 = 0;
+  lastVisit: f64 = 0.0;
+}
+
+// `Counter.increment(by)` saves the state before it answers, like the sigx example.
+export function counterActor(): ActorDef<CounterState> {
+  return new ActorDef<CounterState>("Counter", (key: string) => new CounterState(), counterMethods);
+}
+
+function counterMethods(): Methods<CounterState> {
+  return new Methods<CounterState>()
+    .method1<i64, i64>("increment", async (
+      ctx: Ctx<CounterState>,
+      by: i64,
+    ): Promise<i64> throws ActorError => {
+      if (by < 0) {
+        throw new ActorError(400, "bad-request", "increment: by must not be negative");
+      }
+      ctx.state.count += by;
+      ctx.state.lastVisit = Date.now() as f64;
+      ctx.save();
+      return ctx.state.count;
+    })
+    .method0<CounterState>(
+      "current",
+      async (ctx: Ctx<CounterState>): Promise<CounterState> throws ActorError => ctx.state.clone(),
+    )
+    .method1<string, i64>(
+      // Calls another counter: actor-to-actor, across shards when the keys hash apart.
+      "pull",
+      async (ctx: Ctx<CounterState>, from: string): Promise<i64> throws ActorError => {
+        const theirs = decode<CounterState>(await ctx.call("Counter", from, "current", "[]"));
+        ctx.state.count += theirs.count;
+        ctx.save();
+        return ctx.state.count;
+      },
+    )
+    .method1<string, i64>(
+      // Calls back into itself through another actor: a deadlock the runtime must refuse.
+      "loop",
+      async (ctx: Ctx<CounterState>, via: string): Promise<i64> throws ActorError => {
+        return decode<i64>(await ctx.call("Counter", via, "pullFrom", JSON.stringify([ctx.key])));
+      },
+    )
+    .method1<string, i64>("pullFrom", async (
+      ctx: Ctx<CounterState>,
+      from: string,
+    ): Promise<i64> throws ActorError => {
+      return decode<i64>(await ctx.call("Counter", from, "current", "[]"));
+    })
+    .method0<bool>("sleep", async (ctx: Ctx<CounterState>): Promise<bool> throws ActorError => {
+      ctx.deactivate();
+      return true;
+    });
+}
+
+export class TinyState {
+  count: i64 = 0;
+}
+
+// benchmarks/src/actors.ts: `Tiny.noop()` returns 0 and never saves.
+export function tinyActor(): ActorDef<TinyState> {
+  return new ActorDef<TinyState>("Tiny", (key: string) => new TinyState(), tinyMethods);
+}
+
+function tinyMethods(): Methods<TinyState> {
+  return new Methods<TinyState>()
+    .method0<i64>("noop", async (ctx: Ctx<TinyState>): Promise<i64> throws ActorError => 0)
+    .method0<i64>("bump", async (ctx: Ctx<TinyState>): Promise<i64> throws ActorError => {
+      ctx.state.count += 1;
+      return ctx.state.count;
+    });
+}
+
+// The registry, built once per shard.
+export function actorTypes(): Map<string, ActorType> {
+  const m = new Map<string, ActorType>();
+  m.set("Counter", counterActor());
+  m.set("Tiny", tinyActor());
+  return m;
+}
