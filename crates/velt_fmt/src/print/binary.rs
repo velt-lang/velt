@@ -79,7 +79,7 @@ fn precedence(op: BinaryOp) -> u8 {
         BitXor => 4,
         BitAnd => 5,
         Eq | NotEq => 6,
-        Lt | LtEq | Gt | GtEq => 7,
+        Lt | LtEq | Gt | GtEq | In => 7,
         Shl | Shr | UShr => 8,
         Add | Sub => 9,
         Mul | Div | Rem => 10,

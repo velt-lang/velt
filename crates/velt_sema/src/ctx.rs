@@ -286,7 +286,10 @@ impl<'m> Ctx<'m> {
             .filter(|(_, m)| {
                 matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
             })
-            .map(|(name, _)| format!("`{}.{name}(...)`", a.name))
+            .map(|(name, _)| {
+                let name = name.strip_prefix("static ").unwrap_or(name);
+                format!("`{}.{name}(...)`", a.name)
+            })
             .collect();
         names.sort();
         let last = names.pop()?;

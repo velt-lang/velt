@@ -1,0 +1,76 @@
+// std/fetch: the WHATWG `fetch` API (docs/std/fetch.md), global like in Node: `fetch`,
+// `Request`, `Response` and `Headers` need no import (std/prelude/global/fetch.vlt).
+//
+// `fetch` resolves once the response's status and headers have arrived; the body is received
+// when it is read. Connections are pooled per origin (HTTP/1.1 keep-alive; HTTP/2 when an
+// `https://` server offers it), redirects are followed as the Fetch standard says, and an
+// `AbortSignal` cancels the request in the runtime: it is dropped, not just abandoned
+// (crates/velt_rt/src/http/client).
+
+import { IoError, IoResult, unwrapIo } from "velt:io";
+import { AbortError } from "velt:task";
+import { URL } from "velt:url";
+import { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
+import { Response } from "velt:fetch/response";
+
+export { BodyInit } from "velt:fetch/body";
+export { Headers, HeadersInit } from "velt:fetch/headers";
+export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
+export { Response, ResponseInit } from "velt:fetch/response";
+
+// The runtime takes `text` / `bytes` (moved: left empty) and copies the rest; `headers` is the
+// flat list `[name, value, …]`.
+declare async function velt_rt_http_fetch_send(
+  method: string,
+  url: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  redirect: u32,
+  signal: u64,
+  ca: string,
+): Promise<IoResult<u64>>;
+
+function redirectMode(r: RequestRedirect): u32 {
+  if (r == "error") {
+    return 1;
+  }
+  if (r == "manual") {
+    return 2;
+  }
+  return 0;
+}
+
+// Sends a request. Rejects with `IoError` when there is no response (`ECONNREFUSED`,
+// `ETIMEDOUT`, a TLS failure, an invalid URL or header: `EINVAL`), and with the signal's
+// `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
+// status is a response, not an error: check `res.ok`.
+export async function fetch(
+  input: string | URL | Request,
+  init: RequestInit = {},
+): Promise<Response, IoError | AbortError> {
+  const req = new Request(input, init);
+  const signal = req.signal;
+  if (signal != null) {
+    signal.throwIfAborted();
+  }
+  const body = req.parts();
+  let text = body.text;
+  let bytes = body.bytes;
+  const r = await velt_rt_http_fetch_send(
+    req.method,
+    req.url,
+    req.headers.raw(),
+    body.kind,
+    text,
+    bytes,
+    redirectMode(req.redirect),
+    signal == null ? 0 : signal.handle(),
+    req.ca(),
+  );
+  if (r.code != 0 && signal != null) {
+    signal.throwIfAborted();
+  }
+  return Response.adopt(unwrapIo(r), signal);
+}

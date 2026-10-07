@@ -62,6 +62,7 @@ mod unions;
 mod utility_types;
 mod visit;
 mod void_fields;
+mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast;

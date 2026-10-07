@@ -1,0 +1,4 @@
+// A user class inheriting a std type's private state (a runtime handle) has no JSON form.
+import { BigInt } from "velt:bigint";
+class Mine extends BigInt { tag: string = "t"; }
+function main() { const m = new Mine(5); console.log(JSON.stringify(m)); }

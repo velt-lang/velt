@@ -137,6 +137,7 @@ pub fn binop(op: BinaryOp) -> &'static str {
         Shl => "<<",
         Shr => ">>",
         UShr => ">>>",
+        In => "in",
     }
 }
 

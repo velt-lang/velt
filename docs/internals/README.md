@@ -27,7 +27,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification.
+   simplification, Map probe reuse (a `get` and `set` of the same key probe once).
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.

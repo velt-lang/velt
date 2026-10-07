@@ -343,7 +343,11 @@ impl FnCx<'_, '_> {
         let a = self.cx.adt(d).expect("ICE: adt");
         let cname = a.name.clone();
         let mut owner_generics = a.generics.len();
-        let mut m = a.methods.get(&prop.name).copied();
+        let mut m = a
+            .methods
+            .get(&crate::defs::static_key(&prop.name))
+            .or_else(|| a.methods.get(&prop.name))
+            .copied();
         if m.is_none() {
             if let Some((em, n)) = self.extension_static(d, &prop.name) {
                 (m, owner_generics) = (Some(em), n);

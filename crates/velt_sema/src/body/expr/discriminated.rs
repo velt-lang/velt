@@ -37,7 +37,7 @@ impl FnCx<'_, '_> {
         let mut without = vec![];
         for &v in &live {
             let m = members[v as usize];
-            match self.cx.field_of(m, &prop.name) {
+            match self.cx.field_seen_from(m, &prop.name, self.owner) {
                 Some((i, fty)) => fields.push((v, m, i, fty)),
                 None => without.push((v, m)),
             }
@@ -50,6 +50,21 @@ impl FnCx<'_, '_> {
             && self.cx.is_iterator_result(obj.ty);
         if !without.is_empty() && !value_or_null {
             return Err(obj);
+        }
+        // Every member's field must be usable here (`private`, `#x`), as on a single value. A
+        // `private` field is reported once (its message does not name the class); each `#x`
+        // names the class that declares it.
+        let mut private_reported = false;
+        for &(_, m, i, _) in &fields {
+            if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+                let denied = self
+                    .field_private_to(m, i)
+                    .is_some_and(|o| !self.private_allowed(o));
+                if denied && std::mem::replace(&mut private_reported, true) {
+                    continue;
+                }
+            }
+            self.check_field_private(m, i, prop);
         }
         let owns = fields.iter().any(|f| self.cx.owns_resource(f.3));
         if want == Want::BorrowMut || owns {
@@ -212,7 +227,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The member of union `u` an object literal builds: the one whose discriminants match the
-    /// literal's (`kind: "circle"`), else the one with exactly the literal's fields. `Ok(None)`
+    /// literal's (`kind: "circle"`), else the one with exactly the literal's fields, else the
+    /// union's only `Record` member. `Ok(None)`
     /// leaves the literal to the ordinary checks; `Err` after reporting a wrong discriminant.
     pub(super) fn union_member_for(
         &mut self,
@@ -270,7 +286,8 @@ impl FnCx<'_, '_> {
             );
             return Err(());
         }
-        if cands.len() == 1 {
+        // With a `Record` member as well, a struct member takes only a literal of its shape.
+        if cands.len() == 1 && self.only_record_member(u).is_none() {
             return Ok(cands.pop());
         }
         let names: Vec<&str> = props
@@ -292,8 +309,12 @@ impl FnCx<'_, '_> {
         if exact.len() == 1 {
             return Ok(Some(exact[0]));
         }
-        // No object member has these fields: a `Record` member takes any keys
-        // (`style={{ color: c }}` for `string | Record<string, string | number>`).
+        Ok(self.only_record_member(u))
+    }
+
+    /// The `Record` member of union `u` when it has exactly one: an object literal no struct
+    /// member takes builds it (`Headers | Record<string, string>` given `{ "x-id": "1" }`).
+    fn only_record_member(&mut self, u: TyId) -> Option<TyId> {
         let records: Vec<TyId> = self
             .cx
             .union_members(u)
@@ -301,7 +322,7 @@ impl FnCx<'_, '_> {
             .into_iter()
             .filter(|m| self.record_args(*m).is_some())
             .collect();
-        Ok((exact.is_empty() && records.len() == 1).then(|| records[0]))
+        (records.len() == 1).then(|| records[0])
     }
 
     fn field_names(&self, t: TyId) -> Option<Vec<String>> {

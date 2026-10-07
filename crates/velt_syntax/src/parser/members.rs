@@ -59,7 +59,9 @@ impl<'a> Parser<'a> {
         let mut m = Modifiers::default();
         // `async [Symbol.asyncDispose]()`: a symbol key also follows a modifier, and so does
         // the `*` of a generator method (`static *items()`).
-        while Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::LBracket | Tok::Star) {
+        while Self::is_name(self.nth(1))
+            || matches!(self.nth(1), Tok::LBracket | Tok::Star | Tok::PrivateName)
+        {
             let flag = match self.cur_kw() {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,
@@ -107,6 +109,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.parse_member_name()?;
         self.reject_protected(&mods, &name);
+        let mods = self.private_name_mods(mods, &name);
         if !self.at_method_start() {
             if let Some(s) = star {
                 self.error("`*` marks a generator method: expected `(`", s);
@@ -128,6 +131,25 @@ impl<'a> Parser<'a> {
             is_setter: mods.is_setter,
             is_override: mods.is_override,
         }))
+    }
+
+    /// A member named `#x` is private (ES private name): `private` / `public` on it are errors
+    /// (TS18010), and `#constructor` is reserved (TS18012).
+    fn private_name_mods(&mut self, mut mods: Modifiers, name: &Ident) -> Modifiers {
+        if !name.is_private_name() {
+            return mods;
+        }
+        if mods.is_private || mods.is_public {
+            self.error(
+                "an accessibility modifier cannot be used with a private name",
+                name.span,
+            );
+        }
+        if name.name == "#constructor" {
+            self.error("'#constructor' is a reserved word", name.span);
+        }
+        mods.is_private = true;
+        mods
     }
 
     /// `protected` exists only on constructors (and constructor parameter properties).
@@ -287,6 +309,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.parse_member_name()?;
         self.reject_protected(&mods, &name);
+        self.reject_private_name(&name);
         if !self.at_method_start() {
             let field = self.parse_field_rest(lo, name, &mods)?;
             if let Some(default) = &field.default {

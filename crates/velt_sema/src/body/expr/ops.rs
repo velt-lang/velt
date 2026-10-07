@@ -60,6 +60,7 @@ pub(crate) fn op_str(op: ast::BinaryOp) -> &'static str {
         B::Shl => "<<",
         B::Shr => ">>",
         B::UShr => ">>>",
+        B::In => "in",
     }
 }
 
@@ -84,7 +85,7 @@ pub(crate) fn hir_binop(op: ast::BinaryOp) -> Option<BinOp> {
         B::Shl => BinOp::Shl,
         B::Shr => BinOp::Shr,
         B::UShr => BinOp::UShr,
-        B::And | B::Or | B::Nullish => return None,
+        B::And | B::Or | B::Nullish | B::In => return None,
     })
 }
 
@@ -217,6 +218,7 @@ impl FnCx<'_, '_> {
         use ast::BinaryOp as B;
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
+            B::In => return self.private_in(lhs, rhs, span),
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
                 let other = if is_null(rhs) { lhs } else { rhs };
@@ -415,7 +417,7 @@ impl FnCx<'_, '_> {
             B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => ty.is_int(t),
             B::Eq | B::NotEq => self.equatable(t),
             B::Lt | B::LtEq | B::Gt | B::GtEq => ty.is_numeric(t) || t == ty.str_,
-            B::And | B::Or | B::Nullish => false,
+            B::And | B::Or | B::Nullish | B::In => false,
         };
         if !ok {
             let tn = self.cx.display(t);

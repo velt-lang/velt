@@ -29,7 +29,8 @@ impl FnCx<'_, '_> {
 
     /// Field `name` of struct / class / object values of type `t`: (index, field type).
     pub(crate) fn field_of(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
-        self.cx.field_of(t, name)
+        // A class and its subclass may each have a field `#x` (`Ctx::field_seen_from`).
+        self.cx.field_seen_from(t, name, self.owner)
     }
 
     /// `x.field` on an interface value or bounded generic: a call of the field's getter slot

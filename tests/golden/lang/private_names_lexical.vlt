@@ -1,0 +1,77 @@
+// Private names resolve lexically for every kind of member: in `A`'s body, `o.#v = n` on a
+// `B` is `A`'s setter even though `B` declares its own `#v` accessors, and `o.#v` / `o.#m()`
+// are `A`'s getter and method even where `B` has fields of those names. Expected: Node's.
+class A {
+  #x: number = 1;
+  y: number = 2;
+  #s: number = 0;
+  set #v(n: number) {
+    this.#s = n;
+  }
+  get #v(): number {
+    return this.#s;
+  }
+  #m(): number {
+    return 40;
+  }
+  setOn(o: B, n: number): number {
+    o.#v = n;
+    o.#v += 1;
+    o.#v++;
+    return o.#v;
+  }
+  ref(): number {
+    const f = () => this.#m();
+    return f();
+  }
+}
+
+class B extends A {
+  #s: string = "bs";
+  set #v(n: string) {
+    this.#s = n;
+  }
+  get #v(): string {
+    return this.#s;
+  }
+  z: number = 3;
+  show(): string {
+    return this.#v;
+  }
+}
+
+function main() {
+  accessorsVsFields();
+  const b = new B();
+  const c = new B();
+  console.log(b.setOn(c, 5), c.show(), b.ref());
+  const a: A = b;
+  console.log(Object.keys(a));
+}
+
+class A2 {
+  #s: number = 4;
+  get #v(): number {
+    return this.#s;
+  }
+  #m(): number {
+    return 1;
+  }
+  read(o: B2): number {
+    return o.#v;
+  }
+  call(o: B2): number {
+    return o.#m();
+  }
+}
+
+class B2 extends A2 {
+  #v: string = "field";
+  #m: number = 9;
+}
+
+function accessorsVsFields() {
+  const b = new B2();
+  const o = new B2();
+  console.log(b.read(o), b.call(o));
+}

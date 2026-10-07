@@ -90,7 +90,8 @@ impl VeltErr {
     }
 }
 
-fn code_of(e: &io::Error) -> i32 {
+/// The [`code`] of an I/O error.
+pub(crate) fn code_of(e: &io::Error) -> i32 {
     use io::ErrorKind as K;
     match e.kind() {
         K::NotFound => code::NOT_FOUND,
