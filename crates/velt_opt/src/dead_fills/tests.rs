@@ -7,7 +7,10 @@ use crate::interp::{Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::Ty::*;
-use velt_vir::vir::{AggId, BlockId, ExternFn, ExternId, Program, Proj, Ty};
+use velt_vir::vir::{
+    AggId, BinOp, BlockId, Callee, ExternFn, ExternId, Local, Operand, Place, Program, Proj,
+    Rvalue, Stmt, Ty,
+};
 
 /// A heap whose new blocks are filled with `0xA5`; other extern calls return 0.
 #[derive(Default)]
@@ -31,12 +34,14 @@ fn run_main(p: &Program, n: u64) -> u64 {
     interp.call_symbol("main", &[n]).expect("program runs")
 }
 
-/// Builder state: the allocator, an opaque `keep(ptr)` and `tick()`, and the object layouts.
+/// Builder state: the allocator, an opaque `keep(ptr)`, `tick()` and `flag()` (false), and the
+/// object layouts.
 struct Env {
     pb: ProgramBuilder,
     alloc: ExternId,
     keep: ExternId,
     tick: ExternId,
+    flag: ExternId,
     /// `{ i64, i64 }`
     pair: AggId,
     /// `{ bool, i64 }`: 7 bytes of padding.
@@ -49,6 +54,7 @@ fn env() -> Env {
     pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
     let keep = pb.ext("keep", &[Ptr], Unit, false);
     let tick = pb.ext("tick", &[], Unit, false);
+    let flag = pb.ext("flag", &[], Bool, false);
     let pair = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
     let padded = pb.agg("Padded object", 16, 8, &[(Bool, 0), (I64, 8)]);
     Env {
@@ -56,6 +62,7 @@ fn env() -> Env {
         alloc,
         keep,
         tick,
+        flag,
         pair,
         padded,
     }
@@ -352,5 +359,30 @@ fn locals_whose_address_is_taken_are_not_tracked() {
         store(&mut fb, b, field(q, env.pair, 1), int(2, I64));
         let pair = env.pair;
         check(env.finish(fb, b, w, pair), false);
+    }
+}
+
+#[test]
+fn a_null_test_of_the_new_pointer_is_decided_unless_clobbered() {
+    // `w.0 = 5; c = w != null; [c = flag();] if c { w.1 = 2 }`. The allocator never returns
+    // null, so the walk follows `then` and the fill is dead; once a call result overwrites `c`
+    // (false here), `else` runs, leaves `w.1` unwritten, and the fill must stay.
+    for clobbered in [false, true] {
+        let p = pair_program(|env, fb, b, w| {
+            store(fb, b, field(w, env.pair, 0), int(5, I64));
+            let c = fb.local(Bool);
+            fb.assign(b, c, bin(BinOp::Ne, copy_local(w), int(0, Ptr)));
+            let b = if clobbered {
+                fb.call(b, Callee::Extern(env.flag), vec![], Some(c))
+            } else {
+                b
+            };
+            let (then, join) = (fb.block(), fb.block());
+            fb.branch(b, c, then, join);
+            store(fb, then, field(w, env.pair, 1), int(2, I64));
+            fb.goto(then, join);
+            join
+        });
+        check(p, !clobbered);
     }
 }

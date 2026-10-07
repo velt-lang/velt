@@ -1,0 +1,98 @@
+// check: no leaks
+// Calls on objects whose class is known from their `new` go to that class's method directly in
+// release builds (#559); overrides, `super` calls, interface values and objects that escape
+// before the call must still reach the right method.
+interface Shape {
+  area(): number;
+  name(): string;
+}
+
+class Sq implements Shape {
+  s: number;
+  constructor(s: number) {
+    this.s = s;
+  }
+  area(): number {
+    return this.s * this.s;
+  }
+  name(): string {
+    return "sq";
+  }
+}
+
+class Circ implements Shape {
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return 3 * this.r * this.r;
+  }
+  name(): string {
+    return "circ";
+  }
+}
+
+class Animal {
+  legs: number;
+  constructor(legs: number) {
+    this.legs = legs;
+  }
+  sound(): string {
+    return "...";
+  }
+  describe(): string {
+    return `${this.sound()} on ${this.legs} legs`;
+  }
+}
+
+class Dog extends Animal {
+  constructor() {
+    super(4);
+  }
+  override sound(): string {
+    return "woof";
+  }
+}
+
+class Puppy extends Dog {
+  override sound(): string {
+    return `small ${super.sound()}`;
+  }
+}
+
+function total(n: number): number {
+  let t = 0.0;
+  for (let i = 0; i < n; i++) {
+    const s: Shape = i % 3 == 0 ? new Circ(i) : new Sq(i);
+    t += s.area();
+    const q: Shape = new Sq(i);
+    t += q.area();
+  }
+  return t;
+}
+
+function legs(n: number): number {
+  let sum = 0.0;
+  for (let i = 0; i < n; i++) {
+    const a: Animal = new Dog();
+    a.legs = a.legs + i;
+    sum += a.legs;
+  }
+  return sum;
+}
+
+function main() {
+  console.log(total(10));
+  console.log(legs(5));
+  const a: Animal = new Puppy();
+  console.log(a.describe());
+  const zoo: Animal[] = [new Animal(2), new Dog(), new Puppy()];
+  for (const z of zoo) {
+    console.log(z.sound(), z.describe());
+  }
+  const kept: Shape[] = [];
+  const s: Shape = new Circ(2);
+  kept.push(s);
+  console.log(s.name(), s.area(), kept[0].name());
+}

@@ -29,8 +29,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
    The passes and their order are listed in `crates/velt_opt/src/lib.rs`: the inlining rounds
-   run `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep`, `divisions` and
-   `dead_fills` run once each. Four change how values are represented:
+   run `vtable_loads`, `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep`,
+   `divisions` and `dead_fills` run once each. Five change how objects and numbers are
+   represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
      gets its own copy; a write through one name is copied to the other names that hold the
@@ -45,6 +46,12 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.
+   - `vtable_loads` makes virtual calls on objects of a known class direct: it forwards the
+     vtable pointer a new object's header gets to the loads of it that follow (while the
+     object is still private to the function), and folds loads of method slots from vtables,
+     which are read-only statics. `constfold` then calls the method directly, the next round
+     inlines it, and `heap_sroa` can keep the object in locals. It and `dead_fills` share `fresh`, the
+     walk of the code right after an allocation.
 
    Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined, and
    `numrep`.

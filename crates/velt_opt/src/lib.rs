@@ -9,6 +9,9 @@
 //! - `const_fields`: constant fields of aggregate locals (closure code pointers) propagated
 //!   into their reads, also through read-only pointers, plus cloning of callees that receive
 //!   a known closure (specialization), so closure calls become direct calls.
+//! - `vtable_loads`: loads of a new object's vtable pointer and of method slots of static
+//!   vtables become constants, so `constfold` turns virtual calls on objects of a known class
+//!   into direct calls.
 //! - `constfold`: sparse conditional constant propagation + folding, branch folding,
 //!   devirtualization of calls through constant function pointers.
 //! - `addr_forward`: places through a pointer that always holds `&a…` name `a…` directly.
@@ -40,7 +43,8 @@
 //! Every pass keeps `Function::locs` aligned with the statements it edits (`srclocs`).
 //!
 //! Shared analyses: `visit` (operand/place/successor traversal), `locals` (per-local usage),
-//! `callgraph` (call graph + SCCs), `scc` (strongly connected components of any graph).
+//! `callgraph` (call graph + SCCs), `scc` (strongly connected components of any graph),
+//! `fresh` (the code right after an allocation, while the new block is private).
 //! `interp` (feature `interp`) is a reference interpreter used to check that optimization
 //! preserves behaviour.
 
@@ -56,6 +60,7 @@ mod dead_fills;
 mod dead_funcs;
 mod divisions;
 mod frame_slots;
+mod fresh;
 mod heap_sroa;
 mod inline;
 mod locals;
@@ -68,6 +73,7 @@ mod srclocs;
 mod sroa;
 mod timings;
 mod visit;
+mod vtable_loads;
 
 pub use numrep::Unnarrowed;
 pub use timings::PassTimings;
@@ -196,6 +202,9 @@ fn speed_round(
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let allocator = heap_sroa::Allocator::find(program);
     for func in &mut program.funcs {
+        changed |= t.time("vtable_loads", || {
+            vtable_loads::run(&program.aggs, &program.statics, allocator, func)
+        });
         changed |= t.time("constfold", || constfold::run(&signatures, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
