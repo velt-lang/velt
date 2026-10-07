@@ -50,7 +50,9 @@ async function main() {
     const r = await fetch(`${base}/big`);
     const b = await r.bytes();
     const s = (performance.now() - t) / 1000;
-    console.log(`big: ${b.length} bytes ${s.toFixed(3)}s ${Math.round(b.length / 1048576 / s)} MB/s`);
+    console.log(
+      `big: ${b.length} bytes ${s.toFixed(3)}s ${Math.round(b.length / 1048576 / s)} MB/s`,
+    );
   }
   if (which == "all" || which == "json") {
     const t = performance.now();
@@ -61,6 +63,8 @@ async function main() {
       n += users.length as i64;
     }
     const s = (performance.now() - t) / 1000;
-    console.log(`json: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`);
+    console.log(
+      `json: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`,
+    );
   }
 }
