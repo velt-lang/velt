@@ -3,15 +3,18 @@
 # `struct` (<name>_struct.vlt), a `class` (<name>_class.vlt), by hand without objects
 # (<name>_flat.vlt: parallel `number[]` arrays or packed keys, the code a guaranteed-inline
 # value type should reach), where present today's `struct` updated field by field
-# (<name>_mut.vlt: what a mutable struct allows today and the value type forbids), in Rust
+# (<name>_mut.vlt: what a mutable struct allows today and the value type forbids) and the same
+# with one shared value (<name>_shared.vlt: the struct type becomes a counted object), in Rust
 # with a `#[derive(Clone, Copy)]` struct (rust/<name>.rs) and, for reference, the class and
 # flat versions in Node (they are TypeScript as written; the harness appends `main();`).
 #
 #   bench/structs/run.sh [--velt PATH] [--rt-debug PATH] [--only NAME] [--no-node] [--out DIR] [--reuse]
 #
-# Checks that every version prints the same output, then prints a Markdown table of the
-# instructions each one executes (valgrind cachegrind, VELT_THREADS=1: the count repeats to within
-# 0.1% from run to run, unlike wall time on a shared machine) and of its heap allocations: for
+# Checks that every version prints the same output, then prints Markdown tables of the
+# instructions each Velt and Rust version executes (valgrind cachegrind, VELT_THREADS=1: the count
+# repeats to within 0.1% from run to run, unlike wall time on a shared machine), of the best
+# wall-clock time of 3 interleaved runs (the only column for Node, whose JIT valgrind cannot
+# always run), and of the heap allocations: for
 # Velt the `velt_rt_alloc` calls (VELT_RC_STATS=1 `blocks=` plus heap string buffers `alloc=`,
 # counted by the debug runtime linked into the same optimized program), for Rust the blocks
 # valgrind's DHAT sees.
@@ -58,7 +61,9 @@ for src in "$HERE"/*_struct.vlt; do
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   kinds=(struct class flat)
-  [ -f "$HERE/${name}_mut.vlt" ] && kinds+=(mut)
+  for extra in mut shared; do
+    [ -f "$HERE/${name}_$extra.vlt" ] && kinds+=("$extra")
+  done
   for kind in "${kinds[@]}"; do
     [[ -n "$REUSE" && -f "$OUT/$name-$kind" && -f "$OUT/$name-$kind-counting" ]] && continue
     "$VELT" build --release --backend llvm "$HERE/${name}_$kind.vlt" -o "$OUT/$name-$kind"
@@ -73,10 +78,10 @@ for src in "$HERE"/*_struct.vlt; do
 done
 
 "$PYTHON" - "$OUT" "$NODE" "${names[@]}" <<'PY'
-import os, re, subprocess, sys
+import os, re, subprocess, sys, time
 out, node, names = sys.argv[1], sys.argv[2] == "1", sys.argv[3:]
 env = dict(os.environ, VELT_THREADS="1")
-VELT = ("struct", "mut", "class", "flat")
+VELT = ("struct", "mut", "shared", "class", "flat")
 node_cmd = ["node", "--experimental-strip-types", "--no-warnings"]
 def cmds(n):
     c = {k: [os.path.join(out, f"{n}-{k}")] for k in VELT + ("rust",)
@@ -111,24 +116,38 @@ for n in names:
         sys.exit(f"{n}: the versions print different output: {outputs}")
     ir = {}
     for k, v in c.items():
+        if k.startswith("node"):
+            continue
         print(f"{n} {k}...", file=sys.stderr, flush=True)
         ir[k] = grind(v)
+    wall = {}
+    for _ in range(3):
+        for k, v in c.items():
+            t = time.perf_counter()
+            subprocess.run(v, check=True, stdout=subprocess.DEVNULL, env=env)
+            wall[k] = min(wall.get(k, float("inf")), (time.perf_counter() - t) * 1000)
     blocks = {k: velt_blocks(os.path.join(out, f"{n}-{k}-counting")) for k in VELT if k in c}
     blocks["rust"] = rust_blocks(os.path.join(out, f"{n}-rust"))
-    rows.append((n, ir, blocks))
+    rows.append((n, ir, blocks, wall))
 M = lambda x: f"{x / 1e6:,.0f}"
 x = lambda a, b: f"{a / b:.2f}"
-cols = ["struct", "mut", "class", "flat", "rust"] + (["node-class", "node-flat"] if node else [])
+cols = list(VELT) + ["rust"]
+wcols = cols + (["node-class", "node-flat"] if node else [])
 print("Instructions executed (millions; cachegrind, VELT_THREADS=1):\n")
 print("| workload | " + " | ".join(cols) + " | struct / flat | class / flat | flat / rust | struct / rust |")
 print("|---|" + "---:|" * (len(cols) + 4))
-for n, ir, _ in rows:
+for n, ir, _, _ in rows:
     print(f"| {n} | " + " | ".join(M(ir[k]) if k in ir else "–" for k in cols)
           + f" | {x(ir['struct'], ir['flat'])} | {x(ir['class'], ir['flat'])} | {x(ir['flat'], ir['rust'])} | {x(ir['struct'], ir['rust'])} |")
+print("\nBest wall-clock time of 3 interleaved runs (ms, including process start):\n")
+print("| workload | " + " | ".join(wcols) + " |")
+print("|---|" + "---:|" * len(wcols))
+for n, _, _, w in rows:
+    print(f"| {n} | " + " | ".join(f"{w[k]:.0f}" if k in w else "–" for k in wcols) + " |")
 print("\nHeap blocks allocated (Velt: `velt_rt_alloc`, VELT_RC_STATS; Rust: DHAT):\n")
-print("| workload | struct | mut | class | flat | rust |")
-print("|---|---:|---:|---:|---:|---:|")
-for n, _, b in rows:
+print("| workload | " + " | ".join(cols) + " |")
+print("|---|" + "---:|" * len(cols))
+for n, _, b, _ in rows:
     print(f"| {n} | " + " | ".join(f"{b[k]:,}" if b.get(k) is not None else "–"
-                                   for k in ("struct", "mut", "class", "flat", "rust")) + " |")
+                                   for k in cols) + " |")
 PY
