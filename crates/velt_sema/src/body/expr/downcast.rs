@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does class `class` or one of its subclasses implement interface `iface`?
-    fn class_tree_implements(&mut self, class: DefId, iface: DefId) -> bool {
+    pub(super) fn class_tree_implements(&mut self, class: DefId, iface: DefId) -> bool {
         let classes: Vec<DefId> = (0..self.cx.info.len() as u32)
             .map(DefId)
             .filter(|&d| {

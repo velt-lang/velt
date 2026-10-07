@@ -34,4 +34,5 @@ function main() {
   const ys: (i64 | null)[] = xs;
   const h = new Holder();
   names(h.items);
+  const either: Named[] = cs.length > 0 ? h.items : cs;
 }

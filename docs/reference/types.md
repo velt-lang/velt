@@ -572,7 +572,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
   listed only when it is not `null`. On a class with subclasses it lists the fields of the
-  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too). `console.log` and `JSON` treat a record as an object. A class
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
+  interface value those of the class it holds (an interface also implemented by a struct is an
+  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

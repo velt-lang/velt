@@ -369,13 +369,12 @@ reading freed memory.
 | `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; 0 = absent (`out` untouched) |
 | `velt_rt_http_req_header_count` | `(VeltReq r) -> u64` | |
 | `velt_rt_http_req_header_at` | `(VeltReq r, u64 i, VeltStr* name, VeltStr* value)` | lowercase name |
-| `velt_rt_http_req_header_names` | `(VeltReq r, VeltStrArray* out)` | every header name (lowercase), in received order: `req.headers` in one call (`header_at` per index is O(n) each) |
-| `velt_rt_http_req_header_values` | `(VeltReq r, VeltStrArray* out)` | every value, in the order of `header_names` (non-UTF-8 bytes decoded lossily) |
+| `velt_rt_http_req_headers` | `(VeltReq r, VeltStrArray* out)` | every header as the flat list `[name, value, …]` (lowercase names, received order; non-UTF-8 values decoded lossily): `req.headers` in one call |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
 | `velt_rt_http_resp_new` | `(u32 status) -> VeltResp` | invalid status ⇒ 500 |
 | `velt_rt_http_resp_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | append; 0 if invalid |
 | `velt_rt_http_resp_body_text` | `(VeltResp r, VeltStr* body)` | **takes** `body` (zero-copy if owned; `*body` left empty); default `text/plain; charset=utf-8` |
-| `velt_rt_http_resp_body_bytes` | `(VeltResp r, VeltBytes* body)` | takes; default `application/octet-stream` |
+| `velt_rt_http_resp_body_bytes` | `(VeltResp r, const VeltBytes* body)` | copies (the array may be borrowed); default `application/octet-stream` |
 | `velt_rt_http_resp_json` | `(VeltResp r, VeltStr* json)` | takes; sets `application/json` |
 | `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
 
@@ -388,16 +387,25 @@ one too (`velt_rt_keep_alive_acquire`, §2).
 `v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the
 body setters and `resp_json` drop the body and add no `content-type`.
 
-**Client** (`http://` only; `https://` fails with `ENOTSUP`):
+**Client** (the global `fetch`, std/fetch.vlt; `http://` and `https://`, other schemes fail with
+`ENOTSUP`; HTTPS and HTTP/2 as in §14.8). The future is READY once the status and headers have
+arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are followed as the Fetch
+standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
+are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
+received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
+signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`).
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_fetch` | `(const VeltStr* method, const VeltStr* url, const VeltStr* headers, u64 n_headers, const VeltStr* body) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = `2*n` strings name,value,…; `body` may be null; all copied; body is read fully before READY |
+| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*` and `user-agent: velt` added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
 | `velt_rt_http_fetch_resp_status` | `(VeltFetchResp r) -> u32` | |
-| `velt_rt_http_fetch_resp_header` | `(VeltFetchResp r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive |
-| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r, IoResult<VeltStr>* out)` | copy; `EILSEQ` if not UTF-8. (`await r.text()` can be a trivial compiled wrapper.) |
-| `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r, VeltBytes* out)` | copy |
-| `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | |
+| `velt_rt_http_fetch_resp_status_text` | `(VeltFetchResp r, VeltStr* out)` | the server's reason phrase, else the standard one, else `""` |
+| `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
+| `velt_rt_http_fetch_resp_redirected` | `(VeltFetchResp r) -> bool` | |
+| `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
+| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
+| `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
+| `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
 
 ## 8. Process
 
@@ -924,14 +932,13 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
 root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
-ALPN `h2` and `http/1.1`. This **supersedes the §7 note**: `velt_rt_http_fetch` now accepts
-`https://` (other schemes fail with `ENOTSUP`) and negotiates HTTP/2 when the server offers it.
+ALPN `h2` and `http/1.1`. The client (`velt_rt_http_fetch_send`, §7) accepts `https://` and
+negotiates HTTP/2 when the server offers it.
 HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrades`).
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
-| `velt_rt_http_fetch_ca` | `(method, url, headers, u64 n_headers, body, const VeltStr* ca_pem) -> VeltFut*` | as `velt_rt_http_fetch`, also trusting the PEM CAs in `ca_pem` (`""` = none); clients are pooled per CA text |
 | `velt_rt_http_resp_set_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | insert, replacing earlier values (e.g. the default `content-type`); 0 if invalid |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
 

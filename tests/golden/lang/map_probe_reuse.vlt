@@ -1,0 +1,89 @@
+// Map probes that repeat an earlier one on the same map and key (get then set, has then get,
+// through a field, a Record, number keys), which the optimizer folds into one, and ones that
+// must probe again because the map or the key changed in between. Expected output from node 22.
+class Counter {
+  counts: Map<string, number> = new Map<string, number>();
+
+  add(word: string, by: number) {
+    this.counts.set(word, (this.counts.get(word) ?? 0) + by);
+  }
+}
+
+function lengths(words: string[]): Map<string, number[]> {
+  const m = new Map<string, number[]>();
+  for (const w of words) {
+    if (!m.has(w)) {
+      m.set(w, []);
+    }
+    m.get(w)!.push(w.length);
+  }
+  return m;
+}
+
+function main() {
+  const words = "the cat saw the other cat and the dog".split(" ");
+  const counts = new Map<string, number>();
+  for (const w of words) {
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  console.log(counts.get("the"), counts.get("cat"), counts.get("dog"), counts.size);
+
+  // Integer and fractional deltas, a delta in a variable, a first-time key, values read back.
+  const totals = new Map<string, number>();
+  let step = 0.25;
+  for (const w of words) {
+    totals.set(w, (totals.get(w) ?? 0) + step);
+    step = step * 2;
+    totals.set("all", (totals.get("all") ?? 100) + 1);
+  }
+  console.log(totals.get("the"), totals.get("dog"), totals.get("all"), totals.get("none") ?? -1);
+
+  const c = new Counter();
+  for (const w of words) {
+    c.add(w, 0.5);
+  }
+  console.log(c.counts.get("the"), c.counts.get("and"));
+
+  const l = lengths(words);
+  console.log(l.get("the")!.length, l.get("other")!.length, l.size);
+
+  const r: Record<string, number> = {};
+  for (const w of words) {
+    r[w] = (r[w] ?? 0) + 2;
+  }
+  console.log(r["the"], r["dog"]);
+
+  const byNumber = new Map<number, number>();
+  for (let i = 0; i < 20; i++) {
+    const k = i % 3;
+    byNumber.set(k, (byNumber.get(k) ?? 0) + i);
+  }
+  console.log(byNumber.get(0), byNumber.get(1), byNumber.get(2));
+
+  // The map changes between the probes: the second must see the change.
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  const before = m.get("a") ?? 0;
+  m.delete("a");
+  m.set("a", before + 10);
+  const seen = m.get("a") ?? 0;
+  m.set("b", 5);
+  console.log(seen, m.get("a"), m.has("b"), [...m.keys()].join(","));
+
+  // The key changes between the probes.
+  let key = "x";
+  const n = new Map<string, number>();
+  n.set("x", 1);
+  const first = n.get(key) ?? 0;
+  key = key + "y";
+  n.set(key, (n.get(key) ?? 0) + first);
+  console.log(n.get("x"), n.get("xy"), n.size);
+
+  // Keys made by different string operations meet in one map.
+  const mixed = new Map<string, number>();
+  const parts = ["ab", "cd"];
+  for (const k of ["abcd", parts.join(""), "xabcd".slice(1), `ab${"cd"}`, "ABCD".toLowerCase()]) {
+    mixed.set(k, (mixed.get(k) ?? 0) + 1);
+  }
+  console.log(mixed.get("abcd"), mixed.size);
+}

@@ -1,7 +1,7 @@
 // A 204 or 304 response has no body, so no body headers: the body argument (a streamed one
 // too) is dropped and no default `content-type` is added (Node and the Fetch API do the same).
 // Other statuses keep them.
-import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+import { serve, Request, Response, ResponseWriter } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {

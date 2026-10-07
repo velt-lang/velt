@@ -1,0 +1,25 @@
+"" lt0 le9 lta lez m>= m>= nem
+"0" ge0 le9 lta lez m>= m>= nem
+"5" ge0 le9 lta lez m>= m>= nem
+"9" ge0 le9 lta lez m>= m>= nem
+":" ge0 gt9 lta lez m>= m>= nem
+"a" ge0 gt9 gea lez m>= m>= nem
+"m" ge0 gt9 gea lez m>= m>= eqm
+"ma" ge0 gt9 gea lez m< m< nem
+"m\u0000" ge0 gt9 gea lez m< m< nem
+"z" ge0 gt9 gea lez m< m< nem
+"{" ge0 gt9 gea gtz m< m< nem
+"é" ge0 gt9 gea gtz m< m< nem
+"😀" ge0 gt9 gea gtz m< m< nem
+"~" ge0 gt9 gea gtz m< m< nem
+"/" lt0 le9 lta lez m>= m>= nem
+"00" ge0 le9 lta lez m>= m>= nem
+"9z" ge0 gt9 lta lez m>= m>= nem
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+lt0 le9 lta lez m>= m>= nem true false false true
+,B,a,aa,ab,b,z,é,😀

@@ -34,6 +34,7 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-th
 tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+url = "2.5.8"
 webpki-roots = "1.0.9"
 
 [target.'cfg(unix)'.dependencies]

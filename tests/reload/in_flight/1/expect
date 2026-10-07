@@ -1,3 +1,4 @@
 action: start
 get /: v1
 jit background: /slow
+jit stdout: slow request started
