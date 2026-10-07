@@ -379,6 +379,11 @@ impl FnCx<'_, '_> {
             return self.mk(kind, unit, span);
         };
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
+            // `rows[f()].out += x` / `g().out += x`: the object and indices are evaluated once,
+            // before `x`, as in JS (`ns[f()] += 1` on numbers is one `CompoundAssign`).
+            let mut place = place;
+            let mut stmts = Vec::new();
+            self.hoist_indices(&mut place, &mut stmts);
             let v = self.expr_coerce(value, lty, Want::Borrow);
             let cur = self.place_read(&place, Want::Borrow);
             let cat = self.concat(cur, v, span);
@@ -386,7 +391,8 @@ impl FnCx<'_, '_> {
                 place: Box::new(place),
                 value: Box::new(cat),
             };
-            return self.mk(kind, unit, span);
+            let assign = self.mk(kind, unit, span);
+            return self.with_temps(stmts, assign);
         }
         let hint = self.value_hint(&place, value);
         let v = self.expr(value, hint, Want::Borrow);
@@ -416,12 +422,18 @@ impl FnCx<'_, '_> {
             self.check_int_div_assign(&place, &v, span);
         }
         let bop = hir_binop(op).expect("ICE: logical compound op");
+        let mut place = place;
+        let mut stmts = Vec::new();
+        if Self::has_value_object(&place) {
+            self.hoist_indices(&mut place, &mut stmts);
+        }
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),
             value: Box::new(v),
         };
-        self.mk(kind, unit, span)
+        let assign = self.mk(kind, unit, span);
+        self.with_temps(stmts, assign)
     }
 
     /// `++x` / `x--`. `as_value`: the result is used (needs the Block encoding).
@@ -465,6 +477,12 @@ impl FnCx<'_, '_> {
             BinOp::Sub
         };
         let unit = self.cx.ty.unit;
+        // `f().n++`, and `xs[f()]++` as a value (read, then updated): evaluated once.
+        let mut place = place;
+        let mut stmts = Vec::new();
+        if as_value || Self::has_value_object(&place) {
+            self.hoist_indices(&mut place, &mut stmts);
+        }
         let read = self.place_read(&place, Want::Borrow);
         let ca = self.mk(
             H::CompoundAssign {
@@ -476,9 +494,10 @@ impl FnCx<'_, '_> {
             span,
         );
         if !as_value {
-            return ca;
+            return self.with_temps(stmts, ca);
         }
-        self.update_value(ca, read, prefix, span)
+        let value = self.update_value(ca, read, prefix, span);
+        self.with_temps_value(stmts, value)
     }
 
     /// `++x` as a value: `{ x += 1; x }`; `x++`: `{ let tmp = x; x += 1; tmp }`.

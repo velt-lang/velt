@@ -1,0 +1,89 @@
+// `s += x` on a string place evaluates the target's object and indices once, before `x`, like
+// the other compound assignments (#446). Expected output: Node's.
+class Page {
+  out: string = "";
+}
+
+class Counter {
+  n: number = 0;
+}
+
+function pick(c: Counter): number {
+  c.n++;
+  return 0;
+}
+
+function first(pages: Page[], c: Counter): Page {
+  c.n++;
+  return pages[0];
+}
+
+function main() {
+  numbers();
+  postfix();
+  const pages = [new Page(), new Page()];
+  const rows = [new Page()];
+  const c = new Counter();
+  rows[pick(c)].out += "a";
+  const ns = [1];
+  ns[pick(c)] += 1;
+  console.log(rows[0].out, ns[0], c.n);
+  first(pages, c).out += "b";
+  first(pages, c).out += "c";
+  console.log(pages[0].out, c.n);
+  let i = 0;
+  const g = (): string => {
+    i = 1;
+    return "x";
+  };
+  pages[i].out += g();
+  console.log(pages[0].out, pages[1].out, i);
+  const grid = [["a", "b"], ["c"]];
+  grid[pick(c)][pick(c)] += "!";
+  console.log(grid[0][0], c.n);
+  const bits = [new Counter()];
+  bits[pick(c)].n |= 4;
+  console.log(bits[0].n, c.n);
+  const counters = [new Counter()];
+  const at = (k: number): Counter => {
+    c.n += 10;
+    return counters[k];
+  };
+  at(0).n += 5;
+  at(0).n |= 2;
+  console.log(counters[0].n, c.n);
+}
+
+function numbers() {
+  const counters = [new Counter()];
+  let calls = 0;
+  const at = (k: number): Counter => {
+    calls++;
+    return counters[k];
+  };
+  at(0).n += 5;
+  console.log(calls);
+  at(0).n |= 2;
+  console.log(calls);
+  at(0).n++;
+  console.log(calls, counters[0].n);
+}
+
+function postfix() {
+  const ns: number[] = [10, 20];
+  let i = 0;
+  const g = (): number => {
+    i = 1;
+    return 1;
+  };
+  ns[i] += g();
+  console.log(ns[0], ns[1]);
+  let calls = 0;
+  const f = (): number => {
+    calls++;
+    return 0;
+  };
+  const v = ns[f()]++;
+  const w = ++ns[f()];
+  console.log(v, w, calls, ns[0]);
+}
