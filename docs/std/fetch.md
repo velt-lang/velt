@@ -78,7 +78,8 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 - A body the server compressed (`content-encoding: gzip`, `deflate` or `br`, or several of
   them, such as `deflate, gzip`: up to five) is decoded as it arrives, whichever way you read
   it; the headers stay as received. A list naming another coding leaves the body as sent, and
-  a response without a body (a `HEAD` request's, a 204 or 304) has nothing to decode. A body
+  a response without a body (a `HEAD` request's, a 204 or 304) has nothing to decode; an empty
+  body is `""` in any coding, as in Node. A body
   that does not decode fails the read with `IoError` (`fetch failed: invalid compressed body:
   …`).
 - The status, URL and headers are copied when the head arrives, so they stay readable after

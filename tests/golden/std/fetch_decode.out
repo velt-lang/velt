@@ -5,6 +5,8 @@ raw deflate hello raw
 deflate, gzip hello twice
 head 200 "" true
 not modified 304 ""
+empty gzip gzip ""
+empty br br ""
 "hi"
 gzip, deflate
 identity

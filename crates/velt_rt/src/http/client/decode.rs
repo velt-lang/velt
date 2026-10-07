@@ -2,14 +2,15 @@
 //!
 //! Received frames are queued in a [`Feed`]; a chain of pull decoders (`flate2`'s gzip, zlib and
 //! raw deflate readers, `brotli-decompressor`'s reader), one per listed coding and the last one
-//! applied first, reads from it. Each pull fills at most [`CHUNK`] bytes, so a small body that
+//! applied first, reads from it. Each pull decodes at most [`CHUNK`] bytes into one scratch
+//! buffer and hands them over in a chunk of their own size, so a small body that
 //! expands enormously still arrives in bounded chunks, never all at once. A decoder that runs
 //! out of queued input reports `WouldBlock`, which the decoders resume from once more input is
 //! queued. The headers stay as received (`content-encoding`, the encoded `content-length`).
 //!
 //! As in undici: `gzip` / `x-gzip` (several members), `deflate` (zlib-wrapped or raw, decided by
 //! the first byte) and `br`, in any combination of up to [`MAX_CODINGS`]; a list naming another
-//! coding is passed through undecoded. Unlike undici, a body cut off before its compressed
+//! coding is passed through undecoded; a coding with no input at all decodes to nothing. Unlike undici, a body cut off before its compressed
 //! stream ends is an error, not partial text.
 
 use crate::result::{code, VeltErr};
@@ -74,14 +75,48 @@ impl Read for Input {
 
 type Chain = Box<dyn Read + Send>;
 
-/// `deflate`: zlib-wrapped (RFC 1950) when the first byte is a zlib header (compression method
-/// 8), else raw (RFC 1951), as browsers and undici accept both; decided once that byte arrived.
-struct AutoDeflate {
+/// A content coding `fetch` undoes.
+#[derive(Clone, Copy)]
+enum Coding {
+    Gzip,
+    Deflate,
+    Brotli,
+}
+
+/// One coding undone. Its decoder is made once the first input byte arrived: an input that ends
+/// with no bytes at all is an empty body, as in undici (zlib's and brotli's streams end empty),
+/// not a missing gzip header or brotli stream; and `deflate` is zlib-wrapped (RFC 1950) when that
+/// byte is a zlib header (compression method 8), else raw (RFC 1951), as browsers and undici
+/// accept both.
+struct Layer {
+    coding: Coding,
     pending: Option<BufReader<Chain>>,
     decoder: Option<Chain>,
 }
 
-impl Read for AutoDeflate {
+impl Layer {
+    fn new(coding: Coding, input: Chain) -> Layer {
+        Layer {
+            coding,
+            pending: Some(BufReader::with_capacity(16 << 10, input)),
+            decoder: None,
+        }
+    }
+
+    fn start(&mut self, first: u8) -> Chain {
+        let inner = self.pending.take().expect("ICE: decoder input");
+        match self.coding {
+            Coding::Gzip => Box::new(flate2::bufread::MultiGzDecoder::new(inner)),
+            Coding::Deflate if first & 0x0f == 8 => {
+                Box::new(flate2::bufread::ZlibDecoder::new(inner))
+            }
+            Coding::Deflate => Box::new(flate2::bufread::DeflateDecoder::new(inner)),
+            Coding::Brotli => Box::new(brotli_decompressor::Decompressor::new(inner, 16 << 10)),
+        }
+    }
+}
+
+impl Read for Layer {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.decoder.is_none() {
             let Some(inner) = self.pending.as_mut() else {
@@ -91,17 +126,9 @@ impl Read for AutoDeflate {
                 Some(b) => *b,
                 None => return Ok(0),
             };
-            let inner = self.pending.take().expect("ICE: deflate input");
-            self.decoder = Some(if first & 0x0f == 8 {
-                Box::new(flate2::bufread::ZlibDecoder::new(inner))
-            } else {
-                Box::new(flate2::bufread::DeflateDecoder::new(inner))
-            });
+            self.decoder = Some(self.start(first));
         }
-        self.decoder
-            .as_mut()
-            .expect("ICE: deflate decoder")
-            .read(out)
+        self.decoder.as_mut().expect("ICE: decoder").read(out)
     }
 }
 
@@ -121,6 +148,8 @@ pub(super) enum Decoder {
     Chain {
         input: Input,
         out: Chain,
+        /// What `out` decodes into; each chunk is copied out at its own size.
+        scratch: Box<[u8]>,
     },
     /// More codings than [`MAX_CODINGS`]: reading the body fails.
     TooMany,
@@ -161,17 +190,18 @@ impl Decoder {
         let mut out: Chain = Box::new(input.clone());
         // Listed in the order they were applied: undo the last one first.
         for coding in codings.iter().rev() {
-            let buffered = BufReader::with_capacity(16 << 10, out);
-            out = match coding.as_str() {
-                "gzip" | "x-gzip" => Box::new(flate2::bufread::MultiGzDecoder::new(buffered)),
-                "deflate" => Box::new(AutoDeflate {
-                    pending: Some(buffered),
-                    decoder: None,
-                }),
-                _ => Box::new(brotli_decompressor::Decompressor::new(buffered, 16 << 10)),
+            let coding = match coding.as_str() {
+                "gzip" | "x-gzip" => Coding::Gzip,
+                "deflate" => Coding::Deflate,
+                _ => Coding::Brotli,
             };
+            out = Box::new(Layer::new(coding, out));
         }
-        Decoder::Chain { input, out }
+        Decoder::Chain {
+            input,
+            out,
+            scratch: vec![0; CHUNK].into_boxed_slice(),
+        }
     }
 
     pub fn is_identity(&self) -> bool {
@@ -194,8 +224,12 @@ impl Decoder {
 
     /// Decode what the queued input allows, at most [`CHUNK`] bytes.
     pub fn pull(&mut self) -> Result<Pull, VeltErr> {
-        let (input, out) = match self {
-            Decoder::Chain { input, out } => (input, out),
+        let (input, out, scratch) = match self {
+            Decoder::Chain {
+                input,
+                out,
+                scratch,
+            } => (input, out, scratch),
             Decoder::Identity => return Ok(Pull::End),
             Decoder::TooMany => {
                 return Err(failed(&format_args!(
@@ -203,9 +237,8 @@ impl Decoder {
                 )))
             }
         };
-        let mut buf = vec![0u8; CHUNK];
         loop {
-            match out.read(&mut buf) {
+            match out.read(scratch) {
                 Ok(0) => {
                     // A decoder may report its end before the input does (trailing bytes):
                     // a decoded body is complete only with its input.
@@ -215,10 +248,7 @@ impl Decoder {
                         Pull::NeedInput
                     });
                 }
-                Ok(n) => {
-                    buf.truncate(n);
-                    return Ok(Pull::Data(buf));
-                }
+                Ok(n) => return Ok(Pull::Data(scratch[..n].to_vec())),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Pull::NeedInput),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(failed(&e)),
@@ -248,6 +278,7 @@ mod tests {
                 match d.pull()? {
                     Pull::Data(v) => {
                         assert!(v.len() <= CHUNK);
+                        assert_eq!(v.capacity(), v.len(), "a chunk holds only its data");
                         out.extend(v);
                     }
                     Pull::NeedInput => return Ok(false),
@@ -384,6 +415,49 @@ mod tests {
             decode("gzip", cut, 8).err().unwrap().code,
             code::INVALID_DATA
         );
+    }
+
+    #[test]
+    fn an_empty_body_decodes_to_nothing() {
+        // As in Node: no bytes at all, with or without an empty frame, in every coding.
+        for enc in [
+            "gzip",
+            "x-gzip",
+            "br",
+            "deflate",
+            "deflate, gzip",
+            "gzip, br",
+        ] {
+            assert_eq!(decode(enc, b"", 1).unwrap(), b"", "{enc}");
+            let mut d = Decoder::for_encoding(Some(enc));
+            d.push(Bytes::new());
+            assert!(matches!(d.pull().unwrap(), Pull::NeedInput));
+            d.end_input();
+            assert!(matches!(d.pull().unwrap(), Pull::End), "{enc}");
+        }
+        // An inner coding whose input is empty: Node's `zlib.gzipSync("")`, gzipped or not.
+        let empty_gz = gzip(b"");
+        assert_eq!(decode("gzip", &empty_gz, 4).unwrap(), b"");
+        assert_eq!(decode("gzip, gzip", &empty_gz, 4).unwrap(), b"");
+        assert_eq!(decode("br, gzip", &empty_gz, 4).unwrap(), b"");
+    }
+
+    #[test]
+    fn an_empty_frame_then_a_zlib_body() {
+        let mut d = Decoder::for_encoding(Some("deflate"));
+        d.push(Bytes::new());
+        assert!(matches!(d.pull().unwrap(), Pull::NeedInput));
+        d.push(Bytes::from(zlib(TEXT)));
+        d.end_input();
+        let mut out = vec![];
+        loop {
+            match d.pull().unwrap() {
+                Pull::Data(v) => out.extend(v),
+                Pull::NeedInput => panic!("the input is complete"),
+                Pull::End => break,
+            }
+        }
+        assert_eq!(out, TEXT);
     }
 
     #[test]
