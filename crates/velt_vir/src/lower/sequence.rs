@@ -83,9 +83,9 @@ fn writes_local(e: &hir::Expr) -> bool {
 impl FnLower<'_, '_> {
     /// Hold the borrowed operand `op` (of type `ty`) against the operands after it (`later`):
     /// a value that owns nothing is copied; anything else gets a reference of its own in an
-    /// owned temporary, so the parts it points at outlive what the later operands free. That
-    /// reference is a share (`share_value`), or a deep copy (`clone_value`) where a share would
-    /// count a type that is not counted yet: holding never changes the program's counted types.
+    /// owned temporary (a share), so the parts it points at outlive what the later operands
+    /// free. A share that would count a type not counted yet is replaced by a bitwise copy:
+    /// holding never changes the program's counted types.
     pub(super) fn hold(&mut self, op: Operand, ty: TyId, later: Later) -> Operand {
         self.hold_as(op, ty, later, false)
     }
@@ -114,16 +114,17 @@ impl FnLower<'_, '_> {
             };
         }
         let cty = self.sub(ty);
-        if owned || !self.cx.needs_drop(cty) {
+        if owned || !self.cx.needs_drop(cty) || !self.cx.shares_as_counted(cty) {
+            // Owned already, owning nothing, or holding an uncounted object: a later operand
+            // reaches such an object only through a counted container or a shared cell, and
+            // either makes its type counted, so the bitwise copy (the same object) stays valid.
+            // A deep copy would detach a receiver from its object (`m.set(k, m.get(k)! + 1)`).
             let tmp = self.copy_to_temp(op, t);
             return Operand::Copy(Place::local(tmp));
         }
-        let held = match self.cx.shares_as_counted(cty) {
-            true => self.share_value(op.clone(), cty),
-            false => self.clone_value(op.clone(), cty),
-        };
+        let held = self.share_value(op.clone(), cty);
         match &held {
-            // The fresh temporary the share or copy was written to: registered where it is.
+            // The fresh temporary the share was written to: registered where it is.
             Operand::Copy(h) if h.proj.is_empty() && held != op => {
                 self.own_temp(h.local, cty);
                 held

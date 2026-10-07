@@ -71,6 +71,16 @@ async function bumpLater(v: V, k: number): Promise<void> {
   v.n += k;
 }
 
+class Counter {
+  n: number = 0;
+  add(k: number): void {
+    this.n += k;
+  }
+  get(): number {
+    return this.n;
+  }
+}
+
 function callIt(f: () => string, n: number): string {
   return `${f()}${n}`;
 }
@@ -177,6 +187,16 @@ async function main() {
   const a0 = aa2[0];
   aa2[0].push(growAA());
   console.log(a0, aa2[0], aa2.length);
+
+  // A receiver held across a later call is the same object, not a copy.
+  const counts = new Map<string, number>();
+  for (const w of ["the", "cat", "the"]) {
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  const c = new Counter();
+  c.add(c.get() + 1);
+  c.add(c.get() + 1);
+  console.log(counts.get("the"), counts.size, c.n);
 
   const xs: number[] = [3];
   const p = later();
