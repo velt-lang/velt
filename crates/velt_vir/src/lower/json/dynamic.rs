@@ -78,8 +78,9 @@ impl Cx<'_> {
     /// Does `t` have a JSON form? The lowering-side mirror of sema's stringify check
     /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like
     /// enums, unions of writable members, `json.Value`, `Map<string, V>`, and structs, classes
-    /// and object literals without private fields whose fields are writable. `stack` holds the
-    /// ADTs being visited (recursive types).
+    /// and object literals whose written fields are writable: `#x` fields are skipped, `private`
+    /// ones are written, and a type holding std's private state (`AdtDef::opaque`) has no JSON
+    /// form. `stack` holds the ADTs being visited (recursive types).
     fn json_writable(&mut self, t: TyId, stack: &mut Vec<TyId>) -> bool {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,

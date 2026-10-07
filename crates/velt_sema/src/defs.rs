@@ -389,9 +389,6 @@ pub(crate) struct Extension {
     pub methods: HashMap<String, MethodRef>,
 }
 
-/// Method-table key of a class / interface / `extend` member: its name, or `set <name>` for a
-/// setter (`set name(v)`), which may share its name with a getter. The key is also the last
-/// segment of the setter's def name (`Box.set size`) and how diagnostics name it.
 /// The member name of method-table key `key` (`set #v` names `#v`).
 pub(crate) fn key_member_name(key: &str) -> &str {
     key.strip_prefix("set ").unwrap_or(key)
@@ -402,6 +399,9 @@ pub(crate) fn is_private_key(key: &str) -> bool {
     key_member_name(key).starts_with(velt_syntax::ast::PRIVATE_NAME_PREFIX)
 }
 
+/// Method-table key of a class / interface / `extend` member: its name, or `set <name>` for a
+/// setter (`set name(v)`), which may share its name with a getter. The key is also the last
+/// segment of the setter's def name (`Box.set size`) and how diagnostics name it.
 pub(crate) fn member_key(name: &str, is_setter: bool) -> String {
     if is_setter {
         format!("set {name}")

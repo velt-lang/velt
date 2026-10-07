@@ -12,7 +12,6 @@ use crate::ctx::Ctx;
 use crate::hir::{DefId, LitValue, TyId, TyKind};
 
 impl Ctx<'_> {
-    /// Field `name` of a struct / class / anonymous object type `t`: (index, field type).
     /// Field `name` of `t` as code in the body of class `owner` names it. An ES private name
     /// `#x` is the field `owner` declares; when `owner` declares a `#x` that is not a field of
     /// `t` (a getter, a method, or a field `t` lacks), it is none of `t`'s fields, since
@@ -61,6 +60,7 @@ impl Ctx<'_> {
             || a.methods.contains_key(&crate::defs::member_key(name, true))
     }
 
+    /// Field `name` of a struct / class / anonymous object type `t`: (index, field type).
     pub fn field_of(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
         let TyKind::Adt(d, args) = self.ty.kind(t).clone() else {
             return None;
