@@ -62,7 +62,10 @@ export class PriorityQueue<T> {
     __intrinsic_array_truncate(this.heap, 0);
   }
 
-  /** Clones of the elements in `cmp` order (stable for equal elements); the queue is unchanged. */
+  /**
+   * Clones of the elements in `cmp` order; the queue is unchanged. Equal elements come out in
+   * no particular order (the heap does not keep insertion order).
+   */
   toSortedArray(): T[] {
     const out = this.heap.clone();
     out.sort(this.cmp);
