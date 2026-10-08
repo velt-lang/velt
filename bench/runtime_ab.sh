@@ -13,7 +13,8 @@
 # and runs each under cachegrind with VELT_THREADS=1. Writes WORK/counts.tsv (name, A
 # instructions, B instructions, whether the two outputs are the same) and the raw output of every
 # run to WORK/runs/, and prints a Markdown table. WORK defaults to $CARGO_TARGET_DIR/runtime-ab.
-# Needs: cargo, clang, valgrind, python3, git.
+# Needs: cargo, clang, valgrind, python3, git. (`--vgdb=no`: valgrind cannot make its FIFOs in a
+# TMPDIR on some file systems, such as a Windows drive under WSL.)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
@@ -77,7 +78,7 @@ one() {
       return 1
     fi
     # shellcheck disable=SC2086 # the arguments are words
-    VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null \
+    VELT_THREADS=1 valgrind --tool=cachegrind --vgdb=no --cache-sim=no --cachegrind-out-file=/dev/null \
       "$exe" $args < /dev/null > "$exe.out" 2> "$exe.vg"
     ir=$(sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' "$exe.vg" | tr -d ,)
     [ -n "$ir" ] || { echo "$name: no count from cachegrind, see $exe.vg" >&2; return 1; }
