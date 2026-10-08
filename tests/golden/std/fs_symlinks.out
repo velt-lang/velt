@@ -1,0 +1,15 @@
+dangling false false true
+file.txt true false false
+sub false true false
+to_dir false false true
+to_file false false true
+lstat link: true false false
+stat link: false true 5
+lstat dir link: true false
+lstat file: false true 5
+lstat dangling: true
+file.txt sub
+stat dangling: ENOENT
+readlink file: EINVAL
+symlink twice: EEXIST
+sub kept: true

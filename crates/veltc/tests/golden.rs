@@ -16,6 +16,8 @@
 //!
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
+//! - A golden whose first lines contain `// requires: symlinks` is skipped where this process
+//!   cannot create symbolic links (Windows without Developer Mode or administrator rights).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) before the count.
@@ -114,9 +116,10 @@ fn golden() {
     let mut runnable = vec![];
     for f in &files {
         let rel = f.strip_prefix(&root).unwrap().display().to_string();
-        match missing_required_env(f) {
-            Some(missing) => skipped.push(format!("{rel} (needs ${missing})")),
-            None => runnable.push((f.clone(), rel)),
+        match (missing_required_env(f), missing_capability(f, &work)) {
+            (Some(missing), _) => skipped.push(format!("{rel} (needs ${missing})")),
+            (None, Some(missing)) => skipped.push(format!("{rel} (needs {missing})")),
+            (None, None) => runnable.push((f.clone(), rel)),
         }
     }
     let results = run_parallel(velt, &runnable, &work);
@@ -423,6 +426,44 @@ fn missing_required_env(file: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// A golden that needs something of the machine declares it on one of its first lines:
+/// `// requires: symlinks`. Returns what is missing, if anything.
+fn missing_capability(file: &Path, work: &Path) -> Option<&'static str> {
+    let src = std::fs::read_to_string(file).ok()?;
+    let wants = |what: &str| {
+        src.lines()
+            .take(10)
+            .filter_map(|l| l.trim().strip_prefix("// requires:"))
+            .any(|names| names.split_whitespace().any(|n| n == what))
+    };
+    if wants("symlinks") && !can_symlink(work) {
+        return Some("symlinks: on Windows, Developer Mode or administrator rights");
+    }
+    None
+}
+
+/// Can this process create symbolic links? Always on Unix; on Windows only with Developer Mode
+/// or the symlink privilege, so try once.
+fn can_symlink(work: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CAN.get_or_init(|| {
+            let link = work.join(format!("symlink-probe-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(work);
+            let _ = std::fs::remove_file(&link);
+            let ok = std::os::windows::fs::symlink_file("target", &link).is_ok();
+            let _ = std::fs::remove_file(&link);
+            ok
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = work;
+        true
+    }
 }
 
 /// `velt run` output, killing it and the program it started after `VELT_GOLDEN_TIMEOUT` seconds

@@ -1,0 +1,21 @@
+// Creates the directory tree the listing benchmarks walk: `<root>/dNN/sNN/fNN.txt`, 30 × 30
+// directories of 20 small files (18,000 files, 930 directories), unless it is already there.
+import { existsSync, mkdirSync, writeFileSync } from "velt:fs";
+import { args } from "velt:process";
+
+function main() {
+  const root = args()[0];
+  if (existsSync(`${root}/done`)) {
+    return;
+  }
+  for (let d = 0; d < 30; d++) {
+    for (let s = 0; s < 30; s++) {
+      const dir = `${root}/d${d}/s${s}`;
+      mkdirSync(dir, { recursive: true });
+      for (let f = 0; f < 20; f++) {
+        writeFileSync(`${dir}/f${f}.txt`, "x");
+      }
+    }
+  }
+  writeFileSync(`${root}/done`, "");
+}
