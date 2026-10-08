@@ -129,9 +129,12 @@ usable and no copy method is needed.
   the only reference to its text, growing it geometrically, so building a string in a loop costs
   time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
   copies of `s` never change.
-- **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
-  with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
-  does.
+- `+` with a string on one side and a number or boolean (or one of those or `null`) on the
+  other concatenates, as in JS: `"Total: " + 5` is `"Total: 5"`, `"a" + true` is `"atrue"` and
+  `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
+  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
+  error; build that text with a template literal (`` `Total: ${xs}` ``), which formats any
+  value the way `console.log` does.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two

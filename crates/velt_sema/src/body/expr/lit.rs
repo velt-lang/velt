@@ -177,6 +177,34 @@ impl FnCx<'_, '_> {
         self.intrinsic(Intrinsic::StrConcat, vec![a, b], self.cx.ty.str_, span)
     }
 
+    /// The operands of `a + b` when one is a string (#740): a number or boolean on the other
+    /// side (or one of those or `null`) is written as `String(x)` writes it, as in JS (`"k" + 1`
+    /// is `"k1"`, `"k" + -0` is `"k0"`). Other operands are left for the mismatch report.
+    pub(crate) fn concat_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let s = self.cx.ty.str_;
+        if l.ty == s && r.ty != s {
+            (l, self.concat_operand(r))
+        } else if r.ty == s && l.ty != s {
+            (self.concat_operand(l), r)
+        } else {
+            (l, r)
+        }
+    }
+
+    /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
+    /// `String(x)` text when it is a number or boolean (or one of those or `null`), else `x`.
+    pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
+        let h = self.unbrand(h);
+        let h = self.widen_value(h);
+        let ty = &self.cx.ty;
+        let t = ty.opt_payload(h.ty).unwrap_or(h.ty);
+        if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
+            return h;
+        }
+        let (s, span) = (ty.str_, h.span);
+        self.intrinsic(Intrinsic::ToString, vec![h], s, span)
+    }
+
     /// Can values of this type be printed / formatted (`console.log`, `${}`)? Everything but
     /// function values, interface values, `void` and shared values — also nested.
     pub(crate) fn printable(&mut self, t: TyId) -> bool {
