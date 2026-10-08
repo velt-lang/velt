@@ -233,3 +233,48 @@ fn a_counter_set_from_a_variable_is_not_a_counter() {
     f.blocks[0].stmts[0] = Stmt::Assign(Place::local(c), Rvalue::Use(copy_local(Local(0))));
     assert_eq!(cap_of(&p, c), None);
 }
+
+#[test]
+fn integer_counters_read_through_a_copy_are_capped_within_their_type() {
+    // `len = 0; for (k = 0; k < 10; k++) { t = len; u = t + 1; len = u }`: an array's length
+    // once `sroa` made it a local, pushed to in a bounded loop.
+    for (ty, start, capped) in [(Ty::U64, 0, true), (Ty::U8, 250, false)] {
+        let (mut p, _) = nest(0.0, 1.0, &f64_loops(&[10.0]), true);
+        let f = &mut p.funcs[0];
+        let n = Local(f.locals.len() as u32);
+        let (t, u) = (Local(n.0 + 1), Local(n.0 + 2));
+        for _ in 0..3 {
+            f.locals.push(velt_vir::vir::LocalDecl { ty, name: None });
+        }
+        f.blocks[0].stmts.insert(
+            0,
+            Stmt::Assign(Place::local(n), Rvalue::Use(int(start, ty))),
+        );
+        // The innermost body (the block that tests `p < k`) bumps `len` first.
+        let body = f
+            .blocks
+            .iter()
+            .position(|b| b.stmts.iter().any(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Lt, Operand::Copy(a), _)) if a.local == Local(0))))
+            .expect("the innermost body");
+        let bump = [
+            Stmt::Assign(Place::local(t), Rvalue::Use(copy_local(n))),
+            Stmt::Assign(Place::local(u), bin(BinOp::Add, copy_local(t), int(1, ty))),
+            Stmt::Assign(Place::local(n), Rvalue::Use(copy_local(u))),
+        ];
+        f.blocks[body].stmts.splice(0..0, bump);
+        f.locs.clear();
+        // `len` is compared, so it is tracked.
+        let cmp = Local(f.locals.len() as u32);
+        f.locals.push(velt_vir::vir::LocalDecl {
+            ty: Ty::Bool,
+            name: None,
+        });
+        let last = f.blocks.len() - 1;
+        f.blocks[last].stmts.push(Stmt::Assign(
+            Place::local(cmp),
+            bin(BinOp::Lt, copy_local(n), copy_local(t)),
+        ));
+        let expected = capped.then(|| Fact::int(start as i128, start as i128 + 11));
+        assert_eq!(cap_of(&p, n), expected, "{ty:?}");
+    }
+}

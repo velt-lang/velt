@@ -1,7 +1,8 @@
 //! Counters: a `number` local that starts from whole constants and only ever changes by small
 //! whole steps (`n++`, `n--`, `n += 2`) is whole, never NaN or `-0`, and moves at most as far
 //! as its steps can run. Widening alone loses that bound (`digits++` under `if` in a loop over
-//! a string widens to 2^53); this module computes it.
+//! a string widens to 2^53); this module computes it. Integer locals count the same way, which
+//! bounds the length of an array pushed to in a bounded loop once its fields are scalars.
 //!
 //! - **Loops** are the natural loops of a reducible CFG (functions with irreducible control
 //!   flow get no counters). A block runs at most once per iteration of the innermost loop
@@ -43,7 +44,7 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
         .map(|lp| nest.trips(func, flow, lp))
         .collect();
     for (l, defs) in counters {
-        if let Some(cap) = cap(&nest, &trips, &defs) {
+        if let Some(cap) = cap(&nest, &trips, &defs, func.locals[l.0 as usize].ty) {
             if let Some(s) = flow.slot(l) {
                 out[s] = Some(cap);
             }
@@ -52,7 +53,7 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
     out
 }
 
-/// The tracked `f64` locals (not parameters) set only to whole constants and to steps of
+/// The tracked numeric locals (not parameters) set only to whole constants and to steps of
 /// themselves, with at least one step; with their definitions.
 fn counters(func: &Function, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
     (func.params.len()..func.locals.len())
@@ -62,11 +63,12 @@ fn counters(func: &Function, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
         .collect()
 }
 
-/// Is `l` an `f64` local (not a parameter) that may be a counter: set only to whole constants
-/// and to steps of itself, at least once to a step?
+/// Is `l` an `f64` or integer local (not a parameter) that may be a counter: set only to whole
+/// constants and to steps of itself, at least once to a step?
 pub(super) fn maybe(func: &Function, l: Local) -> bool {
+    let ty = func.locals[l.0 as usize].ty;
     l.0 as usize >= func.params.len()
-        && func.locals[l.0 as usize].ty == Ty::F64
+        && (ty == Ty::F64 || ty.is_int())
         && counter_defs(func, l).is_some_and(|d| d.iter().any(|d| matches!(d, Def::Step(..))))
 }
 
@@ -119,15 +121,16 @@ fn constant(c: &Const) -> Option<f64> {
 }
 
 /// Statement `si` of block `bi` assigns `l` a step of itself, `l + c`: directly, or by copying a
-/// temporary set to `l + c` earlier in the block (with neither changed in between). Returns the
-/// index of the statement that reads `l` and the signed step `c` (whole, non-zero, at most
+/// temporary set to `l + c` earlier in the block (with neither changed in between); `l` may be
+/// read through a copy made earlier in the block (`t = l; u = t + 1; l = u`). Returns the index
+/// of the statement that reads `l` and the signed step `c` (whole, non-zero, at most
 /// [`MAX_STEP`]).
 fn step(func: &Function, bi: usize, si: usize, l: Local) -> Option<(usize, f64)> {
     let stmts = &func.blocks[bi].stmts;
     let Stmt::Assign(_, rv) = &stmts[si] else {
         return None;
     };
-    if let Some(c) = step_rvalue(rv, l) {
+    if let Some(c) = step_rvalue(rv, |op| reads(stmts, si, op, l)) {
         return Some((si, c));
     }
     let Rvalue::Use(Operand::Copy(t)) = rv else {
@@ -145,12 +148,34 @@ fn step(func: &Function, bi: usize, si: usize, l: Local) -> Option<(usize, f64)>
             _ => None,
         })
         .and_then(|(i, d, rv)| (d.local == t.local && d.proj.is_empty()).then_some((i, rv)))?;
-    Some((at, step_rvalue(rv, l)?))
+    Some((at, step_rvalue(rv, |op| reads(stmts, at, op, l))?))
 }
 
-/// The signed step `c` of `rv` = `l + c`, `c + l` or `l - c`.
-fn step_rvalue(rv: &Rvalue, l: Local) -> Option<f64> {
-    let is_l = |op: &Operand| matches!(op, Operand::Copy(p) if p.local == l && p.proj.is_empty());
+/// Does `op`, read by statement `at` of `stmts`, hold `l`'s value: `l` itself, or a local last
+/// set to a copy of `l` earlier, with neither changed since?
+fn reads(stmts: &[Stmt], at: usize, op: &Operand, l: Local) -> bool {
+    let Operand::Copy(p) = op else { return false };
+    if !p.proj.is_empty() {
+        return false;
+    }
+    if p.local == l {
+        return true;
+    }
+    let def = stmts[..at]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, s)| match s {
+            Stmt::Assign(d, rv) if d.local == p.local || d.local == l => Some((i, d, rv)),
+            _ => None,
+        });
+    matches!(def, Some((_, d, Rvalue::Use(Operand::Copy(q))))
+        if d.local == p.local && d.proj.is_empty() && q.local == l && q.proj.is_empty())
+}
+
+/// The signed step `c` of `rv` = `l + c`, `c + l` or `l - c`, where `is_l` tells the reads of
+/// `l`.
+fn step_rvalue(rv: &Rvalue, is_l: impl Fn(&Operand) -> bool) -> Option<f64> {
     let (c, sign) = match rv {
         Rvalue::Binary(BinOp::Add, a, Operand::Const(c, _)) if is_l(a) => (c, 1.0),
         Rvalue::Binary(BinOp::Add, Operand::Const(c, _), b) if is_l(b) => (c, 1.0),
@@ -161,8 +186,9 @@ fn step_rvalue(rv: &Rvalue, l: Local) -> Option<f64> {
     (c != 0.0 && c.fract() == 0.0 && c.abs() <= MAX_STEP).then_some(sign * c)
 }
 
-/// The cap of a counter with definitions `defs`, if it stays within ±2^53.
-fn cap(nest: &Nest, trips: &[Option<u128>], defs: &[Def]) -> Option<Fact> {
+/// The cap of a counter of type `ty` with definitions `defs`, if it stays within ±2^53 (and,
+/// for an integer, its type: it never wraps).
+fn cap(nest: &Nest, trips: &[Option<u128>], defs: &[Def], ty: Ty) -> Option<Fact> {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut up, mut down, mut largest) = (0u128, 0u128, 0.0f64);
     for d in defs {
@@ -186,7 +212,15 @@ fn cap(nest: &Nest, trips: &[Option<u128>], defs: &[Def]) -> Option<Fact> {
     // Room for one more step: the temporary computing it holds the next value.
     let room = TWO_53 - largest;
     let (lo, hi) = (lo as i128 - down as i128, hi as i128 + up as i128);
-    (lo as f64 > -room && (hi as f64) < room).then(|| Fact::int(lo, hi))
+    let within = if ty.is_int() {
+        let top = Fact::top(ty);
+        let below = if down > 0 { largest } else { 0.0 };
+        let above = if up > 0 { largest } else { 0.0 };
+        (lo as f64 - below) >= top.lo && (hi as f64 + above) <= top.hi
+    } else {
+        true
+    };
+    (within && lo as f64 > -room && (hi as f64) < room).then(|| Fact::int(lo, hi))
 }
 
 /// A natural loop.
