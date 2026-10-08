@@ -1,0 +1,20 @@
+// `velt run [-- <port>]`: seeds the shop (SHOP_PRODUCTS, SHOP_ORDERS, default 5000 / 20000) and
+// serves it on PORT (default 8080).
+import { startServer } from "./server";
+import { Store } from "./store";
+
+function envInt(name: string, fallback: i64): i64 {
+  const raw = process.env[name];
+  if (raw == null) {
+    return fallback;
+  }
+  const n = Number.parseInt(raw, 10);
+  return Number.isNaN(n) ? fallback : n as i64;
+}
+
+async function main() {
+  const started = Date.now();
+  const store = Store.seeded(42u32, envInt("SHOP_PRODUCTS", 5000), envInt("SHOP_ORDERS", 20000));
+  const server = await startServer(store, envInt("PORT", 8080));
+  console.log(`shop-api on http://127.0.0.1:${server.port} (seeded in ${Date.now() - started} ms)`);
+}
