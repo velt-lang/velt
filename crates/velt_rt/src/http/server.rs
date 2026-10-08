@@ -80,7 +80,7 @@ struct HandlerFut<S: OwnedStore> {
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
-    fn new(shared: &Arc<Shared>, req: Box<ReqObj>) -> Self {
+    fn new(shared: &Arc<Shared>, req: ReqObj) -> Self {
         let d = &shared.handler();
         let req = super::request::register(req);
         let (size, align) = (d.state_size as usize, d.state_align as usize);

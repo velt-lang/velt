@@ -30,8 +30,8 @@ pub type ReqHandle = Key<ReqObj>;
 static REQUESTS: Registry<ReqObj> = Registry::new();
 
 /// Register a request read by the server; the handler receives the returned key.
-pub fn register(req: Box<ReqObj>) -> ReqHandle {
-    REQUESTS.insert(*req)
+pub fn register(req: ReqObj) -> ReqHandle {
+    REQUESTS.insert(req)
 }
 
 /// The request behind `req`, or a fatal error when it was already released.
@@ -91,21 +91,21 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl ReqObj {
     /// A request whose head has arrived; its body is received when the handler reads it.
-    /// `upgrade` is the key of its parked upgrade, 0 if none. Boxed right away, so the (large)
-    /// parts are not moved again on their way to the handler.
-    pub fn new(req: Request<Incoming>, upgrade: u64, conn: Conn) -> Box<ReqObj> {
+    /// `upgrade` is the key of its parked upgrade, 0 if none. Not boxed: it moves into the
+    /// registry's allocation (`register`) without a box of its own on the way.
+    pub fn new(req: Request<Incoming>, upgrade: u64, conn: Conn) -> ReqObj {
         let (mut parts, body) = req.into_parts();
         if parts.version == hyper::Version::HTTP_2 {
             join_cookies(&mut parts.headers);
         }
         let body = ReqBody::new(body);
-        Box::new(ReqObj {
+        ReqObj {
             parts,
             has_body: body.is_some(),
             body: Mutex::new(body),
             upgrade,
             conn,
-        })
+        }
     }
 }
 
@@ -135,7 +135,8 @@ fn url_of(parts: &hyper::http::request::Parts, conn: &Conn) -> VeltStr {
 }
 
 /// `parts` joined into one string, built on the stack when short (a URL usually is), so the
-/// string's own buffer is the only allocation.
+/// string's own buffer is the only allocation. ASCII (the scheme, path and query always are, a
+/// host nearly always) is taken as it is; anything else is decoded lossily.
 fn joined(parts: &[&[u8]]) -> VeltStr {
     let len = parts.iter().map(|p| p.len()).sum();
     let mut stack = [0u8; 256];
@@ -150,6 +151,10 @@ fn joined(parts: &[&[u8]]) -> VeltStr {
     for p in parts {
         buf[at..at + p.len()].copy_from_slice(p);
         at += p.len();
+    }
+    if buf.is_ascii() {
+        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
+        return unsafe { VeltStr::from_text_counted(std::str::from_utf8_unchecked(buf), len) };
     }
     text_of(buf)
 }
