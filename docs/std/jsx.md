@@ -64,6 +64,9 @@ Rendering rules:
   `velt:jsx/generic/jsx-runtime` is the same provider without that mode
   (`/** @jsxImportSource velt:jsx/generic */`).
 
+A complete app, with components shared with a TypeScript client, async data loading and
+streamed pages: [`examples/apps/ssr-blog`](../../examples/apps/ssr-blog/README.md).
+
 ```tsx
 import { renderToStream, Element } from "velt:jsx";
 import { serve, Request, Response, ResponseWriter } from "velt:http";
