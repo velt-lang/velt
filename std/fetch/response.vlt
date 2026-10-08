@@ -201,13 +201,9 @@ export class Response {
       h = Headers.adopt(velt_rt_http_fetch_resp_headers(this.#handle));
       h.frozen = true;
     }
-    const implied = impliedType(this.#implied);
-    if (implied != null) {
-      // `h` is empty: no `set` needed.
-      h.list.push("content-type");
-      h.list.push(implied);
-      this.#implied = 0;
-    }
+    // `h` is empty: the implied type moves over as its number (std/fetch/headers.vlt).
+    h.implied = this.#implied;
+    this.#implied = 0;
     this.#fields = h;
     return h;
   }
@@ -374,7 +370,9 @@ export class Response {
     let implied: u32 = 0;
     const fields = this.#fields;
     if (fields != null) {
-      headers = fields.raw();
+      const [list, type] = fields.serverList();
+      headers = list;
+      implied = type;
     } else if (this.#source == RUNTIME) {
       headers = this.headers.raw();
     } else {

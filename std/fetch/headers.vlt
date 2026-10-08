@@ -6,7 +6,10 @@
 // removed. The list is the runtime's format too, so a fetched response's headers arrive as one
 // array without being copied again. Lookups scan the list: a message has a handful of headers,
 // for which a scan beats hashing. A server request's headers stay in the runtime until
-// something needs all of them: `get` and `has` look one name up there.
+// something needs all of them: `get` and `has` look one name up there. The headers of a
+// response made here start with the `content-type` its body implies held as a number
+// (`implied`), which a server hands to the runtime as it is; it becomes the list's first entry
+// when something reads or changes `content-type` or needs the whole list.
 //
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
@@ -15,6 +18,8 @@
 // server answers 500). A fetched response's and a received request's headers are immutable, as
 // in JS: changing them stops the program (`TypeError: immutable`), a programming error like an
 // index out of bounds.
+
+import { impliedType } from "velt:fetch/body";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -51,6 +56,9 @@ export class Headers {
   private frozen: bool = false;
   // The server request (runtime key) whose headers `list` does not hold yet; 0 once loaded.
   private req: u64 = 0;
+  // The `content-type` a response's body implies (`impliedType`), not in `list` yet; 0 when
+  // there is none or it was moved there (std sets it).
+  private implied: u32 = 0;
 
   constructor(init: HeadersInit | null = null) {
     if (init == null) {
@@ -88,18 +96,45 @@ export class Headers {
     return this.list;
   }
 
-  // Copies a server request's headers out of the runtime, once.
+  // The list without the implied `content-type`, and that type's number (std only: a server
+  // response hands both to the runtime, which adds the type unless the list has one). A
+  // response's headers are never a server request's, so there is nothing to load.
+  private serverList(): [string[], u32] {
+    return [this.list, this.implied];
+  }
+
+  // Copies a server request's headers out of the runtime, once, and puts the implied
+  // `content-type` into the list.
   private load() {
     if (this.req != 0) {
       this.list = velt_rt_http_req_headers(this.req);
       this.req = 0;
+    }
+    this.fill();
+  }
+
+  // Puts the implied `content-type` into the list, first (where it was set).
+  private fill() {
+    const ct = impliedType(this.implied);
+    this.implied = 0;
+    if (ct == null) {
+      return;
+    }
+    const rest = this.list;
+    this.list = ["content-type", ct];
+    for (const s of rest) {
+      this.list.push(s);
     }
   }
 
   // Adds a value; a header that already has one gets another.
   append(name: string, value: string) {
     this.change();
-    this.list.push(name.toLowerCase());
+    const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.fill();
+    }
+    this.list.push(key);
     this.list.push(trimHttp(value));
   }
 
@@ -107,6 +142,9 @@ export class Headers {
   set(name: string, value: string) {
     this.change();
     const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.implied = 0;
+    }
     this.remove(key);
     this.list.push(key);
     this.list.push(trimHttp(value));
@@ -115,7 +153,11 @@ export class Headers {
   // Removes every value of `name`.
   delete(name: string) {
     this.change();
-    this.remove(name.toLowerCase());
+    const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.implied = 0;
+    }
+    this.remove(key);
   }
 
   // The values of `name` joined with ", ", or null when there is none.
@@ -125,6 +167,9 @@ export class Headers {
       return velt_rt_http_req_header(this.req, name, out) ? out : null;
     }
     const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.fill();
+    }
     let out: string | null = null;
     for (let i: usize = 0; i < this.list.length; i += 2) {
       if (this.list[i] == key) {
@@ -153,6 +198,9 @@ export class Headers {
       return velt_rt_http_req_header(this.req, name, out);
     }
     const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.fill();
+    }
     for (let i: usize = 0; i < this.list.length; i += 2) {
       if (this.list[i] == key) {
         return true;
