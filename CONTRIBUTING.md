@@ -25,7 +25,8 @@ Builds are large. Point `CARGO_TARGET_DIR` at a disk with room if needed; `VELT_
 moves the end-to-end tests' build directories the same way (the goldens build in it, and the
 LLVM, wasm, playground, panic, debugger and debug-info tests in subdirectories of it).
 Debug builds of the compiler carry line tables only (file and line in backtraces and panics);
-set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a debugger.
+set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a debugger
+(dependencies stay without debug info).
 
 ## Testing
 
@@ -36,6 +37,14 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
+
+The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substrings),
+`VELT_GOLDEN_MODES=debug` or `release` (one build mode only), `VELT_GOLDEN_JOBS=<n>` (default
+half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
+(the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
+directory fail the run too). The debug runs use the runtime's checking allocator
+(`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free or overflow aborts with
+`velt debug-alloc: …`.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
@@ -52,10 +61,13 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
   `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
-  goldens in debug mode only). The merge queue and `main` run it on Linux, Windows and macOS,
-  so you need it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
-  the gate in WSL; `scripts/linux-check.sh` runs it in Docker from macOS or Linux (`--services`
-  starts PostgreSQL and Redis so the database tests run).
+  goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
+  OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
+  only when you want that certainty before queueing. On Windows, `-Linux` also builds and tests
+  the committed `HEAD` in WSL (`scripts/test-linux.sh`, in a clone at `~/velt-linux`; run the
+  script with `--dir /mnt/d/...` to keep it on the bigger disk, see below);
+  `scripts/linux-check.sh` runs the gate in Docker from macOS or Linux (`--services` starts
+  PostgreSQL and Redis so the database tests run).
 
 Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
 gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
