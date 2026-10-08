@@ -104,27 +104,32 @@ pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
 const ADDED: usize = 4;
 
 /// `own` (the caller's headers) with what Node adds when it is missing: `accept`, `user-agent`
-/// and `accept-encoding` (`codings`). The map has room for them and for the `host` hyper adds,
-/// so neither grows it.
-pub(super) fn with_defaults(own: HeaderMap, codings: &'static str) -> HeaderMap {
+/// and `accept-encoding` (`codings`), then `host` when it is given (else hyper adds it). The map
+/// has room for all four, so none grows it.
+pub(super) fn with_defaults(
+    own: HeaderMap,
+    codings: &'static str,
+    host: Option<HeaderValue>,
+) -> HeaderMap {
     let defaults = [
-        (header::ACCEPT, "*/*"),
-        (header::USER_AGENT, "velt"),
-        (header::ACCEPT_ENCODING, codings),
+        (header::ACCEPT, HeaderValue::from_static("*/*")),
+        (header::USER_AGENT, HeaderValue::from_static("velt")),
+        (header::ACCEPT_ENCODING, HeaderValue::from_static(codings)),
     ];
+    let added = defaults.into_iter().chain(host.map(|h| (header::HOST, h)));
     if own.is_empty() {
         // Most requests: nothing to look up.
         let mut map = HeaderMap::with_capacity(ADDED);
-        for (name, value) in defaults {
-            map.insert(name, HeaderValue::from_static(value));
+        for (name, value) in added {
+            map.insert(name, value);
         }
         return map;
     }
     let mut map = own;
     map.reserve(ADDED);
-    for (name, value) in defaults {
+    for (name, value) in added {
         if !map.contains_key(&name) {
-            map.insert(name, HeaderValue::from_static(value));
+            map.insert(name, value);
         }
     }
     map
@@ -139,6 +144,7 @@ fn lossy(b: &[u8]) -> String {
 fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     let mut req = Request::new(Full::new(o.body.clone()));
     *req.method_mut() = o.method.clone();
+    let host = o.url.host();
     // A redirect makes a new URI from `o.url.href`: the request can have this one.
     *req.uri_mut() = std::mem::take(&mut o.url.uri);
     let own = if keep {
@@ -146,7 +152,7 @@ fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     } else {
         std::mem::take(&mut o.headers)
     };
-    *req.headers_mut() = with_defaults(own, o.codings);
+    *req.headers_mut() = with_defaults(own, o.codings, host);
     req
 }
 

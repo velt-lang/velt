@@ -261,6 +261,7 @@ fn bad_urls_and_headers_fail_before_connecting() {
     let map = send::with_defaults(
         send::header_map(&set).unwrap(),
         decode::accept_encoding(true),
+        None,
     );
     assert_eq!(map.get("accept").unwrap(), "text/html");
     assert_eq!(map.get("user-agent").unwrap(), "me");
@@ -268,6 +269,7 @@ fn bad_urls_and_headers_fail_before_connecting() {
     let map = send::with_defaults(
         send::header_map(&[]).unwrap(),
         decode::accept_encoding(true),
+        None,
     );
     assert_eq!(map.get("accept-encoding").unwrap(), "br, gzip, deflate");
     assert_eq!(map.len(), 3);

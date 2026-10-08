@@ -11,6 +11,8 @@
 use super::send::invalid;
 use crate::result::{code, VeltErr};
 use bytes::Bytes;
+use hyper::header::HeaderValue;
+use hyper::http::uri::Scheme;
 use hyper::Uri;
 use url::Url;
 
@@ -60,6 +62,19 @@ impl Target {
     /// (only a redirect needs it).
     pub fn url(&self) -> Result<Url, VeltErr> {
         Url::parse(self.href()).map_err(|_| invalid(&format!("Invalid URL {:?}", self.href())))
+    }
+
+    /// The `host` header of a request to an `http:` URL: its host, and its port unless that is
+    /// the default one (a WHATWG serialization has none then), as hyper would make it with
+    /// `format!` for each request. `None` for `https:`, where HTTP/2 has no `host` and hyper adds
+    /// one for HTTP/1.1.
+    pub fn host(&self) -> Option<HeaderValue> {
+        if self.uri.scheme() != Some(&Scheme::HTTP) {
+            return None;
+        }
+        let authority = self.uri.authority()?.as_str();
+        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        HeaderValue::from_str(host).ok()
     }
 
     pub fn is_https(&self) -> bool {
@@ -335,10 +350,16 @@ mod tests {
         let t = Target::parse("http://127.0.0.1:9/x?y").unwrap();
         assert_eq!(t.href(), "http://127.0.0.1:9/x?y");
         assert_eq!(t.uri.path_and_query().map(|p| p.as_str()), Some("/x?y"));
+        assert_eq!(t.host().unwrap(), "127.0.0.1:9");
+        assert_eq!(
+            Target::parse("http://u:p@a.b:80/").unwrap().host().unwrap(),
+            "a.b"
+        );
         assert!(!t.is_https());
         let t = Target::parse("HTTPS://Example.COM:443/a/../b#f").unwrap();
         assert_eq!(t.href(), "https://example.com/b");
         assert!(t.is_https());
+        assert!(t.host().is_none());
         assert!(Target::parse("ftp://x/").is_err());
         assert!(Target::parse("http://").is_err());
     }
