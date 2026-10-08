@@ -501,8 +501,14 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    let r = err_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    assert!(r.contains("constant expressions"), "{r}");
+    // A pure call may initialize a module constant (#383); one with effects may not.
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
+    let r = err_src(
+        "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
+    );
+    assert!(r.contains("`f` cannot initialize module constant `X`"), "{r}");
+    let r = err_src("const X: i64[] = [1]; function main() {}");
+    assert!(r.contains("constant expressions or pure calls"), "{r}");
 }
 
 #[test]
