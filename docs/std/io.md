@@ -7,11 +7,11 @@
   EBADF UNKNOWN` (`EBADF`: the socket, file stream, child process or WebSocket was closed).
 - A failed file-system call (`velt:fs`) has Node's message: the code, the operating system's
   description, the system call and the path, `ENOENT: no such file or directory, open
-  'data.txt'` (`rename 'a' -> 'b'` for two paths); a failed read or write of an opened file
-  names no path (`EISDIR: illegal operation on a directory, read`). The system calls are
-  Node's: `open`, `read`, `write`, `scandir`, `stat`, `lstat`, `mkdir`, `unlink`, `rmdir`, `rm`,
-  `rename`, `copyfile`. The path is the one you passed (Node on Windows prints the absolute
-  path).
+  'data.txt'` (`rename 'a' -> 'b'` for two paths, and `symlink 'target' -> 'path'`); a failed
+  read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
+  read`). The system calls are Node's: `open`, `read`, `write`, `scandir`, `stat`, `lstat`,
+  `readlink`, `symlink`, `mkdir`, `unlink`, `rmdir`, `rm`, `rename`, `copyfile`. The path is the
+  one you passed (Node on Windows prints the absolute path).
 - `IoResult<T>`, `IoStatus`, `ioError`, `unwrapIo` and `checkIo` are exported only for other std
   modules; don't use them in programs.
 
