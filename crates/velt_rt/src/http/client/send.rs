@@ -116,15 +116,26 @@ pub(super) fn with_defaults(
         (header::USER_AGENT, HeaderValue::from_static("velt")),
         (header::ACCEPT_ENCODING, HeaderValue::from_static(codings)),
     ];
-    let added = defaults.into_iter().chain(host.map(|h| (header::HOST, h)));
     if own.is_empty() {
-        // Most requests: nothing to look up.
-        let mut map = HeaderMap::with_capacity(ADDED);
-        for (name, value) in added {
-            map.insert(name, value);
+        // Most requests: a copy of the defaults, made once, which is cheaper than hashing their
+        // names each time.
+        static PLAIN: [OnceLock<HeaderMap>; 2] = [OnceLock::new(), OnceLock::new()];
+        let https = codings == super::decode::accept_encoding(true);
+        let mut map = PLAIN[usize::from(https)]
+            .get_or_init(|| {
+                let mut map = HeaderMap::with_capacity(ADDED);
+                for (name, value) in defaults {
+                    map.insert(name, value);
+                }
+                map
+            })
+            .clone();
+        if let Some(h) = host {
+            map.insert(header::HOST, h);
         }
         return map;
     }
+    let added = defaults.into_iter().chain(host.map(|h| (header::HOST, h)));
     let mut map = own;
     map.reserve(ADDED);
     for (name, value) in added {
