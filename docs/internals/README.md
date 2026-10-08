@@ -133,6 +133,9 @@ Decisions and their rationale, including what is still planned:
   (proposed; open questions).
 - [JavaScript string semantics](design/strings.md): UTF-16 code-unit lengths and positions over
   WTF-8 storage with a cached UTF-16 view (decided, issue #377).
+- [Utility types and `keyof` on type parameters](design/deferred-types.md): `Partial<T>`,
+  `Pick<T, K>`, `keyof T`, `T[K]` and `T & U` in generic code, reduced before monomorphization
+  (accepted, issues #350 and #395).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
