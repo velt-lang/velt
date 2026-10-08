@@ -1,0 +1,50 @@
+// A value holding a `RegExp`, sent on a channel while the program still uses it, is copied for
+// the receiving task with `RegExp.clone()` (#690); a resource the sender no longer uses moves.
+import { channel } from "velt:channel";
+import { RegExp } from "velt:regex";
+
+class Rule {
+  re: RegExp;
+  constructor(re: RegExp) {
+    this.re = re;
+  }
+}
+
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+type Job = { rules: Rule[] };
+
+async function main() {
+  const jobs = channel<Job>();
+  const rules = [new Rule(new RegExp("a+", "g"))];
+  await jobs.send({ rules });
+  await jobs.send({ rules });
+  jobs.close();
+  const t = spawn(async () => {
+    let n = 0;
+    for await (const j of jobs) {
+      n += j.rules.length;
+      console.log(j.rules[0].re.source, j.rules[0].re.flags, j.rules[0].re.replace("caab", "-"));
+    }
+    return n;
+  });
+  console.log(await t, rules[0].re.test("xa"));
+  const conns = channel<Conn>();
+  const c = new Conn(1);
+  await conns.send(c);
+  await conns.send(new Conn(2));
+  conns.close();
+  for await (const x of conns) {
+    console.log("got", x.id);
+  }
+}

@@ -193,9 +193,16 @@ export class RegExp {
     return velt_rt_regex_escape(s);
   }
 
-  /** An independent copy (compiles the pattern again). */
+  /**
+   * An independent copy (compiles the pattern again). It cannot throw: the pattern compiled
+   * once already. So a deep copy for another task (`spawn`, a channel) can call it.
+   */
   clone(): RegExp {
-    return new RegExp(this.source, this.flags);
+    try {
+      return new RegExp(this.source, this.flags);
+    } catch (e) {
+      panic(`RegExp.clone: the pattern no longer compiles: ${e.message}`);
+    }
   }
 
   /** Drop hook: releases the compiled program. */
