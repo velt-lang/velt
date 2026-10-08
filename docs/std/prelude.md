@@ -4,9 +4,12 @@ The prelude is the part of the standard library that every module sees without a
 lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone`, `spawn`,
 `shared`) is implemented by the compiler.
 
-Node's web globals ([`fetch`](fetch.md), `Request`, `Response`, `Headers`, `AbortController`,
-`AbortSignal`, `URL`, `URLSearchParams`) need no import either; they are loaded when a module
-names one and doesn't bind that name itself.
+Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
+([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
+`AbortSignal` ([velt:task](task.md)). They are loaded when a module names one and doesn't bind
+that name itself. The builtin `process` (`process.stdout.write(s)`, `process.env`,
+`process.argv`, `process.exit(code)`, `process.memoryUsage()`; [velt:process](process.md)) needs
+no import either.
 
 ## Strings
 
@@ -286,11 +289,3 @@ top.sort((a, b) => b[1] - a[1]);
 console.log(top[0], words.at(-1), (2.0 / 3.0).toFixed(3), Math.max(3.0, 7.5));
 // [ 'the', 2 ] hat 0.667 7.5
 ```
-
-## Globals
-
-As in Node, these need no import: the builtin `process` (`process.stdout.write(s)`,
-`process.env`, `process.argv`, `process.exit(code)`, `process.memoryUsage()`;
-[velt:process](process.md)), `fetch`, `Request`, `Response` and `Headers` ([fetch](fetch.md)),
-`URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and `AbortSignal`
-([velt:task](task.md)).
