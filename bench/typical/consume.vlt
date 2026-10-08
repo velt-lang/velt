@@ -1,7 +1,8 @@
 // A parser that consumes its input from the front, as hand-written TypeScript parsers often do:
 // look at the start of `rest`, take a token, then `rest = rest.slice(n)` (#402). It reads 10 MB
 // of text as inputs of 1 KB, 1 MB and 10 MB, so the time per byte should not depend on the
-// input's size.
+// input's size. An argument N scales it: N bytes in all per size, as inputs of 1 KB, N/10 and N
+// (bench/runtime_ab.sh passes 1000000, because a slice that copies takes hours at 10 MB).
 function isWordCode(c: number): boolean {
   return (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95;
 }
@@ -51,8 +52,8 @@ function makeText(size: number): string {
 }
 
 function main() {
-  const total: number = 10000000;
-  const sizes: number[] = [1000, 1000000, 10000000];
+  const total: number = process.argv.length > 2 ? Number(process.argv[2]) : 10000000;
+  const sizes: number[] = [1000, total / 10, total];
   for (const size of sizes) {
     const text = makeText(size);
     let words: number = 0;

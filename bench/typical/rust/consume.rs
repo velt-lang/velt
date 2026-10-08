@@ -49,8 +49,8 @@ fn make_text(size: usize) -> String {
 }
 
 fn main() {
-    let total = 10_000_000;
-    for size in [1000, 1_000_000, 10_000_000] {
+    let total: usize = std::env::args().nth(1).map_or(10_000_000, |a| a.parse().unwrap());
+    for size in [1000, total / 10, total] {
         let text = make_text(size);
         let (mut words, mut numbers, mut sum) = (0.0, 0.0, 0.0);
         for _ in 0..total / size {
