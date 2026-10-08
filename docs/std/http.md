@@ -90,8 +90,9 @@ response `fetch` returned (a proxy: its body is passed on as it arrives).
   (backpressure). If the client goes away, the generator is closed (its `finally` blocks run);
   if it throws, the error is printed to stderr and the response is cut off, so the client sees
   a failed body rather than a complete one.
-- A 1xx, 204 or 304 status has no body: `new Response(body, { status: 204 })` with a body stops
-  the program (JS throws `TypeError`), and a passed-on fetched response sends none.
+- A 204, 205 or 304 status has no body: `new Response(body, { status: 204 })` with a body stops
+  the program (JS throws `TypeError`). A passed-on fetched response with a 1xx, 204 or 304
+  status sends none.
 
 ```ts
 import { serve } from "velt:http";
