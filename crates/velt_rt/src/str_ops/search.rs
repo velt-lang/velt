@@ -27,11 +27,33 @@ pub unsafe extern "C" fn velt_rt_str_index_of(
         return from as i64;
     }
     let start = ceil_boundary(sb, from);
-    let found = match (text(s), text(needle)) {
-        (Ok(s), Ok(needle)) => s[start..].find(needle),
-        _ => memmem::find(&sb[start..], nb),
+    let found = if nb.len() <= SHORT_NEEDLE {
+        find_short(&sb[start..], nb)
+    } else {
+        match (text(s), text(needle)) {
+            (Ok(s), Ok(needle)) => s[start..].find(needle),
+            _ => memmem::find(&sb[start..], nb),
+        }
     };
     found.map_or(-1, |i| (start + i) as i64)
+}
+
+/// Needles this short are found by `memchr` on their first byte and a comparison: a searcher
+/// (`str::find`'s Two-Way, `memmem`) costs more to set up than such a search (`url.indexOf("/")`).
+const SHORT_NEEDLE: usize = 4;
+
+/// The first position of the non-empty `needle` in `hay`.
+fn find_short(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    let (first, rest) = (needle[0], &needle[1..]);
+    let mut at = 0;
+    while let Some(i) = memchr::memchr(first, &hay[at..]) {
+        let p = at + i;
+        if hay[p + 1..].starts_with(rest) {
+            return Some(p);
+        }
+        at = p + 1;
+    }
+    None
 }
 
 /// [`velt_rt_str_index_of`] on a non-ASCII string.

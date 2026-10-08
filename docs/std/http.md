@@ -1,104 +1,147 @@
 # velt:http
 
-`import { serve, Request, Response, ResponseWriter } from "velt:http"`. An HTTP server on hyper
-(the client is the global [`fetch`](fetch.md)): HTTP/1.1 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls).
-Handlers run concurrently on every core. A listening server keeps the process alive after
-`main` returns, like Node, until `server.close()`; dropping the `Server` value does not stop
-it. A `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once,
-servers or not. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
-
-- `serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
-  Request) => Promise<Response, E>): Promise<Server>`. The default host is 127.0.0.1. With `tls`
-  (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. Like spawned tasks,
-  handlers (and async closures they reach) must not mutate captured variables (use `shared`). Requests run on several threads
-  at once and each gets its own copy of what the handler captured, so a captured resource
-  (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
-  ([Async](../reference/async.md#thread-safety)). A handler that throws gets a 500
-  response (`Internal Server Error`) and its error is printed to stderr.
-- `Request` (a class) with getters `method`, `path`, `query`, `headers` (the global
-  [`Headers`](fetch.md#headers)), `body` and `upgrade` (an internal key `velt:websocket` uses),
-  plus `header(name): string | null`. Each read copies that property out of the runtime
-  request, so a handler pays only for what it reads; `header(name)` looks up one header without
-  copying the others (`headers` copies them all). `path` excludes the query and `query`
-  excludes the `?`. `headers.get(name)`, `headers.has(name)` and `header(name)` are
-  case-insensitive. A `Request` is valid until its handler settles: keep its properties, not the `Request`, in anything that outlives the handler (a
-  `Response.stream` body, a spawned task). Reading a released `Request` stops the program with a
-  clear error.
-- `Response.text(body, status = 200)`, `Response.json<T>(value, status = 200)`,
-  `Response.html(body, status = 200)`, `Response.bytes(body: u8[], status = 200)`.
-  `.header(name, value): bool` adds a header; `.setHeader(name, value): bool` replaces it (e.g.
-  the default `content-type`). A 1xx, 204 (`Response.text("", 204)`) or 304 status has no body:
-  the body argument is dropped and no `content-type` is added (with `Response.stream`, the
-  writer's writes return `false`).
-- `Response.stream<E>(body: (w: ResponseWriter) => Promise<void, E>, status = 200)`: a body
-  produced while it is sent (server-side rendering, large exports). `body` starts at once and
-  keeps running after the handler returned the response; the status and headers (set them
-  before returning; default `content-type: text/plain; charset=utf-8`) go out first, then every
-  flushed chunk (HTTP/1.1 chunked transfer, no `content-length`). The response ends when `body`
-  returns; if it throws, the error is printed to stderr and the response is cut off (the client
-  sees a failed body, not a complete one). `ResponseWriter` (a handle):
-  `write(text): bool` / `writeBytes(data): bool` buffer, `await flush(): bool` sends the buffer
-  and waits while the client is behind (backpressure), `await close(): bool` ends the response
-  early, `abort()` cuts it off. Once the client has gone away they return `false` and discard
-  their data, so a long-running producer should stop when they do.
-- `Server { port }`: `close()` stops accepting, lets in-flight requests finish and closes idle
-  connections; once the last request finished the handler closure is dropped, so values it
-  captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same and
-  resolves only after that (it consumes the `Server`); a program that exits right after
-  `close()` may exit before the handler is dropped. Dropping the `Server` value does not stop
-  it. A `serve` that fails (address in use, a TLS certificate or key that does not parse)
-  drops the handler closure before it throws.
-- Requests, responses and servers are built only by this module (`Response.text` and the
-  other constructors, `serve`); their runtime handles are private and checked by the runtime,
-  so a stale one never reaches freed memory. `new Response()`, `new Request()` and `new
-  Server()` compile but hold no runtime object: a handler that returns such a response answers
-  500, the request's accessors stop the program (as for a released one), and the server's
-  `port` is 0 and `close()` does nothing.
-- This module's `Request` and `Response` are the server's and differ from the global ones of
-  [`fetch`](fetch.md); importing them hides the global names in that module, so a module that
-  also builds fetch requests imports them under other names (`import { Request as
-  ServerRequest } from "velt:http"`). **Planned**: one `Request` and `Response` for both, as
-  in Deno and Bun.
+`import { serve, ServeInfo, Server } from "velt:http"`. An HTTP server on hyper: HTTP/1.1
+keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls). Handlers take the
+global [`Request`](fetch.md#request) and return the global [`Response`](fetch.md#response), the
+same classes `fetch` uses, as in Deno and Bun. Handlers run concurrently on every core. A
+listening server keeps the process alive after `main` returns, like Node, until
+`server.close()`; dropping the `Server` value does not stop it. A `main` that fails (an uncaught
+error, or a nonzero exit code) ends the process at once, servers or not. For a walkthrough, see
+[Building an HTTP server](../book/http-server.md).
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    if (req.path == "/hello") {
-      return Response.json({ greeting: `hello ${req.query}` });
+    const url = new URL(req.url);
+    if (url.pathname == "/hello") {
+      return Response.json({ greeting: `hello ${url.searchParams.get("name") ?? "you"}` });
     }
-    return Response.text("not found", 404);
+    if (url.pathname == "/echo" && req.method == "POST") {
+      return new Response(await req.text());
+    }
+    return new Response("not found", { status: 404 });
   });
-  const res = await fetch(`http://127.0.0.1:${server.port}/hello?world`);
+  const res = await fetch(`http://127.0.0.1:${server.port}/hello?name=ada`);
   console.log(res.status, res.headers.get("content-type"), await res.text());
-  const missing = await fetch(`http://127.0.0.1:${server.port}/nope`);
-  console.log(missing.status); // 404
+  const echo = await fetch(`http://127.0.0.1:${server.port}/echo`, { method: "POST", body: "hi" });
+  console.log(await echo.text()); // hi
   server.close();
 }
 ```
 
+## `serve(opts, handler)`
+
+`serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
+Request, info: ServeInfo) => Promise<Response, E>): Promise<Server>`. The default host is
+127.0.0.1 (`host: "0.0.0.0"` listens on every interface); port 0 picks a free port. With `tls`
+(PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. A `serve` that fails
+(address in use, a TLS certificate or key that does not parse) drops the handler closure before
+it throws.
+
+- A handler is an async arrow or a named async function (`serve({ port: 8080 }, handle)`), and
+  may take only `req`. TypeScript also allows a handler that returns a `Response` without a
+  promise; Velt's handlers are `async` (**Planned**: `Response | Promise<Response>`, #667).
+- Like spawned tasks, handlers (and async closures they reach) must not mutate captured
+  variables (use `shared`). Requests run on several threads at once and each gets its own copy
+  of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
+  capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).
+- A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
+  stderr, as in Deno and Bun. So does a response with an invalid header name or value.
+
+## The request
+
+The handler's `req` is a [`Request`](fetch.md#request) that reads the server's request lazily: a
+handler pays only for what it reads.
+
+- `req.url` is absolute, as in Deno and Bun: `http://` (`https://` over TLS), the `host` header
+  (HTTP/2: `:authority`), then the path and query. Route with `new URL(req.url).pathname` and
+  read the query with `url.searchParams`. `req.method` is as received (`GET`, `POST`, …).
+- `req.headers` is immutable, as in Deno; `req.headers.get(name)` and `has(name)` look one
+  header up (case-insensitively) without copying the others.
+- The body is received while the handler reads it, not before the handler starts: `await
+  req.text()` (invalid UTF-8 becomes U+FFFD), `await req.json<T>()`, `await req.bytes()`, or
+  chunk by chunk with `for await (const chunk of body)` over `req.body` (a
+  [`BodyStream`](fetch.md#bodystream), `null` for a request without a body), so an upload need
+  not be held in memory. A body is read once; a read that fails (the client went away) throws
+  `IoError`.
+- A `Request` is valid until its handler settles: what the handler read stays readable, but
+  reading something new afterwards (in a streamed body or a spawned task) stops the program
+  with a clear error. Read what outlives the handler first (`const url = req.url`).
+
+`info: ServeInfo` holds what the server knows beyond the request (Deno's `ServeHandlerInfo`):
+`info.remoteAddr` is the client's `NetAddr { transport: "tcp", hostname, port }`.
+
+## The response
+
+The handler returns any [`Response`](fetch.md#response): `new Response(body, { status,
+statusText, headers })` or `Response.json(value, init)`, `Response.redirect(url, status)`, or a
+response `fetch` returned (a proxy: its body is passed on as it arrives).
+
+- A string body is sent without a copy, with `content-type: text/plain;charset=UTF-8` unless
+  the headers set one; `Response.json` sends `application/json`, bytes (`u8[]`) send no
+  `content-type`. Set any other header with `res.headers.set(name, value)` or in `init`.
+- A body made while it is sent (server-side rendering, large exports) is a `BodyStream`:
+  `new Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`
+  (JS: `ReadableStream.from`). The status and headers go out when the handler returns; each
+  chunk is sent as the generator yields it (HTTP/1.1 chunked transfer, no `content-length`),
+  and the generator is not asked for the next one before the client took the previous one
+  (backpressure). If the client goes away, the generator is closed (its `finally` blocks run);
+  if it throws, the error is printed to stderr and the response is cut off, so the client sees
+  a failed body rather than a complete one.
+- A 1xx, 204 or 304 status has no body: `new Response(body, { status: 204 })` with a body stops
+  the program (JS throws `TypeError`), and a passed-on fetched response sends none.
+
 ```ts
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+import { serve } from "velt:http";
+import { BodyStream } from "velt:fetch";
+import { utf8Encode } from "velt:encoding";
+
+async function* rows(n: i64): AsyncGenerator<u8[]> {
+  yield utf8Encode("<!doctype html><ul>");
+  for (let i: i64 = 0; i < n; i++) {
+    yield utf8Encode(`<li>${i}</li>`);
+    await sleep(100);
+  }
+  yield utf8Encode("</ul>");
+}
 
 async function main() {
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    const res = Response.stream(async (w: ResponseWriter) => {
-      w.write("<!doctype html><ul>");
-      for (let i = 0; i < 3; i++) {
-        w.write(`<li>${i}</li>`);
-        if (!(await w.flush())) {
-          return; // the client went away
-        }
-        await sleep(100);
-      }
-      w.write("</ul>");
+    return new Response(BodyStream.from(rows(3)), {
+      headers: { "content-type": "text/html; charset=utf-8" },
     });
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    return res;
   });
 }
 ```
 
-Notes: a handler is an async arrow or a named async function (`serve({ port: 8080 },
-handle)`).
+## `Server`
+
+`Server { port }`: `close()` stops accepting, lets in-flight requests finish and closes idle
+connections; once the last request finished the handler closure is dropped, so values it
+captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same
+and resolves only after that (it consumes the `Server`); a program that exits right after
+`close()` may exit before the handler is dropped. Dropping the `Server` value does not stop it.
+Servers are built only by `serve`: `new Server()` holds no runtime object (its `port` is 0 and
+`close()` does nothing).
+
+## Migrating from the server's own `Request` and `Response`
+
+Before #638, `velt:http` had a `Request`, `Response` and `ResponseWriter` of its own. Handlers
+now take and return the globals; importing the old names is an error that says so.
+
+| Before | Now |
+|---|---|
+| `import { serve, Request, Response } from "velt:http"` | `import { serve } from "velt:http"` (`Request` and `Response` are global) |
+| `req.path`, `req.query` | `new URL(req.url).pathname`, `url.search.slice(1)` or `url.searchParams` |
+| `req.body` (a string) | `await req.text()` (or `req.json<T>()`, `req.bytes()`, `req.body` as a stream) |
+| `req.header(name)` | `req.headers.get(name)` |
+| `Response.text(body, status)` | `new Response(body, { status })` (`content-type: text/plain;charset=UTF-8`) |
+| `Response.json(value, status)` | `Response.json(value, { status })` |
+| `Response.html(body)` | `new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } })` |
+| `Response.bytes(data)` | `new Response(data)` (no default `content-type`) |
+| `res.header(name, value)`, `res.setHeader(name, value)` | `res.headers.append(name, value)`, `res.headers.set(name, value)` |
+| `Response.stream(async (w) => { w.write(…); await w.flush(); })` | `new Response(BodyStream.from(gen()))` with an async generator yielding `u8[]` chunks |
+| `Response.text("", 204)` | `new Response(null, { status: 204 })` |
+| `renderToStream(el, w)` (`velt:jsx`) | `new Response(renderToStream(el), init)` |

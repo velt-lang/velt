@@ -2,7 +2,7 @@
 //! `cargo test -p velt_rt --release --lib http_bench -- --ignored --nocapture`.
 //!
 //! The server is `velt_rt_http_serve` with the handler generated code would emit for
-//! `(req) => Response.text("Hello, World!")`, written against the C ABI. The load generator is a
+//! `(req) => new Response("Hello, World!")`, written against the C ABI. The load generator is a
 //! raw HTTP/1.1 keep-alive client on its own tokio runtime (`BENCH_CLIENT_THREADS`, default 4):
 //! `BENCH_CONNS` connections (default 64), each sending one request at a time for `BENCH_SECS`
 //! (default 5). `BENCH_TARGET=host:port` measures another server instead (e.g. a plain hyper or
@@ -15,7 +15,9 @@ use crate::http::request::*;
 use crate::http::response::*;
 use crate::http::server::*;
 use crate::result::IoResult;
+use crate::bytes::VeltBytes;
 use crate::str::VeltStr;
+use crate::str_array::VeltStrArray;
 use crate::task::READY;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -40,12 +42,18 @@ unsafe extern "C" fn hello_init(_env: *mut c_void, req: *mut ReqObj, state: *mut
 unsafe extern "C" fn hello_poll(s: *mut u8, _cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Hello);
     velt_rt_http_req_drop(st.req);
-    let resp = velt_rt_http_resp_new(200);
+    st.result = hello();
+    READY
+}
+
+/// `new Response("Hello, World!")` built as std builds it for a server.
+fn hello() -> RespHandle {
     // A string literal is static (cap == 0), exactly as generated code passes it.
     let mut body = VeltStr::from_static(b"Hello, World!");
-    velt_rt_http_resp_body_text(resp, &mut body);
-    st.result = resp;
-    READY
+    let (headers, bytes) = (VeltStrArray::from_vec(vec![]), VeltBytes::from_vec(vec![]));
+    let reason = VeltStr::empty();
+    // SAFETY: valid values, as generated code passes them.
+    unsafe { velt_rt_http_resp_build(200, &reason, &headers, 1, &mut body, &bytes, 1) }
 }
 
 unsafe extern "C" fn hello_drop(s: *mut u8) {
@@ -205,10 +213,7 @@ fn run_oha(addr: &str, conns: usize, secs: u64) {
 fn http_response_cost() {
     fn build(n: u32) {
         for _ in 0..n {
-            let resp = velt_rt_http_resp_new(200);
-            let mut body = VeltStr::from_static(b"Hello, World!");
-            unsafe { velt_rt_http_resp_body_text(resp, &mut body) };
-            std::hint::black_box(take(resp));
+            std::hint::black_box(take(hello()));
         }
     }
     // What the same work cost when a response was a raw `Box` pointer (before the registry).

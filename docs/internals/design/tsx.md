@@ -97,8 +97,8 @@ Types:
 
 ## `velt:jsx` (the default provider)
 
-`renderToString(el)`, `renderToStream(el, res)` (writes into a `velt:http` response while
-rendering, flushing at async component boundaries), `Fragment`, `raw(html)`, and a full
+`renderToString(el)`, `renderToStream(el)` (a `BodyStream` a `velt:http` response sends while
+rendering, in chunks at async component boundaries), `Fragment`, `raw(html)`, and a full
 `JSX.IntrinsicElements` for HTML. Precompile mode. Goal: the TechEmpower "fortunes" test written
 in TSX at least as fast as the hand-written template (`bench/web`).
 

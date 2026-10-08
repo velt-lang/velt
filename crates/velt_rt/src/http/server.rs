@@ -6,8 +6,8 @@
 //! initial handler state for one request (taking ownership of the `VeltReq`), plus the state
 //! machine's `poll`/`drop` and state size. The runtime stores that state inline in the request
 //! future (size classes, like `spawn`), so a request costs no allocation beyond hyper's own and the
-//! request/response objects. The request body is read completely before the handler starts, so
-//! `req.body` is a plain synchronous accessor. The handler's result (state offset 0) is a
+//! request/response objects. The handler starts once the request's head has arrived and receives
+//! the body while it reads it (`req_body.rs`). The handler's result (state offset 0) is a
 //! response key (`response.rs`).
 //!
 //! A server handle is a registry key too (`crate::registry`): after `close()`, `shutdown()` or
@@ -20,7 +20,7 @@
 use super::body::RespBody;
 use super::handler::Shared;
 pub use super::handler::{InitFn, VeltHandler};
-use super::request::ReqObj;
+use super::request::{Conn, ReqObj};
 use super::response::RespHandle;
 use super::upgrade;
 use crate::net::tcp::text_arg;
@@ -162,6 +162,7 @@ impl Drop for ParkedUpgrade {
 
 async fn handle<S: OwnedStore>(
     shared: Arc<Shared>,
+    conn: Conn,
     mut req: Request<Incoming>,
 ) -> Result<Response<RespBody>, Infallible> {
     let parked = ParkedUpgrade(if req.headers().contains_key(UPGRADE) {
@@ -169,10 +170,7 @@ async fn handle<S: OwnedStore>(
     } else {
         0
     });
-    let resp = match ReqObj::read(req, parked.0).await {
-        Some(req) => HandlerFut::<S>::new(&shared, req).await,
-        None => status_only(StatusCode::BAD_REQUEST),
-    };
+    let resp = HandlerFut::<S>::new(&shared, ReqObj::new(req, parked.0, conn)).await;
     drop(parked);
     Ok(resp)
 }
@@ -206,8 +204,8 @@ async fn accept_connections<S: OwnedStore>(
     tls: Option<TlsAcceptor>,
 ) {
     loop {
-        let stream = match listener.accept().await {
-            Ok((s, _)) => s,
+        let (stream, remote) = match listener.accept().await {
+            Ok(accepted) => accepted,
             // Per-connection failures and resource exhaustion (EMFILE): back off briefly, go on.
             Err(_) => {
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -215,17 +213,22 @@ async fn accept_connections<S: OwnedStore>(
             }
         };
         let _ = stream.set_nodelay(true);
+        let conn = Conn {
+            remote,
+            local: stream.local_addr().unwrap_or(remote),
+            tls: tls.is_some(),
+        };
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
         // connection.
         tokio::spawn(async move {
             match tls {
-                None => serve_connection::<S, _>(TokioIo::new(stream), shared, watcher).await,
+                None => serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await,
                 Some(acceptor) => {
                     if let Ok(Ok(s)) =
                         tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
                     {
-                        serve_connection::<S, _>(TokioIo::new(s), shared, watcher).await;
+                        serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
                     }
                 }
             }
@@ -234,12 +237,12 @@ async fn accept_connections<S: OwnedStore>(
 }
 
 /// Serves one connection (HTTP/1.1 with upgrades, or HTTP/2) until it closes.
-async fn serve_connection<S, I>(io: I, shared: Arc<Shared>, watcher: Watcher)
+async fn serve_connection<S, I>(io: I, shared: Arc<Shared>, conn: Conn, watcher: Watcher)
 where
     S: OwnedStore,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
-    let svc = hyper::service::service_fn(move |req| handle::<S>(shared.clone(), req));
+    let svc = hyper::service::service_fn(move |req| handle::<S>(shared.clone(), conn, req));
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // pipeline_flush: responses to pipelined requests go out in one write instead of one
     // `writev` each (5× on TechEmpower's pipelined plaintext, bench/web/RESULTS.md).

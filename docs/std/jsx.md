@@ -7,10 +7,11 @@ compiles to calls into `velt:jsx/jsx-runtime` and sees its types as `JSX.Element
 - `renderToString(el: Element): Promise<string>` (throws `RenderError`): the HTML, after
   awaiting the async components. `renderToStringSync(el): string` for a tree without async
   components (throws `RenderError` if it has one).
-- `renderToStream(el: Element, w: ResponseWriter): Promise<bool>` (throws `RenderError`): writes
-  into a [`Response.stream`](http.md) body, flushing before each pending async component so
-  the markup above it reaches the client while it loads. Returns `false`, and stops, once the
-  client has gone away. Thrown from the stream producer, a `RenderError` cuts the response off.
+- `renderToStream(el: Element): BodyStream`: the HTML as a streamed [response
+  body](http.md#the-response) (like React's `renderToReadableStream`), `new
+  Response(renderToStream(el), init)`. The markup above each pending async component is sent
+  before the component is awaited, so it reaches the client while it loads; rendering stops
+  once the client has gone away. A component that throws a `RenderError` cuts the response off.
 - `raw(html: string): Element`: markup inserted without escaping, the only way to emit HTML
   from a string (never pass it user input). `Fragment` is `<>…</>`.
 - Types: `Element` (what every JSX expression is), `Child` (`Element | Element[] | string |
@@ -62,7 +63,7 @@ Rendering rules:
 
 ```tsx
 import { renderToStream, Element } from "velt:jsx";
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+import { serve } from "velt:http";
 
 async function Posts(): Promise<Element> {
   const posts = await loadPosts(); // a database query
@@ -83,12 +84,10 @@ function Page(props: { title: string }): Element {
 
 async function main() {
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    const res = Response.stream(async (w: ResponseWriter) => {
-      // The head and heading are sent at once; the list follows when the query is done.
-      await renderToStream(<Page title="Posts" />, w);
+    // The head and heading are sent at once; the list follows when the query is done.
+    return new Response(renderToStream(<Page title="Posts" />), {
+      headers: { "content-type": "text/html; charset=utf-8" },
     });
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    return res;
   });
 }
 ```

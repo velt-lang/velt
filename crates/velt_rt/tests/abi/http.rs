@@ -1,7 +1,7 @@
 //! HTTP: a compiled request handler served by `velt_rt_http_serve`, exercised with raw HTTP/1.1
 //! keep-alive requests from plain threads and with the runtime's own `fetch`.
 
-use super::fake::{arg, block_on_fut, ok, take_string};
+use super::fake::{arg, block_on_fut, fut_result, ok, take_string};
 use crate::bytes::VeltBytes;
 use crate::http::client::*;
 use crate::http::request::*;
@@ -19,10 +19,12 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
-// async (req) => { await sleep(1); hits.add(1);
-//   return req.path == "/json" ? Response.json('{"ok":true}')
-//        : Response.text(`${req.method} ${req.path}?${req.query} [${req.headers.get("x-test") ?? "-"}] ${req.body}`,
-//                        req.path == "/missing" ? 404 : 200) }
+// async (req) => { await sleep(1); hits.add(1); const body = await req.text();
+//   const url = new URL(req.url);
+//   const res = url.pathname == "/json" ? Response.json({ ok: true })
+//        : new Response(`${req.method} ${url.pathname}?${query} [${req.headers.get("x-test") ?? "-"}] ${body}`,
+//                       { status: url.pathname == "/missing" ? 404 : 200 });
+//   res.headers.set("x-path", url.pathname); return res; }
 /// The handler closure's environment: the drop-function word every closure environment starts
 /// with, then the captured counter.
 #[repr(C)]
@@ -57,35 +59,49 @@ unsafe fn text_of(f: unsafe extern "C" fn(ReqHandle, *mut VeltStr), req: ReqHand
     take_string(out.assume_init())
 }
 
-unsafe fn respond(req: ReqHandle) -> RespHandle {
-    let (method, path) = (
-        text_of(velt_rt_http_req_method, req),
-        text_of(velt_rt_http_req_path, req),
+/// The path and query of a request's absolute URL (`http://x/echo?a=1` → `/echo`, `a=1`).
+unsafe fn path_and_query(req: ReqHandle) -> (String, String) {
+    let url = text_of(velt_rt_http_req_url, req);
+    let after_scheme = url.strip_prefix("http://").expect("an absolute http: URL");
+    let rest = &after_scheme[after_scheme.find('/').expect("a path")..];
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    (path.to_string(), query.to_string())
+}
+
+/// A response as std builds one: `headers` are `[name, value, …]`, the text body is taken.
+unsafe fn build(status: u32, headers: &[&str], body: String, implied: u32) -> RespHandle {
+    let list = VeltStrArray::from_vec(headers.iter().map(|h| VeltStr::from_text(h)).collect());
+    let mut owned = VeltStr::from_vec(body.into_bytes());
+    let bytes = VeltBytes::from_vec(vec![]);
+    let r = velt_rt_http_resp_build(
+        status,
+        &VeltStr::empty(),
+        &list,
+        1,
+        &mut owned,
+        &bytes,
+        implied,
     );
-    let (query, body) = (
-        text_of(velt_rt_http_req_query, req),
-        text_of(velt_rt_http_req_body, req),
-    );
+    assert!(owned.is_empty(), "body ownership moved to the response");
+    r
+}
+
+unsafe fn respond(req: ReqHandle, body: String) -> RespHandle {
+    let method = text_of(velt_rt_http_req_method, req);
+    let (path, query) = path_and_query(req);
     let mut h = MaybeUninit::uninit();
     let hdr = if velt_rt_http_req_header(req, &arg("X-Test"), h.as_mut_ptr()) == 1 {
         take_string(h.assume_init())
     } else {
         "-".into()
     };
-    let resp = velt_rt_http_resp_new(if path == "/missing" { 404 } else { 200 });
-    velt_rt_http_resp_header(resp, &arg("x-path"), &arg(&path));
-    let mut owned = VeltStr::from_vec(if path == "/json" {
-        br#"{"ok":true}"#.to_vec()
-    } else {
-        format!("{method} {path}?{query} [{hdr}] {body}").into_bytes()
-    });
     if path == "/json" {
-        velt_rt_http_resp_json(resp, &mut owned);
-    } else {
-        velt_rt_http_resp_body_text(resp, &mut owned);
+        let json = r#"{"ok":true}"#.to_string();
+        return build(200, &["x-path", &path], json, 2);
     }
-    assert!(owned.is_empty(), "body ownership moved to the response");
-    resp
+    let status = if path == "/missing" { 404 } else { 200 };
+    let text = format!("{method} {path}?{query} [{hdr}] {body}");
+    build(status, &["x-path", &path], text, 1)
 }
 
 /// Handlers of `/slow` started (`a_handler_finishes_after_its_client_left`).
@@ -96,7 +112,7 @@ unsafe extern "C" fn handler_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     loop {
         match st.tag {
             // `/fast` skips the sleep (throughput test); `/slow` gives a client time to leave.
-            0 => match text_of(velt_rt_http_req_path, st.req).as_str() {
+            0 => match path_and_query(st.req).0.as_str() {
                 "/fast" => st.tag = 1,
                 "/slow" => {
                     SLOW_STARTED.fetch_add(1, Ordering::SeqCst);
@@ -110,12 +126,20 @@ unsafe extern "C" fn handler_poll(s: *mut u8, cx: *mut c_void) -> u32 {
                         return PENDING;
                     }
                     velt_rt_fut_drop(st.fut);
-                    st.fut = null_mut();
                 }
                 (*st.env).fetch_add(1, Ordering::SeqCst);
-                st.result = respond(st.req);
+                (st.fut, st.tag) = (velt_rt_http_req_text(st.req), 2);
+            }
+            2 => {
+                if velt_rt_fut_poll(st.fut, cx) == PENDING {
+                    return PENDING;
+                }
+                let body = take_string(ok(fut_result::<IoResult<VeltStr>>(st.fut)));
+                velt_rt_fut_drop(st.fut);
+                st.fut = null_mut();
+                st.result = respond(st.req, body);
                 velt_rt_http_req_drop(st.req);
-                st.tag = 2;
+                st.tag = 3;
                 return READY;
             }
             _ => unreachable!(),
@@ -204,7 +228,7 @@ fn raw_http11_keep_alive() {
         (status, body.as_str()),
         (200, "POST /echo?a=1&b=2 [yes] hello")
     );
-    assert_eq!(header(&h, "content-type"), "text/plain; charset=utf-8");
+    assert_eq!(header(&h, "content-type"), "text/plain;charset=UTF-8");
     assert_eq!(header(&h, "x-path"), "/echo");
     // Same connection (keep-alive).
     w.write_all(b"GET /json HTTP/1.1\r\nHost: x\r\n\r\nGET /missing HTTP/1.1\r\nHost: x\r\n\r\n")

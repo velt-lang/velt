@@ -394,3 +394,43 @@ fn str_eq() {
     let s = lit("same");
     assert_eq!(unsafe { velt_rt_str_eq(&s, &s) }, 1);
 }
+
+#[test]
+fn case_mapping_that_changes_nothing_shares_the_string() {
+    let h = heap("content-type");
+    let mut out = MaybeUninit::<VeltStr>::uninit();
+    unsafe { velt_rt_str_to_lower(&*h, out.as_mut_ptr()) };
+    let mut lower = unsafe { out.assume_init() };
+    let same = unsafe { lower.as_bytes().as_ptr() == h.as_bytes().as_ptr() };
+    assert!(same, "an unchanged heap string is shared, not copied");
+    unsafe { velt_rt_str_drop(&mut lower) };
+    // A borrowed one is copied (it may point into memory that is freed first).
+    let s = lit("ALREADY UPPER, LONGER THAN AN INLINE STRING");
+    let mut out = MaybeUninit::<VeltStr>::uninit();
+    unsafe { velt_rt_str_to_upper(&s, out.as_mut_ptr()) };
+    let mut upper = unsafe { out.assume_init() };
+    assert!(!upper.is_static());
+    assert_eq!(unsafe { upper.as_bytes() }, unsafe { s.as_bytes() });
+    unsafe { velt_rt_str_drop(&mut upper) };
+}
+
+#[test]
+fn short_needles_match_js() {
+    // Repeated first bytes, matches at the end, `from` past a match, needles that overrun.
+    let cases: &[(&'static str, &'static str, i64, i64)] = &[
+        ("http://127.0.0.1:8080/a?b", "/", 8, 21),
+        ("http://127.0.0.1:8080/a?b", "://", 0, 4),
+        ("aaab", "ab", 0, 2),
+        ("aaab", "aab", 1, 1),
+        ("abab", "ab", 1, 2),
+        ("abc", "c", 0, 2),
+        ("abc", "cd", 0, -1),
+        ("abc", "abcd", 0, -1),
+        ("abc", "a", 1, -1),
+        ("", "a", 0, -1),
+    ];
+    for &(s, n, from, want) in cases {
+        let got = both(s, |v| unsafe { velt_rt_str_index_of(v, &lit(n), from) }.to_string());
+        assert_eq!(got, want.to_string(), "{s:?}.indexOf({n:?}, {from})");
+    }
+}

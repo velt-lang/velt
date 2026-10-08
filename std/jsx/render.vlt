@@ -1,4 +1,4 @@
-// std/jsx/render: turns an Element into HTML, as one string or into a streamed response.
+// std/jsx/render: turns an Element into HTML, as one string or as a streamed response body.
 //
 // A complete element already is its HTML (node.vlt). Otherwise the renderer walks the node's
 // pieces in document order with an explicit stack (no async recursion): `html`, then the
@@ -6,7 +6,8 @@
 // created, so awaiting them one after the other still lets them load concurrently.
 
 import { Element, RenderError } from "velt:jsx/node";
-import { ResponseWriter } from "velt:http";
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch/body";
 
 // The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
 // first (in document order) component that threw or rejected.
@@ -58,32 +59,37 @@ function collect(node: Element, pieces: string[]) throws RenderError {
   }
 }
 
-// Writes `el` into a streamed response body (`Response.stream`, std/http), flushing before each
-// pending async component so the markup above it reaches the client while it loads. Returns
-// false, and stops rendering, once the client has gone away. Throws like `renderToString`;
-// thrown from the `Response.stream` producer, that cuts the response off.
-export async function renderToStream(
-  el: Element,
-  w: ResponseWriter,
-): Promise<bool> throws RenderError {
+// The HTML of `el` as a streamed `Response` body (like React's `renderToReadableStream`):
+// `new Response(renderToStream(el), ...)`. The markup above each pending async component is sent
+// before the component is awaited, so it reaches the client while the component loads. Once
+// the client has gone away, rendering stops. A component that throws cuts the response off (its
+// `RenderError` is printed to stderr).
+export function renderToStream(el: Element): BodyStream {
+  return BodyStream.from(chunks(el));
+}
+
+// `renderToStream`'s chunks: the markup up to each pending async component, then the rest.
+async function* chunks(el: Element): AsyncGenerator<u8[], RenderError> {
+  let out = "";
   const stack: Element[] = [el];
   while (stack.length > 0) {
     const node = stack.pop();
     if (node == null) {
       break;
     }
-    if (node.html != "" && !w.write(node.html)) {
-      return false;
-    }
+    out += node.html;
     const pending = pushParts(node, stack);
     if (pending != null) {
-      if (!(await w.flush())) {
-        return false;
+      if (out != "") {
+        yield utf8Encode(out);
+        out = "";
       }
       stack.push(await pending);
     }
   }
-  return true;
+  if (out != "") {
+    yield utf8Encode(out);
+  }
 }
 
 // Pushes the node's parts onto the stack so that they pop in document order, and returns its

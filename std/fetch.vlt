@@ -10,15 +10,15 @@
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
-import { bodyParts } from "velt:fetch/body";
+import { BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
 import { Headers } from "velt:fetch/headers";
 import { normalizeMethod, Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
 
-export { BodyInit } from "velt:fetch/body";
+export { BodyInit, BodyStream } from "velt:fetch/body";
 export { Headers, HeadersInit } from "velt:fetch/headers";
 export { Request, RequestInit, RequestRedirect } from "velt:fetch/request";
-export { BodyStream, Response, ResponseInit } from "velt:fetch/response";
+export { Response, ResponseInit } from "velt:fetch/response";
 
 // The runtime takes `text` / `bytes` (moved: left empty) and copies the rest; `headers` is the
 // flat list `[name, value, …]`.
@@ -55,12 +55,19 @@ export async function fetch(
   const o = outgoing(input, init);
   let text = o.text;
   let bytes = o.bytes;
+  let kind = o.kind;
+  const stream = o.stream;
+  if (stream != null) {
+    // A stream is sent once it has been read whole.
+    bytes = await collect(stream);
+    kind = 2;
+  }
   const signal = o.signal;
   const r = await velt_rt_http_fetch_send(
     o.method,
     o.url,
     o.headers,
-    o.kind,
+    kind,
     text,
     bytes,
     redirectMode(o.redirect),
@@ -83,6 +90,7 @@ struct Outgoing {
   kind: u32;
   text: string;
   bytes: u8[];
+  stream: BodyStream | null;
   redirect: RequestRedirect;
   signal: AbortSignal | null;
   ca: string;
@@ -114,6 +122,7 @@ function outgoing(
       kind: body.kind,
       text: body.text,
       bytes: body.bytes,
+      stream: body.stream,
       redirect: req.redirect,
       signal: signal,
       ca: req.ca(),
@@ -136,6 +145,7 @@ function outgoing(
       kind: 0,
       text: "",
       bytes: [],
+      stream: null,
       redirect: init.redirect ?? "follow",
       signal: signal,
       ca: init.ca ?? "",
@@ -146,7 +156,7 @@ function outgoing(
     throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
   }
   let headers: string[] = [];
-  const ct = body.contentType;
+  const ct = impliedType(body.implied);
   if (given != null) {
     const h = new Headers(given);
     if (ct != null && !h.has("content-type")) {
@@ -166,6 +176,7 @@ function outgoing(
     kind: body.kind,
     text: body.text,
     bytes: body.bytes,
+    stream: body.stream,
     redirect: init.redirect ?? "follow",
     signal: signal,
     ca: init.ca ?? "",

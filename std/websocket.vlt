@@ -18,7 +18,8 @@
 // Only HTTP/1.1 upgrades are supported (HTTP/2 clients fall back to HTTP/1.1 for WebSockets).
 
 import { IoError, IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
-import { Request, Response } from "velt:http";
+import { Request } from "velt:fetch/request";
+import { Response } from "velt:fetch/response";
 
 // The runtime's `VeltWsMessage`: kind 0 = closed, 1 = text, 2 = binary.
 struct RawMessage {
@@ -33,6 +34,7 @@ struct RawAccept {
   response: u64;
 }
 
+declare function velt_rt_http_req_upgrade(r: u64): u64;
 declare function velt_rt_ws_accept(upgradeKey: u64, secKey: string): IoResult<RawAccept>;
 declare async function velt_rt_ws_connect(url: string, ca: string): Promise<IoResult<u64>>;
 declare async function velt_rt_ws_send_text(ws: u64, text: string): Promise<IoStatus>;
@@ -108,17 +110,24 @@ export struct WebSocketUpgrade {
 
 // Whether `req` asks to be upgraded to a WebSocket.
 export function isWebSocketRequest(req: Request): bool {
-  const upgrade = req.header("upgrade") ?? "";
-  return req.upgrade != 0 && upgrade.toLowerCase() == "websocket";
+  const upgrade = req.headers.get("upgrade") ?? "";
+  return upgradeKey(req) != 0 && upgrade.toLowerCase() == "websocket";
+}
+
+// The runtime key of the upgrade `req` asks for (0: none, or not a request a server received).
+function upgradeKey(req: Request): u64 {
+  const raw = req.serverKey();
+  return raw == 0 ? 0 : velt_rt_http_req_upgrade(raw);
 }
 
 // Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one). Return
 // `response` from the handler; the socket works once that response has been sent.
 export function upgradeWebSocket(req: Request): WebSocketUpgrade {
-  const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.header("sec-websocket-key") ?? ""));
+  const key = req.headers.get("sec-websocket-key") ?? "";
+  const r = unwrapIo(velt_rt_ws_accept(upgradeKey(req), key));
   return WebSocketUpgrade {
     socket: WebSocket { handle: r.ws },
-    response: Response.adopt(r.response),
+    response: Response.built(r.response, 101),
   };
 }
 

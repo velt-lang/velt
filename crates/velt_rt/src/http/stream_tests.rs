@@ -2,9 +2,8 @@
 //! wire (hyper over a real socket, read with a raw HTTP/1.1 client).
 
 use super::body::RespBody;
-use super::response::{velt_rt_http_resp_drop, velt_rt_http_resp_new, RespObj};
+use super::response::{register, velt_rt_http_resp_drop, RespObj};
 use super::stream::*;
-use crate::str::VeltStr;
 use crate::task::runtime::handle;
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -137,14 +136,14 @@ fn a_large_buffer_is_sent_without_flush() {
 #[test]
 fn the_abi_opens_writes_and_releases_writers() {
     unsafe {
-        let r = velt_rt_http_resp_new(201);
+        let r = register(Response::new(RespBody::full(Bytes::new())));
         let w = velt_rt_http_resp_stream_open(r);
-        let content_type = super::response::with(r, |r| r.headers()[CONTENT_TYPE].clone());
-        assert_eq!(content_type.unwrap(), "text/plain; charset=utf-8");
-        let text = VeltStr::from_bytes(b"hi");
-        assert_eq!(velt_rt_http_resp_stream_write(w, &text), 1);
+        let headers = super::response::with(r, |r| r.headers().len());
+        assert_eq!(headers, Some(0), "no default content-type");
+        let data = crate::bytes::VeltBytes::from_vec(b"hi".to_vec());
+        assert_eq!(velt_rt_http_resp_stream_write_bytes(w, &data), 1);
         velt_rt_http_resp_stream_abort(w);
-        assert_eq!(velt_rt_http_resp_stream_write(w, &text), 0, "released");
+        assert_eq!(velt_rt_http_resp_stream_write_bytes(w, &data), 0, "released");
         velt_rt_http_resp_stream_abort(w);
         velt_rt_http_resp_drop(r);
     }

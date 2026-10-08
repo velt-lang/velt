@@ -5,14 +5,16 @@
 // they are added (header names are case-insensitive), values have surrounding whitespace
 // removed. The list is the runtime's format too, so a fetched response's headers arrive as one
 // array without being copied again. Lookups scan the list: a message has a handful of headers,
-// for which a scan beats hashing.
+// for which a scan beats hashing. A server request's headers stay in the runtime until
+// something needs all of them: `get` and `has` look one name up there.
 //
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
 // (`getSetCookie()` returns them as an array). Unlike JavaScript, an invalid name or value is
-// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request. A
-// fetched response's headers are immutable, as in JS: changing them stops the program
-// (`TypeError: immutable`), a programming error like an index out of bounds.
+// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request (a
+// server answers 500). A fetched response's and a received request's headers are immutable, as
+// in JS: changing them stops the program (`TypeError: immutable`), a programming error like an
+// index out of bounds.
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
@@ -32,20 +34,26 @@ function isHttpSpace(c: i64): bool {
   return c == 9 || c == 10 || c == 13 || c == 32;
 }
 
+declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
+declare function velt_rt_http_req_headers(r: u64): string[];
+
 // `Headers` or an object literal (`{ "content-type": "text/plain" }`).
 export type HeadersInit = Headers | Record<string, string>;
 
 export class Headers {
   // `[name, value, …]`: lowercase names, trimmed values.
   private list: string[] = [];
-  // A fetched response's headers (std sets it): changing them is an error.
+  // A fetched response's or a server request's headers (std sets it): changing them is an error.
   private frozen: bool = false;
+  // The server request (runtime key) whose headers `list` does not hold yet; 0 once loaded.
+  private req: u64 = 0;
 
   constructor(init: HeadersInit | null = null) {
     if (init == null) {
       return;
     }
     if (init instanceof Headers) {
+      init.load();
       this.list = init.list.clone();
       return;
     }
@@ -61,9 +69,27 @@ export class Headers {
     return h;
   }
 
+  // The immutable headers of the server request behind runtime key `req`, read from the
+  // runtime when needed (std only).
+  private static ofRequest(req: u64): Headers {
+    const h = new Headers();
+    h.req = req;
+    h.frozen = true;
+    return h;
+  }
+
   // The flat list (std only: what `fetch` and the server hand to the runtime).
   private raw(): string[] {
+    this.load();
     return this.list;
+  }
+
+  // Copies a server request's headers out of the runtime, once.
+  private load() {
+    if (this.req != 0) {
+      this.list = velt_rt_http_req_headers(this.req);
+      this.req = 0;
+    }
   }
 
   // Adds a value; a header that already has one gets another.
@@ -90,6 +116,10 @@ export class Headers {
 
   // The values of `name` joined with ", ", or null when there is none.
   get(name: string): string | null {
+    if (this.req != 0) {
+      let out = "";
+      return velt_rt_http_req_header(this.req, name, out) ? out : null;
+    }
     const key = name.toLowerCase();
     let out: string | null = null;
     for (let i: usize = 0; i < this.list.length; i += 2) {
@@ -103,6 +133,7 @@ export class Headers {
 
   // Every `set-cookie` value, in order (they can't be joined with commas).
   getSetCookie(): string[] {
+    this.load();
     const out: string[] = [];
     for (let i: usize = 0; i < this.list.length; i += 2) {
       if (this.list[i] == "set-cookie") {
@@ -113,6 +144,10 @@ export class Headers {
   }
 
   has(name: string): bool {
+    if (this.req != 0) {
+      let out = "";
+      return velt_rt_http_req_header(this.req, name, out);
+    }
     const key = name.toLowerCase();
     for (let i: usize = 0; i < this.list.length; i += 2) {
       if (this.list[i] == key) {
@@ -124,6 +159,7 @@ export class Headers {
 
   // `[name, value]` pairs as iteration yields them: sorted by name, repeats joined.
   private sorted(): [string, string][] {
+    this.load();
     const names: string[] = [];
     for (let i: usize = 0; i < this.list.length; i += 2) {
       const n = this.list[i];

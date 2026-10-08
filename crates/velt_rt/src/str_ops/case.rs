@@ -3,6 +3,7 @@
 use super::{bytes, is_js_whitespace_cp, sub_string, text};
 use crate::str::wtf8;
 use crate::str::VeltStr;
+use crate::str::velt_rt_str_own;
 
 /// Bytes of JS whitespace at the start of the WTF-8 `t` (a lone surrogate is not whitespace).
 fn trimmed_start(t: &[u8]) -> usize {
@@ -80,14 +81,28 @@ fn lower(t: &str) -> String {
     }
 }
 
+/// Whether case mapping leaves `s` as it is: ASCII without a letter `changes` matches (most
+/// header names, identifiers and keys are already in the case asked for). Then the result is
+/// `s`'s own copy (`velt_rt_str_own`: a heap buffer is shared, strings being immutable), with no
+/// new buffer.
+unsafe fn unchanged(s: *const VeltStr, changes: fn(&u8) -> bool) -> bool {
+    (*s).is_ascii() && !(*s).as_bytes().iter().any(changes)
+}
+
 /// `s.toUpperCase()`: full Unicode default case mapping (`ß` → `SS`), like JS.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_to_upper(s: *const VeltStr, out: *mut VeltStr) {
+    if unchanged(s, u8::is_ascii_lowercase) {
+        return velt_rt_str_own(s, out);
+    }
     out.write(map_case(s, upper));
 }
 
 /// `s.toLowerCase()`: full Unicode default case mapping (final sigma included), like JS.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_to_lower(s: *const VeltStr, out: *mut VeltStr) {
+    if unchanged(s, u8::is_ascii_uppercase) {
+        return velt_rt_str_own(s, out);
+    }
     out.write(map_case(s, lower));
 }

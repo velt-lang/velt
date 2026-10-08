@@ -271,8 +271,8 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   they finish.
 - The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`, `VeltFetchResp`) are registry keys as
   well, so a stale or forged one never reaches memory (additive): server operations on a closed
-  handle are no-ops (port 0, `shutdown` resolves at once), response builders ignore a dead
-  response (`velt_rt_http_resp_header` returns 0) and the server answers 500 for one, and using a
+  handle are no-ops (port 0, `shutdown` resolves at once), a dead response key is ignored
+  (`velt_rt_http_resp_drop`) and the server answers 500 for one, and using a
   released request or fetch response is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
   `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
@@ -361,7 +361,8 @@ typedef struct {
 } VeltHandler;      // 48 bytes
 ```
 The runtime stores each request's state inline in the request future (no extra allocation for
-states ≤ 1 KiB) and polls it on a worker. The request body is fully read before `init` runs.
+states ≤ 1 KiB) and polls it on a worker. `init` runs once the request's head has arrived; the
+body is received while the handler reads it (`req_text`, `req_bytes`, `req_chunk`).
 The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
 `VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
 it, and using a request after it was dropped stops the program with a clear message instead of
@@ -374,18 +375,18 @@ reading freed memory.
 | `velt_rt_http_server_close` | `(VeltServer s)` | stop accepting, finish in-flight requests, close idle connections; frees `s` |
 | `velt_rt_http_server_detach` | `(VeltServer s)` | free `s` but keep serving (dropping the `Server` value) |
 | `velt_rt_http_server_shutdown` | `(VeltServer s) -> VeltFut*` | `close` + result `()` once the handler was released (§14.14) |
-| `velt_rt_http_req_method` / `_path` / `_query` / `_body` | `(VeltReq r, VeltStr* out)` | owned copies; path excludes the query; query excludes `?`; body decoded lossily |
-| `velt_rt_http_req_body_bytes` | `(VeltReq r, VeltBytes* out)` | |
-| `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; 0 = absent (`out` untouched) |
-| `velt_rt_http_req_header_count` | `(VeltReq r) -> u64` | |
-| `velt_rt_http_req_header_at` | `(VeltReq r, u64 i, VeltStr* name, VeltStr* value)` | lowercase name |
+| `velt_rt_http_req_method` | `(VeltReq r, VeltStr* out)` | owned copy |
+| `velt_rt_http_req_url` | `(VeltReq r, VeltStr* out)` | the absolute URL: `http://` (`https://` over TLS), the `host` header (HTTP/2: `:authority`; neither: the server's address), path and query |
+| `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; repeated fields joined with `", "`; 0 = absent (`out` untouched) |
 | `velt_rt_http_req_headers` | `(VeltReq r, VeltStrArray* out)` | every header as the flat list `[name, value, …]` (lowercase names, received order; non-UTF-8 values decoded lossily): `req.headers` in one call |
+| `velt_rt_http_req_has_body` | `(VeltReq r) -> u8` | whether the request arrived with a body |
+| `velt_rt_http_req_text` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltStr>`: the rest of the body, UTF-8 decoded lossily, a leading BOM dropped |
+| `velt_rt_http_req_bytes` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the rest of the body |
+| `velt_rt_http_req_chunk` | `(VeltReq r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next chunk (≤ 64 KiB, never empty); empty at the end |
+| `velt_rt_http_req_remote_host` | `(VeltReq r, VeltStr* out)` | the client's IP address |
+| `velt_rt_http_req_remote_port` | `(VeltReq r) -> u32` | the client's port |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
-| `velt_rt_http_resp_new` | `(u32 status) -> VeltResp` | invalid status ⇒ 500 |
-| `velt_rt_http_resp_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | append; 0 if invalid |
-| `velt_rt_http_resp_body_text` | `(VeltResp r, VeltStr* body)` | **takes** `body` (zero-copy if owned; `*body` left empty); default `text/plain; charset=utf-8` |
-| `velt_rt_http_resp_body_bytes` | `(VeltResp r, const VeltBytes* body)` | copies (the array may be borrowed); default `application/octet-stream` |
-| `velt_rt_http_resp_json` | `(VeltResp r, VeltStr* json)` | takes; sets `application/json` |
+| `velt_rt_http_resp_build` | `(u32 status, const VeltStr* reason, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> VeltResp` | a handler's `Response` in one call; see below |
 | `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
 
 A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,
@@ -393,9 +394,16 @@ the program entry waits until no keep-alive references remain — like Node, a l
 keeps the process running. (`velt_rt_block_on` itself does not wait.) Pending ref'd timers hold
 one too (`velt_rt_keep_alive_acquire`, §2).
 
-`Response.text(b, s)` = `resp_new(s)` + `resp_body_text(r, &b)`; `Response.json(v, s)` = serialize
-`v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the
-body setters and `resp_json` drop the body and add no `content-type`.
+`velt_rt_http_resp_build` turns the global `Response` a handler returned into a `VeltResp`:
+`status` (invalid ⇒ 500), the reason phrase (`""` for the standard one), the headers as the flat
+list `[name, value, …]`, and the body by `kind`: 0 none, 1 `text` (**taken**: zero-copy if owned,
+`*text` left empty), 2 `bytes` (copied: the array may be borrowed), 3 a stream std fills next
+(§14.17), 4 a stream of a fetched response's body (decoded, so a `content-encoding` the client
+decoded is dropped). A streamed body drops `content-length`. `implied` is the `content-type`
+the body implies, added unless the headers have one: 0 none, 1 `text/plain;charset=UTF-8`, 2
+`application/json`, 3 `application/x-www-form-urlencoded;charset=UTF-8`. A bodiless status (1xx,
+204, 304) gets no body and no `content-type`. An invalid header name or value builds nothing
+(result 0); std answers 500 then.
 
 **Client** (the global `fetch`, std/fetch.vlt; `http://` and `https://`, other schemes fail with
 `ENOTSUP`; HTTPS and HTTP/2 as in §14.8). The future is READY once the status and headers have
@@ -958,7 +966,6 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
-| `velt_rt_http_resp_set_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | insert, replacing earlier values (e.g. the default `content-type`); 0 if invalid |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
 
 ### 14.9 WebSockets (`velt:websocket`)
@@ -1182,30 +1189,31 @@ against the client.
 | `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
 
 
-### 14.17 Streamed response bodies (`Response.stream`; stream tsx, additive)
-A `VeltResp` body is now either complete (the §7 setters: unchanged, still sent with an exact
-`Content-Length`, no extra allocation) or **streamed**: `velt_rt_http_resp_stream_open` replaces
-the body with the receiving end of a bounded channel (8 chunks) and returns a writer,
+### 14.17 Streamed response bodies (a `Response` whose body is a `BodyStream`)
+A `VeltResp` body is either complete (`velt_rt_http_resp_build` kinds 1 and 2, §7: sent with
+an exact `Content-Length`, no extra allocation) or **streamed**: `velt_rt_http_resp_stream_open`
+replaces the body with the receiving end of a bounded channel (8 chunks) and returns a writer,
 `VeltRespWriter`, a registry key (§3.2, `u64`). A streamed body has no known length, so hyper
 sends it with chunked transfer encoding (HTTP/1.1) or DATA frames (HTTP/2) and never computes a
 `Content-Length`; the status and headers go out when the handler returns the response, before
-the first chunk. The writer is filled by Velt code that keeps running after the handler returned
-(std starts it as a stored promise of the handler's task, §1.1); no code pointers are stored
+the first chunk. std/http/stream.vlt fills the writer from the `BodyStream`, in a task that
+keeps running after the handler returned (a stored promise of the handler's task, §1.1): it
+writes and flushes each chunk, stops reading the stream once a write or flush returns 0, and
+closes the writer (aborts it when reading the stream failed). No code pointers are stored
 (§13.5).
 
 Writes append a copy to the writer's buffer (`BytesMut`) and never wait; a flush hands the
 buffer to the body as one chunk, waiting for channel room (**backpressure**: a producer faster
 than its client waits in `flush`). A buffer that reaches 16 KiB is also handed over by a write
-when the channel has room. Chunks keep their write order even when copies of the handle flush
+when the channel has room. Chunks keep their write order even when several tasks flush
 concurrently. Once the client has gone away (hyper dropped the body) or the writer ended, writes
 and flushes return 0 and discard their data. A writer that is neither closed nor aborted keeps
 its response open.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body and gets no `content-type`; the writer's writes return 0 |
-| `velt_rt_http_resp_stream_write` | `(VeltRespWriter w, const VeltStr* text) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
-| `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | the same for `u8[]` |
+| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream (no default `content-type`); opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body; the writer's writes return 0 |
+| `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
 | `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |
 | `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
 | `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |

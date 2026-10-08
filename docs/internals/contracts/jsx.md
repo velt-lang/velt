@@ -210,8 +210,8 @@ lowerings.
 ## `std/jsx` specifics
 `std/jsx` (default) implements the generic and precompile functions, has no event-handler
 attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
-provider), and offers `renderToString(el)`, `renderToStream(el, res)` (`std/http`
-`Response.stream`, flushing at async component boundaries) and `raw(html)`.
+provider), and offers `renderToString(el)`, `renderToStream(el)` (a `BodyStream` for a `Response` body,
+sent in chunks at async component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
 ## Extending `IntrinsicElements`
