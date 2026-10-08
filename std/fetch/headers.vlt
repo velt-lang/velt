@@ -19,6 +19,10 @@
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
   const n = v.length as i64;
+  // Most values have nothing to trim: two reads tell (HTTP whitespace is below 33).
+  if (n == 0 || (v.charCodeAt(0) > 32 && v.charCodeAt(n - 1) > 32)) {
+    return v;
+  }
   let start: i64 = 0;
   let end: i64 = n;
   while (start < end && isHttpSpace(v.charCodeAt(start))) {
@@ -221,8 +225,16 @@ export class Headers {
 
   // Removes the entries named `key` (lowercase), keeping the order of the others.
   private remove(key: string) {
-    let w: usize = 0;
-    for (let i: usize = 0; i < this.list.length; i += 2) {
+    // Usually there is nothing to remove (`set` of a new name): look before moving anything.
+    let first: usize = 0;
+    while (first < this.list.length && this.list[first] != key) {
+      first += 2;
+    }
+    if (first >= this.list.length) {
+      return;
+    }
+    let w: usize = first;
+    for (let i: usize = first; i < this.list.length; i += 2) {
       if (this.list[i] == key) {
         continue;
       }
