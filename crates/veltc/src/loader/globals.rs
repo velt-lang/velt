@@ -10,13 +10,15 @@
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
 //! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
 //! as `import { Response } from "velt:http"` does, or a declaration), which hides the global.
-//! std modules import what they use, so they never trigger one.
+//! A regular expression literal (`/a+/`, which the parser reads as `new RegExp(…)`) counts as
+//! naming `RegExp`. std modules import what they use, so they never trigger one.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use velt_common::SourceMap;
 use velt_syntax::ast;
+use velt_syntax::visit::{self, Visit};
 
 /// A global module: its file and the names that load it.
 pub(super) struct Global {
@@ -107,6 +109,29 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
     names
 }
 
+/// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
+/// or for `RegExp` also by a regular expression literal.
+pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool {
+    mentions(src, name) || (name == "RegExp" && src.contains('/') && has_regex(module))
+}
+
+/// Whether `module` holds a `new RegExp(…)` (what the parser makes of a regex literal).
+fn has_regex(module: &ast::Module) -> bool {
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::New { class, .. } = &e.kind {
+                if let ast::TypeExprKind::Named { path, .. } = &class.kind {
+                    self.0 |= matches!(path.as_slice(), [id] if id.name == "RegExp");
+                }
+            }
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
+}
+
 /// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
 /// characters are ASCII letters, digits, `_` and `$`, as the lexer reads them).
 pub(super) fn mentions(src: &str, name: &str) -> bool {
@@ -134,6 +159,21 @@ mod tests {
         // Identifiers are ASCII (as the lexer reads them): any other character ends one.
         assert!(mentions("Responseé", "Response"));
         assert!(!mentions("Response_x", "Response"));
+    }
+
+    #[test]
+    fn a_regex_literal_names_regexp() {
+        let names = |src: &str| {
+            let mut sm = SourceMap::new();
+            let file = sm.add(Path::new("m.vlt"), src.to_string());
+            let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
+            names_global(src, &module, "RegExp")
+        };
+        assert!(names(
+            "function f(): bool {\n  return /a+/.test(\"caa\");\n}\n"
+        ));
+        assert!(!names("function f(): number {\n  return 4 / 2 / 1;\n}\n"));
+        assert!(!names("// a /comment/\nfunction f() {}\n"));
     }
 
     #[test]

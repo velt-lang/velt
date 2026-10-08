@@ -6,8 +6,10 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
-`AbortSignal` ([velt:task](task.md)). They are loaded when a module names one and doesn't bind
-that name itself. The builtin `process` (`process.stdout.write(s)`, `process.env`,
+`AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
+`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`). The builtin `process` (`process.stdout.write(s)`, `process.env`,
 `process.argv`, `process.exit(code)`, `process.memoryUsage()`; [velt:process](process.md)) needs
 no import either.
 

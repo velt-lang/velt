@@ -52,6 +52,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "clearTimeout",
     "setInterval",
     "setTimeout",
+    // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
+    "structuredClone",
     // Builtins.
     "console",
     "Promise",

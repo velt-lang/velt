@@ -1,0 +1,10 @@
+// Prelude: `structuredClone`, JavaScript's deep copy.
+
+/**
+ * An independent deep copy of `value`, like JS's `structuredClone`: arrays, maps, sets, object
+ * types and class instances are copied all the way down (`value.clone()`), so changing the copy
+ * never changes the original.
+ */
+export function structuredClone<T>(value: T): T {
+  return value.clone();
+}

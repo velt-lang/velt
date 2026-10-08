@@ -68,7 +68,8 @@ members and in `#name in o` ([Classes](classes.md#classes)).
   `${expr}` writes strings, numbers, booleans and arrays as JS does (`${[1, 2]}` is `1,2`) and
   other values the way `console.log` does ([Strings](types.md#strings)).
 - **Regular expressions**: `/ab+c/gi` is `new RegExp("ab+c", "gi")` from
-  [`velt:regex`](../std/regex.md) (import `RegExp`). A `/` after an operand is division.
+  [`velt:regex`](../std/regex.md) (a global, like `RegExp` itself). A `/` after an operand is
+  division.
 - `true`, `false`, `null`.
 
 ## Keywords
