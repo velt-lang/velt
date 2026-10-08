@@ -374,3 +374,66 @@ fn a_conversion_bounded_by_2_53_does_not_bound_the_integer() {
         Ok(2.0f64.to_bits())
     );
 }
+
+/// `f(a)`: `((a >> 2) as f64) % 7.0` for `a: u64` (whole, up to 2^62: past 2^53), or with
+/// `a: i64` (`a as f64`, which may be negative).
+fn remainder_of_whole_program(signed: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let ty = if signed { Ty::I64 } else { Ty::U64 };
+    let mut fb = FuncBuilder::export("f", &[ty], Ty::F64);
+    let a = fb.param(0);
+    let (s, af, x) = (fb.local(ty), fb.local(Ty::F64), fb.local(Ty::F64));
+    let b = fb.block();
+    if signed {
+        fb.assign(b, s, Rvalue::Use(copy_local(a)));
+    } else {
+        fb.assign(b, s, bin(BinOp::UShr, copy_local(a), int(2, Ty::U64)));
+    }
+    fb.assign(b, af, Rvalue::Cast(copy_local(s), Ty::F64));
+    fb.assign(b, x, bin(BinOp::Rem, copy_local(af), float(7.0, Ty::F64)));
+    fb.ret(b, copy_local(x));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+fn float_remainders(f: &Function) -> usize {
+    f.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .filter(|s| {
+            matches!(s, Stmt::Assign(d, Rvalue::Binary(BinOp::Rem, ..))
+                if f.locals[d.local.0 as usize].ty == Ty::F64)
+        })
+        .count()
+}
+
+#[test]
+fn remainders_of_whole_non_negative_doubles_use_integers() {
+    let p = remainder_of_whole_program(false);
+    let q = narrowed(&p);
+    assert_eq!(float_remainders(&q.funcs[0]), 0);
+    for a in [
+        0u64,
+        1,
+        6,
+        7,
+        29,
+        1 << 55,
+        u64::MAX,
+        u64::MAX - 5,
+        (1 << 54) + 3,
+    ] {
+        assert_eq!(call(&p, &[a]), call(&q, &[a]), "f({a})");
+    }
+}
+
+#[test]
+fn remainders_of_doubles_that_may_be_negative_stay_doubles() {
+    // -7 % 7 is -0, which the integer remainder is not.
+    let p = remainder_of_whole_program(true);
+    let q = narrowed(&p);
+    assert_eq!(float_remainders(&q.funcs[0]), 1);
+    for a in [-7i64, -8, 0, 7, i64::MIN] {
+        assert_eq!(call(&p, &[a as u64]), call(&q, &[a as u64]), "f({a})");
+    }
+}

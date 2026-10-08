@@ -6,9 +6,15 @@
 //! - `__floatIndex(x)` of a whole `x` in `[0, 2^64)`, never NaN, is `x as u64` (the path the
 //!   helper takes for it);
 //! - ToInt32 of a constant is that constant, and of a whole value in the int32 range a
-//!   conversion.
+//!   conversion;
+//! - `a % b` of whole doubles, `a` never negative or `-0` and both below 2^63, is the integer
+//!   remainder of `a as i64` and `b as i64` (exact: both convert exactly, and the remainder is
+//!   smaller than `b`), not a call to `fmod`: `permIndex % 2` with a counter that may reach
+//!   2^53.
 
-use velt_vir::vir::{Callee, Const, Function, Operand, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::vir::{
+    BinOp, Callee, Const, Function, Local, LocalDecl, Operand, Place, Rvalue, Stmt, Terminator, Ty,
+};
 
 use super::fact::{self, Fact};
 use super::flow::{is_comparison, operand_ty, Flow, State};
@@ -24,7 +30,11 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
             continue;
         };
         let mut st: State = entry.clone();
+        let mut remainders = vec![];
         for si in 0..func.blocks[bi].stmts.len() {
+            if integer_remainder(flow, func, &st, &func.blocks[bi].stmts[si]) {
+                remainders.push(si);
+            }
             changed |= constant_params(flow, func, &st, bi, si);
             if let Some(v) = decided(flow, func, &st, &func.blocks[bi].stmts[si]) {
                 if let Stmt::Assign(_, rv) = &mut func.blocks[bi].stmts[si] {
@@ -34,9 +44,79 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
             }
             flow.transfer(&mut st, func, &func.blocks[bi].stmts[si]);
         }
+        if !remainders.is_empty() {
+            remainders_as_integers(func, bi, &remainders);
+            changed = true;
+        }
         changed |= terminator(env, flow, func, bi, &st);
     }
     changed
+}
+
+/// Below it, a whole double converts to an `i64` exactly.
+const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+
+/// Is `s` a double `a % b` that the integers compute exactly (see the module doc)?
+fn integer_remainder(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> bool {
+    let Stmt::Assign(d, Rvalue::Binary(BinOp::Rem, a, b)) = s else {
+        return false;
+    };
+    if !d.proj.is_empty() || operand_ty(func, a) != Ty::F64 || operand_ty(func, b) != Ty::F64 {
+        return false;
+    }
+    let (Some(x), Some(y)) = (flow.operand(st, func, a), flow.operand(st, func, b)) else {
+        return false;
+    };
+    let whole = |f: Fact| f.integral && !f.nan && f.lo <= f.hi && f.magnitude() < TWO_63;
+    whole(x) && whole(y) && x.lo >= 0.0 && !x.neg_zero && !y.may_be_zero()
+}
+
+/// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones.
+fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
+    let fresh = |func: &mut Function| {
+        func.locals.push(LocalDecl {
+            ty: Ty::I64,
+            name: None,
+        });
+        Local(func.locals.len() as u32 - 1)
+    };
+    let mut plans = vec![];
+    for _ in at {
+        plans.push((fresh(func), fresh(func), fresh(func)));
+    }
+    let mut si = 0;
+    let mut next = 0;
+    crate::srclocs::rewrite_stmts(func, bi, |s, out| {
+        let i = si;
+        si += 1;
+        if at.get(next) != Some(&i) {
+            out.push(s);
+            return;
+        }
+        let (ta, tb, tr) = plans[next];
+        next += 1;
+        let Stmt::Assign(d, Rvalue::Binary(_, a, b)) = s else {
+            out.push(s);
+            return;
+        };
+        let as_int = |op: Operand, t: Local, out: &mut Vec<Stmt>| match op {
+            Operand::Const(Const::Float(x), _) => Operand::Const(Const::Int(x as i128), Ty::I64),
+            op => {
+                out.push(Stmt::Assign(Place::local(t), Rvalue::Cast(op, Ty::I64)));
+                Operand::Copy(Place::local(t))
+            }
+        };
+        let a = as_int(a, ta, out);
+        let b = as_int(b, tb, out);
+        out.push(Stmt::Assign(
+            Place::local(tr),
+            Rvalue::Binary(BinOp::Rem, a, b),
+        ));
+        out.push(Stmt::Assign(
+            d,
+            Rvalue::Cast(Operand::Copy(Place::local(tr)), Ty::F64),
+        ));
+    });
 }
 
 /// A parameter that every call sets to the same constant (`params`) is that constant where it
