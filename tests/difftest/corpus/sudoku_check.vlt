@@ -1,10 +1,10 @@
 // Sudoku validity check for rows, columns and boxes.
-function valid(grid: i64[][]): bool {
-  for (let i: usize = 0; i < 9; i++) {
+function valid(grid: number[][]): bool {
+  for (let i: number = 0; i < 9; i++) {
     const row: bool[] = [false, false, false, false, false, false, false, false, false, false];
     const col: bool[] = [false, false, false, false, false, false, false, false, false, false];
     const box: bool[] = [false, false, false, false, false, false, false, false, false, false];
-    for (let j: usize = 0; j < 9; j++) {
+    for (let j: number = 0; j < 9; j++) {
       const r = grid[i][j] as usize;
       const c = grid[j][i] as usize;
       const b = grid[i - (i % 3) + (j - (j % 3)) / 3][(i % 3) * 3 + (j % 3)] as usize;

@@ -1,4 +1,4 @@
-for_of_not_iterable.vlt:23:19: error: cannot iterate over a value of type `i64`
+for_of_not_iterable.vlt:23:19: error: cannot iterate over a value of type `f64`
 `for...of` works on arrays (`T[]`), on `Map`s and classes with an `entries()` method, and on iterables: values with a `[Symbol.iterator]()` method (`implements Iterable<T>`)
 for_of_not_iterable.vlt:26:19: error: cannot iterate over a value of type `Bag`
 for_of_not_iterable.vlt:29:19: error: cannot iterate over a value of type `Counter`
