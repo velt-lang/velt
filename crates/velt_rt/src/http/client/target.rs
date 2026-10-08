@@ -360,6 +360,9 @@ mod tests {
         assert_eq!(t.href(), "https://example.com/b");
         assert!(t.is_https());
         assert!(t.host().is_none());
+        let t = Target::parse("http://[::1]:8080/").unwrap();
+        assert_eq!(t.href(), "http://[::1]:8080/");
+        assert_eq!(t.host().unwrap(), "[::1]:8080");
         assert!(Target::parse("ftp://x/").is_err());
         assert!(Target::parse("http://").is_err());
     }

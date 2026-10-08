@@ -335,3 +335,73 @@ fn text_decodes_valid_utf8_as_is_and_invalid_lossily() {
         }
     }
 }
+
+/// The header lines of each request the server saw, in order.
+fn lines_seen(log: &Log) -> Vec<Vec<String>> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .map(|s| s.headers.clone())
+        .collect()
+}
+
+#[test]
+fn header_lines_go_out_in_order() {
+    rt().block_on(async {
+        let (port, log) = server(redirects).await;
+        let base = format!("http://127.0.0.1:{port}");
+        let host = format!("host: 127.0.0.1:{port}");
+        let defaults = [
+            "accept: */*",
+            "user-agent: velt",
+            "accept-encoding: gzip, deflate",
+        ];
+        let with = |own: &[&str], host: &str| -> Vec<String> {
+            own.iter()
+                .chain(&defaults)
+                .map(|s| s.to_string())
+                .chain([host.to_string()])
+                .collect()
+        };
+
+        // `fetch(url)`: the defaults, then the host hyper would add.
+        fetch(get(&format!("{base}/b"), &[]), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(lines_seen(&log)[0], with(&[], &host));
+
+        // The caller's headers in their order; a default they set is not added again.
+        let own = ["user-agent", "me", "x-a", "1", "accept", "text/html"];
+        fetch(get(&format!("{base}/b"), &own), Redirect::Follow)
+            .await
+            .unwrap();
+        let want: Vec<String> = ["user-agent: me", "x-a: 1", "accept: text/html"]
+            .iter()
+            .map(|s| s.to_string())
+            .chain(["accept-encoding: gzip, deflate".to_string(), host.clone()])
+            .collect();
+        assert_eq!(lines_seen(&log)[1], want);
+
+        // A redirect sends the same lines again.
+        fetch(get(&format!("{base}/a"), &["x-a", "1"]), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(lines_seen(&log)[2], with(&["x-a: 1"], &host));
+        assert_eq!(lines_seen(&log)[3], with(&["x-a: 1"], &host));
+
+        // To another origin, `authorization` is dropped: the caller's other headers, then the
+        // defaults, then the new host.
+        let own = ["authorization", "secret", "x-a", "1"];
+        fetch(get(&format!("{base}/other"), &own), Redirect::Follow)
+            .await
+            .unwrap();
+        assert_eq!(
+            lines_seen(&log)[4],
+            with(&["authorization: secret", "x-a: 1"], &host)
+        );
+        assert_eq!(
+            lines_seen(&log)[5],
+            with(&["x-a: 1"], &format!("host: localhost:{port}"))
+        );
+    });
+}
