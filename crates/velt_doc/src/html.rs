@@ -252,19 +252,28 @@ fn item_html(page: &Page, m: &DocModule, item: &DocItem, parent: Option<&DocItem
         Some(_) => String::new(),
     };
     let signature = page.signature(&item.signature, &generics, &self_href);
+    let badge = match item.deprecated {
+        Some(_) => " <span class=\"deprecated\">deprecated</span>",
+        None => "",
+    };
     if matches!(item.kind, Kind::Field | Kind::Variant | Kind::ReExport) {
         // Data members and unresolved re-exports are one line each: the declaration and its
         // doc.
         return format!(
-            "<div class=\"field\" id=\"{}\"><code>{signature}</code>{}</div>\n",
+            "<div class=\"field\" id=\"{}\"><code>{signature}</code>{badge}{}</div>\n",
             escape(&id),
             to_html(&item.doc)
         );
     }
     let tag = if parent.is_some() { "h3" } else { "h2" };
+    let name_class = match item.deprecated {
+        Some(_) => " class=\"deprecated-name\"",
+        None => "",
+    };
     let mut out = format!(
         "<section class=\"item\" id=\"{}\">\n<{tag}><span class=\"kind\">{}</span> \
-         <a href=\"#{0}\">{}</a></{tag}>\n<pre class=\"sig\"><code>{signature}</code></pre>\n",
+         <a href=\"#{0}\"{name_class}>{}</a>{badge}</{tag}>\n\
+         <pre class=\"sig\"><code>{signature}</code></pre>\n",
         escape(&id),
         item.kind.label(),
         escape(&item.name),
@@ -384,7 +393,7 @@ mod tests {
 
     #[test]
     fn module_page_and_index() {
-        let m = extract("std/demo", "// Demo module. More.\n\n// Adds \"x\".\nexport function add(a: i64): i64 {\n  return a;\n}\n");
+        let m = extract("std/demo", "// Demo module. More.\n\n/// Adds \"x\".\nexport function add(a: i64): i64 {\n  return a;\n}\n");
         let body = module_body(&m, &HashMap::new());
         assert!(body.contains("id=\"function.add\""), "{body}");
         assert!(body.contains("function add(a: i64): i64"), "{body}");

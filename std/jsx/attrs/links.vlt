@@ -4,7 +4,7 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<a>`.
+/** `<a>`. */
 export type AnchorAttrs = HtmlAttrs & {
   href?: string;
   target?: string;
@@ -16,7 +16,7 @@ export type AnchorAttrs = HtmlAttrs & {
   referrerpolicy?: string;
 };
 
-// `<area>`.
+/** `<area>`. */
 export type AreaAttrs = HtmlAttrs & {
   alt?: string;
   coords?: string;
@@ -29,10 +29,10 @@ export type AreaAttrs = HtmlAttrs & {
   referrerpolicy?: string;
 };
 
-// `<base>`.
+/** `<base>`. */
 export type BaseAttrs = HtmlAttrs & { href?: string; target?: string };
 
-// `<link>`.
+/** `<link>`. */
 export type LinkAttrs = HtmlAttrs & {
   href?: string;
   crossorigin?: string;
@@ -52,7 +52,7 @@ export type LinkAttrs = HtmlAttrs & {
   fetchpriority?: string;
 };
 
-// `<meta>` (`http-equiv` is written as is: hyphenated names are not checked).
+/** `<meta>` (`http-equiv` is written as is: hyphenated names are not checked). */
 export type MetaAttrs = HtmlAttrs & {
   name?: string;
   content?: string;
@@ -60,7 +60,7 @@ export type MetaAttrs = HtmlAttrs & {
   media?: string;
 };
 
-// `<script>`.
+/** `<script>`. */
 export type ScriptAttrs = HtmlAttrs & {
   src?: string;
   type?: string;
@@ -74,5 +74,5 @@ export type ScriptAttrs = HtmlAttrs & {
   fetchpriority?: string;
 };
 
-// `<style>`.
+/** `<style>`. */
 export type StyleAttrs = HtmlAttrs & { media?: string; blocking?: string };

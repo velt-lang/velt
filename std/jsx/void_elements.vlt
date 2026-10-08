@@ -1,8 +1,10 @@
 // std/jsx/void_elements: the HTML elements that have no end tag (docs/contracts/jsx.md: the
 // compiler writes precompiled templates with the same list, so both lowerings agree).
 
-// True for `area base br col embed hr img input link meta source track wbr`: written `<br>`,
-// never `<br></br>`, and they have no children.
+/**
+ * True for `area base br col embed hr img input link meta source track wbr`: written `<br>`,
+ * never `<br></br>`, and they have no children.
+ */
 export function isVoidElement(tag: string): bool {
   switch (tag) {
     case "area":

@@ -31,7 +31,7 @@ extend Array<i64> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: i64, y: i64) => i64) | null = null): i64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -48,7 +48,7 @@ extend Array<i32> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: i32, y: i32) => i64) | null = null): i32[] {
     const out = this.slice();
     out.sort(cmp);
@@ -65,7 +65,7 @@ extend Array<u64> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: u64, y: u64) => i64) | null = null): u64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -82,7 +82,7 @@ extend Array<usize> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: usize, y: usize) => i64) | null = null): usize[] {
     const out = this.slice();
     out.sort(cmp);
@@ -91,7 +91,7 @@ extend Array<usize> {
 }
 
 extend Array<f64> {
-  // The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0.
+  /** The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0. */
   sort(cmp: ((x: f64, y: f64) => f64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
@@ -100,7 +100,7 @@ extend Array<f64> {
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: f64, y: f64) => f64) | null = null): f64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -117,7 +117,7 @@ extend Array<string> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: string, y: string) => i64) | null = null): string[] {
     const out = this.slice();
     out.sort(cmp);
@@ -126,12 +126,12 @@ extend Array<string> {
 }
 
 extend<T> Array<T> {
-  // Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`).
+  /** Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`). */
   sort(cmp: (x: T, y: T) => i64) {
     stableSort(this, cmp, (c) => c < 0);
   }
 
-  // A copy sorted by `cmp` (ES2023); the receiver is unchanged.
+  /** A copy sorted by `cmp` (ES2023); the receiver is unchanged. */
   toSorted(cmp: (x: T, y: T) => i64): T[] {
     const out = this.slice();
     out.sort(cmp);

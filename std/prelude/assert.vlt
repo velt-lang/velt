@@ -6,8 +6,10 @@ export function assert(cond: bool, msg: string = "assertion failed") {
   }
 }
 
-// Deep equality (`deepEqual`: contents, not identity). On failure prints both values to stderr,
-// then panics.
+/**
+ * Deep equality (`deepEqual`: contents, not identity). On failure prints both values to stderr,
+ * then panics.
+ */
 export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
   if (!__intrinsic_eq(left, right)) {
     console.error("assertion `left == right` failed");
@@ -17,16 +19,20 @@ export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") 
   }
 }
 
-// Deep (structural) equality, like Node's `util.isDeepStrictEqual`: arrays, structs and object
-// literals compare their contents, recursively; `Map` and `Record` their keys and values in any
-// key order; other class instances by identity. `==` compares every object by identity, like JS.
+/**
+ * Deep (structural) equality, like Node's `util.isDeepStrictEqual`: arrays, structs and object
+ * literals compare their contents, recursively; `Map` and `Record` their keys and values in any
+ * key order; other class instances by identity. `==` compares every object by identity, like JS.
+ */
 export function deepEqual<T>(a: T, b: T): bool {
   return __intrinsic_eq(a, b);
 }
 
-// Calls `f` and returns the error it throws, so a test can check it
-// (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); panics if `f` returns
-// normally.
+/**
+ * Calls `f` and returns the error it throws, so a test can check it
+ * (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); panics if `f` returns
+ * normally.
+ */
 export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected an error"): E {
   try {
     f();

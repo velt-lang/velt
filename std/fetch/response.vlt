@@ -25,7 +25,7 @@ declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u
 declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
 declare function velt_rt_http_fetch_resp_drop(r: u64);
 
-// `new Response(body, init)` and `Response.json(data, init)`: default status 200.
+/** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
   status?: i64;
   statusText?: string;
@@ -96,7 +96,7 @@ export class Response {
     return r;
   }
 
-  // A response whose body is `JSON.stringify(data)`, with `content-type: application/json`.
+  /** A response whose body is `JSON.stringify(data)`, with `content-type: application/json`. */
   static json<T>(data: T, init: ResponseInit = {}): Response {
     // The caller's own `content-type` wins; the string body's default does not.
     const own = init.headers;
@@ -108,7 +108,7 @@ export class Response {
     return r;
   }
 
-  // A network error: status 0, type "error".
+  /** A network error: status 0, type "error". */
   static error(): Response {
     const r = new Response();
     r.#code = 0;
@@ -116,7 +116,7 @@ export class Response {
     return r;
   }
 
-  // A redirect to `url` (`status` 301, 302, 303, 307 or 308).
+  /** A redirect to `url` (`status` 301, 302, 303, 307 or 308). */
   static redirect(url: string, status: i64 = 302): Response {
     if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
       panic(`RangeError: Invalid status code ${status}`);
@@ -126,7 +126,7 @@ export class Response {
     return r;
   }
 
-  // The headers; a fetched response's are immutable.
+  /** The headers; a fetched response's are immutable. */
   get headers(): Headers {
     const known = this.#fields;
     if (known != null) {
@@ -145,12 +145,15 @@ export class Response {
     return this.#code;
   }
 
-  // Whether the status is 200–299.
+  /** Whether the status is 200–299. */
   get ok(): bool {
     return this.#code >= 200 && this.#code <= 299;
   }
 
-  // The server's status message (`OK`, `Not Found`), "" if it sent none.
+  /**
+   * The status message (`OK`, `Not Found`): the server's reason phrase, else the standard one for
+   * the status ("" for a status without one, and for a constructed response by default).
+   */
   get statusText(): string {
     const known = this.#reason;
     if (known != null) {
@@ -161,7 +164,7 @@ export class Response {
     return s;
   }
 
-  // The URL the response came from, after redirects ("" for a constructed response).
+  /** The URL the response came from, after redirects ("" for a constructed response). */
   get url(): string {
     const known = this.#where;
     if (known != null) {
@@ -172,7 +175,7 @@ export class Response {
     return s;
   }
 
-  // Whether `fetch` followed a redirect to get it.
+  /** Whether `fetch` followed a redirect to get it. */
   get redirected(): bool {
     const known = this.#hops;
     if (known != null) {
@@ -183,14 +186,16 @@ export class Response {
     return hops;
   }
 
-  // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
+  /** "basic" (fetched), "default" (constructed) or "error" (`Response.error()`). */
   get type(): string {
     return this.#kind;
   }
 
-  // The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
-  // `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
-  // 304) and for a response made without one.
+  /**
+   * The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
+   * `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
+   * 304), for a `HEAD` request's response and for a response made without one.
+   */
   get body(): BodyStream | null {
     const code = this.#code;
     const none = code == 101 || code == 103 || code == 204 || code == 205;
@@ -200,12 +205,12 @@ export class Response {
     return new BodyStream(this);
   }
 
-  // Whether the body has been read.
+  /** Whether the body has been read. */
   get bodyUsed(): bool {
     return this.#used;
   }
 
-  // The body as text (invalid UTF-8 becomes U+FFFD, as in JS).
+  /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
     if (this.#source == RUNTIME) {
@@ -222,9 +227,11 @@ export class Response {
     return this.#str;
   }
 
-  // `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
-  // match). Velt has no `any`: name the type, `await res.json<User[]>()`, or annotate the
-  // variable that receives it.
+  /**
+   * `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
+   * match). Velt has no `any`: name the type, `await res.json<User[]>()`, or annotate the
+   * variable that receives it.
+   */
   async json<T>(): Promise<T, IoError | AbortError | JsonError> {
     return JSON.parse<T>(await this.text());
   }
@@ -242,7 +249,7 @@ export class Response {
     return this.#data;
   }
 
-  // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
+  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
   async arrayBuffer(): Promise<u8[], IoError | AbortError> {
     return await this.bytes();
   }
@@ -288,7 +295,7 @@ export class Response {
     }
   }
 
-  // Drop hook: releases the runtime response.
+  /** Drop hook: releases the runtime response. */
   [Symbol.dispose]() {
     if (this.#handle != 0) {
       velt_rt_http_fetch_resp_drop(this.#handle);
@@ -297,12 +304,14 @@ export class Response {
   }
 }
 
-// `res.body`: the body as a stream of byte chunks, read with `for await`. Reading it uses the
-// body up, as `text()` does. It keeps its response alive while it is read.
+/**
+ * `res.body`: the body as a stream of byte chunks, read with `for await`. Reading it uses the
+ * body up, as `text()` does. It keeps its response alive while it is read.
+ */
 export class BodyStream {
   private res: Response;
 
-  // The body of `res` (std only: `res.body` makes it).
+  /** The body of `res` (std only: `res.body` makes it). */
   constructor(res: Response) {
     this.res = res;
   }

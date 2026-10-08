@@ -58,9 +58,10 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 
 ## `Response`
 
-- `status: i64`, `ok: bool` (200–299), `statusText` (the server's reason phrase),
-  `headers: Headers`, `url` (the final URL, after redirects), `redirected`, `type` (`"basic"`
-  for a fetched response, `"default"` for one you made, `"error"`), `bodyUsed`.
+- `status: i64`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
+  standard one), `headers: Headers`, `url` (the final URL, after redirects), `redirected`,
+  `type` (`"basic"` for a fetched response, `"default"` for one you made, `"error"`),
+  `bodyUsed`.
 - Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
   mark is dropped, as in JS),
   `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS

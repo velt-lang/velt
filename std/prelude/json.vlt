@@ -57,18 +57,20 @@ struct JsonHandleSlot {
   handle: u64;
 }
 
-// Invalid JSON, or JSON that does not match the type asked for.
+/** Invalid JSON, or JSON that does not match the type asked for. */
 export class JsonError extends Error {
   constructor(message: string) {
     super(message);
   }
 }
 
-// Options of `JSON.parse<T>(text, options)`; every field may be left out.
-// - `unknownKeys`: "reject" makes an object key the target type has no field for an error,
-//   `unknown field at $.key` (default "ignore": it is skipped).
-// - `maxDepth`: the deepest nesting of arrays and objects allowed (default 128, like serde_json:
-//   a typed decoder recurses per level, so a much higher limit can overflow the stack).
+/**
+ * Options of `JSON.parse<T>(text, options)`; every field may be left out.
+ * - `unknownKeys`: "reject" makes an object key the target type has no field for an error,
+ *   `unknown field at $.key` (default "ignore": it is skipped).
+ * - `maxDepth`: the deepest nesting of arrays and objects allowed (default 128, like serde_json:
+ *   a typed decoder recurses per level, so a much higher limit can overflow the stack).
+ */
 export type JsonParseOptions = { unknownKeys?: "ignore" | "reject"; maxDepth?: i64 };
 
 // `maxDepth` when the options leave it out.
@@ -90,13 +92,17 @@ function jsonMaxDepth(options: JsonParseOptions | null): i64 {
 }
 
 export class JSON {
-  // JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
+  /**
+   * JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
+   */
   static stringify<T>(value: T): string {
     return __intrinsic_json_stringify(value);
   }
 
-  // Decodes `text` into a `T` (throws `JsonError`); unknown object keys are skipped unless
-  // `options.unknownKeys` is "reject".
+  /**
+   * Decodes `text` into a `T` (throws `JsonError`); unknown object keys are skipped unless
+   * `options.unknownKeys` is "reject".
+   */
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
     let flags: i64 = 0;
     if (options != null && options.unknownKeys == "reject") {
@@ -105,17 +111,20 @@ export class JSON {
     return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
   }
 
-  // Parses any JSON document (throws `JsonError`); of the options only `maxDepth` applies.
+  /** Parses any JSON document (throws `JsonError`); of the options only `maxDepth` applies. */
   static parseValue(text: string, options: JsonParseOptions | null = null): JsonValue {
     return JsonValue.parse(text, options);
   }
 }
 
-// A JSON value of any shape (see header; std/json calls it `Value`). Accessors on the wrong kind
-// return null / 0. The compiler recognizes this prelude class: JSON glue reads and writes the
-// value's tree, never its `#handle` field. The handle and the constructor are private and only
-// runtime results become one, so safe code cannot forge a runtime pointer; the private
-// constructor also keeps classes from extending `JsonValue`.
+/**
+ * A JSON value of any shape, as `JSON.parseValue` returns it (`velt:json` calls it `Value`): a
+ * tree of reference-counted runtime nodes. It has value semantics: an edit copies a node another
+ * value shares first (copy-on-write), so it never shows through a clone, a parent or a child.
+ * Accessors on the wrong kind return null / 0. `JSON.stringify` and `JSON.parse<T>` read and
+ * write the tree. Only the runtime makes one: the constructor is private, so safe code cannot
+ * forge a runtime pointer, and no class can extend `JsonValue`.
+ */
 export class JsonValue {
   #handle: u64;
 
@@ -124,7 +133,7 @@ export class JsonValue {
     this.#handle = h;
   }
 
-  // Parses any JSON document, like `JSON.parseValue` (throws `JsonError`).
+  /** Parses any JSON document, like `JSON.parseValue` (throws `JsonError`). */
   static parse(text: string, options: JsonParseOptions | null = null): JsonValue {
     const depth = jsonMaxDepth(options) as u32;
     let slot = JsonHandleSlot { handle: 0 };
@@ -143,17 +152,17 @@ export class JsonValue {
     return new JsonValue(h);
   }
 
-  // An empty object, to fill with `set`.
+  /** An empty object, to fill with `set`. */
   static object(): JsonValue {
     return new JsonValue(velt_rt_json_value_new_object());
   }
 
-  // An empty array, to fill with `push`.
+  /** An empty array, to fill with `push`. */
   static array(): JsonValue {
     return new JsonValue(velt_rt_json_value_new_array());
   }
 
-  // A string, number, boolean or `null`.
+  /** A string, number, boolean or `null`. */
   static of(x: string | f64 | bool | null): JsonValue {
     if (x == null) {
       return new JsonValue(velt_rt_json_value_new_null());
@@ -167,7 +176,7 @@ export class JsonValue {
     return new JsonValue(velt_rt_json_value_new_bool(x));
   }
 
-  // The JSON form of any value `JSON.stringify` accepts.
+  /** The JSON form of any value `JSON.stringify` accepts. */
   static from<T>(x: T): JsonValue {
     const text = JSON.stringify(x);
     let slot = JsonHandleSlot { handle: 0 };
@@ -178,12 +187,12 @@ export class JsonValue {
     return new JsonValue(slot.handle);
   }
 
-  // Decodes this value into a `T`, like `JSON.parse<T>` (throws `JsonError`).
+  /** Decodes this value into a `T`, like `JSON.parse<T>` (throws `JsonError`). */
   as<T>(options: JsonParseOptions | null = null): T {
     return JSON.parse<T>(this.stringify(), options);
   }
 
-  // Sets object member `key` (an existing key keeps its position); false if not an object.
+  /** Sets object member `key` (an existing key keeps its position); false if not an object. */
   set(key: string, value: JsonValue): bool {
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_set(slot, key, value.#handle);
@@ -191,7 +200,7 @@ export class JsonValue {
     return ok;
   }
 
-  // Removes object member `key`; false if absent or not an object.
+  /** Removes object member `key`; false if absent or not an object. */
   delete(key: string): bool {
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_delete(slot, key);
@@ -199,7 +208,7 @@ export class JsonValue {
     return ok;
   }
 
-  // Appends to an array; false if not an array.
+  /** Appends to an array; false if not an array. */
   push(value: JsonValue): bool {
     let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_push(slot, value.#handle);
@@ -207,7 +216,7 @@ export class JsonValue {
     return ok;
   }
 
-  // Replaces array element `i`; false if not an array or `i` is out of range.
+  /** Replaces array element `i`; false if not an array or `i` is out of range. */
   setAt(i: i64, value: JsonValue): bool {
     if (i < 0) {
       return false;
@@ -218,18 +227,20 @@ export class JsonValue {
     return ok;
   }
 
-  // Object member `key`, or null (not an object, or no such key).
+  /** Object member `key`, or null (not an object, or no such key). */
   get(key: string): JsonValue | null {
     return JsonValue.wrap(velt_rt_json_value_get(this.#handle, key));
   }
 
-  // Whether this is an object with member `key`, even one whose value is `null` (a typed
-  // `JSON.parse` sees an absent `T | null` field and an explicit `null` alike).
+  /**
+   * Whether this is an object with member `key`, even one whose value is `null` (a typed
+   * `JSON.parse` sees an absent `T | null` field and an explicit `null` alike).
+   */
   has(key: string): bool {
     return this.get(key) != null;
   }
 
-  // Array element `i` (or the i-th member value of an object), or null if out of range.
+  /** Array element `i` (or the i-th member value of an object), or null if out of range. */
   at(i: i64): JsonValue | null {
     if (i < 0) {
       return null;
@@ -237,7 +248,7 @@ export class JsonValue {
     return JsonValue.wrap(velt_rt_json_value_at(this.#handle, i as u64));
   }
 
-  // Array length, object member count, string length (UTF-16 code units); 0 otherwise.
+  /** Array length, object member count, string length (UTF-16 code units); 0 otherwise. */
   len(): i64 {
     return velt_rt_json_value_len(this.#handle) as i64;
   }
@@ -289,7 +300,7 @@ export class JsonValue {
     return null;
   }
 
-  // Object keys in document order; empty for non-objects.
+  /** Object keys in document order; empty for non-objects. */
   keys(): string[] {
     const out: string[] = [];
     if (!this.isObject()) {
@@ -304,17 +315,17 @@ export class JsonValue {
     return out;
   }
 
-  // Same as `JSON.stringify(this)`.
+  /** Same as `JSON.stringify(this)`. */
   stringify(): string {
     return velt_rt_json_value_stringify(this.#handle);
   }
 
-  // Another reference to the same value: O(1) (edits copy on write, so they stay apart).
+  /** Another reference to the same value: O(1) (edits copy on write, so they stay apart). */
   clone(): JsonValue {
     return new JsonValue(velt_rt_json_value_clone(this.#handle));
   }
 
-  // Drop hook: releases this reference (see header).
+  /** Drop hook: releases this reference (values taken with `get` or `at` stay valid). */
   [Symbol.dispose]() {
     velt_rt_json_value_free(this.#handle);
     this.#handle = 0;

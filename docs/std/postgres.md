@@ -17,9 +17,10 @@ to the server is async.
   - the same without parameters: `select<T>(sql)`, `selectOne<T>(sql)`, `run(sql)` (passing
     `{}` as `params` also works);
   - `batch(sql)` runs a script of `;`-separated statements (no parameters, not prepared);
-  - `batchQuery<T, P>(sql, paramSets: P[]): T[][]`, `batchQueryOne<T, P>(sql, paramSets): (T | null)[]`
-    and `batchExecute<P>(sql, paramSets): i64[]` run one statement with many parameter sets in
-    one round trip (one message group with a single Sync, like pgx's `Batch`): the server runs
+  - `batchQuery<T, P>(sql, paramSets: P[]): T[][]`,
+    `batchQueryOne<T, P>(sql, paramSets): (T | null)[]` and
+    `batchExecute<P>(sql, paramSets): i64[]` run one statement with many parameter sets in one
+    round trip (one message group with a single Sync, like pgx's `Batch`): the server runs
     them as one implicit transaction, so if one execution fails the whole batch throws that
     error and, outside a transaction, none of its writes are kept;
   - `begin(): Transaction`, `transaction(fn)`, `inTransaction`, and `close()`.
@@ -75,10 +76,10 @@ to the server is async.
   copy ends; a failed copy counts against an enclosing `transaction`.
 - `createPool({ url, max? }): Pool` (default `max` 10; a bad connection string throws here,
   connections open on first use). A `Pool` has the same `query`/`queryOne`/`execute`/`select`/
-  `selectOne`/`run`/`batch` methods, each running on a free connection (waiting when all `max`
-  are busy), plus `connect(): Client` (a dedicated connection; its `close()` returns it to the
-  pool), `transaction(fn)` on a dedicated connection, `idleCount` and `end()`. Pools are safe
-  to use from many spawned tasks.
+  `selectOne`/`run`/`batch`/`batchQuery`/`batchQueryOne`/`batchExecute` methods, each running on
+  a free connection (waiting when all `max` are busy), plus `connect(): Client` (a dedicated
+  connection; its `close()` returns it to the pool), `transaction(fn)` on a dedicated
+  connection, `idleCount` and `end()`. Pools are safe to use from many spawned tasks.
 - `PgError { code, message, detail, constraint }`: `code` is the server's SQLSTATE (for
   example `"23505"` unique violation, `"42P01"` undefined table, `"42601"` syntax error,
   `"25P02"` statement in an aborted transaction). Failures outside the server use names:
@@ -133,6 +134,6 @@ async function main() {
 }
 ```
 
-Notes: a `Client` or `Pool` that was closed through one copy must not be used through another
-(like velt:net sockets). A pooled connection that is still in a transaction when its client is
-closed is dropped rather than reused. WebAssembly isn't supported.
+Notes: after `close()` or `end()` through one copy of a `Client` or `Pool`, every copy throws
+`"ECLOSED"` (closing again does nothing). A pooled connection that is still in a transaction
+when its client is closed is dropped rather than reused. WebAssembly isn't supported.

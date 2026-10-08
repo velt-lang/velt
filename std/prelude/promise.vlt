@@ -1,21 +1,23 @@
 // Prelude: `Promise.allSettled` and `Promise.any` (docs/reference/async.md). The compiler compiles
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
-// How `Promise.allSettled` reports one promise (`E`: what the promise rejects with).
+/** How `Promise.allSettled` reports one promise (`E`: what the promise rejects with). */
 export type PromiseSettledResult<T, E> =
   | { status: "fulfilled"; value: T }
   | { status: "rejected"; reason: E };
 
-// Thrown by `Promise.any` when no promise fulfills (JS: `AggregateError`).
+/** Thrown by `Promise.any` when no promise fulfills (JS: `AggregateError`). */
 export class AggregateError extends Error {
   constructor(message: string) {
     super(message);
   }
 }
 
-// `Promise.allSettled(ps)`: waits for every promise and reports each outcome, in order. The
-// promises already run concurrently (they started when created), so awaiting them one by one
-// settles when the last one does.
+/**
+ * `Promise.allSettled(ps)`: waits for every promise and reports each outcome, in order. The
+ * promises already run concurrently (they started when created), so awaiting them one by one
+ * settles when the last one does.
+ */
 export async function promiseAllSettled<T, E>(
   ps: Promise<T, E>[],
 ): Promise<PromiseSettledResult<T, E>[]> {
@@ -34,8 +36,10 @@ export async function promiseAllSettled<T, E>(
   }
 }
 
-// `Promise.any(ps)`: the first promise to fulfill; `AggregateError` when all of them reject
-// (or the array is empty).
+/**
+ * `Promise.any(ps)`: the first promise to fulfill; `AggregateError` when all of them reject
+ * (or the array is empty).
+ */
 export async function promiseAny<T, E>(ps: Promise<T, E>[]): Promise<T> throws AggregateError {
   if (ps.length == 0) {
     throw new AggregateError("All promises were rejected");
@@ -184,13 +188,15 @@ function runExecutor<T, E>(
   }
 }
 
-// `new Promise<T, E>((resolve, reject) => ...)`: the compiler compiles the constructor to a call
-// of `promiseNew`, with `site` (where the `new Promise` is) and `direct` (whether it is the
-// operand of an `await`). The executor runs at once and is released before anything waits, so
-// it can't keep the promise pending through a cycle; `resolve` and `reject` may be stored and
-// called later, from any task, and the first settlement wins. An error the executor throws
-// rejects the promise. A promise whose `resolve` and `reject` are all dropped without settling
-// never settles, like in JS; awaiting it directly is reported instead of waiting forever.
+/**
+ * `new Promise<T, E>((resolve, reject) => ...)`: the compiler compiles the constructor to a call
+ * of `promiseNew`, with `site` (where the `new Promise` is) and `direct` (whether it is the
+ * operand of an `await`). The executor runs at once and is released before anything waits, so
+ * it can't keep the promise pending through a cycle; `resolve` and `reject` may be stored and
+ * called later, from any task, and the first settlement wins. An error the executor throws
+ * rejects the promise. A promise whose `resolve` and `reject` are all dropped without settling
+ * never settles, like in JS; awaiting it directly is reported instead of waiting forever.
+ */
 export function promiseNew<T, E>(
   executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
   site: string = "",
@@ -246,7 +252,7 @@ async function settlement<T, E>(
   }
 }
 
-// `new Promise<T>((resolve) => ...)`: an executor that only resolves.
+/** `new Promise<T>((resolve) => ...)`: an executor that only resolves. */
 export function promiseNewResolveOnly<T>(
   executor: (resolve: (value: T) => void) => void,
   site: string = "",
@@ -255,18 +261,22 @@ export function promiseNewResolveOnly<T>(
   return promiseNew<T, never>((resolve, reject) => executor(resolve), site, direct);
 }
 
-// What `Promise.withResolvers<T, E>()` returns (ES2024): a pending promise and the functions
-// that settle it.
+/**
+ * What `Promise.withResolvers<T, E>()` returns (ES2024): a pending promise and the functions
+ * that settle it.
+ */
 export type PromiseWithResolvers<T, E> = {
   promise: Promise<T, E>;
   resolve: (value: T) => void;
   reject: (reason: E) => void;
 };
 
-// `Promise.withResolvers<T, E>()`: the compiler compiles it to a call of `promiseWithResolvers`.
-// `resolve` and `reject` behave like a `new Promise` executor's: they may be stored, sent over
-// a channel or moved into a spawned task and called there, and the first settlement wins. A
-// promise whose `resolve` and `reject` are all dropped without settling never settles.
+/**
+ * `Promise.withResolvers<T, E>()`: the compiler compiles it to a call of `promiseWithResolvers`.
+ * `resolve` and `reject` behave like a `new Promise` executor's: they may be stored, sent over
+ * a channel or moved into a spawned task and called there, and the first settlement wins. A
+ * promise whose `resolve` and `reject` are all dropped without settling never settles.
+ */
 export function promiseWithResolvers<T, E>(): PromiseWithResolvers<T, E> {
   const slot = shared(new Mutex<PromiseSlot<T, E>>(new PromiseSlot<T, E>()));
   const s = settlers<T, E>(slot.clone());

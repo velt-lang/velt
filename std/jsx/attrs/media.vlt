@@ -4,7 +4,7 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<audio>`.
+/** `<audio>`. */
 export type AudioAttrs = HtmlAttrs & {
   src?: string;
   crossorigin?: string;
@@ -15,7 +15,7 @@ export type AudioAttrs = HtmlAttrs & {
   controls?: bool;
 };
 
-// `<video>`.
+/** `<video>`. */
 export type VideoAttrs = HtmlAttrs & {
   src?: string;
   crossorigin?: string;
@@ -32,7 +32,7 @@ export type VideoAttrs = HtmlAttrs & {
   disableremoteplayback?: bool;
 };
 
-// `<img>`.
+/** `<img>`. */
 export type ImgAttrs = HtmlAttrs & {
   alt?: string;
   src?: string;
@@ -49,7 +49,7 @@ export type ImgAttrs = HtmlAttrs & {
   fetchpriority?: string;
 };
 
-// `<source>`.
+/** `<source>`. */
 export type SourceAttrs = HtmlAttrs & {
   type?: string;
   media?: string;
@@ -60,7 +60,7 @@ export type SourceAttrs = HtmlAttrs & {
   height?: string | i64 | f64;
 };
 
-// `<track>`.
+/** `<track>`. */
 export type TrackAttrs = HtmlAttrs & {
   default?: bool;
   kind?: string;
@@ -69,5 +69,5 @@ export type TrackAttrs = HtmlAttrs & {
   srclang?: string;
 };
 
-// `<canvas>`.
+/** `<canvas>`. */
 export type CanvasAttrs = HtmlAttrs & { width?: string | i64 | f64; height?: string | i64 | f64 };

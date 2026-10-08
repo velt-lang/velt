@@ -4,7 +4,7 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<button>`.
+/** `<button>`. */
 export type ButtonAttrs = HtmlAttrs & {
   command?: string;
   commandfor?: string;
@@ -22,10 +22,10 @@ export type ButtonAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
 };
 
-// `<fieldset>`.
+/** `<fieldset>`. */
 export type FieldsetAttrs = HtmlAttrs & { disabled?: bool; form?: string; name?: string };
 
-// `<form>` (`accept-charset` is written as is: hyphenated names are not checked).
+/** `<form>` (`accept-charset` is written as is: hyphenated names are not checked). */
 export type FormAttrs = HtmlAttrs & {
   action?: string;
   autocomplete?: string;
@@ -37,7 +37,7 @@ export type FormAttrs = HtmlAttrs & {
   target?: string;
 };
 
-// `<input>`.
+/** `<input>`. */
 export type InputAttrs = HtmlAttrs & {
   accept?: string;
   alpha?: bool;

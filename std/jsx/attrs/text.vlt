@@ -4,26 +4,26 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<blockquote>` and `<q>`.
+/** `<blockquote>` and `<q>`. */
 export type QuoteAttrs = HtmlAttrs & { cite?: string };
 
-// `<del>` and `<ins>`.
+/** `<del>` and `<ins>`. */
 export type EditAttrs = HtmlAttrs & { cite?: string; datetime?: string };
 
-// `<data>`.
+/** `<data>`. */
 export type DataAttrs = HtmlAttrs & { value?: string | i64 | f64 };
 
-// `<time>`.
+/** `<time>`. */
 export type TimeAttrs = HtmlAttrs & { datetime?: string };
 
-// `<li>`.
+/** `<li>`. */
 export type LiAttrs = HtmlAttrs & { value?: string | i64 | f64 };
 
-// `<ol>`.
+/** `<ol>`. */
 export type OlAttrs = HtmlAttrs & { reversed?: bool; start?: string | i64 | f64; type?: string };
 
-// `<details>`.
+/** `<details>`. */
 export type DetailsAttrs = HtmlAttrs & { open?: bool; name?: string };
 
-// `<dialog>`.
+/** `<dialog>`. */
 export type DialogAttrs = HtmlAttrs & { open?: bool; closedby?: string };

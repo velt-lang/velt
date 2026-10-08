@@ -22,8 +22,29 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 
 ## Comments and semicolons
 
-- Comments: `// line` and `/* block */`. A `///` comment right above an exported declaration is
-  its documentation (`velt doc`).
+- Comments: `// line` and `/* block */`.
+- Doc comments: a JSDoc `/** … */` comment, or a block of `///` lines, that ends on the line
+  right above a declaration documents it. The text is Markdown, with JSDoc tags (`@param`,
+  `@returns`, `@throws`, `@example`, `@deprecated`, `@see`, `{@link name}`). A plain `//` or
+  `/* */` comment is not documentation. Plain comments on the lines between a doc comment and
+  its declaration (`// eslint-disable-next-line`, `// @ts-expect-error`) are skipped, as in
+  TypeScript, but a blank line between them ends the association (TypeScript allows blank
+  lines). The comment block at the very top of a file, followed by a blank line, documents the
+  module (any comment style). `velt doc` shows doc comments.
+
+```ts
+/**
+ * The larger of `a` and `b`.
+ *
+ * @param a - the first number
+ * @param b - the second number
+ * @returns `a` when the two are equal
+ */
+export function larger(a: i64, b: i64): i64 {
+  return a >= b ? a : b;
+}
+```
+
 - Semicolons are required after statements. There is no automatic semicolon insertion.
 
 ## Identifiers

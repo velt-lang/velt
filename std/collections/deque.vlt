@@ -12,7 +12,7 @@
 // First ring capacity once a deque receives its first element.
 const INITIAL_CAPACITY: usize = 8;
 
-// A double-ended queue (ring buffer).
+/** A double-ended queue (ring buffer). */
 export class Deque<T> {
   // `capacity` ring slots, then the spare null slot.
   private slots: (T | null)[] = [];
@@ -20,7 +20,7 @@ export class Deque<T> {
   private head: usize = 0;
   private count: usize = 0;
 
-  // A deque holding clones of `xs` in order (front = `xs[0]`).
+  /** A deque holding clones of `xs` in order (front = `xs[0]`). */
   static from(xs: T[]): Deque<T> {
     const d = new Deque<T>();
     for (let i: usize = 0; i < xs.length; i++) {
@@ -29,29 +29,29 @@ export class Deque<T> {
     return d;
   }
 
-  // Number of elements.
+  /** Number of elements. */
   get length(): usize {
     return this.count;
   }
 
-  // Number of elements (same as `length`).
+  /** Number of elements (same as `length`). */
   get size(): usize {
     return this.count;
   }
 
-  // Whether the deque has no elements.
+  /** Whether the deque has no elements. */
   isEmpty(): bool {
     return this.count == 0;
   }
 
-  // Appends `value` at the back.
+  /** Appends `value` at the back. */
   pushBack(value: T) {
     this.reserveOne();
     this.slots[(this.head + this.count) & (this.capacity() - 1)] = value;
     this.count++;
   }
 
-  // Inserts `value` at the front.
+  /** Inserts `value` at the front. */
   pushFront(value: T) {
     this.reserveOne();
     this.head = (this.head + this.capacity() - 1) & (this.capacity() - 1);
@@ -59,7 +59,7 @@ export class Deque<T> {
     this.count++;
   }
 
-  // Removes and returns the back element, or null if empty.
+  /** Removes and returns the back element, or null if empty. */
   popBack(): T | null {
     if (this.count == 0) {
       return null;
@@ -68,7 +68,7 @@ export class Deque<T> {
     return this.take((this.head + this.count) & (this.capacity() - 1));
   }
 
-  // Removes and returns the front element, or null if empty.
+  /** Removes and returns the front element, or null if empty. */
   popFront(): T | null {
     if (this.count == 0) {
       return null;
@@ -79,7 +79,7 @@ export class Deque<T> {
     return value;
   }
 
-  // A clone of the front element, or null if empty.
+  /** A clone of the front element, or null if empty. */
   peekFront(): T | null {
     if (this.count == 0) {
       return null;
@@ -87,7 +87,7 @@ export class Deque<T> {
     return this.slots[this.head].clone();
   }
 
-  // A clone of the back element, or null if empty.
+  /** A clone of the back element, or null if empty. */
   peekBack(): T | null {
     if (this.count == 0) {
       return null;
@@ -95,8 +95,10 @@ export class Deque<T> {
     return this.slots[(this.head + this.count - 1) & (this.capacity() - 1)].clone();
   }
 
-  // A clone of the element `i` places from the front (negative `i` counts from the back, like
-  // `Array.prototype.at`), or null if out of range.
+  /**
+   * A clone of the element `i` places from the front (negative `i` counts from the back, like
+   * `Array.prototype.at`), or null if out of range.
+   */
   at(i: i64): T | null {
     const n = this.count as i64;
     const k = i < 0 ? i + n : i;
@@ -106,7 +108,7 @@ export class Deque<T> {
     return this.slots[(this.head + (k as usize)) & (this.capacity() - 1)].clone();
   }
 
-  // Removes every element (keeps the buffer).
+  /** Removes every element (keeps the buffer). */
   clear() {
     for (let i: usize = 0; i < this.slots.length; i++) {
       this.slots[i] = null;
@@ -115,7 +117,7 @@ export class Deque<T> {
     this.count = 0;
   }
 
-  // Clones of the elements, front to back.
+  /** Clones of the elements, front to back. */
   toArray(): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.count);
     for (let i: usize = 0; i < this.count; i++) {
@@ -124,7 +126,7 @@ export class Deque<T> {
     return out;
   }
 
-  // Visits the elements front to back, borrowing them.
+  /** Visits the elements front to back, borrowing them. */
   forEach<E>(f: (value: T) => void throws E) throws E {
     for (let i: usize = 0; i < this.count; i++) {
       visit(this.slots[(this.head + i) & (this.capacity() - 1)], f);

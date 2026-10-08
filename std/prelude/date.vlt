@@ -21,9 +21,11 @@ const MAX_TIME: f64 = 8640000000000000.0;
 export class Date implements Comparable<Date> {
   private t: f64;
 
-  // `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
-  // (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
-  // seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+  /**
+   * `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
+   * (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
+   * seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+   */
   constructor(
     value: number | string | Date | null = null,
     month: number | null = null,
@@ -47,14 +49,16 @@ export class Date implements Comparable<Date> {
     }
   }
 
-  // Milliseconds since the epoch, now.
+  /** Milliseconds since the epoch, now. */
   static now(): i64 {
     return velt_rt_date_now();
   }
 
-  // The epoch time of a date string, or NaN: ISO 8601 (`2024-01-15`, `2024-01-15T10:30:00Z`,
-  // `2024-01-15T10:30:00.000+01:00`; without an offset a date alone is UTC and a date-time is
-  // local time, as in JS) and HTTP dates (`Mon, 15 Jan 2024 10:30:00 GMT`).
+  /**
+   * The epoch time of a date string, or NaN: ISO 8601 (`2024-01-15`, `2024-01-15T10:30:00Z`,
+   * `2024-01-15T10:30:00.000+01:00`; without an offset a date alone is UTC and a date-time is
+   * local time, as in JS) and HTTP dates (`Mon, 15 Jan 2024 10:30:00 GMT`).
+   */
   static parse(s: string): number {
     const iso = parseIso(s);
     if (iso != null) {
@@ -67,7 +71,7 @@ export class Date implements Comparable<Date> {
     return 0.0 / 0.0;
   }
 
-  // The epoch time of UTC fields (month 0-11), rolling over like JS.
+  /** The epoch time of UTC fields (month 0-11), rolling over like JS. */
   static UTC(
     year: number,
     month: number = 0,
@@ -120,7 +124,7 @@ export class Date implements Comparable<Date> {
     return this.field(false, 6);
   }
 
-  // 0 = Sunday … 6 = Saturday.
+  /** 0 = Sunday … 6 = Saturday. */
   getDay(): number {
     return this.field(false, 7);
   }
@@ -157,7 +161,7 @@ export class Date implements Comparable<Date> {
     return this.field(true, 7);
   }
 
-  // Minutes from local time to UTC (JS's sign: -60 for UTC+01:00).
+  /** Minutes from local time to UTC (JS's sign: -60 for UTC+01:00). */
   getTimezoneOffset(): number {
     if (this.t != this.t) {
       return this.t;
@@ -236,7 +240,7 @@ export class Date implements Comparable<Date> {
     return this.set(true, [null, null, null, null, null, null, ms]);
   }
 
-  // `2024-01-15T09:30:00.000Z`. An invalid date panics (JS throws a RangeError).
+  /** `2024-01-15T09:30:00.000Z`. An invalid date panics (JS throws a RangeError). */
   toISOString(): string {
     if (this.t != this.t) {
       panic("RangeError: Invalid time value");
@@ -244,17 +248,20 @@ export class Date implements Comparable<Date> {
     return isoString(this.t as i64, 0, true);
   }
 
-  // What `JSON.stringify` writes for a date: its ISO string, or null when invalid.
+  /**
+   * The ISO string, or null for an invalid date: what JS's `JSON.stringify` writes for a date.
+   * Velt's `JSON.stringify` does not take a `Date` (it has no JSON form): call this first.
+   */
   toJSON(): string | null {
     return this.t != this.t ? null : isoString(this.t as i64, 0, true);
   }
 
-  // `Mon, 15 Jan 2024 09:30:00 GMT`.
+  /** `Mon, 15 Jan 2024 09:30:00 GMT`. */
   toUTCString(): string {
     return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
   }
 
-  // `Mon Jan 15 2024 10:30:00 GMT+0100` (local time).
+  /** `Mon Jan 15 2024 10:30:00 GMT+0100` (local time). */
   toString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -262,7 +269,7 @@ export class Date implements Comparable<Date> {
     return `${this.toDateString()} ${this.toTimeString()}`;
   }
 
-  // `Mon Jan 15 2024` (local time).
+  /** `Mon Jan 15 2024` (local time). */
   toDateString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -271,7 +278,7 @@ export class Date implements Comparable<Date> {
     return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
   }
 
-  // `10:30:00 GMT+0100` (local time).
+  /** `10:30:00 GMT+0100` (local time). */
   toTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -281,7 +288,7 @@ export class Date implements Comparable<Date> {
     return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
   }
 
-  // `1/15/2024` (local time, en-US).
+  /** `1/15/2024` (local time, en-US). */
   toLocaleDateString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -290,7 +297,7 @@ export class Date implements Comparable<Date> {
     return `${p.month}/${p.day}/${p.year}`;
   }
 
-  // `10:30:00 AM` (local time, en-US).
+  /** `10:30:00 AM` (local time, en-US). */
   toLocaleTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -301,7 +308,7 @@ export class Date implements Comparable<Date> {
     return `${h}:${pad(p.minute, 2)}:${pad(p.second, 2)} ${half}`;
   }
 
-  // `1/15/2024, 10:30:00 AM` (local time, en-US).
+  /** `1/15/2024, 10:30:00 AM` (local time, en-US). */
   toLocaleString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -309,7 +316,7 @@ export class Date implements Comparable<Date> {
     return `${this.toLocaleDateString()}, ${this.toLocaleTimeString()}`;
   }
 
-  // How `console.log` shows a date, like Node: its ISO string, or `Invalid Date`.
+  /** How `console.log` shows a date, like Node: its ISO string, or `Invalid Date`. */
   __inspect(): string {
     return this.t != this.t ? "Invalid Date" : isoString(this.t as i64, 0, true);
   }

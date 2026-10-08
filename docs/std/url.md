@@ -3,7 +3,8 @@
 A WHATWG-style `URL` and `URLSearchParams` (global, as in Node; `velt:url` exports them too),
 plus JS's URI encoding functions (`import { encodeURIComponent } from "velt:url"`).
 
-- `new URL(input, base: string | null = null)`: throws `UrlError` (`Invalid URL: …`).
+- `new URL(input, base: string | null = null)`: throws `UrlError` (`Invalid URL: …`, or
+  `Invalid base URL: …` when `base` does not parse).
   `URL.parse(input, base = null): URL | null`. `URL.canParse(input, base = null)`.
 - Getters: `href protocol username password host hostname port pathname search hash origin`.
 - Setters: everything except `origin`. Invalid values are ignored, as in JS, except `href`,
@@ -15,8 +16,9 @@ plus JS's URI encoding functions (`import { encodeURIComponent } from "velt:url"
   - `append`, `set`, `delete(name, value?)`, `sort()` (stable)
   - `keys()`, `values()`, `entries()`: arrays, not iterators
   - `toString()`: form encoding (space becomes `+`)
-- `encodeURIComponent`, `encodeURI`, `decodeURIComponent`, `decodeURI`: the decoders throw
-  `UrlError("URI malformed")`.
+- `encodeURIComponent`, `encodeURI`, `decodeURIComponent`, `decodeURI`: they throw
+  `UrlError("URI malformed")` where JS throws `URIError`: the encoders on a lone surrogate, the
+  decoders on a bad escape or invalid UTF-8.
 
 ```ts
 import { URL, URLSearchParams, encodeURIComponent } from "velt:url";

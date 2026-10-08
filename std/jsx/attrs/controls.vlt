@@ -4,10 +4,10 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<label>`.
+/** `<label>`. */
 export type LabelAttrs = HtmlAttrs & { for?: string };
 
-// `<meter>`.
+/** `<meter>`. */
 export type MeterAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
   min?: string | i64 | f64;
@@ -17,10 +17,10 @@ export type MeterAttrs = HtmlAttrs & {
   optimum?: string | i64 | f64;
 };
 
-// `<optgroup>`.
+/** `<optgroup>`. */
 export type OptgroupAttrs = HtmlAttrs & { disabled?: bool; label?: string };
 
-// `<option>`.
+/** `<option>`. */
 export type OptionAttrs = HtmlAttrs & {
   disabled?: bool;
   label?: string;
@@ -28,13 +28,13 @@ export type OptionAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
 };
 
-// `<output>`.
+/** `<output>`. */
 export type OutputAttrs = HtmlAttrs & { for?: string; form?: string; name?: string };
 
-// `<progress>`.
+/** `<progress>`. */
 export type ProgressAttrs = HtmlAttrs & { value?: string | i64 | f64; max?: string | i64 | f64 };
 
-// `<select>`.
+/** `<select>`. */
 export type SelectAttrs = HtmlAttrs & {
   autocomplete?: string;
   disabled?: bool;
@@ -45,7 +45,7 @@ export type SelectAttrs = HtmlAttrs & {
   size?: string | i64 | f64;
 };
 
-// `<textarea>` (its text is its children).
+/** `<textarea>` (its text is its children). */
 export type TextareaAttrs = HtmlAttrs & {
   autocomplete?: string;
   cols?: string | i64 | f64;
