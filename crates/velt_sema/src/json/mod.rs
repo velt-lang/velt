@@ -199,6 +199,10 @@ fn has_param(cx: &Ctx, t: TyId) -> bool {
 
 /// Reports `t` at `span` if it has no JSON form (`true`: reported).
 fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
+    if !parse {
+        let seen = crate::object_copies::Seen::Serialized;
+        cx.object_copies.observe(t, span, seen);
+    }
     let mut stack = vec![];
     let Some(bad) = unserializable(cx, t, &mut stack, parse) else {
         return false;

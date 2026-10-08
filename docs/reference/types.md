@@ -484,9 +484,16 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   [discriminated union](#discriminated-unions) that narrows as usual; `Shape & { kind: "circle" }`
   keeps only the circle member, and `(A | null) & B` is `A & B`.
 - The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
-  type as the object type with those fields written out *in the same order*. Object types are
-  told apart by their field order for now, so `B & A` (or `{ b; a }`) is a different type from
-  `A & B`, and converting between them takes a copy, `{ ...ba }` (#651).
+  type as the object type with those fields written out in the same order.
+- **Field order**: `B & A` (or `{ b; a }`) converts to `A & B`, as in TypeScript. Object types
+  have fixed layouts, so the conversion builds a new object of the expected type holding the
+  same field values: one allocation and a copy of each field, paid where a program converts
+  (nested objects and arrays are shared, not copied). TypeScript passes the same object, so
+  where the program could tell the difference, the conversion is an error with the fix (build
+  the object from its fields, `{ a: ba.a, b: ba.b }`, or take the other type): when the program
+  assigns a copied field of either type, compares values of the expected type with `===`, or
+  prints, serializes or lists the keys of a value holding the expected type (Node would show
+  the original's keys, in its order).
 - `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
   the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
   function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.

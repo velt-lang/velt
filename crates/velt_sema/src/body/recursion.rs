@@ -61,6 +61,7 @@ pub(crate) struct Mark {
     diags: usize,
     throw_checks: usize,
     fresh_checks: usize,
+    object_copies: [usize; 3],
     jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
@@ -77,6 +78,7 @@ impl Mark {
             diags: cx.diags.len(),
             throw_checks: cx.throw_checks.len(),
             fresh_checks: cx.fresh_checks.len(),
+            object_copies: cx.object_copies.mark(),
             jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
@@ -98,6 +100,7 @@ impl Mark {
         cx.diags.truncate(self.diags);
         cx.throw_checks.truncate(self.throw_checks);
         cx.fresh_checks.truncate(self.fresh_checks);
+        cx.object_copies.rollback(self.object_copies);
         cx.jsx_adapters.truncate(self.jsx_adapters);
         cx.fn_values.truncate(self.fn_values);
         cx.fn_defs.truncate(self.fn_defs);

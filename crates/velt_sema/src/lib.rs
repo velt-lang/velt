@@ -49,6 +49,7 @@ mod json;
 mod known;
 mod literals;
 mod moves;
+mod object_copies;
 mod ownership;
 mod promise_copies;
 mod readonly;
@@ -254,6 +255,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     let before = error_count(cx);
     ownership_passes(cx);
     cx.borrow_pass_errors = error_count(cx) > before;
+    // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
+    object_copies::check(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held

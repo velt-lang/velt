@@ -323,7 +323,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The source text of a local or a field path (`h.items`).
-    fn place_text(&self, h: &hir::Expr) -> Option<String> {
+    pub(super) fn place_text(&self, h: &hir::Expr) -> Option<String> {
         match &h.kind {
             H::Local(l, _) => Some(self.f.locals[l.0 as usize].name.clone()),
             H::Field { base, index, .. } => {

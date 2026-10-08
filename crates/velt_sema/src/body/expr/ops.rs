@@ -363,6 +363,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let b = self.cx.ty.bool_;
+        let seen = crate::object_copies::Seen::Identity;
+        self.cx.object_copies.observe(l.ty, span, seen);
+        self.cx.object_copies.observe(r.ty, span, seen);
         let eq = self.intrinsic(Intrinsic::Same, vec![l, r], b, span);
         if !negate {
             return eq;

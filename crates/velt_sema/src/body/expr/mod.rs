@@ -35,6 +35,7 @@ mod method_call;
 mod names;
 mod namespaces;
 mod numbers;
+mod object_copy;
 mod object;
 mod object_keys;
 mod object_method;
