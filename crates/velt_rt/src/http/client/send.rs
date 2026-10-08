@@ -2,13 +2,14 @@
 //! ([`Outgoing`]), redirects as the Fetch standard follows them ([`send`]), and the error
 //! messages Node's `fetch` gives.
 
+use super::target::Target;
 use super::Redirect;
 use crate::result::{code, VeltErr};
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderName, HeaderValue};
-use hyper::{Method, Request, Response, StatusCode, Uri};
+use hyper::{Method, Request, Response, StatusCode};
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -72,29 +73,23 @@ pub(super) fn invalid(what: &str) -> VeltErr {
 /// A request as `fetch` sends it (again, after a redirect).
 pub(super) struct Outgoing {
     pub method: Method,
-    pub url: Url,
+    pub url: Target,
+    /// The caller's headers: each request adds the defaults to them ([`with_defaults`]), so a
+    /// request without headers of its own has nothing to copy for a redirect.
     pub headers: HeaderMap,
+    /// The `accept-encoding` sent unless the caller set one: the codings the first URL's scheme
+    /// can decode.
+    pub codings: &'static str,
     pub body: Bytes,
 }
 
-/// Parse `url` as WHATWG URL (as Node's `fetch` does) and check it is `http:` or `https:`.
-pub(super) fn parse_url(url: &str) -> Result<Url, VeltErr> {
-    let mut u = Url::parse(url).map_err(|e| invalid(&format!("Invalid URL {url:?}: {e}")))?;
-    if !matches!(u.scheme(), "http" | "https") {
-        return Err(VeltErr::new(
-            code::UNSUPPORTED,
-            &format!("fetch supports http: and https: URLs, not {}", u.scheme()),
-        ));
+/// The caller's header list `[name, value, …]` as a header map (empty, which allocates
+/// nothing, when there are none).
+pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
+    if flat.is_empty() {
+        return Ok(HeaderMap::new());
     }
-    u.set_fragment(None);
-    Ok(u)
-}
-
-/// The header list `[name, value, …]` as a header map; what Node adds when it is missing
-/// (`accept`, `user-agent`, and `accept-encoding` with the codings `https` can decode). The map
-/// has room for all three defaults, so adding them never grows it.
-pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltErr> {
-    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 3);
+    let mut map = HeaderMap::with_capacity(flat.len() / 2 + ADDED);
     for [name, value] in flat.as_chunks::<2>().0 {
         let name = HeaderName::from_bytes(name)
             .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(name))))?;
@@ -102,17 +97,53 @@ pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltE
             .map_err(|_| invalid(&format!("invalid value of header {name}")))?;
         map.append(name, value);
     }
-    if !map.contains_key(header::ACCEPT) {
-        map.insert(header::ACCEPT, HeaderValue::from_static("*/*"));
-    }
-    if !map.contains_key(header::USER_AGENT) {
-        map.insert(header::USER_AGENT, HeaderValue::from_static("velt"));
-    }
-    if !map.contains_key(header::ACCEPT_ENCODING) {
-        let codings = HeaderValue::from_static(super::decode::accept_encoding(https));
-        map.insert(header::ACCEPT_ENCODING, codings);
-    }
     Ok(map)
+}
+
+/// The headers added to the caller's: the three defaults and the `host` hyper adds.
+const ADDED: usize = 4;
+
+/// `own` (the caller's headers) with what Node adds when it is missing: `accept`, `user-agent`
+/// and `accept-encoding` (`codings`), then `host` when it is given (else hyper adds it). The map
+/// has room for all four, so none grows it.
+pub(super) fn with_defaults(
+    own: HeaderMap,
+    codings: &'static str,
+    host: Option<HeaderValue>,
+) -> HeaderMap {
+    let defaults = [
+        (header::ACCEPT, HeaderValue::from_static("*/*")),
+        (header::USER_AGENT, HeaderValue::from_static("velt")),
+        (header::ACCEPT_ENCODING, HeaderValue::from_static(codings)),
+    ];
+    if own.is_empty() {
+        // Most requests: a copy of the defaults, made once, which is cheaper than hashing their
+        // names each time.
+        static PLAIN: [OnceLock<HeaderMap>; 2] = [OnceLock::new(), OnceLock::new()];
+        let https = codings == super::decode::accept_encoding(true);
+        let mut map = PLAIN[usize::from(https)]
+            .get_or_init(|| {
+                let mut map = HeaderMap::with_capacity(ADDED);
+                for (name, value) in defaults {
+                    map.insert(name, value);
+                }
+                map
+            })
+            .clone();
+        if let Some(h) = host {
+            map.insert(header::HOST, h);
+        }
+        return map;
+    }
+    let added = defaults.into_iter().chain(host.map(|h| (header::HOST, h)));
+    let mut map = own;
+    map.reserve(ADDED);
+    for (name, value) in added {
+        if !map.contains_key(&name) {
+            map.insert(name, value);
+        }
+    }
+    map
 }
 
 fn lossy(b: &[u8]) -> String {
@@ -121,27 +152,26 @@ fn lossy(b: &[u8]) -> String {
 
 /// The request to send for `o`. Its headers are moved into it unless a redirect may need them
 /// again (`keep`), so a request that is not followed copies none.
-fn request(o: &mut Outgoing, keep: bool) -> Result<Request<Full<Bytes>>, VeltErr> {
-    let uri: Uri = o
-        .url
-        .as_str()
-        .parse()
-        .map_err(|_| invalid(&format!("Invalid URL {:?}", o.url.as_str())))?;
+fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     let mut req = Request::new(Full::new(o.body.clone()));
     *req.method_mut() = o.method.clone();
-    *req.uri_mut() = uri;
-    *req.headers_mut() = if keep {
+    let host = o.url.host();
+    // A redirect makes a new URI from `o.url.href`: the request can have this one.
+    *req.uri_mut() = std::mem::take(&mut o.url.uri);
+    let own = if keep {
         o.headers.clone()
     } else {
         std::mem::take(&mut o.headers)
     };
-    Ok(req)
+    *req.headers_mut() = with_defaults(own, o.codings, host);
+    req
 }
 
 /// A response with the URL it came from and whether a redirect led there.
 pub(super) struct Received {
     pub response: Response<Incoming>,
-    pub url: Url,
+    /// The WHATWG serialization.
+    pub url: Bytes,
     pub redirected: bool,
 }
 
@@ -153,14 +183,17 @@ pub(super) async fn send(
 ) -> Result<Received, VeltErr> {
     let mut redirected = false;
     for _ in 0..=MAX_REDIRECTS {
-        let req = request(&mut o, mode == Redirect::Follow)?;
+        let req = request(&mut o, mode == Redirect::Follow);
         let response = client.request(req).await.map_err(|e| failed(&e))?;
         let status = response.status();
-        let location = response.headers().get(header::LOCATION);
-        if !status.is_redirection() || mode == Redirect::Manual || location.is_none() {
+        // Only a redirect's `location` is looked up.
+        let location = (status.is_redirection() && mode != Redirect::Manual)
+            .then(|| response.headers().get(header::LOCATION))
+            .flatten();
+        if location.is_none() {
             return Ok(Received {
                 response,
-                url: o.url,
+                url: o.url.href,
                 redirected,
             });
         }
@@ -170,11 +203,12 @@ pub(super) async fn send(
                 "fetch failed: unexpected redirect",
             ));
         }
+        let base = o.url.url()?;
         let next = location
             .and_then(|l| l.to_str().ok())
-            .and_then(|l| o.url.join(l).ok())
+            .and_then(|l| base.join(l).ok())
             .ok_or_else(|| VeltErr::new(code::OTHER, "fetch failed: invalid redirect URL"))?;
-        follow(&mut o, status, next)?;
+        follow(&mut o, &base, status, next)?;
         redirected = true;
     }
     Err(VeltErr::new(
@@ -184,8 +218,8 @@ pub(super) async fn send(
 }
 
 /// Turn `o` into the request a redirect with `status` to `next` asks for (Fetch standard,
-/// "HTTP-redirect fetch").
-fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), VeltErr> {
+/// "HTTP-redirect fetch"); `base` is `o`'s URL, parsed.
+fn follow(o: &mut Outgoing, base: &Url, status: StatusCode, mut next: Url) -> Result<(), VeltErr> {
     if !matches!(next.scheme(), "http" | "https") {
         return Err(VeltErr::new(
             code::OTHER,
@@ -208,7 +242,7 @@ fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), Vel
             o.headers.remove(h);
         }
     }
-    if next.origin() != o.url.origin() {
+    if next.origin() != base.origin() {
         for h in [
             header::AUTHORIZATION,
             header::COOKIE,
@@ -218,7 +252,7 @@ fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), Vel
             o.headers.remove(h);
         }
     }
-    o.url = next;
+    o.url = Target::from_url(next)?;
     Ok(())
 }
 

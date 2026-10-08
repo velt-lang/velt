@@ -14,6 +14,7 @@
 mod body;
 mod decode;
 mod send;
+mod target;
 #[cfg(test)]
 mod tests;
 
@@ -27,7 +28,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use futures_util::future::Either;
-use hyper::header::{HeaderMap, CONTENT_ENCODING, CONTENT_LENGTH};
+use hyper::header::{HeaderMap, CONTENT_ENCODING};
 use hyper::Method;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -60,10 +61,9 @@ pub struct FetchResp {
     status: u16,
     /// Usually the standard phrase, which needs no allocation.
     status_text: std::borrow::Cow<'static, str>,
-    url: String,
+    /// The WHATWG serialization.
+    url: Bytes,
     redirected: bool,
-    /// The `content-length`, if the server sent one.
-    len: Option<u64>,
     /// Taken by the first `velt_rt_http_fetch_resp_headers`.
     headers: Mutex<HeaderMap>,
     /// Taken by a body read (`text()`, `bytes()` until the end; a chunk read until it returns).
@@ -112,12 +112,12 @@ async fn abortable<T>(
 }
 
 /// Copy the flat header list `[name, value, …]` out of a Velt `string[]`.
-unsafe fn header_list(headers: *const VeltStrArray, https: bool) -> Result<HeaderMap, VeltErr> {
+unsafe fn header_list(headers: *const VeltStrArray) -> Result<HeaderMap, VeltErr> {
     let a = &*headers;
     let items: Vec<&[u8]> = (0..a.len as usize)
         .map(|i| (*a.ptr.add(i)).as_bytes())
         .collect();
-    send::header_map(&items, https)
+    send::header_map(&items)
 }
 
 async fn run(
@@ -135,14 +135,9 @@ async fn run(
     let status_text = parts
         .extensions
         .get::<hyper::ext::ReasonPhrase>()
-        .map(|p| String::from_utf8_lossy(p.as_bytes()).into_owned().into())
+        .map(|p| lossy(p.as_bytes()).into_owned().into())
         .or_else(|| parts.status.canonical_reason().map(Into::into))
         .unwrap_or_default();
-    let len = parts
-        .headers
-        .get(CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok());
     // A response without a body has nothing to decode, whatever it says (undici too).
     let bodiless = head || matches!(parts.status.as_u16(), 101 | 204 | 205 | 304);
     let encoding = (!bodiless)
@@ -156,10 +151,9 @@ async fn run(
         rest: Bytes::new(),
     };
     Ok(FetchResp {
-        len,
         status: parts.status.as_u16(),
         status_text,
-        url: r.url.into(),
+        url: r.url,
         redirected: r.redirected,
         headers: Mutex::new(parts.headers),
         body: Mutex::new(Some(reader)),
@@ -197,10 +191,11 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
     let outgoing = (|| {
         let method = Method::from_bytes((*method).as_bytes())
             .map_err(|_| send::invalid("invalid HTTP method"))?;
-        let url = send::parse_url(&(*url).text_lossy())?;
-        let headers = header_list(headers, url.scheme() == "https")?;
+        let url = target::Target::parse(&(*url).text_lossy())?;
+        let headers = header_list(headers)?;
         Ok(Outgoing {
             method,
+            codings: decode::accept_encoding(url.is_https()),
             url,
             headers,
             body,
@@ -241,7 +236,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_status_text(
 /// `out` receives an owned string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_fetch_resp_url(r: FetchRespHandle, out: *mut VeltStr) {
-    out.write(VeltStr::from_text(&obj(r).url));
+    out.write(VeltStr::from_text(target::as_text(&obj(r).url)));
 }
 
 /// Whether a redirect led to the response.
@@ -263,12 +258,31 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_headers(
     let headers = std::mem::take(&mut *lock(&obj(r).headers));
     let mut flat = Vec::with_capacity(headers.len() * 2);
     for (name, value) in headers.iter() {
-        flat.push(VeltStr::from_text(name.as_str()));
-        flat.push(VeltStr::from_text(&String::from_utf8_lossy(
-            value.as_bytes(),
-        )));
+        flat.push(text_of(name.as_str().as_bytes()));
+        flat.push(text_of(value.as_bytes()));
     }
     out.write(VeltStrArray::from_vec(flat));
+}
+
+/// `bytes` decoded as UTF-8, invalid sequences as U+FFFD (as JS decodes). Valid text, nearly
+/// all of it, is only validated (ASCII, the most common, only scanned) and copied once, where
+/// [`String::from_utf8_lossy`] would walk it chunk by chunk at several times the cost.
+fn text_of(bytes: &[u8]) -> VeltStr {
+    if bytes.is_ascii() {
+        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
+        return unsafe {
+            VeltStr::from_text_counted(std::str::from_utf8_unchecked(bytes), bytes.len())
+        };
+    }
+    VeltStr::from_text(&lossy(bytes))
+}
+
+/// [`String::from_utf8_lossy`], with std's fast validation first: it borrows valid UTF-8.
+fn lossy(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.into(),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
 }
 
 /// Receive the whole body (each response's body is received once: a second read is `EINVAL`).
@@ -279,7 +293,7 @@ async fn receive(r: Arc<FetchResp>) -> Result<body::Whole, VeltErr> {
             "Body is unusable: Body has already been read",
         ));
     };
-    abortable(r.signal.as_deref(), reader.read_all(r.len)).await
+    abortable(r.signal.as_deref(), reader.read_all()).await
 }
 
 /// `await res.text()` → result slot `IoResult<VeltStr>`: the body as UTF-8, invalid bytes
@@ -293,7 +307,7 @@ pub extern "C" fn velt_rt_http_fetch_resp_text(r: FetchRespHandle) -> *mut VeltF
                 let bytes = w.as_slice();
                 // A leading byte order mark is not text (JS's UTF-8 decode drops it too).
                 let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-                IoResult::ok(VeltStr::from_text(&String::from_utf8_lossy(bytes)))
+                IoResult::ok(text_of(bytes))
             }
             Err(e) => IoResult::<VeltStr>::err(e),
         }

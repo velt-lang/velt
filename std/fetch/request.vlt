@@ -25,8 +25,8 @@ export struct RequestInit {
   ca?: string;
 }
 
-// The method as the Fetch standard normalizes it.
-function normalizeMethod(m: string): string {
+// The method as the Fetch standard normalizes it (std only: `fetch` uses it too).
+export function normalizeMethod(m: string): string {
   const up = m.toUpperCase();
   if (
     up == "DELETE" || up == "GET" || up == "HEAD" || up == "OPTIONS" || up == "POST" || up == "PUT"
