@@ -271,3 +271,94 @@ fn signature_help_documents_parameters_of_generics_and_methods() {
     );
     client.shutdown();
 }
+
+const SHAPES: &str = r#"/** Something with an area. */
+interface Shape {
+  /** The area, in square units. */
+  area(): f64;
+  /** The name of the shape. */
+  name: string;
+}
+
+class Square implements Shape {
+  name: string = "square";
+  side: f64 = 2.0;
+  area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+function main() {
+  const s: Shape = new Square();
+  console.log(s.area(), s.name);
+}
+"#;
+
+#[test]
+fn interface_members_are_documented_through_an_interface_typed_value() {
+    let mut client = Client::start();
+    let doc = uri("doc_shapes.vlt");
+    client.open(&doc, SHAPES);
+    let text = hover_text(&mut client, &doc, SHAPES, "area(), s", 0);
+    assert!(
+        text.ends_with("\n```\n\n---\n\nThe area, in square units."),
+        "{text}"
+    );
+    let text = hover_text(&mut client, &doc, SHAPES, "name);", 0);
+    assert!(text.ends_with("\n---\n\nThe name of the shape."), "{text}");
+    let text = hover_text(&mut client, &doc, SHAPES, "Shape = new", 0);
+    assert!(text.ends_with("\n---\n\nSomething with an area."), "{text}");
+    let edited = SHAPES.replace("console.log(s.area(), s.name);", "s.");
+    let area = resolved(&mut client, &edited, "s.\n", 2, "area");
+    assert_eq!(area["value"], json!("The area, in square units."));
+    client.shutdown();
+}
+
+const RE_LIB: &str = r#"/**
+ * Triples `x`.
+ * @param x - the number
+ */
+export function triple(x: i64): i64 {
+  return x * 3;
+}
+"#;
+
+const RE_MID: &str = r#"export { triple } from "./doc_re_lib";
+export { triple as thrice } from "./doc_re_lib";
+"#;
+
+const RE_APP: &str = r#"import { triple, thrice } from "./doc_re_mid";
+
+function main() {
+  console.log(triple(1), thrice(2));
+}
+"#;
+
+/// Re-exports need nothing of their own: sema's definition is the original declaration, under
+/// its own name or an alias.
+#[test]
+fn re_exported_names_show_the_original_doc() {
+    let mut client = Client::start();
+    client.open(&uri("doc_re_lib.vlt"), RE_LIB);
+    client.open(&uri("doc_re_mid.vlt"), RE_MID);
+    let app = uri("doc_re_app.vlt");
+    client.open(&app, RE_APP);
+    let doc = "Triples `x`.\n\n**Parameters**\n\n- `x`: the number";
+    for needle in ["triple(1)", "thrice(2)", "thrice }"] {
+        let text = hover_text(&mut client, &app, RE_APP, needle, 0);
+        assert!(
+            text.ends_with(&format!("\n---\n\n{doc}")),
+            "{needle}: {text}"
+        );
+    }
+    let (line, col) = pos_of(RE_APP, "thrice(2)", 7);
+    let help = client.request("textDocument/signatureHelp", at(&app, line, col));
+    assert_eq!(
+        help["signatures"][0]["parameters"][0]["documentation"]["value"],
+        json!("the number")
+    );
+    let edited = RE_APP.replace("console.log(triple(1), thrice(2));", "thr");
+    let item = resolved(&mut client, &edited, "thr\n", 3, "thrice");
+    assert_eq!(item["value"], json!(doc));
+    client.shutdown();
+}

@@ -420,3 +420,27 @@ function main() { const e = <Card title=\"t\"></Other>; }";
     );
     assert!(!a.references(&card).iter().any(|s| s.lo == other));
 }
+
+const INTERSECTION: &str = "type Named = { name: string };
+type Person = Named & { age: i64 };
+function main() {
+  const p: Person = { name: \"a\", age: 3 };
+  console.log(p.name, p.age);
+}
+";
+
+/// A field of an intersection's object type is declared where the first operand that has it
+/// writes it.
+#[test]
+fn def_at_resolves_intersection_fields_to_their_operand() {
+    let (a, file) = analyze(INTERSECTION);
+    let name = a
+        .def_at(file, at(INTERSECTION, "p.name", 0, 2))
+        .expect("name");
+    assert_eq!((name.name.as_str(), name.kind), ("name", DefKind::Field));
+    assert_eq!(name.span.lo, at(INTERSECTION, "name: string", 0, 0));
+    let age = a
+        .def_at(file, at(INTERSECTION, "p.age", 0, 2))
+        .expect("age");
+    assert_eq!(age.span.lo, at(INTERSECTION, "age: i64", 0, 0));
+}

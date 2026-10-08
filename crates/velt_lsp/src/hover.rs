@@ -29,7 +29,7 @@ pub fn hover(analysis: &Analysis, offset: u32) -> Option<Hover> {
         (span, signature::decl(analysis, &decl), doc)
     };
     let range = LineIndex::new(analysis.text()).range(span.lo, span.hi);
-    let mut value = format!("```velt\n{text}\n```");
+    let mut value = fenced(&text);
     if let Some(doc) = doc.filter(|d| !d.is_empty()) {
         value.push_str("\n\n---\n\n");
         value.push_str(&doc);
@@ -41,4 +41,26 @@ pub fn hover(analysis: &Analysis, offset: u32) -> Option<Hover> {
         }),
         range: Some(range),
     })
+}
+
+/// `text` in a `velt` code fence longer than any run of backticks in it (a string literal type
+/// may contain three), so the text cannot end the fence.
+fn fenced(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}velt\n{text}\n{fence}")
+}
+
+#[cfg(test)]
+mod fence_tests {
+    use super::fenced;
+
+    #[test]
+    fn the_fence_outlasts_backticks_in_the_text() {
+        assert_eq!(fenced("const x: i64"), "```velt\nconst x: i64\n```");
+        assert_eq!(
+            fenced("type T = \"```\""),
+            "````velt\ntype T = \"```\"\n````"
+        );
+    }
 }
