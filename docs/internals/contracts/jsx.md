@@ -117,6 +117,17 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   one of them is an arrow function). Children go into the
   children field: one child → the child itself, several → an array, each checked against the
   field's type; children with no children field in `P` are an error.
+- **Void elements:** a provider that writes some tags without an end tag declares them, as a
+  string constant of space-separated tags (an error otherwise):
+
+  ```ts
+  export const jsxVoidElements = "area base br col embed hr img input link meta source track wbr";
+  ```
+  Children of those tags are then a compile error ("<br> is a void element and cannot have
+  children"); `{}` and `{/* */}` are no children, and an explicit end tag (`<br></br>`) is
+  allowed. Precompiled templates write these tags without an end tag. `std/jsx` and
+  `std/jsx/generic` export HTML's list. Without the export, any tag may have children (an XML or
+  terminal provider's `<link>`), and templates leave out the end tag of HTML's void elements.
 - **Children:** text (after JSX whitespace rules and entity decoding) becomes a `string` child;
   `{expr}` is coerced to `Child`; `{...xs}` passes `xs` as one child; `{/* */}` and `{}` vanish.
   What `true`, `false` and `null` children render is the provider's choice: nothing (`std/jsx`,
@@ -154,7 +165,8 @@ shape of Deno's precompile transform, with text folded into the strings):
   ```
   which saves the two arrays per call: in a list, every row is such a subtree.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
-  wbr`) have no closing tag; any other self-closing element is written `<x></x>`.
+  wbr`, or the provider's `jsxVoidElements` when it exports them) have no closing tag; any
+  other self-closing element is written `<x></x>`.
 - An element with an attribute spread or a `key` is not precompiled (it goes through `jsx`);
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden

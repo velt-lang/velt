@@ -1,0 +1,15 @@
+jsx_void_children.vlt:7:17: error: <br> is a void element and cannot have children
+  = note: the JSX provider 'std/jsx' writes <br> without an end tag, so there is nowhere to put children: remove them
+
+jsx_void_children.vlt:8:33: error: <img> is a void element and cannot have children
+  = note: the JSX provider 'std/jsx' writes <img> without an end tag, so there is nowhere to put children: remove them
+
+jsx_void_children.vlt:9:20: error: <input> is a void element and cannot have children
+  = note: the JSX provider 'std/jsx' writes <input> without an end tag, so there is nowhere to put children: remove them
+
+jsx_void_children.vlt:10:18: error: Property 'viewbox' does not exist on type 'JSX.IntrinsicElements["svg"]'. Did you mean 'viewBox'?
+
+jsx_void_children.vlt:10:58: error: Property 'radius' does not exist on type 'JSX.IntrinsicElements["circle"]'.
+
+jsx_void_children.vlt:11:33: error: Type 'false' is not assignable to type '"true" | "false" | null'.
+  = note: in attribute 'stretchy' of <mo>

@@ -12,6 +12,7 @@ const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
 const TEMPLATE_STRING: &str = "// @jsxImportSource ./_jsx_test_template_string\n";
 const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
+const VOID: &str = "// @jsxImportSource ./_jsx_test_void\n";
 const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
 fn load(src: &str) -> Loaded {
@@ -325,6 +326,39 @@ fn sole_empty_still_reads_a_sole_local() {
         "{SOLE}function main() {{ const x = true; let y: bool; if (x) {{ y = true; }} const a = <p>{{y}}</p>; }}"
     ));
     assert!(r.contains("possibly uninitialized variable `y`"), "{r}");
+}
+
+/// #87 review: void elements are the provider's (`jsxVoidElements`); one without the export, like
+/// an RSS provider whose `<link>` has text, accepts children of any tag.
+#[test]
+fn void_children_only_for_the_providers_void_elements() {
+    ok(&format!(
+        "{GENERIC}function main() {{ const a = <p><br>x</br><img src=\"a.png\">y</img></p>; }}"
+    ));
+}
+
+/// #675 review: a provider's `jsxVoidElements` also decides which tags templates write without
+/// an end tag; without the export they use HTML's list.
+#[test]
+fn templates_use_the_providers_void_elements() {
+    let p = ok(&format!(
+        "{VOID}function main() {{ const a = <p><br /><span /><br>x</br></p>; }}"
+    ));
+    let lits = str_lits(&p, "main");
+    assert!(
+        lits.iter().any(|s| s == "<p><br></br><span><br>x</br></p>"),
+        "{lits:?}"
+    );
+    let r = err(&format!(
+        "{VOID}function main() {{ const a = <span>x</span>; }}"
+    ));
+    assert!(r.contains("<span> is a void element"), "{r}");
+    let p = ok(&format!(
+        "{PRECOMPILE}function main() {{ const a = <p><br /><span /></p>; }}"
+    ));
+    assert!(str_lits(&p, "main")
+        .iter()
+        .any(|s| s == "<p><br><span></span></p>"));
 }
 
 #[test]

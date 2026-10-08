@@ -24,7 +24,8 @@ use super::text_run::{TextPart, Textness};
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H};
 
-/// HTML void elements: written without a closing tag.
+/// HTML void elements: written without a closing tag, unless the provider lists its own
+/// (`jsxVoidElements`, [`Provider::is_void`]).
 const VOID_ELEMENTS: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
     "wbr",
@@ -47,17 +48,28 @@ pub(super) struct Template {
 }
 
 /// Is `tag` an HTML void element?
-pub(super) fn is_void(tag: &str) -> bool {
+pub(super) fn is_html_void(tag: &str) -> bool {
     VOID_ELEMENTS.contains(&tag)
 }
 
+impl Provider {
+    /// Is `tag` written without an end tag: one the provider lists in `jsxVoidElements`, or an
+    /// HTML void element when it lists none?
+    pub(super) fn is_void(&self, tag: &str) -> bool {
+        match &self.void_elements {
+            Some(list) => list.iter().any(|v| v == tag),
+            None => is_html_void(tag),
+        }
+    }
+}
+
 /// Can intrinsic element `el` (tag `tag`) be written into a template?
-pub(super) fn precompilable(el: &ast::JsxElement, tag: &str) -> bool {
+pub(super) fn precompilable(p: &Provider, el: &ast::JsxElement, tag: &str) -> bool {
     let plain_attrs = !el
         .attrs
         .iter()
         .any(|a| matches!(a, ast::JsxAttr::Spread { .. }) || is_key(a));
-    plain_attrs && (!is_void(tag) || real_children(&el.children).is_empty())
+    plain_attrs && (!p.is_void(tag) || real_children(&el.children).is_empty())
 }
 
 impl FnCx<'_, '_> {
@@ -127,7 +139,7 @@ impl FnCx<'_, '_> {
             }
         }
         t.text.push('>');
-        if is_void(tag) {
+        if p.is_void(tag) {
             return true;
         }
         match (&p.sole_empty, real_children(&el.children).as_slice()) {
@@ -184,7 +196,7 @@ impl FnCx<'_, '_> {
             ast::JsxChild::Element(inner) => {
                 let tag = inner.name.as_ref().and_then(intrinsic_tag);
                 match tag {
-                    Some(tag) if precompilable(inner, &tag) => {
+                    Some(tag) if precompilable(p, inner, &tag) => {
                         let tag_span = inner.name.as_ref().map_or(inner.span, |n| n.span());
                         if !self.template_element(p, pc, inner, &tag, tag_span, t) {
                             let e = self.error_expr(inner.span);
@@ -301,9 +313,9 @@ mod tests {
 
     #[test]
     fn void_elements() {
-        assert!(is_void("br"));
-        assert!(is_void("img"));
-        assert!(!is_void("div"));
-        assert!(!is_void("my-br"));
+        assert!(is_html_void("br"));
+        assert!(is_html_void("img"));
+        assert!(!is_html_void("div"));
+        assert!(!is_html_void("my-br"));
     }
 }

@@ -40,6 +40,9 @@ pub(crate) struct Provider {
     /// `jsxSoleEmpty` (precompile only): what a `null` or boolean sole child of an element
     /// renders as, instead of `jsxEscape`'s result.
     pub sole_empty: Option<String>,
+    /// `jsxVoidElements`: the tags whose children are an error (they have no end tag), and that
+    /// templates write without one; `None` without the export (templates use HTML's list).
+    pub void_elements: Option<Vec<String>>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -116,16 +119,27 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
     let precompile = precompile(cx, t, at);
     let (text_separator, sole_empty) = match precompile {
         Some(_) => (
-            string_const(cx, t, &source, at, "jsxTextSeparator", "<!--t-->")?,
-            string_const(cx, t, &source, at, "jsxSoleEmpty", "")?,
+            string_const(cx, t, &source, at, "jsxTextSeparator", "<!--t-->", FOLDED)?,
+            string_const(cx, t, &source, at, "jsxSoleEmpty", "", FOLDED)?,
         ),
         None => (None, None),
     };
+    let void_elements = string_const(
+        cx,
+        t,
+        &source,
+        at,
+        "jsxVoidElements",
+        "br hr img",
+        "the compiler reads the tags at compile time",
+    )?
+    .map(|list| list.split_whitespace().map(str::to_string).collect());
     Some(Provider {
         async_component: function(cx, t, "jsxAsyncComponent"),
         precompile,
         text_separator,
         sole_empty,
+        void_elements,
         source,
         jsx: jsx?,
         fragment: fragment?,
@@ -177,9 +191,12 @@ fn precompile(cx: &mut Ctx, t: usize, at: Span) -> Option<Precompile> {
     })
 }
 
-/// The value of the optional string constant export `name` (`jsxTextSeparator`, `jsxSoleEmpty`;
-/// `example` for the message): `Some(None)` without one, `None` once an export that is not a
-/// string constant was reported.
+/// Why [`string_const`] needs a constant, for the precompile exports.
+const FOLDED: &str = "the compiler folds it into the template strings";
+
+/// The value of the optional string constant export `name` (`jsxTextSeparator`, `jsxSoleEmpty`,
+/// `jsxVoidElements`; `example` and `why` for the message): `Some(None)` without one, `None` once
+/// an export that is not a string constant was reported.
 fn string_const(
     cx: &mut Ctx,
     t: usize,
@@ -187,6 +204,7 @@ fn string_const(
     at: Span,
     name: &str,
     example: &str,
+    why: &str,
 ) -> Option<Option<String>> {
     let Some(item) = export_of(cx, t, name) else {
         return Some(None);
@@ -222,7 +240,7 @@ fn string_const(
                 at,
             )
             .with_note(format!(
-                "write it as `export const {name} = \"{example}\";`: the compiler folds it into the template strings (docs/contracts/jsx.md)"
+                "write it as `export const {name} = \"{example}\";`: {why} (docs/internals/contracts/jsx.md)"
             )),
         );
         return None;

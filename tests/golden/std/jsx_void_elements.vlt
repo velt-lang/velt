@@ -1,0 +1,23 @@
+// std/jsx's two lists of void elements agree (#675 review): `jsxVoidElements`, which the
+// compiler reads (children are an error, templates write no end tag), and `isVoidElement`, which
+// the generic `jsx` uses.
+
+import { isVoidElement, jsxVoidElements } from "velt:jsx/void_elements";
+
+function main() {
+  const tags = jsxVoidElements.split(" ");
+  let agree = true;
+  for (const tag of tags) {
+    if (!isVoidElement(tag)) {
+      console.log(`missing from isVoidElement: ${tag}`);
+      agree = false;
+    }
+  }
+  for (const tag of ["div", "p", "svg", "circle", "template", "my-br", "BR"]) {
+    if (isVoidElement(tag)) {
+      console.log(`not void but isVoidElement: ${tag}`);
+      agree = false;
+    }
+  }
+  console.log(`${tags.length} void elements, agree: ${agree}`);
+}
