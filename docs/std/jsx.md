@@ -18,14 +18,15 @@ A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees i
   (`Record<string, string | f64>`, the object form of `style`), `Text`
   (`string | i64 | f64 | bool | null`, text the precompiler folds into strings),
   `IntrinsicElements`, `ElementChildrenAttribute`, `RenderError { component; message }`.
+  `Element`'s fields are internal: its markup comes from `renderToString`.
 - `velt:jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
   (the global attributes) and one type per element with attributes of its own (`AnchorAttrs`,
   `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`), for providers that extend them
   ([Extending `IntrinsicElements`](../internals/contracts/jsx.md#extending-intrinsicelements)).
 
 Rendering rules:
-- Text is escaped (`&` `<` `>`), attribute values too (plus `"` and `'`), so user data cannot
-  inject markup. Numbers render like `${n}`; `true`, `false` and `null` children render nothing.
+- Text and attribute values are escaped as react-dom escapes them (`&amp;` `&lt;` `&gt;`
+  `&quot;` `&#x27;`; `escapeHtml` writes `'` as `&#39;`), so user data cannot inject markup. Numbers render like `${n}`; `true`, `false` and `null` children render nothing.
 - A `true` attribute renders as the bare name (`<input disabled>`); `false` and `null` omit it.
 - `style` takes a string or an object, `style={{ fontSize: 14, color: c }}`, rendered with
   React's rules (react-dom 19's `style` serialization, checked on the cases in the
@@ -55,10 +56,12 @@ Rendering rules:
   (the closing tag has none: `</List>`), or infer them like TypeScript from the props and the
   children (``<Labelled label={(v) => `${v}`}>{41}</Labelled>`` gives `T = number` when
   `children: T`); arrow function props get their parameter types from what was inferred.
-- Elements render as they are created: a tree without async components is already its HTML
-  string, so rendering it is a copy. Static markup is precompiled to constant strings, with
-  dynamic text and attributes folded in through template literals (`jsxTemplate`, `jsxEscape`,
-  `jsxAttr`); `velt:jsx/generic/jsx-runtime` is the same provider without that mode
+- Elements render as they are created: a tree without async components is already its HTML,
+  kept as a list of string pieces that each element takes over from its children, so rendering
+  copies the markup once (`renderToStream` writes the pieces into the response). Static markup
+  is precompiled to constant strings, with dynamic text and attributes folded in through
+  template literals (`jsxTemplate`, `jsxTemplateString`, `jsxEscape`, `jsxAttr`);
+  `velt:jsx/generic/jsx-runtime` is the same provider without that mode
   (`/** @jsxImportSource velt:jsx/generic */`).
 
 ```tsx

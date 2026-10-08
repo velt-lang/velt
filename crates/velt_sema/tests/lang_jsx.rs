@@ -10,6 +10,7 @@ use velt_sema::hir::{self, Callee, ExprKind as E, Lit, Program};
 
 const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
+const TEMPLATE_STRING: &str = "// @jsxImportSource ./_jsx_test_template_string\n";
 const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
 const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
@@ -230,6 +231,41 @@ fn text_separator_a_string_that_may_be_empty_next_to_a_slot_is_a_slot() {
     assert_eq!(strings(&t[0][0]), ["<p>a", "", "", "</p>"]);
     // Each `s` is a `Fragment` slot; `n` and `"x"` (never empty) stay in the strings.
     assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 4);
+}
+
+/// #77: a template without slots is `jsxTemplateString(html)` when the runtime exports it (std
+/// does): no arrays per call. With slots, or without the export, it stays `jsxTemplate`.
+#[test]
+fn template_without_slots_uses_jsx_template_string() {
+    let p = ok(&format!(
+        "{TEMPLATE_STRING}function Name(): JSX.Element {{ return <span>x</span>; }}
+        function view(s: string) {{ const a = <p>{{s}}</p>; const b = <p><Name /></p>; }}
+        function main() {{ view(\"x\"); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplateString").len(), 1);
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 1);
+    let p = ok(&format!(
+        "{PRECOMPILE}function view(s: string) {{ const a = <p>{{s}}</p>; }}
+        function main() {{ view(\"x\"); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 1);
+}
+
+/// #676 review: providers escape `'` differently (react-dom `&#x27;`, sigx and `escapeHtml`
+/// `&#39;`), so static text and attribute values with one are left to `jsxEscape`/`jsxAttr`.
+#[test]
+fn static_apostrophes_are_escaped_by_the_provider() {
+    let p = ok(&format!(
+        "{PRECOMPILE}function main() {{ const a = <p title=\"a'b\" class=\"x\">it's &amp; <span>ok</span></p>; }}"
+    ));
+    assert!(!str_lits(&p, "main")
+        .iter()
+        .any(|s| s.contains("&#39;") || s.contains("&#x27;")));
+    assert_eq!(runtime_calls(&p, "main", "jsxEscape").len(), 1);
+    assert_eq!(runtime_calls(&p, "main", "jsxAttr").len(), 1);
+    assert!(str_lits(&p, "main")
+        .iter()
+        .any(|s| s.contains(" class=\"x\">")));
 }
 
 #[test]

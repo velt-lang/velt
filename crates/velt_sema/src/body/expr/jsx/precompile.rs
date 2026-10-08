@@ -5,7 +5,8 @@
 //! folded into the surrounding string as a template literal (`` `<td>${jsxEscape(x)}</td>` ``).
 //! Only `Element` parts are slots: components, fragments, elements that are not precompiled (a
 //! spread or a `key`), `Element`-typed expressions as they are, and any other child as
-//! `Fragment([v], null)`.
+//! `Fragment([v], null)`. A tree without slots is `jsxTemplateString(html)` when the runtime
+//! exports it.
 //!
 //! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`); with a
 //! `jsxSoleEmpty` export, an element's only `{expr}` child may render differently (`sole_child`).
@@ -77,6 +78,11 @@ impl FnCx<'_, '_> {
             return self.error_expr(el.span);
         }
         self.end_string(p, pc, &mut t, el.span);
+        if let (Some(f), true) = (pc.template_string, t.slots.is_empty()) {
+            let [html] =
+                <[hir::Expr; 1]>::try_from(t.strings).expect("ICE: one string without slots");
+            return self.jsx_call(p, f, "jsxTemplateString", vec![html], el.span);
+        }
         let str_ = self.cx.ty.str_;
         let strings_ty = self.cx.ty.array(str_);
         let strings = self.mk(H::ArrayLit(t.strings), strings_ty, el.span);
@@ -106,12 +112,13 @@ impl FnCx<'_, '_> {
         t.text.push_str(tag);
         for a in attrs {
             match a.fixed {
-                Some(Fixed::Text(s)) => {
+                // `'` is the provider's to escape (`&#39;`, `&#x27;`): `jsxAttr` below.
+                Some(Fixed::Text(s)) if !s.contains('\'') => {
                     t.text
                         .push_str(&format!(" {}=\"{}\"", a.name, escape_html(&s)));
                 }
                 Some(Fixed::Bare) => t.text.push_str(&format!(" {}", a.name)),
-                None => {
+                _ => {
                     let span = a.value.span;
                     let name = self.str_lit(&a.name, span);
                     let h = self.jsx_call(p, pc.attr, "jsxAttr", vec![name, a.value], span);
@@ -149,6 +156,18 @@ impl FnCx<'_, '_> {
         t: &mut Template,
     ) {
         match c {
+            ast::JsxChild::Text { value, span } if value.contains('\'') => {
+                // The provider escapes `'` its own way (`&#39;`, `&#x27;`): `jsxEscape`, one text
+                // part like static text.
+                let h = self.str_lit(value, *span);
+                let h = self.coerce(h, pc.text);
+                if t.sep.is_some() {
+                    t.run.push(TextPart::Value(h, Textness::Always, false));
+                } else {
+                    let s = self.escape_call(p, pc, h, *span);
+                    self.add_part(t, s);
+                }
+            }
             ast::JsxChild::Text { value, .. } => {
                 let text = escape_html(value);
                 if t.sep.is_some() {

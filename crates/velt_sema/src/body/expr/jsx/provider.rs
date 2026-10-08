@@ -20,6 +20,8 @@ pub(crate) struct Precompile {
     pub template: DefId,
     pub escape: DefId,
     pub attr: DefId,
+    /// `jsxTemplateString(html)` (optional): a template without slots, one string and no arrays.
+    pub template_string: Option<DefId>,
     /// `JSX.Text`: what `jsxEscape` writes into the template string.
     pub text: TyId,
 }
@@ -170,6 +172,7 @@ fn precompile(cx: &mut Ctx, t: usize, at: Span) -> Option<Precompile> {
         template: function(cx, t, "jsxTemplate")?,
         escape: function(cx, t, "jsxEscape")?,
         attr: function(cx, t, "jsxAttr")?,
+        template_string: function(cx, t, "jsxTemplateString"),
         text: type_export(cx, t, "Text", at)?,
     })
 }

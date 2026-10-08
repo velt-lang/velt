@@ -1,6 +1,6 @@
-<a href="/x" class="link" title="a &quot;quoted&quot; &amp; &#39;single&#39;">go</a>
-<p>&lt;script&gt;alert("x")&lt;/script&gt; &amp; 'q'</p>
-<img src="x&quot; onerror=&quot;alert(1)" alt="&#39;&gt;&lt;script&gt;">
+<a href="/x" class="link" title="a &quot;quoted&quot; &amp; &#x27;single&#x27;">go</a>
+<p>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#x27;q&#x27;</p>
+<img src="x&quot; onerror=&quot;alert(1)" alt="&#x27;&gt;&lt;script&gt;">
 <br><hr id="h"><div></div>
 <input disabled>
 <p>after</p>

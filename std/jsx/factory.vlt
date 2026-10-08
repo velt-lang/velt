@@ -1,11 +1,11 @@
 // std/jsx/factory: the functions compiled JSX calls (docs/contracts/jsx.md "Required exports"
 // and "SSR precompile"), plus `raw`. Internal: std/jsx/jsx-runtime re-exports them.
 //
-// Every factory renders what it can at once (node.vlt): children's markup is appended to the
-// new node's `html`, and a child that still waits for an async component is kept as a part, with
-// the markup after it collected in a following complete part.
+// Every factory renders what it can at once (node.vlt): text is escaped into the new node's
+// strings and child nodes become its slots, and a child that still waits for an async component
+// is kept as a part, with the markup after it collected in a following complete part.
 
-import { Element, Deferred, RenderError } from "velt:jsx/node";
+import { Element, Deferred, RenderError, markupOf, treeNode } from "velt:jsx/node";
 import type { AttrValue, Child, Text } from "velt:jsx/node";
 import { escapeText, renderAttr } from "velt:jsx/escape";
 import { isVoidElement } from "velt:jsx/void_elements";
@@ -29,9 +29,13 @@ export function jsx(
   if (isVoidElement(tag)) {
     return new Element(open);
   }
-  const inner = childrenHtml(children);
+  const inner = childrenText(children);
   if (inner != null) {
     return new Element(`${open}${inner}</${tag}>`);
+  }
+  const done = templateOf(open, children, tag);
+  if (done != null) {
+    return done;
   }
   const node = new Element(open);
   appendChildren(node, children);
@@ -41,9 +45,21 @@ export function jsx(
 
 /** `<>children</>`: the children's markup, nothing around it. */
 export function Fragment(children: Child[], key: string | null): Element {
-  const inner = childrenHtml(children);
+  if (children.length == 1 && isNodeChild(children[0])) {
+    // `{list}` (`Fragment([v], null)` from the compiler): the node is the child itself, or keeps
+    // the array as its slots.
+    const only = children.pop();
+    if (only != null) {
+      return nodeOfChild(only);
+    }
+  }
+  const inner = childrenText(children);
   if (inner != null) {
     return new Element(inner);
+  }
+  const done = templateOf("", children, "");
+  if (done != null) {
+    return done;
   }
   const node = new Element("");
   appendChildren(node, children);
@@ -119,34 +135,152 @@ export function jsxTemplate(strings: string[], slots: Element[]): Element {
   if (!complete) {
     return templateWithParts(strings, slots);
   }
-  const html = templateHtml(strings, slots);
-  // Reuse a slot's node for the result: one allocation less per template.
-  const node = slots.pop();
-  if (node == null) {
-    return new Element(html);
-  }
-  node.html = html;
-  return node;
+  return treeNode(slots, strings);
 }
 
-// The markup of a template whose slots are complete. Template literals for the common slot
-// counts build the string in one buffer.
-function templateHtml(strings: string[], slots: Element[]): string {
-  switch (slots.length) {
-    case 1:
-      return `${strings[0]}${slots[0].html}${strings[1]}`;
-    case 2:
-      return `${strings[0]}${slots[0].html}${strings[1]}${slots[1].html}${strings[2]}`;
-    case 3:
-      return `${strings[0]}${slots[0].html}${strings[1]}${slots[1].html}${strings[2]}${slots[2].html}${strings[3]}`;
+/**
+ * A precompiled subtree without slots (no components, fragments or element children): its
+ * markup, with text and attributes folded in.
+ */
+export function jsxTemplateString(html: string): Element {
+  return new Element(html);
+}
+
+// The complete node `open children </tag>` (no end tag for tag "": a fragment) when a child is
+// a template node or an array (`childrenText` makes the others one string), or null when a
+// child waits for an async component (the children are then left as they are). Text and
+// numbers are escaped into the strings, and so is a child node of one string (copied: it is
+// short, typically); other child nodes and the elements of arrays become slots, moved out of
+// `children` rather than copied.
+function templateOf(open: string, children: Child[], tag: string): Element | null {
+  for (const child of children) {
+    if (!isCompleteChild(child)) {
+      return null;
+    }
   }
-  const pieces: string[] = __intrinsic_array_with_capacity(strings.length + slots.length);
-  pieces.push(strings[0]);
-  for (let i: usize = 0; i < slots.length; i++) {
-    pieces.push(slots[i].html);
-    pieces.push(strings[i + 1]);
+  const strings: string[] = [];
+  const slots: Element[] = [];
+  let text = open;
+  const n = children.length;
+  children.reverse();
+  for (let i: usize = 0; i < n; i++) {
+    const child = children.pop();
+    if (child != null) {
+      text = addToTemplate(child, text, strings, slots);
+    }
+  }
+  const close = tag == "" ? "" : `</${tag}>`;
+  if (slots.length == 0) {
+    return new Element(`${text}${close}`);
+  }
+  strings.push(`${text}${close}`);
+  return treeNode(slots, strings);
+}
+
+// Adds `child` to a template node being built (`templateOf`): `text` is the markup after the
+// last slot; returns it with the child's text added.
+function addToTemplate(child: Child, text: string, strings: string[], slots: Element[]): string {
+  if (child == null || typeof child === "boolean") {
+    return text;
+  }
+  if (typeof child === "string") {
+    return `${text}${escapeText(child)}`;
+  }
+  if (child instanceof Element) {
+    if (child.tree == null) {
+      return `${text}${child.html}`;
+    }
+    strings.push(text);
+    slots.push(child);
+    return "";
+  }
+  if (typeof child === "object") {
+    child.reverse();
+    let rest = text;
+    while (child.length > 0) {
+      const e = child.pop();
+      if (e != null) {
+        strings.push(rest);
+        rest = "";
+        slots.push(e);
+      }
+    }
+    return rest;
+  }
+  return `${text}${formatNumber(child)}`;
+}
+
+// The markup of `children` when they are text, nodes of one string and arrays of them, else
+// null.
+function childrenText(children: Child[]): string | null {
+  if (children.length == 1) {
+    return childText(children[0]);
+  }
+  const pieces: string[] = __intrinsic_array_with_capacity(children.length);
+  for (const child of children) {
+    const text = childText(child);
+    if (text == null) {
+      return null;
+    }
+    pieces.push(text);
   }
   return pieces.join("");
+}
+
+function childText(child: Child): string | null {
+  if (child == null || typeof child === "boolean") {
+    return "";
+  }
+  if (typeof child === "string") {
+    return escapeText(child);
+  }
+  if (child instanceof Element) {
+    return child.tree == null && child.isComplete ? child.html : null;
+  }
+  if (typeof child === "object") {
+    // An array of nodes of one string: joined (copying short markup costs less than slots).
+    const pieces: string[] = __intrinsic_array_with_capacity(child.length);
+    for (const e of child) {
+      if (e.tree != null || !e.isComplete) {
+        return null;
+      }
+      pieces.push(e.html);
+    }
+    return pieces.join("");
+  }
+  return formatNumber(child);
+}
+
+// Whether `child` is a complete element or an array of them.
+function isNodeChild(child: Child): bool {
+  return child != null && typeof child === "object" && isCompleteChild(child);
+}
+
+// The node of a child `isNodeChild` accepted: the element itself, or a template node with the
+// array as its slots.
+function nodeOfChild(child: Child): Element {
+  if (child instanceof Element) {
+    return child;
+  }
+  if (child != null && typeof child === "object") {
+    return treeNode(child, null);
+  }
+  return new Element("");
+}
+
+// Whether `child` is rendered completely (it holds no async or failed component).
+function isCompleteChild(child: Child): bool {
+  if (child instanceof Element) {
+    return child.isComplete;
+  }
+  if (child != null && typeof child === "object") {
+    for (const e of child) {
+      if (!e.isComplete) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // `jsxTemplate` when a slot waits for an async component.
@@ -215,7 +349,7 @@ function appendHtml(node: Element, html: string) {
 // Appends a child node: its markup when it is complete, else the node itself as a part.
 function appendElement(node: Element, child: Element) {
   if (child.isComplete) {
-    appendHtml(node, child.html);
+    appendHtml(node, markupOf(child));
     return;
   }
   if (node.rest == null) {
@@ -253,7 +387,7 @@ function appendElements(node: Element, elements: Element[]) {
   }
 }
 
-// Appends children, moving the incomplete ones into `node` (the slow path of `childrenHtml`).
+// Appends children, moving the incomplete ones into `node` (the slow path of `templateOf`).
 function appendChildren(node: Element, children: Child[]) {
   const n = children.length;
   children.reverse();
@@ -265,23 +399,6 @@ function appendChildren(node: Element, children: Child[]) {
   }
 }
 
-// The markup of `children` when none of them waits for an async component, else null. Reads
-// the children in place, so the common case moves nothing.
-function childrenHtml(children: Child[]): string | null {
-  if (children.length == 1) {
-    return childHtml(children[0]);
-  }
-  const pieces: string[] = __intrinsic_array_with_capacity(children.length);
-  for (const child of children) {
-    const html = childHtml(child);
-    if (html == null) {
-      return null;
-    }
-    pieces.push(html);
-  }
-  return pieces.join("");
-}
-
 // The markup of one child when it is complete, else null.
 function childHtml(child: Child): string | null {
   if (child == null || typeof child === "boolean") {
@@ -291,7 +408,7 @@ function childHtml(child: Child): string | null {
     return escapeText(child);
   }
   if (child instanceof Element) {
-    return child.isComplete ? child.html : null;
+    return child.isComplete ? markupOf(child) : null;
   }
   if (typeof child === "object") {
     const pieces: string[] = __intrinsic_array_with_capacity(child.length);
@@ -299,7 +416,7 @@ function childHtml(child: Child): string | null {
       if (!e.isComplete) {
         return null;
       }
-      pieces.push(e.html);
+      pieces.push(markupOf(e));
     }
     return pieces.join("");
   }
