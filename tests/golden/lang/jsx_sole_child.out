@@ -1,0 +1,136 @@
+maybe="x" flag=true el=true
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p>x</p>
+  <p>x<!--t-->a</p>
+  <p>x<!--t-->x</p>
+  <p title="x"></p>
+  <p>x</p>
+  <p><span></span></p>
+  <p><a>el</a></p>
+  <p><a>el</a>a</p>
+  <p>ada</p>
+  <p>x</p>
+maybe="x" flag=true el=false
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p>x</p>
+  <p>x<!--t-->a</p>
+  <p>x<!--t-->x</p>
+  <p title="x"></p>
+  <p>x</p>
+  <p><span></span></p>
+  <p></p>
+  <p><!---->a</p>
+  <p>ada</p>
+  <p>x</p>
+maybe="x" flag=false el=true
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p>x</p>
+  <p>x<!--t-->a</p>
+  <p>x<!--t-->x</p>
+  <p title="x"></p>
+  <p>x</p>
+  <p><span></span></p>
+  <p><a>el</a></p>
+  <p><a>el</a>a</p>
+  <p></p>
+  <p>x</p>
+maybe="x" flag=false el=false
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p>x</p>
+  <p>x<!--t-->a</p>
+  <p>x<!--t-->x</p>
+  <p title="x"></p>
+  <p>x</p>
+  <p><span></span></p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p>x</p>
+maybe=null flag=true el=true
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p><!----><!----></p>
+  <p></p>
+  <p></p>
+  <p><span></span></p>
+  <p><a>el</a></p>
+  <p><a>el</a>a</p>
+  <p>ada</p>
+  <p></p>
+maybe=null flag=true el=false
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p><!----><!----></p>
+  <p></p>
+  <p></p>
+  <p><span></span></p>
+  <p></p>
+  <p><!---->a</p>
+  <p>ada</p>
+  <p></p>
+maybe=null flag=false el=true
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p><!----><!----></p>
+  <p></p>
+  <p></p>
+  <p><span></span></p>
+  <p><a>el</a></p>
+  <p><a>el</a>a</p>
+  <p></p>
+  <p></p>
+maybe=null flag=false el=false
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p><!---->a</p>
+  <p><!----><!----></p>
+  <p></p>
+  <p></p>
+  <p><span></span></p>
+  <p></p>
+  <p><!---->a</p>
+  <p></p>
+  <p></p>
+reads: 8 8
+templates:
+  ["<p></p>"]
+  ["<p>","a</p>"]
+  ["<p></p>"]
+  ["<p><!---->a</p>"]
+  ["<p></p>"]
+  ["<p><!---->a</p>"]
+  ["<p><!----><!----></p>"]
+  ["<p></p>"]
+  ["<p></p>"]
+  ["<p><span></span></p>"]
+  ["<p>","</p>"]
+  ["<p>","a</p>"]
+  ["<p>","</p>"]
+  ["<p></p>"]

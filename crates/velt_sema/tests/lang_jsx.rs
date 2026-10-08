@@ -11,6 +11,7 @@ use velt_sema::hir::{self, Callee, ExprKind as E, Lit, Program};
 const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
 const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
+const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
 fn load(src: &str) -> Loaded {
     load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src)
@@ -241,6 +242,62 @@ fn no_text_separator_without_the_export() {
     assert!(!exprs(func(&p, "view"))
         .iter()
         .any(|e| matches!(e.kind, E::If { .. })));
+}
+
+/// Regression (#634): `jsxEscape` cannot tell a sole `null` or boolean child from one among
+/// siblings, so a provider that renders them differently (sigx) could not precompile them.
+#[test]
+fn sole_empty_replaces_a_sole_boolean_or_null_child() {
+    let p = ok(&format!(
+        "{SOLE}function view(f: bool, m: string | null) {{ const a = <p>{{f}}</p>; const b = <p>{{f}}a</p>; const c = <p>{{m}}</p>; }}
+        function main() {{ view(true, null); }}"
+    ));
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(
+        strings(&t[0][0]),
+        ["<p></p>"],
+        "a sole boolean is the export's string"
+    );
+    assert_eq!(t.len(), 3);
+    // Among siblings `f` is `jsxEscape`'s; `m` may be text: tested at run time, escaped only
+    // when it is.
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 2);
+    let ifs = exprs(func(&p, "view"))
+        .into_iter()
+        .filter(|e| matches!(e.kind, E::If { .. }))
+        .count();
+    assert_eq!(ifs, 1);
+}
+
+#[test]
+fn sole_empty_a_sole_nullable_element_is_a_conditional_slot() {
+    let p = ok(&format!(
+        "{SOLE}function view(e: JSX.Element | null, s: string) {{ const a = <p>{{e}}</p>; const b = <p>{{s}}</p>; }}
+        function main() {{ view(null, \"x\"); }}"
+    ));
+    // `e`: `Fragment([e], null)` or `jsxTemplate([""], [])`; `s` is always text.
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 3);
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+#[test]
+fn no_sole_empty_without_the_export() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(f: bool) {{ const a = <p>{{f}}</p>; }}
+        function main() {{ view(true); }}"
+    ));
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+#[test]
+fn sole_empty_must_be_a_string_constant() {
+    let r =
+        err("// @jsxImportSource ./errors/_jsx_bad_sole\nfunction main() { const a = <p>x</p>; }");
+    assert!(
+        r.contains("`jsxSoleEmpty` of the JSX provider") && r.contains("must be a string constant"),
+        "{r}"
+    );
 }
 
 #[test]

@@ -21,6 +21,7 @@ mod messages;
 mod precompile;
 mod props;
 mod provider;
+mod sole_child;
 mod text_run;
 
 use velt_common::{Diagnostic, Span};

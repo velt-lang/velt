@@ -1,0 +1,38 @@
+// @jsxImportSource ./_jsx_sole_precompile
+
+// The page of `jsx_sole_child`. `_jsx_sole_page_generic.vlt` and `_jsx_sole_page_precompile.vlt`
+// are the same source under the generic and the precompiling runtime.
+
+function Name(props: { name: string }): JSX.Element {
+  return <>{props.name}</>;
+}
+
+export class Reads {
+  n: i64 = 0;
+}
+
+function counted(reads: Reads, v: string | null): string | null {
+  reads.n++;
+  return v;
+}
+
+// One case per line: a value that may be `null` or a boolean, alone and among siblings.
+export function cases(maybe: string | null, flag: bool, some: bool, reads: Reads): JSX.Element[] {
+  const el: JSX.Element | null = some ? <a>el</a> : null;
+  return [
+    <p>{null}</p>,
+    <p>{null}a</p>,
+    <p>{flag}</p>,
+    <p>{flag}a</p>,
+    <p>{maybe}</p>,
+    <p>{maybe}a</p>,
+    <p>{maybe}{maybe}</p>,
+    <p title={maybe}>{flag}</p>,
+    <p>{/* a comment is no child */}{maybe}</p>,
+    <p><span>{flag}</span></p>,
+    <p>{el}</p>,
+    <p>{el}a</p>,
+    <p>{flag ? <Name name="ada" /> : null}</p>,
+    <p>{counted(reads, maybe)}</p>,
+  ];
+}

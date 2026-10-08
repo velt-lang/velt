@@ -66,7 +66,9 @@ Two lowerings, chosen by what the provider exports:
    SSR output (and emit its resumability and island markers from `jsx` at component
    boundaries). A provider whose client hydrates text nodes one by one exports
    `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
-   parts of the template strings (contracts/jsx.md, "Text separator").
+   parts of the template strings (contracts/jsx.md, "Text separator"). One that renders a
+   `null` or boolean child differently when it is its element's only child exports
+   `jsxSoleEmpty` (sigx: `""`) for the compiler to write there (contracts/jsx.md, "Sole child").
 
 Types:
 
