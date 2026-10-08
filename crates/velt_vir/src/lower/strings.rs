@@ -104,8 +104,9 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(units));
         self.goto(join);
         self.switch_to(outl);
-        let (high, _) = self.str_halves(w1);
-        self.assign(out.clone(), Rvalue::Cast(high, Ty::U64));
+        // The high half of `w1`, unsigned: an optimizer sees that it is below 2^32.
+        let high = self.u64_op(BinOp::UShr, w1, cint(32, Ty::U64));
+        self.assign(out.clone(), Rvalue::Use(high));
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(out)

@@ -4,15 +4,18 @@
 //! A JS `number` is a double, so lowering computes it as `f64`. Where the result is provably
 //! identical, this pass stores it as an `i32` or `i64` instead:
 //! - **Facts** (`fact`, `flow`, `refine`): an interval, integrality, NaN and `-0` for every
-//!   numeric local at every point, refined by branch conditions and widened at loop heads.
+//!   numeric local at every point, refined by branch conditions (and through copies of the
+//!   compared values) and widened at loop heads. An array's length is below 2^53, and a
+//!   parameter every call sets to a constant starts with that constant's facts (`params`).
 //! - **Simplification** (`simplify`): comparisons and branches the facts decide become
 //!   constants and jumps; `trunc`/`floor`/`ceil`/`round` of whole values, `abs` of
-//!   non-negative ones and `__floatIndex` of whole indexes need no call.
+//!   non-negative ones, ToInt32 of constants and int32 values and `__floatIndex` of whole
+//!   indexes need no call; a parameter known to be one constant is that constant.
 //! - **Narrowing** (`narrow`, `rewrite`): an `f64` local whose every value is whole, never NaN
 //!   and within ±2^53 (where integer arithmetic is exact), and that is never `-0` or only read
 //!   where `-0` cannot be told from 0, becomes an `i32` or `i64` local computed with integer
-//!   operations. `i64` locals holding only 32-bit values become `i32` (step 1). Other reads
-//!   convert back exactly.
+//!   operations (an `i32` that feeds a 64-bit one becomes 64-bit too). `i64` locals holding only
+//!   32-bit values become `i32` (step 1). Other reads convert back exactly.
 //! - **Guarded sums** (`int32`): ToInt32 of a sum the facts cannot bound adds as integers
 //!   behind a cheap range check.
 //!
@@ -23,6 +26,8 @@ mod fact;
 mod flow;
 mod int32;
 mod narrow;
+mod params;
+mod print;
 mod reads;
 mod refine;
 mod report;
@@ -30,20 +35,20 @@ mod rewrite;
 mod simplify;
 
 use velt_vir::vir::{
-    Callee, ExternFn, ExternId, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty,
+    AggId, AggLayout, Callee, ExternFn, ExternId, Function, Local, Operand, Rvalue, StaticData,
+    Stmt, Terminator, Ty,
 };
 
 use crate::locals::Usage;
 use crate::visit::rvalue_operands;
 use flow::Flow;
 
+pub(crate) use print::declare as declare_formatters;
 pub use report::Unnarrowed;
 pub(crate) use simplify::self_comparisons;
 
 /// The runtime's ToInt32 (`velt_rt_math_to_int32(f64) -> i32`).
 const TO_INT32: &str = "velt_rt_math_to_int32";
-/// ToInt32 of `a + x` for an int32 `a` (`velt_rt_math_add_int32(i32, f64) -> i32`).
-const ADD_INT32: &str = "velt_rt_math_add_int32";
 /// `Math.trunc`, `floor`, `ceil`, `round` (`f64 -> f64`).
 const ROUNDING: [&str; 4] = [
     "velt_rt_math_trunc",
@@ -58,10 +63,7 @@ const FLOAT_INDEX: &str = "std/prelude/math::__floatIndex";
 
 /// The prelude's int32 helpers (`std/prelude/math.vlt`), inlined in debug builds too so that
 /// `numrep` sees their integer paths.
-const INT32_HELPERS: [&str; 2] = [
-    "std/prelude/math::__mulToInt32",
-    "std/prelude/math::__intAddToInt32",
-];
+const INT32_HELPERS: [&str; 1] = ["std/prelude/math::__mulToInt32"];
 
 /// Per function: is it (an instance of) one of the prelude functions `names`? Instances made
 /// for a caller's location (panic messages) append `_L…` to the symbol.
@@ -90,15 +92,34 @@ pub(crate) struct Env<'p> {
     externs: &'p [ExternFn],
     /// Per function: is it (an instance of) the prelude's `__floatIndex`?
     float_index: Vec<bool>,
+    /// The arrays' aggregate: its field 1 is a length, below 2^53.
+    array: Option<AggId>,
+    /// Facts about parameters that every call passes a constant (`params`).
+    params: params::ParamFacts,
+    /// Number formatters and their integer twins (`print`).
+    formatters: Vec<(ExternId, ExternId, bool)>,
 }
 
 impl<'p> Env<'p> {
-    /// Look up the helpers in `externs` and `funcs`.
-    pub fn of(externs: &'p [ExternFn], funcs: &[Function]) -> Env<'p> {
+    /// Look up the helpers in `externs` and `funcs`, the arrays' aggregate in `aggs`, and the
+    /// facts about parameters from the calls in `funcs` (`statics` hold function addresses).
+    pub fn of(
+        externs: &'p [ExternFn],
+        funcs: &[Function],
+        aggs: &[AggLayout],
+        statics: &[StaticData],
+    ) -> Env<'p> {
         let float_index = instances_of(funcs, &[FLOAT_INDEX]);
+        let array = aggs
+            .iter()
+            .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
+            .map(|i| AggId(i as u32));
         Env {
             externs,
             float_index,
+            array,
+            params: params::of(funcs, statics),
+            formatters: print::pairs(externs),
         }
     }
 
@@ -156,10 +177,18 @@ pub(crate) fn unnarrowed(env: &Env, func: &Function) -> Vec<Unnarrowed> {
 /// Facts for the locals of `func` that matter (`None`: nothing to narrow, or too big).
 fn analyse(env: &Env, func: &Function) -> Option<Flow> {
     let tracked = tracked(env, func);
-    if tracked.is_empty() {
+    if tracked.is_empty() && !constant_to_int32(env, func) {
         return None;
     }
     Flow::compute(func, env, &tracked)
+}
+
+/// Does `func` take ToInt32 of a constant (`simplify` folds it without tracking anything)?
+fn constant_to_int32(env: &Env, func: &Function) -> bool {
+    func.blocks.iter().any(|b| {
+        matches!(&b.term, Terminator::Call { callee, args, .. }
+            if env.is_to_int32(callee) && matches!(args.as_slice(), [Operand::Const(..)]))
+    })
 }
 
 fn numeric(ty: Ty) -> bool {
@@ -261,7 +290,12 @@ fn tracked(env: &Env, func: &Function) -> Vec<Local> {
 /// Narrowing for `program`'s functions, for tests of the whole pass.
 #[cfg(test)]
 pub(crate) fn run_program(program: &mut velt_vir::vir::Program) -> bool {
-    let env = Env::of(&program.externs, &program.funcs);
+    let env = Env::of(
+        &program.externs,
+        &program.funcs,
+        &program.aggs,
+        &program.statics,
+    );
     let mut changed = false;
     for f in &mut program.funcs {
         changed |= run(&env, f);

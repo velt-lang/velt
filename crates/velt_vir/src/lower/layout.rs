@@ -107,7 +107,7 @@ impl Cx<'_> {
         if let Some(a) = self.lay.array {
             return a;
         }
-        let a = self.new_agg("array".into(), &[Ty::Ptr, Ty::U64, Ty::U64]);
+        let a = self.new_agg(crate::ARRAY_AGG_NAME.into(), &[Ty::Ptr, Ty::U64, Ty::U64]);
         self.lay.array = Some(a);
         a
     }

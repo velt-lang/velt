@@ -13,7 +13,9 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use velt_vir::vir::{BinOp, Callee, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
+use velt_vir::vir::{
+    AggId, BinOp, Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty, UnOp,
+};
 
 use super::fact::{self, Fact, TWO_53};
 use super::Env;
@@ -22,17 +24,25 @@ use super::Env;
 const WIDEN_AFTER: u32 = 2;
 /// Largest tracked-locals × blocks product analysed (bounds memory and time).
 const MAX_CELLS: usize = 1 << 19;
-/// Bounds a widened interval jumps to: 0, the int32/uint32 limits, ±2^53 and ±∞.
-const THRESHOLDS: [f64; 8] = [
+/// Bounds a widened interval jumps to: 0, the int32/uint32 limits, 2^32 (one past a string's
+/// largest length: an index that steps past the end), ±2^53 and ±∞.
+const THRESHOLDS: [f64; 9] = [
     f64::NEG_INFINITY,
     -TWO_53,
     -2_147_483_648.0,
     0.0,
     2_147_483_647.0,
     4_294_967_295.0,
+    4_294_967_296.0,
     TWO_53,
     f64::INFINITY,
 ];
+
+/// `s.charCodeAt(i)` past the inline ASCII path (`velt_rt_str_char_code_at`).
+const CHAR_CODE_AT: &str = "velt_rt_str_char_code_at";
+
+/// The largest array length: an array of 2^53 elements would not fit in memory.
+const ARRAY_LEN_MAX: i128 = (1 << 53) - 1;
 
 /// A fact per tracked local.
 pub(super) type State = Vec<Fact>;
@@ -44,6 +54,8 @@ pub(super) struct Flow {
     /// Type per tracked local.
     tys: Vec<Ty>,
     entry: Vec<Option<State>>,
+    /// The arrays' aggregate (`Env::array`).
+    array: Option<AggId>,
 }
 
 impl Flow {
@@ -64,6 +76,7 @@ impl Flow {
             slot,
             tys,
             entry: vec![None; func.blocks.len()],
+            array: env.array,
         };
         flow.solve(func, env);
         Some(flow)
@@ -88,6 +101,7 @@ impl Flow {
                     None => Fact::top(ty),
                 })
             }
+            Operand::Copy(p) if self.is_array_len(func, p) => Some(Fact::int(0, ARRAY_LEN_MAX)),
             Operand::Copy(p) => {
                 let ty = crate::visit::derefs(p).then(|| match p.proj.last() {
                     Some(velt_vir::vir::Proj::Deref(t)) => *t,
@@ -96,6 +110,23 @@ impl Flow {
                 (ty.is_int() || ty.is_float()).then(|| Fact::top(ty))
             }
         }
+    }
+
+    /// Is `p` the length of an array (field 1 of the arrays' aggregate)?
+    fn is_array_len(&self, func: &Function, p: &Place) -> bool {
+        let Some(array) = self.array else {
+            return false;
+        };
+        let [ref base @ .., Proj::Field(1)] = p.proj[..] else {
+            return false;
+        };
+        let ty = match base.last() {
+            None => func.locals[p.local.0 as usize].ty,
+            Some(Proj::Deref(t)) => *t,
+            Some(Proj::Cast(id)) => Ty::Agg(*id),
+            Some(_) => return false,
+        };
+        ty == Ty::Agg(array)
     }
 
     /// Facts about the value of `rv`, assigned to a local of type `ty`.
@@ -143,13 +174,23 @@ impl Flow {
         match (callee, arg) {
             (Callee::Extern(id), Some(a)) if env.is_rounding(*id) => fact::rounded(a),
             (Callee::Extern(id), Some(a)) if env.is_abs(*id) => fact::abs(a),
+            // A UTF-16 code unit, or -1 past the end (rt_abi.md).
+            (Callee::Extern(id), _) if env.symbol(*id) == CHAR_CODE_AT => Fact::int(-1, 65535),
             _ => Fact::top(ty),
         }
     }
 
     fn solve(&mut self, func: &Function, env: &Env) {
         let n = func.blocks.len();
-        self.entry[0] = Some(self.tys.iter().map(|t| Fact::top(*t)).collect());
+        let mut start: State = self.tys.iter().map(|t| Fact::top(*t)).collect();
+        if let Some(params) = env.params.get(&func.symbol) {
+            for (i, f) in params.iter().enumerate() {
+                if let (Some(f), Some(Some(s))) = (f, self.slot.get(i)) {
+                    start[*s] = *f;
+                }
+            }
+        }
+        self.entry[0] = Some(start);
         let cfg = Cfg::of(func);
         let mut visits = vec![0u32; n];
         // Blocks in reverse postorder, so a loop's body settles before what follows it.
@@ -276,6 +317,9 @@ impl Flow {
         };
         for (op, f) in [(&c.lhs, nx), (&c.rhs, ny)] {
             self.set(st, op, f);
+            for copy in super::refine::copies_of(func, b, op) {
+                self.set(st, &Operand::Copy(Place::local(copy)), f);
+            }
             if let Some((src, cast)) = super::refine::converted_from(func, b, op) {
                 // Strictly within ±2^53 the conversion was exact: `2^53 + 1` converts to 2^53.
                 if !cast || f.magnitude() < TWO_53 {

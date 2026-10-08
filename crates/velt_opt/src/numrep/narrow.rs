@@ -89,6 +89,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
     let mut may_neg_zero = vec![false; n];
     let mut arith = vec![false; n];
     let mut wide = vec![false; n];
+    let mut from_int32 = vec![false; n];
     let mut sources: Vec<(Local, Operand)> = vec![];
     let mut reads = Reads {
         cand: &cand,
@@ -106,6 +107,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
                     let l = d.local;
                     arith[l.0 as usize] |= matches!(rv, Rvalue::Binary(..) | Rvalue::Unary(..));
                     wide[l.0 as usize] |= converts_wide(func, rv);
+                    from_int32[l.0 as usize] |= super::int32::from_small_int(func, rv);
                     let r = flow.rvalue(&st, func, rv, func.locals[l.0 as usize].ty);
                     p.range[l.0 as usize] = p.range[l.0 as usize].join(r);
                     may_neg_zero[l.0 as usize] |= r.neg_zero;
@@ -152,8 +154,9 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         sources,
         reads: reads.list,
         f64_locals: func.locals.iter().map(|l| l.ty == Ty::F64).collect(),
+        from_int32,
     };
-    while rules.apply(&mut p) {}
+    while rules.apply(&mut p) || rules.widen(&mut p) {}
     p
 }
 
@@ -166,6 +169,9 @@ struct Rules {
     sources: Vec<(Local, Operand)>,
     reads: Vec<Read>,
     f64_locals: Vec<bool>,
+    /// Per local: some definition converts a 32-bit integer (a ToInt32 result: it stays 32
+    /// bits).
+    from_int32: Vec<bool>,
 }
 
 impl Rules {
@@ -205,6 +211,33 @@ impl Rules {
         for (i, g) in gains.iter().enumerate() {
             if self.f64_locals[i] && !g {
                 drop(p, i, Reason::NoGain);
+            }
+        }
+        changed
+    }
+}
+
+impl Rules {
+    /// An `i32` that feeds a 64-bit one (an operand of its definition, or compared with it)
+    /// becomes 64-bit too, unless it holds ToInt32 results: one sign extension at its
+    /// definition instead of one at every such use (`sum += i` with a 64-bit `sum`). Returns
+    /// whether any changed.
+    fn widen(&self, p: &mut Plan) -> bool {
+        let mut changed = false;
+        for r in &self.reads {
+            let i = r.local.0 as usize;
+            if p.to[i] != Some(Ty::I32) || self.from_int32[i] || !self.f64_locals[i] {
+                continue;
+            }
+            let wide = |l: &Local| p.to[l.0 as usize] == Some(Ty::I64);
+            let feeds_wide = match (r.into, r.int_use) {
+                (Some(d), _) => wide(&d),
+                (None, IntUse::With(m)) => wide(&m),
+                _ => false,
+            };
+            if feeds_wide {
+                p.to[i] = Some(Ty::I64);
+                changed = true;
             }
         }
         changed

@@ -2,6 +2,7 @@
 //! and a property test that runs random `f64` programs in the reference interpreter before and
 //! after the pass (`random.rs`).
 
+mod context;
 mod random;
 
 use super::*;
@@ -267,7 +268,7 @@ fn facts_fold_rounding_calls_and_decided_branches() {
 fn report_lists_unnarrowed_named_locals_in_loops() {
     let (mut p, s, _) = counter_program(0.0, 1000.0);
     p.funcs[0].locals[s.0 as usize].name = Some("s".into());
-    let env = Env::of(&p.externs, &p.funcs);
+    let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);
     let r = unnarrowed(&env, &p.funcs[0]);
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].name, "s");

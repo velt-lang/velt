@@ -104,6 +104,33 @@ pub(super) fn converted_from(func: &Function, b: usize, op: &Operand) -> Option<
     (!assigned_in(&stmts[at..], src)).then(|| (src.clone(), cast))
 }
 
+/// The locals that hold a copy of `op` at the end of block `b` (`sum = t; branch t >= k`):
+/// each was last set in the block to `op`'s value, and neither changed since. Refining `op`
+/// refines them too.
+pub(super) fn copies_of(func: &Function, b: usize, op: &Operand) -> Vec<Local> {
+    let Operand::Copy(p) = op else { return vec![] };
+    if !p.proj.is_empty() {
+        return vec![];
+    }
+    let stmts = &func.blocks[b].stmts;
+    let from = last_def(stmts, p.local, stmts.len()).map_or(0, |(at, _)| at + 1);
+    let mut out = vec![];
+    for (i, s) in stmts.iter().enumerate().skip(from) {
+        let Stmt::Assign(d, Rvalue::Use(Operand::Copy(q))) = s else {
+            continue;
+        };
+        let copy = d.proj.is_empty() && q.proj.is_empty() && q.local == p.local;
+        let later = &stmts[i + 1..];
+        let kept = !later
+            .iter()
+            .any(|s| matches!(s, Stmt::Assign(e, _) if e.local == d.local));
+        if copy && kept && d.local != p.local {
+            out.push(d.local);
+        }
+    }
+    out
+}
+
 fn negate(op: BinOp) -> BinOp {
     match op {
         BinOp::Lt => BinOp::Ge,

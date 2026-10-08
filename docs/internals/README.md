@@ -44,7 +44,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole,
      never NaN, `-0` unobservable) prove the integer computes the same values
      ([design #525](https://github.com/velt-lang/velt/issues/525)). It runs after the two
-     above, so the fields they turned into locals can become integers too.
+     above, so the fields they turned into locals can become integers too, and once before the
+     inlining rounds, while an array is still one value whose length (below 2^53) bounds the
+     loops over it. A parameter that every call sets to a constant takes that constant's facts.
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.
