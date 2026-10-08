@@ -49,7 +49,9 @@ compiler cannot match is a compile error, never a silent difference. Known gaps 
 the end.
 
 ## Required exports of `<source>/jsx-runtime`
-Types (any declaration kind that `import * as JSX` can name):
+Types (any declaration kind that `import * as JSX` can name). `number` in the unions below is
+TypeScript's; a Velt provider spells it with Velt's number types, usually `i64 | f64` (std/jsx's
+`Child` is `Element | Element[] | string | i64 | f64 | bool | null`).
 
 | Export | Meaning |
 |---|---|
@@ -271,8 +273,8 @@ Without the export nothing changes, and the generic lowering ignores it. The gol
 `std/jsx` (default) implements the generic and precompile functions, has no event-handler
 attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
 provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async components),
-`renderToStream(el, res)` (`std/http`
-`Response.stream`, flushing at async component boundaries) and `raw(html)`.
+`renderToStream(el, w: ResponseWriter)` (into a `std/http` `Response.stream` body, flushing at
+async component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
 ## Extending `IntrinsicElements`

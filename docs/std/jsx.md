@@ -62,8 +62,9 @@ Rendering rules:
   children (``<Labelled label={(v) => `${v}`}>{41}</Labelled>`` gives `T = number` when
   `children: T`); arrow function props get their parameter types from what was inferred.
 - Elements render as they are created: a tree without async components is already its HTML,
-  kept as a list of string pieces that each element takes over from its children, so rendering
-  copies the markup once (`renderToStream` writes the pieces into the response). Static markup
+  kept as a tree of template strings that each element takes over from its children instead of
+  copying their markup, so rendering copies the markup once (`renderToStream` writes the pieces
+  into the response). Static markup
   is precompiled to constant strings, with dynamic text and attributes folded in through
   template literals (`jsxTemplate`, `jsxTemplateString`, `jsxEscape`, `jsxAttr`), and a list
   such as `{rows.map((r) => <tr>…</tr>)}` whose rows hold only markup and text is built from

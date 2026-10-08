@@ -40,6 +40,8 @@ decision:
 10. [Modules and packages](modules.md) — imports, exports, specifiers
 11. [Built-ins](builtins.md) — what is in scope without an import
 12. [Diagnostics](diagnostics.md) — the format and wording of compiler errors
+13. [TSX](tsx.md) — JSX syntax, the provider, typing of elements and components, async
+    components, how elements are compiled
 
 How Velt differs from TypeScript, item by item, is in
 [Velt for TypeScript developers](../book/ts-developers.md).
@@ -53,4 +55,4 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 | Semantics stage 3: `weak` references and a compile-time warning for reference cycles | [semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector) |
 | The `struct` keyword removed (structs already behave as objects) | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
-| TSX: `children` and other element-typed props, faster templates (syntax, providers, `velt:jsx` and streaming already work) | [TSX](../internals/design/tsx.md) |
+| TSX: elements in the props of a component that takes ownership of them (`children: JSX.Element`); everything else in [TSX](tsx.md) works | [TSX design](../internals/design/tsx.md) |
