@@ -11,7 +11,7 @@
 //
 // `RedisClient` is a Copy handle like std/net's `TcpStream` (async methods take `this` by copy,
 // so it can be used from many tasks at once), released by `close()`. Commands that take several
-// keys or values take a `string[]` (Velt has no rest parameters): `del(["a", "b"])`.
+// keys or values take a `string[]`: `del(["a", "b"])`.
 //
 // Every failure throws `RedisError` with a `code`: the server's error code for error replies
 // ("WRONGTYPE", "ERR", "NOAUTH", …) or an I/O code ("ECONNREFUSED", "ECONNRESET", "EINVAL").
@@ -353,7 +353,10 @@ export struct RedisClient {
     return RedisClient { handle: unwrapHandle(await velt_rt_redis_duplicate(this.handle)) };
   }
 
-  /** Releases the handle; the connection closes once no command is in flight (call it once). */
+  /**
+   * Releases the handle; the connection closes once no command is in flight. Closing again does
+   * nothing.
+   */
   close() {
     velt_rt_redis_close(this.handle);
   }

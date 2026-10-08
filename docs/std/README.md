@@ -33,8 +33,8 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
   nothing). A promise that is neither awaited nor spawned is a compile error. `*Sync` variants
   block the calling thread.
 - **Handles**: some modules return handle structs (`TcpStream`, `FileReader`, `ChildProcess`,
-  `Database`, …) that you can pass around and capture freely and release exactly once with
-  `close()`. **Planned**
+  `Database`, …) that you can pass around and capture freely and release with `close()`
+  (closing again does nothing). **Planned**
   ([semantics stage 2 §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)):
   they become disposable classes with `using` support when the `struct` keyword is removed.
 

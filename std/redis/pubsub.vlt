@@ -111,7 +111,7 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
 
   /**
    * Ends the subscription: `next()` returns null, the connection closes, and the handle is
-   * released (call it once).
+   * released. Closing again does nothing.
    */
   close() {
     velt_rt_redis_sub_close(this.handle);

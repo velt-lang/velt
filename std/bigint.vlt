@@ -5,7 +5,8 @@
 // loops such as a pidigits spigot should use the in-place forms). The arithmetic operations
 // have machine-integer twins (`mulInt(10)`, `mulIntAssign(k)`) that skip building a BigInt for
 // the small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing
-// by zero panics with a RangeError, as JS throws one, and so does a negative shift count.
+// by zero panics with a RangeError, as JS throws one. A negative shift count panics with a
+// RangeError too, where JS shifts the other way (`1n << -1n` is `0n`).
 //
 // A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
 
