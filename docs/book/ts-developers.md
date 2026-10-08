@@ -277,7 +277,7 @@ method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicod
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([`velt:jsx`](../std/jsx.md)).
+server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 
 ## Quick reference
 
@@ -322,4 +322,4 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)).
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
-| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |
+| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; the differences are in [the reference](../reference/tsx.md#differences-from-typescript) |

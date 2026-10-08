@@ -1,6 +1,10 @@
 # Design: TSX for server-side rendering
 
-Status: proposal; planned after semantics stage 2.
+Status: implemented, as described in [the reference](../../reference/tsx.md) and
+[the provider contract](../contracts/jsx.md); open: elements in the props of a component that
+takes ownership of them (after semantics stage 2), class components and `ref`. This note keeps
+the original design and its reasons; where it differs from the reference, the reference is
+right.
 
 TSX in Velt is for **server-side rendering** first: Velt renders HTML on the server and a client
 framework takes over (resumable SSR, streaming, islands). The first intended consumer is

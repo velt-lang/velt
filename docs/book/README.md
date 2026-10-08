@@ -13,6 +13,7 @@ TypeScript. Every Velt code block in it is compiled by the documentation tests.
 
 - [Building an HTTP server](http-server.md): routing, JSON, validation, shared state, tests
 - [Building a command-line tool](cli-app.md): arguments, files, exit codes, tests
+- [Server-rendered pages with TSX](ssr-pages.md): components, lists, layouts, async data, streaming
 - [Async and concurrency](async.md): promises, timeouts, `spawn`, shared state
 - [Error handling](errors.md): typed `catch`, `throws` clauses, errors as values, panics
 - [Memory without a garbage collector](memory.md): JavaScript's object semantics, deterministic freeing
