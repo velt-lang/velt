@@ -446,6 +446,7 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
 | `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
 | `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
+| `velt_rt_isatty` | `(i32 fd) -> u8` | 1 if `fd` is a terminal (Node's `tty.isatty`); cached for 0, 1, 2; on Windows other numbers are 0 [additive, #693] |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
