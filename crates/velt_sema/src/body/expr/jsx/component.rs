@@ -120,7 +120,8 @@ impl FnCx<'_, '_> {
     /// The runtime's `component` parameter type for props `props` and a component of type
     /// `natural` (that type itself where the runtime's signature leaves it open).
     fn runtime_component_type(&mut self, d: DefId, props: TyId, natural: TyId) -> TyId {
-        let c = self.fn_callable(d, String::new());
+        let at = self.cx.fn_info(d).name_span;
+        let c = self.fn_callable(d, String::new(), at);
         let [component, props_param, ..] = &c.params[..] else {
             return natural;
         };
@@ -199,7 +200,7 @@ impl FnCx<'_, '_> {
     }
 
     fn fn_component(&mut self, def: DefId, callee: ast::Expr, tag: &str) -> Option<Component> {
-        let c = self.fn_callable(def, String::new());
+        let c = self.fn_callable(def, String::new(), callee.span);
         let f = self.cx.fn_info(def);
         let simple = f.name.rsplit("::").next().unwrap_or(&f.name).to_string();
         let identity = format!("{}#{simple}", self.cx.modules[f.module].path);

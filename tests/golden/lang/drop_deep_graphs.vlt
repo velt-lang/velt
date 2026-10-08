@@ -1,0 +1,240 @@
+// check: no leaks
+// Dropping long chains that run through arrays, Map values and closures, doubly linked lists
+// and a tree of depth 100000 does not overflow the stack (#543), at the end of a scope and on
+// reassignment; a node still referenced elsewhere stays alive with everything after it.
+
+class ANode {
+  id: number;
+  next: ANode[] = [];
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class MNode {
+  id: number;
+  links: Map<string, MNode> = new Map();
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class FNode {
+  id: number;
+  prev: () => number;
+
+  constructor(id: number, prev: () => number) {
+    this.id = id;
+    this.prev = prev;
+  }
+}
+
+class DNode {
+  id: number;
+  prev: DNode | null = null;
+  next: DNode | null = null;
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class DANode {
+  id: number;
+  prev: DANode[] = [];
+  next: DANode[] = [];
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class TNode {
+  depth: number;
+  children: TNode[] = [];
+
+  constructor(depth: number) {
+    this.depth = depth;
+  }
+}
+
+function arrayChain(n: number): ANode {
+  let head = new ANode(0);
+  for (let i = 1; i < n; i++) {
+    const node = new ANode(i);
+    node.next.push(head);
+    head = node;
+  }
+  return head;
+}
+
+function arrayLength(head: ANode): number {
+  let n = 1;
+  let cur = head;
+  while (cur.next.length > 0) {
+    cur = cur.next[0];
+    n++;
+  }
+  return n;
+}
+
+function mapChain(n: number): MNode {
+  let head = new MNode(0);
+  for (let i = 1; i < n; i++) {
+    const node = new MNode(i);
+    node.links.set("next", head);
+    head = node;
+  }
+  return head;
+}
+
+function closureChain(n: number): FNode {
+  let head = new FNode(0, () => -1);
+  for (let i = 1; i < n; i++) {
+    const prev = head;
+    head = new FNode(i, () => prev.id);
+  }
+  return head;
+}
+
+// Functions that capture the function before them: a chain of closure environments.
+function composed(n: number): () => number {
+  let f: () => number = () => 0;
+  for (let i = 0; i < n; i++) {
+    const g = f;
+    f = () => g() + 1;
+  }
+  return f;
+}
+
+function doublyLinked(n: number): DNode {
+  const head = new DNode(0);
+  let tail = head;
+  for (let i = 1; i < n; i++) {
+    const node = new DNode(i);
+    node.prev = tail;
+    tail.next = node;
+    tail = node;
+  }
+  let back = 0;
+  let cur: DNode | null = tail;
+  while (cur !== null) {
+    back++;
+    cur = cur.prev;
+  }
+  console.log("doubly linked", back, tail.id);
+  return head;
+}
+
+// The back links would make each pair a cycle, which is never freed: clear them first.
+function unlink(head: DNode) {
+  let cur: DNode | null = head;
+  while (cur !== null) {
+    cur.prev = null;
+    cur = cur.next;
+  }
+}
+
+function doublyLinkedArrays(n: number): DANode {
+  const head = new DANode(0);
+  let tail = head;
+  for (let i = 1; i < n; i++) {
+    const node = new DANode(i);
+    node.prev.push(tail);
+    tail.next.push(node);
+    tail = node;
+  }
+  let back = 1;
+  let cur = tail;
+  while (cur.prev.length > 0) {
+    back++;
+    cur = cur.prev[0];
+  }
+  console.log("doubly linked arrays", back, tail.id);
+  return head;
+}
+
+function unlinkArrays(head: DANode) {
+  let cur = head;
+  while (cur.next.length > 0) {
+    cur = cur.next[0];
+    cur.prev.pop();
+  }
+}
+
+// A spine of `depth` nodes, each with a leaf beside the next spine node.
+function tree(depth: number): TNode {
+  let root = new TNode(depth);
+  for (let d = depth - 1; d > 0; d--) {
+    const node = new TNode(d);
+    node.children.push(new TNode(0));
+    node.children.push(root);
+    root = node;
+  }
+  return root;
+}
+
+function treeSize(root: TNode): number {
+  let n = 0;
+  const stack: TNode[] = [root];
+  while (stack.length > 0) {
+    const t = stack.pop()!;
+    n++;
+    for (const c of t.children) {
+      stack.push(c);
+    }
+  }
+  return n;
+}
+
+function scopeEnd() {
+  const a = arrayChain(1000000);
+  const m = mapChain(200000);
+  const f = closureChain(1000000);
+  const g = composed(1000000);
+  const t = tree(100000);
+  console.log("scope", arrayLength(a), m.links.get("next")!.id, f.prev(), t.depth);
+  console.log("tree", treeSize(t));
+  console.log("composed", composed(10)(), g === g);
+}
+
+function main() {
+  scopeEnd();
+  console.log("scope dropped");
+
+  let a = arrayChain(1000000);
+  a = new ANode(-1);
+  let m = mapChain(200000);
+  m = new MNode(-1);
+  let f = closureChain(1000000);
+  f = new FNode(-1, () => 0);
+  let t = tree(100000);
+  t = new TNode(-1);
+  console.log("reassigned", a.id, m.id, f.id, t.depth);
+
+  let d = doublyLinked(1000000);
+  unlink(d);
+  d = new DNode(-1);
+  let da = doublyLinkedArrays(1000000);
+  unlinkArrays(da);
+  da = new DANode(-1);
+  console.log("doubly linked dropped", d.id, da.id);
+
+  // A node in the middle of a chain is still held elsewhere: dropping the head stops there.
+  const kept: ANode[] = [];
+  let chain = new ANode(0);
+  for (let i = 1; i < 1000000; i++) {
+    const node = new ANode(i);
+    node.next.push(chain);
+    chain = node;
+    if (i === 400000) {
+      kept.push(node);
+    }
+  }
+  chain = new ANode(-1);
+  console.log("kept", kept[0].id, arrayLength(kept[0]), chain.id);
+  kept.pop();
+  console.log("done", kept.length);
+}

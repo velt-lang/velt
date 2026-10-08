@@ -67,8 +67,10 @@ async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
       x.n += 1000;
     }
     byName.get("inner")!.n += 1000;
-    if (last != null) {
-      last.n += 1000;
+    // The closure assigns `last`, so test a `const` copy of it (#435).
+    const lastInner = last;
+    if (lastInner != null) {
+      lastInner.n += 1000;
     }
     seen += out.length == 7 && counts[0] == 2 && holder.items.length == 2 ? 1 : 0;
     await yieldNow();

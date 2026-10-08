@@ -5,7 +5,7 @@ export function find(m: Map<string, number>, key: string): number | null {
 }
 
 export function first(xs: string[]): string | null {
-  const x: string | null = xs.find((s) => s.length > 0) ?? null; //~ undefined-into-null string-offsets
+  const x: string | null = xs.find((s) => s.length > 0) ?? null; //~ undefined-into-null
   return x;
 }
 

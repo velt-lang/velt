@@ -12,8 +12,10 @@ The differences come from three rules:
 2. **Drop the JavaScript behavior that causes bugs**, even when it means ported code must
    change. The compiler then says exactly what to write instead, and editors offer it as a
    quick fix.
-3. **Add something only where TypeScript can't express it at native speed**: integer types,
-   `shared` state across threads, `extend`.
+3. **Add what makes native code faster.** Velt compiles to machine code, not to JavaScript, so
+   it isn't limited to what TypeScript can express. Integer types, `shared` state across threads
+   and `extend` are opt-ins to reach for when you want more speed; code without them still runs
+   as TypeScript would.
 
 ## Programs are compiled
 
@@ -70,10 +72,10 @@ accept; compiler messages and editors print `boolean` either way
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a
   template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
   `"Total: " + a + b` bugs can't happen.
-- **Lengths and positions are in bytes** of UTF-8, not UTF-16 code units: `"héllo".length` is
-  6. `slice`, `indexOf`, `s[i]` and regex offsets are byte offsets; for ASCII text they agree
-  with JS. `s[i]` is `s.charAt(i)` (`""` past the end), and `for (const c of s)` iterates the
-  characters. *Why*: strings are UTF-8 throughout, so no conversion is ever needed.
+- Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
+  by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
+  `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
+  sockets and HTTP bodies need no conversion; `Buffer.byteLength(s)` is the UTF-8 size.
 - Strings are immutable values, as in JS, and cheap to copy.
 
 ## `null`, not `undefined`
@@ -137,8 +139,8 @@ contents.
   `JSON.stringify` of one that contains itself fails as in JavaScript.
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
-- `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,
-  `==` or a discriminant instead.
+- `as` converts numbers and brands a value (`"u1" as UserId`, below); there are no other type
+  assertions. Narrow with `typeof`, `instanceof`, `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
 - `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types, also through
@@ -146,6 +148,12 @@ contents.
   parameter inside a generic function, #350). `Required` also strips `null` from `a: T | null`
   fields, since `a?: T` *is* `T | null`, and `Pick` rejects a key that isn't a field (`Omit`
   warns).
+- Intersections `A & B` of object types work as in TypeScript, unions distributing over them,
+  and so do indexed access types (`User["name"]`) and branded primitives
+  (`type UserId = string & { __brand: "UserId" }`, zero-cost). Parts with no value in common
+  are an error instead of `never`; classes, type parameters (#350) and function types
+  (overloads) can't be parts; `A & B` doesn't convert to `A` without a copy (`{ ...ab }`)
+  ([Intersection types](../reference/types.md#intersection-types)).
 - Not available: `keyof`, mapped and conditional types, template literal types, the other
   utility types (`Record` aside), index signatures, declaration merging, `namespace`.
 
@@ -153,8 +161,14 @@ contents.
 
 - Single inheritance; `override` is required on redefined methods; there are no abstract
   classes and no `protected` members (`private` is private to the declaring class); a
-  constructor can be `private` or `protected`, with TypeScript's rules.
+  constructor can be `private` or `protected`, with TypeScript's rules. ES private names
+  (`#x`, `#m()`, `#x in o`) work as in JavaScript: hidden from `console.log`, `JSON` and
+  `Object.keys`, never inherited.
 - `static readonly` constants exist; mutable statics don't.
+- Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
+  once (also when the base has no constructor), and statements before it cannot use `this`.
+  As in TypeScript 4.6+, such statements are allowed also when the class has initialized fields
+  or parameter properties; those are set right after `super(...)` returns.
 - Field initializers and constructors run in JavaScript's order (base initializers, base
   constructor, derived initializers, derived constructor), and parameter properties come first
   in the field order, as `tsc --target es2022` emits them.
@@ -171,7 +185,12 @@ contents.
 - No overloads. Optional and default parameters work, on arrows too; rest parameters
   (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
   parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
-- Parameter types are required; the return type is inferred only as `void` when omitted.
+- Parameter types are required. As in TypeScript, an omitted return type is inferred from the
+  `return` expressions (a union when they differ, `Promise<T>` for `async`, `void` without a
+  value). As in TypeScript, a function whose `return` expressions depend on the function
+  itself needs an annotation; uses elsewhere in the body don't. A `return;` next
+  to `return value;` is an error rather than `T | undefined`: return `null` with a `T | null`
+  type.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
 - Generators (`function*`, `*name()` methods, `yield`, `yield*`) work as in JS, lazily, with
@@ -214,8 +233,8 @@ surprise ([Error handling](errors.md)).
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
   their `clear` functions are globals; the callback returns the promise to run
-  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer does not
-  keep the process alive ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
+  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
   `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
@@ -259,7 +278,7 @@ method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicod
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
+server-side rendering ([`velt:jsx`](../std/jsx.md)).
 
 ## Quick reference
 
@@ -303,6 +322,5 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |
-| string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |

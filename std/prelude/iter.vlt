@@ -157,9 +157,18 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
     if (this.pos >= (this.text.length as i64)) {
       return { done: true };
     }
-    const c = this.text.charAt(this.pos);
-    this.pos += c.length as i64;
-    return { value: c, done: false };
+    // A high surrogate followed by a low one is one character.
+    let n: i64 = 1;
+    const c = this.text.charCodeAt(this.pos);
+    if (c >= 0xd800 && c < 0xdc00) {
+      const d = this.text.charCodeAt(this.pos + 1);
+      if (d >= 0xdc00 && d < 0xe000) {
+        n = 2;
+      }
+    }
+    const value = this.text.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return { value: value, done: false };
   }
 
   [Symbol.iterator](): Iterator<string> {
@@ -174,10 +183,10 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
  * and its `using` values are disposed, as if the `yield` were a `return`. After it finished,
  * threw, or was closed, `next()` reports `done` forever. `E` is what the body throws.
  *
- * The compiler creates these objects: the generator's state follows the `state` word.
+ * The compiler creates these objects: the generator's state follows the class's fields.
  */
 export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, IterableIterator<T, E>, IteratorObject<T, E> {
-  private state: u64 = 0;
+  #state: u64 = 0;
 
   next(): IteratorResult<T> throws E {
     if (__intrinsic_generator_resume(this)) {
@@ -218,13 +227,13 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, 
  * queue fields start at zero.
  */
 export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E>, AsyncIterableIterator<T, E> {
-  private state: u64 = 0;
+  #state: u64 = 0;
   // The call queue (see `takeTurn`): whether a call is running, the runtime latch the running
   // call opens when it finishes if it started alone, and the latch the last call in line opens
   // (0: none).
-  private running: u64 = 0;
-  private head: u64 = 0;
-  private tail: u64 = 0;
+  #running: u64 = 0;
+  #head: u64 = 0;
+  #tail: u64 = 0;
 
   async next(): Promise<IteratorResult<T>, E> {
     const mine = await this.takeTurn();
@@ -267,20 +276,20 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   // behind it creates `head` for it then). An uncontended call allocates nothing; each finished
   // call wakes only the next one.
   private async takeTurn(): Promise<u64> {
-    if (this.running == 0) {
-      this.running = 1;
+    if (this.#running == 0) {
+      this.#running = 1;
       return 0;
     }
-    let before = this.tail;
+    let before = this.#tail;
     if (before == 0) {
       // Only the running call, which started alone, is ahead.
-      if (this.head == 0) {
-        this.head = velt_rt_latch_new();
+      if (this.#head == 0) {
+        this.#head = velt_rt_latch_new();
       }
-      before = this.head;
+      before = this.#head;
     }
     const mine = velt_rt_latch_new();
-    this.tail = mine;
+    this.#tail = mine;
     await velt_rt_latch_wait(before);
     return mine;
   }
@@ -289,19 +298,19 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   // is released by the call that opens it (a waiting call holds its own reference).
   private passTurn(mine: u64) {
     if (mine == 0) {
-      if (this.head == 0) {
-        this.running = 0;
+      if (this.#head == 0) {
+        this.#running = 0;
         return;
       }
-      velt_rt_latch_open(this.head);
-      velt_rt_latch_free(this.head);
-      this.head = 0;
+      velt_rt_latch_open(this.#head);
+      velt_rt_latch_free(this.#head);
+      this.#head = 0;
       return;
     }
-    if (this.tail == mine) {
+    if (this.#tail == mine) {
       // Nobody is in line behind this call.
-      this.tail = 0;
-      this.running = 0;
+      this.#tail = 0;
+      this.#running = 0;
       velt_rt_latch_free(mine);
       return;
     }

@@ -278,7 +278,7 @@ pub unsafe extern "C" fn velt_rt_redis_subscribe(
         None => url::parse(&text_arg(url))
             .map(|target| Endpoint {
                 target,
-                ca: (*ca).as_bytes().to_vec(),
+                ca: (*ca).text_lossy().as_bytes().to_vec(),
             })
             .map_err(RedisErr::invalid),
     };

@@ -59,7 +59,7 @@ fn tasks_cannot_mutate_captured_variables() {
     let r = err_src(
         "async function main() { let n = 0; await spawn(async () => { [1, 2].forEach((x) => { n += x; }); }); }",
     );
-    assert!(r.contains("cannot mutate captured variable `n`"), "{r}");
+    assert!(r.contains("modifies captured `n`"), "{r}");
     ok_src(
         "async function main() { const n = shared(0); const m = n.clone(); await spawn(async () => { m.add(1); }); console.log(n.get()); }",
     );

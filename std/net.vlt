@@ -40,7 +40,10 @@ export struct TcpListener {
     return TcpStream { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
   }
 
-  /** Stops listening; pending `accept`s fail. */
+  /**
+   * Releases the handle: later `accept`s through any copy throw `IoError` `EBADF`, and closing
+   * again does nothing. An `accept` already waiting keeps the socket open until it completes.
+   */
   close() {
     velt_rt_tcp_listener_close(this.handle);
   }
@@ -77,12 +80,15 @@ export struct TcpStream {
     checkIo(velt_rt_tcp_shutdown(this.handle));
   }
 
-  /** The peer's "ip:port". */
+  /** The peer's "ip:port" ("" once the handle is closed). */
   peerAddr(): string {
     return velt_rt_tcp_peer_addr(this.handle);
   }
 
-  /** Releases the handle (see header). */
+  /**
+   * Releases the handle: later operations through any copy throw `IoError` `EBADF`, and closing
+   * again does nothing. The socket closes once the operations in flight have finished.
+   */
   close() {
     velt_rt_tcp_close(this.handle);
   }

@@ -6,6 +6,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use velt_common::Diagnostic;
+use velt_syntax::ast;
 
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
@@ -51,7 +52,12 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     let mut out = BTreeSet::new();
     for &d in adts {
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
-        for m in decl.methods.iter().filter(|m| m.is_override) {
+        // `override #m` is reported by `own_methods`: private names are never inherited.
+        for m in decl
+            .methods
+            .iter()
+            .filter(|m| m.is_override && !m.decl.sig.name.is_private_name())
+        {
             let name = &m.decl.sig.name;
             let key = member_key(&name.name, m.is_setter);
             match introducer(cx, d, &key) {
@@ -76,8 +82,9 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     out
 }
 
-/// The ancestor of `d` (excluding `d`) that first declares `name` without `override`, or
-/// that gets it as the default method of an interface it implements.
+/// The ancestor of `d` (excluding `d`) that first declares the instance method `name` without
+/// `override`, or that gets it as the default method of an interface it implements (static
+/// methods of the name are skipped).
 fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
     let mut cur = base_of_def(cx, d);
     let mut found = None;
@@ -88,10 +95,9 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
             break;
         }
         let a = cx.adt(c)?;
-        if let Some(m) = a.methods.get(name) {
-            if m.is_static {
-                return None;
-            }
+        // A static of the name is another namespace: look past it, as method lookup does.
+        let instance = a.methods.get(name).filter(|m| !m.is_static);
+        if instance.is_some() {
             let is_override = a.decl.is_some_and(|t| {
                 t.methods.iter().any(|x| {
                     x.is_override && member_key(&x.decl.sig.name.name, x.is_setter) == name
@@ -184,6 +190,22 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
         let Some(mref) = cx.adt(d).and_then(|a| a.methods.get(&key)).copied() else {
             continue;
         };
+        if name.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            // `#m` is never inherited, so it overrides nothing and has no vtable slot.
+            if m.is_override {
+                cx.error(
+                    Diagnostic::error(
+                        format!(
+                            "`override` on `{}`: private names are never inherited",
+                            name.name
+                        ),
+                        name.span,
+                    )
+                    .with_note("remove `override`"),
+                );
+            }
+            continue;
+        }
         let inherited = base_ty
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
@@ -296,14 +318,14 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     args.extend((0..own_m as u32).map(|k| cx.ty.param(nd as u32 + k)));
     let bp: Vec<TyId> = bp.into_iter().map(|t| cx.ty.subst(t, &args)).collect();
     let br = cx.ty.subst(br, &args);
-    if mp != bp || mr != br || mg != bg {
-        cx.err(
-            format!(
-                "method `{}` does not have the same signature as the base class method it overrides",
-                name.name
-            ),
-            name.span,
-        );
+    let message = format!(
+        "method `{}` does not have the same signature as the base class method it overrides",
+        name.name
+    );
+    let at = (name.span, message.clone());
+    let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
+    if mp != bp || !ret_ok || mg != bg {
+        cx.err(message, name.span);
     }
 }
 

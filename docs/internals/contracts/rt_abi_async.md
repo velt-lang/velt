@@ -64,6 +64,14 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
 | `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
+| `velt_rt_xfer_begin` / `velt_rt_xfer_end` | `()` | bracket one transfer of a value to another task (the `TransferRoot` glue, a `thread_copy`); nest. The outermost `end` releases the deferred references (`xfer_defer`) and forgets the copies (additive) |
+| `velt_rt_xfer_find` | `(const void* obj) -> void*` | the copy of the counted object `obj` made in this transfer, null if none yet, or `1` outside a transfer. The clone glue of a counted object asks it before copying one whose count is above 1, the transfer glue before copying a still-shared one, so an object reached twice is copied once and a cycle is copied as a cycle (additive) |
+| `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
+| `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
+| `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
+| `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` (additive) |
+| `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down (additive) |
+| `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
@@ -71,9 +79,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs � all results belong to the awaiter. Use it whenever `T` needs dropping. |
 | `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
 
-| `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1). `n == 0` never completes. |
+| `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
-| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task without being polled now: it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before other woken promises. A started promise keeps running. Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
+| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
 | `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending (additive) |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
@@ -121,6 +129,8 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
+| `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.vlt). Additive. |
+| `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
@@ -151,8 +161,15 @@ compiler's layout: `payload` is the offset of the value after the `bool` present
 `T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
 through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
-sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
-`send` future owns (§13.5).
+sender still shares is deep-copied). No code pointers are stored except drop glue (§13.5): the
+`item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
+`item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
+Values still queued in a channel nobody drains, closed or not, are not dropped while the program
+runs (any copy of the handle may still receive them); when it ends (`main` returned and the
+remaining tasks settled) the runtime drops every item still
+queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
+counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
+it.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -170,7 +187,8 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
+its timer) when the signal is dropped. A signal made
 by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
@@ -361,34 +379,49 @@ reading freed memory.
 | `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; 0 = absent (`out` untouched) |
 | `velt_rt_http_req_header_count` | `(VeltReq r) -> u64` | |
 | `velt_rt_http_req_header_at` | `(VeltReq r, u64 i, VeltStr* name, VeltStr* value)` | lowercase name |
-| `velt_rt_http_req_header_names` | `(VeltReq r, VeltStrArray* out)` | every header name (lowercase), in received order: `req.headers` in one call (`header_at` per index is O(n) each) |
-| `velt_rt_http_req_header_values` | `(VeltReq r, VeltStrArray* out)` | every value, in the order of `header_names` (non-UTF-8 bytes decoded lossily) |
+| `velt_rt_http_req_headers` | `(VeltReq r, VeltStrArray* out)` | every header as the flat list `[name, value, …]` (lowercase names, received order; non-UTF-8 values decoded lossily): `req.headers` in one call |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
 | `velt_rt_http_resp_new` | `(u32 status) -> VeltResp` | invalid status ⇒ 500 |
 | `velt_rt_http_resp_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | append; 0 if invalid |
 | `velt_rt_http_resp_body_text` | `(VeltResp r, VeltStr* body)` | **takes** `body` (zero-copy if owned; `*body` left empty); default `text/plain; charset=utf-8` |
-| `velt_rt_http_resp_body_bytes` | `(VeltResp r, VeltBytes* body)` | takes; default `application/octet-stream` |
+| `velt_rt_http_resp_body_bytes` | `(VeltResp r, const VeltBytes* body)` | copies (the array may be borrowed); default `application/octet-stream` |
 | `velt_rt_http_resp_json` | `(VeltResp r, VeltStr* json)` | takes; sets `application/json` |
 | `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
 
 A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,
 the program entry waits until no keep-alive references remain — like Node, a listening server
-keeps the process running. (`velt_rt_block_on` itself does not wait.)
+keeps the process running. (`velt_rt_block_on` itself does not wait.) Pending ref'd timers hold
+one too (`velt_rt_keep_alive_acquire`, §2).
 
 `Response.text(b, s)` = `resp_new(s)` + `resp_body_text(r, &b)`; `Response.json(v, s)` = serialize
 `v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the
 body setters and `resp_json` drop the body and add no `content-type`.
 
-**Client** (`http://` only; `https://` fails with `ENOTSUP`):
+**Client** (the global `fetch`, std/fetch.vlt; `http://` and `https://`, other schemes fail with
+`ENOTSUP`; HTTPS and HTTP/2 as in §14.8). The future is READY once the status and headers have
+arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are followed as the Fetch
+standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
+are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
+received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
+signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
+with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
+five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
+per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
+with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
+fails with `INVALID_DATA`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_fetch` | `(const VeltStr* method, const VeltStr* url, const VeltStr* headers, u64 n_headers, const VeltStr* body) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = `2*n` strings name,value,…; `body` may be null; all copied; body is read fully before READY |
+| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*`, `user-agent: velt` and `accept-encoding: gzip, deflate` (`br, gzip, deflate` for `https://`) added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
 | `velt_rt_http_fetch_resp_status` | `(VeltFetchResp r) -> u32` | |
-| `velt_rt_http_fetch_resp_header` | `(VeltFetchResp r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive |
-| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r, IoResult<VeltStr>* out)` | copy; `EILSEQ` if not UTF-8. (`await r.text()` can be a trivial compiled wrapper.) |
-| `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r, VeltBytes* out)` | copy |
-| `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | |
+| `velt_rt_http_fetch_resp_status_text` | `(VeltFetchResp r, VeltStr* out)` | the server's reason phrase, else the standard one, else `""` |
+| `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
+| `velt_rt_http_fetch_resp_redirected` | `(VeltFetchResp r) -> bool` | |
+| `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
+| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
+| `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
+| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
+| `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
 
 ## 8. Process
 
@@ -421,6 +454,10 @@ body setters and `resp_json` drop the body and add no `content-type`.
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
+| `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest [additive, #521] |
+| `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline [additive, #521] |
+| `velt_rt_math_add_int32` | `(i32 a, f64 x) -> i32` | JS `(a + x) \| 0`; emitted inline, integer add when `x` is a whole number of at most 2^52 [additive, #521] |
+| `velt_rt_math_clz32` | `(i32) -> i32` | `Math.clz32` of the 32-bit pattern (32 for 0); emitted as one instruction [additive, #521] |
 
 ## 10. Output with many tasks
 
@@ -517,27 +554,30 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
 | `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, const void* v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); emitted by the compiler, which passes the handle's address as a pointer (VIR `ptr`), unlike the `u64` handles of §3.2 |
-| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. The handle is passed like `push_json_value`'s (additive) |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed like `push_json_value`'s (additive; `depth` added by #497) |
 | `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the `<ref *N>` numbering of cycles starts over (node numbers per argument), unless an object is being printed (additive) |
 | `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
 | `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
+| `velt_rt_strbuf_inspect_circular` | `(VeltStrBuf* b, const void* p) -> u8` | for an object past node's depth limit: when `p` is being printed, append `[Circular *N]` (numbered like `inspect_enter`) and return `1`; else `0` (the caller prints `[Name]`). The object is not entered (additive) |
+| `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns, long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 
 ### 12.2 String methods
 
-**POC indexing model:** indexes and lengths are **byte offsets** (they agree with `s.length`). An
-offset that falls inside a multi-byte character is moved back to that character's first byte
-(`slice`) so results are always canonical WTF-8. Where JS works per UTF-16 code unit
-(`split("")`, `replaceAll("", x)`), these work per code point. For ASCII text everything matches
-JS exactly; #377 phase 2b moves positions to code units. A string may hold lone surrogates
-(rt_abi.md "Strings"): searching, slicing, splitting, replacing, padding and repeating work on the
-WTF-8 bytes (a lone surrogate is one 3-byte code point, and the pieces of a built result join a
-high surrogate meeting a low one into the pair); case mapping keeps lone surrogates; number
-parsing and `localeCompare` read each as U+FFFD. "Omitted" JS arguments are passed as the value
-given in Notes.
+**Indexing model** (#377 phase 2b, design/strings.md): indexes and lengths are **UTF-16 code
+units**, as in JavaScript (they agree with `s.length`). An ASCII string works on its bytes, whose
+offsets are its positions; another string works on its WTF-8 bytes and translates positions at
+entry and exit (rt_abi.md "Breadcrumbs"). A position may fall between the two halves of a pair:
+`slice` there re-encodes the half as a lone surrogate (`"😀".slice(0, 1)` is `"\uD83D"`), and a
+needle that starts with a lone low surrogate or ends with a lone high one also matches half of a
+pair (`"😀".indexOf("\uDE00")` is 1), searched in code units. `split("")` and
+`replaceAll("", x)` work per code unit, splitting pairs. A string may hold lone surrogates
+(rt_abi.md "Strings"): the pieces of a built result join a high surrogate meeting a low one into
+the pair; case mapping keeps lone surrogates; number parsing and `localeCompare` read each as
+U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -548,15 +588,17 @@ given in Notes.
 | `velt_rt_str_starts_with` / `_ends_with` | `(const VeltStr* s, const VeltStr* affix) -> u8` | |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
-| `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = characters. Drop with `velt_rt_str_array_drop` (§4). |
+| `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |
+| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the prelude's `__codePoints`) |
+| `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |
 | `velt_rt_str_trim` / `_trim_start` / `_trim_end` | `(const VeltStr* s, VeltStr* out)` | JS WhiteSpace + LineTerminator set (includes U+FEFF, U+00A0, U+2028/9, Zs; not U+0085) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS; ASCII fast path |
 | `velt_rt_str_replace` | `(const VeltStr* s, const VeltStr* from, const VeltStr* to, VeltStr* out)` | first occurrence; `to` expands JS patterns `$$`, `$&`, `` $` ``, `$'` (others literal) |
 | `velt_rt_str_replace_all` | same | all non-overlapping occurrences; empty `from` inserts at every character boundary |
 | `velt_rt_str_repeat` | `(const VeltStr* s, i64 n, VeltStr* out) -> u8` | 1 = ok; 0 = JS `RangeError` (n < 0 or result too large), `*out` empty — the compiler throws/panics |
-| `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in bytes; the last partial `fill` is cut at a character boundary (non-ASCII fill may end up to 3 bytes short); omitted `fill` = `" "` |
-| `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the **byte** at `i` (POC); -1 if out of range (JS: NaN) |
-| `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`, UTF-8 encoded; lone surrogates → U+FFFD; ASCII results are static (no allocation) |
+| `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in code units; the last partial `fill` is cut to the units missing, between the halves of a pair if need be (as JS); omitted `fill` = `" "` |
+| `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the UTF-16 code unit at `i`; -1 if out of range (JS: NaN). Generated code reads ASCII strings inline (rt_abi.md) |
+| `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS; ASCII results are static (no allocation) |
 | `velt_rt_parse_int` | `(const VeltStr* s, i64 radix) -> f64` | exact JS `parseInt`: leading JS whitespace, sign, `0x` prefix (radix 0/16), radix `ToInt32`, 0 = omitted, outside 2..36 ⇒ NaN, longest digit prefix, none ⇒ NaN, `-0` kept. Correctly rounded for radix 10 and powers of two; other radixes exact below 2^128 (V8 is not correctly rounded there either). |
 | `velt_rt_parse_float` | `(const VeltStr* s) -> f64` | exact JS `parseFloat`: leading whitespace, longest `StrDecimalLiteral` prefix (incl. `Infinity`), else NaN |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
@@ -580,10 +622,10 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
-| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
+| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes or is a non-ASCII key of more than 64 UTF-16 units (copied: threads remember positions in long static strings, `str/recent.rs`, which is sound only for bytes never freed) — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
 | `velt_rt_json_reader_expect_array_start` | `(r) -> u8` | consume `[` |
 | `velt_rt_json_reader_array_next` | `(r) -> u8` | **1** = another element follows (read it next), **0** = `]` consumed, **2** = error |
-| `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes incl. surrogate pairs; a lone surrogate → U+FFFD since UTF-8 cannot hold it) |
+| `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes are code units: an escaped pair is one character, a lone surrogate stays lone and joins a raw half next to it) |
 | `velt_rt_json_reader_read_f64` | `(r, f64* out) -> u8` | correctly rounded like `JSON.parse` (`-0` kept, `1e400` → Infinity) |
 | `velt_rt_json_reader_read_i64` | `(r, i64* out) -> u8` | the number must be an exact integer in i64 range (`3`, `3.0`, `3e2` ok; `2.5`, `1e400`, `9223372036854775808` fail as mismatch). Digit strings are converted exactly (beyond 2^53). |
 | `velt_rt_json_reader_read_bool` | `(r, u8* out) -> u8` | |
@@ -638,7 +680,9 @@ puts the key in the path), and nesting past `max_depth` is
 `<detail>` is one of `unexpected end of input`, `unexpected character 'c'` (control characters as
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,
 `invalid number`, `invalid escape`, `invalid \u escape`, `control character in string`,
-`unexpected trailing characters`. `<offset>` is the byte offset in the source. Path syntax
+`unexpected trailing characters`. `<offset>` is the byte offset in the source's UTF-8 (not a
+string position: it locates the error in the input text as an editor or a byte-level tool sees
+it; for ASCII input the two agree). Path syntax
 (`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it, shortened when it
 has more than 20 segments (each starting at `.` or `[`) to the first and last 10 with `…`
 between (`$[0][0]…[0].name`).
@@ -663,7 +707,7 @@ objects with more than 16 keys get a hash index for `get`.
 | `velt_rt_json_value_get` | `(VeltJson v, const VeltStr* key) -> VeltJson` | member, or null (not an object / missing) |
 | `velt_rt_json_value_at` | `(VeltJson v, u64 i) -> VeltJson` | array element, or the i-th member value of an object; null if out of range (including an `i` beyond `usize` on 32-bit targets) |
 | `velt_rt_json_value_key_at` | `(VeltJson v, u64 i, VeltStr* out) -> u8` | i-th object key (owned); 0 if not an object / out of range (as for `at`) |
-| `velt_rt_json_value_len` | `(VeltJson v) -> u64` | array length, object member count, string byte length; else 0 |
+| `velt_rt_json_value_len` | `(VeltJson v) -> u64` | array length, object member count, string length (UTF-16 code units); else 0 |
 | `velt_rt_json_value_as_f64` | `(VeltJson v) -> f64` | NaN if not a number |
 | `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
 | `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
@@ -768,8 +812,11 @@ one state layout, so all of them change together; `env` stays). In dev builds th
 Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
 store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
-flight (a join's or a spawned task's result, a channel item being sent): it matches that value's
-layout, which a swap doesn't change, and it goes away with the value.
+flight (a join's or a spawned task's result, a channel item being sent) or with the values a
+channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
+matches the values' layout, which a swap doesn't change (a changed layout restarts the program),
+and old code is never freed, so the pointer stays callable after a swap. A value's drop glue goes
+away with the value; a channel's lives as long as the channel.
 
 
 ## 14. Standard library breadth (stream std-net; additive)
@@ -793,8 +840,10 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 ### 14.2 Regular expressions (`velt:regex`)
 
 `VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
-first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Offsets are
-byte offsets on character boundaries.
+first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
+on the subject's WTF-8 bytes; the offsets taken (`from`) and returned are UTF-16 code units, like
+every string position (#377 phase 2b): a `from` between the halves of a pair starts after the
+pair, and the offsets of a match are translated once per match.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -902,14 +951,13 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 
 TLS is rustls with the `ring` provider (`crates/velt_rt/src/tls.rs`). Clients trust Mozilla's
 root certificates (`webpki-roots`, compiled in) plus optional extra PEM CAs; servers offer
-ALPN `h2` and `http/1.1`. This **supersedes the §7 note**: `velt_rt_http_fetch` now accepts
-`https://` (other schemes fail with `ENOTSUP`) and negotiates HTTP/2 when the server offers it.
+ALPN `h2` and `http/1.1`. The client (`velt_rt_http_fetch_send`, §7) accepts `https://` and
+negotiates HTTP/2 when the server offers it.
 HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrades`).
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
-| `velt_rt_http_fetch_ca` | `(method, url, headers, u64 n_headers, body, const VeltStr* ca_pem) -> VeltFut*` | as `velt_rt_http_fetch`, also trusting the PEM CAs in `ca_pem` (`""` = none); clients are pooled per CA text |
 | `velt_rt_http_resp_set_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | insert, replacing earlier values (e.g. the default `content-type`); 0 if invalid |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
 

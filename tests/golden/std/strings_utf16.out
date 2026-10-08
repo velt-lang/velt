@@ -1,0 +1,19 @@
+3 7 café true
+9 11 na true
+12 14 ve true
+18 20 ok true
+12 17 56-78 [ '56', '78' ]
+12 56-78
+true 3
+ete [ '日', '本', '😀' ]
+6 5 4 2
+10 5
+5 2
+3 1
+[["namn","stad"],["Åsa","Göte,borg"],["日本","😀"]]
+[["ü","ö"],["😀😀","x"]]
+https://ex.com/%C3%A9?q=%E6%97%A5%E6%9C%AC
+%C3%A9%20%F0%9F%98%80%2F é 😀
+URIError: URI malformed
+URIError: URI malformed
+URIError: URI malformed

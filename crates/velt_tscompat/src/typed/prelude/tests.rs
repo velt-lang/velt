@@ -157,3 +157,16 @@ fn every_prelude_member_is_classified_once() {
          {missing:?}"
     );
 }
+
+#[test]
+fn hints_suggest_only_what_velt_has() {
+    // Regression (#377 phase 2b review): the hint for `Buffer.byteLength` told users to write
+    // `new TextEncoder().encode(s).length`, which Velt does not have yet (#377 phase 4).
+    let hint = super::velt_member("Buffer", "byteLength").expect("Velt-only");
+    assert!(hint.contains("out of shared code"), "{hint}");
+    for (owner, members) in VELT_MEMBERS {
+        for (name, hint) in *members {
+            assert!(!hint.contains("new TextEncoder"), "{owner}.{name}: {hint}");
+        }
+    }
+}

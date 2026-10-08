@@ -1,0 +1,31 @@
+200 true OK true false basic
+application/json true false
+velt a+b true
+second read: Body is unusable: Body has already been read
+404 false Not Found nope
+POST text/plain;charset=UTF-8 1 hello
+PUT application/json 2 {"k":1}
+POST application/x-www-form-urlencoded;charset=UTF-8 - a=1&b=x+y
+PATCH true text/plain;charset=UTF-8
+PATCH text/plain;charset=UTF-8 - from a request
+32 123
+200 true true
+302 false /json
+redirect: error
+GET - - 
+set-cookie a=1
+set-cookie b=2
+x-multi 1, 2
+x-one one
+1, 2 2
+201 true Made b
+text/plain;charset=UTF-8 made
+202 application/json {"a":1}
+application/json 1
+application/problem+json
+"" "" false
+POST text/plain;charset=UTF-8 - once true
+Cannot construct a Request with a Request object that has already been used.
+"  v"
+refused: true
+Request with GET/HEAD method cannot have body.

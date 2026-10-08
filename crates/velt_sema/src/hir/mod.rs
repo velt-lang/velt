@@ -265,6 +265,11 @@ pub struct FnDef {
     pub self_ty: Option<TyId>,
     /// For closures: captured variables become the leading params, in this order.
     pub captures: Vec<Capture>,
+    /// A local async closure (#208, hir_encodings.md "Function values"): it never reaches a
+    /// thread boundary, so each call shares its by-value captures with the closure (another
+    /// reference, or the cell of a `LocalDef::boxed` capture) instead of copying them. False for
+    /// everything else, including async closures that may run on another thread.
+    pub shares_captures: bool,
     pub body: Body,
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md
     /// "Errors"). May mention type params; `Some(Never)` after substitution means non-throwing.
@@ -325,8 +330,11 @@ pub struct FieldDef {
     pub ty: TyId,
     /// Default initializer (class field `= expr`, or `null` for optional fields).
     pub default: Option<Expr>,
-    /// Declared `private` (in this type or the base class that declares it). Interface fields
-    /// are never private.
+    /// Declared optional (`x?: T`): JavaScript leaves such a field out of `JSON.stringify`
+    /// while it is absent, whereas a `T | null` field holding `null` is written.
+    pub optional: bool,
+    /// Declared `private` (in this type or the base class that declares it), or an ES private
+    /// field (`#x`). Interface fields are never private.
     pub private: bool,
 }
 
@@ -338,9 +346,15 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
-    /// Some field (own or inherited) is `private`. Such a type has no JSON form: decoding could
-    /// forge the runtime handles std types keep in private fields, and writing would leak them.
+    /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
+    /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
+    /// and could forge the runtime handles std types keep in private fields.
     pub private_fields: bool,
+    /// Some private field (own or inherited) is declared by a std type: a runtime handle or
+    /// other internal state. Such a type has no JSON form at all (sema rejects writing it, and
+    /// `JSON.stringify` of a base class value holding one writes the static class). Other
+    /// `private` fields are written, as in Node, and `#` fields never are.
+    pub opaque: bool,
     /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
     /// to one value must see the same fields, so sharing it needs one counted object
     /// (hir_encodings.md "Sharing"); otherwise a share may copy it field by field.
@@ -699,6 +713,12 @@ pub enum ExprKind {
     /// an object type -> one that differs only in `readonly` fields, which are the same type
     /// once the program is finished (docs/internals/design/shared-models.md).
     Upcast(Box<Expr>),
+    /// Base class value -> subclass, or interface value -> class, known to hold an instance of
+    /// that class (`Expr::ty`) because a `PatKind::InstanceOf` test succeeded (flow narrowing);
+    /// nothing is checked at run time. On a class value it is a no-op on the pointer; on an
+    /// interface value it is the data pointer (the object), and a moved interface value hands
+    /// its object over.
+    Downcast(Box<Expr>),
     /// Concrete value -> interface value via `Program::impls[impl_index]`; the value is moved.
     ToDyn {
         expr: Box<Expr>,
@@ -741,4 +761,8 @@ pub enum PatKind {
     None,
     /// Non-null pattern on Option.
     Some(Box<Pat>),
+    /// `instanceof C`: the class object (or the interface value holding one) is an instance of
+    /// class `C` or of one of its subclasses; it tests the dynamic class and binds nothing. Only
+    /// on a class whose subclasses include `C`, or on an interface value.
+    InstanceOf(DefId),
 }

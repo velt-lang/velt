@@ -98,7 +98,8 @@ fn accessors_and_handle_lifetimes() {
         assert_eq!(owned_text(out.assume_init_read()), "hé");
         assert_eq!(velt_rt_json_value_as_str(n, out.as_mut_ptr()), 0);
         let lens = [arr, o, s, n, ValueHandle::NULL].map(|h| velt_rt_json_value_len(h));
-        assert_eq!(lens, [2, 1, 3, 0, 0]);
+        // A string's length counts UTF-16 code units ("hé" is 2).
+        assert_eq!(lens, [2, 1, 2, 0, 0]);
         let x = velt_rt_json_value_at(arr, 1);
         assert_eq!(stringify(x), "\"x\"");
         assert!(velt_rt_json_value_at(arr, 2).is_null());

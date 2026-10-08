@@ -5,6 +5,7 @@
 //! of the file, followed by a blank line, documents the module. Re-exports (`export { x } from`,
 //! `export * from`) are recorded here and resolved across modules by [`crate::resolve`].
 
+use std::cell::RefCell;
 use std::ops::Range;
 
 use velt_common::FileId;
@@ -136,10 +137,23 @@ pub struct ReExport {
 /// Extract the documentation of module `name` from its `source`. Syntax errors are tolerated:
 /// whatever the parser recovered is documented. Re-exports are recorded, not yet resolved.
 pub fn extract(name: &str, source: &str) -> DocModule {
+    extract_with(name, source).0
+}
+
+/// The declarations that [`extract`] documents without a doc comment although a plain comment
+/// ends on the line right above them: the byte offsets where they start. Before `/** */` became
+/// the doc comment syntax, such a comment was the documentation; std's tests use this to keep
+/// plain comments from hiding docs.
+pub fn plain_comments_above_docs(source: &str) -> Vec<u32> {
+    extract_with("", source).1
+}
+
+fn extract_with(name: &str, source: &str) -> (DocModule, Vec<u32>) {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     let text = Source {
         printer: Printer { src: source },
         comments: velt_syntax::comment_ranges(source),
+        plain_above: RefCell::default(),
     };
     let mut imports = vec![];
     for item in &module.items {
@@ -189,13 +203,14 @@ pub fn extract(name: &str, source: &str) -> DocModule {
             _ => items.extend(text.item(item, false)),
         }
     }
-    DocModule {
+    let module = DocModule {
         name: name.to_string(),
         doc: text.module_doc(),
         items,
         imports,
         reexports,
-    }
+    };
+    (module, text.plain_above.into_inner())
 }
 
 fn exported_name(n: &ast::ImportName) -> String {
@@ -245,12 +260,19 @@ struct Source<'a> {
     printer: Printer<'a>,
     /// Where the comments are ([`velt_syntax::comment_ranges`]).
     comments: Vec<Range<u32>>,
+    /// Documented declarations without a doc comment and with a plain comment right above.
+    plain_above: RefCell<Vec<u32>>,
 }
 
 impl Source<'_> {
     /// The doc comment of the declaration starting at byte `lo`.
     fn doc_before(&self, lo: u32) -> DocComment {
-        comment::doc_before_in(self.printer.src, &self.comments, lo).unwrap_or_default()
+        let src = self.printer.src;
+        let doc = comment::doc_before_in(src, &self.comments, lo);
+        if doc.is_none() && comment::plain_comment_before(src, &self.comments, lo) {
+            self.plain_above.borrow_mut().push(lo);
+        }
+        doc.unwrap_or_default()
     }
 
     /// The first comment block of the file, when a blank line separates it from what follows.
@@ -507,6 +529,37 @@ mod tests {
         let m = extract("demo", src);
         assert_eq!(m.doc, "Module.");
         assert_eq!((m.items[0].doc.as_str(), m.items[1].doc.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn plain_comments_above_documented_declarations() {
+        let src = "// Module.
+
+// Was a doc.
+export function f() {}
+
+/** Doc. */
+export function g() {}
+
+// Section.
+
+export function h() {}
+
+export class A {
+  // Was a doc.
+  x: i64;
+  // Private.
+  private y: i64;
+}
+
+// Not exported.
+function k() {}
+";
+        let at = |needle: &str| src.find(needle).unwrap() as u32;
+        assert_eq!(
+            plain_comments_above_docs(src),
+            [at("export function f"), at("x: i64")]
+        );
     }
 
     #[test]

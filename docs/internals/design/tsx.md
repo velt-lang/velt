@@ -18,6 +18,10 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
   `<Card title={t}>…</Card>` (a capitalized or dotted name is a component), spread props
   `{...p}`, `key`, string and expression attributes, children text with JSX whitespace rules,
   `{/* comments */}`.
+- Type arguments on an opening tag, as in TSX: `<List<number> items={xs} />`, also after a
+  member name (`<ui.List<number> …>`); the closing tag takes none (`</List>`). Inside a tag a
+  `<` that does not follow `=` opens the type arguments, which are lexed as code up to the
+  matching `>` (an element as an attribute value, `icon=<Star />`, still follows `=`).
 - Allowed in every `.vlt` file: Velt has no `<T>expr` casts (only `as`), so TypeScript's `.ts`
   / `.tsx` split isn't needed. `velt fmt` formats JSX like Prettier.
 - **The parser decides where an element starts**, not the lexer: in code the lexer always
@@ -60,18 +64,31 @@ Two lowerings, chosen by what the provider exports:
    per-node allocation: the server writes constant slices and escaped dynamic values straight
    into the response buffer. It is the default for `velt:jsx`; sigx can implement it for its
    SSR output (and emit its resumability and island markers from `jsx` at component
-   boundaries).
+   boundaries). A provider whose client hydrates text nodes one by one exports
+   `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
+   parts of the template strings (contracts/jsx.md, "Text separator").
 
 Types:
 
 - `JSX.Element` (the provider's node or fragment type), `JSX.IntrinsicElements` (the allowed
   attributes per tag, so typos in attributes are compile errors), `JSX.ElementChildrenAttribute`.
+- Generic components `function List<T>(props: ListProps<T>)` work as in TypeScript: explicit
+  type arguments on the tag, or inference from the props and the children (typed values and
+  children first, then arrow functions, which get their parameter types from the result).
+- Generic arrow functions (`const id = <T>(x: T): T => x;`) are generic functions, at module
+  level and as a `const` in a function body (a nested generic function, instantiated per
+  call). Their parameters need types; without a return type one is inferred from the body by
+  the rules for functions (`const id = <T>(x: T) => x;` returns `T`; `async` gives
+  `Promise<T>`). A Velt function value has exactly one type, so there are no generic function values:
+  using one as a value needs a function type (`const f: (x: i64) => i64 = id;`), and a
+  generic arrow in any other position is a compile error with a fix-it.
 - Components are functions `(props: P) => JSX.Element`. **Async components**
   `(props: P) => Promise<JSX.Element>` are allowed on the server (data loading) and awaited by
   the renderer; streaming providers flush finished parts while later ones load (hybrid promises
   make sibling async components run concurrently, as in JavaScript).
 - Children: `children?: JSX.Element | JSX.Element[] | string | number | null` (no `undefined`;
-  `false` and `true` render nothing, as in TypeScript and React).
+  `false` and `true` render nothing in `velt:jsx`, as in TypeScript and React; a provider may
+  render a placeholder of its own instead, as sigx does for hydration).
 - Safety: text and attribute values are **always escaped**; raw HTML only goes through an
   explicit provider API (`velt:jsx`'s `raw(html)`), so cross-site scripting by default can't
   happen.
@@ -147,7 +164,6 @@ Accepted by `tsc`, but behaves differently:
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
 | `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
 | `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
-| `string-offsets` | `length`, `slice`, `indexOf`, `charCodeAt`, `s[i]`, … on a string: UTF-8 vs UTF-16 offsets (silent on ASCII literals) | warning | |
 | `unsigned-arith` | `-`, `-=`, `--` with an unsigned result (`xs.length - 1` wraps at zero) | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |

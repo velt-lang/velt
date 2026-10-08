@@ -15,13 +15,29 @@
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
   enums (from their strings) and numeric enums (from their values). Anything else fails with
   the allowed values, e.g. `expected one of "low", "normal", "high" at $.tags[1]`.
-- **Private fields:** a class or struct with a `private` field (own or inherited) has no JSON
-  form, for `JSON.parse<T>` and `JSON.stringify` alike; the error names the field. std types
-  keep their runtime handles that way (`BigInt`, `RegExp`, `Mutex`, sockets, files, HTTP,
-  database clients…), so untrusted JSON can never produce one. To send such a value, convert it
-  to a type with public fields first (`n.toString()` for a `BigInt`, or an object literal of the
-  data you need). A value whose static class has a JSON form but whose dynamic class has
-  private fields is written as its static class.
+- **Private fields:** `JSON.stringify` writes a class's `private` fields, as Node does, and
+  skips ES private fields (`#x`), as JavaScript does. `JSON.parse<T>` cannot build a class or
+  struct with a `private` or `#` field (own or inherited), wherever it appears in `T`: decoding
+  fills fields without running the constructor, so it could not initialize them; the error
+  names the field. A type with a private field declared by a std type has no JSON form in either
+  direction: std keeps runtime handles there (`#` fields of classes such as `BigInt`, `RegExp`,
+  `JsonValue`, HTTP requests and responses, SQLite statements, `AbortSignal` and `TaskScope`;
+  `private` fields of structs such as `Mutex`, sockets, files and database clients), also when
+  a user class extends one. So JSON can never carry or forge a handle. To
+  send such a value, convert it to a type with public fields first (`n.toString()` for a
+  `BigInt`, or an object literal of the data you need). A class value is written as its
+  dynamic class (a subclass's fields too), unless that class holds std private state: then as
+  its static class.
+
+```ts
+class Account {
+  name: string = "ada";
+  private secret: string = "pw";
+  #pin: string = "1234";
+}
+
+console.log(JSON.stringify(new Account())); // {"name":"ada","secret":"pw"}
+```
 
 ```ts error
 class Account {
@@ -29,8 +45,8 @@ class Account {
   private secret: string = "pw";
 }
 
-// error: cannot convert to or from JSON: `Account` has a private field `secret`, so it has no JSON form
-const text = JSON.stringify(new Account());
+// error: cannot convert to or from JSON: `Account` has a private field `secret`, which decoding cannot set
+const a = JSON.parse<Account>('{"name":"ada","secret":"pw"}');
 ```
 
 - **Private and protected constructors:** `JSON.parse<T>` (and `v.as<T>()`) cannot decode a
@@ -98,18 +114,24 @@ console.log(text, m.cents); // {"cents":250} 250
   union discriminant with two different values always fails (`{"kind":"leave",...,
   "kind":"join"}` with `expected "leave" at $.kind`: the first occurrence picks the member,
   whose literal the second one does not match).
-- String escapes `\uXXXX` decode surrogate pairs to one character. A lone surrogate (a high
-  one without a low one after it, or a low one alone) cannot be stored in UTF-8, so it becomes
-  U+FFFD (`�`), in `JSON.parse` and `JSON.parseValue` alike; JavaScript keeps it as a lone
-  UTF-16 unit.
+- String escapes `\uXXXX` decode to UTF-16 code units, as in JavaScript: an escaped pair is one
+  character, and a lone surrogate (a high one without a low one after it, or a low one alone)
+  stays a lone surrogate, in `JSON.parse` and `JSON.parseValue` alike
+  (`JSON.parse<string>('"\\ud800"').length` is 1). `JSON.stringify` writes it back as `\ud800`;
+  printing or writing the string elsewhere gives U+FFFD (`�`).
 - Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
-  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
+  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`. The offset counts bytes of
+  the input's UTF-8, which is where an editor or `Buffer`-level tool finds it (not a string
+  position: for ASCII input the two agree).
   In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
   (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
   the byte offset still points at the exact place.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
-  `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.
+  `JSON.stringify` omits an optional field (`a?: T`) of a class, object type or interface while
+  it is `null`, as JavaScript omits an absent property, and writes other `null`s (a
+  `b: T | null` field, a `null` array element). Velt has no `undefined`, so an optional field
+  assigned `null` is left out too, where JavaScript writes `"a":null`.
 - `Value`:
   - navigation: `get(key)`, `at(i)`, both returning `Value | null`; `has(key)` (the key is
     present, even with a `null` value: absent vs explicit `null` is only visible here, as
@@ -131,8 +153,9 @@ console.log(text, m.cents); // {"cents":250} 250
   - `stringify()` (keys in insertion order); `clone()` is O(1)
   - `console.log(v)` prints the value the way node prints the parsed object
     (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
-    quoted inside other values), broken across lines like node when it is long, as Velt's
-    other values are
+    quoted inside other values), broken across lines like node when it is long, with node's
+    limits (`[Object]` / `[Array]` past two levels of nesting, the first 100 elements of an
+    array and then `... n more items`), as Velt's other values are
   - a template string prints a `JsonValue` exactly as `console.log` does, not as JSON:
     `` `v = ${v}` `` is `v = { a: 1, b: [ 2, 'x' ], c: null }`, and a JSON string `"hi"`
     shows as `hi`. Call `stringify()` for the JSON text (`{"a":1,"b":[2,"x"],"c":null}`)

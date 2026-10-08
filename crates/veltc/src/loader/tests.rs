@@ -93,6 +93,68 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
 }
 
 #[test]
+fn globals_load_when_a_user_module_names_them() {
+    let t = Tree::new();
+    let std = t.path("std");
+    t.write(
+        "std/prelude/core.vlt",
+        "export function id(): i64 { return 0; }\n",
+    );
+    t.write(
+        "std/prelude/global/web.vlt",
+        "export { fetch, Response } from \"velt:web\";\n",
+    );
+    t.write(
+        "std/prelude/global/url.vlt",
+        "export { URL } from \"velt:url\";\n",
+    );
+    // A std module that mentions a global's name does not load it.
+    t.write(
+        "std/web.vlt",
+        "// URL\nexport function fetch() {}\nexport class Response {}\n",
+    );
+    t.write("std/url.vlt", "export class URL {}\n");
+    t.write("std/server.vlt", "export class Response {}\n");
+    let opts = || LoadOptions {
+        std_root: Some(std.clone()),
+        ..Default::default()
+    };
+    let plain = t.write("p/plain.vlt", "// prefetch\nfunction main() {}\n");
+    let (l, diags, _) = load(&plain, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["std/prelude/core", "main"]);
+
+    t.write(
+        "p/lib.vlt",
+        "export async function get() { await fetch(); }\n",
+    );
+    let root = t.write(
+        "p/main.vlt",
+        "import { get } from \"./lib\";\nfunction main() {}\n",
+    );
+    let (l, diags, _) = load(&root, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    let want = [
+        "std/prelude/core",
+        "main",
+        "lib",
+        "std/prelude/global/web",
+        "std/web",
+    ];
+    assert_eq!(paths(&l), want);
+
+    // Names a module binds itself (an import, a declaration) hide the global: nothing loads.
+    let own = t.write(
+        "p/own.vlt",
+        "import { Response } from \"velt:server\";\nclass URL {}\n\
+         function main() { const r = new Response(); const u = new URL(); }\n",
+    );
+    let (l, diags, _) = load(&own, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["std/prelude/core", "main", "std/server"]);
+}
+
+#[test]
 fn std_modules_and_prelude_come_first() {
     let t = Tree::new();
     let std = t.path("std");

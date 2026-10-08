@@ -1,0 +1,59 @@
+// A JSX provider that extends std/jsx's intrinsic elements with event handler attributes, as
+// a client framework's server renderer does (sigx, #379): `IntrinsicElements` is std's
+// `&` an object type whose fields merge into std's attribute types. Handlers render nothing
+// on the server; everything else renders through std/jsx.
+
+import * as std from "velt:jsx/jsx-runtime";
+import type { IntrinsicElements as Html } from "velt:jsx/intrinsic";
+import type { HtmlAttrs } from "velt:jsx/attrs";
+
+export { Element } from "velt:jsx/jsx-runtime";
+export type { Child, ElementChildrenAttribute } from "velt:jsx/jsx-runtime";
+export { Fragment, jsxComponent } from "velt:jsx/jsx-runtime";
+
+export type Handler = () => void;
+export type AttrValue = string | i64 | f64 | bool | std.Style | Handler | null;
+
+type Events = { onClick?: Handler; onInput?: Handler };
+
+// `button` and `input` take handlers on top of std's attributes (`Html["button"] & Events`),
+// and `section` drops std's `style` for a string-only one.
+export type IntrinsicElements = Html & {
+  button: Events;
+  input: Events;
+  section: Omit<HtmlAttrs, "style"> & { style?: string };
+};
+
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: std.Child[],
+  key: string | null,
+): std.Element {
+  const kept: string[] = [];
+  const attrs: std.AttrValue[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const v = values[i];
+    if (typeof v === "function") {
+      continue;
+    }
+    kept.push(names[i]);
+    attrs.push(stdValue(v));
+  }
+  return std.jsx(tag, kept, attrs, children, key);
+}
+
+// `v` (not a handler) as std/jsx's attribute value.
+function stdValue(v: AttrValue): std.AttrValue {
+  if (typeof v === "string") {
+    return v;
+  } else if (typeof v === "number") {
+    return v;
+  } else if (typeof v === "boolean") {
+    return v;
+  } else if (typeof v === "object" && v !== null) {
+    return v;
+  }
+  return null;
+}

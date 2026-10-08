@@ -21,7 +21,7 @@ const MAX_CELLS: usize = 1 << 20;
 
 /// A closed interval of integer values of some type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Interval {
+pub(crate) struct Interval {
     pub lo: i128,
     pub hi: i128,
 }
@@ -321,7 +321,7 @@ fn negate(op: BinOp) -> BinOp {
 }
 
 /// Exact interval of `a op b` (before wrapping), for the operators with a cheap bound.
-fn binary(op: BinOp, a: Interval, b: Interval, ty: Ty) -> Option<Interval> {
+pub(crate) fn binary(op: BinOp, a: Interval, b: Interval, ty: Ty) -> Option<Interval> {
     // Shift amounts are taken modulo the width (vir.rs), so only smaller ones are exact.
     let width = i128::from(ty.scalar_size().unwrap_or(8)) * 8;
     let corners = |f: fn(i128, i128) -> Option<i128>| -> Option<Interval> {

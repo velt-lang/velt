@@ -1,0 +1,1 @@
+instanceof_shared_boundary.vlt:14:22: error: `b` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)

@@ -1,0 +1,4 @@
+widen_fresh_detached.vlt:19:17: error: a `C[]` cannot be converted to `Named[]` in a field initializer or a default value
+  = note: convert the elements instead: `(…).map((x): Named => x)`
+widen_fresh_detached.vlt:21:36: error: a `C[]` cannot be converted to `Named[]` in a field initializer or a default value
+widen_fresh_detached.vlt:24:26: error: a `C[]` cannot be converted to `Named[]` in a field initializer or a default value

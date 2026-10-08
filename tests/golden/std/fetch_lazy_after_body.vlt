@@ -1,0 +1,52 @@
+// check: no leaks
+// A fetched response's status text, URL, `redirected` and headers are copied out of the runtime
+// when first read; here the first read comes after the body was read, on a redirected response
+// and on a URL that WHATWG parsing normalizes. The client half is valid TypeScript and prints
+// what Node 22 prints for it (against an equivalent `node:http` server).
+import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+
+async function show(label: string, res: Response, base: string) {
+  const body = await res.text();
+  console.log(
+    label,
+    body,
+    res.status,
+    res.statusText,
+    res.url.replace(base, "<base>"),
+    res.redirected,
+  );
+  console.log(
+    label,
+    res.headers.get("x-kind"),
+    res.headers.get("content-type"),
+    res.headers.has("content-length"),
+    res.bodyUsed,
+  );
+}
+
+async function client(port: number) {
+  const base = `http://127.0.0.1:${port}`;
+  await show("redirected", await fetch(`${base}/start`), base);
+  await show("normalized", await fetch(`HTTP://127.0.0.1:${port}/a/../b#x`), base);
+  await show("missing", await fetch(`${base}/missing`), base);
+}
+
+async function handle(req: ServerRequest): Promise<ServerResponse> {
+  if (req.path == "/start") {
+    const r = ServerResponse.text("", 302);
+    r.header("location", "/b");
+    return r;
+  }
+  if (req.path == "/b") {
+    const r = ServerResponse.text("at b");
+    r.header("x-kind", "b");
+    return r;
+  }
+  return ServerResponse.text("nope", 404);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, handle);
+  await client(server.port as number);
+  await server.shutdown();
+}

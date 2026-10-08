@@ -293,18 +293,21 @@ block scope.
 - **Case values**: literals (numbers, also negative ones; strings; bools), `null`, enum members,
   or any expression that `===` can compare with the discriminant (and compared like it: a
   `string | null` case value on a `string` discriminant, or the reverse; a `string` constant on a
-  union of string literals). A local of a literal type (`const y: "y" = "y"`) acts like the
-  literal: it narrows and counts toward exhaustiveness. On a discriminant (`switch (s.kind)`) and
-  on `typeof x`, other case values must still be literals. Duplicates are an error.
+  union of string literals; a `string` on a discriminant `s.kind` or on `typeof x`). A local of a
+  literal type (`const y: "y" = "y"`) acts like the literal: it narrows and counts toward
+  covering the members. A literal that is not a possible value (`case "square":` when `s.kind`
+  is `"circle" | "rect"`) is an error, as in TypeScript. A value may appear in several cases:
+  the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`
   narrows like `typeof` tests; `switch (x)` on a union narrows by literal member and by
-  `case null`.
-- **Exhaustiveness**: without `default`, a `switch` on a discriminant, a `typeof`, a union of
-  literals or an enum must cover every possible member. A missing one is an error listing the
-  cases (``missing cases: "rect", "tri"``), and a complete one needs no code after it. In
-  `default`, the value is narrowed to the members no case took; with none left it is `never`,
-  so `const _x: never = s;` checks exhaustiveness the TypeScript way.
+  `case null`. Case values that are not literals narrow nothing.
+- **Coverage**: as in TypeScript, a `switch` need not have a case for every member. The members
+  no case takes skip it: `default` and, without `default`, the code after the `switch` see the
+  value narrowed to them. A `switch` with a case for every member of a discriminant, a
+  `typeof`, a union of literals or an enum needs no `default` and no code after it. With no
+  member left in `default`, the value is `never`, so `const _x: never = s;` checks exhaustiveness
+  the TypeScript way.
 - **Performance**: cases on tags, enums and integers dispatch through one jump table; string
   cases compare in order.
 
@@ -336,6 +339,18 @@ function tag(l: Level): string {
   }
 }
 
+type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number } | { kind: "dot" };
+
+function size(s: Shape): number {
+  switch (s.kind) {
+    case "circle":
+      return s.r * 2;
+    case "square":
+      return s.side;
+  }
+  return 0;                     // s is { kind: "dot" } here
+}
+
 function label(x: string | null): string {
   switch (x) {
     case null:
@@ -350,7 +365,7 @@ outer: for (let i = 0; i < 3; i++) {
     if (j == 1) {
       continue outer;
     }
-    console.log(i, j, describe(i), tag(Level.Info), label(null));
+    console.log(i, j, describe(i), tag(Level.Info), label(null), size({ kind: "dot" }));
   }
 }
 ```

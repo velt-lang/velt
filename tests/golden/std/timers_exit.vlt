@@ -1,0 +1,18 @@
+// `process.exit` ends the process at once, also while a ref'd timer is pending (an hour long
+// here, so the program would not end if the timer kept it alive), like Node. The timeout's
+// callback waits until `main` printed its line (`printed`), so the output has one order.
+import { channel, Channel } from "velt:channel";
+
+async function stop(printed: Channel<bool>): Promise<void> {
+  await printed.receive();
+  console.log("exiting with 3");
+  process.exit(3);
+}
+
+async function main() {
+  const printed = channel<bool>(1);
+  setTimeout(async () => console.log("never printed"), 3600000);
+  setTimeout(() => stop(printed), 10);
+  console.log("main returns");
+  printed.trySend(true);
+}

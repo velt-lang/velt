@@ -1,8 +1,8 @@
 // std/encoding: byte <-> text encodings — Base64 (RFC 4648 §4 and the URL-safe §5 alphabet),
 // lowercase hex, and UTF-8 (strict and lossy decoding, validation).
 //
-// Strings are UTF-8 byte sequences, so `utf8Encode` is a copy of a string's bytes and decoding
-// validates them. Encoders build the output as ASCII bytes and turn them into a string with one
+// Strings are stored as UTF-8, so `utf8Encode` is a copy of a string's bytes (a lone surrogate
+// written as U+FFFD) and decoding validates them. Encoders build the output as ASCII bytes and turn them into a string with one
 // runtime copy. Decoders throw `EncodingError` on malformed input.
 
 import { IoResult } from "velt:io";
@@ -36,7 +36,10 @@ export function base64Encode(data: u8[]): string {
   return encode64(data, BASE64_STD, true);
 }
 
-/** Decodes standard Base64; padding is optional. Throws `EncodingError` on any other character. */
+/**
+ * Decodes standard Base64; padding is optional. Throws `EncodingError` on a character outside the
+ * alphabet or a length or padding that cannot come from whole bytes.
+ */
 export function base64Decode(s: string): u8[] {
   return decode64(s, BASE64_STD);
 }

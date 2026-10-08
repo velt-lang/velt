@@ -4,7 +4,10 @@
 //! Features: diagnostics (parse + imports + sema, debounced, per open document), formatting
 //! (`velt_fmt`), document symbols, go to definition, hover, completion (JSX tags and attributes
 //! included), find references, rename, quick fixes (code actions), inlay hints, signature help,
-//! doc comments in hover, completion and signature help ([`docs`]), semantic tokens, document highlight and workspace symbols. Documents in a package's
+//! doc comments in hover, completion and signature help ([`docs`]), semantic tokens, document
+//! highlight and workspace symbols. Imports get their own help
+//! ([`imports`]): the exports of the module inside `import { … }`, module specifiers after
+//! `from "`, and auto-import of exported names that are not imported yet. Documents in a package's
 //! `tsCompat` folders also get the TypeScript-compatibility lint's findings and fixes
 //! ([`ts_compat`]).
 //! Program loading is injected through [`ProgramLoader`] (the CLI's loader lives in `veltc`, which
@@ -25,6 +28,7 @@ mod docs;
 mod documents;
 mod highlight;
 mod hover;
+mod imports;
 mod index;
 mod inlay_hints;
 mod jsx_completion;
@@ -51,6 +55,7 @@ use std::path::{Path, PathBuf};
 use velt_common::{Diagnostics, SourceMap};
 use velt_sema::SourceModule;
 
+pub use imports::index::{package_module_entries, std_module_entries};
 pub use lsp_server::Connection;
 
 /// Stack for the server's analysis thread: parsing and sema recurse along the AST (the same
@@ -77,6 +82,55 @@ pub trait ProgramLoader: Send + Sync {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String>;
+
+    /// The modules a file at `from` can import by a non-relative specifier: the standard
+    /// library's public modules (`velt:fs`) and the modules of the dependencies of the package
+    /// containing `from`. Relative files are listed by the server itself. Used for specifier
+    /// completion and auto-import; the default knows none.
+    fn module_index(&self, from: &Path) -> Vec<ModuleEntry> {
+        let _ = from;
+        vec![]
+    }
+
+    /// The file that the specifier `spec`, imported by the file at `from`, names, exactly as
+    /// [`ProgramLoader::load`] would resolve it; `None` when that import would fail (invalid, not
+    /// found, ambiguous) or, for a loader that does not [resolve
+    /// modules](ProgramLoader::resolves_modules), when it cannot tell. The import help reads
+    /// modules outside the program through this, and checks the specifiers it writes. The
+    /// default resolves nothing.
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        let _ = (spec, from);
+        None
+    }
+
+    /// Whether [`ProgramLoader::resolve_module`] answers for every specifier, so that `None`
+    /// means the import would fail (the import help then leaves out what would not load).
+    fn resolves_modules(&self) -> bool {
+        false
+    }
+}
+
+/// A module an import specifier can name ([`ProgramLoader::module_index`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleEntry {
+    /// The specifier as written in `from "…"`: `velt:fs`, `velt:collections/set`, `json`,
+    /// `json/parse`.
+    pub spec: String,
+    /// The module's file.
+    pub path: PathBuf,
+    /// Where the module comes from.
+    pub kind: ModuleKind,
+    /// One line describing the module (a std module's header comment), or empty.
+    pub doc: String,
+}
+
+/// Where a [`ModuleEntry`] comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleKind {
+    /// The standard library (`velt:x`).
+    Std,
+    /// A dependency of the importing file's package (`name`, `name/sub`).
+    Dependency,
 }
 
 /// Serve LSP over stdin/stdout until the client says `exit`.

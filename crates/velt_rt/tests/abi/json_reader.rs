@@ -15,8 +15,9 @@ pub fn borrow(s: &str) -> VeltStr {
     unsafe { VeltStr::borrowed(s.as_ptr(), s.len()) }
 }
 
+/// The text of an owned string as output shows it (a lone surrogate as U+FFFD), then dropped.
 fn owned_text(mut s: VeltStr) -> String {
-    let text = String::from_utf8(unsafe { s.as_bytes() }.to_vec()).unwrap();
+    let text = unsafe { s.to_string_lossy() };
     unsafe { velt_rt_str_drop(&mut s) };
     text
 }
@@ -169,6 +170,7 @@ fn escapes_unknown_keys_and_duplicates() {
         "age":1e2, "tags":["", "é"], "email":null, "age": 7 } "#
         .replace('~', "\\u");
     let u = decode_user(&doc).unwrap();
+    // The lone surrogate escapes are kept (#377 phase 2b) and print as U+FFFD.
     assert_eq!(u.name, "a\"b\\c/d\u{8}\u{c}\n\r\té😀\u{FFFD}x\u{FFFD}€");
     assert_eq!(
         (u.age, u.tags, u.email),

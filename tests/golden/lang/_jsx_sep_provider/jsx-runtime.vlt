@@ -1,0 +1,32 @@
+// The generic text separator test runtime: `jsx`, `Fragment`, `jsxComponent`. The renderer
+// inserts the separators (see ./render).
+
+import { Child, AttrValue, Element, Later, element, fragment } from "./render";
+
+export { Child, AttrValue, Element } from "./render";
+export { IntrinsicElements, ElementChildrenAttribute } from "../_jsx_test_provider/types";
+
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  return element(tag, names, values, children);
+}
+
+export function Fragment(children: Child[], key: string | null): Element {
+  return fragment(children);
+}
+
+export function jsxComponent<P>(
+  component: (props: P) => Element,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  const el = new Element();
+  el.parts.push(new Later(() => component(props)));
+  return el;
+}

@@ -17,10 +17,13 @@ mod construct;
 mod discriminated;
 mod dispose_call;
 mod division;
+pub(crate) mod downcast;
 mod errors;
 mod fn_arity;
 mod gen_closure;
+mod hoist;
 mod iface_call;
+mod int32;
 mod intrinsics;
 pub(crate) mod jsx;
 mod lit;
@@ -53,12 +56,14 @@ mod tasks;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
+mod widen_fresh;
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
 use crate::hir::{self, TyId};
+pub(crate) use args::deferred;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
@@ -141,7 +146,7 @@ impl FnCx<'_, '_> {
             // `xs as const`: TS narrows the type to literals and `readonly`; the value is the
             // same, and Velt's arrays and literal types need no annotation for it.
             A::Cast { expr, ty } if member::is_as_const(ty) => self.expr(expr, exp, want),
-            A::Cast { expr, ty } => self.cast(expr, ty, span),
+            A::Cast { expr, ty } => self.cast(expr, ty, want, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),
             A::NonNull(inner) => self.non_null(inner, exp, span),

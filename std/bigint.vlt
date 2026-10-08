@@ -1,11 +1,11 @@
-// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (num-bigint).
+// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (dashu-int).
 //
 // Velt has no operator overloading, so arithmetic is methods: `a.add(b)` returns a new BigInt
 // like JS `a + b`; `a.addAssign(b)` changes `a` in place like `a += b`, reusing its buffer (hot
-// loops such as a pidigits spigot should use the in-place forms). Every operation has a
-// machine-integer twin (`mulInt(10)`, `mulIntAssign(k)`) that skips building a BigInt for the
-// small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing by
-// zero panics with a RangeError, as JS throws one.
+// loops such as a pidigits spigot should use the in-place forms). The arithmetic operations
+// have machine-integer twins (`mulInt(10)`, `mulIntAssign(k)`) that skip building a BigInt for
+// the small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing
+// by zero panics with a RangeError, as JS throws one, and so does a negative shift count.
 //
 // A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
 
@@ -37,11 +37,11 @@ const SHR: u32 = 6;
 export class BigIntError extends Error {}
 
 export class BigInt {
-  private handle: u64;
+  #handle: u64;
 
   /** JS `BigInt(n)` / `10n`. */
   constructor(value: i64 = 0) {
-    this.handle = velt_rt_bigint_from_i64(value);
+    this.#handle = velt_rt_bigint_from_i64(value);
   }
 
   /**
@@ -116,7 +116,7 @@ export class BigInt {
 
   neg(): BigInt {
     const out = new BigInt();
-    velt_rt_bigint_neg(out.handle, this.handle);
+    velt_rt_bigint_neg(out.#handle, this.#handle);
     return out;
   }
 
@@ -166,17 +166,17 @@ export class BigInt {
 
   /** Makes this number equal to `other`, reusing this one's buffer. */
   set(other: BigInt) {
-    velt_rt_bigint_assign(this.handle, other.handle);
+    velt_rt_bigint_assign(this.#handle, other.#handle);
   }
 
   /** -1, 0 or 1 as this is less than, equal to or greater than `other`. */
   compareTo(other: BigInt): i64 {
-    return velt_rt_bigint_cmp(this.handle, other.handle);
+    return velt_rt_bigint_cmp(this.#handle, other.#handle);
   }
 
   /** -1, 0 or 1 as this is less than, equal to or greater than `k`. */
   compareToInt(k: i64): i64 {
-    return velt_rt_bigint_cmp_i64(this.handle, k);
+    return velt_rt_bigint_cmp_i64(this.#handle, k);
   }
 
   equals(other: BigInt): bool {
@@ -185,58 +185,58 @@ export class BigInt {
 
   /** The nearest number (JS `Number(big)`). */
   toNumber(): f64 {
-    return velt_rt_bigint_to_f64(this.handle);
+    return velt_rt_bigint_to_f64(this.#handle);
   }
 
   /** The low 64 bits as a signed integer (JS `BigInt.asIntN(64, big)`). */
   toI64(): i64 {
-    return velt_rt_bigint_to_i64(this.handle);
+    return velt_rt_bigint_to_i64(this.#handle);
   }
 
   /** Digits in `radix` (2 to 36), lowercase, with a leading `-` when negative. */
   toString(radix: i64 = 10): string {
-    return velt_rt_bigint_to_string(this.handle, radix);
+    return velt_rt_bigint_to_string(this.#handle, radix);
   }
 
   /** An independent copy. */
   clone(): BigInt {
-    return BigInt.adopt(velt_rt_bigint_clone(this.handle));
+    return BigInt.adopt(velt_rt_bigint_clone(this.#handle));
   }
 
   /** Drop hook: frees the number. */
   [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_bigint_free(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_bigint_free(this.#handle);
+      this.#handle = 0;
     }
   }
 
   // A BigInt owning the runtime handle `h`.
   private static adopt(h: u64): BigInt {
     const b = new BigInt();
-    velt_rt_bigint_free(b.handle);
-    b.handle = h;
+    velt_rt_bigint_free(b.#handle);
+    b.#handle = h;
     return b;
   }
 
   private binary(other: BigInt, op: u32): BigInt {
     const out = new BigInt();
-    checked(velt_rt_bigint_op(out.handle, this.handle, other.handle, op));
+    checked(velt_rt_bigint_op(out.#handle, this.#handle, other.#handle, op));
     return out;
   }
 
   private binaryInt(k: i64, op: u32): BigInt {
     const out = new BigInt();
-    checked(velt_rt_bigint_op_i64(out.handle, this.handle, k, op));
+    checked(velt_rt_bigint_op_i64(out.#handle, this.#handle, k, op));
     return out;
   }
 
   private assignOp(other: BigInt, op: u32) {
-    checked(velt_rt_bigint_op(this.handle, this.handle, other.handle, op));
+    checked(velt_rt_bigint_op(this.#handle, this.#handle, other.#handle, op));
   }
 
   private assignOpInt(k: i64, op: u32) {
-    checked(velt_rt_bigint_op_i64(this.handle, this.handle, k, op));
+    checked(velt_rt_bigint_op_i64(this.#handle, this.#handle, k, op));
   }
 }
 

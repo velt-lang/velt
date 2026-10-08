@@ -83,6 +83,8 @@ pub struct BuildArgs {
     pub timings: bool,
     /// `--locked`.
     pub locked: bool,
+    /// `--report numbers`: list the `number` variables in loops that stay doubles.
+    pub report_numbers: bool,
 }
 
 /// How `velt dev` runs each version of the program.

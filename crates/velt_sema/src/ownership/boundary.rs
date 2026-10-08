@@ -223,7 +223,7 @@ fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, Str
         | E::ArrayLit(args)
         | E::Tuple(args)
         | E::New { args, .. } => args.iter().collect(),
-        E::WrapSome(e) | E::Upcast(e) | E::ToDyn { expr: e, .. } => vec![e],
+        E::WrapSome(e) | E::Upcast(e) | E::Downcast(e) | E::ToDyn { expr: e, .. } => vec![e],
         E::Closure(c) => {
             if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
                 for k in f

@@ -1,6 +1,6 @@
 //! Unary and binary operators (`!`, `&&` and `||` are in `truthiness`). `==`/`!=` on non-primitive types (objects, enums,
-//! options, generic `T`, ...) is `Intrinsic::Same` (JS `===`: objects by identity; `!=` wraps it
-//! in `Not`).
+//! options, interface and function values, generic `T`, ...) is `Intrinsic::Same` (JS `===`:
+//! objects by identity; `!=` wraps it in `Not`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -60,6 +60,7 @@ pub(crate) fn op_str(op: ast::BinaryOp) -> &'static str {
         B::Shl => "<<",
         B::Shr => ">>",
         B::UShr => ">>>",
+        B::In => "in",
     }
 }
 
@@ -84,7 +85,7 @@ pub(crate) fn hir_binop(op: ast::BinaryOp) -> Option<BinOp> {
         B::Shl => BinOp::Shl,
         B::Shr => BinOp::Shr,
         B::UShr => BinOp::UShr,
-        B::And | B::Or | B::Nullish => return None,
+        B::And | B::Or | B::Nullish | B::In => return None,
     })
 }
 
@@ -117,12 +118,26 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
             ast::UnaryOp::Neg => {
+                let int_exp = num_exp.is_some_and(|t| self.cx.ty.is_int(t));
                 let inner = match &operand.kind {
+                    // `-0` is a number unless an integer is expected: an integer has no `-0`,
+                    // and JavaScript keeps its sign (`1 / -0` is `-Infinity`, #562).
+                    ast::ExprKind::Lit(ast::Lit::Int {
+                        value: 0,
+                        suffix: None,
+                    }) if !int_exp => {
+                        let zero = ast::Lit::Float {
+                            value: 0.0,
+                            suffix: None,
+                        };
+                        self.lit(&zero, num_exp, operand.span, true)
+                    }
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {
                         self.lit(l, num_exp, operand.span, true)
                     }
                     _ => self.expr(operand, num_exp, Want::Borrow),
                 };
+                let inner = self.unbrand(inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
                     || self.cx.ty.is_float(t)
@@ -134,6 +149,7 @@ impl FnCx<'_, '_> {
             }
             ast::UnaryOp::Plus => {
                 let mut inner = self.expr(operand, num_exp, Want::Borrow);
+                inner = self.unbrand(inner);
                 if !self.cx.ty.is_numeric(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
@@ -144,8 +160,11 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
-                // `~f` on a float converts it like JS's ToInt32 first (`numbers.rs`).
-                let inner = self.as_int32(inner);
+                let inner = self.unbrand(inner);
+                // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
+                if self.js_bitnot_applies(&inner, int_exp) {
+                    return self.js_bitnot(inner, span);
+                }
                 if !self.cx.ty.is_int(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("~", inner.ty, span);
                 }
@@ -202,6 +221,7 @@ impl FnCx<'_, '_> {
         use ast::BinaryOp as B;
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
+            B::In => return self.private_in(lhs, rhs, span),
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
                 let other = if is_null(rhs) { lhs } else { rhs };
@@ -228,8 +248,11 @@ impl FnCx<'_, '_> {
             Some(LitEq::Operands(l, r)) => (l, r),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        // Branded values are operands as their primitives.
+        let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
-            self.nullable_operands(l, r)
+            let (l, r) = self.nullable_operands(l, r);
+            self.identity_operands(l, r)
         } else {
             (l, r)
         };
@@ -239,6 +262,10 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
+        if let Some(bop) = self.js_bitwise_applies(op, &l, &r, hint) {
+            return self.js_bitwise(bop, l, r, span);
+        }
         let (l, r) = self.mix_numbers(l, r);
         let (l, r) = self.mix_ints(l, r);
         let (l, r) = self.bitwise_int32(op, l, r);
@@ -299,6 +326,29 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `a === b` between an interface value and a class or struct value (or a base and a
+    /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
+    /// does (an interface value points at the object itself), so the two compare by identity.
+    fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let object = |s: &Self, t: TyId| {
+            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            s.cx.union_def(t).is_none()
+                && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
+        };
+        if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
+            return (l, r);
+        }
+        let to = l.ty;
+        match self.try_coerce(r, to) {
+            Ok(r) => (l, r),
+            Err(r) => {
+                let to = r.ty;
+                let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+                (l, r)
+            }
+        }
+    }
+
     pub(crate) fn primitive_eq(&self, t: TyId) -> bool {
         let ty = &self.cx.ty;
         ty.is_numeric(t) || t == ty.bool_ || t == ty.str_ || t == ty.never
@@ -327,11 +377,11 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// Can `==` compare values of `t`? Interface and function values compare by identity
+    /// (#365): the object behind an interface value, and the function value itself (each
+    /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(
-            self.cx.ty.kind(t),
-            TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) | TyKind::Unit
-        )
+        !matches!(self.cx.ty.kind(t), TyKind::Unit)
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.
@@ -370,7 +420,7 @@ impl FnCx<'_, '_> {
             B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => ty.is_int(t),
             B::Eq | B::NotEq => self.equatable(t),
             B::Lt | B::LtEq | B::Gt | B::GtEq => ty.is_numeric(t) || t == ty.str_,
-            B::And | B::Or | B::Nullish => false,
+            B::And | B::Or | B::Nullish | B::In => false,
         };
         if !ok {
             let tn = self.cx.display(t);

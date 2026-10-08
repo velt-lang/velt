@@ -1,0 +1,9 @@
+a.increment(1) = 1 (saved)
+a.increment(2) = 3 (saved)
+b.increment(10) = 10 (saved)
+a.double(2) = 12 (saved)
+b.current(0) = 10
+a: no method missing
+a.increment(100) = 112 (saved) | b.increment(100) = 110 (saved)
+a 4 112 5 increment 1,increment 2,increment 3,increment 6,increment 100
+b 3 110 2 increment 10,increment 100

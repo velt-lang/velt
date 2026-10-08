@@ -63,6 +63,8 @@ pub(crate) fn fn_placeholder<'m>(
         params: vec![],
         ret: crate::hir::TyId(0),
         ret_span: None,
+        ret_source: crate::defs::RetSource::Known,
+        ret_inferred_int: false,
         fixed_modes: matches!(
             kind,
             FnKind::Extern | FnKind::Closure | FnKind::IfaceDefault
@@ -82,6 +84,7 @@ pub(crate) fn fn_placeholder<'m>(
         is_getter: false,
         escaping: false,
         keeps_fn_params: false,
+        mutated_captures: vec![],
         soft_params: vec![],
     }
 }
@@ -180,10 +183,18 @@ pub(super) fn new_def<'m>(
 
 fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
     if cx.scopes[m].items.contains_key(&name.name) {
-        cx.err(
+        let mut d = Diagnostic::error(
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
+        if matches!(item.kind, ast::ItemKind::Interface(_)) {
+            // TypeScript merges the declarations of an interface (#384).
+            d = d.with_note(format!(
+                "Velt does not merge interface declarations: declare `{0}` once with every member, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
+                name.name
+            ));
+        }
+        cx.error(d);
         return;
     }
     cx.scopes[m].items.insert(name.name.clone(), it);
@@ -249,10 +260,8 @@ fn collect_prelude(cx: &mut Ctx) {
         if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
             continue;
         }
-        let mut names: Vec<&String> = cx.scopes[m].exports.iter().collect();
-        names.sort();
-        for name in names {
-            let it = cx.scopes[m].items[name];
+        // Re-exports included: a global module (`std/prelude/global/`) only re-exports.
+        for (name, it) in super::exports::all_exports(cx, m) {
             if let Some(prev) = cx.prelude.insert(name.clone(), it) {
                 if prev != it {
                     let span = match it {

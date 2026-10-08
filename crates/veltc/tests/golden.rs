@@ -17,7 +17,8 @@
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
-//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run.
+//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
+//!   still running when `main` returns are waited for (up to a minute) before the count.
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).

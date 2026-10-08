@@ -19,36 +19,36 @@ declare async function velt_rt_redis_pipeline(
  * `client.multi()` (a `MULTI`/`EXEC` transaction). Queue commands, then `await p.exec()`.
  */
 export class RedisPipeline {
-  private handle: u64;
-  private atomic: bool;
-  private args: string[] = [];
-  private counts: u64[] = [];
+  #handle: u64;
+  #atomic: bool;
+  #args: string[] = [];
+  #counts: u64[] = [];
 
   /** Use `client.pipeline()` / `client.multi()`. */
   constructor(handle: u64, atomic: bool) {
-    this.handle = handle;
-    this.atomic = atomic;
+    this.#handle = handle;
+    this.#atomic = atomic;
   }
 
   /** Number of queued commands. */
   get length(): usize {
-    return this.counts.length;
+    return this.#counts.length;
   }
 
   /** Queues any command (`args[0]` is its name). */
   call(args: string[]) {
     for (const a of args) {
-      this.args.push(a);
+      this.#args.push(a);
     }
-    this.counts.push(args.length as u64);
+    this.#counts.push(args.length as u64);
   }
 
   private add(name: string, args: string[]) {
-    this.args.push(name);
+    this.#args.push(name);
     for (const a of args) {
-      this.args.push(a);
+      this.#args.push(a);
     }
-    this.counts.push((args.length + 1) as u64);
+    this.#counts.push((args.length + 1) as u64);
   }
 
   get(key: string) {
@@ -109,7 +109,7 @@ export class RedisPipeline {
    * throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
    */
   async exec(): Promise<RedisReply[]> {
-    const r = await velt_rt_redis_pipeline(this.handle, this.args, this.counts, this.atomic);
+    const r = await velt_rt_redis_pipeline(this.#handle, this.#args, this.#counts, this.#atomic);
     return replyItems(checkReply(r));
   }
 }

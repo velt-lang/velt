@@ -1,0 +1,18 @@
+// A value narrowed by `instanceof` is still the same variable: `shared(b)` takes it, and a
+// later use of `b` is reported as for any other variable (#56).
+class Base {
+  m = 1;
+}
+
+class Sub extends Base {
+  s = 2;
+}
+
+function main() {
+  const b: Base = new Sub();
+  if (b instanceof Sub) {
+    const s = shared(b);
+    b.m = 5;
+    console.log(s === s);
+  }
+}

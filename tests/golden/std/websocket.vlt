@@ -1,5 +1,5 @@
 // check: no leaks
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 import { channel, Channel } from "velt:channel";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";

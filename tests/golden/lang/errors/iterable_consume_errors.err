@@ -24,4 +24,4 @@ write `*[Symbol.iterator]()`, or `async *[Symbol.asyncIterator]()` for an async 
 iterable_consume_errors.vlt:15:16: error: `this` cannot be used in the `[Symbol.iterator]()` method of an object literal
 TypeScript allows this (`this` is the object); Velt doesn't because the object holds only the method, as a function that sees the variables around it; use those variables, or declare a class that `implements Iterable<T>` and reads its fields
 iterable_consume_errors.vlt:37:20: error: a generator function expression cannot change `total` here
-TypeScript allows this; Velt doesn't because `total` is also captured by an async closure (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const total = shared(...)` and `total.add(n)` / `total.set(v)`, or pass it in as a parameter
+TypeScript allows this; Velt doesn't because `total` is also captured by an async closure that may run on another thread (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const total = shared(...)` and `total.add(n)` / `total.set(v)`, or pass it in as a parameter

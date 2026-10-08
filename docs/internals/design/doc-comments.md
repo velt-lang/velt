@@ -1,7 +1,7 @@
 # Design: doc comments
 
-Status: implemented in `velt doc` (issue #513, part of #512). The language server shows them in
-#514. User documentation: [Lexical structure](../../reference/lexical.md#comments-and-semicolons),
+Status: implemented in `velt doc` (issue #513, part of #512). The language server does not show
+them yet; that is #514. User documentation: [Lexical structure](../../reference/lexical.md#comments-and-semicolons),
 [`velt doc`](../../tooling/cli.md#velt-doc).
 
 ## Problem
@@ -28,10 +28,10 @@ A **doc comment** is one of:
 - a block of `///` lines on consecutive lines (not `////`).
 
 It documents the declaration that follows it when it ends on the line right above the
-declaration, or on the declaration's own line before it. Only whitespace, and whole lines of
-decorators (`@name(…)`), may come between. `export`, `async` and member modifiers (`static`,
-`get`, `readonly`, …) belong to the declaration. A comment that starts after code on its line is
-a trailing comment of that code, not a doc comment.
+declaration, or on the declaration's own line before it. Only whitespace, and plain comments on
+the lines in between, may come between (see below). `export`, `async` and member modifiers
+(`static`, `get`, `readonly`, …) belong to the declaration. A comment that starts after code on
+its line is a trailing comment of that code, not a doc comment.
 
 ```ts ignore
 /**
@@ -51,10 +51,26 @@ export function split(text: string, separator: string): string[] { … }
 export const MAX_SEPARATOR: i64 = 1024;
 ```
 
-Plain `//` and `/* */` comments are never documentation. A blank line between a comment and the
-declaration ends the association: a section comment followed by a blank line documents nothing.
-Only the closest comment counts: a `//` note between a doc comment and its declaration hides the
-doc comment.
+Plain `//` and `/* */` comments are never documentation. Plain comments on the lines between a
+doc comment and its declaration are skipped, as TypeScript does: lint and compiler directives
+sit there (`// eslint-disable-next-line`, `// @ts-expect-error`, `// prettier-ignore`), and the
+doc comment still documents the declaration.
+
+```ts ignore
+/** The default port. */
+// eslint-disable-next-line no-magic-numbers
+export const PORT: i64 = 8080;
+```
+
+A blank line between a comment and the declaration, or between a doc comment and the plain
+comments after it, ends the association: a section comment followed by a blank line documents
+nothing. **This differs from TypeScript**, which attaches a JSDoc comment across blank lines (and
+also reads `/*** … */` as JSDoc). Velt keeps the stricter rule because the module doc depends on
+it: the comment block at the top of a file documents the module exactly when a blank line
+follows it, so with TypeScript's rule a file's leading comment would document the first
+declaration as well. A blank line is also how a source file says that a comment is a section
+heading or a note, not documentation. Ported TypeScript whose JSDoc is separated from its
+declaration by a blank line loses that doc in `velt doc` until the blank line is removed.
 
 Comments are found by the lexer (`velt_syntax::comment_ranges`), so comment markers inside
 strings, templates, regular expressions and JSX text are never comments.
@@ -100,7 +116,7 @@ too. Without the blank line, the block documents the first declaration instead.
 - **`velt doc`** (and `velt doc --std`, the docs website) shows the rendered Markdown under each
   item: the text, then the sections of the table above, in that order. A deprecated item's name
   is struck through and labelled "deprecated".
-- **The editor** (#514): hover shows the same Markdown under the signature; completion items
+- **The editor** (planned, #514): hover shows the same Markdown under the signature; completion items
   show it when resolved; signature help shows the active parameter's `@param` text; deprecated
   items get the LSP `Deprecated` tag (struck through in completion lists).
 
@@ -116,7 +132,10 @@ mechanically: every `//` block that `velt doc` used as the documentation of an e
 declaration, an `extend` block or a public member became a `/** … */` block (one line when it
 fits in 100 columns). Comments at the top of files, section comments separated by a blank line,
 comments on private members and comments inside function bodies were left alone. The std API
-reference built from the converted sources is byte for byte the same as before. `///` blocks
+reference built from the converted sources is byte for byte the same as before (the doc texts
+were then corrected where they no longer matched the code). A test
+(`crates/velt_doc/tests/std_docs.rs`) keeps it that way: it fails when a declaration that
+`velt doc` documents has no doc comment while a plain comment ends right above it. `///` blocks
 (`std/package.vlt`, the `websocket` template) keep working unchanged; the `lib` template uses
 `/** */` with tags.
 

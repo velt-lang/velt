@@ -141,13 +141,14 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
     }
 }
 
-/// Array length, object member count, or string byte length; 0 for everything else.
+/// Array length, object member count, or string length (UTF-16 code units, like `length`); 0 for
+/// everything else.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_value_len(h: ValueHandle) -> u64 {
     match h.get() {
         Some(Value::Array(items)) => items.len() as u64,
         Some(Value::Object(obj)) => obj.len() as u64,
-        Some(Value::String(s)) => s.len() as u64,
+        Some(Value::String(s)) => crate::str::wtf8::count_units(s) as u64,
         _ => 0,
     }
 }

@@ -4,7 +4,8 @@
 //!
 //! Every statement is one line wrapped in its own `try` (errors print `error`, or the message
 //! where both sides agree on it), so the shrinker can drop statements independently. Inputs
-//! stay clear of the known std differences: regex subjects are ASCII without `\r` and patterns
+//! stay clear of the known std differences: regex subjects have no `\r` and no supplementary
+//! characters (JavaScript's non-`u` `.` and negated classes match half of a pair, #401), patterns
 //! can't match the empty string (bugs regex-line-terminators, regex-empty-after-match), `split`
 //! only uses patterns without groups (JS yields `undefined` for groups that didn't match).
 
@@ -63,7 +64,7 @@ const PORTS: [&str; 8] = ["", ":80", ":443", ":8080", ":65535", ":65536", ":0", 
 const SEGMENTS: [&str; 12] = [
     "a", "..", ".", "%2e", "%2E%2e", "a b", "é", "x%zz", "~u", "b;c", "", "A%2fB",
 ];
-const TEXT_CHARS: [&str; 24] = [
+const TEXT_CHARS: [&str; 25] = [
     "a",
     "Z",
     "0",
@@ -88,6 +89,7 @@ const TEXT_CHARS: [&str; 24] = [
     "\\n",
     "\\t",
     ",",
+    "😀",
 ];
 
 /// Characters for `host` / `hostname` setter values.

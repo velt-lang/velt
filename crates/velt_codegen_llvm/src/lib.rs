@@ -11,6 +11,8 @@
 //! - `types`: VIR type → LLVM type / ABI attribute mapping, constant and symbol spelling.
 //! - `module`: whole-program IR (extern declarations, functions, attribute groups).
 //! - `runtime`: known runtime functions (math intrinsics, memory effects, allocator results).
+//! - `strings`: inline fast paths for the hot runtime string functions (drop, `==`, `<`, one-byte
+//!   slices), called instead of the runtime function.
 //! - `statics`: read-only data, including relocated address slots (vtables).
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `debug`: `!dbg` metadata (CodeView on Windows, DWARF elsewhere) when the VIR carries
@@ -34,8 +36,11 @@ mod debug;
 mod function;
 mod llc;
 mod module;
+mod rounding;
 mod runtime;
 mod statics;
+mod string_compare;
+mod strings;
 mod target;
 mod types;
 mod units;

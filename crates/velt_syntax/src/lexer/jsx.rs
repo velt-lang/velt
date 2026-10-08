@@ -4,9 +4,10 @@
 //! values start with `JsxLt` directly.
 //!
 //! Inside a tag (`Mode::JsxTag`) names may contain `-`, strings have no backslash escapes and
-//! `{` opens an expression container. Between the tags (`Mode::JsxChildren`) everything up to
-//! the next `{` or `<` is one text token, cooked with React's whitespace rules (see
-//! [`clean_text`]) and HTML entities decoded.
+//! `{` opens an expression container; a `<` that does not start an attribute value opens the
+//! tag's type arguments (`Mode::JsxTypeArgs`, lexed as code up to the matching `>`). Between
+//! the tags (`Mode::JsxChildren`) everything up to the next `{` or `<` is one text token, cooked
+//! with React's whitespace rules (see [`clean_text`]) and HTML entities decoded.
 
 use super::entities::decode_entities;
 use super::{is_ident_continue, is_ident_start, Lexer, Mode, Payload, Tok};
@@ -30,10 +31,16 @@ impl Lexer<'_> {
                 Tok::LBrace
             }
             // An element as an attribute value: `<A icon=<Star /> />`.
-            b'<' => {
+            b'<' if self.toks.last().is_some_and(|t| t.kind == Tok::Eq) => {
                 self.pos += 1;
                 self.push_mode(Mode::JsxTag { closing: false });
                 Tok::JsxLt
+            }
+            // Type arguments of the tag: `<List<number> items={xs} />`.
+            b'<' => {
+                self.pos += 1;
+                self.push_mode(Mode::JsxTypeArgs);
+                Tok::Lt
             }
             b'/' if self.at(1) == b'>' => {
                 self.pos += 2;
@@ -58,6 +65,19 @@ impl Lexer<'_> {
                 return None;
             }
         };
+        Some(tok)
+    }
+
+    /// One token of a tag's type arguments: ordinary code, where `<` and `>` nest.
+    pub(super) fn jsx_type_args_token(&mut self) -> Option<Tok> {
+        let tok = self.next_token()?;
+        match tok {
+            Tok::Lt => self.push_mode(Mode::JsxTypeArgs),
+            Tok::Gt => {
+                self.pop_mode();
+            }
+            _ => {}
+        }
         Some(tok)
     }
 

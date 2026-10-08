@@ -19,10 +19,8 @@ pub(crate) struct Sel {
     pub guard: Option<hir::Expr>,
     /// Slots the case may select (for narrowing its body).
     pub touched: Vec<usize>,
-    /// Slots every value of which the case selects (for exhaustiveness).
+    /// Slots every value of which the case selects (for coverage).
     pub covered: Vec<usize>,
-    /// A literal the case compares with (duplicate detection).
-    pub lit: Option<hir::Lit>,
 }
 
 impl FnCx<'_, '_> {
@@ -62,16 +60,7 @@ impl FnCx<'_, '_> {
             },
             // A union value compares with any value `===` accepts (`case y:` with `y: "y"`).
             (ScrutKind::Union, None) => self.guard_sel(s, test),
-            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf, None) => {
-                self.cx.err(
-                    format!(
-                        "`case` values must be literals when switching on `{}`",
-                        s.what
-                    ),
-                    test.span,
-                );
-                self.never_sel(s, test.span)
-            }
+            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf, None) => self.key_guard_sel(s, test),
             (ScrutKind::Plain, None) => self.guard_sel(s, test),
         }
     }
@@ -128,7 +117,6 @@ impl FnCx<'_, '_> {
             guard: None,
             touched: hits.clone(),
             covered: hits,
-            lit: None,
         })
     }
 
@@ -148,7 +136,6 @@ impl FnCx<'_, '_> {
                 guard: None,
                 touched: vec![],
                 covered: vec![],
-                lit: Some(hir::Lit::Null),
             },
         }
     }
@@ -207,7 +194,7 @@ impl FnCx<'_, '_> {
         let Some((def, _)) = self.cx.union_def(inner) else {
             return self.never_sel(s, span);
         };
-        let lp = self.pat(P::Lit(lit.clone()), m, span);
+        let lp = self.pat(P::Lit(lit), m, span);
         let mut pat = self.pat(
             P::Variant {
                 def,
@@ -228,7 +215,6 @@ impl FnCx<'_, '_> {
             guard: None,
             touched,
             covered: vec![],
-            lit: Some(lit),
         }
     }
 
@@ -249,13 +235,12 @@ impl FnCx<'_, '_> {
                 guard: None,
                 touched: vec![],
                 covered: vec![],
-                lit: None,
             };
         }
         let Some(lit) = self.pat_lit(l, inner, span) else {
             return self.never_sel(s, span);
         };
-        let mut pat = self.pat(P::Lit(lit.clone()), inner, span);
+        let mut pat = self.pat(P::Lit(lit), inner, span);
         if inner != sty {
             pat = self.pat(P::Some(Box::new(pat)), sty, span);
         }
@@ -264,7 +249,6 @@ impl FnCx<'_, '_> {
             guard: None,
             touched: vec![],
             covered: vec![],
-            lit: Some(lit),
         }
     }
 
@@ -290,8 +274,81 @@ impl FnCx<'_, '_> {
             guard: Some(guard),
             touched: (0..s.slots.len()).collect(),
             covered: vec![],
-            lit: None,
         }
+    }
+
+    /// `case v:` with a value that is not a literal on a discriminant (`switch (s.kind)`) or on
+    /// `typeof x`, as TypeScript accepts it: the union value is bound, and its discriminant or
+    /// tag (a `match` on the member) is compared with `v` in a guard. It narrows nothing.
+    fn key_guard_sel(&mut self, s: &Scrut, test: &ast::Expr) -> Sel {
+        let (ty, span) = (s.expr.ty, test.span);
+        let mode = if self.cx.is_copy(ty) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        };
+        let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
+        let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let Some(key) = self.slot_key(s, cur, span) else {
+            self.cx.err(
+                format!(
+                    "`case` values must be literals when switching on `{}`, whose values have different types",
+                    s.what
+                ),
+                span,
+            );
+            self.expr(test, None, Want::Borrow);
+            return self.never_sel(s, span);
+        };
+        let v = self.expr(test, Some(key.ty), Want::Borrow);
+        let v = self.try_coerce(v, key.ty).unwrap_or_else(|v| v);
+        let guard = self.eq_values(key, v, span);
+        Sel {
+            pat: self.pat(P::Binding(l, mode), ty, span),
+            guard: Some(guard),
+            touched: (0..s.slots.len()).collect(),
+            covered: vec![],
+        }
+    }
+
+    /// The discriminant or `typeof` tag of `cur` (a value of the scrutinee's type): a `match`
+    /// over the slots. `None` when the discriminants have different types.
+    fn slot_key(&mut self, s: &Scrut, cur: hir::Expr, span: Span) -> Option<hir::Expr> {
+        let mut arms = vec![];
+        for slot in &s.slots {
+            let body = match (&s.kind, slot.member, slot.variant) {
+                (ScrutKind::Discriminant(vals), _, Some(v)) => {
+                    self.base_lit_expr(&vals[v as usize], span)
+                }
+                (ScrutKind::TypeOf, Some(m), _) => self.str_lit(self.cx.typeof_tag(m), span),
+                (ScrutKind::TypeOf, None, _) => self.str_lit("object", span),
+                _ => return None,
+            };
+            arms.push(hir::Arm {
+                pat: slot.pat.clone(),
+                guard: None,
+                body,
+            });
+        }
+        let ty = arms.first()?.body.ty;
+        if arms.iter().any(|a| a.body.ty != ty) {
+            return None;
+        }
+        if s.partial {
+            // Members flow narrowing ruled out.
+            let msg = self.str_lit("unreachable switch case", span);
+            let never = self.cx.ty.never;
+            arms.push(hir::Arm {
+                pat: self.pat(P::Wildcard, s.expr.ty, span),
+                guard: None,
+                body: self.intrinsic(hir::Intrinsic::Panic, vec![msg], never, span),
+            });
+        }
+        let m = hir::ExprKind::Match {
+            scrutinee: Box::new(cur),
+            arms,
+        };
+        Some(self.mk(m, ty, span))
     }
 
     /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
@@ -328,7 +385,6 @@ impl FnCx<'_, '_> {
             guard: Some(self.mk(hir::ExprKind::Lit(hir::Lit::Bool(false)), b, span)),
             touched: vec![],
             covered: vec![],
-            lit: None,
         }
     }
 

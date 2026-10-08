@@ -1,0 +1,12 @@
+// A union variable that a closure assigns is not narrowed by `typeof`: a call between the check
+// and the use may run the closure (#435). Narrowed, `u.length` would read a number as a string.
+function main() {
+  let u: string | number = "text";
+  const setNumber = () => {
+    u = 1;
+  };
+  if (typeof u === "string") {
+    setNumber();
+    console.log(u.length);
+  }
+}

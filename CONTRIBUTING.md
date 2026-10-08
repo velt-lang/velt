@@ -22,7 +22,10 @@ cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt
 ```
 
 Builds are large. Point `CARGO_TARGET_DIR` at a disk with room if needed; `VELT_GOLDEN_WORK`
-moves the end-to-end tests' build directory the same way.
+moves the end-to-end tests' build directories the same way (the goldens build in it, and the
+LLVM, wasm, playground, panic, debugger and debug-info tests in subdirectories of it).
+Debug builds of the compiler carry line tables only (file and line in backtraces and panics);
+set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a debugger.
 
 ## Testing
 
@@ -117,8 +120,10 @@ contract document in the same change.
 ## Proposing a language change
 
 Velt's rules (see [the Reference](docs/reference/README.md#the-velt-reference)): adopt
-TypeScript's best parts and never JavaScript's bug sources; one way of doing things; add
-something that is not TypeScript only where TypeScript can't express it at native speed.
+TypeScript's best parts and never JavaScript's bug sources; one way of doing things; valid
+TypeScript runs as it does in Node, and Velt adds its own opt-in features wherever they make
+programs faster. Velt is a native backend language, not a way to compile to JavaScript, so a
+proposal for a Velt-only feature is welcome when it shows the speed it buys.
 
 1. **Open an issue** describing the problem, with real code that is awkward or impossible today.
 2. **Write a design note** for anything beyond a small fix, in the style of
@@ -165,6 +170,11 @@ sccache --locked`, then `export RUSTC_WRAPPER=sccache` (or `[build] rustc-wrappe
 your `~/.cargo/config.toml`). It caches the dependencies, which compile the same everywhere; the
 workspace crates build incrementally as before.
 
+Building in WSL on Windows: keep the build directory and temporary files on the Windows disk you
+build on (`/mnt/d/...`, with `TMPDIR` there too), not in the WSL home directory. WSL's own
+filesystem is a disk image on the system drive that grows with every build and never shrinks on
+its own.
+
 ## Commits and pull requests
 
 Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
@@ -184,6 +194,13 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
   links or co-author trailers, in the description or in your commits.
+- **Dependent changes** go in a stack of pull requests (the
+  [gh-stack](https://github.com/github/gh-stack) extension: `gh extension install
+  github/gh-stack`). Start one with `gh stack init`, `gh stack add` and `gh stack submit`, or join
+  existing pull requests with `gh stack link <bottom> ... <top>`; `gh stack sync` rebases the
+  layers. Each layer gets its own CI and review, and when the bottom one merges the next is
+  retargeted to `main`. Changes that don't depend on each other stay separate pull requests, so
+  the merge queue can test them in parallel.
 - Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
   language semantics need a maintainer's review (see `.github/CODEOWNERS`).
 

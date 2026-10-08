@@ -10,6 +10,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::untyped;
+use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
@@ -49,7 +50,7 @@ pub(crate) fn want_of(mode: PassMode) -> Want {
 }
 
 /// Does this argument take its type from the parameter (checked in the second round)?
-fn deferred(e: &ast::Expr) -> bool {
+pub(crate) fn deferred(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Null) | ast::ExprKind::Arrow { .. } => true,
         ast::ExprKind::Array(xs) => xs.is_empty(),
@@ -114,10 +115,11 @@ impl FnCx<'_, '_> {
         let mut context = slots.clone();
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
-            self.cx.match_ty(c.ret, e, &mut context);
+            self.cx.match_context(c.ret, e, &mut context);
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {
+            self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
@@ -261,7 +263,7 @@ impl FnCx<'_, '_> {
         for i in order {
             let p = &c.params[i];
             if untyped(&args[i]) {
-                self.number_slot_from_callback(c, p.ty, slots);
+                self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
             let known: Vec<Option<TyId>> =
@@ -289,11 +291,70 @@ impl FnCx<'_, '_> {
             .collect()
     }
 
+    /// Slots the arguments fixed to a type narrower than the expected result's take the expected
+    /// type when the result would not convert otherwise and every argument converts to it:
+    /// `const ns: Named[] = wrap(new C())` instantiates `T = Named` (#268).
+    fn prefer_context(
+        &mut self,
+        c: &Callable,
+        slots: &mut [Option<TyId>],
+        context: &[Option<TyId>],
+        args: &[hir::Expr],
+        exp: TyId,
+    ) {
+        let ret = self.cx.ty.subst_known(c.ret, slots);
+        if self.converts_to(ret, exp) {
+            return;
+        }
+        let mut wider = slots.to_vec();
+        for (k, (s, ctx)) in slots.iter().zip(context).enumerate() {
+            let (Some(at), Some(ct)) = (*s, *ctx) else {
+                continue;
+            };
+            let unbounded = c.bounds.get(k).is_none_or(|b| b.is_empty());
+            // An integer slot may become a float one: the arguments are checked below.
+            let converts =
+                self.converts_to(at, ct) || (self.cx.ty.is_int(at) && self.float_core(ct));
+            if at != ct && unbounded && !self.cx.ty.has_error(ct) && converts {
+                wider[k] = Some(ct);
+            }
+        }
+        if wider == slots {
+            return;
+        }
+        for (h, p) in args.iter().zip(&c.params) {
+            let target = self.cx.ty.subst_known(p.ty, &wider);
+            let number = self.is_inferred_int(h) && self.float_core(target);
+            if !self.converts_to(h.ty, target)
+                && !number
+                && !(is_fresh(h) && self.widens(h.ty, target))
+            {
+                return;
+            }
+        }
+        slots.copy_from_slice(&wider);
+    }
+
+    /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
+    /// JS number argument converts)?
+    fn float_core(&self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        self.cx.ty.is_float(t)
+    }
+
     /// An untyped number argument (`0` in `xs.reduce((a, x) => a + x, 0)`) whose parameter is
     /// a still unknown slot `S`: when a callback parameter also has `S` next to a known number
     /// type, `S` is that type (`usize` for a `usize[]`), which is what TS's single `number`
-    /// gives; otherwise the literal's default type decides as usual.
-    fn number_slot_from_callback(&mut self, c: &Callable, pty: TyId, slots: &mut [Option<TyId>]) {
+    /// gives; otherwise the literal's default type decides as usual. A `float` literal (`0.0`)
+    /// only takes a float type: `shapes.reduce((acc, s) => acc + area(s), 0.0)` must not take
+    /// the callback's `i: i64` index for the accumulator.
+    fn number_slot_from_callback(
+        &mut self,
+        c: &Callable,
+        pty: TyId,
+        slots: &mut [Option<TyId>],
+        float: bool,
+    ) {
         let TyKind::Param(s) = *self.cx.ty.kind(pty) else {
             return;
         };
@@ -311,9 +372,9 @@ impl FnCx<'_, '_> {
                 .iter()
                 .map(|t| self.cx.ty.subst_known(*t, slots))
                 .collect();
-            let known = known
-                .into_iter()
-                .find(|t| *t != pty && self.cx.ty.is_numeric(*t));
+            let known = known.into_iter().find(|t| {
+                *t != pty && self.cx.ty.is_numeric(*t) && (!float || self.cx.ty.is_float(*t))
+            });
             if let Some(n) = known {
                 slots[s as usize] = Some(n);
                 return;
@@ -440,10 +501,9 @@ impl FnCx<'_, '_> {
             [one] => format!("type parameter {one}"),
             [init @ .., last] => format!("type parameters {} and {last}", init.join(", ")),
         };
+        let note = uninferred_note(c);
         self.cx.error(
-            Diagnostic::error(format!("cannot infer {list} of {}", c.what), span).with_note(
-                "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result",
-            ),
+            Diagnostic::error(format!("cannot infer {list} of {}", c.what), span).with_note(note),
         );
     }
 
@@ -483,4 +543,39 @@ impl FnCx<'_, '_> {
             span,
         );
     }
+}
+
+/// Does the untyped number expression `e` contain a float literal (`0.0`, `-(1 + 0.5)`)?
+fn has_float_lit(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary { expr, .. } | ast::ExprKind::Paren(expr) => has_float_lit(expr),
+        ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
+        _ => false,
+    }
+}
+
+/// How to fix a call whose type arguments nothing inferred. A JSON decoder's type is what the
+/// data is checked against (TypeScript's `any` from `res.json()` has no Velt counterpart); a type
+/// that only the result mentions is written at the call or on the variable receiving it.
+fn uninferred_note(c: &Callable) -> String {
+    if c.what == "method `json`" || c.what == "`JSON.parse`" {
+        let call = if c.what == "method `json`" {
+            "await res.json"
+        } else {
+            "JSON.parse"
+        };
+        let arg = if c.params.is_empty() { "" } else { "text" };
+        return format!(
+            "Velt has no `any`: name the type the JSON must have (the data is checked against \
+             it): `{call}<User[]>({arg})`, or annotate the variable: \
+             `const users: User[] = {call}({arg})`"
+        );
+    }
+    if c.params.is_empty() {
+        return "only the result's type mentions it: write it at the call, e.g. `f<User>()`, or \
+                annotate the variable receiving the result"
+            .to_string();
+    }
+    "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result".to_string()
 }

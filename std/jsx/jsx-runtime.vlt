@@ -3,7 +3,7 @@
 // factories. Includes the SSR precompile exports, so static markup compiles to constant strings.
 
 export { Element, RenderError } from "velt:jsx/node";
-export type { Child, AttrValue, Text } from "velt:jsx/node";
+export type { Child, AttrValue, Style, Text } from "velt:jsx/node";
 export type { IntrinsicElements, ElementChildrenAttribute } from "velt:jsx/intrinsic";
 export {
   jsx,

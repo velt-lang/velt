@@ -1,6 +1,7 @@
-//! Handlers that need more than one analysis lookup: code actions (fixes → workspace edits tied to
-//! the client's diagnostics, "fix all in file" variants and `source.fixAll`) and workspace symbols
-//! (every analyzed program plus the index of the workspace folders).
+//! Handlers that need more than one analysis lookup: code actions (fixes, imports of unknown
+//! names included → workspace edits tied to the client's diagnostics, "fix all in file" variants
+//! and `source.fixAll`) and workspace symbols (every analyzed program plus the index of the
+//! workspace folders).
 
 use std::collections::HashMap;
 
@@ -32,11 +33,15 @@ impl Server<'_> {
                 dir,
             ));
         }
-        let analysis = self.analysis(uri)?;
+        let (lo, hi) = {
+            let index = LineIndex::new(self.analysis(uri)?.text());
+            (index.offset(p.range.start), index.offset(p.range.end))
+        };
+        let import_fixes = self.import_fixes(uri, (lo, hi));
+        let analysis = self.analyses.get(uri)?;
         let index = LineIndex::new(analysis.text());
-        let lo = index.offset(p.range.start);
-        let hi = index.offset(p.range.end);
-        let fixes = code_actions::fixes(analysis, lo, hi);
+        let mut fixes = code_actions::fixes(analysis, lo, hi);
+        fixes.extend(import_fixes);
         let all_like = code_actions::fix_all_like(analysis, &fixes);
         // Quick fixes unless other kinds are asked for; `source.fixAll` only when asked for
         // (editors request it on save or from a menu, not for the light bulb).

@@ -84,7 +84,8 @@ fn completion_and_hover_come_from_the_schema() {
     client.shutdown();
 }
 
-/// `"` triggers completion for manifest versions; in a program it offers nothing.
+/// `"` triggers completion for manifest versions; in a program it offers nothing outside module
+/// specifiers.
 #[test]
 fn a_quote_triggers_nothing_in_a_program() {
     let mut client = Client::start();

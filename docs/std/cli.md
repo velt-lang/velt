@@ -6,7 +6,7 @@ from `velt:process`.
 
 - `new ArgParser(program, description = "")`: every parser has `-h, --help`, which you can
   redeclare.
-- Builder methods consume the parser and return it, so chain them:
+- Builder methods change the parser and return it (the same object), so they chain:
   - `.flag(name, { short?, help? })`
   - `.option(name, { short?, default?, help?, valueName? })`
   - `.positional(name, help = "")`

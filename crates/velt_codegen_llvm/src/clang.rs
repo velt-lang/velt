@@ -7,9 +7,9 @@
 //! Linux distributions often ship an older default `clang` (Ubuntu 20.04: 10, 22.04: 14) next
 //! to a newer `clang-NN`. The result is cached per process.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use crate::target::Target;
@@ -176,11 +176,6 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
              use `--backend cranelift`"
         )
     };
-    let dir = TempDir::new()?;
-    let ll = dir.path.join("module.ll");
-    let obj = dir.path.join("module.o");
-    std::fs::write(&ll, ir)
-        .map_err(|e| format!("codegen: cannot write `{}`: {e}", ll.display()))?;
     let mut cmd = Command::new(&clang);
     cmd.arg(if optimize { opt_flag() } else { "-O0" })
         .args(["-c", "-x", "ir", "-Wno-override-module"])
@@ -189,17 +184,52 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     if target.pic() {
         cmd.arg("-fPIC");
     }
-    cmd.arg(&ll).arg("-o").arg(&obj);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
+    cmd.args(["-", "-o", "-"]);
+    run_piped(cmd, ir.as_bytes(), "clang")
+}
+
+/// Run an LLVM tool that reads its input from stdin and writes its output to stdout (`-` for
+/// both), and return the output. Nothing goes through files: a scratch file just written by a
+/// tool could be unreadable for a moment on Windows (another process, a virus scanner, still
+/// holding it), and a scratch path can collide with one a crashed process left behind.
+pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenResult<Vec<u8>> {
+    let program = cmd.get_program().to_owned();
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "codegen: cannot run `{}`: {e}",
+                Path::new(&program).display()
+            )
+        })?;
+    let mut stdin = child.stdin.take().expect("ICE: stdin is piped");
+    // Feed the input from another thread while the output is read here: a tool may write
+    // before it has read everything, and both pipes have small buffers.
+    let (out, fed) = std::thread::scope(|scope| {
+        let feeder = scope.spawn(move || stdin.write_all(input));
+        let out = child.wait_with_output();
+        let fed = feeder.join().expect("ICE: the stdin feeder panicked");
+        out.map(|out| (out, fed))
+    })
+    .map_err(|e| {
+        format!(
+            "codegen: cannot run `{}`: {e}",
+            Path::new(&program).display()
+        )
+    })?;
     if !out.status.success() {
         bail!(
-            "codegen: clang failed on the generated IR (this is a compiler bug):\n{}",
+            "codegen: {name} failed on the generated IR (this is a compiler bug):\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    std::fs::read(&obj).map_err(|e| format!("codegen: cannot read `{}`: {e}", obj.display()))
+    // A tool that failed may stop reading: then its error above is reported, not the broken
+    // pipe. One that succeeded without reading all of its input compiled only part of it.
+    fed.map_err(|e| format!("codegen: cannot write the IR to {name}: {e}"))?;
+    Ok(out.stdout)
 }
 
 /// clang's optimization flag for release builds: `-O3`, or `$VELT_LLVM_OPT` (`1`, `2`, `3`, `s`
@@ -221,35 +251,6 @@ fn parse_opt_level(level: &str) -> Option<&'static str> {
         "z" => "-Oz",
         _ => return None,
     })
-}
-
-/// A private scratch directory, removed on drop.
-pub(crate) struct TempDir {
-    pub path: PathBuf,
-}
-
-impl TempDir {
-    /// Create a fresh directory under the system temp dir.
-    pub fn new() -> CodegenResult<TempDir> {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "velt-llvm-{}-{}-{nanos}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&path)
-            .map_err(|e| format!("codegen: cannot create `{}`: {e}", path.display()))?;
-        Ok(TempDir { path })
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
 }
 
 #[cfg(test)]

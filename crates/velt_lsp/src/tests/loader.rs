@@ -1,6 +1,7 @@
 //! A minimal [`ProgramLoader`] for protocol tests: relative imports only (`./x` → `x.vlt` next to
 //! the importer) and relative JSX runtimes (`// @jsxImportSource ./ui` → `ui/jsx-runtime.vlt`),
-//! sources from the overlay or the disk, no std or packages. The real loader lives in
+//! sources from the overlay or the disk, no std or packages. [`StdLoader`] adds `velt:x` imports
+//! from a test's own std root (no prelude) and lists its modules. The real loader lives in
 //! `veltc` (which depends on this crate) and has its own LSP integration test there.
 
 use std::collections::HashMap;
@@ -22,62 +23,112 @@ impl ProgramLoader for TestLoader {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
-        let read = |p: &Path| {
-            overlay
-                .get(p)
-                .cloned()
-                .or_else(|| std::fs::read_to_string(p).ok())
-        };
-        let src = read(root).ok_or_else(|| format!("cannot read `{}`", root.display()))?;
-        let mut paths = vec![root.to_path_buf()];
-        let mut modules = vec![parse(sm, root, src, "main".into(), diags)];
-        let mut next = 0;
-        while next < modules.len() {
-            let dir = paths[next].parent().unwrap_or(Path::new("")).to_path_buf();
-            // `(spec, span, is the JSX runtime)`: a file may also import its runtime by name.
-            let mut specs: Vec<_> = import_specs(&modules[next].ast)
-                .into_iter()
-                .map(|(spec, span)| (spec, span, false))
-                .collect();
-            let runtime = modules[next].ast.jsx_import_source.as_ref();
-            if let Some(source) = runtime {
-                specs.push((
-                    format!("{source}/jsx-runtime"),
-                    modules[next].ast.span,
-                    true,
-                ));
-            }
-            for (spec, span, is_runtime) in specs {
-                let Some(rel) = spec.strip_prefix("./") else {
-                    continue;
-                };
-                let file = dir.join(format!("{rel}.vlt"));
-                let index = match paths.iter().position(|p| *p == file) {
-                    Some(i) => i,
-                    None => match read(&file) {
-                        Some(src) => {
-                            paths.push(file.clone());
-                            modules.push(parse(sm, &file, src, rel.into(), diags));
-                            modules.len() - 1
-                        }
-                        None => {
-                            let msg = format!("cannot find module `{spec}`");
-                            diags.push(Diagnostic::error(msg, span));
-                            continue;
-                        }
-                    },
-                };
-                let canonical = modules[index].path.clone();
-                if is_runtime {
-                    modules[next].jsx_runtime = Some(canonical);
-                } else {
-                    modules[next].imports.push((spec, canonical));
-                }
-            }
-            next += 1;
-        }
-        Ok(LoadedProgram { modules, root: 0 })
+        load(root, overlay, sm, diags, None)
     }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        resolve(spec, from, None)
+    }
+}
+
+/// [`TestLoader`] plus `velt:x` imports from the std root it holds.
+pub struct StdLoader(pub PathBuf);
+
+impl ProgramLoader for StdLoader {
+    fn load(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
+        load(root, overlay, sm, diags, Some(&self.0))
+    }
+
+    fn module_index(&self, _from: &Path) -> Vec<crate::ModuleEntry> {
+        crate::std_module_entries(&self.0)
+    }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        resolve(spec, from, Some(&self.0))
+    }
+}
+
+/// The file `spec` names from `from`, as [`load`] resolves it, if it exists.
+fn resolve(spec: &str, from: &Path, std_root: Option<&Path>) -> Option<PathBuf> {
+    let file = if let Some(rel) = spec.strip_prefix("./") {
+        from.parent()?.join(format!("{rel}.vlt"))
+    } else {
+        std_root?.join(format!("{}.vlt", spec.strip_prefix("velt:")?))
+    };
+    file.is_file().then_some(file)
+}
+
+fn load(
+    root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+    sm: &mut SourceMap,
+    diags: &mut Diagnostics,
+    std_root: Option<&Path>,
+) -> Result<LoadedProgram, String> {
+    let read = |p: &Path| {
+        overlay
+            .get(p)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(p).ok())
+    };
+    let src = read(root).ok_or_else(|| format!("cannot read `{}`", root.display()))?;
+    let mut paths = vec![root.to_path_buf()];
+    let mut modules = vec![parse(sm, root, src, "main".into(), diags)];
+    let mut next = 0;
+    while next < modules.len() {
+        let dir = paths[next].parent().unwrap_or(Path::new("")).to_path_buf();
+        // `(spec, span, is the JSX runtime)`: a file may also import its runtime by name.
+        let mut specs: Vec<_> = import_specs(&modules[next].ast)
+            .into_iter()
+            .map(|(spec, span)| (spec, span, false))
+            .collect();
+        let runtime = modules[next].ast.jsx_import_source.as_ref();
+        if let Some(source) = runtime {
+            specs.push((
+                format!("{source}/jsx-runtime"),
+                modules[next].ast.span,
+                true,
+            ));
+        }
+        for (spec, span, is_runtime) in specs {
+            let (file, canonical) = if let Some(rel) = spec.strip_prefix("./") {
+                (dir.join(format!("{rel}.vlt")), rel.to_string())
+            } else if let (Some(rel), Some(std)) = (spec.strip_prefix("velt:"), std_root) {
+                (std.join(format!("{rel}.vlt")), format!("std/{rel}"))
+            } else {
+                continue;
+            };
+            let index = match paths.iter().position(|p| *p == file) {
+                Some(i) => i,
+                None => match read(&file) {
+                    Some(src) => {
+                        paths.push(file.clone());
+                        modules.push(parse(sm, &file, src, canonical, diags));
+                        modules.len() - 1
+                    }
+                    None => {
+                        let msg = format!("cannot find module `{spec}`");
+                        diags.push(Diagnostic::error(msg, span));
+                        continue;
+                    }
+                },
+            };
+            let canonical = modules[index].path.clone();
+            if is_runtime {
+                modules[next].jsx_runtime = Some(canonical);
+            } else {
+                modules[next].imports.push((spec, canonical));
+            }
+        }
+        next += 1;
+    }
+    Ok(LoadedProgram { modules, root: 0 })
 }
 
 fn parse(

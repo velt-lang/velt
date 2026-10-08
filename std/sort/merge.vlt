@@ -1,0 +1,160 @@
+// Building blocks of the stable sort (std/sort/stable.vlt): insertion sort, run reversal and
+// merging sorted runs through a scratch buffer.
+//
+// `x` goes before `y` when `neg(cmp(x, y))`. Elements move between an array and a scratch
+// buffer of the same length with `__intrinsic_array_move` (raw bits: no clone, no drop), so
+// at any time each element is owned by exactly one of the two arrays and the slot it left
+// holds a stale copy that is only ever overwritten.
+
+// Runs shorter than this are insertion sorted before merging.
+const MERGE_BLOCK: usize = 16;
+
+/** Insertion sort of xs[lo..hi) whose prefix xs[lo..start) is already sorted. Stable. */
+export function insertionTail<T, C>(
+  xs: T[],
+  lo: usize,
+  start: usize,
+  hi: usize,
+  cmp: (x: T, y: T) => C,
+  neg: (c: C) => bool,
+) {
+  for (let i = start; i < hi; i++) {
+    let j = i;
+    while (j > lo && neg(cmp(xs[j], xs[j - 1]))) {
+      __intrinsic_array_swap(xs, j, j - 1);
+      j--;
+    }
+  }
+}
+
+export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
+  if (hi <= lo) {
+    return;
+  }
+  let a = lo;
+  let b = hi - 1;
+  while (a < b) {
+    __intrinsic_array_swap(xs, a, b);
+    a++;
+    b--;
+  }
+}
+
+/** Moves src[lo..hi) to dst[lo..hi). */
+export function moveRange<T>(dst: T[], src: T[], lo: usize, hi: usize) {
+  if (lo < hi) {
+    __intrinsic_array_move(dst, lo, src, lo, hi - lo);
+  }
+}
+
+/**
+ * Merges the sorted runs of xs whose boundaries are `runs` (run k is xs[runs[k]..runs[k + 1]))
+ * into one, ping-ponging with `scratch` (same length; its slots are stale copies or free).
+ * `runs` is consumed.
+ */
+export function mergeRuns<T, C>(
+  xs: T[],
+  scratch: T[],
+  runs: usize[],
+  cmp: (x: T, y: T) => C,
+  neg: (c: C) => bool,
+) {
+  if (runs.length <= 2) {
+    return;
+  }
+  let inScratch = false;
+  while (runs.length > 2) {
+    if (inScratch) {
+      mergePass(scratch, xs, runs, cmp, neg);
+    } else {
+      mergePass(xs, scratch, runs, cmp, neg);
+    }
+    inScratch = !inScratch;
+  }
+  if (inScratch) {
+    moveRange(xs, scratch, runs[0], runs[1]);
+  }
+}
+
+/**
+ * Stable merge sort of xs[lo..hi): insertion-sorted blocks, then `mergeRuns`. The fallback of
+ * the quicksort when its pivots keep coming out bad: O(n log n) whatever the input.
+ */
+export function mergeSortRange<T, C>(
+  xs: T[],
+  scratch: T[],
+  lo: usize,
+  hi: usize,
+  cmp: (x: T, y: T) => C,
+  neg: (c: C) => bool,
+) {
+  const runs: usize[] = __intrinsic_array_with_capacity((hi - lo) / MERGE_BLOCK + 2);
+  runs.push(lo);
+  let a = lo;
+  while (a < hi) {
+    const b = a + MERGE_BLOCK < hi ? a + MERGE_BLOCK : hi;
+    insertionTail(xs, a, a + 1, b, cmp, neg);
+    runs.push(b);
+    a = b;
+  }
+  mergeRuns(xs, scratch, runs, cmp, neg);
+}
+
+// One merge pass: each pair of neighbouring runs of `src` is merged into the same range of
+// `dst` (an odd last run is moved over), and `runs` keeps every other boundary.
+function mergePass<T, C>(
+  src: T[],
+  dst: T[],
+  runs: usize[],
+  cmp: (x: T, y: T) => C,
+  neg: (c: C) => bool,
+) {
+  const last = runs.length - 1;
+  let w: usize = 1;
+  let r: usize = 0;
+  while (r + 2 <= last) {
+    mergeTwo(src, dst, runs[r], runs[r + 1], runs[r + 2], cmp, neg);
+    runs[w] = runs[r + 2];
+    w++;
+    r += 2;
+  }
+  if (r < last) {
+    moveRange(dst, src, runs[r], runs[last]);
+    runs[w] = runs[last];
+    w++;
+  }
+  __intrinsic_array_truncate(runs, w);
+}
+
+// Merges the sorted runs src[a..m) and src[m..b) into dst[a..b); on ties the left run goes
+// first. Every element is moved exactly once whatever the comparator answers.
+function mergeTwo<T, C>(
+  src: T[],
+  dst: T[],
+  a: usize,
+  m: usize,
+  b: usize,
+  cmp: (x: T, y: T) => C,
+  neg: (c: C) => bool,
+) {
+  let i = a;
+  let j = m;
+  let k = a;
+  // Runs already in order (common for partly sorted input) are moved over as they are.
+  if (neg(cmp(src[m], src[m - 1]))) {
+    while (i < m && j < b) {
+      const right = neg(cmp(src[j], src[i]));
+      __intrinsic_array_move(dst, k, src, right ? j : i, 1);
+      const step = right as usize;
+      j += step;
+      i += 1 - step;
+      k++;
+    }
+  }
+  if (i < m) {
+    __intrinsic_array_move(dst, k, src, i, m - i);
+  }
+  // The rest of the right run is already in place (k == j once the left run is used up, and
+  // nothing is left of it otherwise).
+  moveRange(dst, src, j, b);
+}

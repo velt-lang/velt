@@ -1,0 +1,34 @@
+// An intersection distributes over a union: `(Circle | Square) & { id: string }` is
+// `(Circle & { id: string }) | (Square & { id: string })`, a discriminated union that narrows
+// on `kind` as usual, and `& { kind: "circle" }` picks one member.
+
+type Circle = { kind: "circle"; radius: number };
+type Square = { kind: "square"; side: number };
+type Shape = (Circle | Square) & { id: string };
+type JustCircles = Shape & { kind: "circle" };
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case "circle":
+      return 3 * s.radius * s.radius;
+    case "square":
+      return s.side * s.side;
+  }
+}
+
+function idOf(c: (Circle & { id: string }) | null): string {
+  return c === null ? "none" : c.id;
+}
+
+function main() {
+  const shapes: Shape[] = [
+    { kind: "circle", radius: 2, id: "c1" },
+    { kind: "square", side: 3, id: "s1" },
+  ];
+  for (const s of shapes) {
+    console.log(s.id, s.kind, area(s));
+  }
+  const c: JustCircles = { kind: "circle", radius: 1, id: "c2" };
+  console.log(JSON.stringify(c), area(c));
+  console.log(idOf(c), idOf(null));
+}

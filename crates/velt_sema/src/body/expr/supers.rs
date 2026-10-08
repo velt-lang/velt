@@ -10,10 +10,10 @@ use velt_common::{Diagnostic, Span};
 
 impl FnCx<'_, '_> {
     /// `super(args)`: the base class constructor on `this`, a root-level statement of a
-    /// constructor.
+    /// constructor (`body::ctor`). A base class without a constructor makes it `Lit(Unit)`.
     pub(super) fn super_ctor_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let base = self.this_base();
-        // Taken: a `super(...)` among the arguments is not the first statement.
+        // Taken: a `super(...)` among the arguments is not a statement of its own.
         let ok = std::mem::take(&mut self.f.super_ok);
         let Some(base) = base.filter(|_| ok) else {
             self.misplaced_super(base.is_some(), span);
@@ -38,7 +38,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(_, a) => a.clone(),
             _ => bargs,
         };
-        let c = self.fn_callable(ctor, "the base class constructor".into());
+        let c = self.fn_callable(ctor, "the base class constructor".into(), span);
         let slots = ctor_args.iter().map(|t| Some(*t)).collect();
         let ck = self.check_call(&c, slots, args, None, span);
         // The arguments run before the base constructor: `this` is usable after it.
@@ -64,6 +64,17 @@ impl FnCx<'_, '_> {
     /// The error for a `super(args)` that is not a root-level statement of a derived class's
     /// constructor (or is a second one), saying where it is.
     fn misplaced_super(&mut self, derived: bool, span: Span) {
+        if self
+            .f
+            .super_silent
+            .iter()
+            .any(|s| s.lo <= span.lo && span.hi <= s.hi)
+        {
+            // Its `if` was reported as a whole (`body::ctor`).
+            self.f.super_called = true;
+            self.f.before_super = false;
+            return;
+        }
         let msg = if self.f.kind == FnKind::Closure {
             "`super(...)` cannot be called inside a closure; call it as a statement of the constructor's body"
         } else if !derived {
@@ -73,7 +84,7 @@ impl FnCx<'_, '_> {
         } else if self.f.super_called {
             "`super(...)` is called once, as a statement of the constructor's body"
         } else if self.f.stmt_depth > 1 {
-            "`super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop"
+            "`super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips"
         } else {
             "`super(...)` must be a statement of its own in the constructor's body, not part of an expression"
         };
@@ -89,6 +100,8 @@ impl FnCx<'_, '_> {
         if self.f.kind == FnKind::Ctor {
             self.f.super_called = true;
             self.f.before_super = false;
+        } else if let Some(ctor) = self.outer.iter_mut().rev().find(|f| f.kind == FnKind::Ctor) {
+            ctor.super_called = true;
         }
     }
 

@@ -40,6 +40,13 @@ pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) 
     (*s).push_str(&*t);
 }
 
+/// `Buffer.byteLength(s)`: the length of `s` in UTF-8, which is its stored byte length (a lone
+/// surrogate takes 3 bytes, as the U+FFFD it is written as). O(1).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_byte_length(s: *const VeltStr) -> u64 {
+    (*s).len() as u64
+}
+
 /// `parts.join(sep)`: one allocation of the right form (`str/join.rs`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_join(
@@ -108,9 +115,12 @@ pub unsafe extern "C" fn velt_rt_str_drop(s: *mut VeltStr) {
     (*s).release();
 }
 
+/// `a < b` and friends, and `sort()` without a comparator: -1 / 0 / 1 in UTF-16 code-unit order
+/// (#377 phase 2b): byte order, which is code point order, corrected where the two disagree
+/// ([`super::cmp_utf16`], one extra test of the first differing bytes otherwise).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_cmp(a: *const VeltStr, b: *const VeltStr) -> i32 {
-    match (*a).as_bytes().cmp((*b).as_bytes()) {
+    match super::cmp_utf16((*a).as_bytes(), (*b).as_bytes()) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
         Ordering::Greater => 1,
@@ -329,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn cmp_bytewise() {
+    fn cmp_by_code_units() {
         let cmp = |a: &'static str, b: &'static str| unsafe {
             velt_rt_str_cmp(
                 &VeltStr::from_static(a.as_bytes()),
@@ -344,6 +354,9 @@ mod tests {
         assert_eq!(cmp("ab", "abc"), -1);
         assert_eq!(cmp("Z", "a"), -1);
         assert_eq!(cmp("é", "z"), 1); // 0xC3 > 'z'
+                                      // Code-unit order (#377 phase 2b): U+FF5E sorts after a supplementary character.
+        assert_eq!(cmp("～", "😀"), 1);
+        assert_eq!(cmp("a😀", "a～"), -1);
         let inline = VeltStr::from_bytes(b"abc");
         let r = unsafe { velt_rt_str_cmp(&inline, &VeltStr::from_static(b"abc")) };
         assert_eq!(r, 0);

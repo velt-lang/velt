@@ -95,7 +95,15 @@ counted value is shared into a statement temporary; anything else is read throug
 retained for the statement (`retained_hop`). This applies to call arguments and receivers (not
 runtime externs), by-reference `const`s, `switch`/`match` scrutinees, compound assignments
 (the place is formed again after the right-hand side) and assignments (the new value is stored
-before the old one is dropped). `for...of` over a boxed array, or one reached through a counted
+before the old one is dropped). Retaining does not keep an array element in place (a push
+through another reference moves the buffer; `pop`, `truncate` and stores drop the element), so
+a value that lies in the buffer of such an array, not behind a counted object inside it, is
+shared into the temporary (a string clone, a copy for plain values; #564). A share would copy
+the parts a callee can change in place (tuples, object types stored inline), so those types are
+counted when they are borrowed this way, and the share is the same counted object. When the
+array is a boxed local or param that no cell holds, its count is read after the last argument
+is evaluated: 1 means nothing else reaches it, and the element is borrowed in place.
+`for...of` over a boxed array, or one reached through a counted
 object, works like JS's array iterator (for_of_shared.rs): the loop holds a reference to the
 array, re-reads the length every iteration and shares each element into the binding. Moving a
 part out of a counted value shares it instead, and pattern bindings inside a counted value are
@@ -133,8 +141,10 @@ within the copy).
   closure's capture local are indirect through the cell; closures hold one reference each; the
   function releases its own at scope end; reassignment drops the old value in place. A closure
   that is the only remaining user (`makeCounter`) keeps a plain copy. Variables captured by
-  async closures keep their own copies (they may run on other threads): assigning one after the
-  capture stays an error.
+  async closures that may run on other threads keep their own copies: assigning one after the
+  capture stays an error. A local async closure (#208, sema `ownership/local_async`) never
+  leaves its task: like a generator closure, a variable it assigns, or one assigned after the
+  capture, lives in a cell, and each call shares its captured objects.
 
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
@@ -178,7 +188,7 @@ the returned object still shares are deep-copied, and one that is not a new obje
 spawned capture that is still used afterwards, and one passed through a function value,
 vtable or interface (ownership/boundary.rs); a copy that only turns out to be needed at run
 time panics. A borrow-ABI argument of a call through a function value, vtable or interface
-(the caller keeps its reference) is always copied. Async closures copy what they capture per
+(the caller keeps its reference) is always copied. Async closures that may reach another thread (all but local ones, #208) copy what they capture per
 call (deep copies of shared captures, `validate`), since an HTTP handler runs them
 concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
 instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned
@@ -200,6 +210,11 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   uncounted one by the address of its single home (a unique value lives in exactly one place).
   `T | null`, unions and tuples compare part by part (`Glue::Same`). An object type copied when
   shared would lose its identity, so comparing one makes it counted once it is shared.
+- Interface values compare their data pointer; comparing an interface type makes the object
+  types converted to it counted (`Boxing::identity_dyns`), so the data pointer is the object,
+  not a copy. Function values compare code and env; once a program compares function values
+  (`Boxing::fn_identity`), a closure without captures gets an empty env per evaluation (a frame
+  env when only borrowed by a call), so each evaluation is a new function as in JS (#365).
 - `deepEqual(a, b)` (prelude) is the structural comparison; `assertEq` uses it.
 - **Not done:** removing the `struct` keyword and migrating its ~95 declarations (std handles to
   classes with `[Symbol.dispose]`, data structs to `type X = { … }` + `extend X`). Structs

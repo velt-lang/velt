@@ -44,5 +44,6 @@ async function main() {
 }
 ```
 
-Notes: an unclosed handle leaks until the process exits, and closing through two copies is a
-double free. Always `await w.close()` so that write errors are reported.
+Notes: an unclosed handle leaks until the process exits. Once one copy of a handle is closed,
+the others throw `IoError` `EBADF` (`handle is closed`) and closing again does nothing. Always
+`await w.close()` so that write errors are reported.

@@ -136,7 +136,7 @@ impl FnLower<'_, '_> {
     pub(super) fn array_lit(&mut self, es: &[hir::Expr], ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let elem = self.elem_ty(ty);
-        let vals: Vec<Operand> = es.iter().map(|e| self.consume(e)).collect();
+        let vals = self.consume_each(es);
         if self.dead() {
             return unit();
         }

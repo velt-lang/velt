@@ -15,9 +15,10 @@
 // decodes into `bool`, any other 0/1 value (an expression) needs an integer field.
 //
 // `Database` is a Copy handle like std/net's sockets: pass and capture it freely and release it
-// with `close()` (closing it through a second copy is a double free). A `Statement` owns its
-// handle and releases it when dropped, so `db.prepare(sql).all()` leaks nothing. Closing the
-// database while statements exist is safe: they then throw "SQLITE_MISUSE".
+// with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). A
+// `Statement` owns its handle and releases it when dropped, so `db.prepare(sql).all()` leaks
+// nothing. Closing the database while statements exist is safe: they then throw
+// "SQLITE_MISUSE".
 
 import { IoResult, IoStatus } from "velt:io";
 
@@ -202,10 +203,10 @@ export struct Transaction {
  * parameters (see the header); the variants without them are for statements without any.
  */
 export class Statement {
-  private handle: u64;
+  #handle: u64;
 
   constructor(handle: u64) {
-    this.handle = handle;
+    this.#handle = handle;
   }
 
   /** Executes the statement (rows it returns are discarded). */
@@ -219,36 +220,36 @@ export class Statement {
 
   /** The first row, or null if there is none. */
   get<T>(): T | null {
-    return this.first(unwrap(velt_rt_sqlite_query(this.handle, "", true)));
+    return this.first(unwrap(velt_rt_sqlite_query(this.#handle, "", true)));
   }
 
   getWith<T, P>(params: P): T | null {
-    return this.first(unwrap(velt_rt_sqlite_query(this.handle, JSON.stringify(params), true)));
+    return this.first(unwrap(velt_rt_sqlite_query(this.#handle, JSON.stringify(params), true)));
   }
 
   /** Every row. */
   all<T>(): T[] {
-    return this.rows(unwrap(velt_rt_sqlite_query(this.handle, "", false)));
+    return this.rows(unwrap(velt_rt_sqlite_query(this.#handle, "", false)));
   }
 
   allWith<T, P>(params: P): T[] {
-    return this.rows(unwrap(velt_rt_sqlite_query(this.handle, JSON.stringify(params), false)));
+    return this.rows(unwrap(velt_rt_sqlite_query(this.#handle, JSON.stringify(params), false)));
   }
 
   /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
   close() {
-    velt_rt_sqlite_stmt_free(this.handle);
-    this.handle = 0;
+    velt_rt_sqlite_stmt_free(this.#handle);
+    this.#handle = 0;
   }
 
   /** Drop hook: releases the statement. */
   [Symbol.dispose]() {
-    velt_rt_sqlite_stmt_free(this.handle);
-    this.handle = 0;
+    velt_rt_sqlite_stmt_free(this.#handle);
+    this.#handle = 0;
   }
 
   private runJson(params: string): RunResult {
-    const r = unwrap(velt_rt_sqlite_run(this.handle, params));
+    const r = unwrap(velt_rt_sqlite_run(this.#handle, params));
     return new RunResult(r.changes, r.lastInsertRowid);
   }
 
@@ -275,7 +276,7 @@ export class Statement {
   // `transaction` rolls back.
   private decodeError(detail: string): SqliteError {
     const message = `row does not match the requested type: ${detail}`;
-    velt_rt_sqlite_note_error(this.handle, SQLITE_MISMATCH, message);
+    velt_rt_sqlite_note_error(this.#handle, SQLITE_MISMATCH, message);
     return sqliteError(SQLITE_MISMATCH, message);
   }
 }

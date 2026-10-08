@@ -1,0 +1,5 @@
+match
+match none b none
+1 equals 2 differs 3 differs
+same x other x other x
+match null none

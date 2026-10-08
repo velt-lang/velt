@@ -1,0 +1,38 @@
+// Widening a container other code still references stays an error (#268): TypeScript allows
+// it, but a write through the wider type would break the narrower one.
+interface Named {
+  name(): string;
+}
+
+class C implements Named {
+  name(): string {
+    return "c";
+  }
+}
+
+class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+class Holder {
+  items: C[] = [];
+}
+
+function names(xs: Named[]): usize {
+  return xs.length;
+}
+
+function main() {
+  const cs: C[] = [new C()];
+  const ns: Named[] = cs;
+  const b = new Box(new C());
+  const bn: Box<Named> = b;
+  const xs: i64[] = [1];
+  const ys: (i64 | null)[] = xs;
+  const h = new Holder();
+  names(h.items);
+  const either: Named[] = cs.length > 0 ? h.items : cs;
+}

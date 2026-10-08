@@ -2,7 +2,9 @@
 //! date-times (epoch values, rolled-over fields, ISO strings, format patterns).
 //!
 //! The regex grammar never matches the empty string (every sequence has a mandatory atom), so
-//! the known empty-match difference can't show; subjects are ASCII without `\r`.
+//! the known empty-match difference can't show; subjects have no `\r` and no supplementary
+//! characters (JavaScript's non-`u` `.` and negated classes match half of a pair, #401), but
+//! other non-ASCII text, so match offsets are checked in code units.
 
 use super::StdGen;
 
@@ -25,7 +27,9 @@ const ATOMS: [&str; 16] = [
     "\\\\n",
     "\\\\.",
 ];
-const SUBJECT: [&str; 10] = ["a", "b", "1", "2", " ", "_", "-", "\\n", "ab", "."];
+const SUBJECT: [&str; 13] = [
+    "a", "b", "1", "2", " ", "_", "-", "\\n", "ab", ".", "é", "日本", "ü-",
+];
 const REPLACEMENTS: [&str; 8] = ["-", "$&", "[$1]", "$$", "<$`|$'>", "$2$1", "", "($<n>)"];
 const DATE_TOKENS: [&str; 26] = [
     "YYYY", "YY", "M", "MM", "MMM", "MMMM", "D", "DD", "DDDD", "ddd", "dddd", "H", "HH", "h", "hh",

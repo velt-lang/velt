@@ -1,0 +1,105 @@
+// check: no leaks
+// Small class instances that never leave a function live in locals in release builds (heap
+// scalar replacement, #533). The results must not depend on it: a write through a borrowed
+// object (an inlined method's `this`, a parameter) is seen by the caller, in loops too.
+class Vec2 {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  add(o: Vec2): Vec2 {
+    return new Vec2(this.x + o.x, this.y + o.y);
+  }
+  scale(k: number): Vec2 {
+    return new Vec2(this.x * k, this.y * k);
+  }
+  len(): number {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+}
+
+class Counter {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  bump(): number {
+    this.n = this.n + 1;
+    return this.n;
+  }
+}
+
+class Cell {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+function addInto(dst: Counter, src: Counter) {
+  dst.n = dst.n + src.n;
+  dst.n = dst.n + src.n;
+}
+
+// The loop-carried immutable object of `p = p.add(v)`.
+function walk(steps: number): number {
+  let p = new Vec2(0, 0);
+  const v = new Vec2(0.5, 0.25);
+  let total = 0.0;
+  for (let i = 0; i < steps; i++) {
+    p = p.add(v.scale(2));
+    if (p.x > 10) {
+      p = new Vec2(0, p.y);
+    }
+    if (p.y > 10) {
+      p = new Vec2(p.x, 0);
+    }
+    total += p.len();
+  }
+  return total;
+}
+
+// Methods writing `this` while the caller reads the object afterwards.
+function bumped(steps: number): string {
+  const c = new Counter(0);
+  let seen = 0.0;
+  for (let i = 0; i < steps; i++) {
+    seen += c.bump() + c.n;
+  }
+  const d = new Counter(10);
+  addInto(d, c);
+  return `${c.n} ${seen} ${d.n}`;
+}
+
+// Shared objects (two variables) are reference counted and stay on the heap.
+function swapped(first: boolean): string {
+  let a = new Cell(1);
+  let b = new Cell(2);
+  const t = a;
+  a = b;
+  b = t;
+  a.v = 10;
+  const q = first ? a : b;
+  q.v = q.v * 3;
+  return `${a.v} ${b.v} ${t.v} ${q.v}`;
+}
+
+// Fresh objects only read: fields start from the constructor.
+function fresh(k: number): number {
+  let sum = 0.0;
+  for (let i = 0; i < k; i++) {
+    const v = new Vec2(i, i * 2);
+    const w = v.scale(3);
+    sum += w.x + w.y - v.x;
+  }
+  return sum;
+}
+
+function main() {
+  console.log(walk(1000).toFixed(3));
+  console.log(bumped(4));
+  console.log(swapped(true), swapped(false));
+  console.log(fresh(10));
+}

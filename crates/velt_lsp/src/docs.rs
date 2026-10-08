@@ -252,8 +252,12 @@ impl FileDocs {
         match &ty.kind {
             ast::TypeExprKind::Named { args, .. } => args.iter().for_each(|t| self.type_fields(t)),
             ast::TypeExprKind::Array(t) => self.type_fields(t),
-            ast::TypeExprKind::Tuple(ts) | ast::TypeExprKind::Union(ts) => {
-                ts.iter().for_each(|t| self.type_fields(t))
+            ast::TypeExprKind::Tuple(ts)
+            | ast::TypeExprKind::Union(ts)
+            | ast::TypeExprKind::Intersection(ts) => ts.iter().for_each(|t| self.type_fields(t)),
+            ast::TypeExprKind::Indexed { object, key } => {
+                self.type_fields(object);
+                self.type_fields(key);
             }
             ast::TypeExprKind::Function { params, ret, .. } => {
                 params.iter().for_each(|t| self.type_fields(t));

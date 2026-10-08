@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 mod no_window;
 mod runtime_support;
+mod work_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -35,7 +36,7 @@ fn m1_goldens_with_llvm() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm");
+    let work = work_dir::work_dir(&root, "golden-work-llvm");
     std::fs::create_dir_all(&work).expect("work dir");
     let files = m1_programs(&root);
     assert!(!files.is_empty(), "no M1 goldens found");
@@ -59,7 +60,7 @@ fn goldens_split_into_codegen_units() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm-units");
+    let work = work_dir::work_dir(&root, "golden-work-llvm-units");
     std::fs::create_dir_all(&work).expect("work dir");
     let failures: Vec<String> = [
         "lang/json_dynamic_generic",
@@ -87,6 +88,48 @@ fn goldens_split_into_codegen_units() {
     })
     .collect();
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// The LLVM backend's inline helpers, against Node's output: `%` on `f64` (its whole-number fast
+/// path and `fmod` fallback), the int32 operators (`@velt.to_int32`, `mul_int32`, `add_int32`,
+/// `clz32`) and the string helpers (`@velt.str_drop`, `str_eq`, `str_cmp`, `str_slice`,
+/// `str_hash`: keys hashed inline and by the runtime must agree), with `charCodeAt` and the `Map` probes
+/// `velt_opt` merges alongside. Each helper is defined in every codegen unit that uses it, so
+/// each golden also runs split into two units.
+#[test]
+fn inline_helpers_with_llvm() {
+    if !velt_codegen_llvm::available() {
+        eprintln!("note: clang not available; skipping the inline-helper goldens");
+        return;
+    }
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = work_dir::work_dir(&root, "golden-work-llvm-helpers");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let failures: Vec<String> = [
+        "lang/float_remainder",
+        "lang/numbers_int32_ops",
+        "lang/string_fast_paths",
+        "lang/string_compare_literals",
+        "lang/char_code_at",
+        "lang/map_string_keys",
+        "lang/map_probe_reuse",
+    ]
+    .iter()
+    .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))
+    .flat_map(|f| [None, Some(2)].map(|units| (f.clone(), units)))
+    .filter_map(|(f, units)| run_golden(&f, &work, units))
+    .collect();
+    assert!(
+        failures.is_empty(),
+        "
+{}",
+        failures.join(
+            "
+
+"
+        )
+    );
 }
 
 /// Runs one golden in a release build through LLVM (with `units` codegen units when given);

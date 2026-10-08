@@ -26,8 +26,8 @@ use super::Server;
 use crate::index::scope;
 use crate::line_index::LineIndex;
 use crate::{
-    completion, definition, highlight, hover, inlay_hints, manifest, references, sema_query,
-    semantic_tokens, signature_help, symbols,
+    definition, highlight, hover, inlay_hints, manifest, references, sema_query, semantic_tokens,
+    signature_help, symbols,
 };
 
 /// What the server supports.
@@ -46,7 +46,7 @@ pub fn capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![".".into(), "<".into(), "\"".into()]),
+            trigger_characters: Some(vec![".".into(), "<".into(), "\"".into(), "/".into()]),
             resolve_provider: Some(true),
             ..Default::default()
         }),
@@ -150,24 +150,15 @@ impl Server<'_> {
                     .as_ref()
                     .and_then(|c| c.trigger_character.as_deref());
                 // `<` triggers completion for JSX tags only, not after every comparison, and `"`
-                // for manifest versions only.
-                let jsx_only = trigger == Some("<");
+                // and `/` for manifest versions and module specifiers only.
                 if let Some(text) = self.manifest_text(&pos.text_document.uri) {
-                    if jsx_only {
+                    if matches!(trigger, Some("<" | "/")) {
                         return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
                     }
                     let at = LineIndex::new(text).offset(pos.position);
                     return Ok(json(manifest::completion(text, at, &self.registry)));
                 }
-                if trigger == Some("\"") {
-                    return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
-                }
-                let uri = &pos.text_document.uri;
-                let items = self
-                    .analysis(uri)
-                    .map(|a| completion::complete(a, offset(a, pos), jsx_only))
-                    .map(|items| with_document(items, uri));
-                Ok(json(items))
+                Ok(json(self.completion(pos, trigger)))
             }
             ResolveCompletionItem::METHOD => {
                 let item: lsp_types::CompletionItem = parse(params)?;
@@ -329,17 +320,6 @@ impl Server<'_> {
         let loc = self.location(analysis, span)?;
         Some(GotoDefinitionResponse::Scalar(loc))
     }
-}
-
-/// Completion items whose definition is documented carry the document's URI too, so that
-/// `completionItem/resolve` knows which analysis to ask.
-fn with_document(mut items: Vec<CompletionItem>, uri: &Url) -> Vec<CompletionItem> {
-    for item in &mut items {
-        if let Some(Value::Object(data)) = item.data.as_mut() {
-            data.insert("uri".into(), Value::String(uri.to_string()));
-        }
-    }
-    items
 }
 
 fn offset(analysis: &crate::analysis::Analysis, pos: &TextDocumentPositionParams) -> u32 {

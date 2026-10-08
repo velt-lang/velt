@@ -68,6 +68,12 @@ const OWNER_DONE: u32 = 1;
 /// `owner` bit of a started node: the owner's poll returned READY (the result is claimed).
 const OWNER_DELIVERED: u32 = 2;
 
+/// `owner` bits above the flags: the turn of the task poll in which the node started running
+/// ([`created_in`]). Turns count in `1..TURNS`, so the stamp fits; 0 means outside a task.
+const TURN_SHIFT: u32 = 2;
+/// Turns wrap below this.
+pub(super) const TURNS: u32 = 1 << (32 - TURN_SHIFT);
+
 /// `member` value of a node that is not in a set's member list.
 pub(super) const NO_MEMBER: u32 = u32::MAX;
 
@@ -85,7 +91,8 @@ pub(super) struct Head {
     pub refs: AtomicUsize,
     /// Index in the driving set's member list, or [`NO_MEMBER`] (driving task only).
     pub member: AtomicU32,
-    /// `OWNER_*` bits, touched only by whoever holds the handle.
+    /// `OWNER_*` bits, touched only by whoever holds the handle, and the turn the node started
+    /// running in above them until the result is claimed ([`stamp`]).
     owner: Cell<u32>,
     /// The driving set (null while lazy; a counted reference once `SET_REF` is set).
     pub set: *const Shared,
@@ -211,6 +218,11 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if r == READY {
         run_transfer(f);
         h.owner.set(OWNER_DONE);
+    } else if h.owner.get() == 0 {
+        // It suspended for the first time in a task: the turn [`created_in`] compares with. Only
+        // here: most lazy nodes (a recursive call's frame) finish in their first poll, which
+        // then pays nothing for the stamp.
+        stamp(f, super::current_turn());
     }
     r
 }
@@ -341,8 +353,34 @@ pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
     h.flags.load(Ordering::Acquire) & DONE != 0 && h.owner.get() & OWNER_DELIVERED == 0
 }
 
+/// Record that node `f` started running (its first poll, or its start) during task turn `turn`.
+pub(super) unsafe fn stamp(f: *mut VeltFut, turn: u32) {
+    head(f).owner.set(turn << TURN_SHIFT);
+}
+
+/// Did node `f` start running during task turn `turn` (and is its result unclaimed)? Lazy
+/// nodes are stamped by their first poll, started ones when they start: that is when they are
+/// created, for the promises a combinator gives up.
+pub(super) unsafe fn created_in(f: *mut VeltFut, turn: u32) -> bool {
+    turn != 0 && head(f).owner.get() >> TURN_SHIFT == turn
+}
+
+/// Is started node `f` an unfinished member of the set `shared` (so it holds a reference of
+/// the set's)?
+pub(super) unsafe fn running_in(f: *mut VeltFut, shared: &Arc<Shared>) -> bool {
+    let h = head(f);
+    std::ptr::eq(h.set, Arc::as_ptr(shared))
+        && h.member.load(Ordering::Relaxed) != NO_MEMBER
+        && h.flags.load(Ordering::Acquire) & (DONE | CANCELLED) == 0
+}
+
+/// Is started node `f` in its set's ready queue?
+pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & QUEUED != 0
+}
+
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
-unsafe fn is_started(f: *mut VeltFut) -> bool {
+pub(super) unsafe fn is_started(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(
         (*f).poll,
         started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,

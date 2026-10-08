@@ -211,6 +211,8 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::PromiseWiden
                     | Intrinsic::MutexWith
                     | Intrinsic::NeedsTransfer
+                    | Intrinsic::NeedsDrop
+                    | Intrinsic::MayAlias
             )
         );
         if let Callee::Intrinsic(Intrinsic::Spawn) = callee {
@@ -289,6 +291,7 @@ pub(super) fn outer_mode(e: &Expr) -> Option<UseMode> {
         | E::Index { mode: m, .. }
         | E::UnwrapSome(_, m)
         | E::UnwrapVariant { mode: m, .. } => Some(*m),
+        E::Downcast(x) => outer_mode(x),
         _ => None,
     }
 }

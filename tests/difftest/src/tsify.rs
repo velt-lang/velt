@@ -6,20 +6,19 @@
 //! 1. Velt runs `main()` implicitly; JS needs the call. A numeric return becomes the exit code.
 //! 2. `panic(msg)` (a Velt builtin) gets a JS shim with the same observable behavior: `panic: msg`
 //!    on stderr and exit code 101.
-//! 3. `console.log` never wraps long lines (`util.inspect` `breakLength = Infinity`): Velt prints
-//!    containers on one line, Node wraps them past 72 columns. Node's column grouping of arrays with
-//!    more than 6 elements can't be switched off, so programs print at most 6 elements per array.
-//! 4. `import … from "velt:<module>"` loads the module's Node twin, `shims/std/<module>.ts`: the
+//! 3. `import … from "velt:<module>"` loads the module's Node twin, `shims/std/<module>.ts`: the
 //!    same API on Node's own implementation (`URL`, `RegExp`, `Buffer`, `node:crypto`, `Date`)
 //!    where one exists, so the Velt standard library is checked against it.
+//!
+//! `console.log` keeps Node's default layout: Velt breaks long values across lines and groups
+//! arrays into columns as `util.inspect` does (`docs/reference/builtins.md`).
 //!
 //! Everything else must already mean the same thing in both languages; `README.md` lists the
 //! semantic differences programs have to avoid.
 
 /// Appended to every program: runs `main` and turns an `i32` result into the exit code. Stdout is
 /// flushed by Node before exit because `process.exitCode` (not `process.exit`) is used.
-const ENTRY: &str =
-    "\nprocess.getBuiltinModule(\"node:util\").inspect.defaultOptions.breakLength = Infinity;\n\
+const ENTRY: &str = "\n\
 const __veltExit: unknown = main();\n\
 if (typeof __veltExit === \"number\") process.exitCode = __veltExit;\n";
 
@@ -80,6 +79,14 @@ mod tests {
         assert!(ts.starts_with("function main() {}\n"));
         assert!(ts.contains("main();"));
         assert!(!ts.contains("function panic"));
+    }
+
+    /// Velt lays out `console.log` like Node's default `util.inspect` (#496): the twin must
+    /// not change Node's inspect options.
+    #[test]
+    fn keeps_nodes_console_layout() {
+        let ts = to_typescript("function main() {}\n");
+        assert!(!ts.contains("inspect"), "{ts}");
     }
 
     #[test]

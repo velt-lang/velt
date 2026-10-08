@@ -3,8 +3,10 @@
 // `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`).
 //
 // Built on the prelude `Map<T, bool>` (Robin Hood index over dense insertion-ordered entries),
-// so elements may be anything a map key may be: ints, bool, string, Copy structs. `add` takes
-// ownership of the element; `values()` and the algebra results hold clones; `forEach` borrows.
+// so elements may be anything a map key may be: numbers, bool, string, class instances (by
+// identity), structs, object types, tuples and arrays (by content). `add` takes ownership of the
+// element; `values()` returns the stored elements (objects shared, as in JS); the algebra results
+// hold clones; `forEach` borrows.
 
 /** An insertion-ordered set of unique values. */
 export class Set<T> implements Iterable<T> {
@@ -59,7 +61,7 @@ export class Set<T> implements Iterable<T> {
     return this.items.size == 0;
   }
 
-  /** Clones of the elements in insertion order (`for (const x of s.values())`). */
+  /** The elements in insertion order, objects shared as in JS (`for (const x of s.values())`). */
   values(): T[] {
     return this.items.keys();
   }

@@ -1,11 +1,9 @@
 // std/redis/pubsub: `RedisSubscriber` and `RedisMessage` (rt_abi_async.md §14.12). Internal:
 // import the public names and `subscribe` / `psubscribe` from "velt:redis".
 //
-// A subscriber owns its own connection in subscribed mode. Messages are pulled (there is no
-// `for await` and the runtime stores no callbacks):
-//   let m = await sub.next();
-//   while (m != null) { ...; m = await sub.next(); }
-// `close()` (from any task) makes pending and later `next()` calls return null.
+// A subscriber owns its own connection in subscribed mode. Messages are pulled with `next()` or
+// `for await (const m of sub)` (the runtime stores no callbacks). `close()` (from any task)
+// makes pending and later `next()` calls return null, which ends a `for await` loop.
 
 import { IoResult, IoStatus } from "velt:io";
 import { RedisError } from "velt:redis";

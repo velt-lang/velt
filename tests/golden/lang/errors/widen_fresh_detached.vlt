@@ -1,0 +1,30 @@
+// A fresh `C[]` converts to `Named[]` by building a new array (#268), which needs temporaries
+// that a field initializer or a default value has nowhere to keep yet: a precise error with
+// the conversion to write, not a crash. `.map` works there.
+interface Named {
+  name(): string;
+}
+
+class C implements Named {
+  name(): string {
+    return "c";
+  }
+}
+
+function mk(): C[] {
+  return [new C()];
+}
+
+class H {
+  xs: Named[] = mk();
+  ys: Named[] = mk().map((x): Named => x);
+  constructor(public zs: Named[] = mk()) {}
+}
+
+function f(xs: Named[] = mk()): number {
+  return xs.length;
+}
+
+function main() {
+  console.log(new H().ys.length, f());
+}

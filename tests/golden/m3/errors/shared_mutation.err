@@ -1,3 +1,4 @@
 shared_mutation.vlt:4:5
-spawned task
+modifies captured `total`
+reaches `spawn` here
 shared

@@ -11,6 +11,7 @@ use serde_json::Value;
 
 mod no_window;
 mod runtime_support;
+mod work_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -106,7 +107,7 @@ fn lldb_resolves_breakpoints_on_velt_lines() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-debugger");
+    let work = work_dir::work_dir(&root, "golden-work-debugger");
     std::fs::create_dir_all(&work).expect("work dir");
     let src = work.join("app.vlt");
     let program = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";

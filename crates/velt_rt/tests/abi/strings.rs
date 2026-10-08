@@ -1,5 +1,5 @@
 //! String methods through the C ABI, checked against tables produced by node (js_table.rs), plus
-//! the documented POC deviations (byte offsets, UTF-8) checked by hand.
+//! code-unit positions on non-ASCII text checked by hand against node's results.
 
 use super::js_table as js;
 use crate::str::{velt_rt_str_drop, VeltStr};
@@ -41,12 +41,13 @@ fn heap(s: &str) -> Heap {
     Heap(h)
 }
 
-/// Run an out-param ABI function, return the text and free the result.
+/// Run an out-param ABI function, return the text (a lone surrogate as U+FFFD, as the tables
+/// write it with `toWellFormed()`) and free the result.
 fn take(f: impl FnOnce(*mut VeltStr)) -> String {
     let mut out = MaybeUninit::<VeltStr>::uninit();
     f(out.as_mut_ptr());
     let mut s = unsafe { out.assume_init() };
-    let text = String::from_utf8(unsafe { s.as_bytes() }.to_vec()).expect("result is UTF-8");
+    let text = unsafe { s.to_string_lossy() };
     unsafe { velt_rt_str_drop(&mut s) };
     text
 }
@@ -247,37 +248,120 @@ fn repeat_range_errors() {
     );
 }
 
+/// Run an out-param ABI function, return the code units of the result and free it.
+fn take_units(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
+    let mut out = MaybeUninit::<VeltStr>::uninit();
+    f(out.as_mut_ptr());
+    let mut s = unsafe { out.assume_init() };
+    let units = super::utf16_model::wtf8_decode(unsafe { s.as_bytes() });
+    unsafe { velt_rt_str_drop(&mut s) };
+    units
+}
+
+/// The code units of `text` with `\u{D800}`-style lone surrogates spliced in at the `~` marks.
+fn u(text: &str, lone: &[u16]) -> Vec<u16> {
+    let mut out = Vec::new();
+    let mut lone = lone.iter();
+    for (k, part) in text.split('~').enumerate() {
+        if k > 0 {
+            out.push(*lone.next().expect("a lone surrogate per mark"));
+        }
+        out.extend(part.encode_utf16());
+    }
+    out
+}
+
+/// The code units of `s` as a static string (`"😀"` is given as text, its halves as `u`).
+fn wtf8(units: &[u16]) -> VeltStr {
+    let bytes = super::utf16_model::wtf8_encode(units);
+    VeltStr::from_static(Box::leak(bytes.into_boxed_slice()))
+}
+
 #[test]
-fn byte_offset_model() {
-    // "héllo": h=0, é=1..3, l=3. Offsets inside é move back to its first byte.
+fn code_unit_positions() {
+    // Expected values from node 22. "héllo": é is one unit.
     let s = lit("héllo");
     let slice = |a, b| take(|o| unsafe { velt_rt_str_slice(&s, a, b, o) });
-    assert_eq!(slice(1, 3), "é");
-    assert_eq!(slice(2, i64::MAX), "éllo");
-    assert_eq!(slice(0, 2), "h");
+    assert_eq!(slice(1, 3), "él");
+    assert_eq!(slice(2, i64::MAX), "llo");
+    assert_eq!(slice(0, 2), "hé");
     assert_eq!(slice(-4, -1), "éll");
-    assert_eq!(unsafe { velt_rt_str_index_of(&s, &lit("l"), 0) }, 3);
-    assert_eq!(unsafe { velt_rt_str_index_of(&s, &lit("é"), 2) }, -1);
-    assert_eq!(unsafe { velt_rt_str_last_index_of(&s, &lit("é"), 2) }, 1);
+    unsafe {
+        assert_eq!(velt_rt_str_index_of(&s, &lit("l"), 0), 2);
+        assert_eq!(velt_rt_str_index_of(&s, &lit("é"), 2), -1);
+        assert_eq!(velt_rt_str_last_index_of(&s, &lit("é"), 2), 1);
+        assert_eq!(velt_rt_str_last_index_of(&s, &lit("l"), i64::MAX), 3);
+        assert_eq!(velt_rt_str_char_code_at(&s, 1), 233);
+    }
+    // Pad lengths are code units; a fill cut between the halves of a pair keeps the high half.
+    let pad = |s: &'static str, n, fill: &'static str, start: bool| {
+        take_units(|o| unsafe {
+            if start {
+                velt_rt_str_pad_start(&lit(s), n, &lit(fill), o)
+            } else {
+                velt_rt_str_pad_end(&lit(s), n, &lit(fill), o)
+            }
+        })
+    };
+    assert_eq!(pad("a", 4, "é", true), u("éééa", &[]));
+    assert_eq!(pad("a", 5, "😀", false), u("a😀😀", &[]));
+    assert_eq!(pad("a", 4, "😀", false), u("a😀~", &[0xD83D]));
+    assert_eq!(pad("a", 3, "😀", true), u("😀a", &[]));
+    // split("") and replaceAll("") work per code unit: a pair splits into its halves.
+    let pieces = split_units(&lit("a😀"), &lit(""));
+    assert_eq!(pieces, [u("a", &[]), vec![0xD83D], vec![0xDE00]]);
+    let all =
+        take_units(|o| unsafe { velt_rt_str_replace_all(&lit("a😀"), &lit(""), &lit("|"), o) });
+    assert_eq!(all, u("|a|~|~|", &[0xD83D, 0xDE00]));
+}
+
+#[test]
+fn half_pair_paths_match_js() {
+    // The examples of docs/internals/design/strings.md "Semantics" (node 22).
+    let (hi, lo) = (wtf8(&[0xD83D]), wtf8(&[0xDE00]));
+    let emoji = lit("😀");
+    unsafe {
+        assert_eq!(velt_rt_str_index_of(&emoji, &lo, 0), 1);
+        assert_eq!(velt_rt_str_last_index_of(&emoji, &hi, i64::MAX), 0);
+        assert_eq!(velt_rt_str_index_of(&emoji, &lit(""), 1), 1);
+        assert_eq!(velt_rt_str_starts_with(&emoji, &hi), 1);
+        assert_eq!(velt_rt_str_ends_with(&emoji, &lo), 1);
+        assert_eq!(velt_rt_str_includes(&emoji, &lo), 1);
+        assert_eq!(velt_rt_str_includes(&emoji, &hi), 1);
+        assert_eq!(velt_rt_str_char_code_at(&emoji, 0), 0xD83D);
+        assert_eq!(velt_rt_str_char_code_at(&emoji, 1), 0xDE00);
+        assert_eq!(velt_rt_str_char_code_at(&emoji, 2), -1);
+    }
     assert_eq!(
-        unsafe { velt_rt_str_last_index_of(&s, &lit("l"), i64::MAX) },
-        4
+        split_units(&lit("a😀b"), &lo),
+        [u("a~", &[0xD83D]), u("b", &[])]
     );
-    assert_eq!(unsafe { velt_rt_str_char_code_at(&s, 1) }, 0xC3);
-    // Pad lengths are bytes; a multi-byte fill is cut at a character boundary.
-    let fill = lit("é");
-    assert_eq!(
-        take(|o| unsafe { velt_rt_str_pad_start(&lit("a"), 4, &fill, o) }),
-        "éa"
-    );
-    assert_eq!(
-        take(|o| unsafe { velt_rt_str_pad_end(&lit("a"), 5, &fill, o) }),
-        "aéé"
-    );
-    // split("") / replaceAll("") work per Unicode scalar value (JS: per UTF-16 unit).
-    assert_eq!(split_to_vec(&lit("a😀"), ""), ["a", "😀"]);
-    let all = take(|o| unsafe { velt_rt_str_replace_all(&lit("a😀"), &lit(""), &lit("|"), o) });
-    assert_eq!(all, "|a|😀|");
+    let r = take_units(|o| unsafe { velt_rt_str_replace(&emoji, &lo, &lit("X"), o) });
+    assert_eq!(r, u("~X", &[0xD83D]));
+    let r = take_units(|o| unsafe { velt_rt_str_replace_all(&emoji, &lit(""), &lit("-"), o) });
+    assert_eq!(r, u("-~-~-", &[0xD83D, 0xDE00]));
+    let slice = |s: &VeltStr, a, b| take_units(|o| unsafe { velt_rt_str_slice(s, a, b, o) });
+    assert_eq!(slice(&emoji, 0, 1), vec![0xD83D]);
+    assert_eq!(slice(&lit("x😀y"), 2, i64::MAX), u("~y", &[0xDE00]));
+    assert_eq!(slice(&lit("😀😀"), 1, 3), vec![0xDE00, 0xD83D]);
+    // Gluing the halves back together gives the pair (canonical: its 4-byte sequence).
+    let mut glued = MaybeUninit::<VeltStr>::uninit();
+    unsafe { crate::str::velt_rt_str_concat(&hi, &lo, glued.as_mut_ptr()) };
+    let mut glued = unsafe { glued.assume_init() };
+    assert_eq!(unsafe { glued.as_bytes() }, "😀".as_bytes());
+    unsafe { velt_rt_str_drop(&mut glued) };
+}
+
+/// `s.split(sep)` as code units.
+fn split_units(s: &VeltStr, sep: &VeltStr) -> Vec<Vec<u16>> {
+    let mut out = MaybeUninit::<VeltStrArray>::uninit();
+    unsafe { velt_rt_str_split(s, sep, out.as_mut_ptr()) };
+    let mut arr = unsafe { out.assume_init() };
+    let items = (0..arr.len as usize)
+        .map(|i| super::utf16_model::wtf8_decode(unsafe { (*arr.ptr.add(i)).as_bytes() }))
+        .collect();
+    unsafe { velt_rt_str_array_drop(&mut arr) };
+    items
 }
 
 #[test]

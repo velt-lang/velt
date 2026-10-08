@@ -16,7 +16,7 @@ declare function velt_rt_random_u64(): u64;
 // Bytes per compression block of both hashes (and the HMAC key block).
 const BLOCK: usize = 64;
 
-/** Thrown by `randomInt` for an empty range. */
+/** Thrown by `randomInt` for an empty or too large range, or a bound that is not a safe integer. */
 export class CryptoError extends Error {
   constructor(message: string) {
     super(message);

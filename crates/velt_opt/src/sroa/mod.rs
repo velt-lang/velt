@@ -28,7 +28,7 @@ use crate::visit::{stmt_operands, stmt_operands_mut, term_operands, term_operand
 /// Nested aggregates are split at most this many levels deep.
 const MAX_DEPTH: usize = 4;
 /// Aggregates with more fields stay in memory (large records are mostly copied around).
-const MAX_FIELDS: usize = 16;
+pub(crate) const MAX_FIELDS: usize = 16;
 
 /// Split aggregate locals in `func`; returns whether anything changed.
 pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
@@ -111,7 +111,7 @@ fn candidates(aggs: &[AggLayout], func: &Function) -> HashMap<Local, Candidate> 
 /// Whether the fields hold every meaningful byte of the layout, i.e. the only gaps are
 /// alignment padding. Enum aggregates fail this (their payload is only reachable through
 /// variant views), and copying them field by field would lose the payload.
-fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
+pub(crate) fn fields_cover(aggs: &[AggLayout], layout: &AggLayout) -> bool {
     let mut fields: Vec<(u32, u32, u32)> = Vec::with_capacity(layout.fields.len());
     for &(ty, offset) in &layout.fields {
         let (size, align) = match ty {

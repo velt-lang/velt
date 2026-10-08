@@ -6,27 +6,34 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 
 ## Strings
 
-`string` is an immutable UTF-8 value ([Types](../reference/types.md#strings)). Positions are
-byte offsets; a negative position counts from the end, as in JS.
+`string` is an immutable sequence of UTF-16 code units, as in JS
+([Types](../reference/types.md#strings)): lengths and positions count code units (an emoji is
+two), and a negative position counts from the end. `Buffer.byteLength(s)` is the size in UTF-8.
 
 | Method | Notes |
 |---|---|
-| `length` | byte length |
-| `charAt(i = 0)`, `s[i]` | the character starting at `i`, or `""` |
+| `length` | code units |
+| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` |
 | `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
 | `startsWith(s)`, `endsWith(s)` | |
-| `split(sep): string[]` | |
+| `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
-| `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
-| `charCodeAt(i = 0)` | the byte at `i` |
+| `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
+| `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
 | `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
-Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
-return `f64`, `NaN` on failure), `Number(s)`.
+`<`, `>` and `sort()` order strings by code units, as JS. A position between the two halves of
+a pair is allowed everywhere: `"😀".slice(0, 1)` is a lone surrogate, which output writes as
+U+FFFD, and the searches can match half of a pair (`"😀".indexOf(lo)` is 1 when `lo` is the low
+half).
+
+Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lone surrogate),
+`parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
+`Number(s)`.
 
 ## Numbers
 
@@ -39,13 +46,25 @@ return `f64`, `NaN` on failure), `Number(s)`.
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
-  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division.
+  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
+  32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
+  32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
+  128-bit product of two `u64`s.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
 
 `T[]` is a growable array ([Types](../reference/types.md#objects-arrays-tuples-and-maps)).
-Callback methods rethrow what their callback throws.
+Callback methods rethrow what their callback throws. A callback may change the array through
+another reference to it (`const ys = xs`, or an object holding it), and the element it received
+stays valid however the array changes. As in JS, the methods read the length once at the start,
+so elements pushed meanwhile are not visited. Elements removed meanwhile:
+- `forEach`, `filter`, `reduce`, `some` and `every` skip them, as JS does;
+- `find`, `findIndex`, `findLast` and `findLastIndex` skip them too, where JS calls the callback
+  with `undefined` for each missing index (a `T` cannot be `undefined`);
+- `map` panics with "the array shrank while `map` ran", where JS returns an array with holes;
+- `filter` and `find` do not return the element the callback was given when the callback
+  removed it, where JS does.
 
 | Method | Notes |
 |---|---|
@@ -53,7 +72,7 @@ Callback methods rethrow what their callback throws.
 | `at(i): T \| null` | a negative `i` counts from the end |
 | `forEach`, `map`, `filter`, `reduce(f, init)` | callbacks get `(x, i)` (`reduce`: `(acc, x, i)`) and may take fewer |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | likewise |
-| `indexOf`, `lastIndexOf`, `includes` | structural equality, so `NaN` is never found |
+| `indexOf`, `lastIndexOf`, `includes` | compare with `==` (objects by identity, like JS's `===`), so `NaN` is never found (JS's `includes` finds it) |
 | `slice(start = 0, end?)`, `concat(other)` | |
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted) |
 | `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?, ...items)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError) |
@@ -63,19 +82,23 @@ Callback methods rethrow what their callback throws.
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
 | `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
-| `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
+| `sort()`, `sort(cmp)` | `sort()` on `i64`, `i32`, `u64`, `usize`, `f64` and `string` elements, ascending with `NaN` last (unstable, pdqsort); other element types need a comparator; `sort(cmp)` is stable on any element type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
 `fill`, plus `set(src, offset)` and `copyWithin(target, start, end)` like Node's `Buffer`.
-`Buffer.alloc(n)` creates `n` zero bytes.
+`Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
+number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
+bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
+the decoded size for `base64`/`base64url` and `hex`.
 
 ## Map
 
 `Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances (compared by identity), and structs, object types, tuples, arrays, maps and records
-(compared by content, as `deepEqual` compares them).
+instances, interface and function values (compared by identity, as `==` compares them), and
+structs, object types, tuples, arrays, maps and records (compared by content, as `deepEqual`
+compares them).
 
 Float keys compare like JavaScript's (SameValueZero): `0` and `-0` are one key, and `NaN` is a
 key that finds itself (`m.get(NaN)`). Floats inside content keys (arrays, tuples, object types)
@@ -99,7 +122,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 
 | Member | Notes |
 |---|---|
-| `new Map<K, V>()`, `new Map(entries: [K, V][])`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS |
+| `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
 | `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
@@ -108,6 +131,11 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call, like `for...of` over the map (JS's is a live view) |
 | `for (const [k, v] of map)` | |
 
+A callback of `forEach`, `upsert`, `update` or `getOrInsert` may change the map through another
+reference to it: the value the callback gets stays valid, `forEach` visits entries added
+meanwhile, and `upsert` and `getOrInsert` store their result under the key even when the
+callback deleted or added entries.
+
 ## Record
 
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,
@@ -115,7 +143,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 ([Reference](../reference/types.md#objects-arrays-tuples-and-maps)). `Object.keys(r)`,
 `Object.values(r)` and `Object.entries(r)` return arrays in insertion order; `Object.keys`
 returns a `string[]` and, as in TypeScript, also lists the fields of any object, struct or
-class instance.
+class instance (except `#private` fields, as in JS).
 
 ```ts
 class User {
@@ -171,12 +199,12 @@ The iteration protocol behind `for...of` and `for await` ([Control flow](../refe
 | `interface AsyncIterableIterator<T, E = never>` | `extends AsyncIterator<T, E>, AsyncIterable<T, E>`; `AsyncGenerator` implements it, and a value converts to an `AsyncIterable<T, E>` |
 | `[Symbol.iterator](): Iterator<T>` on `T[]`, `string` (`Iterator<string>`), `Map<K, V>` (`Iterator<[K, V]>`) | makes them `Iterable`: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds. An array's iterator is a live view (JS's: it reads the length at each step); a string's yields characters (code points); a map's iterates the entries as of the call (`entries()`) |
 | `class ArrayIterator<T>`, `class StringIterator` | the iterators of arrays and strings (TS's names): `implements IterableIterator<T>, IteratorObject<T>` |
+| `class __IterableObject<T, E = never>`, `class __AsyncIterableObject<T, E = never>` | an [iterable object literal](../reference/types.md#iterable-object-literals) (`{ *[Symbol.iterator]() { ... } }`): `implements Iterable<T, E>` (`AsyncIterable<T, E>`) by calling the method it holds |
 
 An `extend` block defining `[Symbol.iterator](): Iterator<T, E>` (or
 `[Symbol.asyncIterator](): AsyncIterator<T, E>`) makes its type an `Iterable<T, E>` (or
 `AsyncIterable<T, E>`) the way the prelude does for arrays and strings, as `compareTo` makes it
 `Comparable`.
-| `class __IterableObject<T, E = never>`, `class __AsyncIterableObject<T, E = never>` | an [iterable object literal](../reference/types.md#iterable-object-literals) (`{ *[Symbol.iterator]() { ... } }`): `implements Iterable<T, E>` (`AsyncIterable<T, E>`) by calling the method it holds |
 
 ## JSON
 
@@ -220,9 +248,10 @@ variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-f
 - `getTime()`, `valueOf()`, `getTimezoneOffset()`; `getFullYear getMonth getDate getDay
   getHours getMinutes getSeconds getMilliseconds` and the `getUTC…` ones; the matching `set…`
   and `setUTC…` setters (with JS's optional extra fields), and `setTime`.
-- `toISOString()` (an invalid date panics), `toJSON()`, `toUTCString()`, `toString()`,
-  `toDateString()`, `toTimeString()`, and `toLocaleString()`, `toLocaleDateString()`,
-  `toLocaleTimeString()` (always `en-US`).
+- `toISOString()` (an invalid date panics), `toJSON()` (the ISO string, or `null` when
+  invalid; `JSON.stringify` does not take a `Date`, so call it first), `toUTCString()`,
+  `toString()`, `toDateString()`, `toTimeString()`, and `toLocaleString()`,
+  `toLocaleDateString()`, `toLocaleTimeString()` (always `en-US`).
 - Dates compare with `<` (`Date` implements `Comparable`); `console.log` prints one as its ISO
   string, as Node does.
 
@@ -253,3 +282,11 @@ top.sort((a, b) => b[1] - a[1]);
 console.log(top[0], words.at(-1), (2.0 / 3.0).toFixed(3), Math.max(3.0, 7.5));
 // [ 'the', 2 ] hat 0.667 7.5
 ```
+
+## Globals
+
+As in Node, these need no import: the builtin `process` (`process.stdout.write(s)`,
+`process.env`, `process.argv`, `process.exit(code)`, `process.memoryUsage()`;
+[velt:process](process.md)), `fetch`, `Request`, `Response` and `Headers` ([fetch](fetch.md)),
+`URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and `AbortSignal`
+([velt:task](task.md)).

@@ -74,7 +74,17 @@ impl FnLower<'_, '_> {
         let done = self.new_block();
         let nn = self.non_null(p.clone());
         self.when(nn, done);
+        // During a transfer, a box referenced more than once is copied once.
+        let found = self.cx.copied_across(t).then(|| {
+            self.find_copy(p.clone(), |lw, copy| {
+                lw.assign(dst.clone(), Rvalue::Use(copy));
+                lw.goto(done);
+            })
+        });
         let new = self.counted_alloc(payload);
+        if let Some(found) = found {
+            self.record_copy(found, p.clone(), new.clone());
+        }
         let sp = self.operand_place(p, Ty::Ptr);
         let np = self.operand_place(new.clone(), Ty::Ptr);
         inner(

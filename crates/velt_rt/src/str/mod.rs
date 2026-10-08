@@ -25,14 +25,19 @@ mod crumbs;
 mod heap;
 mod invariants;
 mod join;
+mod order;
 mod push;
+mod recent;
 pub mod stats;
 #[cfg(test)]
 mod tests;
+pub(crate) mod work;
 pub mod wtf8;
 
 pub use abi::*;
-pub use crumbs::{cmp_utf16, BytePos};
+pub use crumbs::BytePos;
+pub(crate) use crumbs::STRIDE;
+pub use order::cmp_utf16;
 pub use wtf8::{Summary, Wtf8};
 
 #[cfg(not(target_endian = "little"))]
@@ -119,7 +124,9 @@ impl VeltStr {
     ///
     /// # Safety
     /// The bytes must be canonical WTF-8 and stay valid and unchanged for as long as the string
-    /// (and its copies) live.
+    /// (and its copies) live; if they are not ASCII and hold more than [`STRIDE`] UTF-16 units,
+    /// for the rest of the process (a literal): threads remember positions in such a string
+    /// (`recent.rs`).
     pub unsafe fn borrowed(ptr: *const u8, len: usize) -> VeltStr {
         let bytes = if len == 0 {
             &[][..]
@@ -153,12 +160,18 @@ impl VeltStr {
     /// An owned copy of UTF-8 text, like [`Self::from_bytes`]. UTF-8 holds no lone surrogates,
     /// so only the units are counted.
     pub fn from_text(text: &str) -> VeltStr {
-        VeltStr::from_text_counted(text, wtf8::count_units(text.as_bytes()))
+        // SAFETY: the units were just counted.
+        unsafe { VeltStr::from_text_counted(text, wtf8::count_units(text.as_bytes())) }
     }
 
     /// [`Self::from_text`] when the caller already counted the text's UTF-16 length (`units`).
+    ///
+    /// # Safety
+    /// `units` must be the text's UTF-16 length: the layout of a heap buffer follows from it (a
+    /// header exactly when it differs from the byte length), so a wrong count frees the buffer
+    /// with the wrong layout. Debug runtimes check it.
     #[inline]
-    pub fn from_text_counted(text: &str, units: usize) -> VeltStr {
+    pub unsafe fn from_text_counted(text: &str, units: usize) -> VeltStr {
         VeltStr::owned_counted(text.as_bytes(), Summary { units, lone: 0 })
     }
 
@@ -176,7 +189,11 @@ impl VeltStr {
 
     /// An owned copy of canonical WTF-8 whose UTF-16 length (`units`) the caller counted; its
     /// lone surrogates are counted.
-    pub fn from_wtf8_units(bytes: &[u8], units: usize) -> VeltStr {
+    ///
+    /// # Safety
+    /// `bytes` must be canonical WTF-8 and `units` its UTF-16 length (see
+    /// [`Self::from_text_counted`]: a wrong count frees the buffer with the wrong layout).
+    pub unsafe fn from_wtf8_units(bytes: &[u8], units: usize) -> VeltStr {
         VeltStr::owned_counted(
             bytes,
             Summary {

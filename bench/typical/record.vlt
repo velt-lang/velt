@@ -1,0 +1,27 @@
+// Record<string, number> as a dictionary, Object.keys / entries, spread copies of arrays,
+// concat, includes and indexOf on string arrays.
+function main() {
+  const scores: Record<string, number> = {};
+  const names: string[] = [];
+  for (let i = 0; i < 2000; i++) names.push(`n${i}`);
+  for (let round = 0; round < 500; round++) {
+    for (let i = 0; i < 2000; i += 3) {
+      const k = names[i];
+      scores[k] = (scores[k] ?? 0) + round;
+    }
+  }
+  let total = 0.0;
+  for (const k of Object.keys(scores)) total += scores[k] ?? 0;
+  let found = 0;
+  for (let i = 0; i < 20000; i++) {
+    if (names.includes(`n${i % 3000}`)) found++;
+    found += names.indexOf(`n${i % 2500}`) >= 0 ? 1 : 0;
+  }
+  let arr: number[] = [];
+  for (let i = 0; i < 2000; i++) {
+    arr = [...arr, i];
+  }
+  let joined: number[] = [];
+  for (let i = 0; i < 1000; i++) joined = joined.concat([i, i + 1]);
+  console.log(total, found, arr.length, joined.length);
+}
