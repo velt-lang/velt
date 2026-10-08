@@ -1,0 +1,190 @@
+// Sends the same scripted requests (reads, then writes) to two freshly started shop servers and
+// compares status and body byte for byte; `bad_json` errors compare by code only (Velt's
+// JSON.parse<T> and node's decoders word their messages differently).
+//
+//   velt run parity.vlt -- http://127.0.0.1:8080 http://127.0.0.1:8081
+import { args, exit } from "velt:process";
+
+type Call = { method: string; path: string; body: string };
+type Reply = { status: i64; body: string };
+
+function get(path: string): Call {
+  return { method: "GET", path, body: "" };
+}
+
+function send(method: string, path: string, body: string): Call {
+  return { method, path, body };
+}
+
+function newProduct(i: i64, sku: string, category: string): string {
+  return JSON.stringify({
+    name: `  Bulk Item ${i} `,
+    description: `Imported item number ${i}.`,
+    category,
+    brand: i % 3 === 0 ? "Fjord" : "Ivy",
+    tags: ["Imported", "imported", `batch-${i % 4}`],
+    attributes: { material: "oak", lot: `L${i}` },
+    variants: [
+      {
+        sku,
+        color: "red",
+        size: "M",
+        stock: 10 + i,
+        price: { amount: 1500 + i * 10, currency: "EUR" },
+      },
+      {
+        sku: `${sku}-B`,
+        color: "blue",
+        size: "L",
+        stock: 0,
+        price: { amount: 1700 + i * 10, currency: "EUR" },
+      },
+    ],
+  });
+}
+
+function order(customer: i64, lines: string): string {
+  return `{"customer":{"id":${customer},"name":"Customer ${customer}","email":"c${customer}@example.com","extra":1},"items":${lines},"shipping":{"line1":"1 Main Street","city":"Oslo","postalCode":"0150","country":"NO"}}`;
+}
+
+function calls(): Call[] {
+  const out: Call[] = [
+    get("/health"),
+    get("/products/1"),
+    get("/products/4999"),
+    get("/products/0"),
+    get("/products/abc"),
+    get("/products/999999"),
+    get("/products?limit=100"),
+    get("/products?page=3&limit=50&sort=price"),
+    get("/products?sort=-price&category=coffee"),
+    get("/products?sort=rating&limit=30"),
+    get("/products?sort=name&page=2"),
+    get("/products?sort=newest"),
+    get("/products?q=Waterproof&inStock=true&limit=100"),
+    get("/products?minPrice=20000&maxPrice=25000&sort=price"),
+    get("/products?tag=handmade&brand=Acme"),
+    get("/products?sort=bogus"),
+    get("/products?limit=500"),
+    get("/products?page=0"),
+    get("/products?q=caf%C3%A9+x"),
+    get("/orders?limit=100"),
+    get("/orders?status=paid&page=2"),
+    get("/orders?customer=17"),
+    get("/orders?status=lost"),
+    get("/orders/123"),
+    get("/orders/20001"),
+    get("/stats"),
+    send("POST", "/products", newProduct(1, "NEW-1", "coffee")),
+    send("POST", "/products", newProduct(2, "NEW-2", "shoes")),
+    send("POST", "/products", newProduct(3, "NEW-1", "coffee")),
+    send("POST", "/products", newProduct(4, "bad sku", "coffee")),
+    send("POST", "/products", "{"),
+    send(
+      "POST",
+      "/products",
+      "{\"name\":\"x\",\"category\":\"toys\",\"brand\":\"b\",\"variants\":[{\"sku\":\"ABC\",\"color\":\"r\",\"size\":\"M\",\"stock\":\"5\",\"price\":{\"amount\":1,\"currency\":\"EUR\"}}]}",
+    ),
+    send(
+      "PATCH",
+      "/products/2",
+      "{\"name\":\"Renamed Thing\",\"tags\":[\"A\",\"b\",\"a\"],\"attributes\":{\"origin\":\"SE\",\"new\":\"x\"},\"active\":false}",
+    ),
+    send("PATCH", "/products/3", "{\"name\":\"   \"}"),
+    send("PATCH", "/products/3", "{\"active\":\"no\"}"),
+    get("/products/2"),
+  ];
+  let bulk = "[";
+  for (let i = 10; i < 210; i++) {
+    const sku = i % 50 === 0 ? "NEW-1" : `BULK-${i}`;
+    bulk += `${i > 10 ? "," : ""}${newProduct(i, sku, i % 37 === 0 ? "nope" : "kitchen")}`;
+  }
+  bulk += "]";
+  out.push(send("POST", "/products/bulk", bulk));
+  out.push(get("/products?sort=newest&limit=100"));
+  out.push(
+    send(
+      "POST",
+      "/orders",
+      order(5, "[{\"sku\":\"P1-1\",\"quantity\":3},{\"sku\":\"BULK-11\",\"quantity\":2}]"),
+    ),
+  );
+  out.push(
+    send(
+      "POST",
+      "/orders",
+      order(6, "[{\"sku\":\"P7-1\",\"quantity\":100},{\"sku\":\"P8-1\",\"quantity\":1}]"),
+    ),
+  );
+  out.push(send("POST", "/orders", order(7, "[{\"sku\":\"NOPE\",\"quantity\":1}]")));
+  out.push(
+    send(
+      "POST",
+      "/orders",
+      order(8, "[{\"sku\":\"BULK-12\",\"quantity\":20},{\"sku\":\"BULK-12\",\"quantity\":10}]"),
+    ),
+  );
+  out.push(send("POST", "/orders", order(9, "[{\"sku\":\"P2-1\",\"quantity\":1}]")));
+  out.push(send("POST", "/orders", order(10, "[{\"sku\":\"P1-1\",\"quantity\":1.5}]")));
+  out.push(send("POST", "/orders", order(11, "[]")));
+  out.push(send("POST", "/orders/20001/status", "{\"status\":\"paid\"}"));
+  out.push(send("POST", "/orders/20001/status", "{\"status\":\"shipped\"}"));
+  out.push(send("POST", "/orders/20001/status", "{\"status\":\"cancelled\"}"));
+  out.push(send("POST", "/orders/20002/status", "{\"status\":\"cancelled\"}"));
+  out.push(send("POST", "/orders/20002/status", "{\"status\":\"lost\"}"));
+  out.push(get("/orders/20002"));
+  out.push(get("/products/1"));
+  out.push(get("/orders?limit=5"));
+  out.push(get("/stats"));
+  out.push(send("DELETE", "/products/1", ""));
+  out.push(send("PUT", "/orders", ""));
+  out.push(get("/nope"));
+  out.push(get("/orders/5/items"));
+  return out;
+}
+
+async function call(base: string, c: Call): Promise<Reply> {
+  const url = `${base}${c.path}`;
+  // Two literal inits: `RequestInit` can't be named to build one conditionally (#702).
+  const res =
+    c.method === "GET" ? await fetch(url) : await fetch(url, { method: c.method, body: c.body });
+  return { status: res.status as i64, body: await res.text() };
+}
+
+function errorCode(body: string): string {
+  try {
+    const v = JSON.parseValue(body);
+    return v.get("error")?.get("code")?.asString() ?? "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function main() {
+  const argv = args();
+  if (argv.length !== 2) {
+    console.error("usage: velt run parity.vlt -- <velt base url> <node base url>");
+    exit(2);
+  }
+  let failures = 0;
+  let bytes = 0;
+  const all = calls();
+  for (const c of all) {
+    const a = await call(argv[0], c);
+    const b = await call(argv[1], c);
+    bytes += a.body.length;
+    const same =
+      a.status === b.status &&
+      (a.body === b.body || (errorCode(a.body) === "bad_json" && errorCode(b.body) === "bad_json"));
+    if (!same) {
+      failures++;
+      console.log(`DIFF ${c.method} ${c.path}: ${a.status} vs ${b.status}`);
+      console.log(`  velt: ${a.body.slice(0, 300)}`);
+      console.log(`  node: ${b.body.slice(0, 300)}`);
+    }
+  }
+  console.log(`${all.length - failures}/${all.length} responses identical (${bytes} bytes)`);
+  if (failures > 0) {
+    exit(1);
+  }
+}

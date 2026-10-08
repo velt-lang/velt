@@ -1,0 +1,140 @@
+// The API end to end through `route` (no sockets): validation, money, stock and paging.
+import { route } from "../src/api";
+import { Order, Page, Product } from "../src/model";
+import { Store } from "../src/store";
+
+function shop(): Store {
+  return Store.seeded(1u32, 40, 60);
+}
+
+function status(s: Store, method: string, path: string, query: string, body: string): i64 {
+  return route(s, method, path, query, body).status;
+}
+
+function code(s: Store, method: string, path: string, query: string, body: string): string {
+  const v = JSON.parseValue(route(s, method, path, query, body).body);
+  return v.get("error")?.get("code")?.asString() ?? "";
+}
+
+function product(sku: string, stock: i64, amount: i64): string {
+  return `{"name":"Thing","category":"toys","brand":"Acme","variants":[{"sku":"${sku}","color":"red","size":"M","stock":${stock},"price":{"amount":${amount},"currency":"EUR"}}]}`;
+}
+
+function order(lines: string): string {
+  return `{"customer":{"id":1,"name":"A","email":"a@example.com"},"items":${lines},"shipping":{"line1":"x","city":"y","postalCode":"z","country":"SE"}}`;
+}
+
+export function test_seeding_is_deterministic() {
+  assertEq(
+    route(shop(), "GET", "/stats", "", "").body,
+    route(shop(), "GET", "/stats", "", "").body,
+  );
+  assertEq(
+    route(shop(), "GET", "/products/7", "", "").body,
+    route(shop(), "GET", "/products/7", "", "").body,
+  );
+}
+
+export function test_paging() {
+  const s = shop();
+  const page = JSON.parse<Page<Product>>(route(s, "GET", "/products", "limit=15&page=3", "").body);
+  assertEq(page.total, 40);
+  assertEq(page.pages, 3);
+  assertEq(page.items.length, 10);
+  assertEq(page.items[0].id, 31);
+  assertEq(code(s, "GET", "/products", "limit=101", ""), "invalid");
+  assertEq(code(s, "GET", "/products", "page=-1", ""), "invalid");
+}
+
+export function test_price_sort_and_filter() {
+  const s = shop();
+  const page = JSON.parse<Page<Product>>(
+    route(s, "GET", "/products", "sort=price&limit=100&minPrice=5000", "").body,
+  );
+  let last: i64 = 0;
+  for (const p of page.items) {
+    let min = p.variants[0].price.amount;
+    for (const v of p.variants) {
+      min = v.price.amount < min ? v.price.amount : min;
+    }
+    assert(min >= 5000 && min >= last);
+    last = min;
+  }
+}
+
+export function test_create_validates_everything() {
+  const s = shop();
+  assertEq(status(s, "POST", "/products", "", product("NEW-1", 5, 100)), 201);
+  assertEq(code(s, "POST", "/products", "", product("NEW-1", 5, 100)), "conflict");
+  assertEq(code(s, "POST", "/products", "", product("new 2", 5, 100)), "invalid");
+  assertEq(code(s, "POST", "/products", "", product("NEW-3", -1, 100)), "invalid");
+  assertEq(code(s, "POST", "/products", "", product("NEW-4", 5, 0)), "invalid");
+  assertEq(code(s, "POST", "/products", "", "{\"name\":1}"), "bad_json");
+  assertEq(code(s, "POST", "/products", "", "[1,"), "bad_json");
+}
+
+export function test_bulk_keeps_the_valid_ones() {
+  const s = shop();
+  const body = `[${product("B-1", 1, 100)},${product("B-1", 1, 100)},${product("B-2", 1, 100)}]`;
+  assertEq(
+    route(s, "POST", "/products/bulk", "", body).body,
+    "{\"created\":2,\"ids\":[41,42],\"errors\":[{\"index\":1,\"code\":\"conflict\",\"message\":\"sku 'B-1' already exists\"}]}",
+  );
+}
+
+export function test_patch_is_all_or_nothing() {
+  const s = shop();
+  const before = route(s, "GET", "/products/5", "", "").body;
+  assertEq(code(s, "PATCH", "/products/5", "", "{\"tags\":[\"ok\"],\"name\":\"  \"}"), "invalid");
+  assertEq(route(s, "GET", "/products/5", "", "").body, before);
+  const after = JSON.parse<Product>(
+    route(s, "PATCH", "/products/5", "", "{\"tags\":[\"B\",\"a\",\"b\"]}").body,
+  );
+  assertEq(after.tags, ["b", "a"]);
+}
+
+export function test_order_totals_and_stock() {
+  const s = shop();
+  route(s, "POST", "/products", "", product("BIG-1", 10, 30000));
+  const o = JSON.parse<Order>(
+    route(s, "POST", "/orders", "", order("[{\"sku\":\"BIG-1\",\"quantity\":2}]")).body,
+  );
+  // 600.00, 10% off from 500.00, then 25% VAT; free shipping from 300.00.
+  assertEq(
+    [o.subtotal, o.discount, o.tax, o.shippingCost, o.total],
+    [60000, 6000, 13500, 0, 67500],
+  );
+  assertEq(
+    code(
+      s,
+      "POST",
+      "/orders",
+      "",
+      order("[{\"sku\":\"BIG-1\",\"quantity\":5},{\"sku\":\"BIG-1\",\"quantity\":4}]"),
+    ),
+    "conflict",
+  );
+  const left = JSON.parse<Product>(route(s, "GET", "/products/41", "", "").body);
+  assertEq(left.variants[0].stock, 8);
+}
+
+export function test_status_transitions_return_stock_on_cancel() {
+  const s = shop();
+  route(s, "POST", "/products", "", product("ST-1", 10, 1000));
+  const o = JSON.parse<Order>(
+    route(s, "POST", "/orders", "", order("[{\"sku\":\"ST-1\",\"quantity\":4}]")).body,
+  );
+  assertEq(code(s, "POST", `/orders/${o.id}/status`, "", "{\"status\":\"shipped\"}"), "conflict");
+  assertEq(status(s, "POST", `/orders/${o.id}/status`, "", "{\"status\":\"paid\"}"), 200);
+  assertEq(status(s, "POST", `/orders/${o.id}/status`, "", "{\"status\":\"cancelled\"}"), 200);
+  assertEq(JSON.parse<Product>(route(s, "GET", "/products/41", "", "").body).variants[0].stock, 10);
+  assertEq(code(s, "POST", `/orders/${o.id}/status`, "", "{\"status\":\"lost\"}"), "bad_json");
+}
+
+export function test_routing_errors() {
+  const s = shop();
+  assertEq(code(s, "GET", "/nope", "", ""), "not_found");
+  assertEq(code(s, "DELETE", "/products/1", "", ""), "method_not_allowed");
+  assertEq(code(s, "GET", "/products/0", "", ""), "invalid");
+  assertEq(code(s, "GET", "/orders/999", "", ""), "not_found");
+}

@@ -1,0 +1,539 @@
+// The shop's state: products (with a SKU index), orders, and the operations the API exposes.
+// Everything is in memory; validation errors are thrown as `ApiError`.
+import {
+  ApiError,
+  BulkError,
+  BulkResult,
+  categories,
+  CategoryStats,
+  CURRENCY,
+  invalid,
+  NewOrder,
+  NewProduct,
+  NewVariant,
+  Order,
+  OrderItem,
+  OrderStatus,
+  Page,
+  Product,
+  ProductPatch,
+  ProductStats,
+  Stats,
+  Variant,
+} from "./model";
+import { isoAt, priced, Random, seedOrders, seedProducts, slugify } from "./seed";
+
+/// Product listing parameters (already validated).
+export type ProductQuery = {
+  category: string | null;
+  brand: string | null;
+  tag: string | null;
+  q: string | null; // lower-cased
+  minPrice: i64 | null;
+  maxPrice: i64 | null;
+  inStock: bool;
+  sort: string; // "id" | "price" | "-price" | "rating" | "name" | "newest"
+  page: i64;
+  limit: i64;
+};
+
+export type OrderQuery = { status: string | null; customer: i64 | null; page: i64; limit: i64 };
+
+type SkuRef = { product: i64; variant: i64 }; // indexes into products / variants
+
+export function minPrice(p: Product): i64 {
+  let min = p.variants[0].price.amount;
+  for (const v of p.variants) {
+    if (v.price.amount < min) {
+      min = v.price.amount;
+    }
+  }
+  return min;
+}
+
+function totalStock(p: Product): i64 {
+  let n: i64 = 0;
+  for (const v of p.variants) {
+    n += v.stock;
+  }
+  return n;
+}
+
+function cleanTags(tags: string[] | null): string[] {
+  const out: string[] = [];
+  if (tags == null) {
+    return out;
+  }
+  if (tags.length > 10) {
+    throw invalid("at most 10 tags");
+  }
+  for (const t of tags) {
+    const tag = t.trim().toLowerCase();
+    if (tag.length === 0 || tag.length > 30) {
+      throw invalid("tags are 1 to 30 characters");
+    }
+    if (!out.includes(tag)) {
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
+function cleanName(name: string): string {
+  const n = name.trim();
+  if (n.length === 0 || n.length > 120) {
+    throw invalid("name must be 1 to 120 characters");
+  }
+  return n;
+}
+
+function isSku(s: string): bool {
+  if (s.length < 3 || s.length > 32) {
+    return false;
+  }
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 45;
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// The first comparison that isn't a tie: `a - b || c - d` in JavaScript, which Velt rejects
+/// (numbers aren't conditions; #701).
+function cmp(first: i64, then: i64): i64 {
+  return first !== 0 ? first : then;
+}
+
+/// -1, 0 or 1: comparators return `i64`, so a fractional difference needs its sign (#701).
+function sign(x: f64): i64 {
+  return x < 0.0 ? -1 : x > 0.0 ? 1 : 0;
+}
+
+function pageOf<T>(all: T[], page: i64, limit: i64): Page<T> {
+  // An `i64` copy of the length, so the page count below is integer division (#214).
+  const total: i64 = all.length;
+  const start = (page - 1) * limit;
+  return {
+    items: all.slice(start, start + limit),
+    page,
+    limit,
+    total,
+    pages: (total + limit - 1) / limit,
+  };
+}
+
+export class Store {
+  products: Product[] = [];
+  orders: Order[] = [];
+  private byId: Map<i64, i64> = new Map<i64, i64>(); // product id → index
+  private bySku: Map<string, SkuRef> = new Map<string, SkuRef>();
+  private orderById: Map<i64, i64> = new Map<i64, i64>();
+  private nextProductId: i64 = 1;
+  private nextOrderId: i64 = 1;
+  private clock: i64 = 0; // seconds after the seed's last order, for new documents
+
+  /// A store seeded with `productCount` products and `orderCount` orders from `seed`.
+  static seeded(seed: u32, productCount: i64, orderCount: i64): Store {
+    const s = new Store();
+    const r = new Random(seed);
+    for (const p of seedProducts(r, productCount)) {
+      s.addProduct(p);
+    }
+    for (const o of seedOrders(r, s.products, orderCount)) {
+      s.addOrder(o);
+    }
+    s.clock = orderCount * 600;
+    return s;
+  }
+
+  private now(): string {
+    this.clock += 60;
+    return isoAt(this.clock);
+  }
+
+  private addProduct(p: Product) {
+    const index = this.products.length;
+    for (let v = 0; v < p.variants.length; v++) {
+      this.bySku.set(p.variants[v].sku, { product: index, variant: v });
+    }
+    this.byId.set(p.id, index);
+    this.products.push(p);
+    if (p.id >= this.nextProductId) {
+      this.nextProductId = p.id + 1;
+    }
+  }
+
+  private addOrder(o: Order) {
+    this.orderById.set(o.id, this.orders.length);
+    this.orders.push(o);
+    if (o.id >= this.nextOrderId) {
+      this.nextOrderId = o.id + 1;
+    }
+  }
+
+  product(id: i64): Product {
+    const index = this.byId.get(id);
+    if (index == null) {
+      throw new ApiError(404, "not_found", `no product ${id}`);
+    }
+    return this.products[index];
+  }
+
+  order(id: i64): Order {
+    const index = this.orderById.get(id);
+    if (index == null) {
+      throw new ApiError(404, "not_found", `no order ${id}`);
+    }
+    return this.orders[index];
+  }
+
+  listProducts(q: ProductQuery): Page<Product> {
+    const hits: Product[] = [];
+    for (const p of this.products) {
+      if (q.category != null && p.category !== q.category) {
+        continue;
+      }
+      if (q.brand != null && p.brand !== q.brand) {
+        continue;
+      }
+      if (q.tag != null && !p.tags.includes(q.tag)) {
+        continue;
+      }
+      if (
+        q.q != null &&
+        !p.name.toLowerCase().includes(q.q) &&
+        !p.description.toLowerCase().includes(q.q)
+      ) {
+        continue;
+      }
+      if (q.minPrice != null || q.maxPrice != null) {
+        const price = minPrice(p);
+        if (
+          (q.minPrice != null && price < q.minPrice) || (q.maxPrice != null && price > q.maxPrice)
+        ) {
+          continue;
+        }
+      }
+      if (q.inStock && totalStock(p) === 0) {
+        continue;
+      }
+      hits.push(p);
+    }
+    switch (q.sort) {
+      case "price":
+      case "-price": {
+        // Each product's lowest price once, not on every comparison.
+        const dir: i64 = q.sort === "price" ? 1 : -1;
+        const keyed = hits.map((p) => ({ price: minPrice(p), p }));
+        keyed.sort((a, b) => cmp((a.price - b.price) * dir, a.p.id - b.p.id));
+        return pageOf(keyed.map((k) => k.p), q.page, q.limit);
+      }
+      case "rating":
+        hits.sort(
+          (a, b) => cmp(
+            sign(b.rating.average - a.rating.average),
+            cmp(b.rating.count - a.rating.count, a.id - b.id),
+          ),
+        );
+        break;
+      case "name":
+        hits.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id - b.id));
+        break;
+      case "newest":
+        hits.sort((a, b) => b.id - a.id);
+        break;
+    }
+    return pageOf(hits, q.page, q.limit);
+  }
+
+  private variantsOf(input: NewVariant[], taken: string[]): Variant[] {
+    if (input.length === 0 || input.length > 20) {
+      throw invalid("a product has 1 to 20 variants");
+    }
+    const out: Variant[] = [];
+    for (const v of input) {
+      if (!isSku(v.sku)) {
+        throw invalid(`sku '${v.sku}' must be 3 to 32 of A-Z, 0-9 and -`);
+      }
+      if (this.bySku.has(v.sku) || taken.includes(v.sku)) {
+        throw new ApiError(409, "conflict", `sku '${v.sku}' already exists`);
+      }
+      if (v.stock < 0 || v.stock > 1000000) {
+        throw invalid("stock must be 0 to 1000000");
+      }
+      if (v.price.amount <= 0 || v.price.currency !== CURRENCY) {
+        throw invalid(`price must be a positive amount in ${CURRENCY}`);
+      }
+      taken.push(v.sku);
+      out.push({
+        sku: v.sku,
+        color: v.color,
+        size: v.size,
+        stock: v.stock,
+        price: { amount: v.price.amount, currency: CURRENCY },
+      });
+    }
+    return out;
+  }
+
+  /// Validates `input` and adds it; `taken` collects SKUs claimed earlier in the same batch.
+  private create(input: NewProduct, taken: string[]): Product {
+    const name = cleanName(input.name);
+    if (!categories().includes(input.category)) {
+      throw invalid(`category must be one of ${categories().join(", ")}`);
+    }
+    const brand = input.brand.trim();
+    if (brand.length === 0 || brand.length > 60) {
+      throw invalid("brand must be 1 to 60 characters");
+    }
+    const description = input.description ?? "";
+    if (description.length > 2000) {
+      throw invalid("description is at most 2000 characters");
+    }
+    const tags = cleanTags(input.tags);
+    const variants = this.variantsOf(input.variants, taken);
+    const id = this.nextProductId;
+    const p: Product = {
+      id,
+      slug: slugify(name),
+      name,
+      description,
+      category: input.category,
+      brand,
+      tags,
+      attributes: input.attributes ?? {},
+      variants,
+      rating: { average: 0.0, count: 0 },
+      active: true,
+      createdAt: this.now(),
+    };
+    this.addProduct(p);
+    return p;
+  }
+
+  createProduct(input: NewProduct): Product {
+    return this.create(input, []);
+  }
+
+  /// Creates every valid product of `inputs`; invalid ones are reported by index.
+  bulkCreate(inputs: NewProduct[]): BulkResult {
+    if (inputs.length > 1000) {
+      throw invalid("at most 1000 products per request");
+    }
+    const ids: i64[] = [];
+    const errors: BulkError[] = [];
+    const taken: string[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      try {
+        ids.push(this.create(inputs[i], taken).id);
+      } catch (e) {
+        errors.push({ index: i, code: e.code, message: e.message });
+      }
+    }
+    return { created: ids.length, ids, errors };
+  }
+
+  patchProduct(id: i64, patch: ProductPatch): Product {
+    const p = this.product(id);
+    // Validate everything before changing anything.
+    const name = patch.name == null ? null : cleanName(patch.name);
+    const description = patch.description;
+    if (description != null && description.length > 2000) {
+      throw invalid("description is at most 2000 characters");
+    }
+    const tags = patch.tags == null ? null : cleanTags(patch.tags);
+    if (name != null) {
+      p.name = name;
+      p.slug = slugify(name);
+    }
+    if (description != null) {
+      p.description = description;
+    }
+    if (tags != null) {
+      p.tags = tags;
+    }
+    const attributes = patch.attributes;
+    if (attributes != null) {
+      for (const [k, v] of Object.entries(attributes)) {
+        p.attributes[k] = v;
+      }
+    }
+    if (patch.active != null) {
+      p.active = patch.active;
+    }
+    return p;
+  }
+
+  /// Prices `input` against the catalogue and takes the stock; all or nothing.
+  createOrder(input: NewOrder): Order {
+    if (input.items.length === 0 || input.items.length > 50) {
+      throw invalid("an order has 1 to 50 items");
+    }
+    if (!input.customer.email.includes("@")) {
+      throw invalid("customer.email is not an email address");
+    }
+    const items: OrderItem[] = [];
+    const refs: SkuRef[] = [];
+    for (const line of input.items) {
+      const ref = this.bySku.get(line.sku);
+      if (ref == null) {
+        throw invalid(`unknown sku '${line.sku}'`);
+      }
+      if (line.quantity < 1 || line.quantity > 100) {
+        throw invalid("quantity must be 1 to 100");
+      }
+      const p = this.products[ref.product];
+      const v = p.variants[ref.variant];
+      if (!p.active) {
+        throw new ApiError(409, "conflict", `product ${p.id} is not for sale`);
+      }
+      let wanted = line.quantity;
+      for (const it of items) {
+        if (it.sku === line.sku) {
+          wanted += it.quantity;
+        }
+      }
+      if (v.stock < wanted) {
+        throw new ApiError(409, "conflict", `only ${v.stock} of '${line.sku}' in stock`);
+      }
+      items.push({
+        productId: p.id,
+        sku: v.sku,
+        name: p.name,
+        quantity: line.quantity,
+        unitPrice: v.price.amount,
+        lineTotal: v.price.amount * line.quantity,
+      });
+      refs.push(ref);
+    }
+    for (let i = 0; i < items.length; i++) {
+      this.products[refs[i].product].variants[refs[i].variant].stock -= items[i].quantity;
+    }
+    const order = priced(
+      this.nextOrderId,
+      "pending",
+      input.customer,
+      items,
+      input.shipping,
+      this.now(),
+    );
+    this.addOrder(order);
+    return order;
+  }
+
+  /// Moves an order along pending → paid → shipped; pending and paid orders can be cancelled
+  /// (which returns their stock).
+  setStatus(id: i64, status: OrderStatus): Order {
+    const o = this.order(id);
+    const allowed =
+      (o.status === "pending" && (status === "paid" || status === "cancelled")) ||
+      (o.status === "paid" && (status === "shipped" || status === "cancelled"));
+    if (!allowed) {
+      throw new ApiError(409, "conflict", `an order can't go from ${o.status} to ${status}`);
+    }
+    if (status === "cancelled") {
+      for (const it of o.items) {
+        const ref = this.bySku.get(it.sku);
+        if (ref != null) {
+          this.products[ref.product].variants[ref.variant].stock += it.quantity;
+        }
+      }
+    }
+    o.status = status;
+    return o;
+  }
+
+  listOrders(q: OrderQuery): Page<Order> {
+    const hits: Order[] = [];
+    for (let i = this.orders.length - 1; i >= 0; i--) {
+      const o = this.orders[i];
+      if (
+        (q.status == null || o.status === q.status) &&
+        (q.customer == null || o.customer.id === q.customer)
+      ) {
+        hits.push(o);
+      }
+    }
+    return pageOf(hits, q.page, q.limit);
+  }
+
+  stats(): Stats {
+    let active: i64 = 0;
+    let variants: i64 = 0;
+    let units: i64 = 0;
+    for (const p of this.products) {
+      if (p.active) {
+        active++;
+      }
+      variants += p.variants.length;
+      units += totalStock(p);
+    }
+    const byStatus = { pending: 0, paid: 0, shipped: 0, cancelled: 0 };
+    const byCategory = new Map<string, CategoryStats>();
+    for (const c of categories()) {
+      byCategory.set(c, { category: c, orders: 0, units: 0, revenue: 0 });
+    }
+    const byProduct = new Map<i64, ProductStats>();
+    let revenue: i64 = 0;
+    let counted: i64 = 0;
+    for (const o of this.orders) {
+      switch (o.status) {
+        case "pending":
+          byStatus.pending++;
+          break;
+        case "paid":
+          byStatus.paid++;
+          break;
+        case "shipped":
+          byStatus.shipped++;
+          break;
+        case "cancelled":
+          byStatus.cancelled++;
+          continue;
+      }
+      revenue += o.total;
+      counted++;
+      const seen: string[] = [];
+      for (const it of o.items) {
+        const c = byCategory.get(this.product(it.productId).category)!;
+        c.units += it.quantity;
+        c.revenue += it.lineTotal;
+        if (!seen.includes(c.category)) {
+          seen.push(c.category);
+          c.orders++;
+        }
+        const ps = byProduct.get(it.productId);
+        if (ps == null) {
+          byProduct.set(it.productId, {
+            productId: it.productId,
+            name: it.name,
+            units: it.quantity,
+            revenue: it.lineTotal,
+          });
+        } else {
+          ps.units += it.quantity;
+          ps.revenue += it.lineTotal;
+        }
+      }
+    }
+    const cats = [...byCategory.values()];
+    cats.sort((a, b) => cmp(b.revenue - a.revenue, a.category < b.category ? -1 : 1));
+    const top = [...byProduct.values()];
+    top.sort((a, b) => cmp(b.units - a.units, a.productId - b.productId));
+    return {
+      products: this.products.length,
+      activeProducts: active,
+      variants,
+      unitsInStock: units,
+      orders: this.orders.length,
+      ordersByStatus: byStatus,
+      revenue,
+      averageOrderValue: counted === 0 ? 0 : revenue / counted,
+      categories: cats,
+      topProducts: top.slice(0, 10),
+    };
+  }
+}

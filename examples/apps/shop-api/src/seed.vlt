@@ -1,0 +1,249 @@
+// A deterministic catalogue and order history, so every run (and node/server.mjs) starts from
+// the same data and returns the same bytes.
+import { categories, CURRENCY, Order, OrderItem, OrderStatus, Product, Variant } from "./model";
+
+/// A 32-bit LCG (Numerical Recipes); node/server.mjs mirrors it with `Math.imul` and `>>> 0`.
+export class Random {
+  private state: u32;
+
+  constructor(seed: u32) {
+    this.state = seed;
+  }
+
+  /// An integer in [0, n).
+  next(n: i64): i64 {
+    this.state = this.state * 1664525u32 + 1013904223u32;
+    return ((this.state >> 8u32) as i64) % n;
+  }
+
+  pick(xs: string[]): string {
+    return xs[this.next(xs.length)];
+  }
+}
+
+// The word lists are functions: module-level array constants are #60.
+function brands(): string[] {
+  return [
+    "Acme",
+    "Borealis",
+    "Cobalt",
+    "Dune",
+    "Ember",
+    "Fjord",
+    "Granite",
+    "Halo",
+    "Ivy",
+    "Juniper",
+  ];
+}
+
+function adjectives(): string[] {
+  return [
+    "Classic",
+    "Compact",
+    "Deluxe",
+    "Everyday",
+    "Light",
+    "Pro",
+    "Rugged",
+    "Smart",
+    "Ultra",
+    "Vintage",
+  ];
+}
+
+function nouns(): string[] {
+  return [
+    "Backpack",
+    "Bottle",
+    "Grinder",
+    "Headphones",
+    "Kettle",
+    "Lamp",
+    "Notebook",
+    "Planter",
+    "Shoes",
+    "Tent",
+    "Speaker",
+    "Puzzle",
+  ];
+}
+
+function colors(): string[] {
+  return ["black", "white", "red", "green", "blue", "sand", "grey"];
+}
+
+function sizes(): string[] {
+  return ["XS", "S", "M", "L", "XL"];
+}
+
+function words(): string[] {
+  return [
+    "durable",
+    "recycled",
+    "lightweight",
+    "waterproof",
+    "handmade",
+    "organic",
+    "quiet",
+    "fast",
+    "warm",
+    "modular",
+    "foldable",
+    "repairable",
+  ];
+}
+
+function materials(): string[] {
+  return ["steel", "cotton", "wool", "bamboo", "aluminium", "ceramic", "oak"];
+}
+
+const BASE_MS = 1767225600000; // 2026-01-01T00:00:00Z
+
+/// The ISO time `seconds` after BASE_MS.
+export function isoAt(seconds: i64): string {
+  return new Date((BASE_MS + seconds * 1000) as f64).toISOString();
+}
+
+export function slugify(name: string): string {
+  return name.toLowerCase().replaceAll(" ", "-");
+}
+
+function description(r: Random): string {
+  const w = words();
+  let text = "";
+  const sentences = 2 + r.next(3);
+  for (let s = 0; s < sentences; s++) {
+    text += `${s === 0 ? "A" : " Made to be"} ${r.pick(w)}, ${r.pick(w)} and ${r.pick(w)} companion for every day.`;
+  }
+  return text;
+}
+
+function product(r: Random, id: i64): Product {
+  const name = `${r.pick(brands())} ${r.pick(adjectives())} ${r.pick(nouns())} ${id}`;
+  const tags: string[] = [];
+  const tagCount = 1 + r.next(4);
+  for (let t = 0; t < tagCount; t++) {
+    const tag = r.pick(words());
+    if (!tags.includes(tag)) {
+      tags.push(tag);
+    }
+  }
+  const attributes: Record<string, string> = {};
+  attributes["material"] = r.pick(materials());
+  attributes["warranty"] = `${1 + r.next(5)} years`;
+  if (r.next(2) === 0) {
+    attributes["origin"] = r.pick(["SE", "NO", "DE", "PT", "JP"]);
+  }
+  const variants: Variant[] = [];
+  const variantCount = 1 + r.next(5);
+  const base = 990 + r.next(400) * 100;
+  for (let v = 0; v < variantCount; v++) {
+    variants.push({
+      sku: `P${id}-${v + 1}`,
+      color: r.pick(colors()),
+      size: r.pick(sizes()),
+      stock: r.next(5) === 0 ? 0 : r.next(500),
+      price: { amount: base + v * 500, currency: CURRENCY },
+    });
+  }
+  return {
+    id,
+    slug: slugify(name),
+    name,
+    description: description(r),
+    category: r.pick(categories()),
+    brand: brands()[r.next(10)],
+    tags,
+    attributes,
+    variants,
+    rating: { average: ((10 + r.next(41)) as f64) / 10.0, count: r.next(2000) },
+    active: r.next(10) !== 0,
+    createdAt: isoAt(id * 3600),
+  };
+}
+
+export function seedProducts(r: Random, count: i64): Product[] {
+  const out: Product[] = [];
+  for (let id = 1; id <= count; id++) {
+    out.push(product(r, id));
+  }
+  return out;
+}
+
+function statuses(): OrderStatus[] {
+  return ["pending", "paid", "paid", "shipped", "shipped", "shipped", "cancelled"];
+}
+
+/// Seeded orders over `products` (they don't change the stock: it is the stock left after them).
+export function seedOrders(r: Random, products: Product[], count: i64): Order[] {
+  const out: Order[] = [];
+  for (let id = 1; id <= count; id++) {
+    const items: OrderItem[] = [];
+    const lines = 1 + r.next(4);
+    for (let l = 0; l < lines; l++) {
+      const p = products[r.next(products.length)];
+      const v = p.variants[r.next(p.variants.length)];
+      const quantity = 1 + r.next(3);
+      items.push({
+        productId: p.id,
+        sku: v.sku,
+        name: p.name,
+        quantity,
+        unitPrice: v.price.amount,
+        lineTotal: v.price.amount * quantity,
+      });
+    }
+    const customer = r.next(800) + 1;
+    out.push(
+      priced(
+        id,
+        statuses()[r.next(7)],
+        { id: customer, name: `Customer ${customer}`, email: `c${customer}@example.com` },
+        items,
+        {
+          line1: `${1 + r.next(200)} Main Street`,
+          city: r.pick(["Stockholm", "Oslo", "Berlin", "Lisbon", "Kyoto"]),
+          postalCode: `${10000 + r.next(89999)}`,
+          country: r.pick(["SE", "NO", "DE", "PT", "JP"]),
+        },
+        isoAt(id * 600),
+      ),
+    );
+  }
+  return out;
+}
+
+/// An order with its totals: 10% off from 500.00, 25% VAT on the discounted subtotal (rounded
+/// half up), free shipping from 300.00 after the discount, else 49.00.
+export function priced(
+  id: i64,
+  status: OrderStatus,
+  customer: { id: i64; name: string; email: string },
+  items: OrderItem[],
+  shipping: { line1: string; city: string; postalCode: string; country: string },
+  createdAt: string,
+): Order {
+  let subtotal: i64 = 0;
+  for (const it of items) {
+    subtotal += it.lineTotal;
+  }
+  const discount = subtotal >= 50000 ? subtotal / 10 : 0;
+  const net = subtotal - discount;
+  const tax = (net * 25 + 50) / 100;
+  const shippingCost = net >= 30000 ? 0 : 4900;
+  return {
+    id,
+    status,
+    customer,
+    items,
+    shipping,
+    currency: CURRENCY,
+    subtotal,
+    discount,
+    tax,
+    shippingCost,
+    total: net + tax + shippingCost,
+    createdAt,
+  };
+}
