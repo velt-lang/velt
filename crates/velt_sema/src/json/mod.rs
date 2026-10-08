@@ -1,8 +1,10 @@
 //! What `JSON.stringify` / `JSON.parse<T>` can be generated for (after all bodies): numbers,
 //! `bool`, `string`, arrays, `T | null`, C-like enums, unions (stringify only), structs / classes
 //! / object literals whose fields are all public and serializable, and the prelude's `JsonValue`.
-//! A type with a private field has no JSON form: std types keep runtime handles (pointers) in
-//! private fields, and decoding one from untrusted input would forge it. A class with a private
+//! `JSON.stringify` writes `private` fields (as Node does) and skips ES private fields (`#x`);
+//! decoding cannot set either. A type holding a std type's private field has no JSON form at
+//! all: std types keep runtime handles (pointers) there, and decoding one from untrusted input
+//! would forge it. A class with a private
 //! or protected constructor can be written but not decoded: decoding fills the fields without
 //! running a constructor, which would bypass the class's factories and their checks. The intrinsics sit in generic prelude code
 //! (`JSON.stringify<T>`), so a requirement on a type parameter propagates to every caller (and
