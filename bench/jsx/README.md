@@ -73,3 +73,17 @@ With #77's list fold (`jsxList`: rows without slots are built as strings) and nu
 What is left of the 8% is copying: the folded rows are joined, the page string is built around
 them, and the benchmark adds the doctype with another template literal, where `hand` joins
 once. (`rows` and `rows-render` are lists outside a template, so they are not folded.)
+
+With template literals sized once from their parts (#707: one allocation per literal, so a long
+part no longer regrows the builder), instructions of one run; the "before" column is the same
+benchmark on the main it builds on (#682):
+
+| variant | macOS arm64 before | after | Linux arm64 before | after |
+|---|---:|---:|---:|---:|
+| hand | 2 490 658 473 | 2 210 258 980 | 2 452 196 306 | 2 176 934 660 |
+| precompiled | 2 693 114 024 | 2 343 839 271 | 2 650 557 805 | 2 311 142 969 |
+| generic | 9 975 231 533 | 9 246 179 229 | 10 024 439 864 | 9 273 024 533 |
+
+The precompiled page goes from 8% to 6% more instructions than `hand` on both. Linux arm64 is
+the bench-arm workflow (`gh workflow run bench-arm -f suite=jsx -f ref=template-builder -f
+base=main`, run 37830325119; cachegrind on a GitHub `ubuntu-24.04-arm` runner).
