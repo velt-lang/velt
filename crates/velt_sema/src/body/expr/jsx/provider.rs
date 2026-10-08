@@ -35,6 +35,9 @@ pub(crate) struct Provider {
     pub precompile: Option<Precompile>,
     /// `jsxTextSeparator` (precompile only): markup written between adjacent text parts.
     pub text_separator: Option<String>,
+    /// `jsxSoleEmpty` (precompile only): what a `null` or boolean sole child of an element
+    /// renders as, instead of `jsxEscape`'s result.
+    pub sole_empty: Option<String>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -109,14 +112,18 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
     }
     let children_field = children_field(cx, t, &source, at)?;
     let precompile = precompile(cx, t, at);
-    let text_separator = match precompile {
-        Some(_) => text_separator(cx, t, &source, at)?,
-        None => None,
+    let (text_separator, sole_empty) = match precompile {
+        Some(_) => (
+            string_const(cx, t, &source, at, "jsxTextSeparator", "<!--t-->")?,
+            string_const(cx, t, &source, at, "jsxSoleEmpty", "")?,
+        ),
+        None => (None, None),
     };
     Some(Provider {
         async_component: function(cx, t, "jsxAsyncComponent"),
         precompile,
         text_separator,
+        sole_empty,
         source,
         jsx: jsx?,
         fragment: fragment?,
@@ -167,11 +174,18 @@ fn precompile(cx: &mut Ctx, t: usize, at: Span) -> Option<Precompile> {
     })
 }
 
-/// The value of the optional `jsxTextSeparator` export: `Some(None)` without one, `None` once an
-/// export that is not a string constant was reported.
-fn text_separator(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Option<String>> {
-    const NAME: &str = "jsxTextSeparator";
-    let Some(item) = export_of(cx, t, NAME) else {
+/// The value of the optional string constant export `name` (`jsxTextSeparator`, `jsxSoleEmpty`;
+/// `example` for the message): `Some(None)` without one, `None` once an export that is not a
+/// string constant was reported.
+fn string_const(
+    cx: &mut Ctx,
+    t: usize,
+    source: &str,
+    at: Span,
+    name: &str,
+    example: &str,
+) -> Option<Option<String>> {
+    let Some(item) = export_of(cx, t, name) else {
         return Some(None);
     };
     let mut value = None;
@@ -201,11 +215,11 @@ fn text_separator(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Opti
     if value.is_none() {
         cx.error(
             Diagnostic::error(
-                format!("`{NAME}` of the JSX provider '{source}' must be a string constant"),
+                format!("`{name}` of the JSX provider '{source}' must be a string constant"),
                 at,
             )
             .with_note(format!(
-                "write it as `export const {NAME} = \"<!--t-->\";`: the compiler folds it into the template strings (docs/contracts/jsx.md)"
+                "write it as `export const {name} = \"{example}\";`: the compiler folds it into the template strings (docs/contracts/jsx.md)"
             )),
         );
         return None;
