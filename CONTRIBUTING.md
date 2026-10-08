@@ -145,7 +145,9 @@ proposal for a Velt-only feature is welcome when it shows the speed it buys.
 3. **Show the performance impact** on `bench/` for anything that touches code generation or the
    runtime: the gate for semantic changes is every benchmark within 3% of the previous compiler.
    `bench/nightly.sh` counts instructions with cachegrind; for a runtime change,
-   `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours.
+   `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours; for
+   a compiler or std change, `bench/compiler_ab.sh BASE HEAD` builds them with each commit's
+   toolchain.
 4. Once the design is accepted, the implementation lands with end-to-end tests, documentation
    updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
    breaks.
