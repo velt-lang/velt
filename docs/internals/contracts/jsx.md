@@ -1,7 +1,7 @@
 # JSX provider contract (Mac round 12)
 
 How the compiler lowers TSX and what a **provider** (`std/jsx`, sigx, any SSR renderer) must
-export. Design and rationale: [docs/design/tsx.md](../design/tsx.md). Nothing here is specific to
+export. Design and rationale: [docs/internals/design/tsx.md](../design/tsx.md). Nothing here is specific to
 one framework; providers live in their own packages.
 
 ## Choosing the provider
@@ -39,7 +39,7 @@ compile-time shapes), so the compiler does the part TS leaves to the runtime:
   distinction TS uses for key warnings carries no information here.
 
 ## Compatibility rule
-A component written in the TS/Velt common subset (docs/design/tsx.md, "Sharing components with
+A component written in the TS/Velt common subset (docs/internals/design/tsx.md, "Sharing components with
 the client") must type-check and **behave identically** under `tsc` with the provider's TS
 runtime and under `velt` with its Velt runtime: same props object, same children shape (one
 child → the child, several → an array, none → field absent/`null`), same `key` handling, same
@@ -152,7 +152,7 @@ shape of Deno's precompile transform, with text folded into the strings):
 - An element with an attribute spread or a `key` is not precompiled (it goes through `jsx`);
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
-  `std/jsx_precompile_equals_generic` checks `std/jsx`).
+  `lang/jsx_precompile_equals_generic` checks `std/jsx`).
 
 ### Text separator (optional export)
 The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
@@ -210,7 +210,8 @@ lowerings.
 ## `std/jsx` specifics
 `std/jsx` (default) implements the generic and precompile functions, has no event-handler
 attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
-provider), and offers `renderToString(el)`, `renderToStream(el, res)` (`std/http`
+provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async components),
+`renderToStream(el, res)` (`std/http`
 `Response.stream`, flushing at async component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
@@ -241,7 +242,8 @@ A provider whose attributes include handlers adds the handler type to `AttrValue
 attribute's type must convert to it) and decides what its `jsx` does with them; a server
 renderer drops them. TypeScript's other route, merging declarations of a global
 `JSX.IntrinsicElements` interface, does not exist: the provider module's export is the one
-definition. `tests/golden/lang/jsx_extend_intrinsic.vlt` is a complete provider.
+definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provider (used by
+`lang/jsx_extend_intrinsic`).
 
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async

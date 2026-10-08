@@ -1,7 +1,7 @@
-# HIR encodings (contract detail for `crates/velt_sema/src/hir.rs`)
+# HIR encodings (contract detail for `crates/velt_sema/src/hir/`)
 
 How sema encodes language features in HIR; lowering relies on every point here.
-Maintainer-owned, like hir.rs.
+Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
@@ -296,7 +296,7 @@ Maintainer-owned, like hir.rs.
   field types.
 
 ## switch
-- No HIR statement: sema desugars `switch` (hir.rs, sema `body/switch`) into
+- No HIR statement: sema desugars `switch` (`hir/mod.rs`, sema `body/switch`) into
   - a `Match` in statement position on the scrutinee (a place; a temporary is first stored in a
     `Let`): one arm per group of labels sharing a body (`Or` patterns), the `default` group last
     as `_`; arms are `Block` expressions of type `Unit` (or `Never` when the body always
@@ -373,7 +373,7 @@ Maintainer-owned, like hir.rs.
   join handles and the value form of `Promise.all` (which settles to `Result<T[], E>`: the first
   rejection, as soon as it happens). A `spawn(...)` in statement position (its handle is dropped
   at once) reports a rejection as uncaught.
-- `Intrinsic::Attempt` (`attempt(f)`): see hir.rs; lowering calls `f` with the Result ABI and
+- `Intrinsic::Attempt` (`attempt(f)`): see `hir/intrinsic.rs`; lowering calls `f` with the Result ABI and
   converts `Ok(v)` / `Err(e)` into the call's type by widening (`T | E`), or `null` / the error
   for `E | null`.
 - Uncaught errors in `main` (or a detached task) print `Uncaught <Type>` (+ `: <message>` if the
@@ -430,7 +430,8 @@ Maintainer-owned, like hir.rs.
   one counted object, others may be shared by copying their fields.
 - `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
   that declares it; interface fields never are). `console.log` / `inspect` leave out private
-  fields of zero size (std's `runtime` markers); other private fields show, as in Node.
+  fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`
+  fields never do (ES private names).
 - `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
   `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
   is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
@@ -467,3 +468,11 @@ exported handle classes (`BigInt`, `RegExp`, `JsonValue`, `Request`, `Response`,
 their state in `#` fields. Handle types that are structs (sockets, files, database clients,
 `Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
 every std type with private state, `private` or `#`, out of JSON.
+
+## Types with no HIR form
+
+Intersection types (`A & B`) and indexed access types (`T["k"]`) never reach HIR: sema resolves
+an intersection of object types to one ordinary anonymous object type (`intersections.rs`), and
+an indexed access to the type of the field it names (a union for several keys,
+`utility_types.rs`). Branded types (`string & { __brand: "UserId" }`) are replaced by their
+primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
