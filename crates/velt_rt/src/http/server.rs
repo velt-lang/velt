@@ -33,7 +33,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use hyper::body::Incoming;
-use hyper::header::UPGRADE;
+use hyper::upgrade::OnUpgrade;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -200,7 +200,10 @@ fn handle<S: OwnedStore>(
     conn: Conn,
     mut req: Request<Incoming>,
 ) -> HandlerFut<S> {
-    let parked = ParkedUpgrade(if req.headers().contains_key(UPGRADE) {
+    // hyper sets up an upgrade (an `OnUpgrade` extension) exactly for a request that can have
+    // one (HTTP/1.1 with `upgrade`, or CONNECT): looking for it costs nothing when there is
+    // none, unlike a header lookup.
+    let parked = ParkedUpgrade(if req.extensions().get::<OnUpgrade>().is_some() {
         upgrade::park(hyper::upgrade::on(&mut req))
     } else {
         0
