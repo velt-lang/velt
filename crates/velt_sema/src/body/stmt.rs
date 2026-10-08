@@ -398,6 +398,12 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
+            // `return value;` in an arrow whose `void` result comes from its expected type.
+            Some(e) if self.f.discards_value => {
+                let h = self.expr_stmt(e);
+                Self::push(out, S::Expr(h), span);
+                Self::push(out, S::Return(None), span);
+            }
             Some(e) => {
                 let h = self.expr_coerce(e, ret, Want::Move);
                 Self::push(out, S::Return(Some(h)), span);
