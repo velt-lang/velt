@@ -283,7 +283,9 @@ fn tracked(env: &Env, func: &Function) -> Vec<Local> {
         // A counter's cap needs the trip counts of the loops around it: track what their exit
         // tests compare too (`i < s.length` with an `i64` `i`).
         let double_counter = |i: usize| {
-            in_slice[i] && ty(Local(i as u32)) == Ty::F64 && counter::maybe(func, Local(i as u32))
+            in_slice[i]
+                && ty(Local(i as u32)) == Ty::F64
+                && counter::maybe(func, Local(i as u32), true)
         };
         if counters_seen || !(0..n).any(double_counter) {
             break;

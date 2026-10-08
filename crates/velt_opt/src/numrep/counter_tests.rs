@@ -278,3 +278,52 @@ fn integer_counters_read_through_a_copy_are_capped_within_their_type() {
         assert_eq!(cap_of(&p, n), expected, "{ty:?}");
     }
 }
+
+#[test]
+fn a_sum_of_bounded_values_is_capped_by_its_trips() {
+    // `c = c + e` with `e = (p as u8) as f64` in [0, 255], 1001 times at most.
+    let (mut p, c) = nest(0.0, 1.0, &f64_loops(&[1000.0]), true);
+    let f = &mut p.funcs[0];
+    let (u, e) = (
+        Local(f.locals.len() as u32),
+        Local(f.locals.len() as u32 + 1),
+    );
+    f.locals.push(velt_vir::vir::LocalDecl {
+        ty: Ty::U8,
+        name: None,
+    });
+    f.locals.push(velt_vir::vir::LocalDecl {
+        ty: Ty::F64,
+        name: None,
+    });
+    let (bi, si) = f
+        .blocks
+        .iter()
+        .enumerate()
+        .find_map(|(bi, b)| {
+            b.stmts
+                .iter()
+                .position(|s| {
+                    matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Add, Operand::Copy(a), _))
+                    if a.local == c)
+                })
+                .map(|si| (bi, si))
+        })
+        .expect("the step");
+    let Stmt::Assign(v, _) = f.blocks[bi].stmts[si].clone() else {
+        unreachable!()
+    };
+    f.blocks[bi].stmts[si] = Stmt::Assign(v, bin(BinOp::Add, copy_local(c), copy_local(e)));
+    f.blocks[bi].stmts.splice(
+        si..si,
+        [
+            Stmt::Assign(Place::local(u), Rvalue::Cast(copy_local(Local(0)), Ty::U8)),
+            Stmt::Assign(Place::local(e), Rvalue::Cast(copy_local(u), Ty::F64)),
+        ],
+    );
+    f.locs.clear();
+    assert_eq!(cap_of(&p, c), Some(Fact::int(0, 255 * 1001)));
+    let q = narrowed(&p);
+    assert!(!assigned(&q.funcs[0], c));
+    agree(&p, &q);
+}

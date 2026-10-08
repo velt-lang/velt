@@ -12,16 +12,19 @@
 //!   one direction by constant steps (one of them on every path around the loop), whose facts
 //!   at that step bound the values it takes there (an exit test against a constant, an array or
 //!   string length, a proven bound). `(hi - lo) / step + 2` bounds the loop head's runs.
+//! - **Steps** add a whole constant, or a local whose facts bound it (`codes +=
+//!   s.charCodeAt(i)`, in [-1, 65535]); the counter may be read through a copy made earlier,
+//!   in a block that dominates the step's.
 //! - **The cap** of a counter is its constants widened by the sum over its steps of
 //!   `|step| × runs`. Only counters whose cap stays within ±2^53 (with room for one more step)
 //!   get one: the flow analysis then meets the counter's facts with it, so it never widens
 //!   past it. A counter that may pass 2^53 stays a double.
 
-use velt_vir::vir::{BinOp, Const, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::vir::{BinOp, Const, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty};
 
 use super::fact::{Fact, TWO_53};
 use super::flow::Flow;
-use crate::map_probe::region::{predecessors, Dominators};
+use crate::map_probe::region::{between, predecessors, Dominators, Point};
 
 /// Largest step of a counter or an induction variable.
 const MAX_STEP: f64 = 4_294_967_296.0;
@@ -44,7 +47,8 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
         .map(|lp| nest.trips(func, flow, lp))
         .collect();
     for (l, defs) in counters {
-        if let Some(cap) = cap(&nest, &trips, &defs, func.locals[l.0 as usize].ty) {
+        let ty = func.locals[l.0 as usize].ty;
+        if let Some(cap) = cap(func, flow, &nest, &trips, &defs, ty) {
             if let Some(s) = flow.slot(l) {
                 out[s] = Some(cap);
             }
@@ -58,18 +62,22 @@ pub(super) fn caps(func: &Function, flow: &Flow) -> Vec<Option<Fact>> {
 fn counters(func: &Function, flow: &Flow) -> Vec<(Local, Vec<Def>)> {
     (func.params.len()..func.locals.len())
         .map(|i| Local(i as u32))
-        .filter(|&l| flow.slot(l).is_some() && maybe(func, l))
-        .filter_map(|l| Some((l, counter_defs(func, l)?)))
+        .filter(|&l| flow.slot(l).is_some() && maybe(func, l, false))
+        .filter_map(|l| Some((l, counter_defs(&Cx::new(func), l)?)))
         .collect()
 }
 
 /// Is `l` an `f64` or integer local (not a parameter) that may be a counter: set only to whole
-/// constants and to steps of itself, at least once to a step?
-pub(super) fn maybe(func: &Function, l: Local) -> bool {
+/// constants and to steps of itself, at least once to a step (a constant one, with `constant`)?
+pub(super) fn maybe(func: &Function, l: Local, constant: bool) -> bool {
     let ty = func.locals[l.0 as usize].ty;
+    let step = |d: &Def| match d {
+        Def::Step(_, _, by) => !constant || matches!(by, By::Const(_)),
+        Def::Init(_) => false,
+    };
     l.0 as usize >= func.params.len()
         && (ty == Ty::F64 || ty.is_int())
-        && counter_defs(func, l).is_some_and(|d| d.iter().any(|d| matches!(d, Def::Step(..))))
+        && counter_defs(&Cx::new(func), l).is_some_and(|d| d.iter().any(step))
 }
 
 /// A definition of a counter.
@@ -77,12 +85,24 @@ pub(super) fn maybe(func: &Function, l: Local) -> bool {
 enum Def {
     /// `n = c`.
     Init(f64),
-    /// `n = n + c` in this block (directly or through a temporary).
-    Step(usize, f64),
+    /// `n = n + c` in this block (directly or through a temporary), reading `n` at this
+    /// statement.
+    Step(usize, usize, By),
+}
+
+/// What a step adds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum By {
+    /// A whole constant (negative for `n - c`).
+    Const(f64),
+    /// A local whose facts bound it (`codes += s.charCodeAt(i)`), subtracted when the flag is
+    /// set.
+    Var(Local, bool),
 }
 
 /// The definitions of `l` if each is a whole constant or a step of `l` (`None` otherwise).
-fn counter_defs(func: &Function, l: Local) -> Option<Vec<Def>> {
+fn counter_defs(cx: &Cx, l: Local) -> Option<Vec<Def>> {
+    let func = cx.func;
     let mut defs = vec![];
     for (bi, b) in func.blocks.iter().enumerate() {
         if let Terminator::Call { dest: Some(d), .. } = &b.term {
@@ -104,7 +124,10 @@ fn counter_defs(func: &Function, l: Local) -> Option<Vec<Def>> {
                     let neg_zero = x == 0.0 && x.is_sign_negative();
                     (x.fract() == 0.0 && x.abs() < TWO_53 && !neg_zero).then_some(Def::Init(x))?
                 }
-                _ => Def::Step(bi, step(func, bi, si, l)?.1),
+                _ => {
+                    let (at, by) = step(cx, bi, si, l)?;
+                    Def::Step(bi, at, by)
+                }
             });
         }
     }
@@ -123,14 +146,14 @@ fn constant(c: &Const) -> Option<f64> {
 /// Statement `si` of block `bi` assigns `l` a step of itself, `l + c`: directly, or by copying a
 /// temporary set to `l + c` earlier in the block (with neither changed in between); `l` may be
 /// read through a copy made earlier in the block (`t = l; u = t + 1; l = u`). Returns the index
-/// of the statement that reads `l` and the signed step `c` (whole, non-zero, at most
-/// [`MAX_STEP`]).
-fn step(func: &Function, bi: usize, si: usize, l: Local) -> Option<(usize, f64)> {
+/// of the statement that reads `l` and what the step adds.
+fn step(cx: &Cx, bi: usize, si: usize, l: Local) -> Option<(usize, By)> {
+    let func = cx.func;
     let stmts = &func.blocks[bi].stmts;
     let Stmt::Assign(_, rv) = &stmts[si] else {
         return None;
     };
-    if let Some(c) = step_rvalue(rv, |op| reads(stmts, si, op, l)) {
+    if let Some(c) = step_rvalue(rv, |op| reads(cx, bi, si, op, l)) {
         return Some((si, c));
     }
     let Rvalue::Use(Operand::Copy(t)) = rv else {
@@ -148,12 +171,38 @@ fn step(func: &Function, bi: usize, si: usize, l: Local) -> Option<(usize, f64)>
             _ => None,
         })
         .and_then(|(i, d, rv)| (d.local == t.local && d.proj.is_empty()).then_some((i, rv)))?;
-    Some((at, step_rvalue(rv, |op| reads(stmts, at, op, l))?))
+    Some((at, step_rvalue(rv, |op| reads(cx, bi, at, op, l))?))
 }
 
-/// Does `op`, read by statement `at` of `stmts`, hold `l`'s value: `l` itself, or a local last
-/// set to a copy of `l` earlier, with neither changed since?
-fn reads(stmts: &[Stmt], at: usize, op: &Operand, l: Local) -> bool {
+/// A function and, computed when first needed, its predecessors and dominators.
+struct Cx<'f> {
+    func: &'f Function,
+    cfg: std::cell::OnceCell<(Vec<Vec<usize>>, Dominators)>,
+}
+
+impl<'f> Cx<'f> {
+    fn new(func: &'f Function) -> Cx<'f> {
+        Cx {
+            func,
+            cfg: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn cfg(&self) -> &(Vec<Vec<usize>>, Dominators) {
+        self.cfg.get_or_init(|| {
+            let preds = predecessors(self.func);
+            let doms = Dominators::new(self.func, &preds);
+            (preds, doms)
+        })
+    }
+}
+
+/// Does `op`, read by statement `at` of block `bi`, hold `l`'s value: `l` itself, or a local
+/// set to a copy of `l` with neither changed since: last in the block, or by its only
+/// definition, in a block that dominates this one (`codes += s.charCodeAt(i)` reads `codes`
+/// before the call).
+fn reads(cx: &Cx, bi: usize, at: usize, op: &Operand, l: Local) -> bool {
+    let func = cx.func;
     let Operand::Copy(p) = op else { return false };
     if !p.proj.is_empty() {
         return false;
@@ -161,48 +210,123 @@ fn reads(stmts: &[Stmt], at: usize, op: &Operand, l: Local) -> bool {
     if p.local == l {
         return true;
     }
-    let def = stmts[..at]
+    let copies = |d: &Place, rv: &Rvalue| {
+        matches!(rv, Rvalue::Use(Operand::Copy(q))
+            if d.local == p.local && d.proj.is_empty() && q.local == l && q.proj.is_empty())
+    };
+    let last = func.blocks[bi].stmts[..at]
         .iter()
-        .enumerate()
         .rev()
-        .find_map(|(i, s)| match s {
-            Stmt::Assign(d, rv) if d.local == p.local || d.local == l => Some((i, d, rv)),
+        .find_map(|s| match s {
+            Stmt::Assign(d, rv) if d.local == p.local || d.local == l => Some(copies(d, rv)),
             _ => None,
         });
-    matches!(def, Some((_, d, Rvalue::Use(Operand::Copy(q))))
-        if d.local == p.local && d.proj.is_empty() && q.local == l && q.proj.is_empty())
+    if let Some(copy) = last {
+        return copy;
+    }
+    // The only definition of `p`, a copy of `l`.
+    let mut defs = func.blocks.iter().enumerate().flat_map(|(b, block)| {
+        block
+            .stmts
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, s)| match s {
+                Stmt::Assign(d, rv) if d.local == p.local => Some((b, i, d, rv)),
+                _ => None,
+            })
+    });
+    let (Some((qb, qi, d, rv)), None) = (defs.next(), defs.next()) else {
+        return false;
+    };
+    let p_call = func
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.term, Terminator::Call { dest: Some(d), .. } if d.local == p.local));
+    if !copies(d, rv) || p_call {
+        return false;
+    }
+    let (preds, doms) = cx.cfg();
+    let from = Point {
+        block: qb,
+        index: qi,
+    };
+    let to = Point {
+        block: bi,
+        index: at,
+    };
+    let Some(region) = between(func, preds, doms, from, to) else {
+        return false;
+    };
+    let changes = |pt: Point| {
+        let block = &func.blocks[pt.block];
+        match block.stmts.get(pt.index) {
+            Some(Stmt::Assign(d, _)) => d.local == l,
+            Some(_) => false,
+            None => matches!(&block.term, Terminator::Call { dest: Some(d), .. } if d.local == l),
+        }
+    };
+    let changed = region.points().any(changes);
+    !changed
 }
 
-/// The signed step `c` of `rv` = `l + c`, `c + l` or `l - c`, where `is_l` tells the reads of
-/// `l`.
-fn step_rvalue(rv: &Rvalue, is_l: impl Fn(&Operand) -> bool) -> Option<f64> {
+/// What `rv` = `l + c`, `c + l` or `l - c` adds to `l` (`c` a constant, whole, non-zero and at
+/// most [`MAX_STEP`], or another local), where `is_l` tells the reads of `l`.
+fn step_rvalue(rv: &Rvalue, is_l: impl Fn(&Operand) -> bool) -> Option<By> {
     let (c, sign) = match rv {
-        Rvalue::Binary(BinOp::Add, a, Operand::Const(c, _)) if is_l(a) => (c, 1.0),
-        Rvalue::Binary(BinOp::Add, Operand::Const(c, _), b) if is_l(b) => (c, 1.0),
-        Rvalue::Binary(BinOp::Sub, a, Operand::Const(c, _)) if is_l(a) => (c, -1.0),
+        Rvalue::Binary(BinOp::Add, a, c) if is_l(a) && !is_l(c) => (c, 1.0),
+        Rvalue::Binary(BinOp::Add, c, b) if is_l(b) && !is_l(c) => (c, 1.0),
+        Rvalue::Binary(BinOp::Sub, a, c) if is_l(a) && !is_l(c) => (c, -1.0),
         _ => return None,
     };
-    let c = constant(c)?;
-    (c != 0.0 && c.fract() == 0.0 && c.abs() <= MAX_STEP).then_some(sign * c)
+    match c {
+        Operand::Const(c, _) => {
+            let c = constant(c)?;
+            (c != 0.0 && c.fract() == 0.0 && c.abs() <= MAX_STEP).then_some(By::Const(sign * c))
+        }
+        Operand::Copy(p) if p.proj.is_empty() => Some(By::Var(p.local, sign < 0.0)),
+        Operand::Copy(_) => None,
+    }
+}
+
+/// The smallest and largest amounts step `by`, reading the counter at statement `at` of block
+/// `b`, adds: whole and at most [`MAX_STEP`] in magnitude, or `None`.
+fn amounts(func: &Function, flow: &Flow, b: usize, at: usize, by: By) -> Option<(f64, f64)> {
+    match by {
+        By::Const(c) => Some((c, c)),
+        By::Var(e, minus) => {
+            let f = flow.fact_before(func, b, at, e)?;
+            let ok = f.integral && !f.nan && f.lo <= f.hi && f.magnitude() <= MAX_STEP;
+            ok.then(|| if minus { (-f.hi, -f.lo) } else { (f.lo, f.hi) })
+        }
+    }
 }
 
 /// The cap of a counter of type `ty` with definitions `defs`, if it stays within ±2^53 (and,
 /// for an integer, its type: it never wraps).
-fn cap(nest: &Nest, trips: &[Option<u128>], defs: &[Def], ty: Ty) -> Option<Fact> {
+fn cap(
+    func: &Function,
+    flow: &Flow,
+    nest: &Nest,
+    trips: &[Option<u128>],
+    defs: &[Def],
+    ty: Ty,
+) -> Option<Fact> {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut up, mut down, mut largest) = (0u128, 0u128, 0.0f64);
     for d in defs {
         match *d {
             Def::Init(x) => (lo, hi) = (lo.min(x), hi.max(x)),
-            Def::Step(b, c) => {
+            Def::Step(b, at, by) => {
                 let runs = nest.runs(trips, b)?;
-                let moved = runs.saturating_mul(c.abs() as u128).min(MAX_RUNS);
-                if c > 0.0 {
-                    up = up.saturating_add(moved).min(MAX_RUNS);
-                } else {
-                    down = down.saturating_add(moved).min(MAX_RUNS);
+                let (least, most) = amounts(func, flow, b, at, by)?;
+                let moved = |c: f64| runs.saturating_mul(c as u128).min(MAX_RUNS);
+                if most > 0.0 {
+                    up = up.saturating_add(moved(most)).min(MAX_RUNS);
                 }
-                largest = largest.max(c.abs());
+                if least < 0.0 {
+                    down = down.saturating_add(moved(-least)).min(MAX_RUNS);
+                }
+                largest = largest.max(least.abs()).max(most.abs());
             }
         }
     }
@@ -352,7 +476,10 @@ impl Nest {
         }
         let steps: Vec<(usize, usize, f64)> = ds
             .iter()
-            .map(|&(b, s)| step(func, b, s, l).map(|(at, c)| (b, at, c)))
+            .map(|&(b, s)| match step(&Cx::new(func), b, s, l) {
+                Some((at, By::Const(c))) => Some((b, at, c)),
+                _ => None,
+            })
             .collect::<Option<_>>()?;
         let up = steps[0].2 > 0.0;
         if steps.iter().any(|s| (s.2 > 0.0) != up) {

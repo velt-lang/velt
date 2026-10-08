@@ -95,12 +95,13 @@ fn counter_program(start: f64, bound: f64) -> (Program, Local, Local) {
 }
 
 #[test]
-fn bounded_counters_become_i32_and_sums_stay_doubles() {
+fn bounded_counters_and_their_sums_become_integers() {
     let (p, s, k) = counter_program(0.0, 1000.0);
     let q = narrowed(&p);
     let f = &q.funcs[0];
     assert!(!assigned(f, k), "the counter is narrowed");
-    assert!(assigned(f, s), "the unbounded sum stays a double");
+    // `s` adds `k` in [0, 999] at most 1001 times (`counter`).
+    assert!(!assigned(f, s), "the bounded sum is narrowed");
     assert!(
         local_ty_count(f, Ty::I32) >= 2,
         "counter and its increment are i32"
@@ -265,8 +266,16 @@ fn facts_fold_rounding_calls_and_decided_branches() {
 }
 
 #[test]
+fn sums_that_may_pass_2_53_stay_doubles() {
+    // 10^9 additions of up to 10^9 - 1.
+    let (p, s, _) = counter_program(0.0, 1e9);
+    let q = narrowed(&p);
+    assert!(assigned(&q.funcs[0], s), "the sum stays a double");
+}
+
+#[test]
 fn report_lists_unnarrowed_named_locals_in_loops() {
-    let (mut p, s, _) = counter_program(0.0, 1000.0);
+    let (mut p, s, _) = counter_program(0.0, 1e9);
     p.funcs[0].locals[s.0 as usize].name = Some("s".into());
     let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);
     let r = unnarrowed(&env, &p.funcs[0]);

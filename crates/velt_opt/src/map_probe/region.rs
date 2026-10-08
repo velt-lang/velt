@@ -16,14 +16,14 @@ use crate::visit::successors;
 
 /// A statement (`index < stmts.len()`) or the terminator (`index == stmts.len()`) of a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) struct Point {
+pub(crate) struct Point {
     pub block: usize,
     pub index: usize,
 }
 
 /// The statements (and terminator, index `stmts.len()`) of some blocks: per block, ranges.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Region {
+pub(crate) struct Region {
     pub parts: Vec<(usize, Range<usize>)>,
     by_block: HashMap<usize, Vec<Range<usize>>>,
 }
@@ -164,7 +164,7 @@ fn reverse_postorder(func: &Function) -> Vec<usize> {
 
 /// The code strictly between `q` and `p` (see the module doc), or `None` when `q` does not
 /// dominate `p`. `q == p` gives the empty region.
-pub(super) fn between(
+pub(crate) fn between(
     func: &Function,
     preds: &[Vec<usize>],
     doms: &Dominators,
