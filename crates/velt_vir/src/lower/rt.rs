@@ -44,6 +44,9 @@ pub(super) enum Rt {
     FAbs,
     RcInc,
     RcDec,
+    DropState,
+    DropQueue,
+    DropDrain,
     // M3: futures and tasks (rt_abi_async.md §1, §2, §8, §9)
     FutPoll,
     FutDrop,
@@ -174,6 +177,9 @@ impl Rt {
             Rt::FAbs => math("velt_rt_math_fabs"),
             Rt::RcInc => ("velt_rt_rc_inc", vec![Ptr], Unit, false),
             Rt::RcDec => ("velt_rt_rc_dec", vec![Ptr], U8, false),
+            Rt::DropState => ("velt_rt_drop_state", vec![], Ptr, false),
+            Rt::DropQueue => ("velt_rt_drop_queue", vec![Ptr, Ptr], Unit, false),
+            Rt::DropDrain => ("velt_rt_drop_drain", vec![], Unit, false),
             _ => self.sig_m3(),
         }
     }

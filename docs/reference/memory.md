@@ -33,6 +33,12 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
+- Dropping a long chain of objects never overflows the stack, however it is linked: a
+  linked list through a `next: Node | null` field or a tree through `left` and `right` is
+  freed in a loop, and a chain through arrays, `Map` values, closures, interface values,
+  subclasses or struct values is freed in nested steps up to a fixed depth (128), with the
+  objects past it freed when the outer drop is done
+  ([order of cleanup](#order-of-cleanup-in-long-chains)).
 - Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
   holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
   or method: the closure refers to the object, the object to the closure); replace the field
@@ -214,6 +220,41 @@ async function ping(addr: string): Promise<string> {
   await using conn = new Conn(addr);     // closed at the end of the block
   return conn.request("PING");
 }
+```
+
+### Order of cleanup in long chains
+
+When an object goes away, its `[Symbol.dispose]()` runs first, then its fields are released in
+declaration order, each completely (an object a field held is disposed with everything it
+holds) before the next. A chain through the class's own field (`next: Node | null`) keeps
+exactly this order at any length: each node is disposed before the rest of the chain. In a
+chain or tree that nests through other values (arrays, `Map` values, closures, interfaces), an
+object more than 128 levels below the one being released is set aside and released, in the
+order it was reached, once the outer release has finished everything else. Every hook still
+runs exactly once, and a chain is still disposed from its head on; only a branch deeper than
+128 levels is disposed after the shallower objects that come after it.
+
+```ts
+class Step {
+  name: string;
+  next: Step[] = [];
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+{
+  const a = new Step("a");
+  const b = new Step("b");
+  b.next.push(new Step("c"));
+  a.next.push(b);
+  a.next.push(new Step("d"));
+}                               // dispose a, dispose b, dispose c, dispose d
 ```
 
 Not supported yet: the `Disposable` / `AsyncDisposable` interfaces and `DisposableStack` (a
