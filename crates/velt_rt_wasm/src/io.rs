@@ -141,6 +141,20 @@ pub(crate) mod capture {
     }
 }
 
+/// `isatty(fd)` (std/process): 1 if a standard stream is a terminal (WASI hosts may say so; in
+/// the browser nothing is), 0 for any other descriptor.
+#[no_mangle]
+pub extern "C" fn velt_rt_isatty(fd: i32) -> u8 {
+    use std::io::IsTerminal;
+    let tty = match fd {
+        0 => std::io::stdin().is_terminal(),
+        1 => std::io::stdout().is_terminal(),
+        2 => std::io::stderr().is_terminal(),
+        _ => false,
+    };
+    tty as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

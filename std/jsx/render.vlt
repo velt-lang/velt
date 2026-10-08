@@ -1,11 +1,12 @@
 // std/jsx/render: turns an Element into HTML, as one string or into a streamed response.
 //
-// A complete element already is its HTML (node.vlt). Otherwise the renderer walks the node's
+// A complete element already is its HTML, as a string or a tree of template strings (node.vlt)
+// joined or written once. Otherwise the renderer walks the node's
 // pieces in document order with an explicit stack (no async recursion): `html`, then the
 // awaited async component, then the other parts. Every async component started when its node was
 // created, so awaiting them one after the other still lets them load concurrently.
 
-import { Element, RenderError } from "velt:jsx/node";
+import { Element, RenderError, Tree, markupOf, pushMarkup } from "velt:jsx/node";
 import { ResponseWriter } from "velt:http";
 
 /**
@@ -14,22 +15,22 @@ import { ResponseWriter } from "velt:http";
  */
 export async function renderToString(el: Element): Promise<string> throws RenderError {
   if (el.isComplete) {
-    return el.html;
+    return markupOf(el);
   }
-  let out = "";
+  const pieces: string[] = [];
   const stack: Element[] = [el];
   while (stack.length > 0) {
     const node = stack.pop();
     if (node == null) {
       break;
     }
-    out += node.html;
+    pushMarkup(node, pieces);
     const pending = pushParts(node, stack);
     if (pending != null) {
       stack.push(await pending);
     }
   }
-  return out;
+  return pieces.join("");
 }
 
 /**
@@ -38,7 +39,7 @@ export async function renderToString(el: Element): Promise<string> throws Render
  */
 export function renderToStringSync(el: Element): string throws RenderError {
   if (el.isComplete) {
-    return el.html;
+    return markupOf(el);
   }
   const pieces: string[] = [];
   collect(el, pieces);
@@ -47,7 +48,7 @@ export function renderToStringSync(el: Element): string throws RenderError {
 
 // `renderToStringSync` for an incomplete node, depth first.
 function collect(node: Element, pieces: string[]) throws RenderError {
-  pieces.push(node.html);
+  pushMarkup(node, pieces);
   if (node.rest == null) {
     return;
   }
@@ -78,7 +79,7 @@ export async function renderToStream(
     if (node == null) {
       break;
     }
-    if (node.html != "" && !w.write(node.html)) {
+    if (!writeMarkup(node, w)) {
       return false;
     }
     const pending = pushParts(node, stack);
@@ -90,6 +91,27 @@ export async function renderToStream(
     }
   }
   return true;
+}
+
+// Writes the markup of `node` (not its parts) string by string; false once the client has gone
+// away.
+function writeMarkup(node: Element, w: ResponseWriter): bool {
+  if (node.tree == null) {
+    return node.html == "" || w.write(node.html);
+  }
+  if (!writeString(node.tree, 0, w)) {
+    return false;
+  }
+  for (let i: usize = 0; i < node.tree.slots.length; i++) {
+    if (!writeMarkup(node.tree.slots[i], w) || !writeString(node.tree, i + 1, w)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function writeString(tree: Tree, i: usize, w: ResponseWriter): bool {
+  return tree.strings == null || tree.strings[i] == "" || w.write(tree.strings[i]);
 }
 
 // Pushes the node's parts onto the stack so that they pop in document order, and returns its

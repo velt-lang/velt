@@ -1,0 +1,23 @@
+// A scripted session against the real server (golden: demo.out): the post list, tag filters, a
+// post with its comments (streamed: the comments load last), escaped user content, and a 404.
+import { startServer } from "./src/server";
+
+async function get(port: i64, path: string) {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`);
+  const status = res.status;
+  const type = res.headers.get("content-type") ?? "-";
+  const body = await res.text();
+  console.log(`GET ${path} -> ${status} (${type})`);
+  console.log(body);
+}
+
+async function main() {
+  const server = await startServer(0);
+  await get(server.port, "/");
+  await get(server.port, "/?tag=http");
+  await get(server.port, "/?page=2&tag=t%73x");
+  await get(server.port, "/posts/hello-tsx");
+  await get(server.port, "/posts/escaping");
+  await get(server.port, "/posts/nope");
+  server.close();
+}

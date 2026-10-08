@@ -1,0 +1,18 @@
+{
+  "//": "The client side of the shared components: `npx -p typescript tsc -p .` type-checks src/shared against client/jsx-runtime.ts (README). The options are the common subset's baseline (docs/internals/design/tsx.md).",
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "ESNext.Disposable", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "ssr-blog-jsx",
+    "paths": { "ssr-blog-jsx/jsx-runtime": ["./client/jsx-runtime.ts"] },
+    "types": []
+  },
+  "include": ["src/shared", "client"]
+}

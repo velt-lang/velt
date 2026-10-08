@@ -1,0 +1,50 @@
+// The TechEmpower fortunes data and the hand-written page (bench/web/velt/server.vlt's
+// renderer): the baseline the TSX pages are measured against.
+
+import { escapeHtml } from "velt:html";
+
+export class Fortune {
+  constructor(public id: i64, public message: string) {}
+}
+
+const FORTUNES_HEAD =
+  "<!DOCTYPE html><html><head><title>Fortunes</title></head><body><table><tr><th>id</th><th>message</th></tr>";
+
+// The 12 standard fortunes plus the one added per request, sorted by message.
+export function fortunes(): Fortune[] {
+  const fs: Fortune[] = [
+    new Fortune(1, "fortune: No such file or directory"),
+    new Fortune(2, "A computer scientist is someone who fixes things that aren't broken."),
+    new Fortune(3, "After enough decimal places, nobody gives a damn."),
+    new Fortune(4, "A bad random number generator: 1, 1, 1, 1, 1, 4.33e+67, 1, 1, 1"),
+    new Fortune(5, "A computer program does what you tell it to do, not what you want it to do."),
+    new Fortune(6, "Emacs is a nice operating system, but I prefer UNIX. — Tom Christaensen"),
+    new Fortune(7, "Any program that runs right is obsolete."),
+    new Fortune(8, "A list is only as strong as its weakest link. — Donald Knuth"),
+    new Fortune(9, "Feature: A bug with seniority."),
+    new Fortune(10, "Computers make very fast, very accurate mistakes."),
+    new Fortune(
+      11,
+      "<script>alert(\"This should not be displayed in a browser alert box.\");</script>",
+    ),
+    new Fortune(12, "フレームワークのベンチマーク"),
+    new Fortune(0, "Additional fortune added at request time."),
+  ];
+  fs.sort((a, b) => a.message.compareTo(b.message));
+  return fs;
+}
+
+// The page as bench/web's Velt server writes it: a template literal per row, joined once.
+export function hand(fortunes: Fortune[]): string {
+  const parts: string[] = [FORTUNES_HEAD];
+  for (const f of fortunes) {
+    parts.push(`<tr><td>${f.id}</td><td>${escapeHtml(f.message)}</td></tr>`);
+  }
+  parts.push("</table></body></html>");
+  return parts.join("");
+}
+
+// Only the rows of `hand`, as strings (the breakdown's floor).
+export function handRows(fortunes: Fortune[]): string[] {
+  return fortunes.map((f) => `<tr><td>${f.id}</td><td>${escapeHtml(f.message)}</td></tr>`);
+}

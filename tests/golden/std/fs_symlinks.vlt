@@ -1,0 +1,69 @@
+// requires: symlinks
+// lstat, Stats.isSymbolicLink, readlink and symlink, and symlinks in readDirEntries.
+import {
+  symlink,
+  symlinkSync,
+  lstat,
+  lstatSync,
+  stat,
+  readlink,
+  readlinkSync,
+  readDirEntries,
+  mkdir,
+  writeFile,
+  readFile,
+  remove,
+  existsSync,
+} from "velt:fs";
+
+async function main() {
+  const dir = "velt_fs_symlinks_tmp";
+  if (existsSync(dir)) {
+    await remove(dir, { recursive: true }); // left by an interrupted run
+  }
+  await mkdir(`${dir}/sub`, { recursive: true });
+  await writeFile(`${dir}/file.txt`, "hello");
+  await writeFile(`${dir}/sub/x.txt`, "nested");
+  // A nested relative target: on Windows its `/` is stored as `\`, as Node does.
+  await symlink("sub/x.txt", `${dir}/to_nested`);
+  await symlink("file.txt", `${dir}/to_file`);
+  symlinkSync("sub", `${dir}/to_dir`);
+  await symlink("nowhere", `${dir}/dangling`);
+
+  for (const d of await readDirEntries(dir)) {
+    console.log(d.name, d.isFile(), d.isDirectory(), d.isSymbolicLink());
+  }
+
+  const l = await lstat(`${dir}/to_file`);
+  console.log("lstat link:", l.isSymbolicLink(), l.isFile(), l.isDirectory());
+  const s = await stat(`${dir}/to_file`);
+  console.log("stat link:", s.isSymbolicLink(), s.isFile(), s.size);
+  const d = lstatSync(`${dir}/to_dir`);
+  console.log("lstat dir link:", d.isSymbolicLink(), d.isDirectory());
+  const f = lstatSync(`${dir}/file.txt`);
+  console.log("lstat file:", f.isSymbolicLink(), f.isFile(), f.size);
+  console.log("lstat dangling:", (await lstat(`${dir}/dangling`)).isSymbolicLink());
+
+  console.log(await readlink(`${dir}/to_file`), readlinkSync(`${dir}/to_dir`));
+  const nested = await readlink(`${dir}/to_nested`);
+  console.log(nested.replaceAll("\\", "/"), await readFile(`${dir}/to_nested`));
+
+  try {
+    await stat(`${dir}/dangling`);
+  } catch (e) {
+    console.log("stat dangling:", e.code);
+  }
+  try {
+    await readlink(`${dir}/file.txt`);
+  } catch (e) {
+    console.log("readlink file:", e.code);
+  }
+  try {
+    await symlink("file.txt", `${dir}/to_file`);
+  } catch (e) {
+    console.log("symlink twice:", e.code);
+  }
+  await remove(`${dir}/to_dir`);
+  console.log("sub kept:", (await stat(`${dir}/sub`)).isDirectory());
+  await remove(dir, { recursive: true });
+}

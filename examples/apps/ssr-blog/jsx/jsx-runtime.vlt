@@ -1,0 +1,5 @@
+// The blog's JSX provider on the server: std/jsx. A TypeScript client compiles the same
+// components with client/jsx-runtime.ts instead (tsconfig.json maps the provider to it), which
+// renders the same HTML.
+
+export * from "velt:jsx/jsx-runtime";

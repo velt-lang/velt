@@ -3,9 +3,11 @@
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
 connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
-HTTPS, and redirects followed as the standard says. `velt:fetch` exports the same names and
-the option types (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`)
-and `BodyStream`, the type of `res.body`.
+HTTPS, and redirects followed as the standard says. The option types of their signatures
+(`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are global too, as
+in TypeScript, so an init object can be built before the call:
+`const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
+`velt:fetch` exports the same names and `BodyStream`, the type of `res.body`.
 
 ```ts
 type User = { id: number; name: string };

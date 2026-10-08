@@ -1,0 +1,56 @@
+// The HTTP server under concurrent writes: requests run on several threads, and the store's
+// Mutex must make stock-taking all or nothing.
+import { AbortError } from "velt:task";
+import { IoError } from "velt:io";
+import { Order, Product } from "../src/model";
+import { startServer } from "../src/server";
+import { Store } from "../src/store";
+
+function order(sku: string): string {
+  return `{"customer":{"id":1,"name":"A","email":"a@example.com"},"items":[{"sku":"${sku}","quantity":1}],"shipping":{"line1":"x","city":"y","postalCode":"z","country":"SE"}}`;
+}
+
+async function post(base: string, path: string, body: string): Promise<i64> {
+  const res = await fetch(`${base}${path}`, { method: "POST", body });
+  await res.text();
+  return res.status;
+}
+
+export async function test_concurrent_orders_never_oversell() {
+  const server = await startServer(Store.seeded(3u32, 10, 0), 0);
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await post(
+    base,
+    "/products",
+    `{"name":"Limited","category":"toys","brand":"Acme","variants":[{"sku":"LIM-1","color":"red","size":"M","stock":5,"price":{"amount":1000,"currency":"EUR"}}]}`,
+  );
+  assertEq(created, 201);
+
+  const attempts: Promise<i64, AbortError | IoError>[] = [];
+  for (let i = 0; i < 20; i++) {
+    attempts.push(spawn(post(base, "/orders", order("LIM-1"))));
+  }
+  const statuses = await Promise.all(attempts);
+  let ok: i64 = 0;
+  let conflicts: i64 = 0;
+  for (const s of statuses) {
+    if (s === 201) {
+      ok++;
+    } else if (s === 409) {
+      conflicts++;
+    }
+  }
+  assertEq([ok, conflicts], [5, 15]);
+
+  const product = await (await fetch(`${base}/products/11`)).json<Product>();
+  assertEq(product.variants[0].stock, 0);
+
+  // Cancelling one of the orders returns its unit.
+  const orders = await (await fetch(`${base}/orders?status=pending&limit=1`)).json<{
+    items: Order[];
+  }>();
+  assertEq(await post(base, `/orders/${orders.items[0].id}/status`, `{"status":"cancelled"}`), 200);
+  const after = await (await fetch(`${base}/products/11`)).json<Product>();
+  assertEq(after.variants[0].stock, 1);
+  server.close();
+}

@@ -1,0 +1,6 @@
+// The precompiling test JSX runtime with its own void elements (`jsxVoidElements`): `span` only,
+// so templates write `<br></br>` and `<span>`, and `<span>` may not have children.
+
+export * from "../_jsx_test_precompile/jsx-runtime";
+
+export const jsxVoidElements = "span";

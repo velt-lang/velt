@@ -9,7 +9,7 @@ mod ops;
 pub mod stream;
 pub mod sync;
 
-pub use ops::VeltStat;
+pub use ops::{kind, VeltDirents, VeltStat};
 
 use crate::str::VeltStr;
 use crate::task::leaf::blocking_leaf;
@@ -62,6 +62,37 @@ pub unsafe extern "C" fn velt_rt_fs_read_dir(path: *const VeltStr) -> *mut VeltF
 pub unsafe extern "C" fn velt_rt_fs_stat(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
     blocking_leaf(move || ops::stat(p))
+}
+
+/// `readDir(path, { withFileTypes: true })` → `IoResult<VeltDirents>`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_read_dir_typed(path: *const VeltStr) -> *mut VeltFut {
+    let p = path_arg(path);
+    blocking_leaf(move || ops::read_dir_typed(p))
+}
+
+/// `lstat(path)` → `IoResult<VeltStat>` (a symlink's own metadata).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_lstat(path: *const VeltStr) -> *mut VeltFut {
+    let p = path_arg(path);
+    blocking_leaf(move || ops::lstat(p))
+}
+
+/// `readlink(path)` → `IoResult<VeltStr>`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_readlink(path: *const VeltStr) -> *mut VeltFut {
+    let p = path_arg(path);
+    blocking_leaf(move || ops::readlink(p))
+}
+
+/// `symlink(target, path)` → `IoResult<()>`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_symlink(
+    target: *const VeltStr,
+    path: *const VeltStr,
+) -> *mut VeltFut {
+    let (t, p) = (path_arg(target), path_arg(path));
+    blocking_leaf(move || ops::symlink(t, p))
 }
 
 /// `mkdir(path, { recursive })` → `IoResult<()>`.

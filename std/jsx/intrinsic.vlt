@@ -1,8 +1,9 @@
 // std/jsx/intrinsic: the JSX types of std/jsx (docs/contracts/jsx.md): which lower-case tags
 // exist and which attributes each accepts (attribute types: std/jsx/attrs/*.vlt). A tag or
 // attribute that is not listed is a compile error, so typos are caught; custom elements
-// (`<my-widget>`) and hyphenated attributes (`data-*`, `aria-*`) are not checked. There are no
-// event handler attributes: std/jsx renders HTML on the server.
+// (`<my-widget>`, `<annotation-xml>`) and hyphenated attributes (`data-*`, `aria-*`,
+// `stroke-width`) are not checked. There are no event handler attributes: std/jsx renders HTML
+// on the server.
 
 import type { Child } from "velt:jsx/node";
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
@@ -53,13 +54,55 @@ import type {
   DialogAttrs,
 } from "velt:jsx/attrs/text";
 import type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
+import type {
+  AnimationAttrs,
+  CircleAttrs,
+  ClipPathAttrs,
+  EllipseAttrs,
+  FilterAttrs,
+  FilterPrimitiveAttrs,
+  ForeignObjectAttrs,
+  LineAttrs,
+  LinearGradientAttrs,
+  MarkerAttrs,
+  MaskAttrs,
+  MpathAttrs,
+  PathAttrs,
+  PatternAttrs,
+  PolyAttrs,
+  RadialGradientAttrs,
+  RectAttrs,
+  StopAttrs,
+  SvgAttrs,
+  SvgImageAttrs,
+  SvgRootAttrs,
+  SvgScriptAttrs,
+  SymbolAttrs,
+  TextContentAttrs,
+  TextPathAttrs,
+  UseAttrs,
+  ViewAttrs,
+} from "velt:jsx/attrs/svg";
+import type {
+  AnnotationAttrs,
+  MactionAttrs,
+  MathAttrs,
+  MathRootAttrs,
+  MfracAttrs,
+  MoAttrs,
+  MpaddedAttrs,
+  MspaceAttrs,
+  MtdAttrs,
+  MunderoverAttrs,
+} from "velt:jsx/attrs/mathml";
 
 /**
- * Tag name → attribute type, for every element of the HTML standard (SVG and MathML are not
- * included).
+ * Tag name → attribute type, for every element of the HTML standard, of SVG 2 and of MathML
+ * Core. `a`, `script`, `style` and `title` exist in HTML and SVG and take HTML's attributes
+ * (`a` and `script` also SVG's).
  */
 export type IntrinsicElements = {
-  a: AnchorAttrs;
+  a: AnchorAttrs & SvgAttrs;
   abbr: HtmlAttrs;
   address: HtmlAttrs;
   area: AreaAttrs;
@@ -141,7 +184,7 @@ export type IntrinsicElements = {
   ruby: HtmlAttrs;
   s: HtmlAttrs;
   samp: HtmlAttrs;
-  script: ScriptAttrs;
+  script: ScriptAttrs & SvgScriptAttrs;
   search: HtmlAttrs;
   section: HtmlAttrs;
   select: SelectAttrs;
@@ -171,6 +214,100 @@ export type IntrinsicElements = {
   var: HtmlAttrs;
   video: VideoAttrs;
   wbr: HtmlAttrs;
+
+  // SVG.
+  animate: AnimationAttrs;
+  animateMotion: AnimationAttrs;
+  animateTransform: AnimationAttrs;
+  circle: CircleAttrs;
+  clipPath: ClipPathAttrs;
+  defs: SvgAttrs;
+  desc: SvgAttrs;
+  discard: AnimationAttrs;
+  ellipse: EllipseAttrs;
+  feBlend: FilterPrimitiveAttrs;
+  feColorMatrix: FilterPrimitiveAttrs;
+  feComponentTransfer: FilterPrimitiveAttrs;
+  feComposite: FilterPrimitiveAttrs;
+  feConvolveMatrix: FilterPrimitiveAttrs;
+  feDiffuseLighting: FilterPrimitiveAttrs;
+  feDisplacementMap: FilterPrimitiveAttrs;
+  feDistantLight: FilterPrimitiveAttrs;
+  feDropShadow: FilterPrimitiveAttrs;
+  feFlood: FilterPrimitiveAttrs;
+  feFuncA: FilterPrimitiveAttrs;
+  feFuncB: FilterPrimitiveAttrs;
+  feFuncG: FilterPrimitiveAttrs;
+  feFuncR: FilterPrimitiveAttrs;
+  feGaussianBlur: FilterPrimitiveAttrs;
+  feImage: FilterPrimitiveAttrs;
+  feMerge: FilterPrimitiveAttrs;
+  feMergeNode: FilterPrimitiveAttrs;
+  feMorphology: FilterPrimitiveAttrs;
+  feOffset: FilterPrimitiveAttrs;
+  fePointLight: FilterPrimitiveAttrs;
+  feSpecularLighting: FilterPrimitiveAttrs;
+  feSpotLight: FilterPrimitiveAttrs;
+  feTile: FilterPrimitiveAttrs;
+  feTurbulence: FilterPrimitiveAttrs;
+  filter: FilterAttrs;
+  foreignObject: ForeignObjectAttrs;
+  g: SvgAttrs;
+  image: SvgImageAttrs;
+  line: LineAttrs;
+  linearGradient: LinearGradientAttrs;
+  marker: MarkerAttrs;
+  mask: MaskAttrs;
+  metadata: SvgAttrs;
+  mpath: MpathAttrs;
+  path: PathAttrs;
+  pattern: PatternAttrs;
+  polygon: PolyAttrs;
+  polyline: PolyAttrs;
+  radialGradient: RadialGradientAttrs;
+  rect: RectAttrs;
+  set: AnimationAttrs;
+  stop: StopAttrs;
+  svg: SvgRootAttrs;
+  switch: SvgAttrs;
+  symbol: SymbolAttrs;
+  text: TextContentAttrs;
+  textPath: TextPathAttrs;
+  tspan: TextContentAttrs;
+  use: UseAttrs;
+  view: ViewAttrs;
+
+  // MathML.
+  annotation: AnnotationAttrs;
+  maction: MactionAttrs;
+  math: MathRootAttrs;
+  merror: MathAttrs;
+  mfrac: MfracAttrs;
+  mi: MathAttrs;
+  mmultiscripts: MathAttrs;
+  mn: MathAttrs;
+  mo: MoAttrs;
+  mover: MunderoverAttrs;
+  mpadded: MpaddedAttrs;
+  mphantom: MathAttrs;
+  mprescripts: MathAttrs;
+  mroot: MathAttrs;
+  mrow: MathAttrs;
+  ms: MathAttrs;
+  mspace: MspaceAttrs;
+  msqrt: MathAttrs;
+  mstyle: MathAttrs;
+  msub: MathAttrs;
+  msubsup: MathAttrs;
+  msup: MathAttrs;
+  mtable: MathAttrs;
+  mtd: MtdAttrs;
+  mtext: MathAttrs;
+  mtr: MathAttrs;
+  munder: MunderoverAttrs;
+  munderover: MunderoverAttrs;
+  none: MathAttrs;
+  semantics: MathAttrs;
 };
 
 /** Components receive their JSX children in the `children` field of their props. */

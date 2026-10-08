@@ -1,0 +1,129 @@
+// Finding a pattern in a file's text: the matching lines, their numbers and the matched spans.
+// Plain words use `indexOf` (memchr/memmem in the runtime); anything else uses a RegExp.
+import { RegExp } from "velt:regex";
+
+/// How to interpret the pattern.
+export type MatchOptions = { fixed: bool; ignoreCase: bool; word: bool };
+
+/// A matched span within a line, in UTF-16 units from the line's start.
+export type Span = { start: i64; end: i64 };
+
+/// One matching line.
+export type LineMatch = { line: i64; text: string; spans: Span[] };
+
+const META = "\\^$.|?*+()[]{}";
+
+function isPlain(pattern: string): bool {
+  for (let i = 0; i < pattern.length; i++) {
+    if (META.includes(pattern[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// A compiled pattern. Build one per task: each task searches with its own.
+export class Matcher {
+  private literal: string | null = null;
+  private re: RegExp | null = null;
+
+  constructor(pattern: string, opts: MatchOptions) {
+    const plain = opts.fixed || isPlain(pattern);
+    if (plain && !opts.ignoreCase && !opts.word && pattern.length > 0) {
+      this.literal = pattern;
+      return;
+    }
+    let source = plain ? RegExp.escape(pattern) : pattern;
+    if (opts.word) {
+      source = `\\b(?:${source})\\b`;
+    }
+    this.re = new RegExp(source, opts.ignoreCase ? "im" : "m");
+  }
+
+  /// The first match at or after `from` in `s`, as a span, or null.
+  find(s: string, from: i64): Span | null {
+    const lit = this.literal;
+    if (lit != null) {
+      const at = s.indexOf(lit, from);
+      return at < 0 ? null : { start: at, end: at + lit.length };
+    }
+    const re = this.re;
+    if (re != null) {
+      // RegExp offsets are `usize`, string positions `i64` (#214).
+      const m = re.exec(s, from as usize);
+      if (m != null) {
+        return { start: m.index as i64, end: m.end as i64 };
+      }
+    }
+    return null;
+  }
+
+  /// Whether `s` contains a match anywhere.
+  test(s: string): bool {
+    return this.find(s, 0) != null;
+  }
+
+  /// Every line of `s` with a match, in order. `limit` > 0 stops after that many lines.
+  lines(s: string, limit: i64): LineMatch[] {
+    const out: LineMatch[] = [];
+    let first = this.find(s, 0);
+    if (first == null) {
+      return out;
+    }
+    let lineNo: i64 = 1;
+    let counted: i64 = 0; // newlines before `counted` are included in lineNo
+    let hit: Span | null = first;
+    while (hit != null) {
+      // An empty match at the very end is not on a line: the text is empty or its last line
+      // ended with a newline.
+      if (hit.start >= s.length && (s.length === 0 || s.endsWith("\n"))) {
+        break;
+      }
+      const lineStart = hit.start === 0 ? 0 : s.lastIndexOf("\n", hit.start - 1) + 1;
+      let lineEnd = s.indexOf("\n", hit.start);
+      if (lineEnd < 0) {
+        lineEnd = s.length;
+      }
+      // Count the newlines between the previous line and this one.
+      let nl = s.indexOf("\n", counted);
+      while (nl >= 0 && nl < lineStart) {
+        lineNo++;
+        nl = s.indexOf("\n", nl + 1);
+      }
+      counted = lineStart;
+
+      let textEnd = lineEnd;
+      if (textEnd > lineStart && s.charCodeAt(textEnd - 1) === 13) {
+        textEnd--; // CRLF
+      }
+      const text = s.slice(lineStart, textEnd);
+      // Matching the line on its own drops a regex match that only exists across lines (`\s`
+      // can match the newline in the whole text), as grep and ripgrep do.
+      const spans = this.spans(text);
+      if (spans.length > 0) {
+        out.push({ line: lineNo, text, spans });
+        if (limit > 0 && out.length >= limit) {
+          break;
+        }
+      }
+      // A final newline ends the last line; nothing follows it.
+      hit = lineEnd + 1 >= s.length ? null : this.find(s, lineEnd + 1);
+    }
+    return out;
+  }
+
+  /// The matched spans within one line (non-overlapping, left to right).
+  spans(line: string): Span[] {
+    const out: Span[] = [];
+    let from: i64 = 0;
+    while (from <= line.length) {
+      const m = this.find(line, from);
+      if (m == null) {
+        break;
+      }
+      out.push({ start: m.start, end: m.end });
+      from = m.end > m.start ? m.end : m.end + 1;
+    }
+    return out;
+  }
+}

@@ -1,0 +1,25 @@
+// Walks the benchmark tree 5 times with `readDirEntriesSync`: the listing carries each entry's
+// type, so no `stat` is needed.
+import { readDirEntriesSync } from "velt:fs";
+import { args } from "velt:process";
+
+function walk(dir: string): i64 {
+  let files = 0;
+  for (const e of readDirEntriesSync(dir)) {
+    if (e.isDirectory()) {
+      files += walk(`${dir}/${e.name}`);
+    } else if (e.isFile()) {
+      files += 1;
+    }
+  }
+  return files;
+}
+
+function main() {
+  const root = args()[0];
+  let total = 0;
+  for (let round = 0; round < 5; round++) {
+    total += walk(root);
+  }
+  console.log(total);
+}

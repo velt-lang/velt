@@ -265,7 +265,7 @@ task, one at a time between `await`s, so they share what it captured as in JavaS
 
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
-  64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
+  64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic; `.add(n)` returns the new value.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
   crosses the lock by reference, since other threads use the value as soon as it is released:

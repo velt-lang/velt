@@ -1,0 +1,44 @@
+// The page of `jsx_tree`, under std/jsx's precompiling runtime. `_jsx_tree_page_generic.vlt` is
+// the same source under `velt:jsx/generic`.
+
+import { raw } from "velt:jsx";
+
+function Item(props: { label: string }): JSX.Element {
+  return <li title={props.label}>{props.label}</li>;
+}
+
+async function Late(props: { n: i64 }): Promise<JSX.Element> {
+  return <em>late {props.n}</em>;
+}
+
+// One case per line: lists in fragments and templates, nested templates, text with quotes.
+export function cases(xs: string[], n: i64): JSX.Element[] {
+  return [
+    <ul>{xs.map((x) => <li>{x}</li>)}</ul>,
+    <>{xs.map((x) => <b>{x}</b>)}</>,
+    <>a{xs.map((x) => <i>{x}</i>)}b{n}</>,
+    <ol>{xs.map((x) => <Item label={x} />)}<li>end</li></ol>,
+    <section><table>{xs.map((x) => <tr><td>{x}</td><td>{n}</td></tr>)}</table></section>,
+    <div>{raw("<!-- raw -->")}<p>it's "quoted" {xs[0]}</p></div>,
+    <div>{[<p>one</p>, <>{xs.map((x) => <span>{x}</span>)}</>]}</div>,
+  ];
+}
+
+export function leaf(): JSX.Element {
+  return <span>x</span>;
+}
+
+export function wrap(el: JSX.Element): JSX.Element {
+  return <div>{el}</div>;
+}
+
+// A list before and after an async component: rendered once it has loaded.
+export function withAsync(xs: string[]): JSX.Element {
+  return (
+    <main>
+      <ul>{xs.map((x) => <li>{x}</li>)}</ul>
+      <Late n={xs.length} />
+      <p>{xs.map((x) => <>{x};</>)}</p>
+    </main>
+  );
+}

@@ -34,6 +34,25 @@ changing variables, the working directory and byte writes.
   synchronized with concurrent reads.
 - `cwd()`, `chdir(path)`: both throw `IoError`. `exit(code: i32)`.
 - `stdout.write(bytes: u8[])`: raw bytes, without a copy for large arrays.
+- `stdout.isTTY`, `stderr.isTTY`, `stdin.isTTY`: whether the stream is a terminal, as Node's
+  `process.stdout.isTTY` (`false` when output goes to a file or a pipe, so a CLI can leave out
+  colours). `isatty(fd: i32)`: the same for a file descriptor, as Node's `tty.isatty(fd)`; on
+  Windows only 0, 1 and 2 can be terminals. The answer for a standard stream is computed once,
+  so asking on every write costs nothing. Where Velt differs from Node:
+  - `isTTY` is `false` for a stream that isn't a terminal, where Node's is `undefined`.
+  - `isatty` is in `velt:process`; Node has it in `node:tty`.
+  - On Windows, a mintty or MSYS terminal (Git Bash) counts as a terminal; in Node it doesn't.
+  - The builtin `process.stdout` has only `write` so far (`process.stdout.isTTY` is #729):
+    import `stdout` for `isTTY`.
+
+```ts
+import { stdout } from "velt:process";
+
+function main() {
+  const color = stdout.isTTY && process.env.NO_COLOR == null;
+  console.log(color ? "\u001b[32mok\u001b[0m" : "ok"); // ok, when piped
+}
+```
 
 ```ts
 import { args, envAll, setEnv, cwd } from "velt:process";

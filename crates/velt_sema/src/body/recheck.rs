@@ -68,8 +68,9 @@ pub(crate) struct Frame {
 /// The start of a body's check, to roll back to.
 pub(crate) struct Mark {
     lens: Lens,
-    /// The body's function and how many of its closures were numbered then.
-    closures: (String, Option<u32>),
+    /// The body's function and how many of its closures were numbered then (`None`: a mark
+    /// inside a body, which only `rollback` uses).
+    closures: Option<(String, Option<u32>)>,
 }
 
 /// Keep, of `v`'s elements from `from` on, those inside `keep` (index ranges), in order; returns
@@ -94,7 +95,16 @@ impl Mark {
         let count = cx.closure_counts.get(&name).copied();
         Mark {
             lens: Lens::now(cx),
-            closures: (name, count),
+            closures: Some((name, count)),
+        }
+    }
+
+    /// The lists as they are now, inside the body being checked: for a try that may be undone
+    /// with `rollback` (`expr/jsx/list_fold.rs`).
+    pub(crate) fn here(cx: &Ctx) -> Self {
+        Mark {
+            lens: Lens::now(cx),
+            closures: None,
         }
     }
 
@@ -133,8 +143,12 @@ impl Mark {
                 f.ret_source = RetSource::Body;
             }
         }
+        // Bodies checked since the mark are unchecked again; those checked before it keep
+        // their segments.
         if let Some(frame) = cx.rechecks.last_mut() {
-            frame.segments.clear();
+            frame
+                .segments
+                .retain(|(_, e)| e.completed <= m.completed && e.diags <= m.diags);
         }
     }
 
@@ -192,11 +206,12 @@ impl Mark {
             frame.segments = vec![(m, end)];
             frame.reuse = own_closures.into_iter().rev().collect();
         }
-        let (name, count) = &self.closures;
-        match count {
-            Some(n) => cx.closure_counts.insert(name.clone(), *n),
-            None => cx.closure_counts.remove(name),
-        };
+        if let Some((name, count)) = &self.closures {
+            match count {
+                Some(n) => cx.closure_counts.insert(name.clone(), *n),
+                None => cx.closure_counts.remove(name),
+            };
+        }
     }
 }
 

@@ -19,7 +19,8 @@ fn root() -> PathBuf {
         .expect("repo root")
 }
 
-/// The `.vlt` files under `dir`, recursively, sorted.
+/// The `.vlt` files under `dir`, recursively, sorted; a file whose name starts with `_` is a
+/// module of a program, checked through the program that imports it (as in the goldens).
 fn programs(dir: &Path) -> Vec<PathBuf> {
     let mut out = vec![];
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
@@ -27,7 +28,11 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
         let path = entry.expect("directory entry").path();
         if path.is_dir() {
             out.extend(programs(&path));
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+        } else if path.extension().is_some_and(|e| e == "vlt")
+            && !path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+        {
             out.push(path);
         }
     }

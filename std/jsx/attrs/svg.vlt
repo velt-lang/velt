@@ -1,0 +1,335 @@
+// std/jsx/attrs/svg: attribute types of SVG elements (each is `SvgAttrs`, the core and
+// presentation attributes every SVG element accepts, `&` its own; public as `velt:jsx/attrs`).
+// Names are SVG's, case included (`viewBox`, `preserveAspectRatio`). Hyphenated presentation
+// attributes (`stroke-width`, `fill-opacity`, `font-size`) and namespaced ones (`xlink:href`,
+// `xml:space`) are not checked against these types (docs/contracts/jsx.md).
+
+import type { Style } from "velt:jsx/node";
+
+/** The attributes of SVG elements that have no others (`<g>`, `<defs>`, `<desc>`, …). */
+export type SvgAttrs = {
+  autofocus?: bool;
+  class?: string;
+  color?: string;
+  cursor?: string;
+  direction?: string;
+  display?: string;
+  fill?: string;
+  filter?: string;
+  id?: string;
+  lang?: string;
+  mask?: string;
+  nonce?: string;
+  opacity?: string | i64 | f64;
+  overflow?: string;
+  requiredExtensions?: string;
+  role?: string;
+  stroke?: string;
+  style?: string | Style;
+  systemLanguage?: string;
+  tabindex?: string | i64 | f64;
+  transform?: string;
+  visibility?: string;
+};
+
+/** `<svg>`. */
+export type SvgRootAttrs = SvgAttrs & {
+  xmlns?: string;
+  viewBox?: string;
+  preserveAspectRatio?: string;
+  version?: string;
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+};
+
+/** `<symbol>`. */
+export type SymbolAttrs = SvgAttrs & {
+  viewBox?: string;
+  preserveAspectRatio?: string;
+  refX?: string | i64 | f64;
+  refY?: string | i64 | f64;
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+};
+
+/** `<view>`. */
+export type ViewAttrs = SvgAttrs & { viewBox?: string; preserveAspectRatio?: string };
+
+/** `<circle>`. */
+export type CircleAttrs = SvgAttrs & {
+  cx?: string | i64 | f64;
+  cy?: string | i64 | f64;
+  r?: string | i64 | f64;
+  pathLength?: string | i64 | f64;
+};
+
+/** `<ellipse>`. */
+export type EllipseAttrs = SvgAttrs & {
+  cx?: string | i64 | f64;
+  cy?: string | i64 | f64;
+  rx?: string | i64 | f64;
+  ry?: string | i64 | f64;
+  pathLength?: string | i64 | f64;
+};
+
+/** `<rect>`. */
+export type RectAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  rx?: string | i64 | f64;
+  ry?: string | i64 | f64;
+  pathLength?: string | i64 | f64;
+};
+
+/** `<line>`. */
+export type LineAttrs = SvgAttrs & {
+  x1?: string | i64 | f64;
+  y1?: string | i64 | f64;
+  x2?: string | i64 | f64;
+  y2?: string | i64 | f64;
+  pathLength?: string | i64 | f64;
+};
+
+/** `<polyline>` and `<polygon>`. */
+export type PolyAttrs = SvgAttrs & { points?: string; pathLength?: string | i64 | f64 };
+
+/** `<path>`. */
+export type PathAttrs = SvgAttrs & { d?: string; pathLength?: string | i64 | f64 };
+
+/** `<use>`. */
+export type UseAttrs = SvgAttrs & {
+  href?: string;
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+};
+
+/** `<image>`. */
+export type SvgImageAttrs = SvgAttrs & {
+  href?: string;
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  preserveAspectRatio?: string;
+  crossorigin?: string;
+  decoding?: string;
+};
+
+/** `<foreignObject>`. */
+export type ForeignObjectAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+};
+
+/** `<text>` and `<tspan>`. */
+export type TextContentAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  dx?: string | i64 | f64;
+  dy?: string | i64 | f64;
+  rotate?: string | i64 | f64;
+  lengthAdjust?: string;
+  textLength?: string | i64 | f64;
+};
+
+/** `<textPath>`. */
+export type TextPathAttrs = SvgAttrs & {
+  href?: string;
+  path?: string;
+  startOffset?: string | i64 | f64;
+  method?: string;
+  spacing?: string;
+  side?: string;
+  lengthAdjust?: string;
+  textLength?: string | i64 | f64;
+};
+
+/** `<marker>`. */
+export type MarkerAttrs = SvgAttrs & {
+  viewBox?: string;
+  preserveAspectRatio?: string;
+  refX?: string | i64 | f64;
+  refY?: string | i64 | f64;
+  markerUnits?: string;
+  markerWidth?: string | i64 | f64;
+  markerHeight?: string | i64 | f64;
+  orient?: string | i64 | f64;
+};
+
+/** `<linearGradient>`. */
+export type LinearGradientAttrs = SvgAttrs & {
+  href?: string;
+  x1?: string | i64 | f64;
+  y1?: string | i64 | f64;
+  x2?: string | i64 | f64;
+  y2?: string | i64 | f64;
+  gradientUnits?: string;
+  gradientTransform?: string;
+  spreadMethod?: string;
+};
+
+/** `<radialGradient>`. */
+export type RadialGradientAttrs = SvgAttrs & {
+  href?: string;
+  cx?: string | i64 | f64;
+  cy?: string | i64 | f64;
+  r?: string | i64 | f64;
+  fx?: string | i64 | f64;
+  fy?: string | i64 | f64;
+  fr?: string | i64 | f64;
+  gradientUnits?: string;
+  gradientTransform?: string;
+  spreadMethod?: string;
+};
+
+/** `<stop>`. */
+export type StopAttrs = SvgAttrs & { offset?: string | i64 | f64 };
+
+/** `<pattern>`. */
+export type PatternAttrs = SvgAttrs & {
+  href?: string;
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  viewBox?: string;
+  preserveAspectRatio?: string;
+  patternUnits?: string;
+  patternContentUnits?: string;
+  patternTransform?: string;
+};
+
+/** `<clipPath>`. */
+export type ClipPathAttrs = SvgAttrs & { clipPathUnits?: string };
+
+/** `<mask>`. */
+export type MaskAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  maskUnits?: string;
+  maskContentUnits?: string;
+};
+
+/** `<filter>`. */
+export type FilterAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  filterUnits?: string;
+  primitiveUnits?: string;
+};
+
+/**
+ * The filter primitives (`<feBlend>` … `<feTurbulence>`) and their light sources and transfer
+ * functions: one type with the attributes of all of them.
+ */
+export type FilterPrimitiveAttrs = SvgAttrs & {
+  x?: string | i64 | f64;
+  y?: string | i64 | f64;
+  width?: string | i64 | f64;
+  height?: string | i64 | f64;
+  result?: string;
+  in?: string;
+  in2?: string;
+  mode?: string;
+  type?: string;
+  values?: string;
+  operator?: string;
+  k1?: string | i64 | f64;
+  k2?: string | i64 | f64;
+  k3?: string | i64 | f64;
+  k4?: string | i64 | f64;
+  stdDeviation?: string | i64 | f64;
+  edgeMode?: string;
+  dx?: string | i64 | f64;
+  dy?: string | i64 | f64;
+  order?: string | i64 | f64;
+  kernelMatrix?: string;
+  divisor?: string | i64 | f64;
+  bias?: string | i64 | f64;
+  targetX?: string | i64 | f64;
+  targetY?: string | i64 | f64;
+  preserveAlpha?: "true" | "false";
+  surfaceScale?: string | i64 | f64;
+  diffuseConstant?: string | i64 | f64;
+  specularConstant?: string | i64 | f64;
+  specularExponent?: string | i64 | f64;
+  kernelUnitLength?: string | i64 | f64;
+  scale?: string | i64 | f64;
+  xChannelSelector?: string;
+  yChannelSelector?: string;
+  azimuth?: string | i64 | f64;
+  elevation?: string | i64 | f64;
+  z?: string | i64 | f64;
+  pointsAtX?: string | i64 | f64;
+  pointsAtY?: string | i64 | f64;
+  pointsAtZ?: string | i64 | f64;
+  limitingConeAngle?: string | i64 | f64;
+  baseFrequency?: string | i64 | f64;
+  numOctaves?: string | i64 | f64;
+  seed?: string | i64 | f64;
+  stitchTiles?: string;
+  radius?: string | i64 | f64;
+  tableValues?: string;
+  slope?: string | i64 | f64;
+  intercept?: string | i64 | f64;
+  amplitude?: string | i64 | f64;
+  exponent?: string | i64 | f64;
+  offset?: string | i64 | f64;
+  href?: string;
+  preserveAspectRatio?: string;
+  crossorigin?: string;
+};
+
+/**
+ * `<animate>`, `<animateMotion>`, `<animateTransform>`, `<set>` and `<discard>`: one type with the
+ * attributes of all of them (`fill` is the animation's `freeze` / `remove` here).
+ */
+export type AnimationAttrs = SvgAttrs & {
+  href?: string;
+  attributeName?: string;
+  attributeType?: string;
+  begin?: string;
+  dur?: string;
+  end?: string;
+  min?: string;
+  max?: string;
+  restart?: string;
+  repeatCount?: string | i64 | f64;
+  repeatDur?: string;
+  from?: string | i64 | f64;
+  to?: string | i64 | f64;
+  by?: string | i64 | f64;
+  values?: string;
+  calcMode?: string;
+  keyTimes?: string;
+  keySplines?: string;
+  keyPoints?: string;
+  additive?: string;
+  accumulate?: string;
+  path?: string;
+  rotate?: string | i64 | f64;
+  type?: string;
+};
+
+/** `<mpath>`. */
+export type MpathAttrs = SvgAttrs & { href?: string };
+
+/**
+ * `<script>` inside SVG, which names its file with `href` (`IntrinsicElements` has one `script`:
+ * HTML's attributes and this).
+ */
+export type SvgScriptAttrs = { href?: string };

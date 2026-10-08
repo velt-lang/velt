@@ -19,7 +19,7 @@ use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId};
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Returns {
     values: Vec<Value>,
     /// `return null` (typed once the result is known).
@@ -28,6 +28,7 @@ pub(crate) struct Returns {
     bare: Vec<Span>,
 }
 
+#[derive(Clone)]
 struct Value {
     /// Widened type of the returned value (`"a"` → `string`).
     ty: TyId,

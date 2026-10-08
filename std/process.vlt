@@ -1,5 +1,6 @@
 // std/process: command-line arguments, setting environment variables, working directory and exit
-// (rt_abi_async.md §8), and byte writes to standard output (`stdout.write`). Reading variables
+// (rt_abi_async.md §8), byte writes to standard output (`stdout.write`) and whether the standard
+// streams are terminals (`stdout.isTTY`, `isatty(fd)`). Reading variables
 // (`process.env.NAME`) and writing strings (`process.stdout.write(s)`) are on the builtin
 // `process`, with no import (std/prelude/process.vlt). Strings are UTF-8 (the runtime uses the
 // wide APIs on Windows).
@@ -13,6 +14,7 @@ declare function velt_rt_env_all(): string[];
 declare function velt_rt_process_cwd(): IoResult<string>;
 declare function velt_rt_process_chdir(path: string): IoStatus;
 declare function velt_rt_stdout_write_bytes(bytes: u8[]);
+declare function velt_rt_isatty(fd: i32): bool;
 
 /**
  * Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
@@ -25,9 +27,46 @@ export struct Stdout {
   write(bytes: u8[]) {
     velt_rt_stdout_write_bytes(bytes);
   }
+
+  /**
+   * Whether standard output is a terminal (Node's `process.stdout.isTTY`): false when it is
+   * redirected to a file or a pipe, so a CLI can leave out colours. Asked once, then cached.
+   */
+  get isTTY(): bool {
+    return velt_rt_isatty(1);
+  }
 }
 
 export const stdout: Stdout = {};
+
+/** Standard error, for its `isTTY` (write strings to it with `process.stderr.write(s)`). */
+export struct Stderr {
+  /** Whether standard error is a terminal (Node's `process.stderr.isTTY`). Cached. */
+  get isTTY(): bool {
+    return velt_rt_isatty(2);
+  }
+}
+
+export const stderr: Stderr = {};
+
+/** Standard input, for its `isTTY` (read it with `velt:stdin`). */
+export struct Stdin {
+  /** Whether standard input is a terminal (Node's `process.stdin.isTTY`). Cached. */
+  get isTTY(): bool {
+    return velt_rt_isatty(0);
+  }
+}
+
+export const stdin: Stdin = {};
+
+/**
+ * Whether file descriptor `fd` is open and refers to a terminal (Node's `tty.isatty(fd)`): 0 is
+ * standard input, 1 standard output, 2 standard error. On Windows only those three can be
+ * terminals.
+ */
+export function isatty(fd: i32): bool {
+  return velt_rt_isatty(fd);
+}
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {

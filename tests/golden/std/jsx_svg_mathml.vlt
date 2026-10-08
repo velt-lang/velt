@@ -1,0 +1,23 @@
+// SVG and MathML elements are intrinsic elements of std/jsx (#87): their attributes are checked
+// (camelCase SVG names such as `viewBox`; hyphenated and namespaced ones are not checked), and
+// they render the same in the precompile and the generic lowering. Elements with no children
+// are written `<x></x>`, which the HTML parser accepts inside `<svg>` and `<math>`.
+
+import { renderToStringSync } from "velt:jsx";
+import * as precompiled from "./_jsx_svg_page";
+import * as generic from "./_jsx_svg_page_generic";
+
+function show(a: string, b: string) {
+  console.log(a);
+  console.log(a == b ? "same" : `different:\n${b}`);
+}
+
+function main() {
+  show(renderToStringSync(precompiled.icon(4)), renderToStringSync(generic.icon(4)));
+  const values: f64[] = [10, 25.5, 40];
+  show(
+    renderToStringSync(precompiled.chart(values, "Sales & <costs>")),
+    renderToStringSync(generic.chart(values, "Sales & <costs>")),
+  );
+  show(renderToStringSync(precompiled.formula(2)), renderToStringSync(generic.formula(2)));
+}
