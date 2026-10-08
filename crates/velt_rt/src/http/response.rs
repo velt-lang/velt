@@ -89,7 +89,7 @@ mod kind {
 
 /// Appends the headers of the flat list `[name, value, …]`; `None` if a name or value is not
 /// valid HTTP.
-unsafe fn append_headers(list: &VeltStrArray, map: &mut HeaderMap) -> Option<()> {
+pub(super) unsafe fn append_headers(list: &VeltStrArray, map: &mut HeaderMap) -> Option<()> {
     let len = list.len as usize;
     for i in (0..len.saturating_sub(1)).step_by(2) {
         let name = header_name((*list.ptr.add(i)).as_bytes()).ok()?;
@@ -128,34 +128,36 @@ fn implied_type(code: u32) -> Option<HeaderValue> {
     }
 }
 
-/// A `Response` returned from a handler (std/fetch/response.vlt), as one response: `status`
-/// (invalid ⇒ 500), the status text (`reason`; "" for the standard one), the headers as the
-/// flat list `[name, value, …]`, and the body as `kind` says: `text` (taken without a copy:
-/// the caller's value is left empty), `bytes` (copied: the array may be borrowed), or a stream
-/// std opens next. `implied` is the `content-type` the body implies (`implied_type`), added
-/// unless the headers have one. A 1xx, 204 or 304 status gets no body and no `content-type`.
-/// `None` if a header name or value is not valid HTTP.
-unsafe fn build(
-    status: u32,
-    reason: &VeltStr,
-    headers: &VeltStrArray,
-    kind: u32,
-    text: *mut VeltStr,
-    bytes: &VeltBytes,
-    implied: u32,
-) -> Option<RespObj> {
-    let body = match kind {
+/// The body `kind` says: `text` (taken without a copy: the caller's value is left empty),
+/// `bytes` (copied: the array may be borrowed), or none (also for a stream std opens next).
+pub(super) unsafe fn body_of(kind: u32, text: *mut VeltStr, bytes: &VeltBytes) -> Bytes {
+    match kind {
         kind::TEXT => take_text(text),
         kind::BYTES => Bytes::copy_from_slice(bytes.as_bytes()),
         _ => Bytes::new(),
-    };
+    }
+}
+
+/// A `Response` returned from a handler (std/fetch/response.vlt), as one response: `status`
+/// (invalid ⇒ 500), the status text (`reason`; empty for the standard one), the headers
+/// `add_headers` appends, and `body` as `kind` says (`body_of`; a stream std opens next drops
+/// `content-length`). `implied` is the `content-type` the body implies (`implied_type`), added
+/// unless the headers have one. A 1xx, 204 or 304 status gets no body and no `content-type`.
+/// `None` if a header name or value is not valid HTTP.
+pub(super) fn build(
+    status: u32,
+    reason: &[u8],
+    kind: u32,
+    body: Bytes,
+    implied: u32,
+    add_headers: impl FnOnce(&mut HeaderMap) -> Option<()>,
+) -> Option<RespObj> {
     let mut r = empty();
     *r.status_mut() = u16::try_from(status)
         .ok()
         .and_then(|s| StatusCode::from_u16(s).ok())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    append_headers(headers, r.headers_mut())?;
-    let reason = reason.as_bytes();
+    add_headers(r.headers_mut())?;
     if !reason.is_empty() {
         if let Ok(p) = hyper::ext::ReasonPhrase::try_from(reason.to_vec()) {
             r.extensions_mut().insert(p);
@@ -183,7 +185,9 @@ unsafe fn build(
 }
 
 /// [`build`] as a registered response (std opens a streamed body on it next, or a handler
-/// returns it); the null key (nothing built) if a header name or value is not valid HTTP.
+/// returns it): the headers as the flat list `[name, value, …]`, the body by `kind` (0 none, 1
+/// `text`, 2 `bytes`, 3 a stream, 4 a fetched response's body); the null key (nothing built)
+/// if a header name or value is not valid HTTP.
 ///
 /// # Safety
 /// The pointers must be valid Velt values.
@@ -197,37 +201,11 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
     bytes: *const VeltBytes,
     implied: u32,
 ) -> RespHandle {
-    build(status, &*reason, &*headers, kind, text, &*bytes, implied)
-        .map_or(RespHandle::NULL, register)
-}
-
-/// The response a handler returns for request `req`, with a complete body (`kind` 0, 1 or 2;
-/// the arguments as for [`build`]), handed straight to the request: what the handler returns
-/// next. That is `context::RESPONDED` when the response was left in the handler's frame (the
-/// handler is being polled for `req`, as it is when it returns), else a registered response's
-/// key (a handler that runs on in a task of its own after its client left), or 0 if a header
-/// name or value is not valid HTTP.
-///
-/// # Safety
-/// The pointers must be valid Velt values.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_respond(
-    req: u64,
-    status: u32,
-    reason: *const VeltStr,
-    headers: *const VeltStrArray,
-    kind: u32,
-    text: *mut VeltStr,
-    bytes: *const VeltBytes,
-    implied: u32,
-) -> u64 {
-    let Some(r) = build(status, &*reason, &*headers, kind, text, &*bytes, implied) else {
-        return 0;
-    };
-    match super::context::respond(req, r) {
-        None => super::context::RESPONDED,
-        Some(r) => register(r).bits(),
-    }
+    let body = body_of(kind, text, &*bytes);
+    build(status, (*reason).as_bytes(), kind, body, implied, |m| {
+        append_headers(&*headers, m)
+    })
+    .map_or(RespHandle::NULL, register)
 }
 
 /// Free a response that was not returned from a handler (a dead key is ignored).

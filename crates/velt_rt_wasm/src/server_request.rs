@@ -79,6 +79,24 @@ pub unsafe extern "C" fn velt_rt_http_req_respond(
     _req: u64,
     _status: u32,
     _reason: *const VeltStr,
+    _name: *const VeltStr,
+    _value: *const VeltStr,
+    _kind: u32,
+    _text: *mut VeltStr,
+    _bytes: *const crate::bytes::VeltBytes,
+    _implied: u32,
+) -> u64 {
+    no_request()
+}
+
+/// As `velt_rt_http_req_respond`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_respond_list(
+    _req: u64,
+    _status: u32,
+    _reason: *const VeltStr,
+    _name: *const VeltStr,
+    _value: *const VeltStr,
     _headers: *const VeltStrArray,
     _kind: u32,
     _text: *mut VeltStr,

@@ -47,11 +47,25 @@ declare function velt_rt_http_resp_build(
   implied: u32,
 ): u64;
 // The response a handler returns for server request `raw`, with a complete body (`kind` 0, 1 or
-// 2), handed straight to the request: what the handler returns next (std/http).
+// 2), handed straight to the request: what the handler returns next (std/http). `name` and
+// `value` are a first header as given ("" for none); `_list` adds `headers`, the rest.
 declare function velt_rt_http_req_respond(
   raw: u64,
   status: u32,
   reason: string,
+  name: string,
+  value: string,
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;
+declare function velt_rt_http_req_respond_list(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
   headers: string[],
   kind: u32,
   text: string,
@@ -402,35 +416,63 @@ export class Response {
       this.#handle = 0;
       return h;
     }
-    let headers: string[] = [];
-    let implied: u32 = 0;
     const fields = this.#fields;
-    if (fields != null) {
-      const [list, type] = fields.serverList();
-      headers = list;
-      implied = type;
-    } else if (source == RUNTIME) {
-      headers = this.headers.raw();
-    } else {
-      implied = this.#implied;
-    }
-    let text = this.#str;
     if (source == STREAM || source == RUNTIME) {
+      let headers: string[] = [];
+      let implied: u32 = 0;
+      if (fields != null) {
+        const [list, type] = fields.serverFlat();
+        headers = list;
+        implied = type;
+      } else if (source == RUNTIME) {
+        headers = this.headers.raw();
+      }
+      let none = "";
       return velt_rt_http_resp_build(
         this.#code as u32,
         this.#reason ?? "",
         headers,
+        source as u32,
+        none,
+        this.#data,
+        implied,
+      );
+    }
+    let text = this.#str;
+    if (fields == null) {
+      return velt_rt_http_req_respond(
+        raw,
+        this.#code as u32,
+        this.#reason ?? "",
+        "",
+        "",
+        source as u32,
+        text,
+        this.#data,
+        this.#implied,
+      );
+    }
+    const [name, value, list, implied] = fields.serverList();
+    if (list == null) {
+      return velt_rt_http_req_respond(
+        raw,
+        this.#code as u32,
+        this.#reason ?? "",
+        name,
+        value,
         source as u32,
         text,
         this.#data,
         implied,
       );
     }
-    return velt_rt_http_req_respond(
+    return velt_rt_http_req_respond_list(
       raw,
       this.#code as u32,
       this.#reason ?? "",
-      headers,
+      name,
+      value,
+      list,
       source as u32,
       text,
       this.#data,

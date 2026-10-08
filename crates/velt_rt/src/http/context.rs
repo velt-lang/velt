@@ -97,7 +97,6 @@ mod tests {
     use super::*;
     use crate::bytes::VeltBytes;
     use crate::str::VeltStr;
-    use crate::str_array::VeltStrArray;
 
     fn response() -> RespObj {
         hyper::Response::new(super::super::body::RespBody::full(bytes::Bytes::new()))
@@ -106,11 +105,12 @@ mod tests {
     /// `velt_rt_http_req_respond` of a 201 with a text body for request `key`.
     fn respond_201(key: u64) -> u64 {
         let mut text = VeltStr::from_text("made");
-        let (reason, headers) = (VeltStr::empty(), VeltStrArray::from_vec(vec![]));
+        let reason = VeltStr::empty();
+        let (name, value) = (VeltStr::empty(), VeltStr::empty());
         let bytes = VeltBytes::from_vec(vec![]);
         unsafe {
-            super::super::response::velt_rt_http_req_respond(
-                key, 201, &reason, &headers, 1, &mut text, &bytes, 1,
+            super::super::respond::velt_rt_http_req_respond(
+                key, 201, &reason, &name, &value, 1, &mut text, &bytes, 1,
             )
         }
     }

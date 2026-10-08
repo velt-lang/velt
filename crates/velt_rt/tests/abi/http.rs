@@ -5,6 +5,7 @@ use super::fake::{arg, block_on_fut, fut_result, ok, take_string};
 use crate::bytes::VeltBytes;
 use crate::http::client::*;
 use crate::http::request::*;
+use crate::http::respond::*;
 use crate::http::response::*;
 use crate::http::server::*;
 use crate::result::IoResult;
@@ -91,21 +92,50 @@ unsafe fn build(status: u32, headers: &[&str], body: String, implied: u32) -> Re
 static IN_FRAME: AtomicU64 = AtomicU64::new(0);
 
 /// A text response handed to request `req`, as std hands over a complete body: what the
-/// handler returns.
-unsafe fn hand_over(req: ReqHandle, status: u32, headers: &[&str], body: String) -> RespHandle {
-    let list = VeltStrArray::from_vec(headers.iter().map(|h| VeltStr::from_text(h)).collect());
+/// handler returns. Its first header goes as its own pair, as std passes a header set on a new
+/// response: as written, `X-Path: ` and the value between spaces (the runtime lowercases and
+/// trims); `extra` headers (`[name, value, …]`, normalized) follow in a list.
+unsafe fn hand_over(
+    req: ReqHandle,
+    status: u32,
+    path: &str,
+    extra: &[&str],
+    body: String,
+) -> RespHandle {
+    let (name, value) = (
+        VeltStr::from_text("X-Path"),
+        VeltStr::from_text(&format!(" {path}\t")),
+    );
     let mut owned = VeltStr::from_vec(body.into_bytes());
     let bytes = VeltBytes::from_vec(vec![]);
-    let r = velt_rt_http_req_respond(
-        req.bits(),
-        status,
-        &VeltStr::empty(),
-        &list,
-        1,
-        &mut owned,
-        &bytes,
-        1,
-    );
+    let reason = VeltStr::empty();
+    let r = if extra.is_empty() {
+        velt_rt_http_req_respond(
+            req.bits(),
+            status,
+            &reason,
+            &name,
+            &value,
+            1,
+            &mut owned,
+            &bytes,
+            1,
+        )
+    } else {
+        let list = VeltStrArray::from_vec(extra.iter().map(|h| VeltStr::from_text(h)).collect());
+        velt_rt_http_req_respond_list(
+            req.bits(),
+            status,
+            &reason,
+            &name,
+            &value,
+            &list,
+            1,
+            &mut owned,
+            &bytes,
+            1,
+        )
+    };
     assert!(owned.is_empty(), "body ownership moved to the response");
     match r {
         crate::http::context::RESPONDED => IN_FRAME.fetch_add(1, Ordering::SeqCst),
@@ -130,7 +160,12 @@ unsafe fn respond(req: ReqHandle, body: String) -> RespHandle {
     }
     let status = if path == "/missing" { 404 } else { 200 };
     let text = format!("{method} {path}?{query} [{hdr}] {body}");
-    hand_over(req, status, &["x-path", &path], text)
+    let extra: &[&str] = if path == "/missing" {
+        &["x-extra", "1", "x-extra", "2"]
+    } else {
+        &[]
+    };
+    hand_over(req, status, &path, extra, text)
 }
 
 /// Handlers of `/slow` started (`a_handler_finishes_after_its_client_left`).
@@ -267,8 +302,12 @@ fn raw_http11_keep_alive() {
         (status, body.as_str(), header(&h, "content-type")),
         (200, r#"{"ok":true}"#, "application/json")
     );
-    let (status, _, body) = read_response(&mut r);
+    let (status, h, body) = read_response(&mut r);
     assert_eq!((status, body.as_str()), (404, "GET /missing? [-] "));
+    // The first header as its own pair, the rest in a list, in order.
+    let names: Vec<_> = h.iter().map(|(n, v)| format!("{n}={v}")).collect();
+    let x: Vec<_> = names.iter().filter(|n| n.starts_with("x-")).collect();
+    assert_eq!(x, ["x-path=/missing", "x-extra=1", "x-extra=2"]);
     // The text responses went straight to their request's frame.
     assert!(IN_FRAME.load(Ordering::SeqCst) >= 2);
 }
