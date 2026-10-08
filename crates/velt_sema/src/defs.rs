@@ -191,8 +191,6 @@ pub(crate) struct FnInfo<'m> {
     pub ret: TyId,
     pub ret_span: Option<Span>,
     pub ret_source: RetSource,
-    /// The result is inferred from integers that behave like JS numbers (`expr::numbers`).
-    pub ret_inferred_int: bool,
     /// Pass modes are part of a dynamically dispatched ABI (vtable / interface / closure /
     /// extern): no ownership inference, moving out of params is an error.
     pub fixed_modes: bool,
@@ -261,9 +259,6 @@ pub(crate) struct FieldInfo {
     pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
-    /// Declared without a type from an integer literal (`count = 0;`): reads are JS numbers
-    /// (`body::expr::numbers`).
-    pub inferred_int: bool,
 }
 
 pub(crate) struct AdtInfo<'m> {

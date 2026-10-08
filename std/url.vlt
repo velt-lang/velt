@@ -438,7 +438,7 @@ export class URLSearchParams {
   // Stable sort by name (bytewise, which matches JS's UTF-16 order for ASCII names).
   sort() {
     const pairs = this.entries();
-    pairs.sort((a, b) => a[0].compareTo(b[0]));
+    pairs.sort((a, b) => a[0].compareTo(b[0]) as number);
     this.names = pairs.map((p) => p[0].clone());
     this.vals = pairs.map((p) => p[1].clone());
   }

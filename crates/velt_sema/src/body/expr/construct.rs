@@ -81,6 +81,7 @@ impl FnCx<'_, '_> {
             slot_names: names.names,
             bounds: names.bounds,
             js_numbers: false,
+            js_api: false,
             rest: false,
             defaults: self.cx.adt_param_defaults(d),
         };

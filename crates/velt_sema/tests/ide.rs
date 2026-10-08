@@ -174,7 +174,7 @@ fn members_of_values_and_types() {
         arr_members
             .iter()
             .any(|(n, _, t)| n == "map"
-                && t.starts_with("(f: (arg0: i64, arg1: i64) => U throws E)")),
+                && t.starts_with("(f: (arg0: f64, arg1: i64) => U throws E)")),
         "{arr_members:?}"
     );
 }

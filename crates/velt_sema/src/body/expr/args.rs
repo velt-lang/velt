@@ -23,9 +23,12 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
-    /// A `std/` function called from user code: a float argument for an integer parameter is
-    /// a JS number and converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
+    /// A `std/` function called from user code: a float argument for a parameter it declares
+    /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
+    /// A function of the JS API (`numbers::is_js_api`): integers it passes to callbacks (an
+    /// index) are numbers there.
+    pub js_api: bool,
     /// The last parameter is a rest parameter (`...xs: T[]`): the remaining arguments, spreads
     /// included, become one array literal.
     pub rest: bool,
@@ -130,7 +133,11 @@ impl FnCx<'_, '_> {
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let target = self.cx.ty.subst(p.ty, &type_args);
-            let h = if c.js_numbers && self.cx.ty.is_int(target) && self.cx.ty.is_float(h.ty) {
+            // Only a parameter the library declares an integer (`slice(start: i64)`), not a
+            // type argument the program chose (`push` on an `i64[]`).
+            let declared_int = self.cx.ty.is_int(p.ty);
+            let h = if c.js_numbers && declared_int && self.cx.ty.is_float(h.ty) {
+                self.literal_use_as(&h, target);
                 // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
                 let span = h.span;
                 self.mk(H::Cast(Box::new(h)), target, span)
@@ -221,6 +228,7 @@ impl FnCx<'_, '_> {
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
             js_numbers: c.js_numbers,
+            js_api: c.js_api,
             rest: false,
             defaults: c.defaults.clone(),
         };
@@ -270,15 +278,23 @@ impl FnCx<'_, '_> {
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             let expected = self.cx.ty.subst_known(p.ty, &known);
             let adapter = self.fewer_params_adapter(&args[i], expected);
-            let h = match adapter.as_ref().or(as_arrow(&args[i])) {
+            let arrow = adapter.as_ref().or(as_arrow(&args[i]));
+            // An arrow passed to the JS API (also where `cmp | null` is expected): what its
+            // parameters and result are in user code (`closure`, `returns::returned`).
+            let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
+            self.std_callback = match self.cx.ty.kind(declared) {
+                TyKind::FnPtr { params, .. } if c.js_api && arrow.is_some() => {
+                    Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
+                }
+                _ => None,
+            };
+            let h = match arrow {
                 Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.std_callback = c.js_numbers;
-                    let h = self.arrow_arg(a, expected, p.mode == PassMode::Owned);
-                    self.std_callback = false;
-                    h
+                    self.arrow_arg(a, expected, p.mode == PassMode::Owned)
                 }
                 _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };
+            self.std_callback = None;
             let h = match collect {
                 true => self.collected_arg(h, p.ty),
                 false => h,
@@ -324,7 +340,7 @@ impl FnCx<'_, '_> {
         }
         for (h, p) in args.iter().zip(&c.params) {
             let target = self.cx.ty.subst_known(p.ty, &wider);
-            let number = self.is_inferred_int(h) && self.float_core(target);
+            let number = self.exact_in_number(h.ty) && self.float_core(target);
             if !self.converts_to(h.ty, target)
                 && !number
                 && !(is_fresh(h) && self.widens(h.ty, target))
@@ -368,6 +384,11 @@ impl FnCx<'_, '_> {
             if !params.contains(&pty) {
                 continue;
             }
+            // An integer the JS API declares (a callback's index) is a number in user code.
+            let params: Vec<TyId> = params
+                .into_iter()
+                .filter(|t| !(c.js_api && self.cx.ty.is_int(*t)))
+                .collect();
             let known: Vec<TyId> = params
                 .iter()
                 .map(|t| self.cx.ty.subst_known(*t, slots))

@@ -91,7 +91,10 @@ fn primitive_types() {
         t.view("const half", "seven / 2"),
         TypeView::Float(FloatTy::F64)
     ));
-    assert!(matches!(t.view("const len", "xs.length"), TypeView::Int(i) if !i.is_signed()));
+    assert!(matches!(
+        t.view("const len", "xs.length"),
+        TypeView::Float(FloatTy::F64)
+    ));
     assert!(matches!(t.view("lit, true", "true"), TypeView::Bool));
     assert!(matches!(t.view("const m", "\"k\""), TypeView::Str));
 }

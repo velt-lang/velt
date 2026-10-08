@@ -32,8 +32,6 @@ struct Value {
     /// Widened type of the returned value (`"a"` → `string`).
     ty: TyId,
     span: Span,
-    /// An integer that behaves like a JS number (it converts to a float result).
-    inferred_int: bool,
 }
 
 /// Has inferring result types used up its stack budget (`Ctx::stack_budget`)? Each body checked
@@ -107,6 +105,21 @@ pub(crate) fn check_deferred(cx: &mut Ctx) {
 }
 
 impl FnCx<'_, '_> {
+    /// The value `e` returned from a body whose result type is `ret`. A callback of the JS API
+    /// returning a number (a comparator) may return an integer of any type: it converts.
+    pub(crate) fn returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        if self.f.int_returns_number {
+            // Its own type first: `x.n != y.n ? y.n - x.n : -1` with `n: i64` is an `i64`.
+            let h = self.expr(e, None, Want::Move);
+            if self.cx.ty.is_int(h.ty) {
+                return self.int_to_float(h, ret);
+            }
+            return self.coerce(h, ret);
+        }
+        let h = self.expr(e, Some(ret), Want::Move);
+        self.coerce(h, ret)
+    }
+
     /// `return e` / `return;` in a body whose result type is being inferred.
     pub(super) fn infer_return(&mut self, e: Option<&ast::Expr>, span: Span) -> Option<hir::Expr> {
         let Some(e) = e else {
@@ -134,30 +147,15 @@ impl FnCx<'_, '_> {
         let h = self.expr(e, hint, Want::Move);
         self.cx.rec.in_return = outer;
         let ty = self.cx.widened(h.ty);
-        let inferred_int = self.is_inferred_int(&h);
-        self.f.returns.values.push(Value {
-            ty,
-            span: h.span,
-            inferred_int,
-        });
+        self.f.returns.values.push(Value { ty, span: h.span });
         Some(h)
     }
 
     /// The inferred result type of the body `block` (whose `return`s were recorded); converts
-    /// every returned value to it. `who` names the function in messages. Also says whether the
-    /// result is an integer that behaves like a JS number (`return 1`: `f() / 2` is `0.5`).
-    pub(crate) fn finish_inferred_ret(
-        &mut self,
-        block: &mut hir::Block,
-        who: &str,
-    ) -> (TyId, bool) {
+    /// every returned value to it. `who` names the function in messages.
+    pub(crate) fn finish_inferred_ret(&mut self, block: &mut hir::Block, who: &str) -> TyId {
         let r = std::mem::take(&mut self.f.returns);
         let ty = self.common_ret(&r, block);
-        // `T | null` of JS-number integers (`return 5;` and `return null;`) is one too.
-        let core = self.cx.ty.opt_payload(ty).unwrap_or(ty);
-        let ints = r.values.iter().filter(|v| v.ty == core);
-        let inferred_int = self.cx.ty.is_int(core) && ints.clone().count() > 0;
-        let inferred_int = inferred_int && ints.clone().all(|v| v.inferred_int);
         self.f.ret = Some(ty);
         let (unit, error) = (self.cx.ty.unit, self.cx.ty.error);
         if ty != unit && ty != error {
@@ -168,7 +166,7 @@ impl FnCx<'_, '_> {
         if !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
             visit::block(block, &mut CoerceReturns { fcx: self, to: ty });
         }
-        (ty, inferred_int)
+        ty
     }
 
     fn common_ret(&mut self, r: &Returns, block: &hir::Block) -> TyId {
@@ -198,7 +196,7 @@ impl FnCx<'_, '_> {
         }
         let span = r.nulls.first().or(r.values.first().map(|v| &v.span));
         let span = span.copied().unwrap_or(block.span);
-        let core = self.common_type(&tys, &r.values, span);
+        let core = self.common_type(&tys, span);
         if r.nulls.is_empty() || core == error {
             return core;
         }
@@ -222,12 +220,9 @@ impl FnCx<'_, '_> {
     }
 
     /// The type of `tys` that every other converts to, else their union.
-    fn common_type(&mut self, tys: &[TyId], values: &[Value], span: Span) -> TyId {
+    fn common_type(&mut self, tys: &[TyId], span: Span) -> TyId {
         for &c in tys {
-            let all = tys.iter().all(|&t| {
-                let inferred_int = values.iter().filter(|v| v.ty == t).all(|v| v.inferred_int);
-                self.converts(t, c, inferred_int)
-            });
+            let all = tys.iter().all(|&t| self.converts(t, c));
             if all {
                 return c;
             }
@@ -236,15 +231,15 @@ impl FnCx<'_, '_> {
     }
 
     /// Does a value of type `t` convert to `to` implicitly (as `coerce` would)?
-    fn converts(&mut self, t: TyId, to: TyId, inferred_int: bool) -> bool {
+    fn converts(&mut self, t: TyId, to: TyId) -> bool {
         if t == to {
             return true;
         }
         if let Some(p) = self.cx.ty.opt_payload(to) {
-            return self.converts(t, p, inferred_int);
+            return self.converts(t, p);
         }
-        if self.cx.ty.is_float(to) && self.cx.ty.is_int(t) {
-            return inferred_int;
+        if to == self.cx.ty.f64 && self.exact_in_number(t) {
+            return true;
         }
         if to == self.cx.ty.str_ && self.is_string_enum(t) {
             return true;
@@ -282,15 +277,6 @@ impl FnCx<'_, '_> {
                 "Velt has no `undefined`: write `return null;` and the return type `{nullable}`"
             )),
         );
-    }
-}
-
-impl FnCx<'_, '_> {
-    /// Converts every `return` value of `block` to `to`, the function's result; returns `to`.
-    pub(super) fn returns_as(&mut self, block: &mut hir::Block, to: TyId) -> TyId {
-        self.f.ret = Some(to);
-        visit::block(block, &mut CoerceReturns { fcx: self, to });
-        to
     }
 }
 

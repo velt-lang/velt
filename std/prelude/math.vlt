@@ -192,22 +192,15 @@ declare function velt_rt_math_add_int32(a: i32, x: f64): i32;
 
 // ToInt32 of the product `a * b` of two JS numbers (`(y * k) | 0`; sema `int32.rs` inserts the
 // call). JS multiplies doubles, so a product past 2^53 is rounded before its low 32 bits are
-// taken. For 32-bit operands that is `velt_rt_math_mul_int32`; other values multiply as doubles.
-export function __mulToInt32(a: i64, b: i64): i32 {
-  if ((a as i32) as i64 == a && (b as i32) as i64 == b) {
-    return velt_rt_math_mul_int32(a as i32, b as i32);
+// taken. For int32 operands that is `velt_rt_math_mul_int32` (one multiply when `numrep` proves
+// the product within 2^53); other values multiply as doubles.
+export function __mulToInt32(a: f64, b: f64): i32 {
+  const x = a as i32;
+  const y = b as i32;
+  if (x as f64 == a && y as f64 == b) {
+    return velt_rt_math_mul_int32(x, y);
   }
-  return velt_rt_math_to_int32((a as f64) * (b as f64));
-}
-
-// ToInt32 of `a + x` for a JS number `a` held as an integer and a float `x` (`(y + i) | 0` with
-// `i: number`; sema `int32.rs`): `velt_rt_math_add_int32` when `a` is an int32, which adds as
-// integers when `x` is a whole number of at most 2^52 (the double sum is exact then).
-export function __intAddToInt32(a: i64, x: f64): i32 {
-  if ((a as i32) as i64 == a) {
-    return velt_rt_math_add_int32(a as i32, x);
-  }
-  return velt_rt_math_to_int32((a as f64) + x);
+  return velt_rt_math_to_int32(a * b);
 }
 
 // `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
