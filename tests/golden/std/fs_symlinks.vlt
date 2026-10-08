@@ -11,13 +11,21 @@ import {
   readDirEntries,
   mkdir,
   writeFile,
+  readFile,
   remove,
+  existsSync,
 } from "velt:fs";
 
 async function main() {
   const dir = "velt_fs_symlinks_tmp";
+  if (existsSync(dir)) {
+    await remove(dir, { recursive: true }); // left by an interrupted run
+  }
   await mkdir(`${dir}/sub`, { recursive: true });
   await writeFile(`${dir}/file.txt`, "hello");
+  await writeFile(`${dir}/sub/x.txt`, "nested");
+  // A nested relative target: on Windows its `/` is stored as `\`, as Node does.
+  await symlink("sub/x.txt", `${dir}/to_nested`);
   await symlink("file.txt", `${dir}/to_file`);
   symlinkSync("sub", `${dir}/to_dir`);
   await symlink("nowhere", `${dir}/dangling`);
@@ -37,6 +45,8 @@ async function main() {
   console.log("lstat dangling:", (await lstat(`${dir}/dangling`)).isSymbolicLink());
 
   console.log(await readlink(`${dir}/to_file`), readlinkSync(`${dir}/to_dir`));
+  const nested = await readlink(`${dir}/to_nested`);
+  console.log(nested.replaceAll("\\", "/"), await readFile(`${dir}/to_nested`));
 
   try {
     await stat(`${dir}/dangling`);

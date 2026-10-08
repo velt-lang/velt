@@ -21,8 +21,8 @@ async form, which runs on the runtime's blocking pool, and a `*Sync` form. Failu
 - `readlink(path): Promise<string>`: a symlink's target as stored in it (`EINVAL` if `path` is
   not a symlink). `symlink(target, path)`: creates a symlink at `path`; a relative `target` is
   relative to the link's directory. On Windows the link is a directory link when `target` is a
-  directory, as in Node, and creating links needs Developer Mode or administrator rights
-  (`EACCES` otherwise).
+  directory, and a relative `target`'s `/` separators are stored as `\`, both as in Node;
+  creating links needs Developer Mode or administrator rights (`EACCES` otherwise).
 - `mkdir(path, { recursive? })`, `remove(path, { recursive? })` (a symlink is removed, never what
   it points to), `rename(from, to)`, `copyFile(from, to)`.
 - `exists(path): Promise<bool>`: never throws.

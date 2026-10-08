@@ -241,18 +241,25 @@ fn make_symlink(target: &Path, path: &Path) -> io::Result<()> {
 }
 
 /// Windows has file and directory links; as in Node, the type follows what `target` is now (a
-/// file link when it does not exist). Creating one needs Developer Mode or the
-/// `SeCreateSymbolicLinkPrivilege` (`EACCES` otherwise).
+/// file link when it does not exist). A relative target is stored with `\` separators, as Node's
+/// `preprocessSymlinkDestination` does: Windows does not resolve `/` in a link's relative
+/// target. Creating a link needs Developer Mode or the `SeCreateSymbolicLinkPrivilege` (`EACCES`
+/// otherwise).
 #[cfg(windows)]
 fn make_symlink(target: &Path, path: &Path) -> io::Result<()> {
+    let target = if target.is_relative() {
+        PathBuf::from(target.to_string_lossy().replace('/', "\\"))
+    } else {
+        target.to_path_buf()
+    };
     let resolved = match path.parent() {
-        Some(dir) if target.is_relative() => dir.join(target),
-        _ => target.to_path_buf(),
+        Some(dir) if target.is_relative() => dir.join(&target),
+        _ => target.clone(),
     };
     if resolved.is_dir() {
-        std::os::windows::fs::symlink_dir(target, path)
+        std::os::windows::fs::symlink_dir(&target, path)
     } else {
-        std::os::windows::fs::symlink_file(target, path)
+        std::os::windows::fs::symlink_file(&target, path)
     }
 }
 
