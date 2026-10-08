@@ -83,6 +83,13 @@ export class Response {
   #handle: u64 = 0;
 
   constructor(body: BodyInit | null = null, init?: ResponseInit) {
+    if (init == null && typeof body == "string") {
+      // Most responses: text and no options, so no parts and no status to check.
+      this.#source = TEXT;
+      this.#str = body;
+      this.#implied = TEXT_TYPE;
+      return;
+    }
     if (body != null || init != null) {
       this.setUp(body, init, 0);
     }
@@ -166,6 +173,12 @@ export class Response {
   // unless `init` sets one.
   static json<T>(data: T, init?: ResponseInit): Response {
     const r = new Response();
+    if (init == null) {
+      r.#source = TEXT;
+      r.#str = JSON.stringify(data);
+      r.#implied = JSON_TYPE;
+      return r;
+    }
     r.setUp(JSON.stringify(data), init, JSON_TYPE);
     return r;
   }
