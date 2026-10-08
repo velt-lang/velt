@@ -13,6 +13,7 @@ pub mod handler;
 mod interned;
 pub mod req_body;
 pub mod request;
+mod request_url;
 pub mod response;
 pub mod server;
 pub mod stream;

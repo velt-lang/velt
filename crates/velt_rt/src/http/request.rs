@@ -19,7 +19,6 @@ use crate::str_array::VeltStrArray;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use hyper::body::Incoming;
-use hyper::header::HOST;
 use hyper::Request;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -109,73 +108,35 @@ impl ReqObj {
     }
 }
 
-/// A request's absolute URL: `http(s)://`, the `host` header (HTTP/2: `:authority`; without
-/// either, the server's address), then the path and query, as Deno and Bun give it. A host
-/// that is not UTF-8 is decoded lossily.
-fn url_of(parts: &hyper::http::request::Parts, conn: &Conn) -> VeltStr {
-    let uri = &parts.uri;
-    let path = uri.path_and_query().map_or("/", |p| p.as_str()).as_bytes();
-    if let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) {
-        // Absolute form (HTTP/2, or a proxy request over HTTP/1.1).
-        let parts = [
-            scheme.as_bytes(),
-            b"://",
-            authority.as_str().as_bytes(),
-            path,
-        ];
-        return joined(&parts);
-    }
-    let scheme: &[u8] = if conn.tls { b"https://" } else { b"http://" };
-    // A scan, not a hashed lookup: `host` is a request's first header, or close to it.
-    let host = parts.headers.iter().find(|(name, _)| *name == HOST);
-    match host.map(|(_, h)| h.as_bytes()) {
-        Some(host) if !host.is_empty() => joined(&[scheme, host, path]),
-        _ => joined(&[scheme, conn.local.to_string().as_bytes(), path]),
-    }
-}
-
-/// `parts` joined into one string, built on the stack when short (a URL usually is), so the
-/// string's own buffer is the only allocation. ASCII (the scheme, path and query always are, a
-/// host nearly always) is taken as it is; anything else is decoded lossily.
-fn joined(parts: &[&[u8]]) -> VeltStr {
-    let len = parts.iter().map(|p| p.len()).sum();
-    let mut stack = [0u8; 256];
-    let mut heap = Vec::new();
-    let buf: &mut [u8] = if len <= stack.len() {
-        &mut stack[..len]
-    } else {
-        heap.resize(len, 0);
-        &mut heap
-    };
-    let mut at = 0;
-    for p in parts {
-        buf[at..at + p.len()].copy_from_slice(p);
-        at += p.len();
-    }
-    if buf.is_ascii() {
-        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
-        return unsafe { VeltStr::from_text_counted(std::str::from_utf8_unchecked(buf), len) };
-    }
-    text_of(buf)
-}
-
 /// The key std/websocket passes to `velt_rt_ws_accept`; 0 if the request asked for no upgrade.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_upgrade(req: ReqHandle) -> u64 {
     obj(req).upgrade
 }
 
-/// `req.method` (`GET`, `POST`...).
+/// `req.method` (`GET`, `POST`...): the standard methods are static strings.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_method(req: ReqHandle, out: *mut VeltStr) {
-    out.write(owned_str(obj(req).parts.method.as_str()));
+    let r = obj(req);
+    let m = &r.parts.method;
+    let known: &'static [u8] = match m.as_str() {
+        "GET" => b"GET",
+        "POST" => b"POST",
+        "PUT" => b"PUT",
+        "DELETE" => b"DELETE",
+        "HEAD" => b"HEAD",
+        "OPTIONS" => b"OPTIONS",
+        "PATCH" => b"PATCH",
+        _ => return out.write(owned_str(m.as_str())),
+    };
+    out.write(VeltStr::from_static(known));
 }
 
 /// `req.url`: the absolute URL (`http://host/path?query`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_url(req: ReqHandle, out: *mut VeltStr) {
     let r = obj(req);
-    out.write(url_of(&r.parts, &r.conn));
+    out.write(super::request_url::url_of(&r.parts, &r.conn));
 }
 
 /// `req.headers.get(name)` (case-insensitive): writes `out` (repeated fields joined with
@@ -299,42 +260,8 @@ pub unsafe extern "C" fn velt_rt_http_req_drop(req: ReqHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_cookies, url_of, Conn};
+    use super::join_cookies;
     use hyper::header::{HeaderMap, HeaderValue, COOKIE};
-
-    fn url(builder: hyper::http::request::Builder, tls: bool) -> String {
-        let (parts, ()) = builder.body(()).unwrap().into_parts();
-        let local = "10.0.0.1:8080".parse().unwrap();
-        let conn = Conn {
-            remote: "10.0.0.2:5000".parse().unwrap(),
-            local,
-            tls,
-        };
-        let mut url = url_of(&parts, &conn);
-        let text = unsafe { url.as_bytes() }.to_vec();
-        unsafe { url.release() };
-        String::from_utf8(text).unwrap()
-    }
-
-    #[test]
-    fn urls_are_absolute() {
-        let get = |uri: &str| hyper::Request::get(uri);
-        assert_eq!(
-            url(get("/a/b?x=1").header("host", "example.com:81"), false),
-            "http://example.com:81/a/b?x=1"
-        );
-        assert_eq!(
-            url(get("/").header("host", "example.com"), true),
-            "https://example.com/"
-        );
-        // HTTP/2 and proxy requests carry the scheme and authority in the request target.
-        assert_eq!(
-            url(get("https://h2.example/p?q").header("host", "other"), false),
-            "https://h2.example/p?q"
-        );
-        // HTTP/1.0 may name no host: the server's address stands in.
-        assert_eq!(url(get("/x"), false), "http://10.0.0.1:8080/x");
-    }
 
     #[test]
     fn http2_cookie_crumbs_are_joined_with_semicolons() {
