@@ -1,0 +1,121 @@
+// Command-line options: the parser (also the source of `--help`) and the parsed settings.
+import { ArgParser, CliError } from "velt:cli";
+import { availableParallelism } from "velt:os";
+
+export type Options = {
+  pattern: string;
+  roots: string[];
+  filesMode: bool; // list file paths (matching the pattern, if any) instead of searching text
+  fixed: bool;
+  ignoreCase: bool;
+  word: bool;
+  filesWithMatches: bool;
+  count: bool;
+  maxCount: i64;
+  types: string[]; // file extensions to keep, without the dot
+  hidden: bool;
+  noIgnore: bool;
+  maxDepth: i64;
+  threads: i64;
+  color: bool;
+  heading: bool;
+  stats: bool;
+  maxFileSize: i64;
+};
+
+export function parser(): ArgParser {
+  return new ArgParser("seek", "Fast recursive search, written in Velt.")
+    .positional(
+      "pattern",
+      "Regex to find (a plain word is matched literally); with --files, filters paths",
+    )
+    .positional("paths", "Files or directories to search (default: .)")
+    .flag("files", { short: "f", help: "List files instead of searching their contents" })
+    .flag("fixed-strings", { short: "F", help: "Treat the pattern as a literal string" })
+    .flag("ignore-case", { short: "i", help: "Case-insensitive search" })
+    .flag("word", { short: "w", help: "Only match whole words" })
+    .flag("files-with-matches", { short: "l", help: "Print only the paths of files with a match" })
+    .flag("count", { short: "c", help: "Print the number of matching lines per file" })
+    .option("max-count", {
+      short: "m",
+      help: "Stop after this many matching lines per file",
+      valueName: "n",
+    })
+    .option("type", {
+      short: "t",
+      help: "Only search files with this extension (repeatable)",
+      valueName: "ext",
+    })
+    .flag("hidden", { short: "H", help: "Search hidden files and directories" })
+    .flag("no-ignore", { help: "Don't respect .gitignore files" })
+    .option("max-depth", {
+      short: "d",
+      help: "Descend at most this many directories",
+      valueName: "n",
+    })
+    .option("threads", {
+      short: "j",
+      help: "Search threads (default: one per core)",
+      valueName: "n",
+    })
+    .option("color", {
+      default: "auto",
+      help: "auto | always | never (auto honours NO_COLOR)",
+      valueName: "when",
+    })
+    .flag("heading", { help: "Group matches under each file name" })
+    .flag("stats", { short: "s", help: "Print timing and counts at the end" })
+    .option("max-filesize", {
+      default: "50",
+      help: "Skip files larger than this many MiB",
+      valueName: "mib",
+    });
+}
+
+function intOption(value: i64 | null, fallback: i64, name: string, min: i64): i64 {
+  const v = value ?? fallback;
+  if (v < min) {
+    throw new CliError(`--${name} must be at least ${min}`);
+  }
+  return v;
+}
+
+/// The settings from `argv` (without the program name), or null when `--help` was asked for.
+/// `noColorEnv` is whether NO_COLOR is set. Throws `CliError` for usage mistakes.
+export function parseOptions(argv: string[], noColorEnv: bool): Options | null {
+  const a = parser().parse(argv);
+  const filesMode = a.flag("files");
+  if (a.flag("help") || (a.positionals.length === 0 && !filesMode)) {
+    return null;
+  }
+  const pattern = a.positionals.length > 0 ? a.positionals[0] : "";
+  const roots = a.positionals.length > 1 ? a.positionals.slice(1) : ["."];
+  const when = a.getOr("color", "auto");
+  if (when !== "auto" && when !== "always" && when !== "never") {
+    throw new CliError(`--color must be auto, always or never, not '${when}'`);
+  }
+  const types: string[] = [];
+  for (const t of a.getAll("type")) {
+    types.push(t.startsWith(".") ? t.slice(1) : t);
+  }
+  return {
+    pattern,
+    roots,
+    filesMode,
+    fixed: a.flag("fixed-strings"),
+    ignoreCase: a.flag("ignore-case"),
+    word: a.flag("word"),
+    filesWithMatches: a.flag("files-with-matches"),
+    count: a.flag("count"),
+    maxCount: intOption(a.getInt("max-count"), 0, "max-count", 0),
+    types,
+    hidden: a.flag("hidden"),
+    noIgnore: a.flag("no-ignore"),
+    maxDepth: intOption(a.getInt("max-depth"), 64, "max-depth", 0),
+    threads: intOption(a.getInt("threads"), availableParallelism() as i64, "threads", 1),
+    color: when === "always" || (when === "auto" && !noColorEnv),
+    heading: a.flag("heading"),
+    stats: a.flag("stats"),
+    maxFileSize: intOption(a.getInt("max-filesize"), 50, "max-filesize", 1) * 1024 * 1024,
+  };
+}

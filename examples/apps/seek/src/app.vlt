@@ -1,0 +1,135 @@
+// The search as a function of its arguments and two output sinks, so `src/main.vlt` can print
+// and `demo.vlt` can collect. seek: walk → (channel) → one search task per core → (channel) →
+// the caller's task, which writes.
+import { channel } from "velt:channel";
+import { RegExp } from "velt:regex";
+import { Matcher } from "./matcher";
+import { parseOptions, parser, Options } from "./options";
+import { Report, searchWorker } from "./search";
+import { FileJob, walk } from "./walk";
+
+/// `--files` filters paths with this, if a pattern was given.
+function pathRegex(opts: Options): RegExp | null {
+  if (opts.pattern === "") {
+    return null;
+  }
+  return new RegExp(
+    opts.fixed ? RegExp.escape(opts.pattern) : opts.pattern,
+    opts.ignoreCase ? "i" : "",
+  );
+}
+
+/// `--files`: print the walked paths (those matching the pattern, if one was given).
+async function listFiles(opts: Options, write: (s: string) => void): Promise<i32> {
+  const jobs = channel<FileJob>(1024);
+  const walker = spawn(walk(opts, jobs));
+  const re = pathRegex(opts);
+  let shown = 0;
+  let buf = "";
+  for await (const job of jobs) {
+    if (re == null || re.test(job.path)) {
+      buf += `${job.path}\n`;
+      shown++;
+      if (buf.length > 65536) {
+        write(buf);
+        buf = "";
+      }
+    }
+  }
+  write(buf);
+  await walker;
+  return shown > 0 ? 0 : 1;
+}
+
+async function search(
+  opts: Options,
+  write: (s: string) => void,
+  writeErr: (s: string) => void,
+): Promise<i32> {
+  const started = Date.now();
+  const jobs = channel<FileJob>(1024);
+  const reports = channel<Report>(256);
+  const walker = spawn(walk(opts, jobs));
+  for (let i = 0; i < opts.threads; i++) {
+    spawn(searchWorker(opts, jobs, reports));
+  }
+
+  let running = opts.threads;
+  let filesMatched: i64 = 0;
+  let lines: i64 = 0;
+  let bytes: i64 = 0;
+  let buf = "";
+  while (running > 0) {
+    const r = await reports.receive();
+    if (r == null) {
+      break;
+    }
+    if (r.done) {
+      running--;
+      bytes += r.bytes;
+      continue;
+    }
+    filesMatched++;
+    lines += r.matches;
+    buf += r.text;
+    if (buf.length > 65536) {
+      write(buf);
+      buf = "";
+    }
+  }
+  write(buf);
+  reports.close();
+  const walked = await walker;
+
+  if (opts.stats) {
+    const ms = Date.now() - started;
+    const mib = Math.round((bytes as f64) / 1048576 * 10) / 10;
+    writeErr(
+      `${lines} matching lines in ${filesMatched} files; searched ${walked.files} files (${mib} MiB) in ${walked.dirs} directories, ${walked.skipped} skipped; ${ms} ms on ${opts.threads} threads`,
+    );
+  }
+  return filesMatched > 0 ? 0 : 1;
+}
+
+/// Runs seek with `argv` (without the program name): output goes to `write`, messages to
+/// `writeErr` (one line each). `noColor` is whether NO_COLOR is set. Returns the exit code: 0 found,
+/// 1 nothing found, 2 usage error.
+export async function execute(
+  argv: string[],
+  noColor: bool,
+  write: (s: string) => void,
+  writeErr: (s: string) => void,
+): Promise<i32> {
+  let opts: Options | null;
+  try {
+    opts = parseOptions(argv, noColor);
+  } catch (e) {
+    writeErr(`seek: ${e.message}`);
+    return 2;
+  }
+  if (opts == null) {
+    write(`${parser().help()}\n`);
+    return 0;
+  }
+  // Compile the pattern once here, so a bad regex is a usage error rather than a failing worker.
+  try {
+    if (opts.filesMode) {
+      pathRegex(opts);
+    } else {
+      new Matcher(opts.pattern, {
+        fixed: opts.fixed,
+        ignoreCase: opts.ignoreCase,
+        word: opts.word,
+      });
+    }
+  } catch (e) {
+    writeErr(`seek: ${e.message}`);
+    return 2;
+  }
+  try {
+    return opts.filesMode ? await listFiles(opts, write) : await search(opts, write, writeErr);
+  } catch (e) {
+    writeErr(`seek: ${e.message}`);
+    return 2;
+  }
+}
