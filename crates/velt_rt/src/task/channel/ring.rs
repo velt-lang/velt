@@ -38,6 +38,11 @@ impl Ring {
         self.len == 0
     }
 
+    /// The size of every item (0 before the first non-empty one).
+    pub(super) fn item_size(&self) -> usize {
+        self.slot
+    }
+
     fn slots(&self) -> usize {
         self.buf.len().checked_div(self.slot).unwrap_or(0)
     }
