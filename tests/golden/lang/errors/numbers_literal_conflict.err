@@ -2,7 +2,7 @@ numbers_literal_conflict.vlt:10:21: error: mismatched types
 numbers_literal_conflict.vlt:11:15: used as a `number` here
 = note: expected i64, found f64
 = note: `a` is a `number`: it is declared from a literal without a type, and also used as a `number`
-= note: declare it with the type it needs (`let a: T = …`), or convert here with `as i64`
+= note: declare it with the type it needs (`let a: i64 = …`; `/` on it is then integer division), or convert here with `as i64`
 numbers_literal_conflict.vlt:14:12: error: mismatched types
 = note: expected usize, found f64
 = note: a `number` converts to `usize` only with `as usize`

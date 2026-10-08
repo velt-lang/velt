@@ -1,0 +1,35 @@
+// A local declared from a literal stays a number when the program names no integer type for
+// it (#525, review of #685): passing it to an integer parameter of the JS API (`s.slice(k)`,
+// `s.charAt(k)`) or using it as an index is neutral, so `-k` keeps its sign and doubling rounds
+// past 2^53. A bitwise operator makes it a number unless the other operand is a 64-bit integer:
+// `x << 40` shifts by 40 & 31. Expected output is Node's.
+function sliced() {
+  const s = "hello world";
+  let k = 0;
+  console.log(s.slice(k));
+  k = -k;
+  console.log(k, 1 / k);
+  let d = 1;
+  console.log(s.charAt(d), s[d]);
+  for (let i = 0; i < 60; i++) {
+    d = d * 2;
+  }
+  console.log(d + 1);
+  const xs = [10, 20, 30];
+  let j = 2;
+  console.log(xs[j]);
+  j = j / 4;
+  console.log(j);
+}
+
+function shifted() {
+  let x = 1;
+  console.log(x << 40, x << 31, (x << 31) >>> 0);
+  let m = 5;
+  console.log(~m, m ^ 3, -m >> 1, -m >>> 28);
+}
+
+function main() {
+  sliced();
+  shifted();
+}

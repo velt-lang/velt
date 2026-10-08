@@ -301,8 +301,8 @@ fn def_of_takes_an_exact_span() {
 
 #[test]
 fn a_local_declared_from_a_literal_takes_the_type_of_its_uses() {
-    // #525: `k` is only an index (an `i64`), `steps` is returned as an `i64`, `half` is
-    // divided and `i` meets a length (numbers).
+    // #525: `steps` is returned as an `i64`; `k` is only an index (neutral: a number),
+    // `half` is divided and `i` meets a length (numbers).
     let t = Typed::new(
         "function f(xs: f64[]): i64 {\n\
            let k = 0; let s = 0.0; for (const x of xs) { s += xs[k] * x; k++; }\n\
@@ -316,7 +316,7 @@ fn a_local_declared_from_a_literal_takes_the_type_of_its_uses() {
     let int = |after: &str, text: &str| matches!(t.view(after, text), TypeView::Int(IntTy::I64));
     let num =
         |after: &str, text: &str| matches!(t.view(after, text), TypeView::Float(FloatTy::F64));
-    assert!(int("xs[k]", "k"));
+    assert!(num("xs[k]", "k"));
     assert!(int("return", "steps"));
     assert!(num("half / 2", "half"));
     assert!(num("xs[i]", "i"));

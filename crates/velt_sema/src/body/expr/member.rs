@@ -383,7 +383,6 @@ impl FnCx<'_, '_> {
         // A float index is a JS number (`xs[i]` with `i: number`), except a quotient: `xs[n / 2]`
         // is almost always a forgotten `Math.trunc`, so it stays an error below.
         if self.cx.ty.is_float(i.ty) && self.float_division_note(&i).is_none() {
-            self.literal_use_index(&i);
             i = self.float_index(i);
         }
         if self.cx.ty.is_int(i.ty) && i.ty != usize_ {

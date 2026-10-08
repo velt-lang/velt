@@ -63,11 +63,16 @@ and memory where you want a fixed width; code shared with TypeScript never names
   `i64`, and `let i = 0; i < n` with `n: i64` makes `i` an `i64`. A use with `T` is assigning,
   passing, returning or storing the local (or arithmetic on it: `acc + i`) where a `T` is
   expected, or combining or comparing it with a 64-bit integer of type `T`. A use as a number is
-  combining it with another number (`0.5`, `xs.length`), `/`, `**`, a bitwise operator, a
-  `number` parameter or a method call on it. Locals used together (`x = y`, `x + y`) get one
-  type. A local used only as an array index (`let k = 0; … xs[k] … k++`) is an `i64`. A local
-  used both ways stays a number, and each use as `T` is an error that says why, with the fix:
-  declare the type (`let i: i64 = 0`) or convert (`i as i64`).
+  combining it with another number (`0.5`, `xs.length`), `/`, `**`, a `number` parameter or a
+  method call on it, and a bitwise operator unless the other operand is a 64-bit integer
+  (`x << 40` shifts by 8, as in JS). Arithmetic (`+ - * %`, `-x`, `+=`, `++`) on a local
+  allows only a 64-bit `T`: `let n = 200; takeU8(n); n + n` would wrap in a `u8`, so `n` is a
+  number and `takeU8(n)` needs `n as u8`. Only types the program names count: passing the
+  local to an integer parameter of the JavaScript API (`s.slice(k)`) or using it as an index
+  (`xs[k]`) leaves it a number, which the optimizer stores as an integer where that gives the
+  same results. Locals used together (`x = y`, `x + y`) get one type. A local used both ways
+  stays a number, and each use as `T` is an error that says why, with the fix: declare the
+  type (`let i: i64 = 0`, which makes `/` on it integer division) or convert (`i as i64`).
 - **The standard library hands you numbers**: its JavaScript API (the globals `Array`,
   `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
   `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of

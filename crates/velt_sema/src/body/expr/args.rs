@@ -136,8 +136,8 @@ impl FnCx<'_, '_> {
             // Only a parameter the library declares an integer (`slice(start: i64)`), not a
             // type argument the program chose (`push` on an `i64[]`).
             let declared_int = self.cx.ty.is_int(p.ty);
+            // A neutral use for the literal-local pre-scan: the JS API takes numbers.
             let h = if c.js_numbers && declared_int && self.cx.ty.is_float(h.ty) {
-                self.literal_use_as(&h, target);
                 // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
                 let span = h.span;
                 self.mk(H::Cast(Box::new(h)), target, span)

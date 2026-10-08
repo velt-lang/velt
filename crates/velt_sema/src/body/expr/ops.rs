@@ -143,6 +143,7 @@ impl FnCx<'_, '_> {
                     _ => self.expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
+                self.literal_use_arith(&inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
                     || self.cx.ty.is_float(t)
@@ -166,6 +167,7 @@ impl FnCx<'_, '_> {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
+                self.literal_use_number(&inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner) {
                     return self.js_bitnot(inner, span);

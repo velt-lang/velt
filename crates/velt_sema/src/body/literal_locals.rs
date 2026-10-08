@@ -3,23 +3,26 @@
 //! `let i = 0` declares a `number`, as in TypeScript, unless the function uses `i` only with
 //! one declared integer type `T` and never as a number: then `i` is a `T`, as if declared
 //! `let i: T = 0`. So `let steps = 0; … return steps` in a function returning `i64` counts in
-//! an `i64`. TS-shared code never names an integer type, so it is unaffected.
+//! an `i64`. Only a type the program names counts: the integer parameters of the JS API
+//! (`s.slice(k)`) and indexes (`xs[k]`) are neutral, so TS-shared code, which never names an
+//! integer type, is unaffected (`numrep` proves where its numbers can be integers).
 //!
 //! The candidates are the unannotated locals whose initializer is built from integer literals
 //! and other candidates with `+ - * %`, unary minus and `c ? a : b`. Every use of a candidate,
 //! or of such an expression of candidates (`acc + i`), is evidence:
 //! - **as `T`**: converted to the declared integer type `T` (assigned, passed, returned or
 //!   stored), or combined or compared with a value of a 64-bit integer type `T` (bitwise
-//!   operators included: `(key << 2) | b` with `b: i64`);
+//!   operators included: `key | b` with `b: i64`);
 //! - **as a number**: next to another number (a float literal, `xs.length`, a `number`
-//!   parameter), converted to a float type, an operand of `/` or `**`, or the receiver of a
-//!   method;
-//! - **as an index** (`xs[k]`): a candidate used only as an index (and neutrally) is an `i64`,
-//!   so `let k = 0; … dPos[k] … k++` counts in an integer, not a number converted at every
-//!   access; with a use as `T` it is a `T`, with a use as a number a number;
+//!   parameter), converted to a float type, an operand of `/` or `**`, the receiver of a
+//!   method, or an operand of a bitwise operator (`| & ^ << >> >>> ~`) whose other operand is
+//!   not a 64-bit integer (JS's 32-bit semantics: `x << 40` is `x << 8`);
+//! - **in arithmetic** (`+ - * %`, unary `-`, `+=`, `++`): a `T` narrower than 64 bits would
+//!   wrap where a number does not (`let n = 200; takeU8(n); n + n` is 400), so such a
+//!   candidate stays a number, and the use as `T` is an error with a fix-it;
 //! - neutral otherwise: next to another candidate (they get the same type), a literal, an
 //!   integer type that converts to a number exactly (`i32`), printed, in a template literal,
-//!   converted with `as`.
+//!   converted with `as`, passed to an integer parameter of the JS API, an array index.
 //!
 //! Uses need checked types (the parameter of `m.set` on a `Map<i64, i64>`, a closure's
 //! parameter), so the body is checked with every candidate a number, recording the uses; when a
@@ -61,8 +64,8 @@ struct Uses {
     number: Option<Span>,
     /// A negative literal is stored in it: it cannot be unsigned.
     negative: bool,
-    /// It is used as an array index.
-    index: bool,
+    /// It takes part in arithmetic: a narrow integer type would wrap.
+    arith: bool,
 }
 
 impl LiteralLocals {
@@ -83,11 +86,11 @@ impl LiteralLocals {
         let ints = std::mem::take(&mut self.uses[b].ints);
         let number = self.uses[b].number.take();
         let negative = std::mem::take(&mut self.uses[b].negative);
-        let index = std::mem::take(&mut self.uses[b].index);
+        let arith = std::mem::take(&mut self.uses[b].arith);
         let root = &mut self.uses[a];
         root.ints.extend(ints);
         root.negative |= negative;
-        root.index |= index;
+        root.arith |= arith;
         root.number = match (root.number, number) {
             (Some(x), Some(y)) => Some(if (y.file, y.lo) < (x.file, x.lo) {
                 y
@@ -113,10 +116,10 @@ impl LiteralLocals {
         }
     }
 
-    fn use_index(&mut self, cands: &[usize]) {
+    fn use_arith(&mut self, cands: &[usize]) {
         for &c in cands {
             let r = self.find(c);
-            self.uses[r].index = true;
+            self.uses[r].arith = true;
         }
     }
 
@@ -134,21 +137,24 @@ impl LiteralLocals {
     }
 
     /// The type each class resolves to: `T` when every use as an integer is `T`, none is as a
-    /// number, and `T` holds its literals (a negative one is never unsigned); `i64` when it is
-    /// used only as an index.
+    /// number, `T` holds its literals (a negative one is never unsigned) and, unless `T` has
+    /// 64 bits, the class takes no part in arithmetic.
     fn resolved(&mut self, ty: &crate::types::Types) -> Vec<(Span, Option<TyId>, Uses)> {
         let mut out = vec![];
         for i in 0..self.parent.len() {
             let r = self.find(i);
             let u = self.uses[r].clone();
-            let fits = |t: TyId| !u.negative || ty.int_ty(t).is_some_and(|it| it.is_signed());
+            let fits = |t: TyId| {
+                let it = ty.int_ty(t);
+                (!u.negative || it.is_some_and(|it| it.is_signed()))
+                    && (!u.arith || it.is_some_and(|it| it.bits() == 64))
+            };
             let t = match u.ints.first() {
                 Some(&(t, _))
                     if u.number.is_none() && u.ints.iter().all(|(x, _)| *x == t) && fits(t) =>
                 {
                     Some(t)
                 }
-                None if u.number.is_none() && u.index => Some(ty.i64),
                 _ => None,
             };
             let decl = self.uses[i].decl;
@@ -209,8 +215,11 @@ pub(crate) fn finish(cx: &mut Ctx, def: DefId, diags_from: usize) {
                     });
                     "and also used as a `number`".to_string()
                 }
-                None if uses.negative => {
+                None if uses.negative && !cx.ty.int_ty(*ty).is_some_and(|i| i.is_signed()) => {
                     format!("and holds a negative value, which `{shown}` cannot")
+                }
+                None if uses.arith && !cx.ty.int_ty(*ty).is_some_and(|i| i.bits() == 64) => {
+                    format!("and used in arithmetic, which would wrap at the width of `{shown}`")
                 }
                 None => "and used with different integer types".to_string(),
             };
@@ -219,7 +228,7 @@ pub(crate) fn finish(cx: &mut Ctx, def: DefId, diags_from: usize) {
                 uses.name
             ));
             d.notes.push(format!(
-                "declare it with the type it needs (`let {}: T = …`), or convert here with `as {shown}`",
+                "declare it with the type it needs (`let {}: {shown} = …`; `/` on it is then integer division), or convert here with `as {shown}`",
                 uses.name
             ));
         }
@@ -346,10 +355,10 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h` is an array index.
-    pub(crate) fn literal_use_index(&mut self, h: &hir::Expr) {
+    /// `h` takes part in arithmetic (`h++`, `-h`).
+    pub(crate) fn literal_use_arith(&mut self, h: &hir::Expr) {
         if let Some(cands) = self.scan(h) {
-            self.literal.use_index(&cands);
+            self.literal.use_arith(&cands);
         }
     }
 
@@ -393,6 +402,20 @@ impl FnCx<'_, '_> {
                 self.literal_use_number(r);
             }
             B::And | B::Or | B::Nullish | B::In => {}
+            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => {
+                let wide = |h: &hir::Expr| self.cx.ty.int_ty(h.ty).is_some_and(|i| i.bits() == 64);
+                if wide(l) || wide(r) {
+                    self.literal_combine(l, r);
+                } else {
+                    self.literal_use_number(l);
+                    self.literal_use_number(r);
+                }
+            }
+            B::Add | B::Sub | B::Mul | B::Rem => {
+                self.literal_use_arith(l);
+                self.literal_use_arith(r);
+                self.literal_combine(l, r);
+            }
             _ => self.literal_combine(l, r),
         }
     }

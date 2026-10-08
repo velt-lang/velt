@@ -465,6 +465,7 @@ impl FnCx<'_, '_> {
             None => return self.error_expr(span),
         };
         let lty = place.ty;
+        self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
         if !self.cx.ty.is_numeric(lty) {
             if !self.cx.ty.is_bottom(lty) {
