@@ -15,8 +15,10 @@
 // (rename with `AS`). int2/int4/int8 → exact integers, float4/float8 → `f64`, numeric → its
 // exact digits as a `string` (cast `::float8` for a number), bool → `bool`, text types, enums
 // and uuid → `string`, date/time/timestamp/timestamptz → ISO 8601 `string` (timestamptz in UTC
-// with "Z"), json/jsonb → the document (any matching `T`), bytea → `u8[]`, arrays → `T[]`,
-// NULL → `T | null` fields. Other types (interval, inet, money …) throw "ENOTSUP": cast them.
+// with "Z"), interval, inet/cidr and macaddr → PostgreSQL's text form as a `string`, money →
+// its exact amount as a `string`, json/jsonb → the document (any matching `T`), bytea → `u8[]`,
+// arrays → `T[]`, domains → as their base type, NULL → `T | null` fields. Other types (ranges,
+// composites, geometric types …) throw "ENOTSUP": cast them.
 //
 // `batchQuery` / `batchQueryOne` / `batchExecute` run one statement with many parameter sets
 // in one round trip: one message group with a single Sync (what pgx's Batch does), so the
@@ -335,8 +337,8 @@ export struct Client {
 
 /**
  * The data side of `client.copyFrom(sql)`: chunks in the COPY's format (text, CSV or binary),
- * streamed to the server. `end()` completes the copy; `abort()` (or dropping the last reference
- * to the connection) cancels it and the server rolls the statement back.
+ * streamed to the server. `end()` completes the copy; `abort()` cancels it and the server rolls
+ * the statement back.
  */
 export struct CopyWriter {
   private handle: u64;

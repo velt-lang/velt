@@ -232,7 +232,10 @@ extend<T> Array<T> {
     return true;
   }
 
-  /** Structural equality (`==`), so `NaN` is never found (JS `indexOf` semantics). */
+  /**
+   * Position of the first element `==` `x`, or -1. `==` compares objects by identity and numbers
+   * by value, like JS's `===`, so `NaN` is never found (JS `indexOf` semantics).
+   */
   indexOf(x: T): i64 {
     for (let i: usize = 0; i < this.length; i++) {
       if (this[i] == x) {
@@ -258,8 +261,9 @@ extend<T> Array<T> {
   }
 
   /**
-   * Clones of the elements in [start, end). JS semantics: negative positions count from the
-   * end, out-of-range positions are clamped, and `end` defaults to the length.
+   * The elements in [start, end), themselves (objects are shared, as in JS). JS semantics:
+   * negative positions count from the end, out-of-range positions are clamped, and `end`
+   * defaults to the length.
    */
   slice(start: i64 = 0, end: i64 = 9223372036854775807): T[] {
     const lo = clampPosition(start, this.length);

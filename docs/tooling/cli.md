@@ -201,8 +201,8 @@ velt doc [<file|dir>...] [--std] [-o <dir>]
 Generates HTML documentation for exported items: their signatures and the doc comment right
 above each declaration, a JSDoc `/** … */` comment or a block of `///` lines (a comment block at
 the top of a file, followed by a blank line, documents the module). Plain `//` comments are not
-documentation.
-Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
+documentation; on the lines between a doc comment and its declaration
+(`// eslint-disable-next-line`) they are skipped. Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
 `<package>/target/doc`; `--std` documents
 the standard library. The output has one page per module and a client-side search.
 

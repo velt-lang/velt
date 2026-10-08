@@ -169,8 +169,8 @@ class CsvScanner {
 }
 
 /**
- * Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field or
- * text after a closing quote.
+ * Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field,
+ * text after a closing quote, or an invalid `delimiter`.
  */
 export function parseCsv(text: string, opts: CsvOptions = {}): string[][] {
   const s = new CsvScanner(text, delimiterUnit(opts.delimiter ?? ","), opts.trim ?? false);
@@ -218,7 +218,10 @@ function needsQuotes(field: string, delim: string): bool {
     field.includes("\r");
 }
 
-/** Writes records as CSV, quoting only fields that need it; every record ends with a line break. */
+/**
+ * Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+ * Throws `CsvError` on an invalid `delimiter`.
+ */
 export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): string {
   const delim = opts.delimiter ?? ",";
   delimiterUnit(delim);

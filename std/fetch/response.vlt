@@ -150,7 +150,10 @@ export class Response {
     return this.#code >= 200 && this.#code <= 299;
   }
 
-  /** The server's status message (`OK`, `Not Found`), "" if it sent none. */
+  /**
+   * The status message (`OK`, `Not Found`): the server's reason phrase, else the standard one for
+   * the status ("" for a status without one, and for a constructed response by default).
+   */
   get statusText(): string {
     const known = this.#reason;
     if (known != null) {
@@ -191,7 +194,7 @@ export class Response {
   /**
    * The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
    * `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
-   * 304) and for a response made without one.
+   * 304), for a `HEAD` request's response and for a response made without one.
    */
   get body(): BodyStream | null {
     const code = this.#code;

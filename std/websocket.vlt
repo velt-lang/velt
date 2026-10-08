@@ -55,7 +55,10 @@ export class WsMessage {
   }
 }
 
-/** An open WebSocket connection (a Copy handle; see the module header). */
+/**
+ * An open WebSocket connection. A Copy handle like std/net's `TcpStream`: async methods take
+ * `this` by copy, so one task can wait in `receive` while another `send`s. Released by `close()`.
+ */
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   private handle: u64;
 
@@ -117,8 +120,9 @@ export function isWebSocketRequest(req: Request): bool {
 }
 
 /**
- * Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one). Return
- * `response` from the handler; the socket works once that response has been sent.
+ * Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one, or was
+ * already accepted). Return `response` from the handler; the socket works once that response
+ * has been sent.
  */
 export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.header("sec-websocket-key") ?? ""));

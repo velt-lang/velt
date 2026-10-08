@@ -92,7 +92,10 @@ export struct Channel<T> implements AsyncIterable<T> {
   }
 }
 
-/** A new channel of `T` values: unbounded, or holding at most `capacity` values. */
+/**
+ * A new channel of `T` values: unbounded with `capacity` 0, else holding at most `capacity`
+ * values. Panics if `capacity` is negative.
+ */
 export function channel<T>(capacity: i64 = 0): Channel<T> {
   if (capacity < 0) {
     panic(`channel capacity must not be negative, got ${capacity}`);

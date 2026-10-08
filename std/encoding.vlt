@@ -36,7 +36,10 @@ export function base64Encode(data: u8[]): string {
   return encode64(data, BASE64_STD, true);
 }
 
-/** Decodes standard Base64; padding is optional. Throws `EncodingError` on any other character. */
+/**
+ * Decodes standard Base64; padding is optional. Throws `EncodingError` on a character outside the
+ * alphabet or a length or padding that cannot come from whole bytes.
+ */
 export function base64Decode(s: string): u8[] {
   return decode64(s, BASE64_STD);
 }

@@ -60,7 +60,8 @@ export class Map<K, V> {
   /**
    * A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
    * key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
-   * the map shares their keys and values, like JS.
+   * the map shares their keys and values, like JS. `new Map(iterable)` also takes any iterable
+   * of pairs (a generator, another map), which the compiler collects into an array first.
    */
   constructor(entries: [K, V][] = []) {
     for (const [k, v] of entries) {
@@ -87,7 +88,10 @@ export class Map<K, V> {
     this.append(key, value, p, e);
   }
 
-  /** The value stored for `key` (see header), or null. */
+  /**
+   * The value stored for `key`, or null. Like JS it is the stored value itself: an object is
+   * shared (another reference to it), a number or string is copied.
+   */
   get(key: K): V | null {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
@@ -130,8 +134,8 @@ export class Map<K, V> {
 
   /**
    * Calls `f` with the value stored for `key` (not a copy), so an object value can be changed
-   * in place: `m.update(k, (xs) => { xs.push(x); })`. Copy values (numbers, bool, Copy
-   * structs) arrive by value like any Copy argument: replace them with `upsert` or `set`.
+   * in place: `m.update(k, (xs) => { xs.push(x); })`. Values that copy (numbers, `bool`,
+   * strings) arrive as copies, like any such argument: replace them with `upsert` or `set`.
    * Returns whether `key` was present.
    */
   update<E>(key: K, f: (value: V) => void throws E): bool throws E {

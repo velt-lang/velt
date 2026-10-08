@@ -180,7 +180,7 @@ export class Response {
     return Response.adopt(r);
   }
 
-  /** `application/octet-stream` unless a `content-type` header is set. */
+  /** Default `content-type: application/octet-stream` (replace it with `setHeader`). */
   static bytes(body: u8[], status: i64 = 200): Response {
     const r = velt_rt_http_resp_new(status as u32);
     let owned = body;

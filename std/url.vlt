@@ -35,7 +35,10 @@ import {
   decodeLenient,
 } from "velt:url/encode";
 
-/** Thrown for invalid URLs (`Invalid URL: <input>`) and malformed escapes (`URI malformed`). */
+/**
+ * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`) and for malformed
+ * escapes or lone surrogates in the URI functions (`URI malformed`).
+ */
 export class UrlError extends Error {}
 
 /** A parsed absolute URL (JS `URL`). */
@@ -121,7 +124,8 @@ export class URL {
 
   /**
    * Takes the host (and a port after `:`) up to the first `/`, `?` or `#`; ignored when the
-   * host is invalid or empty, and an empty port keeps the current one.
+   * host is invalid, or empty where the URL needs one (a special scheme, credentials or a port).
+   * An empty port keeps the current one.
    */
   set host(v: string) {
     if (this.rec.opaque) {
@@ -169,7 +173,10 @@ export class URL {
     return this.rec.port.clone();
   }
 
-  /** Takes the leading digits of `v` ("" clears the port); ignored when out of range. */
+  /**
+   * Takes the leading digits of `value` ("" clears the port); ignored when out of range or when
+   * the URL cannot have a port (no host, or `file:`).
+   */
   set port(value: string) {
     if (!this.canHaveCredentials()) {
       return;
@@ -441,7 +448,7 @@ export class URLSearchParams {
     __intrinsic_array_truncate(this.vals, w);
   }
 
-  /** Stable sort by name (bytewise, which matches JS's UTF-16 order for ASCII names). */
+  /** Stable sort by name, in UTF-16 code-unit order as in JS. */
   sort() {
     const pairs = this.entries();
     pairs.sort((a, b) => a[0].compareTo(b[0]));

@@ -15,9 +15,10 @@
 // decodes into `bool`, any other 0/1 value (an expression) needs an integer field.
 //
 // `Database` is a Copy handle like std/net's sockets: pass and capture it freely and release it
-// with `close()` (closing it through a second copy is a double free). A `Statement` owns its
-// handle and releases it when dropped, so `db.prepare(sql).all()` leaks nothing. Closing the
-// database while statements exist is safe: they then throw "SQLITE_MISUSE".
+// with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). A
+// `Statement` owns its handle and releases it when dropped, so `db.prepare(sql).all()` leaks
+// nothing. Closing the database while statements exist is safe: they then throw
+// "SQLITE_MISUSE".
 
 import { IoResult, IoStatus } from "velt:io";
 

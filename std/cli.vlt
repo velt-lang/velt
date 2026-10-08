@@ -9,7 +9,7 @@
 //   const a = p.parse(args());
 //   if (a.flag("help")) { console.log(p.help()); return; }
 //
-// Builder methods consume the parser and return it (chain them, or `p = p.flag(...)`).
+// Builder methods change the parser and return it, so they chain (`p.flag(...)` alone also works).
 // Accepted syntax: `--name`, `--name=value`, `--name value`, `--no-name` (flag set to false),
 // `-v`, `-abc` (short flags clustered), `-o value` / `-ovalue` (short option, value attached or
 // next), `--` (everything after is positional) and `-` (a positional). An option's value is

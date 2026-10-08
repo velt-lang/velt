@@ -1,10 +1,11 @@
 // std/collections/sorted_map: `SortedMap<K, V>`, a map that keeps its keys in ascending order
-// (`K extends Comparable<K>`: numbers, strings, bool, user types implementing `compareTo`).
+// (`K extends Comparable<K>`: numbers, strings, bool, user types that implement `Comparable`).
 //
 // Two parallel sorted arrays searched by binary search: O(log n) lookups, O(n) inserts and
 // deletes (element swaps, cache friendly), which beats a tree for small and read-mostly maps.
 // Ordered queries (`first`, `last`, `floorKey`, `ceilingKey`, `range`) are O(log n) plus the
-// output. Like `Map`, `set` takes ownership, and `get` / `keys` / `values` / `entries` clone.
+// output. `set` takes ownership; `get` / `keys` / `values` / `entries` return clones (unlike
+// `Map`, which shares stored objects).
 
 /** A map ordered by key. */
 export class SortedMap<K extends Comparable<K>, V> {

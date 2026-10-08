@@ -1,11 +1,11 @@
-// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (num-bigint).
+// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (dashu-int).
 //
 // Velt has no operator overloading, so arithmetic is methods: `a.add(b)` returns a new BigInt
 // like JS `a + b`; `a.addAssign(b)` changes `a` in place like `a += b`, reusing its buffer (hot
-// loops such as a pidigits spigot should use the in-place forms). Every operation has a
-// machine-integer twin (`mulInt(10)`, `mulIntAssign(k)`) that skips building a BigInt for the
-// small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing by
-// zero panics with a RangeError, as JS throws one.
+// loops such as a pidigits spigot should use the in-place forms). The arithmetic operations
+// have machine-integer twins (`mulInt(10)`, `mulIntAssign(k)`) that skip building a BigInt for
+// the small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing
+// by zero panics with a RangeError, as JS throws one, and so does a negative shift count.
 //
 // A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
 

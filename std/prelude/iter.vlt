@@ -183,7 +183,7 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
  * and its `using` values are disposed, as if the `yield` were a `return`. After it finished,
  * threw, or was closed, `next()` reports `done` forever. `E` is what the body throws.
  *
- * The compiler creates these objects: the generator's state follows the `state` word.
+ * The compiler creates these objects: the generator's state follows the class's fields.
  */
 export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, IterableIterator<T, E>, IteratorObject<T, E> {
   #state: u64 = 0;
