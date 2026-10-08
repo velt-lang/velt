@@ -75,4 +75,4 @@ export type ScriptAttrs = HtmlAttrs & {
 };
 
 /** `<style>`. */
-export type StyleAttrs = HtmlAttrs & { media?: string; blocking?: string };
+export type StyleAttrs = HtmlAttrs & { media?: string; blocking?: string; type?: string };

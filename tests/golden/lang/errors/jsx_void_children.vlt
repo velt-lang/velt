@@ -1,0 +1,12 @@
+// Children of an HTML void element are an error (#87): the element has no end tag, so they
+// could not be rendered. `{}`, comments and an explicit end tag are no children. SVG and MathML
+// attributes are checked like HTML ones.
+
+function main() {
+  const ok = <p><br></br><hr>{/* nothing */}</hr><img src="a.png" /></p>;
+  const a = <br>x</br>;
+  const b = <p><img src="a.png">{"caption"} more</img></p>;
+  const c = <input>{ok}</input>;
+  const d = <svg viewbox="0 0 1 1"><circle cx={1} cy={1} radius={1} /></svg>;
+  const e = <math><mo stretchy={false}>=</mo></math>;
+}

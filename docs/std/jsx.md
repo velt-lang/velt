@@ -21,7 +21,9 @@ A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees i
   `Element`'s fields are internal: its markup comes from `renderToString`.
 - `velt:jsx/attrs` exports the attribute types `IntrinsicElements` is made of: `HtmlAttrs`
   (the global attributes) and one type per element with attributes of its own (`AnchorAttrs`,
-  `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`), for providers that extend them
+  `ButtonAttrs`, `InputAttrs`, …, each `HtmlAttrs & { … }`; `SvgAttrs` and `MathAttrs` and the
+  types built on them, such as `CircleAttrs` and `MoAttrs`, for SVG and MathML), for providers
+  that extend them
   ([Extending `IntrinsicElements`](../internals/contracts/jsx.md#extending-intrinsicelements)).
 
 Rendering rules:
@@ -37,13 +39,16 @@ Rendering rules:
   values trimmed, empty strings left out, declarations joined by `;`:
   `style="font-size:14px;color:teal"`.
 - Void elements (`area base br col embed hr img input link meta source track wbr`) have no end
-  tag (and no children); any other empty element is written `<x></x>`. `key` is not rendered.
-- `IntrinsicElements` lists every HTML element with its attributes and the global ones, under
-  their HTML names (`class`, `for`, `tabindex`), so a misspelled tag or attribute is a compile
-  error. Hyphenated attributes (`data-*`, `aria-*`, `http-equiv`) and custom elements
-  (`<my-widget>`) are not checked. There are no event handler attributes (`onclick`): std/jsx
-  renders on the server, and client-side frameworks bring their own provider. SVG and MathML
-  elements are not listed yet.
+  tag, and children of one are a compile error (`<br>x</br>`); any other empty element is
+  written `<x></x>`, also inside `<svg>` and `<math>`. `key` is not rendered.
+- `IntrinsicElements` lists every HTML, SVG 2 and MathML Core element with its attributes and
+  the global ones, under their HTML, SVG and MathML names (`class`, `for`, `tabindex`,
+  `viewBox`, `clipPath`), so a misspelled tag or attribute is a compile error. Hyphenated and
+  namespaced attributes (`data-*`, `aria-*`, `http-equiv`, `stroke-width`, `xlink:href`) and
+  custom elements (`<my-widget>`) are not checked. MathML's true/false attributes take the
+  strings (`stretchy="false"`), as a `false` value would leave the attribute out. There are no
+  event handler attributes (`onclick`): std/jsx renders on the server, and client-side
+  frameworks bring their own provider.
 - Components are functions `(props: P) => Element`; `velt:jsx` calls each one as its element is
   created. **Async components** `(props: P) => Promise<Element>` start then too, so siblings
   load concurrently; rendering awaits them in document order. A component that throws, or an

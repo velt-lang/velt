@@ -1,6 +1,7 @@
 // velt:jsx/attrs: the HTML attribute types of std/jsx, for JSX providers that extend them
 // (docs/internals/contracts/jsx.md "Extending `IntrinsicElements`"). `HtmlAttrs` holds the
-// global attributes; every other type is `HtmlAttrs & { … }` with the element's own.
+// global attributes; every other type is `HtmlAttrs & { … }` with the element's own. The SVG
+// and MathML types are built the same way on `SvgAttrs` and `MathAttrs`.
 
 export type {
   LabelAttrs,
@@ -39,6 +40,47 @@ export type {
   TrackAttrs,
   CanvasAttrs,
 } from "velt:jsx/attrs/media";
+export type {
+  AnnotationAttrs,
+  MactionAttrs,
+  MathAttrs,
+  MathRootAttrs,
+  MfracAttrs,
+  MoAttrs,
+  MpaddedAttrs,
+  MspaceAttrs,
+  MtdAttrs,
+  MunderoverAttrs,
+} from "velt:jsx/attrs/mathml";
+export type {
+  AnimationAttrs,
+  CircleAttrs,
+  ClipPathAttrs,
+  EllipseAttrs,
+  FilterAttrs,
+  FilterPrimitiveAttrs,
+  ForeignObjectAttrs,
+  LineAttrs,
+  LinearGradientAttrs,
+  MarkerAttrs,
+  MaskAttrs,
+  MpathAttrs,
+  PathAttrs,
+  PatternAttrs,
+  PolyAttrs,
+  RadialGradientAttrs,
+  RectAttrs,
+  StopAttrs,
+  SvgAttrs,
+  SvgImageAttrs,
+  SvgRootAttrs,
+  SvgScriptAttrs,
+  SymbolAttrs,
+  TextContentAttrs,
+  TextPathAttrs,
+  UseAttrs,
+  ViewAttrs,
+} from "velt:jsx/attrs/svg";
 export type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
 export type {
   QuoteAttrs,
