@@ -178,7 +178,14 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
         _ => *r.body_mut() = RespBody::full(body),
     }
     if let Some(v) = implied_type(implied) {
-        r.headers_mut().entry(CONTENT_TYPE).or_insert(v);
+        let headers = r.headers_mut();
+        // Without headers of its own (most responses) a plain insert does: there is nothing
+        // to look for.
+        if headers.is_empty() {
+            headers.insert(CONTENT_TYPE, v);
+        } else {
+            headers.entry(CONTENT_TYPE).or_insert(v);
+        }
     }
     register(r)
 }
