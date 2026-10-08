@@ -65,7 +65,8 @@ members and in `#name in o` ([Classes](classes.md#classes)).
   [`velt:bigint`](../std/bigint.md).
 - **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \uHHHH \u{H…}`.
 - **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`.
-  `${expr}` formats any value the way `console.log` does.
+  `${expr}` writes strings, numbers, booleans and arrays as JS does (`${[1, 2]}` is `1,2`) and
+  other values the way `console.log` does ([Strings](types.md#strings)).
 - **Regular expressions**: `/ab+c/gi` is `new RegExp("ab+c", "gi")` from
   [`velt:regex`](../std/regex.md) (import `RegExp`). A `/` after an operand is division.
 - `true`, `false`, `null`.

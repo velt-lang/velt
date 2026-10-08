@@ -1,6 +1,6 @@
-// `${x}` of arrays, nested arrays, tuples of containers and maps is exactly what
-// `console.log(x)` prints: node style `[ 1, 2 ]`, `[]`, quoted strings inside containers,
-// `Map(1) { 'a' => 1 }`.
+// `${x}` of arrays is JS's `String(x)`: the elements joined with "," (nested arrays the same
+// way, `null` as empty text, #757); `${x}` of a map is what `console.log(x)` prints,
+// `Map(1) { 'a' => 1 }` (JS writes `[object Map]`).
 class Oops {
   message: string;
   constructor(message: string) {

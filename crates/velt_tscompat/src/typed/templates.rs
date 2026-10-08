@@ -18,7 +18,7 @@ enum Printed {
     Same,
     /// The same, except that JavaScript prints `undefined` where the value is `undefined`.
     Nullable,
-    /// Velt prints the contents; JavaScript `[object Object]` or the elements joined by commas.
+    /// Velt prints the contents; JavaScript `[object Object]` (also for the elements of an array).
     Contents,
 }
 
@@ -56,9 +56,9 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
                     e.span,
                     format!("`${{…}}` of {what} prints its contents in Velt, not in JavaScript"),
                     &[
-                        "Velt formats the value as `console.log` does (`[ 1, 2 ]`, \
-                         `P { x: 1 }`); JavaScript calls `toString()`: an array joins its \
-                         elements with commas (`1,2`), an object gives `[object Object]`",
+                        "Velt formats an object as `console.log` does (`P { x: 1 }`), also as \
+                         an element of an array; JavaScript calls `toString()`, which gives \
+                         `[object Object]`",
                         "format it yourself: `xs.join(\", \")`, a field (`${p.name}`), or a \
                          `toString()` method the class declares itself, which both call",
                     ],
@@ -103,11 +103,16 @@ fn printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
                     _ => Printed::Same,
                 })
         }
+        // An array is written as JS writes it (`1,2`, #757) when its elements are.
+        TypeView::Array(e) => element_printed(&e, t, depth),
+        TypeView::Tuple(es) => es
+            .iter()
+            .map(|e| element_printed(e, t, depth))
+            .find(|p| matches!(p, Printed::Contents))
+            .unwrap_or(Printed::Same),
         TypeView::Named(n) if n.kind == NamedKind::Enum => Printed::Same,
         TypeView::Named(_) if t.program.analysis.declares_method(ty, "toString") => Printed::Same,
-        TypeView::Array(_)
-        | TypeView::Tuple(_)
-        | TypeView::Map(..)
+        TypeView::Map(..)
         | TypeView::Set(_)
         | TypeView::Record
         | TypeView::Named(_)
@@ -115,6 +120,20 @@ fn printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
         | TypeView::Shared(_)
         | TypeView::Fn => Printed::Contents,
         _ => Printed::Same,
+    }
+}
+
+/// How an element of an array prints: `null` as empty text in both (JavaScript writes
+/// `undefined` that way too), and a class instance by its contents in Velt even when the class
+/// declares `toString()`.
+fn element_printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
+    match t.view(ty) {
+        TypeView::Nullable(inner) => element_printed(&inner, t, depth + 1),
+        TypeView::Named(n) if n.kind != NamedKind::Enum => Printed::Contents,
+        _ => match printed(ty, t, depth + 1) {
+            Printed::Nullable => Printed::Same,
+            p => p,
+        },
     }
 }
 

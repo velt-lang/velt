@@ -247,7 +247,7 @@ Set(101) {
 ]
 { wrapped: { json: { a: [Object], list: [Array] } } }
 [ [ [ [Array] ] ] ]
-[ [ [ [Array] ] ] ] | { a: { b: { c: [Object] } } } | 101
+1 | { a: { b: { c: [Object] } } } | 101
 {
   a: { b: { c: [Object], e: [Array], f: [], g: {} } },
   list: [ 1, [ 2, [Array] ] ]

@@ -1,6 +1,6 @@
 // `${x}` of structs, anonymous objects, classes (also through a base-class reference),
 // discriminated unions, numeric and string enums, literal types and errors as values is exactly
-// what `console.log(x)` prints.
+// what `console.log(x)` prints; an array of them joins those texts with "," (#757).
 struct Point {
   x: i64;
   y: f64;

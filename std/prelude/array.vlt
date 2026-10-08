@@ -503,8 +503,9 @@ extend<T> Array<T> {
   /**
    * `join` for element types without their own (string enums, literal unions, objects): each
    * element as a template literal shows it (`${x}`; for objects that is the `console.log`
-   * form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
-   * arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
+   * form, where JS writes `[object Object]`; arrays are joined with ",", as in JS). Strings,
+   * numbers and bools have exact ones below; arrays of arrays and of nullable elements have
+   * JS's in array_nested.vlt.
    */
   join(sep: string = ","): string {
     let s = "";

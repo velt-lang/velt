@@ -3,14 +3,16 @@
 //! flattened into one builder: reserve an estimate, push every part as soon as it is evaluated
 //! (JS order — later parts cannot change what an earlier part contributed), and the filled
 //! builder is the result (same layout as `VeltStr`, no `finish` call). Non-string parts are
-//! appended by the shared format glue, so `${x}` is exactly what `console.log(x)` prints.
+//! appended by the shared format glue, so `${x}` is what `console.log(x)` prints, except for
+//! arrays and tuples, which are written as JS's `String(x)` writes them (`1,2`).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
+use super::operand::proj;
 use super::rt::Rt;
 use super::sequence::Later;
-use super::FnLower;
-use crate::vir::{Operand, Place, Ty, STR_AGG};
+use super::{cint, FnLower};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 const STR: Ty = Ty::Agg(STR_AGG);
 
@@ -117,8 +119,86 @@ impl FnLower<'_, '_> {
             TyKind::Never => {}
             _ => {
                 let p = self.place_of(v, t);
-                self.format_top(buf, &p, t);
+                self.push_js_string(buf, &p, t);
             }
+        }
+    }
+
+    /// Append `String(x)` of the value at `place` (#757): JS's `Array.prototype.toString` for
+    /// arrays and tuples (the elements joined with ",", nested arrays the same way, `null` as
+    /// empty text), the `console.log` text for everything else.
+    fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        match self.cx.kind(ty) {
+            TyKind::Array(e) => {
+                let arr = self.content(place, ty);
+                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+                let k = self.temp(Ty::U64);
+                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                self.count_loop(k, len, |lw, k| {
+                    let first = lw.rvalue_temp(
+                        Ty::Bool,
+                        Rvalue::Binary(BinOp::Eq, k.clone(), cint(0, Ty::U64)),
+                    );
+                    let (sep_bb, elem_bb) = (lw.new_block(), lw.new_block());
+                    lw.branch(first, elem_bb, sep_bb);
+                    lw.switch_to(sep_bb);
+                    lw.push_text(buf, ",");
+                    lw.goto(elem_bb);
+                    lw.switch_to(elem_bb);
+                    let p = lw.elem_place(&arr, k, e);
+                    lw.push_js_element(buf, &p, e);
+                });
+            }
+            TyKind::Tuple(tys) => {
+                for (i, &t) in tys.iter().enumerate() {
+                    if i > 0 {
+                        self.push_text(buf, ",");
+                    }
+                    let p = self.field_place(place, ty, i as u32);
+                    self.push_js_element(buf, &p, t);
+                }
+            }
+            TyKind::Option(e) if self.writes_js_list(e) => {
+                let (some_bb, none_bb, done) =
+                    (self.new_block(), self.new_block(), self.new_block());
+                let some = self.option_is_some(place, ty);
+                self.branch(some, some_bb, none_bb);
+                self.switch_to(none_bb);
+                self.push_text(buf, "null");
+                self.goto(done);
+                self.switch_to(some_bb);
+                let payload = self.some_payload(place, ty);
+                self.push_js_string(buf, &payload, e);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.format_top(buf, place, ty),
+        }
+    }
+
+    /// Whether [`push_js_string`](Self::push_js_string) writes values of `ty` as a JS list.
+    fn writes_js_list(&self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Array(_) | TyKind::Tuple(_))
+    }
+
+    /// An element of an array being written by [`push_js_string`](Self::push_js_string):
+    /// `null` is empty text, as in JS.
+    fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        match self.cx.kind(ty) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
+                self.push_scalar(buf, Operand::Copy(place.clone()), ty)
+            }
+            TyKind::Option(e) => {
+                let (some_bb, done) = (self.new_block(), self.new_block());
+                let some = self.option_is_some(place, ty);
+                self.branch(some, some_bb, done);
+                self.switch_to(some_bb);
+                let payload = self.some_payload(place, ty);
+                self.push_js_element(buf, &payload, e);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.push_js_string(buf, place, ty),
         }
     }
 

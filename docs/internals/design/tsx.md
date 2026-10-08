@@ -165,7 +165,7 @@ Accepted by `tsc`, but behaves differently:
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
 | `strict-null-eq` | `=== null` / `!== null` on values that are `undefined` in JS (below) | error (a fix: `==` / `!=`) | |
-| `object-in-template` | `${x}` of an array, tuple, map, object or class instance without its own `toString()`: Velt prints the contents | error | |
+| `object-in-template` | `${x}` of a map, object or class instance without its own `toString()`, or of an array holding one (or any class instance): Velt prints the contents | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
 | `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |

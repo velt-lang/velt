@@ -133,8 +133,12 @@ usable and no copy method is needed.
   other concatenates, as in JS: `"Total: " + 5` is `"Total: 5"`, `"a" + true` is `"atrue"` and
   `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
   `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
-  error; build that text with a template literal (`` `Total: ${xs}` ``), which formats any
-  value the way `console.log` does.
+  error; build that text with a template literal (`` `Total: ${xs}` ``).
+- A template literal writes `${x}` as JS's `String(x)` does for strings, numbers, booleans,
+  `null` and arrays: an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays
+  the same way, `null` elements as empty text). It calls a class's own `toString()`; other
+  values (objects, maps) are formatted the way `console.log` formats them, where JS writes
+  `[object Object]`.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
