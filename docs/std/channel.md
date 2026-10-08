@@ -29,9 +29,10 @@ through one channel.
 - `Channel<T>` is a handle struct, like `TcpStream` ([Handles](README.md#conventions)). Copies
   share one channel, so pass it to producers and consumers, `spawn`ed tasks included, without
   `shared(...)`.
-- Close a channel when you're done with it. A closed channel is freed once it is drained;
-  values left in a closed channel that nobody drains are not dropped. A channel that is never
-  closed lives until the process exits.
+- Close a channel when you're done with it. A closed channel is freed once it is drained. Values
+  left in a channel that nobody drains stay in memory while the program runs, since any copy of
+  the channel may still receive them, and are dropped when the program ends. A channel that is
+  never closed lives until the program ends.
 
 ```ts
 import { channel, Channel, ChannelClosed } from "velt:channel";

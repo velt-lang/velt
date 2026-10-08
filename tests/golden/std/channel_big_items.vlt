@@ -75,6 +75,7 @@ async function main() {
   unbounded.close();
   console.log("queued:", unbounded.length, "closed:", unbounded.closed);
   let drained = 0;
+  let last = "";
   while (true) {
     const r = unbounded.tryReceive();
     if (r == null) {
@@ -83,6 +84,7 @@ async function main() {
     if (whole(r, drained)) {
       drained++;
     }
+    last = r.label;
   }
-  console.log("unbounded:", drained, "intact, last:", reading(drained - 1).label);
+  console.log("unbounded:", drained, "intact, last:", last);
 }
