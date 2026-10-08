@@ -3,42 +3,41 @@
 // `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` is a min-heap and
 // `(a, b) => b - a` a max-heap (the `sort(cmp)` convention). Elements are only swapped inside the
 // heap array, never cloned; `pop` moves the top element out by swapping it to the end.
-// Elements that compare equal come out in unspecified order (a heap is not stable).
-// Known issue: a comparator that captures variables must not outlive the function that created
-// it (tests/golden/bugs/sema_closure_param_stored_in_field.vlt); non-capturing comparators are fine.
+// Elements that compare equal come out in unspecified order (a heap is not stable). The queue
+// keeps `cmp`, and a comparator may capture variables.
 
-// A priority queue (binary heap); `pop` returns the element that `cmp` orders first.
+/** A priority queue (binary heap); `pop` returns the element that `cmp` orders first. */
 export class PriorityQueue<T> {
   private heap: T[] = [];
   private cmp: (a: T, b: T) => i64;
 
-  // An empty queue ordered by `cmp` (negative: `a` first).
+  /** An empty queue ordered by `cmp` (negative: `a` first). */
   constructor(cmp: (a: T, b: T) => i64) {
     this.cmp = cmp;
   }
 
-  // Number of queued elements.
+  /** Number of queued elements. */
   get size(): usize {
     return this.heap.length;
   }
 
-  // Number of queued elements (same as `size`).
+  /** Number of queued elements (same as `size`). */
   get length(): usize {
     return this.heap.length;
   }
 
-  // Whether the queue is empty.
+  /** Whether the queue is empty. */
   isEmpty(): bool {
     return this.heap.length == 0;
   }
 
-  // Adds `value` (O(log n)).
+  /** Adds `value` (O(log n)). */
   push(value: T) {
     this.heap.push(value);
     this.siftUp(this.heap.length - 1);
   }
 
-  // Removes and returns the first element in `cmp` order, or null if empty (O(log n)).
+  /** Removes and returns the first element in `cmp` order, or null if empty (O(log n)). */
   pop(): T | null {
     const n = this.heap.length;
     if (n == 0) {
@@ -50,7 +49,7 @@ export class PriorityQueue<T> {
     return top;
   }
 
-  // A clone of the first element in `cmp` order, or null if empty.
+  /** A clone of the first element in `cmp` order, or null if empty. */
   peek(): T | null {
     if (this.heap.length == 0) {
       return null;
@@ -58,12 +57,15 @@ export class PriorityQueue<T> {
     return this.heap[0].clone();
   }
 
-  // Removes every element.
+  /** Removes every element. */
   clear() {
     __intrinsic_array_truncate(this.heap, 0);
   }
 
-  // Clones of the elements in `cmp` order (stable for equal elements); the queue is unchanged.
+  /**
+   * Clones of the elements in `cmp` order; the queue is unchanged. Equal elements come out in
+   * no particular order (the heap does not keep insertion order).
+   */
   toSortedArray(): T[] {
     const out = this.heap.clone();
     const cmp = this.cmp;
@@ -71,7 +73,7 @@ export class PriorityQueue<T> {
     return out;
   }
 
-  // Clones of the elements in heap (unspecified) order.
+  /** Clones of the elements in heap (unspecified) order. */
   toArray(): T[] {
     return this.heap.clone();
   }

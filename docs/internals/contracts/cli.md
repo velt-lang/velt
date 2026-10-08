@@ -57,8 +57,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   browser (Web Worker + `velt_web.mjs`). Only `std/…` imports are accepted. Needs the browser
   runtime (`cargo build -p velt_rt_wasm --target wasm32-unknown-unknown`).
 - `doc` (additive): HTML API docs from exported items, their public members,
-  their signatures as written and the `///`/`//` comment block right above each declaration (a
-  comment block at the top of a file documents the module). No paths: the package's `src/`
+  their signatures as written and the doc comment right above each declaration: a JSDoc
+  `/** … */` comment or a block of `///` lines, with JSDoc tags (`@param`, `@returns`,
+  `@throws`, `@example`, `@deprecated`, `@see`, `{@link}`); plain `//` is not a doc comment
+  (`docs/internals/design/doc-comments.md`). A comment block at the top of a file, followed by a
+  blank line, documents the module. No paths: the package's `src/`
   (its `.vlt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
@@ -223,7 +226,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   parsing, subcommands, `--help`, usage errors → exit 2. `api`: JSON HTTP API (routes,
   validation, `ApiError` subclasses → status codes, `shared<Mutex<…>>` state), tests with `fetch`
   against a server on port 0. `websocket`: chat server + terminal client (`serve`/`connect`).
-  `lib`: `src/lib.vlt` exports with `///` docs for `velt doc`. Templates are embedded in the
+  `lib`: `src/lib.vlt` exports with `/** */` doc comments for `velt doc`. Templates are embedded in the
   binary (`crates/veltc/templates/`); `{{name}}` in them becomes the package name.
 - `init` (additive): the same files in the current directory; the package is named after the
   directory (lower-cased, other characters → `-`) unless `--name`. Files the template would

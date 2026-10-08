@@ -5,7 +5,8 @@ for producer/consumer pipelines and worker pools. Any number of tasks may send a
 through one channel.
 
 - `channel<T>(capacity = 0): Channel<T>`: unbounded with `0`, else holding at most `capacity`
-  values. On a full channel, `send` waits until a receiver makes room (backpressure).
+  values. On a full channel, `send` waits until a receiver makes room (backpressure). A
+  negative `capacity` panics.
 - `Channel<T>`:
   - `send(value: T): Promise<void>` queues the value. It throws `ChannelClosed` if the channel
     is closed, also while waiting; the value is dropped then.
@@ -33,8 +34,8 @@ through one channel.
   channel abandoned with values still queued (one per connection, say) keeps them until the
   program ends, since any copy of the channel may still receive them; they are dropped only
   then (when `main` succeeds; on WebAssembly they are not dropped, the instance's memory goes
-  with it). To free them sooner, drain it: close it and receive until you get `null`. A channel that is never
-  closed lives until the program ends.
+  with it). To free them sooner, drain it: close it and receive until you get `null`. A
+  channel that is never closed lives until the program ends.
 
 ```ts
 import { channel, Channel, ChannelClosed } from "velt:channel";

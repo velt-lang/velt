@@ -1,25 +1,34 @@
 // Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed` on f64, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 
+/**
+ * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
+ * for it with `isNaN(x)`.
+ */
 export const NaN: f64 = 0.0 / 0.0;
+/** Positive infinity, an `f64` greater than every finite one. `-Infinity` is its negation. */
 export const Infinity: f64 = 1.0 / 0.0;
 
-// Whether `x` is NaN (JS global `isNaN` on a number).
+/** Whether `x` is NaN (JS global `isNaN` on a number). */
 export function isNaN(x: f64): bool {
   return x != x;
 }
 
-// Whether `x` is neither NaN nor ±Infinity.
+/** Whether `x` is neither NaN nor ±Infinity. */
 export function isFinite(x: f64): bool {
   return x - x == 0.0;
 }
 
 extend f64 {
-  // `digits` (0 to 100) decimals, rounded like JS: to the nearest, and on an exact tie away from
-  // zero (`(0.5).toFixed(0)` is "1", `(-1.25).toFixed(1)` is "-1.3"; `(1.005).toFixed(2)` is
-  // "1.00" because 1.005 is really 1.00499…). From 1e21 up it is `String(x)`, as in JS.
+  /**
+   * `digits` (0 to 100) decimals, rounded like JS: to the nearest, and on an exact tie away from
+   * zero (`(0.5).toFixed(0)` is "1", `(-1.25).toFixed(1)` is "-1.3"; `(1.005).toFixed(2)` is
+   * "1.00" because 1.005 is really 1.00499…). From 1e21 up it is `String(x)`, as in JS.
+   */
   toFixed(digits: i64 = 0): string {
     if (digits < 0 || digits > 100) {
       panic("RangeError: toFixed() digits argument must be between 0 and 100");
@@ -28,46 +37,70 @@ extend f64 {
   }
 }
 
-// `Number.isInteger(x)`, `Number.MAX_SAFE_INTEGER` & co.: the static members of JS's `Number`.
-// `Number` itself is the `Number(s)` conversion (string.vlt); the compiler looks its members up
-// in this class (TypeScript calls the type of `Number` `NumberConstructor` too).
+/**
+ * `Number.isInteger(x)`, `Number.MAX_SAFE_INTEGER` & co.: the static members of JS's `Number`.
+ * `Number` itself is the `Number(s)` conversion (string.vlt); the compiler looks its members up
+ * in this class (TypeScript calls the type of `Number` `NumberConstructor` too).
+ */
 export class NumberConstructor {
+  /**
+   * A value that is not a number.
+   * In equality comparisons, NaN does not equal any value, including itself. To test whether a
+   * value is equivalent to NaN, use the `Number.isNaN` function.
+   */
   static readonly NaN: f64 = 0.0 / 0.0;
+  /** An `f64` greater than every finite `f64`, shown as `Infinity`. */
   static readonly POSITIVE_INFINITY: f64 = 1.0 / 0.0;
+  /** An `f64` less than every finite `f64`, shown as `-Infinity`. */
   static readonly NEGATIVE_INFINITY: f64 = -1.0 / 0.0;
-  // 2^53 - 1: the largest integer an f64 holds exactly, and its negation.
+  /** 2^53 - 1: the largest integer an f64 holds exactly, and its negation. */
   static readonly MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+  /**
+   * The value of the smallest integer n such that n and n − 1 are both exactly representable as
+   * an `f64`: −9007199254740991 (−(2^53 − 1)).
+   */
   static readonly MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+  /** The largest finite `f64`. Equal to approximately 1.79E+308. */
   static readonly MAX_VALUE: f64 = 1.7976931348623157e308;
-  // The smallest positive (subnormal) f64.
+  /** The smallest positive (subnormal) f64. */
   static readonly MIN_VALUE: f64 = 5e-324;
-  // The gap between 1 and the next f64 (2^-52).
+  /** The gap between 1 and the next f64 (2^-52). */
   static readonly EPSILON: f64 = 2.220446049250313e-16;
 
-  // Whether `x` is NaN. Unlike the global `isNaN` in JS, neither converts its argument.
+  /** Whether `x` is NaN. Unlike the global `isNaN` in JS, neither converts its argument. */
   static isNaN(x: f64): bool {
     return x != x;
   }
 
+  /**
+   * Returns true if passed value is finite: neither NaN nor ±Infinity. The same as the global
+   * `isFinite`, because neither converts its argument (JS's global one does).
+   * @param x - A numeric value.
+   */
   static isFinite(x: f64): bool {
     return x - x == 0.0;
   }
 
-  // Whether `x` is a finite number without a fractional part (`5.0` is an integer).
+  /** Whether `x` is a finite number without a fractional part (`5.0` is an integer). */
   static isInteger(x: f64): bool {
     return x - x == 0.0 && __intrinsic_trunc(x) == x;
   }
 
-  // An integer with |x| <= 2^53 - 1.
+  /** An integer with |x| <= 2^53 - 1. */
   static isSafeInteger(x: f64): bool {
     return NumberConstructor.isInteger(x) && x <= 9007199254740991.0 && x >= -9007199254740991.0;
   }
 
-  // The same functions as the globals `parseInt` and `parseFloat`.
+  /** The same functions as the globals `parseInt` and `parseFloat`. */
   static parseInt(s: string, radix: i64 = 0): f64 {
     return parseInt(s, radix);
   }
 
+  /**
+   * Converts a string to a floating-point number, like the global `parseFloat`: the longest
+   * decimal prefix, or NaN.
+   * @param s - A string that contains a floating-point number.
+   */
   static parseFloat(s: string): f64 {
     return parseFloat(s);
   }

@@ -2,7 +2,7 @@
 # Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .tar.gz).
 #
 # Layout (see docs/tooling/platforms.md):
-#   bin/velt  lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md  std/**  README.md  LICENSE-MIT  LICENSE-APACHE
+#   bin/velt  lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md  std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: scripts/package.sh [--std-dir <dir>] [--skip-build] [--no-archive]
 #   --std-dir     std sources to ship (default: <repo>/std)
@@ -75,7 +75,7 @@ Layout: bin/ (the velt CLI), lib/ (runtime library linked into every program),
 std/ (standard library sources). Full guide: docs/tooling/platforms.md in the Velt repository.
 EOF
 
-cp "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$out/"
+cp "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$repo/NOTICE" "$out/"
 
 if [ "$archive" = 1 ]; then
     tar -czf "$dist/$name.tar.gz" -C "$dist" "$name"

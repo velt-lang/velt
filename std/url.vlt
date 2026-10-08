@@ -35,19 +35,22 @@ import {
   decodeLenient,
 } from "velt:url/encode";
 
-// Thrown for invalid URLs (`Invalid URL: <input>`) and malformed escapes (`URI malformed`).
+/**
+ * Thrown for invalid URLs (`Invalid URL: <input>`, `Invalid base URL: <base>`) and for malformed
+ * escapes or lone surrogates in the URI functions (`URI malformed`).
+ */
 export class UrlError extends Error {}
 
-// A parsed absolute URL (JS `URL`).
+/** A parsed absolute URL (JS `URL`). */
 export class URL {
   private rec: UrlRecord;
 
-  // Parses `input`, resolved against `base` when it is relative; throws `UrlError`.
+  /** Parses `input`, resolved against `base` when it is relative; throws `UrlError`. */
   constructor(input: string, base: string | null = null) {
     this.rec = parseOrThrow(input, base);
   }
 
-  // Like the constructor, but null instead of throwing (JS `URL.parse`).
+  /** Like the constructor, but null instead of throwing (JS `URL.parse`). */
   static parse(input: string, base: string | null = null): URL | null {
     try {
       return new URL(input, base);
@@ -56,12 +59,12 @@ export class URL {
     }
   }
 
-  // Whether `new URL(input, base)` would succeed.
+  /** Whether `new URL(input, base)` would succeed. */
   static canParse(input: string, base: string | null = null): bool {
     return URL.parse(input, base) != null;
   }
 
-  // The whole URL; assigning reparses it (throws `UrlError` if invalid).
+  /** The whole URL; assigning reparses it (throws `UrlError` if invalid). */
   get href(): string {
     return serialize(this.rec);
   }
@@ -70,12 +73,12 @@ export class URL {
     this.rec = parseOrThrow(v, null);
   }
 
-  // The scheme with its colon, e.g. `https:`.
+  /** The scheme with its colon, e.g. `https:`. */
   get protocol(): string {
     return `${this.rec.scheme}:`;
   }
 
-  // Switches between schemes of the same kind (special or not), like JS.
+  /** Switches between schemes of the same kind (special or not), like JS. */
   set protocol(value: string) {
     const v = removeTabNewline(value);
     const colon = v.indexOf(":");
@@ -89,7 +92,7 @@ export class URL {
     this.rec.scheme = scheme;
   }
 
-  // Percent-encoded user name ("" if none).
+  /** Percent-encoded user name ("" if none). */
   get username(): string {
     return this.rec.username.clone();
   }
@@ -100,7 +103,7 @@ export class URL {
     }
   }
 
-  // Percent-encoded password ("" if none).
+  /** Percent-encoded password ("" if none). */
   get password(): string {
     return this.rec.password.clone();
   }
@@ -111,7 +114,7 @@ export class URL {
     }
   }
 
-  // `hostname:port`, or just the hostname when the port is absent or the scheme's default.
+  /** `hostname:port`, or just the hostname when the port is absent or the scheme's default. */
   get host(): string {
     if (this.rec.port.length > 0) {
       return `${this.rec.host}:${this.rec.port}`;
@@ -119,8 +122,11 @@ export class URL {
     return this.rec.host.clone();
   }
 
-  // Takes the host (and a port after `:`) up to the first `/`, `?` or `#`; ignored when the
-  // host is invalid or empty, and an empty port keeps the current one.
+  /**
+   * Takes the host (and a port after `:`) up to the first `/`, `?` or `#`; ignored when the
+   * host is invalid, or empty where the URL needs one (a special scheme, credentials or a port).
+   * An empty port keeps the current one.
+   */
   set host(v: string) {
     if (this.rec.opaque) {
       return;
@@ -144,12 +150,12 @@ export class URL {
     }
   }
 
-  // The host without the port (lowercased for special schemes; IPv6 keeps its brackets).
+  /** The host without the port (lowercased for special schemes; IPv6 keeps its brackets). */
   get hostname(): string {
     return this.rec.host.clone();
   }
 
-  // Like `host`, but a value with a port (`h:8`) is ignored.
+  /** Like `host`, but a value with a port (`h:8`) is ignored. */
   set hostname(v: string) {
     if (this.rec.opaque) {
       return;
@@ -162,12 +168,15 @@ export class URL {
     }
   }
 
-  // The port as written ("" when absent or the scheme's default, e.g. 443 for https).
+  /** The port as written ("" when absent or the scheme's default, e.g. 443 for https). */
   get port(): string {
     return this.rec.port.clone();
   }
 
-  // Takes the leading digits of `v` ("" clears the port); ignored when out of range.
+  /**
+   * Takes the leading digits of `value` ("" clears the port); ignored when out of range or when
+   * the URL cannot have a port (no host, or `file:`).
+   */
   set port(value: string) {
     if (!this.canHaveCredentials()) {
       return;
@@ -192,7 +201,7 @@ export class URL {
     this.rec.port = port == defaultPort(this.rec.scheme) ? "" : port;
   }
 
-  // The path, e.g. `/a/b` (percent-encoded; for `mailto:x` it is `x`).
+  /** The path, e.g. `/a/b` (percent-encoded; for `mailto:x` it is `x`). */
   get pathname(): string {
     return this.rec.path.clone();
   }
@@ -203,7 +212,7 @@ export class URL {
     }
   }
 
-  // `?` + the query, or "" when the query is absent or empty.
+  /** `?` + the query, or "" when the query is absent or empty. */
   get search(): string {
     return this.rec.query.length == 0 ? "" : `?${this.rec.query}`;
   }
@@ -214,7 +223,7 @@ export class URL {
     this.rec.query = encodeSet(removeTabNewline(v.startsWith("?") ? v.slice(1) : v.clone()), set);
   }
 
-  // `#` + the fragment, or "" when it is absent or empty.
+  /** `#` + the fragment, or "" when it is absent or empty. */
   get hash(): string {
     return this.rec.fragment.length == 0 ? "" : `#${this.rec.fragment}`;
   }
@@ -227,7 +236,7 @@ export class URL {
     );
   }
 
-  // `scheme://host[:port]` for http(s), ws(s) and ftp; "null" for other schemes (JS).
+  /** `scheme://host[:port]` for http(s), ws(s) and ftp; "null" for other schemes (JS). */
   get origin(): string {
     if (!isSpecial(this.rec.scheme) || this.rec.scheme == "file") {
       return "null";
@@ -235,23 +244,23 @@ export class URL {
     return `${this.rec.scheme}://${this.host}`;
   }
 
-  // A copy of the parsed query (see the header for how to write it back).
+  /** A copy of the parsed query (see the header for how to write it back). */
   get searchParams(): URLSearchParams {
     return new URLSearchParams(this.rec.query);
   }
 
-  // Replaces the query with `p` serialized (no query if `p` is empty).
+  /** Replaces the query with `p` serialized (no query if `p` is empty). */
   set searchParams(p: URLSearchParams) {
     this.rec.query = p.toString();
     this.rec.hasQuery = this.rec.query.length > 0;
   }
 
-  // Same as `href`.
+  /** Same as `href`. */
   toString(): string {
     return this.href;
   }
 
-  // Same as `href` (JS `toJSON`).
+  /** Same as `href` (JS `toJSON`). */
   toJSON(): string {
     return this.href;
   }
@@ -330,13 +339,17 @@ function validScheme(s: string): bool {
   return true;
 }
 
-// An ordered list of name/value pairs in `application/x-www-form-urlencoded` form (JS
-// `URLSearchParams`). Names may repeat; order is kept.
+/**
+ * An ordered list of name/value pairs in `application/x-www-form-urlencoded` form (JS
+ * `URLSearchParams`). Names may repeat; order is kept.
+ */
 export class URLSearchParams {
   private names: string[] = [];
   private vals: string[] = [];
 
-  // Parses a query string (a leading `?` is skipped; `+` means space; bad escapes stay literal).
+  /**
+   * Parses a query string (a leading `?` is skipped; `+` means space; bad escapes stay literal).
+   */
   constructor(init: string = "") {
     const start: i64 = init.startsWith("?") ? 1 : 0;
     for (const part of init.slice(start).split("&")) {
@@ -355,12 +368,12 @@ export class URLSearchParams {
     }
   }
 
-  // Number of pairs.
+  /** Number of pairs. */
   get size(): usize {
     return this.names.length;
   }
 
-  // The first value for `name`, or null.
+  /** The first value for `name`, or null. */
   get(name: string): string | null {
     for (let i: usize = 0; i < this.names.length; i++) {
       if (this.names[i] == name) {
@@ -370,7 +383,7 @@ export class URLSearchParams {
     return null;
   }
 
-  // Every value for `name`, in order.
+  /** Every value for `name`, in order. */
   getAll(name: string): string[] {
     const out: string[] = [];
     for (let i: usize = 0; i < this.names.length; i++) {
@@ -381,7 +394,7 @@ export class URLSearchParams {
     return out;
   }
 
-  // Whether a pair named `name` (with value `value`, if given) exists.
+  /** Whether a pair named `name` (with value `value`, if given) exists. */
   has(name: string, value: string | null = null): bool {
     for (let i: usize = 0; i < this.names.length; i++) {
       if (this.names[i] == name && (value == null || this.vals[i] == value)) {
@@ -391,13 +404,13 @@ export class URLSearchParams {
     return false;
   }
 
-  // Adds a pair at the end.
+  /** Adds a pair at the end. */
   append(name: string, value: string) {
     this.names.push(name);
     this.vals.push(value);
   }
 
-  // Sets the first pair named `name` to `value` and removes the others (appends if none).
+  /** Sets the first pair named `name` to `value` and removes the others (appends if none). */
   set(name: string, value: string) {
     let found = false;
     let w: usize = 0;
@@ -420,7 +433,7 @@ export class URLSearchParams {
     }
   }
 
-  // Removes every pair named `name` (with value `value`, if given).
+  /** Removes every pair named `name` (with value `value`, if given). */
   delete(name: string, value: string | null = null) {
     let w: usize = 0;
     for (let i: usize = 0; i < this.names.length; i++) {
@@ -435,7 +448,7 @@ export class URLSearchParams {
     __intrinsic_array_truncate(this.vals, w);
   }
 
-  // Stable sort by name (bytewise, which matches JS's UTF-16 order for ASCII names).
+  /** Stable sort by name, in UTF-16 code-unit order as in JS. */
   sort() {
     const pairs = this.entries();
     pairs.sort((a, b) => a[0].compareTo(b[0]) as number);
@@ -443,17 +456,17 @@ export class URLSearchParams {
     this.vals = pairs.map((p) => p[1].clone());
   }
 
-  // The names, in order (repeats included).
+  /** The names, in order (repeats included). */
   keys(): string[] {
     return this.names.clone();
   }
 
-  // The values, in order.
+  /** The values, in order. */
   values(): string[] {
     return this.vals.clone();
   }
 
-  // `[name, value]` pairs, in order.
+  /** `[name, value]` pairs, in order. */
   entries(): [string, string][] {
     const out: [string, string][] = [];
     for (let i: usize = 0; i < this.names.length; i++) {
@@ -462,7 +475,7 @@ export class URLSearchParams {
     return out;
   }
 
-  // `a=1&b=x+y` (form encoding: space as `+`, everything but `*-._` and alphanumerics escaped).
+  /** `a=1&b=x+y` (form encoding: space as `+`, everything but `*-._` and alphanumerics escaped). */
   toString(): string {
     const parts: string[] = [];
     for (let i: usize = 0; i < this.names.length; i++) {
@@ -472,8 +485,10 @@ export class URLSearchParams {
   }
 }
 
-// JS `encodeURIComponent`: escapes everything except alphanumerics and `-_.!~*'()`; throws
-// `UrlError("URI malformed")` on a lone surrogate, as JS throws `URIError`.
+/**
+ * JS `encodeURIComponent`: escapes everything except alphanumerics and `-_.!~*'()`; throws
+ * `UrlError("URI malformed")` on a lone surrogate, as JS throws `URIError`.
+ */
 export function encodeURIComponent(s: string): string {
   const out = encodeUri(s, false);
   if (out == null) {
@@ -482,7 +497,7 @@ export function encodeURIComponent(s: string): string {
   return out;
 }
 
-// JS `encodeURI`: like `encodeURIComponent`, but keeps `;,/?:@&=+$#`.
+/** JS `encodeURI`: like `encodeURIComponent`, but keeps `;,/?:@&=+$#`. */
 export function encodeURI(s: string): string {
   const out = encodeUri(s, true);
   if (out == null) {
@@ -491,7 +506,7 @@ export function encodeURI(s: string): string {
   return out;
 }
 
-// JS `decodeURIComponent`; throws `UrlError("URI malformed")` on a bad escape or invalid UTF-8.
+/** JS `decodeURIComponent`; throws `UrlError("URI malformed")` on a bad escape or invalid UTF-8. */
 export function decodeURIComponent(s: string): string {
   const out = decodeUri(s, false);
   if (out == null) {
@@ -500,7 +515,7 @@ export function decodeURIComponent(s: string): string {
   return out;
 }
 
-// JS `decodeURI`: like `decodeURIComponent`, but escapes of `;/?:@&=+$,#` stay escaped.
+/** JS `decodeURI`: like `decodeURIComponent`, but escapes of `;/?:@&=+$,#` stay escaped. */
 export function decodeURI(s: string): string {
   const out = decodeUri(s, true);
   if (out == null) {

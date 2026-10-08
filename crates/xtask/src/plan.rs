@@ -92,6 +92,7 @@ pub(crate) const DIFFTEST: &str = "tests/difftest/";
 const NOTHING: &[&str] = &[
     "LICENSE-APACHE",
     "LICENSE-MIT",
+    "NOTICE",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "CLAUDE.md",

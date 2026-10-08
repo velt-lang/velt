@@ -7,6 +7,13 @@
 // Entries keep insertion order; JSON reads and writes a record as an object, and `console.log`
 // shows it like one.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * A dictionary from keys of type `K` to values of type `V`, like TypeScript's `Record<K, V>`:
+ * `K` is `string`, a union of string literal types or a string enum. `r.name` and `r[k]` read
+ * a key, `r[k] = v` sets it, `delete r[k]` removes it; entries keep insertion order.
+ */
 export class Record<K, V> {
   // Field 0: the JSON and formatting glue read it directly.
   private entries: Map<K, V> = new Map();
@@ -15,7 +22,7 @@ export class Record<K, V> {
     return this.entries.get(key);
   }
 
-  // A literal-key record holds every key (sema checks literals; JSON checks documents).
+  /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
   __at(key: K): V {
     return this.entries.get(key).unwrap();
   }
@@ -32,7 +39,7 @@ export class Record<K, V> {
     return this.entries.has(key);
   }
 
-  // `{ ...other }`: every entry of `other`, later entries replacing earlier ones.
+  /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
   __extend(other: Record<K, V>) {
     for (const [k, v] of other.entries.entries()) {
       this.entries.set(k, v);
@@ -43,8 +50,10 @@ export class Record<K, V> {
     return this.entries.size;
   }
 
-  // `Object.keys(r)`: TypeScript lists an object's keys as strings, so a string enum key is
-  // listed as its value.
+  /**
+   * `Object.keys(r)`: TypeScript lists an object's keys as strings, so a string enum key is
+   * listed as its value.
+   */
   __keyNames(): string[] {
     const out: string[] = [];
     for (const k of this.entries.keys()) {
@@ -62,18 +71,35 @@ export class Record<K, V> {
   }
 }
 
-// TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (insertion order).
-// Sema checks calls of them itself: `Object.keys` also lists the fields of any object
-// (crates/velt_sema/src/body/expr/object_keys.rs).
+/**
+ * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (insertion order).
+ * Sema checks calls of them itself: `Object.keys` also lists the fields of any object
+ * (crates/velt_sema/src/body/expr/object_keys.rs).
+ */
 export class Object {
+  /**
+   * Returns the keys of a record as strings (a string enum key as its value), in insertion order.
+   * On other objects it lists their fields.
+   * @param r - The record whose keys to list.
+   */
   static keys<K, V>(r: Record<K, V>): string[] {
     return r.__keyNames();
   }
 
+  /**
+   * Returns an array of the values of a record, in insertion order. An object literal works
+   * too, read as a `Record<string, V>`: `Object.values({ x: 1, y: 2 })` is `[1, 2]`.
+   * @param r - The record whose values to list.
+   */
   static values<K, V>(r: Record<K, V>): V[] {
     return r.__values();
   }
 
+  /**
+   * Returns an array of the `[key, value]` pairs of a record, in insertion order. An object
+   * literal works too, read as a `Record<string, V>`.
+   * @param r - The record whose entries to list.
+   */
   static entries<K, V>(r: Record<K, V>): [K, V][] {
     return r.__entries();
   }

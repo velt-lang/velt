@@ -101,7 +101,7 @@ try {
         if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
         if (Test-Path (Join-Path $Dist $d)) { Copy-Item -Recurse (Join-Path $Dist $d) $Dest }
     }
-    foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE")) {
+    foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
         if (Test-Path (Join-Path $Dist $f)) { Copy-Item -Force (Join-Path $Dist $f) $Prefix }
     }
     $Bin = Join-Path $Prefix "bin"

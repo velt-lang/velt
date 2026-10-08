@@ -43,9 +43,11 @@ const SMALL_SORT: usize = 20;
 // Ranges at least this long take the pseudo-median of 9 (recursively) as pivot.
 const PSEUDO_MEDIAN_MIN: usize = 64;
 
-// Stable sort of `xs`: `x` goes before `y` when `neg(cmp(x, y))`; equivalent elements keep
-// their order. (`cmp` and `neg` are passed separately rather than as one `less` closure so
-// that both stay known closures that the optimizer specializes and inlines.)
+/**
+ * Stable sort of `xs`: `x` goes before `y` when `neg(cmp(x, y))`; equivalent elements keep
+ * their order. (`cmp` and `neg` are passed separately rather than as one `less` closure so
+ * that both stay known closures that the optimizer specializes and inlines.)
+ */
 export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   const n = xs.length;
   // `xs[0]` only names the element type: it is not evaluated.

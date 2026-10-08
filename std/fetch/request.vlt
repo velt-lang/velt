@@ -8,24 +8,26 @@ import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { BodyInit, BodyParts, bodyParts } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
-// What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it.
+/** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";
 
-// The options of `fetch(input, init)` and `new Request(input, init)`.
+/** The options of `fetch(input, init)` and `new Request(input, init)`. */
 export struct RequestInit {
-  // Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased.
+  /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
   method?: string;
   headers?: HeadersInit;
   body?: BodyInit;
   redirect?: RequestRedirect;
-  // Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
-  // (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+  /**
+   * Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
+   * (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+   */
   signal?: AbortSignal;
-  // Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA.
+  /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
   ca?: string;
 }
 
-// The method as the Fetch standard normalizes it (std only: `fetch` uses it too).
+/** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
 export function normalizeMethod(m: string): string {
   const up = m.toUpperCase();
   if (
@@ -46,8 +48,10 @@ export class Request {
   #body: BodyParts = { kind: 0, text: "", bytes: [], contentType: null };
   #used: bool = false;
 
-  // Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
-  // for a `Request` input whose body was already used.
+  /**
+   * Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
+   * for a `Request` input whose body was already used.
+   */
   constructor(input: string | URL | Request, init: RequestInit = {}) throws IoError {
     if (typeof input == "string") {
       this.#target = input;
@@ -109,7 +113,7 @@ export class Request {
     return this.#follow;
   }
 
-  // The signal passed in `init` (JS gives every request a signal; Velt's is null without one).
+  /** The signal passed in `init` (JS gives every request a signal; Velt's is null without one). */
   get signal(): AbortSignal | null {
     return this.#abort;
   }
@@ -118,7 +122,7 @@ export class Request {
     return this.#used;
   }
 
-  // The body as text.
+  /** The body as text. */
   async text(): Promise<string, IoError> {
     this.claim();
     if (this.#body.kind == 2) {
@@ -127,7 +131,7 @@ export class Request {
     return this.#body.text;
   }
 
-  // `JSON.parse<T>` of the body (see `Response.json`).
+  /** `JSON.parse<T>` of the body (see `Response.json`). */
   async json<T>(): Promise<T, IoError | JsonError> {
     return JSON.parse<T>(await this.text());
   }
@@ -140,7 +144,7 @@ export class Request {
     return this.#body.bytes;
   }
 
-  // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
+  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
   async arrayBuffer(): Promise<u8[], IoError> {
     return await this.bytes();
   }

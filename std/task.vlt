@@ -30,15 +30,17 @@ declare function velt_rt_group_free(g: u64);
 
 const DEFAULT_REASON: string = "This operation was aborted";
 
-// Thrown by `throwIfAborted()`: the signal's reason is the message.
+/** Thrown by `throwIfAborted()`: the signal's reason is the message. */
 export class AbortError extends Error {
   constructor(reason: string) {
     super(reason);
   }
 }
 
-// Thrown by `timeout(p, ms)` when `p` does not settle in time, and by `throwIfAborted()` on a
-// signal that an `AbortSignal.timeout` aborted.
+/**
+ * Thrown by `timeout(p, ms)` when `p` does not settle in time, and by `throwIfAborted()` on a
+ * signal that an `AbortSignal.timeout` aborted.
+ */
 export class TimeoutError extends AbortError {
   ms: i64;
 
@@ -75,14 +77,16 @@ function signalCell(handle: u64): SignalCell {
   return shared(new Mutex<SignalObj>(new SignalObj(handle)));
 }
 
-// The receiving half: tells work that it should stop.
+/** The receiving half: tells work that it should stop. */
 export class AbortSignal {
   // Keeps the runtime signal alive; `h` is its handle, valid as long as `cell` is.
   #cell: SignalCell;
   #h: u64;
 
-  // Made by `AbortController`, `taskScope` and the static constructors (`SignalCell` is
-  // internal).
+  /**
+   * Made by `AbortController`, `taskScope` and the static constructors (`SignalCell` is
+   * internal).
+   */
   constructor(cell: SignalCell) {
     this.#h = cell.with((s) => s.raw());
     this.#cell = cell;
@@ -92,18 +96,20 @@ export class AbortSignal {
     return this.#h;
   }
 
-  // Whether `abort()` was called (or the timeout elapsed).
+  /** Whether `abort()` was called (or the timeout elapsed). */
   get aborted(): bool {
     return velt_rt_signal_aborted(this.handle());
   }
 
-  // The reason passed to `abort()` ("" while not aborted).
+  /** The reason passed to `abort()` ("" while not aborted). */
   get reason(): string {
     return velt_rt_signal_reason(this.handle());
   }
 
-  // Throws if the signal is aborted: `TimeoutError` if an `AbortSignal.timeout` aborted it,
-  // otherwise `AbortError` with the reason as its message.
+  /**
+   * Throws if the signal is aborted: `TimeoutError` if an `AbortSignal.timeout` aborted it,
+   * otherwise `AbortError` with the reason as its message.
+   */
   throwIfAborted() throws AbortError {
     if (this.aborted) {
       const ms = velt_rt_signal_timeout_ms(this.handle());
@@ -114,20 +120,26 @@ export class AbortSignal {
     }
   }
 
-  // Resolves once the signal is aborted (never, if it never is). Race it directly against
-  // work: `Promise.race([work(), signal.whenAborted()])`.
+  /**
+   * Resolves once the signal is aborted (never, if it never is). Race it directly against
+   * work: `Promise.race([work(), signal.whenAborted()])`.
+   */
   whenAborted(): Promise<void> {
     return velt_rt_signal_wait(this.handle());
   }
 
-  // A signal that aborts by itself after `ms` milliseconds (reason "timed out after <ms> ms";
-  // `throwIfAborted()` throws `TimeoutError`).
+  /**
+   * A signal that aborts by itself after `ms` milliseconds (reason "timed out after <ms> ms";
+   * `throwIfAborted()` throws `TimeoutError`).
+   */
   static timeout(ms: i64): AbortSignal {
     return new AbortSignal(signalCell(velt_rt_signal_timeout(ms, `timed out after ${ms} ms`)));
   }
 
-  // A signal that aborts as soon as any of `signals` does, with its reason. It keeps those
-  // signals alive until then.
+  /**
+   * A signal that aborts as soon as any of `signals` does, with its reason. It keeps those
+   * signals alive until then.
+   */
   static any(signals: AbortSignal[]): AbortSignal {
     const handles: u64[] = [];
     for (const s of signals) {
@@ -137,7 +149,7 @@ export class AbortSignal {
   }
 }
 
-// The sending half: `abort()` aborts its `signal`.
+/** The sending half: `abort()` aborts its `signal`. */
 export class AbortController {
   #sig: AbortSignal;
   #h: u64;
@@ -148,22 +160,24 @@ export class AbortController {
     this.#sig = new AbortSignal(cell);
   }
 
-  // The controller's signal (the same object every time, like JS).
+  /** The controller's signal (the same object every time, like JS). */
   get signal(): AbortSignal {
     return this.#sig;
   }
 
-  // Aborts the signal (a no-op if it already is).
+  /** Aborts the signal (a no-op if it already is). */
   abort(reason: string = DEFAULT_REASON) {
     velt_rt_signal_abort(this.#h, reason);
   }
 }
 
-// `p`, unless it does not settle within `ms` milliseconds: then `TimeoutError`. `p` is raced
-// directly, so after a timeout it is abandoned like a `Promise.race` loser: a runtime wait
-// (`signal.whenAborted()`, a timer) is dropped, and a started task keeps running, its
-// rejection handled (pass it a signal to stop it). When `p` wins, the timer is cancelled at
-// once, so nothing is left waiting.
+/**
+ * `p`, unless it does not settle within `ms` milliseconds: then `TimeoutError`. `p` is raced
+ * directly, so after a timeout it is abandoned like a `Promise.race` loser: a runtime wait
+ * (`signal.whenAborted()`, a timer) is dropped, and a started task keeps running, its
+ * rejection handled (pass it a signal to stop it). When `p` wins, the timer is cancelled at
+ * once, so nothing is left waiting.
+ */
 export async function timeout<T, E>(p: Promise<T, E>, ms: i64): Promise<T> throws E | TimeoutError {
   const stop = new AbortController();
   const racers: Promise<T, E | TimeoutError>[] = [p, expire<T, E>(ms, stop.signal)];
@@ -184,8 +198,10 @@ async function expire<T, E>(ms: i64, stop: AbortSignal): Promise<T> throws E | T
   throw new TimeoutError(ms);
 }
 
-// `taskScope`'s options. `cancelOnError`: abort `scope.signal` when the body or a child fails
-// (default true).
+/**
+ * `taskScope`'s options. `cancelOnError`: abort `scope.signal` when the body or a child fails
+ * (default true).
+ */
 export type ScopeOptions = { cancelOnError?: bool };
 
 // Owns a scope's runtime group and a reference to its signal: released once, at the last
@@ -236,8 +252,10 @@ function recordFirst<E>(errors: FirstError<E>, e: E) {
   });
 }
 
-// A running `taskScope`: spawns its child tasks and carries the signal that cancels them. `E`
-// is the error type of the scope, its body and its children.
+/**
+ * A running `taskScope`: spawns its child tasks and carries the signal that cancels them. `E`
+ * is the error type of the scope, its body and its children.
+ */
 export class TaskScope<E> {
   // Ends the group at its last reference; `g` is its registry key (safe to use when stale).
   #group: shared<Mutex<GroupObj>>;
@@ -248,7 +266,7 @@ export class TaskScope<E> {
   #errors: FirstError<E>;
   #cancelOnError: bool;
 
-  // Made by `taskScope` (`GroupObj` is internal).
+  /** Made by `taskScope` (`GroupObj` is internal). */
   constructor(
     group: shared<Mutex<GroupObj>>,
     sig: AbortSignal,
@@ -263,16 +281,20 @@ export class TaskScope<E> {
     this.#cancelOnError = cancelOnError;
   }
 
-  // The scope's signal: aborted when the body or a child fails (with `cancelOnError`), on
-  // `cancel()`, and when the scope's task is cancelled. Pass it to the children so they stop
-  // cooperatively.
+  /**
+   * The scope's signal: aborted when the body or a child fails (with `cancelOnError`), on
+   * `cancel()`, and when the scope's task is cancelled. Pass it to the children so they stop
+   * cooperatively.
+   */
   get signal(): AbortSignal {
     return this.#sig;
   }
 
-  // Adds `p` as a child task of the scope (`spawn(p)`; a call starts on this task, as any
-  // promise value); the scope waits for it. A promise that cannot fail (`Promise<T>`) is
-  // accepted too.
+  /**
+   * Adds `p` as a child task of the scope (`spawn(p)`; a call starts on this task, as any
+   * promise value); the scope waits for it. A promise that cannot fail (`Promise<T>`) is
+   * accepted too.
+   */
   spawn<T>(p: Promise<T, E>): Promise<T, E> {
     if (!velt_rt_group_enter(this.#g)) {
       panic("scope.spawn after its taskScope ended");
@@ -286,7 +308,7 @@ export class TaskScope<E> {
     );
   }
 
-  // Aborts the scope's signal.
+  /** Aborts the scope's signal. */
   cancel(reason: string = DEFAULT_REASON) {
     velt_rt_signal_abort(this.#sigH, reason);
   }
@@ -329,12 +351,14 @@ async function scopeChild<T, E>(
   }
 }
 
-// Structured concurrency: runs `body` with a `TaskScope` and settles only once the body and
-// every task it spawned with `scope.spawn` have finished, so no child outlives the scope. The
-// scope fails with the first error in time, of the body or of any child (even one nobody
-// awaited, or whose error the body caught), and otherwise returns the body's result. With
-// `cancelOnError` (the default), that first error aborts `scope.signal`, so the other children
-// can stop; their `AbortError`s come later and don't replace it.
+/**
+ * Structured concurrency: runs `body` with a `TaskScope` and settles only once the body and
+ * every task it spawned with `scope.spawn` have finished, so no child outlives the scope. The
+ * scope fails with the first error in time, of the body or of any child (even one nobody
+ * awaited, or whose error the body caught), and otherwise returns the body's result. With
+ * `cancelOnError` (the default), that first error aborts `scope.signal`, so the other children
+ * can stop; their `AbortError`s come later and don't replace it.
+ */
 export async function taskScope<T, E>(
   body: (scope: TaskScope<E>) => Promise<T> throws E,
   options: ScopeOptions = {},

@@ -15,9 +15,10 @@
 // decodes into `bool`, any other 0/1 value (an expression) needs an integer field.
 //
 // `Database` is a Copy handle like std/net's sockets: pass and capture it freely and release it
-// with `close()` (closing it through a second copy is a double free). A `Statement` owns its
-// handle and releases it when dropped, so `db.prepare(sql).all()` leaks nothing. Closing the
-// database while statements exist is safe: they then throw "SQLITE_MISUSE".
+// with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). A
+// `Statement` owns its handle and releases it when dropped, so `db.prepare(sql).all()` leaks
+// nothing. Closing the database while statements exist is safe: they then throw
+// "SQLITE_MISUSE".
 
 import { IoResult, IoStatus } from "velt:io";
 
@@ -50,10 +51,12 @@ declare function velt_rt_sqlite_error_name(code: i32): string;
 // SQLite's `SQLITE_MISMATCH`: a row that does not decode into the requested type.
 const SQLITE_MISMATCH: i32 = 20;
 
-// A failed SQLite operation. `code` is SQLite's result code name, e.g. "SQLITE_ERROR" (bad
-// SQL), "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_BUSY", "SQLITE_CANTOPEN", "SQLITE_RANGE" (wrong
-// parameters), "SQLITE_MISUSE" (closed handle, several statements in `prepare`) or
-// "SQLITE_MISMATCH" (a row that does not fit the requested type).
+/**
+ * A failed SQLite operation. `code` is SQLite's result code name, e.g. "SQLITE_ERROR" (bad
+ * SQL), "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_BUSY", "SQLITE_CANTOPEN", "SQLITE_RANGE" (wrong
+ * parameters), "SQLITE_MISUSE" (closed handle, several statements in `prepare`) or
+ * "SQLITE_MISMATCH" (a row that does not fit the requested type).
+ */
 export class SqliteError extends Error {
   code: string;
 
@@ -63,11 +66,11 @@ export class SqliteError extends Error {
   }
 }
 
-// What `run` did.
+/** What `run` did. */
 export class RunResult {
-  // Rows inserted, updated or deleted.
+  /** Rows inserted, updated or deleted. */
   changes: i64;
-  // Rowid of the most recent successful INSERT on this connection.
+  /** Rowid of the most recent successful INSERT on this connection. */
   lastInsertRowid: i64;
 
   constructor(changes: i64, lastInsertRowid: i64) {
@@ -76,15 +79,15 @@ export class RunResult {
   }
 }
 
-// `open` options.
+/** `open` options. */
 export struct OpenOptions {
-  // Open without write access (default false).
+  /** Open without write access (default false). */
   readonly?: bool;
-  // Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false).
+  /** Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false). */
   fileMustExist?: bool;
-  // Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000).
+  /** Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000). */
   timeout?: i64;
-  // Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false).
+  /** Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false). */
   wal?: bool;
 }
 
@@ -105,44 +108,50 @@ function unwrap<T>(r: IoResult<T>): T {
   return r.value;
 }
 
-// An open connection (see the header for handle rules).
+/** An open connection (see the header for handle rules). */
 export struct Database {
   private handle: u64;
 
-  // Runs one or more `;`-separated statements without parameters (schema scripts).
+  /** Runs one or more `;`-separated statements without parameters (schema scripts). */
   exec(sql: string) {
     check(velt_rt_sqlite_exec(this.handle, sql));
   }
 
-  // Compiles one statement (throws for bad SQL).
+  /** Compiles one statement (throws for bad SQL). */
   prepare(sql: string): Statement {
     return new Statement(unwrap(velt_rt_sqlite_prepare(this.handle, sql)));
   }
 
-  // `PRAGMA <source>`: the first column of the first row as text ("" if none):
-  // `pragma("journal_mode = WAL")` is "wal", `pragma("user_version")` "0".
+  /**
+   * `PRAGMA <source>`: the first column of the first row as text ("" if none):
+   * `pragma("journal_mode = WAL")` is "wal", `pragma("user_version")` "0".
+   */
   pragma(source: string): string {
     return unwrap(velt_rt_sqlite_pragma(this.handle, source));
   }
 
-  // Whether a transaction is open.
+  /** Whether a transaction is open. */
   get inTransaction(): bool {
     return velt_rt_sqlite_in_transaction(this.handle);
   }
 
-  // Starts a transaction (a savepoint when one is already open); end it with `commit()` or
-  // `rollback()`.
+  /**
+   * Starts a transaction (a savepoint when one is already open); end it with `commit()` or
+   * `rollback()`.
+   */
   begin(): Transaction {
     const nested = this.inTransaction;
     this.exec(nested ? "SAVEPOINT velt_tx" : "BEGIN");
     return Transaction { handle: this.handle, nested: nested };
   }
 
-  // Runs `fn` in a transaction and commits it. If `fn` throws, or any operation on this
-  // connection failed meanwhile (even one `fn` caught), everything `fn` did is rolled back and
-  // the error is thrown here: the transaction is all-or-nothing. Nested calls use a savepoint:
-  // a failed inner transaction undoes only its own work, and the outer one continues if `fn`
-  // catches its error. Use `begin()` to decide about commit or rollback yourself.
+  /**
+   * Runs `fn` in a transaction and commits it. If `fn` throws, or any operation on this
+   * connection failed meanwhile (even one `fn` caught), everything `fn` did is rolled back and
+   * the error is thrown here: the transaction is all-or-nothing. Nested calls use a savepoint:
+   * a failed inner transaction undoes only its own work, and the outer one continues if `fn`
+   * catches its error. Use `begin()` to decide about commit or rollback yourself.
+   */
   transaction<T, E>(fn: () => T throws E): T throws SqliteError | E {
     const tx = this.begin();
     const failures = velt_rt_sqlite_error_count(this.handle);
@@ -163,7 +172,7 @@ export struct Database {
     }
   }
 
-  // Closes the connection and releases the handle (later calls throw "SQLITE_MISUSE").
+  /** Closes the connection and releases the handle (later calls throw "SQLITE_MISUSE"). */
   close() {
     const s = velt_rt_sqlite_close(this.handle);
     this.handle = 0;
@@ -171,26 +180,28 @@ export struct Database {
   }
 }
 
-// A transaction from `Database.begin()`.
+/** A transaction from `Database.begin()`. */
 export struct Transaction {
   private handle: u64;
-  // A savepoint inside an outer transaction.
+  /** A savepoint inside an outer transaction. */
   nested: bool;
 
   commit() {
     check(velt_rt_sqlite_exec(this.handle, this.nested ? "RELEASE velt_tx" : "COMMIT"));
   }
 
-  // Undoes everything since `begin()`.
+  /** Undoes everything since `begin()`. */
   rollback() {
     const sql = this.nested ? "ROLLBACK TO velt_tx; RELEASE velt_tx" : "ROLLBACK";
     check(velt_rt_sqlite_exec(this.handle, sql));
   }
 }
 
-// A prepared statement (compiled once per connection and cached, so preparing the same SQL
-// again is cheap). Released when dropped, or earlier with `close()`. `...With(params)` binds
-// parameters (see the header); the variants without them are for statements without any.
+/**
+ * A prepared statement (compiled once per connection and cached, so preparing the same SQL
+ * again is cheap). Released when dropped, or earlier with `close()`. `...With(params)` binds
+ * parameters (see the header); the variants without them are for statements without any.
+ */
 export class Statement {
   #handle: u64;
 
@@ -198,7 +209,7 @@ export class Statement {
     this.#handle = handle;
   }
 
-  // Executes the statement (rows it returns are discarded).
+  /** Executes the statement (rows it returns are discarded). */
   run(): RunResult {
     return this.runJson("");
   }
@@ -207,7 +218,7 @@ export class Statement {
     return this.runJson(JSON.stringify(params));
   }
 
-  // The first row, or null if there is none.
+  /** The first row, or null if there is none. */
   get<T>(): T | null {
     return this.first(unwrap(velt_rt_sqlite_query(this.#handle, "", true)));
   }
@@ -216,7 +227,7 @@ export class Statement {
     return this.first(unwrap(velt_rt_sqlite_query(this.#handle, JSON.stringify(params), true)));
   }
 
-  // Every row.
+  /** Every row. */
   all<T>(): T[] {
     return this.rows(unwrap(velt_rt_sqlite_query(this.#handle, "", false)));
   }
@@ -225,13 +236,13 @@ export class Statement {
     return this.rows(unwrap(velt_rt_sqlite_query(this.#handle, JSON.stringify(params), false)));
   }
 
-  // Releases the statement now (later calls throw "SQLITE_MISUSE").
+  /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
   close() {
     velt_rt_sqlite_stmt_free(this.#handle);
     this.#handle = 0;
   }
 
-  // Drop hook: releases the statement.
+  /** Drop hook: releases the statement. */
   [Symbol.dispose]() {
     velt_rt_sqlite_stmt_free(this.#handle);
     this.#handle = 0;
@@ -270,8 +281,10 @@ export class Statement {
   }
 }
 
-// Opens (by default creating) the database file at `path`; ":memory:" is a private in-memory
-// database. Throws `SqliteError`.
+/**
+ * Opens (by default creating) the database file at `path`; ":memory:" is a private in-memory
+ * database. Throws `SqliteError`.
+ */
 export function open(path: string, opts: OpenOptions = {}): Database {
   const r = velt_rt_sqlite_open(
     path,

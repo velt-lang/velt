@@ -1,0 +1,22 @@
+Velt
+Copyright (c) 2026 The Velt contributors. Licensed under the MIT license or the Apache License
+2.0, at your option (LICENSE-MIT, LICENSE-APACHE).
+
+This product includes documentation text adapted from TypeScript
+(https://github.com/microsoft/TypeScript):
+
+  The doc comments in std/prelude/*.vlt are partly adapted from the JSDoc in TypeScript's
+  standard library declarations (src/lib/*.d.ts, as shipped in the `typescript` package,
+  lib/lib.*.d.ts). The prelude files that contain such text say so in a comment at the top.
+  The text was extracted with scripts/gen-prelude-docs.js and edited for Velt. These adapted
+  passages remain under the Apache License 2.0 only; they are not offered under the MIT license.
+
+  Copyright (c) Microsoft Corporation. All rights reserved.
+
+  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+  except in compliance with the License. You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0 (also in LICENSE-APACHE).
+
+  THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+  EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OR CONDITIONS
+  OF TITLE, FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABLITY OR NON-INFRINGEMENT.

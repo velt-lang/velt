@@ -3,15 +3,15 @@
 
 import { URLSearchParams } from "velt:url";
 
-// A body: text, bytes, or form fields (sent as `application/x-www-form-urlencoded`).
+/** A body: text, bytes, or form fields (sent as `application/x-www-form-urlencoded`). */
 export type BodyInit = string | u8[] | URLSearchParams;
 
-// How `velt_rt_http_fetch_send` receives a body (`kind`: 0 none, 1 text, 2 bytes).
+/** How `velt_rt_http_fetch_send` receives a body (`kind`: 0 none, 1 text, 2 bytes). */
 export struct BodyParts {
   kind: u32;
   text: string;
   bytes: u8[];
-  // The `content-type` the body implies when none was set (null: none).
+  /** The `content-type` the body implies when none was set (null: none). */
   contentType: string | null;
 }
 

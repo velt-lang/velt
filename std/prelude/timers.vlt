@@ -80,21 +80,23 @@ class TimerState {
   }
 }
 
-// Handle of a pending `setTimeout` / `setImmediate` task or of a `setInterval` schedule.
+/** Handle of a pending `setTimeout` / `setImmediate` task or of a `setInterval` schedule. */
 export class Timer {
   private state: shared<Mutex<TimerState>>;
   private repeats: bool;
 
-  // Wraps the task's state (use `setTimeout` or `setInterval` to create timers).
+  /** Wraps the task's state (use `setTimeout` or `setInterval` to create timers). */
   constructor(state: shared<Mutex<TimerState>>, repeats: bool) {
     this.state = state;
     this.repeats = repeats;
   }
 
-  // Cancels the task if it has not started yet, and an interval's future runs at any time (a
-  // no-op on a timeout that started, like JS `clearTimeout`). A cleared timer no longer keeps
-  // the process alive (an interval's run in progress still does, until its promise settles).
-  // Dropping the handle does not cancel.
+  /**
+   * Cancels the task if it has not started yet, and an interval's future runs at any time (a
+   * no-op on a timeout that started, like JS `clearTimeout`). A cleared timer no longer keeps
+   * the process alive (an interval's run in progress still does, until its promise settles).
+   * Dropping the handle does not cancel.
+   */
   clear() {
     const repeats = this.repeats;
     this.state.with((s) => {
@@ -105,8 +107,10 @@ export class Timer {
     });
   }
 
-  // Lets the process exit while this timer is pending, like Node's `timeout.unref()`.
-  // Returns the timer.
+  /**
+   * Lets the process exit while this timer is pending, like Node's `timeout.unref()`.
+   * Returns the timer.
+   */
   unref(): Timer {
     this.state.with((s) => {
       s.refd = false;
@@ -115,8 +119,10 @@ export class Timer {
     return this;
   }
 
-  // Keeps the process alive while this timer is pending again (the default), like Node's
-  // `timeout.ref()`. Returns the timer.
+  /**
+   * Keeps the process alive while this timer is pending again (the default), like Node's
+   * `timeout.ref()`. Returns the timer.
+   */
   ref(): Timer {
     this.state.with((s) => {
       s.refd = true;
@@ -125,19 +131,23 @@ export class Timer {
     return this;
   }
 
-  // Whether the timer is ref'd (`ref()`, the default) rather than `unref()`'d, like Node's
-  // `timeout.hasRef()`.
+  /**
+   * Whether the timer is ref'd (`ref()`, the default) rather than `unref()`'d, like Node's
+   * `timeout.hasRef()`.
+   */
   hasRef(): bool {
     return this.state.with((s) => s.refd);
   }
 
-  // Whether `clear()` cancelled the task before it started (an interval: whether it was
-  // cleared).
+  /**
+   * Whether `clear()` cancelled the task before it started (an interval: whether it was
+   * cleared).
+   */
   get cleared(): bool {
     return this.state.with((s) => s.stopped);
   }
 
-  // Whether the task has started (an interval: whether it ran at least once).
+  /** Whether the task has started (an interval: whether it ran at least once). */
   get started(): bool {
     return this.state.with((s) => s.started);
   }
@@ -151,27 +161,29 @@ function newState(): shared<Mutex<TimerState>> {
   return state;
 }
 
-// Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first.
+/** Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first. */
 export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
   const state = newState();
   spawn(fireOnce(ms, task, state.clone()));
   return new Timer(state, false);
 }
 
-// Cancels `t` if its task has not started (same as `t.clear()`).
+/** Cancels `t` if its task has not started (same as `t.clear()`). */
 export function clearTimeout(t: Timer) {
   t.clear();
 }
 
-// Calls `task` every `ms` milliseconds (at least 1) until the returned timer is cleared. Each
-// run waits for the previous run's promise, then `ms` more.
+/**
+ * Calls `task` every `ms` milliseconds (at least 1) until the returned timer is cleared. Each
+ * run waits for the previous run's promise, then `ms` more.
+ */
 export function setInterval(task: () => Promise<void>, ms: i64): Timer {
   const state = newState();
   spawn(fireEvery(ms < 1 ? 1 : ms, task, state.clone()));
   return new Timer(state, true);
 }
 
-// Stops the interval `t` (same as `t.clear()`; also cancels a timeout, like JS).
+/** Stops the interval `t` (same as `t.clear()`; also cancels a timeout, like JS). */
 export function clearInterval(t: Timer) {
   t.clear();
 }

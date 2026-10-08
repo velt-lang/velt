@@ -145,6 +145,8 @@ Decisions and their rationale, including what is still planned:
 - [Iteration, generators and `for await`](design/iteration.md): the iterator protocol with typed
   errors, `for...of` over iterables, generators, async generators and `for await`
   (implemented, issue #62).
+- [Doc comments](design/doc-comments.md): JSDoc `/** … */` and `///` comments with tags, read
+  by `velt doc` and the editor; std migrated from plain `//` (implemented, issue #513).
 
 ## Testing
 

@@ -50,32 +50,32 @@ declare async function velt_rt_child_output(
 ): Promise<IoResult<RawOutput>>;
 declare function velt_rt_child_output_sync(spec: CommandSpec, input: string): IoResult<RawOutput>;
 
-// Options shared by every way of running a program.
+/** Options shared by every way of running a program. */
 export struct SpawnOptions {
-  // Working directory (default: the current one).
+  /** Working directory (default: the current one). */
   cwd?: string;
-  // Variables added to (or replacing ones in) the inherited environment.
+  /** Variables added to (or replacing ones in) the inherited environment. */
   env?: Map<string, string>;
-  // Start from an empty environment (only `env` is set).
+  /** Start from an empty environment (only `env` is set). */
   clearEnv?: bool;
-  // "pipe", "inherit" (default) or "ignore", for `spawn` only.
+  /** "pipe", "inherit" (default) or "ignore", for `spawn` only. */
   stdin?: string;
   stdout?: string;
   stderr?: string;
 }
 
-// Options of `exec`/`execSync`.
+/** Options of `exec`/`execSync`. */
 export struct ExecOptions {
   cwd?: string;
   env?: Map<string, string>;
   clearEnv?: bool;
-  // Written to the program's stdin, which is then closed (default: empty stdin).
+  /** Written to the program's stdin, which is then closed (default: empty stdin). */
   input?: string;
 }
 
-// What a finished program produced (output decoded as UTF-8, invalid bytes as U+FFFD).
+/** What a finished program produced (output decoded as UTF-8, invalid bytes as U+FFFD). */
 export class ExecResult {
-  // Exit code; `128 + n` when killed by signal `n` (Unix).
+  /** Exit code; `128 + n` when killed by signal `n` (Unix). */
   code: i64;
   stdout: string;
   stderr: string;
@@ -86,7 +86,7 @@ export class ExecResult {
     this.stderr = stderr;
   }
 
-  // Whether the program exited with code 0.
+  /** Whether the program exited with code 0. */
   get ok(): bool {
     return this.code == 0;
   }
@@ -138,7 +138,7 @@ function resultOf(raw: RawOutput): ExecResult {
   return new ExecResult(raw.code as i64, raw.stdout, raw.stderr);
 }
 
-// Runs `program` with `args` to completion; resolves with its exit code and output.
+/** Runs `program` with `args` to completion; resolves with its exit code and output. */
 export async function exec(
   program: string,
   args: string[] = [],
@@ -148,7 +148,7 @@ export async function exec(
   return resultOf(unwrapIo(await velt_rt_child_output(spec, opts.input ?? "")));
 }
 
-// `exec` that blocks the calling thread (for scripts and CLIs).
+/** `exec` that blocks the calling thread (for scripts and CLIs). */
 export function execSync(program: string, args: string[] = [], opts: ExecOptions = {}): ExecResult {
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
   return resultOf(unwrapIo(velt_rt_child_output_sync(spec, opts.input ?? "")));
@@ -161,8 +161,10 @@ function shellArgs(command: string): string[] {
   return ["sh", "-c", command];
 }
 
-// Runs a command line through the platform shell (`sh -c` / `cmd /C`). Never pass untrusted
-// text: the shell interprets it.
+/**
+ * Runs a command line through the platform shell (`sh -c` / `cmd /C`). Never pass untrusted
+ * text: the shell interprets it.
+ */
 export async function execShell(command: string, opts: ExecOptions = {}): Promise<ExecResult> {
   const argv = shellArgs(command);
   const program = argv[0].clone();
@@ -170,7 +172,7 @@ export async function execShell(command: string, opts: ExecOptions = {}): Promis
   return await exec(program, argv, opts);
 }
 
-// `execShell` that blocks the calling thread.
+/** `execShell` that blocks the calling thread. */
 export function execShellSync(command: string, opts: ExecOptions = {}): ExecResult {
   const argv = shellArgs(command);
   const program = argv[0].clone();
@@ -196,69 +198,73 @@ function signalNumber(name: string): i32 {
   }
 }
 
-// A started program: a Copy handle like std/net's `TcpStream` (async methods take `this` by
-// copy, so `await p.readStdout()` can be called repeatedly), released by `close()` (after
-// which every copy throws `IoError` `EBADF`). Closing does not stop the program (it is reaped
-// in the background): `kill` it or `wait` for it.
+/**
+ * A started program: a Copy handle like std/net's `TcpStream` (async methods take `this` by
+ * copy, so `await p.readStdout()` can be called repeatedly), released by `close()` (after
+ * which the methods of every copy throw `IoError` `EBADF` and `exitCode` is null). Closing does
+ * not stop the program (it is reaped in the background): `kill` it or `wait` for it.
+ */
 export struct ChildProcess {
-  // The OS process id.
+  /** The OS process id. */
   pid: i64;
   private handle: u64;
 
-  // Writes to stdin (spawned with `stdin: "pipe"`); resolves once everything is written.
+  /** Writes to stdin (spawned with `stdin: "pipe"`); resolves once everything is written. */
   async write(data: string): Promise<void> {
     checkIo(await velt_rt_child_write(this.handle, data));
   }
 
-  // Closes stdin: the program reads end of input.
+  /** Closes stdin: the program reads end of input. */
   async closeStdin(): Promise<void> {
     checkIo(await velt_rt_child_close_stdin(this.handle));
   }
 
-  // The next chunk of stdout as text ("" = end of output); requires `stdout: "pipe"`.
+  /** The next chunk of stdout as text ("" = end of output); requires `stdout: "pipe"`. */
   async readStdout(max: u64 = 0): Promise<string> {
     return unwrapIo(await velt_rt_child_read_string(this.handle, 1, max));
   }
 
-  // The next chunk of stderr as text ("" = end of output); requires `stderr: "pipe"`.
+  /** The next chunk of stderr as text ("" = end of output); requires `stderr: "pipe"`. */
   async readStderr(max: u64 = 0): Promise<string> {
     return unwrapIo(await velt_rt_child_read_string(this.handle, 2, max));
   }
 
-  // The next 1..max bytes of stdout (empty = end of output; `max` 0 = up to 64 KiB).
+  /** The next 1..max bytes of stdout (empty = end of output; `max` 0 = up to 64 KiB). */
   async readStdoutBytes(max: u64 = 0): Promise<u8[]> {
     return unwrapIo(await velt_rt_child_read(this.handle, 1, max));
   }
 
-  // The next 1..max bytes of stderr (empty = end of output).
+  /** The next 1..max bytes of stderr (empty = end of output). */
   async readStderrBytes(max: u64 = 0): Promise<u8[]> {
     return unwrapIo(await velt_rt_child_read(this.handle, 2, max));
   }
 
-  // Resolves with the exit code once the program has finished.
+  /** Resolves with the exit code once the program has finished. */
   async wait(): Promise<i64> {
     return unwrapIo(await velt_rt_child_wait(this.handle)) as i64;
   }
 
-  // The exit code if the program has finished, else null.
+  /** The exit code if the program has finished, else null. */
   get exitCode(): i64 | null {
     const code = velt_rt_child_exit_code(this.handle);
     return code < 0 ? null : code;
   }
 
-  // Sends a signal ("SIGTERM" default, "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT"); on Windows
-  // every signal terminates the process. Does nothing once the program has finished.
+  /**
+   * Sends a signal ("SIGTERM" default, "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT"); on Windows
+   * every signal terminates the process. Does nothing once the program has finished.
+   */
   kill(signal: string = "SIGTERM") {
     checkIo(velt_rt_child_kill(this.handle, signalNumber(signal)));
   }
 
-  // Releases the handle (operations in flight finish first; the program keeps running).
+  /** Releases the handle (operations in flight finish first; the program keeps running). */
   close() {
     velt_rt_child_close(this.handle);
   }
 }
 
-// Starts `program` with `args`. Stdio defaults to "inherit"; use "pipe" to talk to it.
+/** Starts `program` with `args`. Stdio defaults to "inherit"; use "pipe" to talk to it. */
 export function spawn(program: string, args: string[] = [], opts: SpawnOptions = {}): ChildProcess {
   const stdio = stdioBits(opts.stdin, 0) | stdioBits(opts.stdout, 2) | stdioBits(opts.stderr, 4);
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, stdio);

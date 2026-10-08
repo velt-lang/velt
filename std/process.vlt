@@ -14,12 +14,14 @@ declare function velt_rt_process_cwd(): IoResult<string>;
 declare function velt_rt_process_chdir(path: string): IoStatus;
 declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 
-// Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
-// import). Writes are ordered with `console.log` and buffered the same way; a large array
-// (64 KiB or more) goes straight to the OS from the caller's buffer, without a copy. Portable: no
-// `/dev/stdout` needed.
+/**
+ * Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
+ * import). Writes are ordered with `console.log` and buffered the same way; a large array
+ * (64 KiB or more) goes straight to the OS from the caller's buffer, without a copy. Portable: no
+ * `/dev/stdout` needed.
+ */
 export struct Stdout {
-  // Writes raw bytes (the array stays the caller's, ready to be refilled).
+  /** Writes raw bytes (the array stays the caller's, ready to be refilled). */
   write(bytes: u8[]) {
     velt_rt_stdout_write_bytes(bytes);
   }
@@ -27,12 +29,12 @@ export struct Stdout {
 
 export const stdout: Stdout = {};
 
-// Every command-line argument, starting with the program path (like C's `argv`).
+/** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {
   return velt_rt_process_args();
 }
 
-// The arguments after the program path.
+/** The arguments after the program path. */
 export function args(): string[] {
   let all = velt_rt_process_args();
   if (all.length > 0) {
@@ -41,10 +43,12 @@ export function args(): string[] {
   return all;
 }
 
-// Every environment variable, as a snapshot (Node's `process.env` as an object): names in the
-// order the OS keeps them, which is Node's order too. On Windows names keep their case, and
-// lookups in the record are case-sensitive (`process.env.NAME` is not); the per-drive `=C:`
-// entries are left out, as in Node.
+/**
+ * Every environment variable, as a snapshot (Node's `process.env` as an object): names in the
+ * order the OS keeps them, which is Node's order too. On Windows names keep their case, and
+ * lookups in the record are case-sensitive (`process.env.NAME` is not); the per-drive `=C:`
+ * entries are left out, as in Node.
+ */
 export function envAll(): Record<string, string> {
   const pairs = velt_rt_env_all();
   const all: Record<string, string> = {};
@@ -54,7 +58,9 @@ export function envAll(): Record<string, string> {
   return all;
 }
 
-// Not synchronized with concurrent `process.env` reads on other threads: set variables at startup.
+/**
+ * Not synchronized with concurrent `process.env` reads on other threads: set variables at startup.
+ */
 export function setEnv(name: string, value: string) {
   velt_rt_env_set(name, value);
 }
@@ -63,17 +69,17 @@ export function removeEnv(name: string) {
   velt_rt_env_remove(name);
 }
 
-// The current working directory (throws `IoError`).
+/** The current working directory (throws `IoError`). */
 export function cwd(): string {
   return unwrapIo(velt_rt_process_cwd());
 }
 
-// Changes the current working directory of the whole process (throws `IoError`).
+/** Changes the current working directory of the whole process (throws `IoError`). */
 export function chdir(path: string) {
   checkIo(velt_rt_process_chdir(path));
 }
 
-// Flushes stdout/stderr and ends the process with `code` (same as `process.exit`).
+/** Flushes stdout/stderr and ends the process with `code` (same as `process.exit`). */
 export function exit(code: i32) {
   process.exit(code);
 }

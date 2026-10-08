@@ -4,13 +4,15 @@ import { IoResult, unwrapIo } from "velt:io";
 
 declare async function velt_rt_dns_lookup(host: string): Promise<IoResult<string[]>>;
 
-// Every IP address of `host` (IPv4 and IPv6, in resolver order, without duplicates). Throws
-// `IoError` with code "ENOENT" when the name does not resolve.
+/**
+ * Every IP address of `host` (IPv4 and IPv6, in resolver order, without duplicates). Throws
+ * `IoError` with code "ENOENT" when the name does not resolve.
+ */
 export async function lookup(host: string): Promise<string[]> {
   return unwrapIo(await velt_rt_dns_lookup(host));
 }
 
-// The first address of `host` (the one a connect would try first).
+/** The first address of `host` (the one a connect would try first). */
 export async function lookupOne(host: string): Promise<string> {
   const all = await lookup(host);
   return all[0].clone();

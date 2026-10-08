@@ -24,7 +24,7 @@ foreach ($d in @("bin", "lib", "std")) {
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
     if (Test-Path (Join-Path $Dist $d)) { Copy-Item -Recurse (Join-Path $Dist $d) $dest }
 }
-foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE")) {
+foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
     if (Test-Path (Join-Path $Dist $f)) { Copy-Item -Force (Join-Path $Dist $f) $Prefix }
 }
 

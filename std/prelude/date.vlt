@@ -8,6 +8,8 @@
 // Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
 // methods always use the `en-US` format.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt:datetime/civil";
 import { pad, offsetString, isoString, httpString } from "velt:datetime/format";
 import { parseIso, parseHttp } from "velt:datetime/parse";
@@ -18,12 +20,20 @@ declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
 
+/**
+ * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
+ * 1970-01-01T00:00:00Z, NaN for an invalid date, with JS's conventions (months 0-11, local-time
+ * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code. Unlike JS, the
+ * setters currently turn a year of 0-99 into 1900-1999 (#674).
+ */
 export class Date implements Comparable<Date> {
   private t: f64;
 
-  // `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
-  // (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
-  // seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+  /**
+   * `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
+   * (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
+   * seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+   */
   constructor(
     value: number | string | Date | null = null,
     month: number | null = null,
@@ -47,14 +57,16 @@ export class Date implements Comparable<Date> {
     }
   }
 
-  // Milliseconds since the epoch, now.
+  /** Milliseconds since the epoch, now. */
   static now(): i64 {
     return velt_rt_date_now();
   }
 
-  // The epoch time of a date string, or NaN: ISO 8601 (`2024-01-15`, `2024-01-15T10:30:00Z`,
-  // `2024-01-15T10:30:00.000+01:00`; without an offset a date alone is UTC and a date-time is
-  // local time, as in JS) and HTTP dates (`Mon, 15 Jan 2024 10:30:00 GMT`).
+  /**
+   * The epoch time of a date string, or NaN: ISO 8601 (`2024-01-15`, `2024-01-15T10:30:00Z`,
+   * `2024-01-15T10:30:00.000+01:00`; without an offset a date alone is UTC and a date-time is
+   * local time, as in JS) and HTTP dates (`Mon, 15 Jan 2024 10:30:00 GMT`).
+   */
   static parse(s: string): number {
     const iso = parseIso(s);
     if (iso != null) {
@@ -67,7 +79,7 @@ export class Date implements Comparable<Date> {
     return 0.0 / 0.0;
   }
 
-  // The epoch time of UTC fields (month 0-11), rolling over like JS.
+  /** The epoch time of UTC fields (month 0-11), rolling over like JS. */
   static UTC(
     year: number,
     month: number = 0,
@@ -80,84 +92,111 @@ export class Date implements Comparable<Date> {
     return fromFields(true, [year, month, day, hours, minutes, seconds, ms]);
   }
 
+  /**
+   * Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC, or NaN
+   * for an invalid date.
+   */
   getTime(): number {
     return this.t;
   }
 
+  /**
+   * Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC, or NaN
+   * for an invalid date.
+   */
   valueOf(): number {
     return this.t;
   }
 
+  /**
+   * Orders two dates by their time value (`Comparable`): negative when this one is earlier,
+   * positive when later, 0 when equal or either is invalid.
+   */
   compareTo(other: Date): i64 {
     return this.t < other.t ? -1 : this.t > other.t ? 1 : 0;
   }
 
+  /** Gets the year, using local time. */
   getFullYear(): number {
     return this.field(false, 0);
   }
 
+  /** Gets the month (0 for January to 11 for December), using local time. */
   getMonth(): number {
     return this.field(false, 1);
   }
 
+  /** Gets the day-of-the-month, using local time. */
   getDate(): number {
     return this.field(false, 2);
   }
 
+  /** Gets the hours in a date, using local time. */
   getHours(): number {
     return this.field(false, 3);
   }
 
+  /** Gets the minutes of a Date object, using local time. */
   getMinutes(): number {
     return this.field(false, 4);
   }
 
+  /** Gets the seconds of a Date object, using local time. */
   getSeconds(): number {
     return this.field(false, 5);
   }
 
+  /** Gets the milliseconds of a Date, using local time. */
   getMilliseconds(): number {
     return this.field(false, 6);
   }
 
-  // 0 = Sunday … 6 = Saturday.
+  /** 0 = Sunday … 6 = Saturday. */
   getDay(): number {
     return this.field(false, 7);
   }
 
+  /** Gets the year using Universal Coordinated Time (UTC). */
   getUTCFullYear(): number {
     return this.field(true, 0);
   }
 
+  /** Gets the month (0-11) of a Date object using Universal Coordinated Time (UTC). */
   getUTCMonth(): number {
     return this.field(true, 1);
   }
 
+  /** Gets the day-of-the-month, using Universal Coordinated Time (UTC). */
   getUTCDate(): number {
     return this.field(true, 2);
   }
 
+  /** Gets the hours value in a Date object using Universal Coordinated Time (UTC). */
   getUTCHours(): number {
     return this.field(true, 3);
   }
 
+  /** Gets the minutes of a Date object using Universal Coordinated Time (UTC). */
   getUTCMinutes(): number {
     return this.field(true, 4);
   }
 
+  /** Gets the seconds of a Date object using Universal Coordinated Time (UTC). */
   getUTCSeconds(): number {
     return this.field(true, 5);
   }
 
+  /** Gets the milliseconds of a Date object using Universal Coordinated Time (UTC). */
   getUTCMilliseconds(): number {
     return this.field(true, 6);
   }
 
+  /** Gets the day of the week (0 = Sunday) using Universal Coordinated Time (UTC). */
   getUTCDay(): number {
     return this.field(true, 7);
   }
 
-  // Minutes from local time to UTC (JS's sign: -60 for UTC+01:00).
+  /** Minutes from local time to UTC (JS's sign: -60 for UTC+01:00). */
   getTimezoneOffset(): number {
     if (this.t != this.t) {
       return this.t;
@@ -165,23 +204,59 @@ export class Date implements Comparable<Date> {
     return -(localOffset(this.t as i64) as f64);
   }
 
+  /**
+   * Sets the date and time value in the Date object.
+   * @param t - A numeric value representing the number of elapsed milliseconds since midnight,
+   * January 1, 1970 GMT.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setTime(t: number): number {
     this.t = timeClip(t);
     return this.t;
   }
 
+  /**
+   * Sets the year of the Date object using local time.
+   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setFullYear(50)` gives
+   * 1950.
+   * @param year - A numeric value for the year.
+   * @param month - A zero-based numeric value for the month (0 for January, 11 for December).
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setFullYear(year: number, month: number | null = null, day: number | null = null): number {
     return this.set(false, [year, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the month value in the Date object using local time.
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value representing the day of the month. If this value is not supplied,
+   * the value from a call to the getDate method is used.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMonth(month: number, day: number | null = null): number {
     return this.set(false, [null, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the numeric day-of-the-month value of the Date object using local time.
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setDate(day: number): number {
     return this.set(false, [null, null, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the hour value in the Date object using local time.
+   * @param hours - A numeric value equal to the hours value.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setHours(
     hours: number,
     minutes: number | null = null,
@@ -191,30 +266,79 @@ export class Date implements Comparable<Date> {
     return this.set(false, [null, null, null, hours, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the minutes value in the Date object using local time.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
     return this.set(false, [null, null, null, null, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the seconds value in the Date object using local time.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setSeconds(seconds: number, ms: number | null = null): number {
     return this.set(false, [null, null, null, null, null, seconds, ms]);
   }
 
+  /**
+   * Sets the milliseconds value in the Date object using local time.
+   * @param ms - A numeric value equal to the millisecond value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMilliseconds(ms: number): number {
     return this.set(false, [null, null, null, null, null, null, ms]);
   }
 
+  /**
+   * Sets the year value in the Date object using Universal Coordinated Time (UTC).
+   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setUTCFullYear(50)` gives
+   * 1950.
+   * @param year - A numeric value equal to the year.
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCFullYear(year: number, month: number | null = null, day: number | null = null): number {
     return this.set(true, [year, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the month value in the Date object using Universal Coordinated Time (UTC).
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value representing the day of the month. If it is not supplied, the
+   * value from a call to the getUTCDate method is used.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMonth(month: number, day: number | null = null): number {
     return this.set(true, [null, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the numeric day of the month in the Date object using Universal Coordinated Time (UTC).
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCDate(day: number): number {
     return this.set(true, [null, null, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the hours value in the Date object using Universal Coordinated Time (UTC).
+   * @param hours - A numeric value equal to the hours value.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCHours(
     hours: number,
     minutes: number | null = null,
@@ -224,19 +348,37 @@ export class Date implements Comparable<Date> {
     return this.set(true, [null, null, null, hours, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the minutes value in the Date object using Universal Coordinated Time (UTC).
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
     return this.set(true, [null, null, null, null, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the seconds value in the Date object using Universal Coordinated Time (UTC).
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCSeconds(seconds: number, ms: number | null = null): number {
     return this.set(true, [null, null, null, null, null, seconds, ms]);
   }
 
+  /**
+   * Sets the milliseconds value in the Date object using Universal Coordinated Time (UTC).
+   * @param ms - A numeric value equal to the millisecond value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMilliseconds(ms: number): number {
     return this.set(true, [null, null, null, null, null, null, ms]);
   }
 
-  // `2024-01-15T09:30:00.000Z`. An invalid date panics (JS throws a RangeError).
+  /** `2024-01-15T09:30:00.000Z`. An invalid date panics (JS throws a RangeError). */
   toISOString(): string {
     if (this.t != this.t) {
       panic("RangeError: Invalid time value");
@@ -244,17 +386,20 @@ export class Date implements Comparable<Date> {
     return isoString(this.t as i64, 0, true);
   }
 
-  // What `JSON.stringify` writes for a date: its ISO string, or null when invalid.
+  /**
+   * The ISO string, or null for an invalid date: what JS's `JSON.stringify` writes for a date.
+   * Velt's `JSON.stringify` does not take a `Date` (it has no JSON form): call this first.
+   */
   toJSON(): string | null {
     return this.t != this.t ? null : isoString(this.t as i64, 0, true);
   }
 
-  // `Mon, 15 Jan 2024 09:30:00 GMT`.
+  /** `Mon, 15 Jan 2024 09:30:00 GMT`. */
   toUTCString(): string {
     return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
   }
 
-  // `Mon Jan 15 2024 10:30:00 GMT+0100` (local time).
+  /** `Mon Jan 15 2024 10:30:00 GMT+0100` (local time). */
   toString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -262,7 +407,7 @@ export class Date implements Comparable<Date> {
     return `${this.toDateString()} ${this.toTimeString()}`;
   }
 
-  // `Mon Jan 15 2024` (local time).
+  /** `Mon Jan 15 2024` (local time). */
   toDateString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -271,7 +416,7 @@ export class Date implements Comparable<Date> {
     return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
   }
 
-  // `10:30:00 GMT+0100` (local time).
+  /** `10:30:00 GMT+0100` (local time). */
   toTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -281,7 +426,7 @@ export class Date implements Comparable<Date> {
     return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
   }
 
-  // `1/15/2024` (local time, en-US).
+  /** `1/15/2024` (local time, en-US). */
   toLocaleDateString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -290,7 +435,7 @@ export class Date implements Comparable<Date> {
     return `${p.month}/${p.day}/${p.year}`;
   }
 
-  // `10:30:00 AM` (local time, en-US).
+  /** `10:30:00 AM` (local time, en-US). */
   toLocaleTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -301,7 +446,7 @@ export class Date implements Comparable<Date> {
     return `${h}:${pad(p.minute, 2)}:${pad(p.second, 2)} ${half}`;
   }
 
-  // `1/15/2024, 10:30:00 AM` (local time, en-US).
+  /** `1/15/2024, 10:30:00 AM` (local time, en-US). */
   toLocaleString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -309,7 +454,7 @@ export class Date implements Comparable<Date> {
     return `${this.toLocaleDateString()}, ${this.toLocaleTimeString()}`;
   }
 
-  // How `console.log` shows a date, like Node: its ISO string, or `Invalid Date`.
+  /** How `console.log` shows a date, like Node: its ISO string, or `Invalid Date`. */
   __inspect(): string {
     return this.t != this.t ? "Invalid Date" : isoString(this.t as i64, 0, true);
   }

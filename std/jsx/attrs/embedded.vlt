@@ -4,7 +4,7 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<iframe>`.
+/** `<iframe>`. */
 export type IframeAttrs = HtmlAttrs & {
   src?: string;
   srcdoc?: string;
@@ -18,7 +18,7 @@ export type IframeAttrs = HtmlAttrs & {
   loading?: string;
 };
 
-// `<embed>`.
+/** `<embed>`. */
 export type EmbedAttrs = HtmlAttrs & {
   src?: string;
   type?: string;
@@ -26,7 +26,7 @@ export type EmbedAttrs = HtmlAttrs & {
   height?: string | i64 | f64;
 };
 
-// `<object>`.
+/** `<object>`. */
 export type ObjectAttrs = HtmlAttrs & {
   data?: string;
   type?: string;
@@ -36,13 +36,13 @@ export type ObjectAttrs = HtmlAttrs & {
   height?: string | i64 | f64;
 };
 
-// `<map>`.
+/** `<map>`. */
 export type MapAttrs = HtmlAttrs & { name?: string };
 
-// `<slot>`.
+/** `<slot>`. */
 export type SlotAttrs = HtmlAttrs & { name?: string };
 
-// `<template>`.
+/** `<template>`. */
 export type TemplateAttrs = HtmlAttrs & {
   shadowrootmode?: string;
   shadowrootdelegatesfocus?: bool;

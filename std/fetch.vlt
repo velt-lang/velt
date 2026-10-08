@@ -44,10 +44,12 @@ function redirectMode(r: RequestRedirect): u32 {
   return 0;
 }
 
-// Sends a request. Rejects with `IoError` when there is no response (`ECONNREFUSED`,
-// `ETIMEDOUT`, a TLS failure, an invalid URL or header: `EINVAL`), and with the signal's
-// `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
-// status is a response, not an error: check `res.ok`.
+/**
+ * Sends a request. Rejects with `IoError` when there is no response (`ECONNREFUSED`,
+ * `ETIMEDOUT`, a TLS failure, an invalid URL or header: `EINVAL`), and with the signal's
+ * `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
+ * status is a response, not an error: check `res.ok`.
+ */
 export async function fetch(
   input: string | URL | Request,
   init: RequestInit = {},
