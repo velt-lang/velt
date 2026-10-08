@@ -7,7 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 secs=${1:-5}
 conns=${2:-64}
-velt=${VELT:-../../../target/debug/velt}
+# A release velt: a debug one links the debug runtime, which is several times slower.
+velt=${VELT:-../../../target/release/velt}
+[ -x "$velt" ] || velt=velt
 vport=${VELT_PORT:-18080}
 nport=${NODE_PORT:-18081}
 tmp=$(mktemp -d)
