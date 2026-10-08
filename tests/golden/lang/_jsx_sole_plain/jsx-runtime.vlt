@@ -1,6 +1,5 @@
-// The precompiling runtime of `_jsx_sole_provider`: `jsxEscape` renders `true`, `false` and
-// `null` as the placeholder they are among siblings, and `jsxSoleEmpty` tells the compiler what
-// they render as when they are an element's only child.
+// The sigx-like precompiling runtime without `jsxTemplateString`: a sole `null`/boolean slot
+// falls back to `jsxTemplate([sole], [])`.
 
 import { AttrValue, Element, Template, Text, attr, textOf } from "../_jsx_sep_provider/render";
 
@@ -14,10 +13,6 @@ export function jsxTemplate(strings: string[], slots: Element[]): Element {
   const el = new Element();
   el.parts.push(new Template(strings, slots));
   return el;
-}
-
-export function jsxTemplateString(html: string): Element {
-  return jsxTemplate([html], []);
 }
 
 export function jsxEscape(value: Text): string {

@@ -15,6 +15,7 @@ variant in its own process (issue #77):
 ```sh
 bench/jsx/run.sh [runs]                  # this checkout
 BASE=origin/main bench/jsx/run.sh        # also against origin/main's std/, same compiler and runtime
+BASE=origin/main BASE_FULL=1 bench/jsx/run.sh   # also with origin/main's compiler, runtime and std
 ```
 
 `run.sh` prints the best wall-clock time over the runs and the instructions retired by one run

@@ -2,7 +2,7 @@
 // presentation attributes every SVG element accepts, `&` its own; public as `velt:jsx/attrs`).
 // Names are SVG's, case included (`viewBox`, `preserveAspectRatio`). Hyphenated presentation
 // attributes (`stroke-width`, `fill-opacity`, `font-size`) and namespaced ones (`xlink:href`,
-// `xml:space`) are not checked against these types (docs/contracts/jsx.md).
+// `xml:space`) are not checked against these types (docs/internals/contracts/jsx.md).
 
 import type { Style } from "velt:jsx/node";
 
