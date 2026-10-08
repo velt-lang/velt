@@ -124,7 +124,10 @@ impl FnCx<'_, '_> {
             return true;
         }
         match (&p.sole_empty, real_children(&el.children).as_slice()) {
-            (Some(sole), [c @ ast::JsxChild::Expr { expr: Some(_), .. }]) => {
+            (
+                Some(sole),
+                [c @ (ast::JsxChild::Expr { expr: Some(_), .. } | ast::JsxChild::Spread { .. })],
+            ) => {
                 self.sole_child(p, pc, c, sole, t);
             }
             _ => {

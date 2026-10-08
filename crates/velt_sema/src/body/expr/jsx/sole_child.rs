@@ -1,11 +1,10 @@
 //! The provider's `jsxSoleEmpty` in precompiled templates (docs/contracts/jsx.md "Sole child").
 //! A runtime that receives one child as itself and several as an array (sigx) may render a
 //! `null` or boolean child differently when it is its element's only child. `jsxEscape` and
-//! `Fragment` see only the value, so for an element's only `{expr}` child that may be `null` or
-//! a boolean, the compiler writes the export's string in their place:
+//! `Fragment` see only the value, so for an element's only `{expr}` or `{...expr}` child that may
+//! be `null` or a boolean, the compiler writes the export's string in their place:
 //! - a `JSX.Text` child: `{ const t = v; t is text ? jsxEscape(t) : sole }` in the string (just
-//!   `{ const t = v; sole }` when it is never text, and constant text when reading `v` has no
-//!   effect);
+//!   `{ const t = v; sole }` when it is never text, and constant text for a literal);
 //! - any other child: the slot `{ const t = v; t is text ? Fragment([t], null) : jsxTemplate([sole], []) }`.
 //!
 //! The value is read once, where the child would be.
@@ -39,8 +38,9 @@ impl FnCx<'_, '_> {
             return self.dynamic_child(p, pc, h, span, t);
         }
         let never_text = self.textness(&h) == Textness::Never;
-        if never_text && matches!(h.kind, H::Lit(_) | H::Local(..)) {
-            // Nothing to evaluate: the export's string is constant text.
+        if never_text && matches!(h.kind, H::Lit(_)) {
+            // Nothing to evaluate: the export's string is constant text. (A local is still read,
+            // so that it is checked like any other use.)
             return t.text.push_str(sole);
         }
         match self.try_coerce(h, pc.text) {

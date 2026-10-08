@@ -13,6 +13,8 @@ maybe="x" flag=true el=true
   <p><a>el</a>a</p>
   <p>ada</p>
   <p>x</p>
+  <p><a>x</a><a>y</a></p>
+  <p><a>x</a><a>y</a>a</p>
 maybe="x" flag=true el=false
   <p></p>
   <p><!---->a</p>
@@ -28,6 +30,8 @@ maybe="x" flag=true el=false
   <p><!---->a</p>
   <p>ada</p>
   <p>x</p>
+  <p></p>
+  <p><!---->a</p>
 maybe="x" flag=false el=true
   <p></p>
   <p><!---->a</p>
@@ -43,6 +47,8 @@ maybe="x" flag=false el=true
   <p><a>el</a>a</p>
   <p></p>
   <p>x</p>
+  <p><a>x</a><a>y</a></p>
+  <p><a>x</a><a>y</a>a</p>
 maybe="x" flag=false el=false
   <p></p>
   <p><!---->a</p>
@@ -58,6 +64,8 @@ maybe="x" flag=false el=false
   <p><!---->a</p>
   <p></p>
   <p>x</p>
+  <p></p>
+  <p><!---->a</p>
 maybe=null flag=true el=true
   <p></p>
   <p><!---->a</p>
@@ -73,6 +81,8 @@ maybe=null flag=true el=true
   <p><a>el</a>a</p>
   <p>ada</p>
   <p></p>
+  <p><a>x</a><a>y</a></p>
+  <p><a>x</a><a>y</a>a</p>
 maybe=null flag=true el=false
   <p></p>
   <p><!---->a</p>
@@ -88,6 +98,8 @@ maybe=null flag=true el=false
   <p><!---->a</p>
   <p>ada</p>
   <p></p>
+  <p></p>
+  <p><!---->a</p>
 maybe=null flag=false el=true
   <p></p>
   <p><!---->a</p>
@@ -103,6 +115,8 @@ maybe=null flag=false el=true
   <p><a>el</a>a</p>
   <p></p>
   <p></p>
+  <p><a>x</a><a>y</a></p>
+  <p><a>x</a><a>y</a>a</p>
 maybe=null flag=false el=false
   <p></p>
   <p><!---->a</p>
@@ -118,6 +132,8 @@ maybe=null flag=false el=false
   <p><!---->a</p>
   <p></p>
   <p></p>
+  <p></p>
+  <p><!---->a</p>
 reads: 8 8
 templates:
   ["<p></p>"]
@@ -134,3 +150,5 @@ templates:
   ["<p>","a</p>"]
   ["<p>","</p>"]
   ["<p></p>"]
+  ["<p>","</p>"]
+  ["<p>","a</p>"]

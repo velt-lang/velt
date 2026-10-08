@@ -249,16 +249,16 @@ fn no_text_separator_without_the_export() {
 #[test]
 fn sole_empty_replaces_a_sole_boolean_or_null_child() {
     let p = ok(&format!(
-        "{SOLE}function view(f: bool, m: string | null) {{ const a = <p>{{f}}</p>; const b = <p>{{f}}a</p>; const c = <p>{{m}}</p>; }}
+        "{SOLE}function view(f: bool, m: string | null) {{ const a = <p>{{false}}</p>; const b = <p>{{f}}a</p>; const c = <p>{{m}}</p>; const d = <p>{{f}}</p>; }}
         function main() {{ view(true, null); }}"
     ));
     let t = runtime_calls(&p, "view", "jsxTemplate");
     assert_eq!(
         strings(&t[0][0]),
         ["<p></p>"],
-        "a sole boolean is the export's string"
+        "a sole `false` is the export's string"
     );
-    assert_eq!(t.len(), 3);
+    assert_eq!(t.len(), 4);
     // Among siblings `f` is `jsxEscape`'s; `m` may be text: tested at run time, escaped only
     // when it is.
     assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 2);
@@ -279,6 +279,16 @@ fn sole_empty_a_sole_nullable_element_is_a_conditional_slot() {
     assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
     assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 3);
     assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+/// Regression (#634 review): a sole boolean local was not read, so a possibly uninitialized
+/// one was accepted.
+#[test]
+fn sole_empty_still_reads_a_sole_local() {
+    let r = err(&format!(
+        "{SOLE}function main() {{ const x = true; let y: bool; if (x) {{ y = true; }} const a = <p>{{y}}</p>; }}"
+    ));
+    assert!(r.contains("possibly uninitialized variable `y`"), "{r}");
 }
 
 #[test]

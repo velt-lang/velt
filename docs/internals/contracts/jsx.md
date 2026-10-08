@@ -209,10 +209,10 @@ renders as instead:
 ```ts
 export const jsxSoleEmpty = "";   // a string constant (an error otherwise)
 ```
-The compiler then writes it in place of a `{expr}` child that is the only child of a
-precompiled element (`{}` and `{/* */}` are no children) and is `true`, `false` or `null`:
+The compiler then writes it in place of a `{expr}` or `{...expr}` child that is the only child
+of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `false` or `null`:
 - A child whose type is only `boolean` or `null` is the export's string at compile time
-  (`<p>{flag}</p>` → `"<p></p>"`), evaluated if reading it can have an effect.
+  (`<p>{false}</p>` → `"<p></p>"`); any other expression is still evaluated.
 - A text child whose type mixes them with text (`string | null`) is tested at run time, with the
   value read once: `jsxEscape(v)` when it is text, the export's string otherwise.
 - A slot child whose type has a `null` or boolean member (`JSX.Element | null`) is the slot

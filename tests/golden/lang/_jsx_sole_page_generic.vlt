@@ -19,6 +19,7 @@ function counted(reads: Reads, v: string | null): string | null {
 // One case per line: a value that may be `null` or a boolean, alone and among siblings.
 export function cases(maybe: string | null, flag: bool, some: bool, reads: Reads): JSX.Element[] {
   const el: JSX.Element | null = some ? <a>el</a> : null;
+  const list: JSX.Element[] | null = some ? [<a>x</a>, <a>y</a>] : null;
   return [
     <p>{null}</p>,
     <p>{null}a</p>,
@@ -34,5 +35,7 @@ export function cases(maybe: string | null, flag: bool, some: bool, reads: Reads
     <p>{el}a</p>,
     <p>{flag ? <Name name="ada" /> : null}</p>,
     <p>{counted(reads, maybe)}</p>,
+    <p>{...list}</p>,
+    <p>{...list}a</p>,
   ];
 }
