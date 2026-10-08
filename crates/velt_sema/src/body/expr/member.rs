@@ -66,7 +66,7 @@ impl FnCx<'_, '_> {
             let (fty, slot) = (i.fields[idx].ty, (i.methods.len() + idx) as u32);
             self.cx
                 .rec_ref(prop.span, Target::Field(b.iface, idx as u32));
-            let fty = self.cx.ty.subst(fty, &b.args);
+            let fty = self.cx.subst(fty, &b.args);
             if want == Want::BorrowMut {
                 self.cx.err(
                     format!(

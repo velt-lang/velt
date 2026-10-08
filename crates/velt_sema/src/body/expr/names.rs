@@ -301,7 +301,7 @@ impl FnCx<'_, '_> {
                 .with_note("use it where a function type is expected, e.g. `const f: (x: i64) => i64 = ...`"),
             );
         }
-        let ty = self.cx.ty.subst(fn_ty, &args);
+        let ty = self.cx.subst(fn_ty, &args);
         let ty = self.fn_value_errors(d, &args, ty, exp, span);
         self.cx.fn_values.push((d, args.clone(), span));
         self.mk(H::FnRef(d, args), ty, span)

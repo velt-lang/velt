@@ -14,6 +14,8 @@
 //!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped with `velt_rt_fut_drop`;
 //! - function values and closures → `{ code: ptr, env: ptr }`; interface values → `{ data, vtable }`.
 
+use std::collections::{HashMap, HashSet};
+
 use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, TyId, TyKind};
 
 use super::{ice, Cx};
@@ -28,12 +30,224 @@ impl<'h> Cx<'h> {
         self.types.intern(k)
     }
 
-    /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`.
+    /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`, with anonymous object types in
+    /// their canonical form (`canon`).
     pub(super) fn subst(&mut self, t: TyId, targs: &[TyId]) -> TyId {
+        let t = self.subst_raw(t, targs);
+        self.canon(t)
+    }
+
+    /// `t` with every anonymous object type replaced by the one type of its shape (field names
+    /// and canonical field types, in order). Substitution makes several types of one shape:
+    /// `{ a: U }` at `U = string` is the generic anonymous def applied to `[string]`, while a
+    /// written `{ a: string }` is a def of its own. Sema canonicalizes the types it computes
+    /// (velt_sema `anon.rs`), but instantiating a generic body happens here. The type of a shape
+    /// is sema's concrete def of it when there is one, else the first one seen. The forms have
+    /// the same layout; this keeps them one type, so values flow between them unconverted.
+    pub(super) fn canon(&mut self, t: TyId) -> TyId {
+        if let Some(&c) = self.anon.memo.get(&t) {
+            return c;
+        }
+        let c = |cx: &mut Self, x: TyId| cx.canon(x);
+        let k = match self.kind(t) {
+            TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Array(e) => TyKind::Array(c(self, e)),
+            TyKind::Map(k, v) => TyKind::Map(c(self, k), c(self, v)),
+            TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
+            TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
+            TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+            } => TyKind::FnPtr {
+                params: params.iter().map(|&a| c(self, a)).collect(),
+                ret: c(self, ret),
+                throws: c(self, throws),
+            },
+            _ => {
+                self.anon.memo.insert(t, t);
+                return t;
+            }
+        };
+        let mut out = self.intern(k);
+        if let TyKind::Adt(d, args) = self.kind(out) {
+            let anon = match self.hir.def(d) {
+                hir::Def::Adt(a) if a.kind == AdtKind::Anon && !args.is_empty() => Some(a),
+                _ => None,
+            };
+            if let Some(a) = anon.filter(|_| !self.reaches_itself(d)) {
+                // The optional and presence flags are part of the shape: `{ a?: T }` and
+                // `{ a: T | null }` print and serialize differently, and `{ a?: T | null }` also
+                // has a presence flag in its layout.
+                let fields: Vec<(String, TyId, bool, bool)> = a
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty, f.optional, f.presence))
+                    .collect();
+                let key: Vec<(String, TyId, bool, bool)> = fields
+                    .into_iter()
+                    .map(|(n, ft, opt, presence)| {
+                        let ft = self.subst_raw(ft, &args);
+                        (n, self.canon(ft), opt, presence)
+                    })
+                    .collect();
+                out = match self.concrete_anon(&key) {
+                    Some(dc) => self.intern(TyKind::Adt(dc, vec![])),
+                    None => *self.anon.reps.entry(key).or_insert(out),
+                };
+            } else if let Some(u) = self.canon_union(d, &args) {
+                out = u;
+            }
+        }
+        self.anon.memo.insert(t, out);
+        out
+    }
+
+    /// The canonical type of union def `d` at (canonical) `args` (velt_sema `anon.rs`
+    /// `canon_union`): with plain members only, the deduplicated members' union (sema's def of
+    /// that member list, else the first type seen with it), or the single member itself.
+    fn canon_union(&mut self, d: DefId, args: &[TyId]) -> Option<TyId> {
+        if args.is_empty() {
+            return None;
+        }
+        let hir::Def::Enum(e) = self.hir.def(d) else {
+            return None;
+        };
+        if !e.is_union {
+            return None;
+        }
+        let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
+        let mut members: Vec<TyId> = vec![];
+        for p in payloads {
+            let m = self.subst_raw(p, args);
+            let m = self.canon(m);
+            let plain = !matches!(
+                self.kind(m),
+                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+            ) && !self.is_union(m);
+            if !plain {
+                return None;
+            }
+            if !members.contains(&m) {
+                members.push(m);
+            }
+        }
+        if members.len() == 1 {
+            return Some(members[0]);
+        }
+        members.sort_by_key(|t| t.0);
+        let t = self.intern(TyKind::Adt(d, args.to_vec()));
+        Some(match self.hir.union_shapes.get(&members) {
+            Some(&u) => self.intern(TyKind::Adt(u, vec![])),
+            None => *self.anon.union_reps.entry(members).or_insert(t),
+        })
+    }
+
+    /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
+    /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
+    /// the union collapsed to that member. Unchanged for every other enum.
+    pub(super) fn union_variant(
+        &mut self,
+        hir_ty: TyId,
+        targs: &[TyId],
+        variant: u32,
+        ty: TyId,
+    ) -> VariantAt {
+        let raw = self.subst_raw(hir_ty, targs);
+        if raw == ty {
+            return VariantAt::Index(variant);
+        }
+        let TyKind::Adt(d, args) = self.kind(raw) else {
+            return VariantAt::Index(variant);
+        };
+        let payload = self.enum_def(d).variants[variant as usize].payload[0];
+        let m = self.subst_raw(payload, &args);
+        let m = self.canon(m);
+        if m == ty {
+            return VariantAt::Whole;
+        }
+        let TyKind::Adt(cd, cargs) = self.kind(ty) else {
+            ice("union variant of a non-union type")
+        };
+        let cps: Vec<TyId> = self
+            .enum_def(cd)
+            .variants
+            .iter()
+            .map(|v| v.payload[0])
+            .collect();
+        for (i, p) in cps.into_iter().enumerate() {
+            let p = self.subst_raw(p, &cargs);
+            if self.canon(p) == m {
+                return VariantAt::Index(i as u32);
+            }
+        }
+        ice("union variant not in its canonical union")
+    }
+
+    /// Does anonymous def `d` reach itself through the fields of object types
+    /// (`interface List<T> { tail?: List<T> }`, #376)? Its instances stay as they are, as in
+    /// sema (velt_sema `anon.rs`): canonicalizing one would canonicalize its own fields without
+    /// end.
+    fn reaches_itself(&mut self, d: DefId) -> bool {
+        if let Some(&r) = self.anon.recursive.get(&d) {
+            return r;
+        }
+        let hir = self.hir;
+        let fields = |x: DefId| match hir.def(x) {
+            hir::Def::Adt(a) if a.kind == AdtKind::Anon => a.fields.iter().map(|f| f.ty).collect(),
+            _ => vec![],
+        };
+        let mut seen = HashSet::new();
+        let mut stack: Vec<TyId> = fields(d);
+        let mut found = false;
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            match self.kind(t) {
+                TyKind::Adt(x, _) if x == d => {
+                    found = true;
+                    break;
+                }
+                TyKind::Adt(x, args) | TyKind::Dyn(x, args) => {
+                    stack.extend(fields(x));
+                    stack.extend(args);
+                }
+                TyKind::Tuple(es) => stack.extend(es),
+                TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => stack.push(e),
+                TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                    stack.extend([a, b]);
+                }
+                TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                } => {
+                    stack.extend(params);
+                    stack.extend([ret, throws]);
+                }
+                _ => {}
+            }
+        }
+        self.anon.recursive.insert(d, found);
+        found
+    }
+
+    /// Sema's anonymous def with exactly these (concrete) fields, if lowering sees one.
+    fn concrete_anon(&self, key: &[(String, TyId, bool, bool)]) -> Option<DefId> {
+        self.hir.anon_shapes.get(key).copied()
+    }
+
+    /// [`subst`](Self::subst) without canonicalizing.
+    fn subst_raw(&mut self, t: TyId, targs: &[TyId]) -> TyId {
         if targs.is_empty() {
             return t;
         }
-        let s = |cx: &mut Self, x: TyId| cx.subst(x, targs);
+        let s = |cx: &mut Self, x: TyId| cx.subst_raw(x, targs);
         let k = match self.kind(t) {
             TyKind::Param(n) => {
                 return *targs
@@ -186,7 +400,17 @@ impl<'h> Cx<'h> {
     pub(super) fn part_types(&mut self, t: TyId) -> Vec<TyId> {
         match self.kind(t) {
             TyKind::Adt(d, args) => match self.hir.def(d) {
-                hir::Def::Adt(_) => self.adt_field_tys(t),
+                hir::Def::Adt(a) => {
+                    // A struct / object value stores a presence flag per `presence` field after
+                    // its fields (`hir::FieldDef::presence`, `presence_slot`).
+                    let flags = a.fields.iter().filter(|f| f.presence).count();
+                    let mut tys = self.adt_field_tys(t);
+                    if flags > 0 && a.kind != AdtKind::Class {
+                        let b = self.intern(TyKind::Bool);
+                        tys.extend(std::iter::repeat_n(b, flags));
+                    }
+                    tys
+                }
                 hir::Def::Enum(e) => {
                     let tys: Vec<TyId> =
                         e.variants.iter().flat_map(|v| v.payload.clone()).collect();
@@ -207,6 +431,27 @@ impl<'h> Cx<'h> {
             TyKind::Tuple(es) => es[index as usize],
             _ => self.adt_field_tys(t)[index as usize],
         }
+    }
+
+    /// The VIR field index of the presence flag of field `i` of struct / object type `t`, if
+    /// that field keeps one (`hir::FieldDef::presence`): after the stored fields, in field order.
+    pub(super) fn presence_slot(&mut self, t: TyId, i: u32) -> Option<u32> {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return None;
+        };
+        if a.kind == AdtKind::Class || !a.fields.get(i as usize)?.presence {
+            return None;
+        }
+        let rank = a.fields[..i as usize].iter().filter(|f| f.presence).count() as u32;
+        let stored = self
+            .adt_field_tys(t)
+            .into_iter()
+            .filter(|&f| !self.is_unit(f))
+            .count() as u32;
+        Some(stored + rank)
     }
 
     /// Field types of a struct/class/anon instance, substituted with its type args.
@@ -303,4 +548,24 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
         IntTy::U32 => Ty::U32,
         IntTy::U64 | IntTy::USize => Ty::U64,
     }
+}
+
+/// Canonical anonymous object types (`Cx::canon`).
+#[derive(Default)]
+pub(super) struct AnonShapes {
+    memo: HashMap<TyId, TyId>,
+    /// The type of each shape that sema has no concrete def for.
+    reps: HashMap<Vec<(String, TyId, bool, bool)>, TyId>,
+    /// The same for unions, by sorted member list.
+    union_reps: HashMap<Vec<TyId>, TyId>,
+    /// Anonymous defs that reach themselves through fields (`Cx::reaches_itself`).
+    recursive: HashMap<DefId, bool>,
+}
+
+/// Where a generic union's variant lives in the canonical union (`Cx::union_variant`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VariantAt {
+    Index(u32),
+    /// The union collapsed to this member: the value itself.
+    Whole,
 }

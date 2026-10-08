@@ -74,7 +74,7 @@ fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Vec<TyId> {
             .collect(),
         _ => vec![],
     };
-    let mut out: Vec<TyId> = raw.into_iter().map(|t| cx.ty.subst(t, args)).collect();
+    let mut out: Vec<TyId> = raw.into_iter().map(|t| cx.subst(t, args)).collect();
     for s in subclasses(cx, d) {
         if let DefInfo::Adt(a) = &cx.info[s.0 as usize] {
             out.extend(a.fields.iter().map(|f| f.ty));

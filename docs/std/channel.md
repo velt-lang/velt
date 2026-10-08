@@ -15,7 +15,10 @@ through one channel.
     dropped then. Being synchronous, it can be called where `await` can't, such as inside a
     `Mutex`'s `with` callback (an unbounded channel is never full).
   - `receive(): Promise<T | null>` returns the oldest value, waiting for one. It returns `null`
-    once the channel is closed and empty.
+    once the channel is closed and empty. `T | null | null` is `T | null`, so for a channel of
+    nullable values (`channel<string | null>`) a received `null` and a closed channel look alike
+    here and in `tryReceive`; send the values wrapped (`{ v: string | null }`) to tell them
+    apart.
   - `tryReceive(): T | null` returns the oldest value if one is queued, without waiting.
   - A channel is an `AsyncIterable<T>`: `for await (const v of ch)` receives values until the
     channel is closed and drained, then ends. Leaving the loop early (`break`, `return`, an

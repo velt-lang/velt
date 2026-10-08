@@ -35,6 +35,18 @@ impl FnLower<'_, '_> {
                 self.gen_embed_value(&e)
             }
             (I::Print, _) => self.print(1, args),
+            (I::FieldAbsent, []) => {
+                // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
+                let t = self.sub(ty);
+                self.none_value(t)
+            }
+            (I::FieldPresent, [f]) => {
+                let p = self.place_expr(f);
+                match self.presence_place(f, &p) {
+                    Some(fp) => Operand::Copy(fp),
+                    None => ice("`FieldPresent` of a field without a presence flag"),
+                }
+            }
             (I::PrintErr, _) => self.print(2, args),
             (I::ToString, [a]) => self.stringify(a, ty),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),

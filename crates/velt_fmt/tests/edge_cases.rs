@@ -230,6 +230,31 @@ fn readonly_fields_in_object_types() {
 }
 
 #[test]
+fn a_written_null_of_an_optional_field_stays() {
+    // `a?: T | null` keeps an absent key apart from a present `null`: it is not `a?: T`.
+    holds(
+        "type U = { a?: string | null; b?: string; c: string | null };
+",
+    );
+    holds(
+        "interface I {
+  deletedAt?: string | null;
+}
+",
+    );
+    let out = velt_fmt::format_source(
+        "type U = {a?:string|null};
+",
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        "type U = { a?: string | null };
+"
+    );
+}
+
+#[test]
 fn private_names() {
     holds(
         "class A {

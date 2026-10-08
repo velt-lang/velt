@@ -172,7 +172,7 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
                 caller_owner = p;
                 hops += 1;
             }
-            let s = cx.ty.subst(t, &targs);
+            let s = cx.subst(t, &targs);
             work.push((caller_owner, s, depth + 1));
         }
     }

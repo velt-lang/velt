@@ -249,7 +249,10 @@ pub(crate) struct MethodRef {
 #[derive(Clone)]
 pub(crate) struct FieldInfo {
     pub name: String,
+    /// The type a read gives: `declared`, or `declared | null` for an optional field.
     pub ty: TyId,
+    /// The written type, without the `null` a `?` adds (`Required` gives it back).
+    pub declared: TyId,
     pub span: Span,
     pub readonly: bool,
     pub optional: bool,

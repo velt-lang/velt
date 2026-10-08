@@ -1,0 +1,25 @@
+// `{ d?: string }` and `{ d?: string | null }` read alike (one `null`), but only the second keeps
+// an absent `d` apart from a present `null`, so they are two object types with two layouts
+// (#395 P2). A generic `{ d?: T | null }` at `T = string` is the second, even next to a written
+// `{ d?: string }`: lowering must not map it onto the first's shape.
+function mk<T>(x: T | null, give: boolean): { d?: T | null } {
+  if (give) {
+    return { d: x };
+  }
+  return {};
+}
+
+function main() {
+  const plain: { d?: string } = { d: "p" };
+  const absent: { d?: string } = {};
+  console.log(JSON.stringify(plain), JSON.stringify(absent), Object.keys(absent));
+
+  const n = mk<string>(null, true);
+  const a = mk<string>(null, false);
+  const s = mk<string>("s", true);
+  console.log(JSON.stringify(n), JSON.stringify(a), JSON.stringify(s));
+  console.log(n, a, s);
+  console.log(Object.keys(n), Object.keys(a), Object.keys(s));
+  const written: { d?: string | null } = n;
+  console.log(JSON.stringify({ ...{ d: "old" }, ...written }));
+}

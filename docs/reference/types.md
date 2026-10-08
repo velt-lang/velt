@@ -233,15 +233,43 @@ has type `T | null`, stored without an extra allocation where possible.
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
-- `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional field
-  of a class, interface or object type starts as `null` (and `JSON.stringify` leaves it out
-  while it is `null`, as JavaScript leaves out an absent property, but writes a `b: T | null`
-  field), and an object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`). As in TypeScript, `{ a?: T }` and
-  `{ a: T | null }` are different object types: a value of one is not a value of the other.
+- `a?: T` reads as `T | null`: an optional parameter `b?: T` is `b: T | null = null` (callers
+  may leave it out or pass `null`; it cannot also have a default), and an optional field of a
+  class, interface or object type starts as `null`, meaning absent: `JSON.stringify` leaves it
+  out, and so does `console.log` in an object type, as JavaScript leaves out a missing key (a
+  class shows it, as Node shows a class's optional field); a spread (`{ ...a, ...b }`) doesn't
+  copy it over an earlier value. A `b: T | null` field holding `null` is written.
+- A field declared `a?: T | null` in an object type keeps an absent key apart from a present
+  `null`, as JavaScript does: it prints and serializes `null` when present, `JSON.parse` keeps
+  the difference, and a spread copies a present `null` (`update(u, { deletedAt: null })`
+  clears the field). In a class, such a field is still absent while it is `null`.
+- An object literal may leave out any `T | null` field of an object type
+  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+- In an object type, `?` is part of the type, as in TypeScript: `{ a?: string }` and
+  `{ a: string | null }` read alike but are different types (the first may be absent), with no
+  implicit conversion between them; copy with `{ ...x }`.
+  Difference from TypeScript: TypeScript also accepts a `{ a: F | null }` where a
+  `{ a?: F | null }` is expected; in Velt the two are different types (the second keeps a
+  presence flag), so copy with `{ ...x }` there too.
+
+```ts
+type User = { name: string; deletedAt?: string | null };
+
+function update(u: User, patch: Partial<User>): User {
+  return { ...u, ...patch };
+}
+
+const u: User = { name: "ann", deletedAt: "2026-01-01" };
+console.log(JSON.stringify(update(u, {}))); // {"name":"ann","deletedAt":"2026-01-01"}
+console.log(JSON.stringify(update(u, { deletedAt: null }))); // {"name":"ann","deletedAt":null}
+const v: User = { name: "bo" };
+console.log(JSON.stringify(v)); // {"name":"bo"}
+console.log(update(v, { deletedAt: null })); // { name: 'bo', deletedAt: null }
+```
+
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
-  missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
+  missing), except for an `a?: T | null` field of an object type, which records whether the key
+  was there. A `JsonValue` always tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
   never evaluated). Parentheses end a chain: `(x?.a).b` needs `x?.a` to be non-null.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
@@ -532,22 +560,37 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **Generic object types** are structural, as in TypeScript: an instance is the object type it
+  spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
+  the instance of a generic interface with only fields.
+
+```ts
+type Box<T> = { v: T };
+
+function box<T>(v: T): Box<T> {
+  return { v };
+}
+
+const b: { v: string } = box("hi"); // `Box<string>` is `{ v: string }`
+console.log(b.v); // hi
+```
+
 - **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
   (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without
   `readonly`, in both directions, and stays the same object.
 - **Utility types** build an object type from a concrete one (an object type, an interface
   with only fields, or a class or struct, whose public fields are used):
-  `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
+  `Partial<T>` (every field optional), `Required<T>` (no field optional),
   `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
   `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
   (`"id" | "email"`). In `Pick` a name that is not a field is an error; in `Omit` it is a
   warning, as TypeScript accepts it (so `type WithoutChildren<P> = Omit<P, "children">` works
   on types without `children`). The results are ordinary object types: `Pick<User, "name">`
-  *is* `{ name: string }`, and declaration order doesn't matter. Differences from TypeScript:
-  `Required` also removes `null` from fields written `a: T | null` (in Velt `a?: T` is
-  `T | null`, #418); an operator on a type parameter (`Partial<T>` in a generic function) is
-  not supported yet (#350); and a type can't apply one to itself in its own fields
+  *is* `{ name: string }`, and declaration order doesn't matter. As in TypeScript, `Required`
+  removes only the `?`: a field written `a: T | null`, or `a?: T | null`, stays nullable.
+  Differences from TypeScript: an operator on a type parameter (`Partial<T>` in a generic
+  function) is not supported yet (#350); and a type can't apply one to itself in its own fields
   (`interface Node { patches: Partial<Node>[] }`).
 
 ```ts

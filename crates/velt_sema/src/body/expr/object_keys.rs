@@ -4,11 +4,11 @@
 //! - `Object.keys(x)` accepts any object, as in TypeScript (issue #230), and returns a
 //!   `string[]`: a record's keys in insertion order (`r.__keyNames()`), or the field names of an
 //!   object type, struct or class instance in declaration order (base class fields first, as
-//!   JS defines them). The names are known statically; only an optional field of a struct
-//!   (`b?: T`) is tested at run time, and listed when it is not null, as `JSON.stringify` writes
-//!   it. A class field is always listed, optional or not, as TS-compiled classes define every
-//!   field. An object type's `b?: T` is the type `T | null` (sema keeps no separate optional
-//!   flag), so its fields are always listed, as `JSON.stringify` and `console.log` show them.
+//!   JS defines them). The names are known statically; only an optional field of a struct or
+//!   object type (`b?: T`) is tested at run time, and listed while it is present, as
+//!   `JSON.stringify` writes it: not null, or for `b?: T | null` its presence flag (a present
+//!   `null` is listed). A class field is always listed, optional or not, as TS-compiled classes
+//!   define every field.
 //! - `Object.values(r)` / `Object.entries(r)` keep one value type, so they need a `Record`
 //!   (an object literal is read as one, `record_literal.rs`).
 //!
@@ -28,10 +28,12 @@ use crate::hir::{self, AdtKind, DefId, ExprKind as H, PatKind as P, TyId, TyKind
 /// What to use instead of `Object.values` / `Object.entries` on an object that is not a record.
 const ONE_VALUE_TYPE_NOTE: &str = "they return one value type, so they need a `Record<K, V>`; list an object's keys with `Object.keys`, or keep values of different types in a `Record<string, V>` whose `V` is a union or `JsonValue`";
 
-/// A key of an object type: its name, and whether it is listed only when not null.
+/// A key of an object type: its name, whether it is listed only while present, and whether its
+/// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
 struct Key {
     name: String,
     optional: bool,
+    presence: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -244,6 +246,7 @@ impl FnCx<'_, '_> {
                     .map(|f| Key {
                         name: f.name.clone(),
                         optional: false,
+                        presence: false,
                     })
                     .collect()
             });
@@ -268,7 +271,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The keys of a value bound to `l`, testing the optional ones: `["a", ...(<keys>.b !=
-    /// null ? ["b"] : [])]`.
+    /// null ? ["b"] : [])]`, with a presence field's flag (`FieldPresent`, bound to a temporary
+    /// first) instead of the null test.
     fn present_keys(
         &mut self,
         l: hir::LocalId,
@@ -281,6 +285,11 @@ impl FnCx<'_, '_> {
             name: name.clone(),
             span,
         };
+        self.push_scope();
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name, l);
+        }
+        let mut lets = vec![];
         let elems = keys
             .iter()
             .map(|k| {
@@ -299,14 +308,17 @@ impl FnCx<'_, '_> {
                     },
                     span,
                 );
-                let present = synth(
-                    ast::ExprKind::Binary {
-                        op: ast::BinaryOp::NotEq,
-                        lhs: Box::new(field),
-                        rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
-                    },
-                    span,
-                );
+                let present = match k.presence {
+                    true => self.presence_flag(&field, &k.name, span, &mut lets),
+                    false => synth(
+                        ast::ExprKind::Binary {
+                            op: ast::BinaryOp::NotEq,
+                            lhs: Box::new(field),
+                            rhs: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Null), span)),
+                        },
+                        span,
+                    ),
+                };
                 let cond = ast::ExprKind::Cond {
                     cond: Box::new(present),
                     then: Box::new(synth(ast::ExprKind::Array(vec![lit]), span)),
@@ -316,13 +328,29 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let array = synth(ast::ExprKind::Array(elems), span);
-        self.push_scope();
-        if let Some(scope) = self.f.scopes.last_mut() {
-            scope.names.insert(name, l);
-        }
         let h = self.expr(&array, Some(str_array), Want::Move);
         self.pop_scope();
-        h
+        self.with_lets(lets, h)
+    }
+
+    /// `FieldPresent(<field>)` bound to a temporary in the current scope, and the name that
+    /// reads it.
+    fn presence_flag(
+        &mut self,
+        field: &ast::Expr,
+        key: &str,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> ast::Expr {
+        let place = self.expr(field, None, Want::Borrow);
+        let b = self.cx.ty.bool_;
+        let flag = self.intrinsic(hir::Intrinsic::FieldPresent, vec![place], b, span);
+        let name = format!("<present@{}:{key}>", span.lo);
+        let read = self.temp(&name, flag, lets);
+        if let (H::Local(local, _), Some(scope)) = (&read.kind, self.f.scopes.last_mut()) {
+            scope.names.insert(name.clone(), *local);
+        }
+        synth(ast::ExprKind::Ident(ast::Ident { name, span }), span)
     }
 
     /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
@@ -346,6 +374,7 @@ impl FnCx<'_, '_> {
             .map(|f| Key {
                 name: f.name.clone(),
                 optional: f.optional && !class,
+                presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
             });
         Some(keys.collect())
     }

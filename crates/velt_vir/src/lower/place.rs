@@ -10,6 +10,7 @@ use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
 use super::sequence::may_write;
+use super::types::VariantAt;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 
@@ -149,22 +150,30 @@ impl FnLower<'_, '_> {
         }
     }
 
-    pub(super) fn unwrap_some(&mut self, inner: &hir::Expr, mode: UseMode) -> Operand {
+    /// The payload (of type `ty`) of the option `inner`. When `ty` is the option type itself
+    /// (a generic `U | null` at a nullable `U`, `TyTable::intern`), that is the value itself.
+    pub(super) fn unwrap_some(&mut self, inner: &hir::Expr, mode: UseMode, ty: TyId) -> Operand {
         let oty = self.sub(inner.ty);
-        if mode == UseMode::Move && self.through_counted(inner, oty) {
-            let v = self.unwrap_some(inner, UseMode::Borrow);
+        let pty = if self.sub(ty) == oty {
+            oty
+        } else {
             let TyKind::Option(pty) = self.cx.kind(oty) else {
                 ice("unwrap of a non-option")
             };
+            pty
+        };
+        if mode == UseMode::Move && self.through_counted(inner, oty) {
+            let v = self.unwrap_some(inner, UseMode::Borrow, ty);
             let s = self.share_value(v, pty);
             return self.own_value(s, pty);
         }
         let v = self.expr(inner);
         let p = self.place_of(v, oty);
         self.check_narrowed_field(inner, &p, oty);
-        let payload = self.some_payload(&p, oty);
-        let TyKind::Option(pty) = self.cx.kind(oty) else {
-            ice("unwrap of a non-option")
+        let payload = if pty == oty {
+            p.clone()
+        } else {
+            self.some_payload(&p, oty)
         };
         self.move_payload(inner, &p, &payload, pty, mode)
             .unwrap_or(Operand::Copy(payload))
@@ -199,15 +208,23 @@ impl FnLower<'_, '_> {
         mode: UseMode,
     ) -> Operand {
         let ety = self.sub(inner.ty);
+        let at = self.variant_at(inner.ty, variant, ety);
         if mode == UseMode::Move && self.through_counted(inner, ety) {
             let v = self.unwrap_variant(inner, variant, UseMode::Borrow);
-            let pty = self.cx.variant_tys(ety, variant)[0];
+            let pty = match at {
+                VariantAt::Index(i) => self.cx.variant_tys(ety, i)[0],
+                VariantAt::Whole => ety,
+            };
             let s = self.share_value(v, pty);
             return self.own_value(s, pty);
         }
         let v = self.expr(inner);
         let p = self.place_of(v, ety);
-        let (payload, pty) = self.variant_part(&p, ety, variant, 0);
+        let (payload, pty) = match at {
+            VariantAt::Index(i) => self.variant_part(&p, ety, i, 0),
+            // The union collapsed to this member: the value itself.
+            VariantAt::Whole => (p.clone(), ety),
+        };
         if self.cx.is_unit(pty) {
             // A zero-sized payload (a literal member like `"mid"`) has no field to read.
             return unit();
@@ -306,12 +323,19 @@ impl FnLower<'_, '_> {
                 let oty = self.sub(inner.ty);
                 let p = self.place_expr_with(inner, pre);
                 self.check_narrowed_field(inner, &p, oty);
-                self.some_payload(&p, oty)
+                if self.sub(e.ty) == oty {
+                    p
+                } else {
+                    self.some_payload(&p, oty)
+                }
             }
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
-                self.variant_part(&p, ety, *variant, 0).0
+                match self.variant_at(expr.ty, *variant, ety) {
+                    VariantAt::Index(i) => self.variant_part(&p, ety, i, 0).0,
+                    VariantAt::Whole => p,
+                }
             }
             K::Downcast(inner) => {
                 let p = self.place_expr_with(inner, pre);
@@ -350,6 +374,7 @@ impl FnLower<'_, '_> {
         let ty = self.sub(place.ty);
         let shared = self.through_counted(place, ty);
         let p = self.place_expr_with(place, &mut pre);
+        let flag = self.presence_place(place, &p);
         if shared && self.cx.needs_drop(ty) {
             // Other owners see the place: store first, then drop the old value (its `dispose`
             // may reach the place's container and must find it consistent).
@@ -365,7 +390,26 @@ impl FnLower<'_, '_> {
         } else {
             self.store(p, v);
         }
+        // A write to a `presence` field makes it present.
+        if let Some(fp) = flag {
+            self.assign(fp, Rvalue::Use(FnLower::ctrue()));
+        }
         unit()
+    }
+
+    /// The presence flag of the `presence` field the HIR `place` (at VIR place `p`) names.
+    pub(super) fn presence_place(&mut self, place: &hir::Expr, p: &Place) -> Option<Place> {
+        let hir::ExprKind::Field { base, index, .. } = &place.kind else {
+            return None;
+        };
+        let bt = self.sub(base.ty);
+        let slot = self.cx.presence_slot(bt, *index)?;
+        let mut fp = p.clone();
+        match fp.proj.last_mut() {
+            Some(Proj::Field(f)) => *f = slot,
+            _ => ice("presence of a field place without a field projection"),
+        }
+        Some(fp)
     }
 
     /// Assigning a field that was moved out of a local re-initializes it (nothing to drop).

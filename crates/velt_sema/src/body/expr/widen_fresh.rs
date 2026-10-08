@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
         }
         let mut out = vec![];
         for t in tys {
-            let (f, g) = (self.cx.ty.subst(t, &xs), self.cx.ty.subst(t, &ys));
+            let (f, g) = (self.cx.subst(t, &xs), self.cx.subst(t, &ys));
             if !self.converts_to(f, g) {
                 return None;
             }
