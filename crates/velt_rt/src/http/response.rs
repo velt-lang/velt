@@ -8,20 +8,18 @@
 //! (never contended: one handler builds one response).
 //!
 //! The text body is handed to hyper without copying (the caller's value is left empty), and a
-//! default `content-type` is added unless one was set. Header values a server sends on every
-//! response are interned (`interned.rs`).
+//! default `content-type` is added unless one was set. Header names and values a server sends on
+//! every response are interned (`interned.rs`).
 
 use super::body::RespBody;
-use super::interned::header_value;
+use super::interned::{header_name, header_value};
 use super::take_text;
 use crate::bytes::VeltBytes;
 use crate::registry::{Key, Registry};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use bytes::Bytes;
-use hyper::header::{
-    HeaderMap, HeaderName, HeaderValue, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-};
+use hyper::header::{HeaderMap, HeaderValue, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 
@@ -94,7 +92,7 @@ mod kind {
 unsafe fn append_headers(list: &VeltStrArray, map: &mut HeaderMap) -> Option<()> {
     let len = list.len as usize;
     for i in (0..len.saturating_sub(1)).step_by(2) {
-        let name = HeaderName::from_bytes((*list.ptr.add(i)).as_bytes()).ok()?;
+        let name = header_name((*list.ptr.add(i)).as_bytes()).ok()?;
         let value = header_value((*list.ptr.add(i + 1)).text_lossy().as_bytes()).ok()?;
         map.append(name, value);
     }
