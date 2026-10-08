@@ -42,9 +42,35 @@ pub unsafe extern "C" fn velt_rt_str_index_of(
 /// (`str::find`'s Two-Way, `memmem`) costs more to set up than such a search (`url.indexOf("/")`).
 const SHORT_NEEDLE: usize = 4;
 
+/// Below this many bytes a byte is found eight at a time ([`find_byte_short`]): `memchr`'s
+/// dispatch costs more than such a search (a URL, a header value).
+const SHORT_HAY: usize = 32;
+
+/// The first position of `b` in `hay`, which is shorter than [`SHORT_HAY`]: eight bytes per
+/// step, with the classic test for a zero byte in `word ^ (b × 0x01…01)`.
+fn find_byte_short(hay: &[u8], b: u8) -> Option<usize> {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    let pattern = LO * b as u64;
+    let mut at = 0;
+    while at + 8 <= hay.len() {
+        let word = u64::from_le_bytes(hay[at..at + 8].try_into().expect("ICE: 8 bytes"));
+        let x = word ^ pattern;
+        let zero = x.wrapping_sub(LO) & !x & HI;
+        if zero != 0 {
+            return Some(at + (zero.trailing_zeros() / 8) as usize);
+        }
+        at += 8;
+    }
+    hay[at..].iter().position(|&c| c == b).map(|i| at + i)
+}
+
 /// The first position of the non-empty `needle` in `hay`.
 fn find_short(hay: &[u8], needle: &[u8]) -> Option<usize> {
     let (first, rest) = (needle[0], &needle[1..]);
+    if rest.is_empty() && hay.len() < SHORT_HAY {
+        return find_byte_short(hay, first);
+    }
     let mut at = 0;
     while let Some(i) = memchr::memchr(first, &hay[at..]) {
         let p = at + i;

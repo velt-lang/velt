@@ -436,3 +436,38 @@ fn short_needles_match_js() {
         assert_eq!(got, want.to_string(), "{s:?}.indexOf({n:?}, {from})");
     }
 }
+
+#[test]
+fn one_byte_needles_in_short_strings_match_a_plain_scan() {
+    // Lengths around the 8-byte steps and the short-string limit, the byte at every position
+    // (and twice, and bytes whose neighbours differ by one bit or are 0x80 apart).
+    for len in 0..40usize {
+        for at in 0..=len {
+            let mut bytes = vec![b'x'; len];
+            if at < len {
+                bytes[at] = b'/';
+            }
+            if at + 3 < len {
+                bytes[at + 3] = b'/';
+            }
+            if at > 0 {
+                bytes[at - 1] = b'.';
+            }
+            let text = String::from_utf8(bytes).unwrap();
+            for from in [0i64, 1, 7, 8, 9] {
+                let want = text
+                    .bytes()
+                    .enumerate()
+                    .skip(from as usize)
+                    .find(|&(_, b)| b == b'/')
+                    .map_or(-1, |(i, _)| i as i64);
+                // SAFETY: `text` outlives `borrowed`.
+                let borrowed = unsafe { VeltStr::borrowed(text.as_ptr(), text.len()) };
+                for s in [&borrowed, &*heap(&text)] {
+                    let got = unsafe { velt_rt_str_index_of(s, &lit("/"), from) };
+                    assert_eq!(got, want, "{text:?}.indexOf(\"/\", {from})");
+                }
+            }
+        }
+    }
+}
