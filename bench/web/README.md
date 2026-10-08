@@ -7,7 +7,8 @@ predecessor (plaintext, JSON and an in-memory fortunes page).
 
 ```
 db/init.sql, db/db.sh   Postgres 17 in Docker (container velt-web-pg) with World + Fortune
-velt/server.vlt        std/http + std/postgres (createPool)
+velt/server.vlt        std/http + std/postgres (createPool); the routes are in velt/app.ts
+velt-tsx/server.vlt    the same routes, the fortunes page in TSX (velt:jsx, precompiled)
 node/server.mjs         node:http + pg (Pool); CLUSTER=1: node:cluster, one worker per core
 bun/server.ts           Bun.serve + Bun.SQL (Bun's built-in Postgres client)
 go/main.go              net/http + pgx/v5 (pgxpool)
