@@ -1,0 +1,14 @@
+// Process glue: arguments in, output to stdout, messages to stderr, the exit code out.
+import { args } from "velt:process";
+import { execute } from "./app";
+
+async function main(): Promise<i32> {
+  return await execute(
+    args(),
+    process.env.NO_COLOR != null,
+    (s) => {
+      process.stdout.write(s);
+    },
+    (s) => console.error(s),
+  );
+}

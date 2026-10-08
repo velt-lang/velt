@@ -1,0 +1,105 @@
+// A search worker: takes files from the walk, searches each, and sends the formatted output of
+// every file with a match to the printer. Output is formatted here, in parallel, so the printer
+// only writes.
+import { Channel } from "velt:channel";
+import { readFileSync } from "velt:fs";
+import { LineMatch, Matcher } from "./matcher";
+import { Options } from "./options";
+import { FileJob } from "./walk";
+
+/// One worker's report for one file; `done` marks the worker's last message.
+export type Report = { text: string; matches: i64; bytes: i64; done: bool };
+
+const RESET = "\u001b[0m";
+const PATH = "\u001b[35m";
+const LINE = "\u001b[32m";
+const HIT = "\u001b[1;31m";
+
+function paint(color: bool, code: string, s: string): string {
+  return color ? `${code}${s}${RESET}` : s;
+}
+
+function highlight(m: LineMatch, color: bool): string {
+  if (!color || m.spans.length === 0) {
+    return m.text;
+  }
+  let out = "";
+  let at: i64 = 0;
+  for (const sp of m.spans) {
+    out += m.text.slice(at, sp.start);
+    out += paint(true, HIT, m.text.slice(sp.start, sp.end));
+    at = sp.end;
+  }
+  out += m.text.slice(at);
+  return out;
+}
+
+/// The output for `path` given its matching lines.
+export function format(path: string, found: LineMatch[], opts: Options): string {
+  const name = paint(opts.color, PATH, path);
+  if (opts.filesWithMatches) {
+    return `${name}\n`;
+  }
+  if (opts.count) {
+    return `${name}:${found.length}\n`;
+  }
+  let out = opts.heading ? `${name}\n` : "";
+  for (const m of found) {
+    const num = paint(opts.color, LINE, `${m.line}`);
+    out +=
+      opts.heading
+        ? `${num}:${highlight(m, opts.color)}\n`
+        : `${name}:${num}:${highlight(m, opts.color)}\n`;
+  }
+  if (opts.heading) {
+    out += "\n";
+  }
+  return out;
+}
+
+/// Searches the text of one file; null when it has no match or isn't text.
+export function searchText(
+  path: string,
+  text: string,
+  matcher: Matcher,
+  opts: Options,
+): Report | null {
+  // Text with NUL bytes is treated as binary, like grep.
+  if (text.includes("\u0000")) {
+    return null;
+  }
+  const limit = opts.filesWithMatches ? 1 : opts.maxCount;
+  const found = matcher.lines(text, limit);
+  if (found.length === 0) {
+    return null;
+  }
+  return { text: format(path, found, opts), matches: found.length as i64, bytes: 0, done: false };
+}
+
+/// Searches files from `jobs` until it is closed and drained.
+export async function searchWorker(
+  opts: Options,
+  jobs: Channel<FileJob>,
+  out: Channel<Report>,
+): Promise<void> {
+  const matcher = new Matcher(opts.pattern, {
+    fixed: opts.fixed,
+    ignoreCase: opts.ignoreCase,
+    word: opts.word,
+  });
+  let bytes: i64 = 0;
+  for await (const job of jobs) {
+    let text: string;
+    try {
+      text = readFileSync(job.path);
+    } catch (e) {
+      continue; // not UTF-8 (binary), or unreadable
+    }
+    bytes += job.size;
+    const r = searchText(job.path, text, matcher, opts);
+    if (r != null) {
+      await out.send(r);
+    }
+  }
+  await out.send({ text: "", matches: 0, bytes, done: true });
+}

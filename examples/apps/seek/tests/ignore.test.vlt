@@ -1,0 +1,50 @@
+import { globToRegex, isIgnored, parseIgnore, RuleCache } from "../src/ignore";
+import { parseOptions } from "../src/options";
+
+function ignored(gitignore: string, path: string, isDir: bool = false): bool {
+  return isIgnored(parseIgnore("", gitignore), new RuleCache(), path, isDir);
+}
+
+export function test_globs() {
+  assertEq(globToRegex("*.log"), "[^/]*\\.log");
+  assertEq(globToRegex("a/**/b"), "a/(?:.*/)?b");
+}
+
+export function test_names_match_at_any_depth() {
+  assert(ignored("*.log", "debug.log"));
+  assert(ignored("*.log", "a/b/debug.log"));
+  assert(!ignored("*.log", "debug.txt"));
+  assert(ignored("node_modules", "web/node_modules", true));
+}
+
+export function test_slashes_anchor_to_the_gitignore_directory() {
+  assert(ignored("/build", "build", true));
+  assert(!ignored("/build", "src/build", true));
+  assert(ignored("docs/*.md", "docs/a.md"));
+  assert(!ignored("docs/*.md", "x/docs/a.md"));
+}
+
+export function test_directory_only_rules_and_negation() {
+  assert(ignored("target/", "target", true));
+  assert(!ignored("target/", "target", false));
+  assert(!ignored("*.log\n!keep.log", "keep.log"));
+  assert(ignored("# comment\n\n*.tmp", "x.tmp"));
+}
+
+export function test_nested_gitignore_applies_below_its_directory() {
+  const rules = parseIgnore("pkg", "dist");
+  const cache = new RuleCache();
+  assert(isIgnored(rules, cache, "pkg/dist", true));
+  assert(!isIgnored(rules, cache, "dist", true));
+}
+
+export function test_options() {
+  const o = parseOptions(["-i", "-t", ".rs", "-t", "md", "foo", "src", "docs"], false)!;
+  assertEq(o.pattern, "foo");
+  assertEq(o.roots, ["src", "docs"]);
+  assert(o.ignoreCase && o.color);
+  assertEq(o.types, ["rs", "md"]);
+  assert(!parseOptions(["foo"], true)!.color);
+  assert(parseOptions([], false) == null);
+  assertEq(parseOptions(["--files"], false)!.roots, ["."]);
+}
