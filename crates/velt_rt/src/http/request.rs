@@ -46,12 +46,33 @@ pub struct ReqObj {
     upgrade: u64,
 }
 
+/// HTTP/2 may split `cookie` into one field per crumb (RFC 9113 §8.2.3); join them back with
+/// `"; "` into one field, as Node does, so `headers.get("cookie")` reads as over HTTP/1.1
+/// (where the general `", "` join would corrupt the cookie list).
+fn join_cookies(headers: &mut hyper::HeaderMap) {
+    let crumbs: Vec<&[u8]> = headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .map(|v| v.as_bytes())
+        .collect();
+    if crumbs.len() < 2 {
+        return;
+    }
+    let joined = crumbs.join(&b"; "[..]);
+    if let Ok(v) = hyper::header::HeaderValue::from_bytes(&joined) {
+        headers.insert(hyper::header::COOKIE, v);
+    }
+}
+
 impl ReqObj {
     /// Read a hyper request including its whole body; `None` if the body could not be read.
     /// `upgrade` is the key of its parked upgrade, 0 if none. Boxed right away, so the (large)
     /// parts are not moved again on their way to the handler.
     pub async fn read(req: Request<Incoming>, upgrade: u64) -> Option<Box<ReqObj>> {
-        let (parts, body) = req.into_parts();
+        let (mut parts, body) = req.into_parts();
+        if parts.version == hyper::Version::HTTP_2 {
+            join_cookies(&mut parts.headers);
+        }
         // Most requests (GET) have no body: skip the collecting future.
         let body = if body.is_end_stream() {
             Bytes::new()
@@ -159,4 +180,24 @@ pub unsafe extern "C" fn velt_rt_http_req_body_bytes(req: ReqHandle, out: *mut V
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_drop(req: ReqHandle) {
     REQUESTS.remove(req);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_cookies;
+    use hyper::header::{HeaderMap, HeaderValue, COOKIE};
+
+    #[test]
+    fn http2_cookie_crumbs_are_joined_with_semicolons() {
+        let mut h = HeaderMap::new();
+        h.append(COOKIE, HeaderValue::from_static("a=1"));
+        h.append(COOKIE, HeaderValue::from_static("b=2"));
+        join_cookies(&mut h);
+        assert_eq!(h.get_all(COOKIE).iter().count(), 1);
+        assert_eq!(h.get(COOKIE).unwrap(), "a=1; b=2");
+        let mut one = HeaderMap::new();
+        one.insert(COOKIE, HeaderValue::from_static("a=1"));
+        join_cookies(&mut one);
+        assert_eq!(one.get(COOKIE).unwrap(), "a=1");
+    }
 }

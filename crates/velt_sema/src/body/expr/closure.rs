@@ -18,7 +18,7 @@
 //! (`LocalDef::mutable` records the modification instead; see `crate::ownership`).
 //! Capture modes that depend on inferred mutation are finalized by `crate::ownership`.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 use velt_syntax::ast;
 
 use super::closure_sig::Expected;
@@ -168,10 +168,12 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
-        if is_async {
-            self.no_mutated_captures(&frame);
+        let mutated = if is_async {
             self.no_captured_generators(&frame);
-        }
+            mutated_captures(&frame)
+        } else {
+            vec![]
+        };
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
         let err = self.closure_error(def, declared_err, &frame, clause);
@@ -181,7 +183,9 @@ impl FnCx<'_, '_> {
         } else {
             body_ret
         };
-        self.cx.fn_info_mut(def).escaping = escaping || is_async;
+        let info = self.cx.fn_info_mut(def);
+        info.escaping = escaping || is_async;
+        info.mutated_captures = mutated;
         self.finish_closure(Checked {
             def,
             frame,
@@ -212,25 +216,6 @@ impl FnCx<'_, '_> {
                 init: Some(init),
             },
             span: p.name.span,
-        }
-    }
-
-    /// Async closures run as tasks, possibly on another thread and after the enclosing function
-    /// has moved on: mutating a captured variable would be a data race (or lost), so it is an
-    /// error; shared state goes through `shared` (docs/reference/async.md).
-    pub(super) fn no_mutated_captures(&mut self, frame: &Frame) {
-        for c in &frame.captures {
-            let Some(at) = c.mutated_at else { continue };
-            let name = frame.locals[c.inner.0 as usize].name.clone();
-            self.cx.error(
-                Diagnostic::error(
-                    format!("cannot mutate captured variable `{name}` in a spawned task (async closure)"),
-                    at,
-                )
-                .with_note(format!(
-                    "tasks may run concurrently on other threads; share it with `shared` instead: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
-                )),
-            );
         }
     }
 
@@ -412,6 +397,7 @@ impl FnCx<'_, '_> {
             is_generator: generator.is_some(),
             self_ty: None,
             captures,
+            shares_captures: false,
             body: hir::Body { locals, block },
             throws: None,
             span,
@@ -488,4 +474,18 @@ fn closure_assigned_in(
         }
     };
     crate::body::closure_assigned::owned(assigned)
+}
+
+/// The captured variables an async closure's body modifies, with the first place each is
+/// modified. They are only allowed when the closure stays on its task
+/// (`crate::ownership::local_async`).
+fn mutated_captures(frame: &Frame) -> Vec<(String, Span)> {
+    frame
+        .captures
+        .iter()
+        .filter_map(|c| {
+            let at = c.mutated_at?;
+            Some((frame.locals[c.inner.0 as usize].name.clone(), at))
+        })
+        .collect()
 }

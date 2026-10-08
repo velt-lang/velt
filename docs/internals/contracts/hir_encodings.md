@@ -30,6 +30,10 @@ Maintainer-owned, like hir.rs.
 - Function values (`TyKind::FnPtr`) are closures: `{ code: Ptr, env: Ptr }`; `env` is null for
   named functions. `ExprKind::Closure(def)` captures per `FnDef::captures`: Borrow/BorrowMut
   captures store pointers (non-escaping closures), Copy/Owned captures store values (escaping).
+  A non-escaping closure is a direct call argument, called immediately, or the initializer of a
+  `StmtKind::Let` whose local is used only as the callee of `Callee::Indirect` calls in the same
+  (non-async, non-generator) function (`const f = () => this.n; f()`): its env may live in the
+  frame, and a call through the local borrows the captured variables.
   An Owned capture with `Capture::share` stores a share (`Intrinsic::Share` semantics) and
   leaves the enclosing local initialized (a shared value still used after the closure is created;
   see "Sharing"). A capture whose local is `LocalDef::boxed` stores the cell pointer instead.
@@ -110,7 +114,10 @@ Maintainer-owned, like hir.rs.
 - `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are `T | null`
   fields with a `null` default.
 - An async closure clones its owned captures into each promise it creates (it may be called many
-  times, e.g. as an HTTP handler); borrowed captures are read from its env.
+  times, e.g. as an HTTP handler); borrowed captures are read from its env. A local async
+  closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
+  instead gives each promise another reference to its owned captures (a share, as a generator
+  closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
   (init, poll, drop, state_size, state_align, env).
 - Sema rejects: JSON of maps without `string` keys / functions / interface values, and
@@ -400,6 +407,11 @@ Maintainer-owned, like hir.rs.
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such
   elements instead of moving them.
+  `Intrinsic::MayAlias(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type borrowed by a call can be reached through another reference while
+  the call runs (lowering counts the type or borrows values of it inside counted objects, so
+  params of it are never `noalias`). The array callback methods re-check the length after a
+  callback only then.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no

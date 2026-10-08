@@ -1,6 +1,8 @@
 // Async errors are typed: a promise's type carries what it can reject with
 // (`Promise<T, E>`), so awaiting a direct call, a stored promise, a spawned task, or
 // `Promise.all` rethrows the error with its type.
+import { channel, Channel } from "velt:channel";
+
 class Timeout extends Error {
   ms: i64;
 
@@ -33,6 +35,12 @@ async function slow(ms: i64): Promise<string> throws Timeout {
     }
     throw e;
   }
+}
+
+// `fetchValue(ms)` once `gate` receives a value or is closed.
+async function fetchAfter(gate: Channel<bool>, ms: i64): Promise<i64> {
+  await gate.receive();
+  return await fetchValue(ms);
 }
 
 async function report(p: Promise<i64, Timeout | Refused>): Promise<string> {
@@ -71,11 +79,11 @@ async function main() {
   } catch (e) {
     console.log("all failed:", e.message);
   }
-  // The first rejection in time wins. The two failing tasks are far apart: a spawned task
-  // starts (and starts its timer) when a worker first runs it, which can be late on a busy
-  // machine.
-  const tasks: Promise<i64, Timeout | Refused>[] = [];
-  for (const ms of [20, 40, 500]) {
+  // The first rejection in time wins, not the first in the array: the task in slot 0 can only
+  // reject after `main` saw the join fail (tasks have no order among themselves otherwise).
+  const gate = channel<bool>(1);
+  const tasks: Promise<i64, Timeout | Refused>[] = [spawn(fetchAfter(gate, 500))];
+  for (const ms of [20, 40]) {
     tasks.push(spawn(fetchValue(ms)));
   }
   try {
@@ -83,6 +91,7 @@ async function main() {
   } catch (e) {
     console.log("joined failed:", e.message);
   }
+  gate.close();
   const ok: Promise<i64, Timeout | Refused>[] = [spawn(fetchValue(1)), fetchValue(3)];
   console.log("joined", await Promise.all(ok));
   const job = async (): Promise<i64> => {

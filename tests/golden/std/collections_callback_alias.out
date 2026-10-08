@@ -1,0 +1,4 @@
+Deque forEach 4 value-0-:52,value-1-:52,value-2-:52,value-3-:52
+Set forEach 22 23 value-0-:52,value-1-:52,value-3-:52,value-10:54
+SortedMap forEach 53 53 k0=value-0-:52,k1=value-1-:52,a10=value-21:54,a11=value-21:54
+SortedMap forEach a9=value-20:54,k2=value-2-:52,k3=replaced:8,z=value-30:54

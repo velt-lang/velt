@@ -89,6 +89,7 @@ fn getter_def(
         is_generator: false,
         self_ty: Some(self_ty),
         captures: vec![],
+        shares_captures: false,
         body: hir::Body {
             locals: vec![LocalDef {
                 name: "this".into(),

@@ -22,5 +22,8 @@ async function main() {
   console.log(await res.text(), payload.length, payload[0]);
   const req = new Request(`${base}/echo`, { method: "PUT", body: payload });
   console.log(await (await fetch(req)).text());
+  // A byte body's leading byte order mark is not text, as in JS.
+  const bom: u8[] = [239, 187, 191, 104, 105];
+  console.log(JSON.stringify(await new Response(bom).text()), bom.length);
   await server.shutdown();
 }

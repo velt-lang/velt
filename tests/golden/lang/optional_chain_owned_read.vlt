@@ -1,0 +1,25 @@
+// check: no leaks
+// A value read through `?.` into a variable of its own is another reference to it: the object
+// it was read from keeps its own and releases it when it goes away (a heap string read with
+// `rec?.state` was moved out of `rec`, which then released it a second time).
+type Inner = { name: string };
+type Rec = { state: string; etag: string; inner: Inner; tags: string[] };
+
+function show(s: string | null): string {
+  return s ?? "-";
+}
+
+function main() {
+  const n = 3;
+  const rec: Rec | null = {
+    state: `a heap string, state number ${n}`,
+    etag: `etag ${n}`,
+    inner: { name: `inner name ${n}` },
+    tags: [`tag ${n}`],
+  };
+  const stored = rec?.state;
+  const name = rec?.inner.name;
+  const tag = rec?.tags[0];
+  console.log(show(stored), name, tag);
+  console.log(rec?.state, rec?.etag, rec?.inner.name, rec?.tags);
+}

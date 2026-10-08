@@ -1,0 +1,26 @@
+// @jsxImportSource ./_jsx_events
+
+// Extending std/jsx's `IntrinsicElements` with an intersection (#384): `onClick` is accepted
+// on `<button>` and `<input>`, std's own attributes and the `style` object form still are,
+// and the handlers render nothing on the server.
+
+import { renderToStringSync } from "velt:jsx";
+
+function main() {
+  let clicks = 0;
+  const page = (
+    <div class="card" style={{ fontSize: 14, color: "teal", lineHeight: 1.5 }}>
+      <button
+        type="button"
+        onClick={() => {
+          clicks++;
+        }}
+      >
+        Add
+      </button>
+      <input name="q" value="velt" onInput={() => {}} />
+      <section style="margin:0">panel</section>
+    </div>
+  );
+  console.log(renderToStringSync(page));
+}

@@ -55,6 +55,8 @@ impl Ctx<'_> {
                 throws,
             } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
             ast::TypeExprKind::Union(parts) => self.resolve_union(t, parts, env),
+            ast::TypeExprKind::Intersection(parts) => self.resolve_intersection(t, parts, env),
+            ast::TypeExprKind::Indexed { object, key } => self.resolve_indexed(object, key, env),
             ast::TypeExprKind::Literal(l) => match self.lit_value_of(l, t.span) {
                 Some(v) => self.lit_type(v),
                 None => self.ty.error,
@@ -404,6 +406,7 @@ impl Ctx<'_> {
     /// A type without a name of its own (a union or an anonymous object type).
     fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
+            || self.brand_base(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }

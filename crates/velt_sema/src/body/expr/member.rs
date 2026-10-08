@@ -278,6 +278,7 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
+        let obj = self.unbrand(obj);
         let obj = self.widen_literal_receiver(obj, &prop.name);
         if prop.name == "length" {
             let t = obj.ty;
@@ -434,9 +435,23 @@ impl FnCx<'_, '_> {
         self.mk(kind, ety, span)
     }
 
-    pub(crate) fn cast(&mut self, expr: &ast::Expr, ty: &ast::TypeExpr, span: Span) -> hir::Expr {
+    pub(crate) fn cast(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         let target = self.resolve(ty);
+        if let Some(base) = self.cx.brand_base(target) {
+            return self.brand_cast(expr, target, base, want, span);
+        }
         let inner = self.expr(expr, None, Want::Borrow);
+        // `id as string`: a brand's value as its primitive.
+        let inner = match self.cx.brand_base(inner.ty) == Some(target) {
+            true => return self.unbrand(inner),
+            false => inner,
+        };
         // A literal type casts as its base type (`k as f64` with `k: 1 | 2`).
         let inner = self.widen_value(inner);
         let src = inner.ty;
@@ -454,6 +469,39 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.mk(H::Cast(Box::new(inner)), target, span)
+    }
+
+    /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to
+    /// it, such as a literal), keeping the value.
+    fn brand_cast(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        base: TyId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let inner = self.expr(expr, Some(base), want);
+        let inner = self.unbrand(inner);
+        match self.try_coerce(inner, base) {
+            Ok(mut h) => {
+                h.ty = target;
+                h
+            }
+            Err(h) => {
+                let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                self.cx.error(
+                    Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span).with_note(
+                        format!(
+                            "`{d}` is a branded `{}`: only a `{}` can be branded",
+                            self.cx.display(base),
+                            self.cx.display(base)
+                        ),
+                    ),
+                );
+                self.error_expr(span)
+            }
+        }
     }
 
     /// Enum without payloads (casts to its discriminant).

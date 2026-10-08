@@ -1,0 +1,155 @@
+// check: no leaks
+// A compound assignment whose right-hand side reallocates (or replaces) what holds its target:
+// the target's object and index are evaluated first, then the right-hand side, and the write
+// goes to that object's element where it is now (#580). Strings read the old value first.
+class R {
+  out: string = "a";
+}
+
+class P {
+  v: number = 1;
+}
+
+type Pt = { x: number };
+
+function grow(xs: number[]): number {
+  for (let i = 0; i < 1000; i++) {
+    xs.push(i);
+  }
+  return 7;
+}
+
+function growP(ps: P[]): number {
+  for (let i = 0; i < 1000; i++) {
+    ps.push(new P());
+  }
+  return 7;
+}
+
+function growPt(ps: Pt[]): number {
+  for (let i = 0; i < 1000; i++) {
+    ps.push({ x: i });
+  }
+  return 7;
+}
+
+function growS(ss: string[]): string {
+  for (let i = 0; i < 1000; i++) {
+    ss.push(`s${i}`);
+  }
+  return "!";
+}
+
+function bitwise() {
+  const a: number[] = [5, 6];
+  a[0] += a.pop()!;
+  console.log(a.length, a[0]);
+  const b: number[] = [3];
+  b[0] |= grow(b);
+  console.log(b.length, b[0]);
+  const c: number[] = [3];
+  c[0] ^= grow(c);
+  console.log(c.length, c[0]);
+  const d: number[] = [3];
+  d[0] **= grow(d);
+  console.log(d.length, d[0]);
+  const ns: (number | null)[] = [null, 1];
+  const grow2 = (): number => {
+    for (let i = 0; i < 1000; i++) {
+      ns.push(i);
+    }
+    return 4;
+  };
+  ns[0] ??= grow2();
+  ns[1] ??= grow2();
+  console.log(ns.length, ns[0], ns[1]);
+}
+
+function strings() {
+  let s = "a";
+  const g = (): string => {
+    s = "zz";
+    return "!";
+  };
+  s += g();
+  console.log(s);
+  const r = new R();
+  const h = (): string => {
+    r.out = "yy";
+    return "?";
+  };
+  r.out += h();
+  console.log(r.out);
+  const rows: R[] = [new R()];
+  const k = (): string => {
+    rows[0].out = "q";
+    for (let i = 0; i < 100; i++) {
+      rows.push(new R());
+    }
+    return "#";
+  };
+  rows[0].out += k();
+  console.log(rows[0].out, rows.length);
+  const names: string[] = ["n"];
+  const more = (): string => {
+    names[0] = "m";
+    for (let i = 0; i < 100; i++) {
+      names.push("x");
+    }
+    return "+";
+  };
+  names[0] += more();
+  console.log(names[0], names.length);
+}
+
+function main() {
+  const xs: number[] = [1, 2, 3];
+  xs[0] += grow(xs);
+  console.log(xs.length, xs[0]);
+
+  const ys: number[] = [1, 2, 3];
+  ys[1] = grow(ys);
+  console.log(ys.length, ys[1]);
+
+  const zs: number[] = [1, 2, 3];
+  let i = 0;
+  zs[i] -= grow(zs);
+  zs[i + 1] *= grow(zs);
+  console.log(zs.length, zs[0], zs[1]);
+
+  const ps: P[] = [new P()];
+  ps[0].v += growP(ps);
+  console.log(ps.length, ps[0].v);
+
+  const pts: Pt[] = [{ x: 1 }];
+  pts[0].x += growPt(pts);
+  console.log(pts.length, pts[0].x);
+  pts[0].x = growPt(pts);
+  console.log(pts.length, pts[0].x);
+
+  const ss: string[] = ["a"];
+  const grow2 = (): string => growS(ss);
+  ss[0] += grow2();
+  console.log(ss.length, ss[0]);
+
+  const m = new Map<string, Pt>();
+  m.set("k", { x: 1 });
+  const fill = (): number => {
+    for (let j = 0; j < 1000; j++) {
+      m.set(`k${j}`, { x: j });
+    }
+    return 5;
+  };
+  m.get("k")!.x += fill();
+  console.log(m.size, m.get("k")!.x);
+
+  const ws: number[] = [1, 2, 3];
+  const idx = (): number => {
+    grow(ws);
+    return 0;
+  };
+  ws[idx()]++;
+  console.log(ws.length, ws[0]);
+  bitwise();
+  strings();
+}

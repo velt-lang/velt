@@ -6,7 +6,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | Path | Role |
 |---|---|
 | `prelude/*.vlt` | Implicitly imported into every module. |
-| `prelude/global/*.vlt` | Globals loaded on demand: only re-exports, loaded (and then part of the prelude) when a non-std module mentions one of the names (`fetch.vlt`: `fetch Headers Request Response AbortController AbortSignal`; `url.vlt`: `URL URLSearchParams`). std modules import what they use. |
+| `prelude/global/*.vlt` | Globals loaded on demand: only re-exports, loaded (and then part of the prelude) when a non-std module mentions one of the names without importing or declaring it itself (`fetch.vlt`: `fetch Headers Request Response AbortController AbortSignal`; `url.vlt`: `URL URLSearchParams`). std modules import what they use. |
 | `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
 | `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
 | `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
@@ -83,7 +83,9 @@ handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]
 ## Performance notes
 Std code is monomorphized and inlined like user code, so write plain index loops.
 - Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
-- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow).
+- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
+  other references may reach the array, lowering passes a share of the element instead, so a
+  callback that pushes onto the array or pops it cannot leave its argument dangling).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
   element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
   buffer (the stable sort, std/sort/stable.vlt) move raw elements with

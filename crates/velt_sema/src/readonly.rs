@@ -18,11 +18,16 @@ use crate::visit;
 
 /// Replace every readonly object type in the finished program by its plain twin.
 pub(crate) fn erase(cx: &mut Ctx) {
-    if cx.readonly_twins.is_empty() {
+    if cx.readonly_twins.is_empty() && cx.brands.is_empty() {
         return;
     }
     let twins = cx.readonly_twins.clone();
+    // A branded type is its primitive from here on (`crate::brands`).
     let mut cache: HashMap<TyId, TyId> = HashMap::new();
+    for (&d, &base) in &cx.brands {
+        let brand = cx.ty.intern(TyKind::Adt(d, vec![]));
+        cache.insert(brand, base);
+    }
     let Ctx {
         ty, defs, impls, ..
     } = cx;

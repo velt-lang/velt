@@ -110,6 +110,9 @@ pub(super) struct Facts {
     projections: HashSet<(TyId, TyId)>,
     /// Object types compared by identity (`==`, same.rs).
     identity: HashSet<TyId>,
+    /// Value types a callee may change in place while it borrows them out of an array other
+    /// references reach (stabilize.rs): counted, so the borrow can share the value itself.
+    identity_borrows: HashSet<TyId>,
     /// Types of values transferred to another thread as a whole (transfers.rs).
     transfers: HashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
@@ -133,6 +136,12 @@ impl Cx<'_> {
     /// Record that values of the object type `t` are compared by identity.
     pub(super) fn note_identity(&mut self, t: TyId) {
         self.facts.identity.insert(t);
+    }
+
+    /// Record that a value of type `t` (one of `in_place_parts`) may be changed in place by a
+    /// callee while it is borrowed out of an array other references reach.
+    pub(super) fn note_identity_borrow(&mut self, t: TyId) {
+        self.facts.identity_borrows.insert(t);
     }
 
     /// Record that function values are compared by identity.
@@ -200,6 +209,8 @@ impl Cx<'_> {
             .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
             .collect();
         next.identity_dyns.extend(dyns);
+        next.boxes
+            .extend(self.facts.identity_borrows.iter().copied());
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         let mut seen = HashSet::new();
         loop {

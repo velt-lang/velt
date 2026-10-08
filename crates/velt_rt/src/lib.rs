@@ -21,6 +21,7 @@ pub mod db_json;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
 pub mod dev;
+pub mod drop_depth;
 pub mod entry;
 pub mod fmt;
 pub mod fnv;

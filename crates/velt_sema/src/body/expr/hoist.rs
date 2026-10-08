@@ -55,6 +55,23 @@ impl FnCx<'_, '_> {
         stmts.push(hir::Stmt { kind, span });
     }
 
+    /// Binds a share of the string `cur` (a read of the place being updated) to a temporary
+    /// (appended to `stmts`), and returns that temporary: the read happens there, before the
+    /// right-hand side runs.
+    pub(super) fn hoist_value(&mut self, cur: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+        let (ty, span) = (cur.ty, cur.span);
+        let tmp = self.new_local("<current>", ty, false, span, LocalKind::Temp);
+        let init = self.intrinsic(hir::Intrinsic::Share, vec![cur], ty, span);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: tmp,
+                init: Some(init),
+            },
+            span,
+        });
+        self.mk(H::Local(tmp, UseMode::Move), ty, span)
+    }
+
     /// `e` after the statements `stmts` (as a block when there are any).
     pub(super) fn with_temps(&mut self, mut stmts: Vec<hir::Stmt>, e: hir::Expr) -> hir::Expr {
         if stmts.is_empty() {
@@ -85,6 +102,19 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), ty, span)
+    }
+
+    /// Does `place` go through an array element or an object that is a value (`rows[i].out`,
+    /// `f().out`), where a call may reallocate or replace what holds it?
+    pub(super) fn through_element(place: &hir::Expr) -> bool {
+        match &place.kind {
+            H::Index { .. } => true,
+            H::Field { base, .. } => !is_place(base) || Self::through_element(base),
+            H::UnwrapSome(base, _) | H::UnwrapVariant { expr: base, .. } | H::Downcast(base) => {
+                Self::through_element(base)
+            }
+            _ => false,
+        }
     }
 
     /// Does `place` go through an object that is a value rather than a place (`f().n`)? A

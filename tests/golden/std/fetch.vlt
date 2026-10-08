@@ -89,6 +89,20 @@ async function client(base: string) {
   const jt = Response.json([1], { headers: { "content-type": "application/problem+json" } });
   console.log(jt.headers.get("content-type"));
 
+  // Smaller details: a response without a body reads any number of times, a used request can't
+  // be sent again, and only HTTP whitespace is trimmed from header values.
+  const none = new Response(null);
+  console.log(JSON.stringify(await none.text()), JSON.stringify(await none.text()), none.bodyUsed);
+  const once = new Request(`${base}/echo`, { method: "POST", body: "once" });
+  console.log(await (await fetch(once)).text(), once.bodyUsed);
+  try {
+    await fetch(once);
+  } catch (e) {
+    console.log(e.message);
+  }
+  const spaced = new Headers({ "x-s": "  v 	" });
+  console.log(JSON.stringify(spaced.get("x-s")));
+
   // No response at all.
   try {
     await fetch("http://127.0.0.1:1/");

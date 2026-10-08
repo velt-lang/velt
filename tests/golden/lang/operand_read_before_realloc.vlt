@@ -1,0 +1,59 @@
+// check: no leaks
+// An operand that reads an array element is read before a later operand runs, as in JS, even
+// when that operand reallocates the array (#580): `xs[0] + grow(xs)` read the element through
+// its old address after `grow` had freed the buffer.
+class P {
+  v: number = 3;
+}
+
+type Pt = { x: number };
+
+function grow(xs: number[]): number {
+  for (let i = 0; i < 1000; i++) {
+    xs.push(i);
+  }
+  return 6;
+}
+
+function growP(ps: P[]): number {
+  for (let i = 0; i < 1000; i++) {
+    ps.push(new P());
+  }
+  return 6;
+}
+
+function growPt(ps: Pt[]): number {
+  for (let i = 0; i < 1000; i++) {
+    ps.push({ x: i });
+  }
+  return 6;
+}
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+function main() {
+  const a: number[] = [3];
+  console.log(a[0] + grow(a), a[0] * grow(a), a.length);
+  const b: number[] = [3];
+  console.log(add(b[0], grow(b)));
+  const c: number[] = [3];
+  console.log(c[0], grow(c));
+  const d: number[] = [3];
+  const arr = [d[0], grow(d)];
+  console.log(arr[0], arr[1]);
+  const e: number[] = [3];
+  const o = { x: e[0], y: grow(e) };
+  console.log(o.x, o.y);
+  const f: number[] = [3];
+  const t: [number, number] = [f[0], grow(f)];
+  console.log(t[0], t[1]);
+  const ps: P[] = [new P()];
+  console.log(ps[0].v + growP(ps));
+  const pts: Pt[] = [{ x: 3 }];
+  const r = [pts[0], { x: growPt(pts) }];
+  console.log(r[0].x, r[1].x, pts[0].x + growPt(pts));
+  const g: number[] = [3];
+  console.log(`${g[0]} ${grow(g)}`, g[0] < grow(g));
+}

@@ -61,17 +61,25 @@ impl Found {
     }
 }
 
-/// Method `name` of struct/class `d` instantiated with `args`.
+/// Method `name` of struct/class `d` instantiated with `args`. Statics and instance members are
+/// separate namespaces, as in TypeScript: a static method of a subclass does not hide an
+/// inherited instance method of the same name. A static method is the answer only when no
+/// instance method has the name (so the caller can say it is static).
 pub(crate) fn lookup_method(cx: &mut Ctx, d: DefId, args: &[TyId], name: &str) -> Option<Found> {
     let (mut d, mut args) = (d, args.to_vec());
+    let mut first_static = None;
     for _ in 0..64 {
-        let a = cx.adt(d)?;
+        let Some(a) = cx.adt(d) else { break };
         if let Some(m) = a.methods.get(name) {
-            return Some(Found::Class {
+            let found = Found::Class {
                 m: *m,
                 owner: d,
-                args,
-            });
+                args: args.clone(),
+            };
+            if !m.is_static {
+                return Some(found);
+            }
+            first_static.get_or_insert(found);
         }
         let (implements, base) = (a.implements.clone(), a.base);
         for b in implements {
@@ -91,8 +99,10 @@ pub(crate) fn lookup_method(cx: &mut Ctx, d: DefId, args: &[TyId], name: &str) -
                 implementor,
             });
         }
-        let base = cx.ty.subst(base?, &args);
-        (d, args) = cx.class_of(base)?;
+        let Some(base) = base else { break };
+        let base = cx.ty.subst(base, &args);
+        let Some(next) = cx.class_of(base) else { break };
+        (d, args) = next;
     }
-    None
+    first_static
 }

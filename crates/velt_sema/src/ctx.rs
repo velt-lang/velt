@@ -57,6 +57,10 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Branded type definitions → their primitive (`crate::brands`).
+    pub brands: HashMap<DefId, TyId>,
+    /// (primitive, object part) → the brand's definition.
+    pub brand_keys: HashMap<(TyId, TyId), DefId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: HashMap<DefId, DefId>,
     /// The reverse of `field_only`.
@@ -138,6 +142,14 @@ pub(crate) struct Ctx<'m> {
     /// the stack inferring return types may use above it (`body::returns::ret_of`).
     pub stack_base: usize,
     pub stack_budget: usize,
+    /// Closures held in a `const` and only called, and `const me = this`, may borrow instead of
+    /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
+    /// second check of a program the borrowing version rejects (`crate::check_with`).
+    pub held_borrows: bool,
+    /// Some closure or `const me = this` was made to borrow.
+    pub held_borrows_used: bool,
+    /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
+    pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -171,6 +183,8 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
+            brands: HashMap::new(),
+            brand_keys: HashMap::new(),
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
@@ -205,6 +219,9 @@ impl<'m> Ctx<'m> {
             overridden: HashSet::new(),
             stack_base: crate::stack_address(),
             stack_budget: crate::SEMA_STACK_BUDGET,
+            held_borrows: true,
+            held_borrows_used: false,
+            borrow_pass_errors: false,
             fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
@@ -481,6 +498,9 @@ impl<'m> Ctx<'m> {
     fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 32 {
             return false;
+        }
+        if let Some(base) = self.brand_base(t) {
+            return self.is_copy_depth(base, depth + 1);
         }
         match self.ty.kind(t).clone() {
             TyKind::Int(_)

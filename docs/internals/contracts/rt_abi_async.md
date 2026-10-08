@@ -69,6 +69,9 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
 | `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
 | `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
+| `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` (additive) |
+| `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down (additive) |
+| `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
@@ -158,8 +161,15 @@ compiler's layout: `payload` is the offset of the value after the `bool` present
 `T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
 through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
-sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
-`send` future owns (§13.5).
+sender still shares is deep-copied). No code pointers are stored except drop glue (§13.5): the
+`item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
+`item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
+Values still queued in a channel nobody drains, closed or not, are not dropped while the program
+runs (any copy of the handle may still receive them); when it ends (`main` returned and the
+remaining tasks settled) the runtime drops every item still
+queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
+counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
+it.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -393,11 +403,16 @@ arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are follo
 standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
 are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
 received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
-signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`).
+signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
+with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
+five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
+per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
+with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
+fails with `INVALID_DATA`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*` and `user-agent: velt` added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
+| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*`, `user-agent: velt` and `accept-encoding: gzip, deflate` (`br, gzip, deflate` for `https://`) added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
 | `velt_rt_http_fetch_resp_status` | `(VeltFetchResp r) -> u32` | |
 | `velt_rt_http_fetch_resp_status_text` | `(VeltFetchResp r, VeltStr* out)` | the server's reason phrase, else the standard one, else `""` |
 | `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
@@ -405,6 +420,7 @@ signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMED
 | `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
 | `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
 | `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
+| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
 | `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
 
 ## 8. Process
@@ -796,8 +812,11 @@ one state layout, so all of them change together; `env` stays). In dev builds th
 Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
 store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
-flight (a join's or a spawned task's result, a channel item being sent): it matches that value's
-layout, which a swap doesn't change, and it goes away with the value.
+flight (a join's or a spawned task's result, a channel item being sent) or with the values a
+channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
+matches the values' layout, which a swap doesn't change (a changed layout restarts the program),
+and old code is never freed, so the pointer stays callable after a swap. A value's drop glue goes
+away with the value; a channel's lives as long as the channel.
 
 
 ## 14. Standard library breadth (stream std-net; additive)

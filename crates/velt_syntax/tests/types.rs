@@ -73,3 +73,31 @@ fn function_types_with_throws() {
         "(async arrow (): Promise<void> throws E {0 stmts})",
     );
 }
+
+#[test]
+fn intersection_types() {
+    assert_eq!(alias_ty("A & B"), "(A & B)");
+    assert_eq!(alias_ty("A & B & { c: i64 }"), "(A & B & {c: i64})");
+    // `&` binds tighter than `|`, and may lead like `|`.
+    assert_eq!(alias_ty("A & B | C"), "((A & B) | C)");
+    assert_eq!(alias_ty("A | B & C"), "(A | (B & C))");
+    assert_eq!(alias_ty("(A | B) & C"), "((A | B) & C)");
+    assert_eq!(alias_ty("& A & B"), "(A & B)");
+    assert_eq!(alias_ty("(A & B)[]"), "(A & B)[]");
+    assert_eq!(
+        alias_ty("string & { __brand: \"Id\" }"),
+        "(string & {__brand: \"Id\"})"
+    );
+    // A cast keeps its restricted grammar: `x as A & B` is a bitwise and.
+    check("x as i64 & m", "(& (as x i64) m)");
+}
+
+#[test]
+fn indexed_access_types() {
+    assert_eq!(alias_ty("T[\"k\"]"), "T[\"k\"]");
+    assert_eq!(alias_ty("T[\"a\" | \"b\"]"), "T[(\"a\" | \"b\")]");
+    assert_eq!(alias_ty("T[\"k\"][]"), "T[\"k\"][]");
+    assert_eq!(alias_ty("A & B[\"k\"]"), "(A & B[\"k\"])");
+    // Only string keys: `T[]` stays an array type.
+    assert_eq!(alias_ty("T[]"), "T[]");
+}

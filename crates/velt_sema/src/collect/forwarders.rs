@@ -139,6 +139,7 @@ pub(super) fn synth_method(
         is_generator: false,
         self_ty: Some(self_ty),
         captures: vec![],
+        shares_captures: false,
         body,
         throws: None,
         span,

@@ -20,13 +20,13 @@ impl FnLower<'_, '_> {
             }
             return Operand::Copy(obj);
         }
-        let ops: Vec<Operand> = fields.iter().map(|f| self.consume(f)).collect();
+        let ops = self.consume_each(fields);
         self.build_agg(ty, ops)
     }
 
     pub(super) fn tuple(&mut self, es: &[hir::Expr], ty: TyId) -> Operand {
         let ty = self.sub(ty);
-        let ops: Vec<Operand> = es.iter().map(|e| self.consume(e)).collect();
+        let ops = self.consume_each(es);
         self.build_agg(ty, ops)
     }
 

@@ -33,6 +33,9 @@ struct Moves<'a> {
     captures: &'a HashMap<DefId, Vec<Capture>>,
     /// Closures that are stored or returned (they capture by value).
     escaping: &'a HashSet<DefId>,
+    /// Non-escaping closures held in a local, by local (`crate::ownership::held_closures`):
+    /// each call through the local uses what the closure borrows.
+    held: HashMap<LocalId, DefId>,
     /// The local a `let` being checked binds (the holder of a closure literal initializer).
     holder: Option<LocalId>,
     /// The `let` locals of each block being checked (innermost last).
@@ -53,8 +56,10 @@ struct Moves<'a> {
     reused: HashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a HashMap<DefId, HashSet<LocalId>>,
-    /// Generator closures (`function*` expressions).
-    generators: &'a HashSet<DefId>,
+    /// Closures each call of which has a state of its own that shares the captured variables:
+    /// generator closures (`function*` expressions) and local async closures
+    /// (`FnDef::shares_captures`); true for generators.
+    generators: &'a HashMap<DefId, bool>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
@@ -105,10 +110,12 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .collect();
     let writers = writers(cx, &escaping);
     let async_captured = async_captured(cx);
-    let generators: HashSet<DefId> = escaping
+    let generators: HashMap<DefId, bool> = escaping
         .iter()
-        .copied()
-        .filter(|&d| matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if f.is_generator))
+        .filter_map(|&d| match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(f)) if f.is_generator || f.shares_captures => Some((d, f.is_generator)),
+            _ => None,
+        })
         .collect();
     let mut all = vec![];
     let mut out = Outcome::default();
@@ -131,6 +138,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             using,
             captures: &captures,
             escaping: &escaping,
+            held: crate::ownership::held_closures(cx, &f.body.block),
             in_step: false,
             holder: None,
             open: vec![],
@@ -208,10 +216,10 @@ fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<Lo
     out
 }
 
-/// `(function, local)` pairs captured by an async closure: such a variable keeps its own
-/// value per closure (async closures may run on other threads, and cells are not atomic). A
-/// generator closure's generators stay on the thread that creates them, so its captures may
-/// live in cells.
+/// `(function, local)` pairs captured by an async closure that may run on another thread: such
+/// a variable keeps its own value per closure (cells are not atomic). A local async closure
+/// (`FnDef::shares_captures`, `crate::ownership::local_async`) and a generator closure's
+/// generators stay on the task that creates them, so their captures may live in cells.
 fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
     let mut out = HashSet::new();
     for i in 0..cx.defs.len() {
@@ -227,7 +235,7 @@ fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
         cx.defs[i] = Some(Def::Fn(f));
         for c in closures {
             if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
-                if cf.is_async && !cf.is_generator {
+                if cf.is_async && !cf.is_generator && !cf.shares_captures {
                     let d = DefId(i as u32);
                     out.extend(cf.captures.iter().map(|cap| (d, cap.outer)));
                 }
@@ -341,9 +349,10 @@ impl Moves<'_> {
         self.boxed.contains(&l)
     }
 
-    /// A generator closure created here assigns enclosing variable `l` (module docs of
-    /// `crate::ownership::cells`): it lives in a cell, or, when it cannot, that is an error.
-    fn generator_writes(&mut self, l: LocalId, span: Span) {
+    /// A generator closure (`generator`) or a local async closure created here assigns
+    /// enclosing variable `l` (module docs of `crate::ownership::cells`): it lives in a cell,
+    /// or, when it cannot, that is an error.
+    fn generator_writes(&mut self, l: LocalId, span: Span, generator: bool) {
         let i = l.0 as usize;
         if self.boxable[i] {
             self.boxed.insert(l);
@@ -353,14 +362,16 @@ impl Moves<'_> {
             return;
         }
         let name = &self.locals[i].name;
+        let (what, calls) = match generator {
+            true => ("a generator function expression", "the generators"),
+            false => ("an async closure", "the closure's calls"),
+        };
         self.errors.push(
-            Diagnostic::error(
-                format!("a generator function expression cannot change `{name}` here"),
-                span,
-            )
-            .with_note(format!(
-                "TypeScript allows this; Velt doesn't because `{name}` is also captured by an async closure (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
-            )),
+            Diagnostic::error(format!("{what} cannot change `{name}` here"), span).with_note(
+                format!(
+                    "TypeScript allows this; Velt doesn't because `{name}` is also captured by an async closure that may run on another thread (or holds a promise), so it cannot be shared with {calls}; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
+                ),
+            ),
         );
     }
 

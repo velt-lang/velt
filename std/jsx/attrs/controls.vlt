@@ -1,77 +1,14 @@
 // std/jsx/attrs/controls: attribute types of form controls besides `<input>` and `<button>`
-// (internal; the global attributes are repeated from attrs/global.vlt, see there).
+// (each is `HtmlAttrs`, the global attributes from attrs/global.vlt, `&` its own; public as
+// `velt:jsx/attrs`).
+
+import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
 // `<label>`.
-export type LabelAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  for?: string;
-};
+export type LabelAttrs = HtmlAttrs & { for?: string };
 
 // `<meter>`.
-export type MeterAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type MeterAttrs = HtmlAttrs & {
   value?: string | i64 | f64;
   min?: string | i64 | f64;
   max?: string | i64 | f64;
@@ -81,77 +18,10 @@ export type MeterAttrs = {
 };
 
 // `<optgroup>`.
-export type OptgroupAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  disabled?: bool;
-  label?: string;
-};
+export type OptgroupAttrs = HtmlAttrs & { disabled?: bool; label?: string };
 
 // `<option>`.
-export type OptionAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type OptionAttrs = HtmlAttrs & {
   disabled?: bool;
   label?: string;
   selected?: bool;
@@ -159,116 +29,13 @@ export type OptionAttrs = {
 };
 
 // `<output>`.
-export type OutputAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  for?: string;
-  form?: string;
-  name?: string;
-};
+export type OutputAttrs = HtmlAttrs & { for?: string; form?: string; name?: string };
 
 // `<progress>`.
-export type ProgressAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
-  value?: string | i64 | f64;
-  max?: string | i64 | f64;
-};
+export type ProgressAttrs = HtmlAttrs & { value?: string | i64 | f64; max?: string | i64 | f64 };
 
 // `<select>`.
-export type SelectAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type SelectAttrs = HtmlAttrs & {
   autocomplete?: string;
   disabled?: bool;
   form?: string;
@@ -279,39 +46,7 @@ export type SelectAttrs = {
 };
 
 // `<textarea>` (its text is its children).
-export type TextareaAttrs = {
-  accesskey?: string;
-  autocapitalize?: string;
-  autocorrect?: string;
-  autofocus?: bool;
-  class?: string;
-  contenteditable?: bool | string;
-  dir?: string;
-  draggable?: string;
-  enterkeyhint?: string;
-  exportparts?: string;
-  hidden?: bool | string;
-  id?: string;
-  inert?: bool;
-  inputmode?: string;
-  is?: string;
-  itemid?: string;
-  itemprop?: string;
-  itemref?: string;
-  itemscope?: bool;
-  itemtype?: string;
-  lang?: string;
-  nonce?: string;
-  part?: string;
-  popover?: bool | string;
-  role?: string;
-  slot?: string;
-  spellcheck?: string;
-  style?: string;
-  tabindex?: string | i64 | f64;
-  title?: string;
-  translate?: string;
-  writingsuggestions?: string;
+export type TextareaAttrs = HtmlAttrs & {
   autocomplete?: string;
   cols?: string | i64 | f64;
   dirname?: string;

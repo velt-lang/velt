@@ -1,0 +1,6 @@
+redirected at b 200 OK <base>/b true
+redirected b text/plain; charset=utf-8 true true
+normalized at b 200 OK <base>/b false
+normalized b text/plain; charset=utf-8 true true
+missing nope 404 Not Found <base>/missing false
+missing null text/plain; charset=utf-8 true true

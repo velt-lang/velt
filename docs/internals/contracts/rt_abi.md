@@ -181,7 +181,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
-  heap buffers). Release runtimes compile the counters out; to count optimized code, link a
+  heap buffers), then `blocks=<allocated>/<freed>` and `channel leftovers=<n>` (values still
+  queued in channels when `main` returned, dropped by the runtime then; rt_abi_async.md §2.2).
+  Release runtimes compile the counters out; to count optimized code, link a
   release-built program against the debug runtime (`VELT_RT_LIB=<target>/debug/velt_rt.lib`).
 - `VELT_STDOUT_STATS=1` with a **debug** runtime prints `stdout stats: writes=<n>` to stderr at
   exit: how many times buffered stdout was written to the OS. Tests check buffering with it
@@ -240,9 +242,11 @@ drop function in their header releases one reference.
 e.g. every golden run) checks every allocation of the process (generated code and runtime alike):
 blocks carry a header and canaries and start filled with `0xCD`; a free checks for double
 frees, foreign pointers, a size different from the allocation's and overwritten canaries
-(overflow/underflow), fills the block with `0xDD` and keeps it in a quarantine (64 MiB) so a use
+(overflow/underflow), fills the block with `0xA5` and keeps it in a quarantine (64 MiB) so a use
 after free reads the poison instead of a reused block; a write after free is detected when the
-block leaves the quarantine. The first violation prints `velt debug-alloc: <what> (block …, size
+block leaves the quarantine, or when the program ends (`main` returned or `velt_rt_exit`) for
+the blocks still in it. The poison reads as a tiny `f64` and a non-canonical pointer, so a
+read-modify-write of a freed number changes its bytes and following a freed pointer faults. The first violation prints `velt debug-alloc: <what> (block …, size
 …)` to stderr and aborts. Release runtimes don't contain the check.
 
 ## Control [M1]

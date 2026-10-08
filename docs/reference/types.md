@@ -13,6 +13,7 @@
 | `{ a: T; b: U }` | anonymous object type |
 | classes, structs, interfaces | [Classes](classes.md) |
 | `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null) |
+| `A & B`, `T["k"]` | [intersections of object types](#intersection-types), [branded types](#branded-types), [indexed access](#indexed-access-types) |
 | `"up"`, `42`, `true` | [literal types](#literal-types) |
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
 | `Promise<T>`, `shared<T>`, `Mutex<T>` | async results and thread-safe shared values ([Async](async.md)) |
@@ -415,6 +416,104 @@ for (const s of shapes) {
   `class Node { kind: "node"; kids: Tree[] }`), because an alias cannot refer to itself.
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
+
+## Intersection types
+
+`A & B` is the object type with the fields of both `A` and `B`, as in TypeScript. The parts are
+object types: anonymous ones, aliases of them, interfaces with only fields, results of utility
+types, other intersections, and unions of these. `&` binds tighter than `|`
+(`A & B | C` is `(A & B) | C`), and a leading `&` is allowed like a leading `|`.
+
+```ts
+type Named = { name: string };
+type Aged = { age: number };
+type Person = Named & Aged; // { name: string; age: number }
+
+interface HasId {
+  id: string;
+}
+type Entity = HasId & { createdAt: number };
+type WithMeta<T> = T & { meta: string };
+
+const ada: Person = { name: "Ada", age: 36 };
+console.log(JSON.stringify(ada)); // {"name":"Ada","age":36}
+const e: Entity = { id: "e1", createdAt: 1700 };
+const n: Named = { name: "Grace" };
+const grace: Named & Aged = { ...n, age: 45 }; // spread builds one from the parts
+const w: WithMeta<{ x: number }> = { x: 3, meta: "m" };
+console.log(e.id, grace.age, w.meta); // e1 45 m
+```
+
+- **Fields** are the first part's, then the next part's new ones: the key order of
+  `{ ...a, ...b }`, so printing and `JSON.stringify` match Node.
+- **A field in several parts** gets the intersection of its types: the same type stays, object
+  types merge (`{ p: { x } } & { p: { y } }` has `p: { x; y }`), a literal type and its base
+  type give the literal, and union members that have no value in common drop out. The field is
+  optional only when it is optional in every part, and `readonly` only when it is `readonly` in
+  every part that has it (both as in TypeScript).
+- **Unions distribute**: `(Circle | Square) & { id: string }` is
+  `(Circle & { id: string }) | (Square & { id: string })`, a
+  [discriminated union](#discriminated-unions) that narrows as usual; `Shape & { kind: "circle" }`
+  keeps only the circle member, and `(A | null) & B` is `A & B`.
+- The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
+  type as the object type with those fields written out *in the same order*. Object types are
+  told apart by their field order for now, so `B & A` (or `{ b; a }`) is a different type from
+  `A & B`, and converting between them takes a copy, `{ ...ba }` (#651).
+- `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
+  the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
+  function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.
+- An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
+  give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
+
+Differences from TypeScript, each a compile error with a note on what to write instead:
+
+- When the parts have no value in common (`{ k: string } & { k: number }`, or two different
+  discriminants), TypeScript makes the type, or the field, `never`; Velt reports
+  ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
+- Classes and structs are not parts (Velt classes are nominal, not structural): use
+  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
+  (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
+- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
+  yet (#350). A generic alias works, since each use has concrete type arguments.
+- Interface declarations are not merged (#652): declare an interface once, or name the
+  combination with `&`.
+
+```ts error
+type Conflict = { k: string } & { k: number }; // error: no value has type ...
+```
+
+### Branded types
+
+A primitive `&` an object type (`string & { __brand: "UserId" }`) is a **branded type**: a
+nominal alias of the primitive, with no cost at run time. `x as UserId` brands a value; a
+branded value works wherever its primitive does (members, operators, `${}`, arguments, map
+keys); a plain `string`, or another brand of it, does not convert to the brand.
+
+```ts
+type UserId = string & { __brand: "UserId" };
+type Cents = number & { readonly __unit: "cents" };
+
+function greet(id: UserId): string {
+  return `user ${id}`;
+}
+
+const id = "u-42" as UserId;
+console.log(greet(id), id.length, id.toUpperCase()); // user u-42 4 U-42
+const price = 449 as Cents;
+console.log(price / 100); // 4.49
+```
+
+```ts error
+type UserId = string & { __brand: "UserId" };
+const id: UserId = "u-1"; // error: a plain `string` does not convert to it; brand a value with `x as UserId`
+```
+
+### Indexed access types
+
+`T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
+of the fields' types, as in TypeScript: `Person["name"]` is `string`. A key that is not a field
+is an error. The key is a string literal type or a union of them; on a type parameter it is not
+supported yet (#350).
 
 ## Enums
 

@@ -196,7 +196,12 @@ fn not_declared_before<'a>(
             args.iter().find_map(|a| not_declared_before(a, rest))
         }
         K::Array(e) => not_declared_before(e, rest),
-        K::Tuple(ts) | K::Union(ts) => ts.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => {
+            ts.iter().find_map(|a| not_declared_before(a, rest))
+        }
+        K::Indexed { object, key } => {
+            not_declared_before(object, rest).or_else(|| not_declared_before(key, rest))
+        }
         K::Function {
             params,
             ret,

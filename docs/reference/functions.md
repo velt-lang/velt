@@ -464,20 +464,49 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   and that parameter of the enclosing function becomes owned. Where that parameter cannot become
   owned (in a closure, or an overridden or interface method), this is the error
   ``cannot keep a copy of `next`, a borrowed function parameter``.
+- A closure held in a `const` that is only ever called (`const add = (n: number) => {
+  this.total += n; }; add(1); add(2);`) is non-escaping too: it captures by reference, sees
+  every later change of what it captures, and lives in the frame, so capturing `this` does not
+  make the class reference-counted. The compiler proves it: the closure's variable is used only
+  as `f(...)` (never copied, stored, returned, passed on or captured by another closure), the
+  enclosing function is not `async` or a generator, and no call runs while a reference into a
+  captured object is held (the call's own arguments do not use what it captures, and it is not
+  inside a `for...of` over such an object, a `match` on one, or next to an argument borrowing
+  one). Otherwise it is escaping, as below; the results are the same, only the cost differs.
+  Borrowing never makes a program an error: where a closure borrowing `this` (or `const me =
+  this`) would conflict with a caller's borrow, such as a `for...of` over `c.items` around a
+  `c.clear()` that replaces `items`, the closure and `me` share instead. The fallback is for
+  the whole program: one such conflict makes every held closure and every `const me = this` in
+  it share, as if none of them borrowed.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
   into the closure, so it is released (and disposed) when the closure is, even if other captures
   are still used afterwards. A variable that the closure or the enclosing code assigns
-  while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
+  while the other still uses it (`let count = 0; const incs = [() => { count++; }]; incs[0]();
   console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps
   a plain copy. A `for (let …)` loop's step runs on a fresh binding per iteration, as in JS. A
   closure passed to `push` is stored, so it is escaping too.
-- Async closures never modify captured variables, because they may run on another thread
-  ([Async](async.md#thread-safety)), and the enclosing code may not assign a variable an async
-  closure captured (``cannot assign to `k` after a stored closure captured it``): the closure
-  keeps its own copy.
+- An async closure that stays on the task that created it captures like any other escaping
+  closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
+  variables it captured, and every call sees the same objects and variables. Each call shares
+  the captured objects with the closure (a count increment, no copy), and a variable that the
+  closure assigns, or that the enclosing code assigns after creating it, lives in a cell. Every
+  call runs as a started promise on the caller's task, so it interleaves with the rest of the
+  task only at `await`s, never in parallel ([Async](async.md#promises)).
+- An async closure that may run on another thread copies what it captured for each call, and
+  may not modify a captured variable or object (``this async closure modifies captured `n`, so
+  it must stay on the task that created it``, with where it leaves its task); nor may the
+  enclosing code assign one it captured (``cannot assign to `k` after a stored closure captured
+  it``). The compiler proves which closures stay: one may leave when it is spawned
+  (`spawn(async () => …)`, `spawn(f())`, an argument of a spawned call), is an HTTP handler, goes
+  into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
+  is passed to (a generic one included), a variable holding it, a closure capturing it or a
+  task returning it does; when it is stored in an
+  object, array or map whose type reaches one of those places; and when it is passed directly to
+  a function value or an interface or overridden method, which may keep it. A timer callback
+  (`setTimeout`) runs as a spawned task, so it is one too.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {
@@ -503,4 +532,27 @@ let total = 0;
 const next = makeCounter();
 next();
 console.log(total, next(), apply((x) => x * 10, 5), scale([1.5]));   // 6 2 50 [ 3 ]
+```
+
+```ts
+class Ctx {
+  count: number = 0;
+}
+
+// The closure outlives `methods`, changes `ctx` and keeps `calls` in a cell.
+function methods(ctx: Ctx): (by: number) => Promise<number> {
+  let calls: number = 0;
+  return async (by: number): Promise<number> => {
+    calls += 1;
+    ctx.count += by;
+    await sleep(1);
+    return ctx.count * 100 + calls;
+  };
+}
+
+async function main() {
+  const ctx = new Ctx();
+  const inc = methods(ctx);
+  console.log(await Promise.all([inc(1), inc(2)]), ctx.count);   // [ 302, 302 ] 3
+}
 ```

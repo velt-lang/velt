@@ -286,6 +286,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         is_generator: f.is_generator,
         self_ty: f.this.as_ref().map(|t| t.ty),
         captures: vec![],
+        shares_captures: false,
         body: hir::Body {
             locals: frame.locals,
             block,

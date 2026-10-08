@@ -1,0 +1,56 @@
+// An async closure that modifies what it captured must stay on the task that created it
+// (#208). Each error names the modification and where the closure leaves its task: a spawned
+// call, a parameter that a helper spawns, an object that crosses holding it, a channel, a
+// function value that may keep it, and `shared(...)`.
+import { channel } from "velt:channel";
+
+class Jobs {
+  run: () => Promise<void>;
+  constructor(run: () => Promise<void>) {
+    this.run = run;
+  }
+}
+
+async function runJobs(jobs: Jobs): Promise<void> {
+  await jobs.run();
+}
+
+async function later(f: () => Promise<void>): Promise<void> {
+  await spawn(f());
+}
+
+async function main() {
+  let a = 0;
+  const f = async (): Promise<void> => {
+    a += 1;
+  };
+  await spawn(f());
+
+  let b = 0;
+  await later(async (): Promise<void> => {
+    b += 1;
+  });
+
+  let c = 0;
+  const jobs = new Jobs(async (): Promise<void> => {
+    c += 1;
+  });
+  await spawn(runJobs(jobs));
+
+  let d = 0;
+  const ch = channel<() => Promise<void>>();
+  await ch.send(async (): Promise<void> => {
+    d += 1;
+  });
+
+  let e = 0;
+  const take = (g: () => Promise<void>): void => {};
+  take(async (): Promise<void> => {
+    e += 1;
+  });
+
+  const counts = [0];
+  const s = shared(async (): Promise<void> => {
+    counts[0] = 1;
+  });
+}
