@@ -1,0 +1,86 @@
+// check: no leaks
+// A template literal reuses the buffer of its longest fresh part (a call's result of 1 KiB or
+// more that nothing else holds) instead of copying it into a new string. Every case prints what
+// a new string would hold; `no leaks` checks that the buffers balance.
+
+class Page {
+  constructor(public html: string) {}
+}
+
+// A heap string of `n` rows (`n * 12` bytes and more), built by `+=`, so it has spare room.
+function rows(n: i64): string {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += `<li>${i % 10}</li>\n`;
+  }
+  return s;
+}
+
+// The markup of a page object that is a temporary of the call: the template still gets the
+// only reference once the argument is dropped.
+function markup(p: Page): string {
+  return p.html;
+}
+
+// Keeps the strings it returns: a template's part from it is shared, so it is copied.
+class Store {
+  items: string[] = [];
+  kept(s: string): string {
+    this.items.push(s);
+    return s;
+  }
+}
+
+function lit(): string {
+  return "a literal returned by a function, longer than an inline string";
+}
+
+class Refused {
+  constructor(public why: string) {}
+}
+
+function fail(): string throws Refused {
+  throw new Refused("no");
+}
+
+function digest(s: string): string {
+  return `${s.length}:${s.slice(0, 12)}…${s.slice(s.length - 6)}`;
+}
+
+function main() {
+  const store = new Store();
+  const big = 120;
+  // A long fresh part after static text (the doctype case), before it, and in the middle.
+  console.log(digest(`<!DOCTYPE html>${markup(new Page(rows(big)))}`));
+  console.log(digest(`${rows(big)}</ul>`));
+  console.log(digest(`<ul start="${big}">${rows(big)}</ul>`));
+  // Short parts are copied.
+  console.log(`[${rows(2)}]`);
+  console.log(`[${"x".repeat(30)}]`);
+  // Several fresh parts: the longest is reused, the others are copied around it.
+  console.log(digest(`${rows(3)}|${rows(big)}|${rows(5)}`));
+  // A shared part (kept elsewhere), a literal, and a slice of another string.
+  console.log(digest(`<p>${store.kept(rows(big))}</p>`));
+  console.log(digest(`<p>${lit()}</p>`));
+  const whole = rows(big);
+  console.log(digest(`<p>${whole.slice(5, 1300)}</p>`));
+  // A part used twice in one template is shared between them.
+  const twice = rows(big);
+  console.log(digest(`${store.kept(twice)}${twice}`));
+  // Non-ASCII: a non-ASCII part with an ASCII head, an ASCII part with a non-ASCII head.
+  const wide = `${"ありがとう".repeat(100)}`;
+  console.log(digest(`[${wide.repeat(1)}]`), `[${wide.repeat(1)}]`.length);
+  console.log(digest(`é ${rows(big)}`), `é ${rows(big)}`.length);
+  // Numbers around the reused part.
+  const n = 42;
+  console.log(digest(`${n}${rows(big)}${n * 1.5}${n > 1}`));
+  // An empty fresh part and an empty template around one.
+  console.log(`[${"".repeat(3)}]`, `${rows(0)}`.length);
+  // A later part that throws: the fresh part evaluated before it is freed.
+  try {
+    console.log(`${rows(big)}${fail()}`);
+  } catch (e) {
+    console.log(`caught ${e.why}`);
+  }
+  console.log(store.items.length);
+}

@@ -18,9 +18,12 @@
 #                   VELT_STD, another checkout's compiler and std build this checkout's programs
 #   COUNT=valgrind  count instructions with valgrind's cachegrind (Linux without perf counters,
 #                   e.g. CI runners); the count doesn't depend on how busy the machine is
-#   VARIANTS        the variants to run (default: all six)
+#   VARIANTS        the variants to run (default: all ten)
 #   LABEL           the first column (default: this checkout)
 #   OUT             where the programs are built (default: target/bench-jsx)
+#   CG_OUT=<dir>    with COUNT=valgrind, keep each variant's cachegrind file there
+#                   (`<label>-<variant>.cg`), for a per-function diff:
+#                   `cg_annotate --diff $CG_OUT/x-hand.cg $CG_OUT/x-precompiled.cg`
 #
 # Needs: cargo, python3, git (for BASE), valgrind (for COUNT=valgrind).
 set -euo pipefail
@@ -30,6 +33,7 @@ ROOT=$(cd "$HERE/../.." && pwd)
 OUT=${OUT:-$ROOT/target/bench-jsx}
 mkdir -p "$OUT"
 export COUNT=${COUNT:-}
+[[ -n "${CG_OUT:-}" ]] && mkdir -p "$CG_OUT"
 
 PYTHON=$(command -v python3 || command -v python)
 if [[ -z "${VELT:-}" ]]; then
@@ -38,7 +42,7 @@ if [[ -z "${VELT:-}" ]]; then
   VELT=$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/Cargo.toml" |
     "$PYTHON" -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])')/release/velt
 fi
-read -r -a VARIANTS <<<"${VARIANTS:-hand precompiled generic rows-strings rows rows-render}"
+read -r -a VARIANTS <<<"${VARIANTS:-hand precompiled generic rows-strings rows rows-render shape-no-doctype shape-jsx-escape precompiled-no-doctype shape}"
 
 # measure <exe> <variant>: "<best ms> <instructions or ->" over RUNS runs.
 measure() {
@@ -52,7 +56,9 @@ for _ in range(runs):
     best = min(best, time.perf_counter() - t)
 instr = "-"
 if os.environ.get("COUNT") == "valgrind":
-    grind = ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null"]
+    cg = os.environ.get("CG_OUT")
+    keep = os.path.join(cg, f"{os.environ.get('CG_LABEL', 'run')}-{variant}.cg") if cg else "/dev/null"
+    grind = ["valgrind", "--tool=cachegrind", "--cache-sim=no", f"--cachegrind-out-file={keep}"]
     r = subprocess.run(grind + [exe, variant], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                        text=True, env=dict(os.environ, VELT_THREADS="1"))
     m = re.search(r"I\s+refs:\s+([\d,]+)", r.stderr)
@@ -113,7 +119,7 @@ for b in "${builds[@]}"; do
   label=${b%%|*}
   exe=${b#*|}
   for v in "${VARIANTS[@]}"; do
-    read -r ms instr < <(measure "$exe" "$v")
+    read -r ms instr < <(CG_LABEL=${label//[^A-Za-z0-9_.-]/_} measure "$exe" "$v")
     echo "| $label | $v | $ms | $instr |"
   done
 done

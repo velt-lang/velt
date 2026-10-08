@@ -560,15 +560,18 @@ Appended text lying in the target's own buffer (the target itself, a share, an u
 a static-form view of it) is copied out before the buffer grows, moves behind a header or has a
 surrogate pair joined at its end.
 
-**Invariant:** a count-1 buffer is appended to (and so possibly reallocated) only while no
-borrowed static-form view into it is live. The only such views today are the JSON reader's
-borrowed keys (§12.3), which point into the source text, and generated decode glue never
-appends to the text it is reading. Appended text may lie in the target's own buffer (a share,
-an uncounted copy or a static-form view of it): it is copied out before the buffer grows.
+**Invariant:** a count-1 buffer is appended to or adopted (and so possibly reallocated, and for
+an adoption its text moved within it) only while no borrowed static-form view into it is live.
+The only such views today are the JSON reader's borrowed keys (§12.3), which point into the
+source text; generated decode glue never appends to the text it is reading, and a template
+literal adopts only a call's result that it owns. Appended text may lie in the target's own
+buffer (a share, an uncounted copy or a static-form view of it): it is copied out before the
+buffer grows. An adopted string's head must not lie in its buffer.
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_strbuf_new` | `(u64 cap, VeltStrBuf* out)` | `cap` = initial capacity hint (≤ 23: starts inline, else allocates up front) |
+| `velt_rt_strbuf_adopt` | `(VeltStr* part, const VeltStr* head, u64 cap, VeltStrBuf* out) -> u8` | a builder holding `head + *part` in `part`'s own buffer, grown to `cap` (clamped like `new`'s hint): 1 when `part` is the only reference to a heap buffer of its own (not a slice, literal or inline string) whose layout fits the result, and `head` has no lone surrogate; `*out` is then the builder and `*part` empty. Otherwise 0 and nothing changes. `head` must not lie in `part`'s buffer. Template literals use it for a long fresh part |
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
