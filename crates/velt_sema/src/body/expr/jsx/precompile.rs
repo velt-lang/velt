@@ -9,7 +9,8 @@
 //! exports it.
 //!
 //! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`); with a
-//! `jsxSoleEmpty` export, an element's only `{expr}` child may render differently (`sole_child`).
+//! `jsxSoleEmpty` export, an element's only `{expr}` child may render differently (`sole_child`);
+//! with a `jsxList` export, `{xs.map((x) => <tr>…</tr>)}` builds strings (`list_fold`).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -82,6 +83,10 @@ impl FnCx<'_, '_> {
         tag: &str,
         tag_span: Span,
     ) -> hir::Expr {
+        let fold = self.jsx_list_fold == Some(el.span);
+        if fold {
+            self.jsx_list_fold = None;
+        }
         let mut t = Template {
             sep: p.text_separator.clone(),
             ..Template::default()
@@ -90,6 +95,11 @@ impl FnCx<'_, '_> {
             return self.error_expr(el.span);
         }
         self.end_string(p, pc, &mut t, el.span);
+        if fold && t.slots.is_empty() {
+            // A row of a folded list: its markup is the closure's result (`list_fold`).
+            self.jsx_list_folded = true;
+            return t.strings.pop().expect("ICE: one string without slots");
+        }
         if let (Some(f), true) = (pc.template_string, t.slots.is_empty()) {
             let [html] =
                 <[hir::Expr; 1]>::try_from(t.strings).expect("ICE: one string without slots");
@@ -189,6 +199,10 @@ impl FnCx<'_, '_> {
                 }
             }
             ast::JsxChild::Expr { expr: None, .. } => {}
+            ast::JsxChild::Expr {
+                expr: Some(e),
+                span,
+            } if self.list_fold(p, pc, e, *span, t) => {}
             ast::JsxChild::Expr { span, .. } | ast::JsxChild::Spread { span, .. } => {
                 let h = self.child_value(p, c, p.child);
                 self.dynamic_child(p, pc, h, *span, t);
@@ -225,6 +239,14 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(h.ty) || self.compatible(p.element, h.ty) {
             let h = self.coerce(h, p.element);
             return self.add_slot(p, pc, t, h);
+        }
+        if h.ty == self.cx.ty.i64 || h.ty == self.cx.ty.f64 {
+            // A number is written as `${n}`, as every provider renders it (no `jsxEscape`).
+            if t.sep.is_some() {
+                return t.run.push(TextPart::Number(h));
+            }
+            let s = self.number_text(h);
+            return self.add_part(t, s);
         }
         let (textness, may_be_empty) = match t.sep {
             Some(_) => (self.textness(&h), self.may_be_empty(&h)),
@@ -293,6 +315,13 @@ impl FnCx<'_, '_> {
             _ => self.concat_parts(parts, span),
         };
         t.strings.push(s);
+    }
+
+    /// `${h}` for a number `h`: digits, nothing to escape.
+    pub(super) fn number_text(&mut self, h: hir::Expr) -> hir::Expr {
+        let span = h.span;
+        let str_ = self.cx.ty.str_;
+        self.intrinsic(hir::Intrinsic::ToString, vec![h], str_, span)
     }
 
     /// `jsxEscape(h)`.

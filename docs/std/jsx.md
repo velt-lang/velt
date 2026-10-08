@@ -65,7 +65,9 @@ Rendering rules:
   kept as a list of string pieces that each element takes over from its children, so rendering
   copies the markup once (`renderToStream` writes the pieces into the response). Static markup
   is precompiled to constant strings, with dynamic text and attributes folded in through
-  template literals (`jsxTemplate`, `jsxTemplateString`, `jsxEscape`, `jsxAttr`);
+  template literals (`jsxTemplate`, `jsxTemplateString`, `jsxEscape`, `jsxAttr`), and a list
+  such as `{rows.map((r) => <tr>…</tr>)}` whose rows hold only markup and text is built from
+  strings (`jsxList`), as a hand-written template would be;
   `velt:jsx/generic/jsx-runtime` is the same provider without that mode
   (`/** @jsxImportSource velt:jsx/generic */`).
 

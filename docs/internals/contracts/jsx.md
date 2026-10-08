@@ -153,7 +153,8 @@ shape of Deno's precompile transform, with text folded into the strings):
 - a dynamic child whose type is assignable to `Text` and every dynamic attribute are folded into
   the surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` ``
   (template literals build in place, rt_abi_async.md §12.1, so a row costs what a hand-written
-  template costs);
+  template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}` without
+  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings;
 - every other dynamic part becomes an `Element` slot: components (`jsxComponent(C, props, …)`/
   `jsxAsyncComponent`), fragments, `Element`-typed expressions as they are, and any other
   `Child` (arrays, unions containing `Element`) as `Fragment([v], null)`;
@@ -163,7 +164,18 @@ shape of Deno's precompile transform, with text folded into the strings):
   ```ts
   function jsxTemplateString(html: string): Element;                 // optional: no slots, no arrays
   ```
-  which saves the two arrays per call: in a list, every row is such a subtree.
+  which saves the two arrays per call.
+- **Lists:** when the runtime also exports
+
+  ```ts
+  function jsxList(items: string[]): string;                         // optional: a list's rows
+  ```
+  and no `jsxTextSeparator`, a child `{xs.map((x) => <tr>…</tr>)}` (an array's `map` with an
+  arrow whose body is one intrinsic element, with no declared return type, spread or `key`) whose
+  row is a subtree without slots is written into the surrounding string as
+  `` ${jsxList(xs.map((x) => `<tr>…</tr>`))} ``: the rows are strings, not elements. `std/jsx`
+  joins them; a provider may add its own list markup. Any other list is a slot as before. The
+  source does not change, and nor does its type: the arrow is the compiler's.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
   wbr`, or the provider's `jsxVoidElements` when it exports them) have no closing tag; any
   other self-closing element is written `<x></x>`.
