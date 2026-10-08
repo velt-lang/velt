@@ -33,8 +33,9 @@ through one channel.
 - Close a channel when you're done with it. A closed channel is freed once it is drained. A
   channel abandoned with values still queued (one per connection, say) keeps them until the
   program ends, since any copy of the channel may still receive them; they are dropped only
-  then. To free them sooner, drain it: close it and receive until you get `null`. A channel
-  that is never closed lives until the program ends.
+  then (when `main` succeeds; on WebAssembly they are not dropped, the instance's memory goes
+  with it). To free them sooner, drain it: close it and receive until you get `null`. A
+  channel that is never closed lives until the program ends.
 
 ```ts
 import { channel, Channel, ChannelClosed } from "velt:channel";

@@ -9,7 +9,7 @@ helper), and explain it in your final report.
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
-| HIR | `crates/velt_sema/src/hir.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
+| HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify` | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
@@ -26,7 +26,9 @@ velt build main.vlt
       ├─ velt_syntax::parse_file       per file      → ast::Module
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_with (+ verify)              → vir::Program (with source locations)
-      ├─ velt_codegen_cl::emit_object                 → main.o / main.obj
+      ├─ velt_opt::optimize                           → vir::Program (release: all passes)
+      ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
+      │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
       └─ velt_link::link  (+ velt_rt staticlib)       → executable
 ```
 Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exit code 1 on errors.
@@ -59,11 +61,12 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 |---|---|
 | maintainers | contracts above, `tests/golden/**`, `CLAUDE.md`, `docs/**`, root `Cargo.toml` |
 | frontend | `crates/velt_syntax` (except `ast.rs`) |
-| semantics | `crates/velt_sema` (except `hir.rs`) |
+| semantics | `crates/velt_sema` (except `hir/`) |
 | ir | `crates/velt_vir` (except `vir.rs` data types — `Display` impl may be improved) |
-| codegen | `crates/velt_codegen_cl` |
+| optimizer | `crates/velt_opt` |
+| codegen | `crates/velt_codegen_cl`, `crates/velt_codegen_llvm` |
 | runtime | `crates/velt_rt`, `std/**` |
-| tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http` |
+| tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |

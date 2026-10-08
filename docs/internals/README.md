@@ -10,7 +10,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ velt_sema (resolve, types, ownership and mutation inference, typed errors) ─▶ HIR
       ─▶ velt_vir (monomorphize, layouts, drops, async state machines) ─▶ VIR
       ─▶ velt_opt (inline, constant folding, SROA, DCE, numrep, …)  [all of it in release builds]
-      ─▶ velt_codegen_cl (Cranelift: debug builds, JIT) | velt_codegen_llvm (LLVM IR → clang -O3)
+      ─▶ velt_codegen_cl (Cranelift: debug builds, JIT) | velt_codegen_llvm (LLVM IR → clang)
       ─▶ object file ─▶ velt_link (system linker) + velt_rt (runtime static library)
 ```
 
@@ -30,9 +30,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
-   The passes and their order are listed in `crates/velt_opt/src/lib.rs`: the inlining rounds
-   run `vtable_loads`, `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep`,
-   `divisions` and `dead_fills` run once each. Five change how objects and numbers are
+   The passes and their order are in `crates/velt_opt/src/lib.rs`: `dead_funcs` first, then
+   up to three rounds of `inline`, `const_fields`, and per function `vtable_loads`,
+   `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce` and `simplify_cfg`; then
+   `map_probe`, `numrep`, `divisions` and `dead_fills` once per function; then `noalias` and
+   `frame_slots`, each followed by a cleanup; `dead_funcs` again at the end. Five change how objects and numbers are
    represented or reached:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
@@ -55,10 +57,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      inlines it, and `heap_sroa` can keep the object in locals. It and `dead_fills` share `fresh`, the
      walk of the code right after an allocation.
 
-   Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined, and
-   `numrep`.
-6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
-   by clang `-O3` for release builds and WebAssembly.
+   Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined,
+   `numrep`, and removal of unused functions (`dead_funcs`).
+6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR,
+   compiled by clang (`-O3`, or `VELT_LLVM_OPT`, for release builds; unoptimized for `--backend
+   llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.
 
 The **runtime** (`velt_rt`) is a Rust static library: memory allocation (mimalloc), strings,
@@ -79,13 +82,17 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_codegen_llvm` | LLVM backend (textual IR, clang) |
 | `velt_link` | system linker driver, runtime discovery |
 | `velt_rt` | native runtime |
+| `velt_rt_shared` | the same runtime built as a shared library, which debug builds link against |
 | `velt_rt_wasm`, `velt_rt_host` | WebAssembly runtime; host-side mirror for tests |
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
 | `velt_doc` | API docs and the docs website |
 | `velt_tscompat` | `velt check --ts-compat`: the lint for code shared with TypeScript |
-| `vpm`, `velt_registry`, `velt_http` | package manager, registry server, HTTP client for registries |
+| `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
+| `vpm`, `velt_registry` | package manager, registry server |
+| `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
+| `xtask` | repository tooling: the quality gate and its check selection (`cargo xtask`) |
 
 ## Contracts
 
@@ -101,6 +108,8 @@ deliberate, reviewed change.
 | The CLI as tests rely on it | [contracts/cli.md](contracts/cli.md) |
 | The package manifest | [contracts/manifest.md](contracts/manifest.md) |
 | The sema query API for editors | [contracts/sema_ide.md](contracts/sema_ide.md) |
+| How TSX is lowered, and what a JSX provider exports | [contracts/jsx.md](contracts/jsx.md) |
+| Native libraries of packages | [contracts/native_abi.md](contracts/native_abi.md) |
 
 ## Design notes
 
@@ -108,6 +117,8 @@ Decisions and their rationale, including what is still planned:
 
 - [JavaScript semantics without a garbage collector](design/semantics.md): strings as values,
   hybrid promises, the staged move to shared references, cycles, the JS fidelity decisions.
+- [Semantics stage 2](design/semantics-stage2.md): objects, arrays, maps and closures as shared
+  references (implemented except the removal of `struct`).
 - [TypeScript alignment](design/ts-alignment.md): inferred mutation, discriminated unions, typed
   errors, `extend`.
 - [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
@@ -138,8 +149,10 @@ Decisions and their rationale, including what is still planned:
 ## Testing
 
 - Unit tests next to the code; cross-module tests in each crate's `tests/`.
-- **End-to-end tests** (`tests/golden/**`): every `.vlt` file with a `.out` (and optionally a
-  `.code` exit code) is compiled and run in debug and release modes, and its output compared.
+- **End-to-end tests** (`tests/golden/**`): every `.vlt` file with a `.out` (optionally a
+  `.code` exit code and a `.stderr` the run's stderr must contain) is compiled and run in debug
+  and release modes, and its output compared; one with a `.err` must fail to build with those
+  messages. `examples/*.vlt` with a `.out` are included.
   Directories marked `.pending` (such as `tests/golden/bugs/`, known bugs) are reported but
   don't fail the run.
 - **Documentation tests**: every `ts` code block in the user documentation is compiled

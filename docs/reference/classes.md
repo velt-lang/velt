@@ -118,10 +118,13 @@ hidden classes and no runtime shape checks.
   without running the class's `[Symbol.dispose]()`: like JavaScript, nothing disposes an
   object `new` never returned.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
-  overridden methods go through a vtable, and only where the static type is a base class.
+  overridden methods go through a vtable, and only where the static type is a base class. A
+  call on an object whose class is known from where it was allocated (`const s: Shape = new
+  Square()`) is usually made direct while the object has not been passed on.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
   there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
-  use the private members of its types, which is how std types build each other's handles;
+  use the private members of its types, which is how std types build each other's handles
+  (this covers `private` only: a `#x` name is usable only in its class's body, in std too);
   `console.log` shows private fields, as Node shows a TypeScript `private` field, except
   zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`

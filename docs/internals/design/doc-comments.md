@@ -109,7 +109,8 @@ an error: the doc comment of TypeScript code ported to Velt keeps its informatio
 Unchanged: the comment block at the very top of a file (after a `#!` line, if any), followed by a
 blank line or the end of the file, documents the module. It may be in any style (`//`, `///`,
 `/* */`, `/** */`), since there is no declaration it could be mistaken for. Tags in it are read
-too. Without the blank line, the block documents the first declaration instead.
+too. Without the blank line, a `/** */` or `///` block documents the first declaration instead,
+and plain comments document nothing.
 
 ## What the tools show
 
