@@ -1,10 +1,19 @@
 // The keyspace: one map per value type (strings, the hot path, need no tag check), expiry
-// times in a map of their own, checked on access and swept in the background.
+// times in an index of their own (src/structs.vlt), checked on access and swept in the
+// background.
 import { Deque } from "velt:collections/deque";
-import { Set } from "velt:collections/set";
+import { Expires, MemberSet, ZSet } from "./structs";
 
 /// A value of the wrong type for the command (`WRONGTYPE`), or a bad argument (`ERR …`).
-export class CommandError extends Error {}
+export class CommandError extends Error {
+  /// The reply text as bytes, when it quotes raw request bytes (the unknown-command error).
+  detail: u8[] | null;
+
+  constructor(message: string, detail: u8[] | null = null) {
+    super(message);
+    this.detail = detail;
+  }
+}
 
 export function wrongType(): CommandError {
   return new CommandError("WRONGTYPE Operation against a key holding the wrong kind of value");
@@ -14,70 +23,17 @@ export function notInteger(): CommandError {
   return new CommandError("ERR value is not an integer or out of range");
 }
 
-/// One member of a sorted set, ordered by score, then member.
-export type Scored = { score: f64; member: string };
-
-function before(a: Scored, score: f64, member: string): bool {
-  return a.score < score || (a.score === score && a.member < member);
-}
-
-/// A sorted set: member → score, plus the members in order (binary search on insert/remove).
-export class ZSet {
-  scores: Map<string, f64> = new Map<string, f64>();
-  order: Scored[] = [];
-
-  /// Where (score, member) is or would go.
-  private position(score: f64, member: string): i64 {
-    let lo: i64 = 0;
-    let hi: i64 = this.order.length;
-    while (lo < hi) {
-      const mid = (lo + hi) / 2;
-      if (before(this.order[mid], score, member)) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo;
-  }
-
-  /// Adds or moves `member`; true if it is new.
-  add(score: f64, member: string): bool {
-    const old = this.scores.get(member);
-    if (old != null) {
-      if (old === score) {
-        return false;
-      }
-      this.order.splice(this.position(old, member), 1);
-    }
-    this.scores.set(member, score);
-    this.order.splice(this.position(score, member), 0, { score, member });
-    return old == null;
-  }
-
-  remove(member: string): bool {
-    const old = this.scores.get(member);
-    if (old == null) {
-      return false;
-    }
-    this.scores.delete(member);
-    this.order.splice(this.position(old, member), 1);
-    return true;
-  }
-}
-
 export type Kind = "none" | "string" | "list" | "hash" | "set" | "zset";
 
 export class Db {
   strings: Map<string, u8[]> = new Map<string, u8[]>();
   lists: Map<string, Deque<u8[]>> = new Map<string, Deque<u8[]>>();
   hashes: Map<string, Map<string, u8[]>> = new Map<string, Map<string, u8[]>>();
-  sets: Map<string, Set<string>> = new Map<string, Set<string>>();
+  sets: Map<string, MemberSet> = new Map<string, MemberSet>();
   zsets: Map<string, ZSet> = new Map<string, ZSet>();
-  expires: Map<string, i64> = new Map<string, i64>(); // key → ms since the epoch
+  expires: Expires = new Expires(); // key → ms since the epoch
   now: i64 = 0; // the time of the current batch of commands (ms since the epoch)
-  private sweepKeys: string[] = []; // the active-expiry cursor walks this snapshot
-  private sweepAt: i64 = 0;
+  private sweepAt: i64 = 0; // the active-expiry cursor, a position in `expires`
 
   /// Deletes `key` if its time is up; true if it did.
   private expireIfDue(key: string): bool {
@@ -188,25 +144,28 @@ export class Db {
 
   /// Active expiry, like Redis's: checks the next `sample` keys that have a time to live and
   /// removes the due ones, and repeats while more than a quarter of a sample was due (at most
-  /// `rounds` times). A cursor walks every key with a time to live over successive sweeps, so
-  /// no key is skipped for good.
+  /// `rounds` times). The cursor walks the expiry index in place; a delete moves the last key
+  /// into the gap, so a key can be passed over in one cycle, but not for good.
   sweep(sample: i64, rounds: i64 = 16): i64 {
     let removed: i64 = 0;
     for (let round: i64 = 0; round < rounds && this.expires.size > 0; round++) {
       let due: i64 = 0;
       let seen: i64 = 0;
-      while (seen < sample && seen < (this.expires.size as i64)) {
-        if (this.sweepAt >= this.sweepKeys.length) {
-          this.sweepKeys = [...this.expires.keys()];
+      while (seen < sample && this.expires.size > 0) {
+        if (this.sweepAt >= this.expires.size) {
           this.sweepAt = 0;
         }
-        const k = this.sweepKeys[this.sweepAt];
-        this.sweepAt++;
+        const k = this.expires.keyAt(this.sweepAt);
         seen++;
         const at = this.expires.get(k);
         if (at != null && at <= this.now) {
-          this.remove(k);
+          this.remove(k); // the last key moves here: look at this position again
           due++;
+        } else {
+          this.sweepAt++;
+        }
+        if (seen >= this.expires.size + due) {
+          break; // every key looked at once this round
         }
       }
       removed += due;

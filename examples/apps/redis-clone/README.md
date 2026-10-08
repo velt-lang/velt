@@ -3,7 +3,8 @@
 A Redis-compatible server: the RESP2 protocol over `velt:net`, with pipelining, 65 commands
 over strings, lists, hashes, sets and sorted sets, and key expiry (on access, plus a background
 sweep). `redis-cli` and `redis-benchmark` work against it unchanged, and `parity.vlt` checks
-that its replies match a real Redis byte for byte: 236 cases, including errors, integer and
+that its replies match a real Redis (started with `--databases 1`, like this server) byte for
+byte: 269 cases, including errors, integer and
 float edge cases, inline commands, commands split across reads, and malformed input.
 
 ```sh
@@ -33,9 +34,14 @@ velt run demo.vlt              # a client session against an in-process server (
   repeats while more than a quarter were due, as Redis does. Redis samples at random; the cursor
   walks all of them in turn.
 - **Protocol limits:** as in Redis, a header or inline line without a line ending is rejected
-  after 64 KB ("too big mbulk count string", "too big inline request"). The same limit applies
-  to a bulk length header ("too big bulk count string"), where Redis 8.8 doesn't answer at all.
-  Inline commands don't support quoting (`SET "a b" c`).
+  after 64 KB ("too big mbulk count string", "too big inline request"), and a client whose
+  unparsed input passes 1 GB is disconnected (`client-query-buffer-limit`). The 64 KB limit
+  also applies to a bulk length header ("too big bulk count string"), where Redis 8.8 doesn't
+  answer at all. Inline commands don't support quoting (`SET "a b" c`).
+- **One database:** `SELECT 0` works and anything else is "DB index is out of range", as
+  redis-server answers with `databases 1`.
+- **Sorted-set commands:** `ZADD` takes no options (`NX XX GT LT CH INCR`), and `ZRANGE` only
+  ranks with `WITHSCORES` (no `BYSCORE`, `BYLEX`, `REV` or `LIMIT`); there is no `ZREVRANGE`.
 - **Floats:** scores accept what Redis's `strtod` does except hexadecimal floats (`0x1p3`).
 - **Atomicity:** each batch of pipelined commands runs under one lock, so other clients never
   see it half done, which is stronger than Redis guarantees.
@@ -43,10 +49,11 @@ velt run demo.vlt              # a client session against an in-process server (
 | File | What |
 |---|---|
 | `src/resp.vlt` | `RespParser` (incremental and amortized: commands may arrive split or pipelined; Redis's length and line limits), `Writer` (replies into a growable `u8[]`, headers written in place) |
-| `src/db.vlt` | `Db`: one map per value type plus an expiry map; `ZSet` (scores + an ordered array) |
+| `src/db.vlt` | `Db`: one map per value type plus an expiry index; lazy and active expiry |
+| `src/structs.vlt` | a skip list with spans for sorted sets (O(log n) insert, remove and rank), `MemberSet` (O(1) random member for SPOP), `Expires` (an expiry index the sweep walks in place) |
 | `src/commands.vlt` | `execute(db, args, out)`: each command with Redis's argument rules and error messages |
 | `src/server.vlt` | a task per connection; each read's commands run as one batch under the keyspace lock |
-| `parity.vlt` | 236 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
+| `parity.vlt` | 269 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
 | `bench.sh` | parity, then `redis-benchmark` (median of 3, interleaved), CPU per request, memory |
 
 ## Performance
@@ -60,10 +67,15 @@ column.
 200k requests per run, and the median of 3 runs interleaved between the servers. The Velt
 server runs twice: on one worker thread (`VELT_THREADS=1`) and with the default (one per core).
 
-The review changes since then (the parser's buffering and limits, strict score parsing) were
-checked with an interleaved A/B of the old and new builds on ZADD, LRANGE, GET and SET: no
-regression. The machine wasn't quiet enough for a full rerun. That A/B caught a first version
-of the score parser that compiled a `RegExp` per call and made ZADD 6× slower.
+The review changes since then were checked with interleaved A/B runs of the old and new builds:
+- the parser's buffering and limits, and strict score parsing, on ZADD, LRANGE, GET and SET;
+- the skip list, `MemberSet` and resumable parsing, on ZADD, ZPOPMIN, SADD, SPOP, LRANGE, GET
+  and SET.
+
+Neither showed a regression; the machine wasn't quiet enough for a full rerun. The first A/B
+caught a version of the score parser that compiled a `RegExp` per call and made ZADD 6× slower.
+The second shows what the skip list is for: ZADD into a sorted set of about 86k members (`-r
+100000`) went from 13.4k to 188k requests/s, where the old sorted array spliced on every insert.
 
 | requests/s | Redis | Velt, 1 thread | Velt, default |
 |---|---|---|---|

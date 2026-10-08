@@ -1,6 +1,6 @@
 // The protocol layer: incremental parsing, inline commands, errors, and reply encoding.
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { RespParser, Writer } from "../src/resp";
+import { protocolErrorReply, RespParser, Writer } from "../src/resp";
 
 function all(p: RespParser): string[] {
   const out: string[] = [];
@@ -45,16 +45,36 @@ export function test_inline_commands() {
   assertEq(all(p), ["ECHO hi"]);
 }
 
-export function test_protocol_errors() {
+export function test_protocol_errors_quote_the_raw_byte() {
+  const cases: [string, u8][] = [
+    ["*1\r\n+PING\r\n", 43u8],
+    ["*1\r\n\r\n", 13u8],
+  ];
+  for (const [wire, got] of cases) {
+    const p = new RespParser();
+    p.feed(utf8Encode(wire));
+    let detail: u8[] = [];
+    try {
+      p.next();
+    } catch (e) {
+      detail = e.detail;
+    }
+    assertEq(detail[detail.length - 2], got);
+  }
+  // A non-UTF-8 byte goes back as itself, and CR/LF become spaces in the reply.
   const p = new RespParser();
-  p.feed(utf8Encode("*1\r\n+PING\r\n"));
-  let message = "";
+  p.feed([42u8, 49u8, 13u8, 10u8, 255u8, 13u8, 10u8]);
+  let reply: u8[] = [];
   try {
     p.next();
   } catch (e) {
-    message = e.message;
+    reply = protocolErrorReply(e.detail);
   }
-  assertEq(message, "expected '$', got '+'");
+  assertEq(reply.slice(reply.length - 5), [39u8, 255u8, 39u8, 13u8, 10u8]);
+  assertEq(
+    utf8DecodeLossy(protocolErrorReply(utf8Encode("got '\r'"))),
+    "-ERR Protocol error: got ' '\r\n",
+  );
 }
 
 export function test_writer_grows_and_encodes() {
@@ -120,4 +140,47 @@ export function test_integer_extremes_and_sanitized_errors() {
     utf8DecodeLossy(w.take()),
     ":-9223372036854775808\r\n:9223372036854775807\r\n:0\r\n-ERR bad  +OK\r\n",
   );
+}
+
+export function test_many_arguments_in_small_reads() {
+  const p = new RespParser();
+  let wire = "*10001\r\n$5\r\nRPUSH\r\n";
+  for (let i = 0; i < 10000; i++) {
+    wire += `$${`${i}`.length}\r\n${i}\r\n`;
+  }
+  let got: u8[][] | null = null;
+  for (let i = 0; i < wire.length; i += 7) {
+    p.feed(utf8Encode(wire.slice(i, i + 7)));
+    const c = p.next();
+    if (c != null) {
+      got = c;
+    }
+  }
+  assertEq(got!.length, 10001);
+  assertEq(utf8DecodeLossy(got![10000]), "9999");
+}
+
+export function test_query_buffer_limit() {
+  const p = new RespParser(1000);
+  p.feed(utf8Encode("*1\r\n$2000\r\n"));
+  let closed = false;
+  try {
+    p.feed(utf8Encode("x".repeat(1000)));
+  } catch (e) {
+    closed = true;
+  }
+  assert(closed);
+}
+
+export function test_stale_bytes_after_a_large_command_are_never_parsed() {
+  const p = new RespParser();
+  // A large value leaves its bytes (and CRLFs) in the buffer's capacity.
+  const big = "a\r\n".repeat(100000);
+  p.feed(utf8Encode(`*1\r\n$${big.length}\r\n${big}\r\n`));
+  assertEq(p.next()![0].length, big.length);
+  // Then a partial command: its header line isn't complete, whatever lies in old capacity.
+  p.feed(utf8Encode("*1\r\n$3"));
+  assert(p.next() == null);
+  p.feed(utf8Encode("\r\nabc\r\n"));
+  assertEq(utf8DecodeLossy(p.next()![0]), "abc");
 }

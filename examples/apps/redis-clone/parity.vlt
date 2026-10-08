@@ -2,11 +2,30 @@
 // byte for byte. Replies whose order Redis leaves unspecified (KEYS, SMEMBERS, HGETALL of a
 // large hash) are compared as sorted lines.
 //
-//   redis-server --port 6379 --save '' &
+//   redis-server --port 6379 --save '' --databases 1 &   (one database, like this server)
 //   velt run parity.vlt -- 127.0.0.1:6380 127.0.0.1:6379
 import { connect, TcpStream } from "velt:net";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { args, exit } from "velt:process";
+
+/// Bytes as a string, one character per byte (Latin-1): exact to compare, readable to print.
+function latin1(b: u8[]): string {
+  let s = "";
+  for (let i = 0; i < b.length; i++) {
+    s += String.fromCharCode(b[i] as i64);
+  }
+  return s;
+}
+
+/// The bytes of a Latin-1 string (each character below 256 is one byte): lets raw cases send
+/// bytes that aren't UTF-8, such as "\xff".
+function latin1Bytes(s: string): u8[] {
+  const out = Buffer.alloc(s.length as usize);
+  for (let i = 0; i < s.length; i++) {
+    out[i] = s.charCodeAt(i) as u8;
+  }
+  return out;
+}
 
 /// Reads one complete reply from `conn`, keeping any extra bytes for the next call.
 class ReplyReader {
@@ -50,7 +69,7 @@ class ReplyReader {
     while (true) {
       const stop = this.end(0);
       if (stop >= 0) {
-        const reply = utf8DecodeLossy(this.buf.slice(0, stop));
+        const reply = latin1(this.buf.slice(0, stop));
         this.buf = this.buf.slice(stop);
         return reply;
       }
@@ -348,6 +367,36 @@ function script(): Step[] {
     c("NOSUCH", "x".repeat(200), "b"),
     c("NOSUCH", "a\r\nb", "c\nd"),
     c("Z".repeat(200)),
+    c("SELECT", "0"),
+    c("SELECT", "1"),
+    c("SELECT", "-1"),
+    c("SELECT", "00"),
+    c("SELECT", "x"),
+    c("SELECT"),
+    c("SADD", "ps", "a", "b", "c"),
+    c("SPOP", "ps", "-1"),
+    c("SPOP", "ps", "x"),
+    c("SPOP", "ps", "1", "2"),
+    c("SPOP", "nokey", "-1"),
+    c("SPOP", "ps", "0"),
+    c("SCARD", "ps"),
+    c("ZADD", "pz", "1", "a", "2", "b"),
+    c("ZPOPMIN", "pz", "-1"),
+    c("ZPOPMIN", "pz", "x"),
+    c("ZPOPMIN", "pz", "1", "2"),
+    c("ZPOPMIN", "pz", "0"),
+    c("ZCARD", "pz"),
+    c("RPUSH", "pl", "a", "b", "c"),
+    c("LPOP", "pl", "1", "2"),
+    c("RPOP", "pl", "1", "2"),
+    c("LPOP", "pl", "-1"),
+    c("LPOP", "pl", "x"),
+    c("LPOP", "pl", "0"),
+    c("LPOP", "nokey", "0"),
+    c("LLEN", "pl"),
+    c("ZADD", "pz", `0x${"f".repeat(300)}`, "m"),
+    c("NOSUCH", "é".repeat(100), "b"),
+    c("ü".repeat(100)),
     c("FLUSHDB"),
     c("DBSIZE"),
   ];
@@ -376,6 +425,12 @@ function rawCases(): RawCase[] {
     { name: "overflowing multibulk count", pieces: ["*18446744073709551617\r\n"] },
     { name: "overflowing bulk length", pieces: ["*1\r\n$99999999999999999999\r\n"] },
     { name: "bulk without $", pieces: ["*1\r\n+PING\r\n"] },
+    { name: "CR where $ belongs", pieces: ["*1\r\n\r\n"] },
+    { name: "a non-UTF-8 byte where $ belongs", pieces: ["*1\r\n\xff\r\n"] },
+    {
+      name: "unknown command with a non-UTF-8 argument",
+      pieces: ["*2\r\n$4\r\nNOPE\r\n$2\r\n\xff\xfe\r\n*1\r\n$4\r\nQUIT\r\n"],
+    },
     { name: "too big inline request", pieces: ["a".repeat(70000)] },
     { name: "too big mbulk count string", pieces: [`*${"1".repeat(70000)}`] },
     // Not compared: "too big bulk count string". Redis 8.8 doesn't answer a 70 kB bulk header
@@ -391,7 +446,7 @@ async function readAll(conn: TcpStream): Promise<string> {
     if (data.length === 0) {
       return out;
     }
-    out += utf8DecodeLossy(data);
+    out += latin1(data);
   }
 }
 
@@ -403,7 +458,7 @@ async function timeout(ms: i64): Promise<string> {
 async function rawExchange(addr: string, c: RawCase): Promise<string> {
   const conn = await connect(addr);
   for (const piece of c.pieces) {
-    await conn.writeBytes(utf8Encode(piece));
+    await conn.writeBytes(latin1Bytes(piece));
     await sleep(20);
   }
   const reply = await Promise.race([readAll(conn), timeout(2000)]);

@@ -4,7 +4,7 @@
 import { listen, TcpListener, TcpStream } from "velt:net";
 import { execute } from "./commands";
 import { Db } from "./db";
-import { RespParser, Writer } from "./resp";
+import { protocolErrorReply, RespParser, Writer } from "./resp";
 
 type Batch = { reply: u8[]; open: bool };
 
@@ -39,9 +39,13 @@ async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void
       if (data.length === 0) {
         break;
       }
-      parser.feed(data);
+      try {
+        parser.feed(data);
+      } catch (e) {
+        break; // past the query-buffer limit: Redis closes such a client without a reply
+      }
       const commands: u8[][][] = [];
-      let protocolError: string | null = null;
+      let protocolError: u8[] | null = null;
       try {
         let args = parser.next();
         while (args != null) {
@@ -49,14 +53,14 @@ async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void
           args = parser.next();
         }
       } catch (e) {
-        protocolError = e.message;
+        protocolError = e.detail;
       }
       let open = true;
       if (commands.length > 0) {
         open = await answer(conn, db, commands);
       }
       if (protocolError != null) {
-        await conn.write(`-ERR Protocol error: ${protocolError}\r\n`);
+        await conn.writeBytes(protocolErrorReply(protocolError));
         open = false;
       }
       if (!open) {

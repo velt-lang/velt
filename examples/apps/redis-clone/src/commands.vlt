@@ -1,7 +1,7 @@
 // The commands: arguments in, a RESP reply out, with Redis's argument rules and error messages.
-import { Set } from "velt:collections/set";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { CommandError, Db, notInteger, Scored, ZSet } from "./db";
+import { CommandError, Db, notInteger } from "./db";
+import { MemberSet, Scored, ZSet } from "./structs";
 import { Deque } from "velt:collections/deque";
 import { Writer } from "./resp";
 
@@ -117,6 +117,9 @@ export function parseScore(b: u8[]): f64 {
         throw notFloat();
       }
       v = v * 16.0 + d;
+    }
+    if (v === Infinity) {
+      throw notFloat(); // overflow, as in strtod
     }
     return negative ? -v : v;
   }
@@ -390,12 +393,12 @@ function hash(db: Db, key: string, create: bool): Map<string, u8[]> | null {
   return db.hashes.get(key);
 }
 
-function setOf(db: Db, key: string, create: bool): Set<string> | null {
+function setOf(db: Db, key: string, create: bool): MemberSet | null {
   if (!db.expect(key, "set")) {
     if (!create) {
       return null;
     }
-    db.sets.set(key, new Set<string>());
+    db.sets.set(key, new MemberSet());
   }
   return db.sets.get(key);
 }
@@ -417,14 +420,28 @@ function dropIfEmpty(db: Db, key: string, size: i64) {
   }
 }
 
-function pop(db: Db, args: u8[][], out: Writer, front: bool) {
-  const key = text(args[1]);
-  const count = args.length > 2 ? parseInt64(args[2]) : -1;
-  if (args.length > 3 || (args.length > 2 && count < 0)) {
-    throw args.length > 3
-      ? syntax()
-      : new CommandError("ERR value is out of range, must be positive");
+/// A pop count (LPOP, SPOP, ZPOPMIN): Redis answers "out of range" for a negative count and for
+/// one that isn't a number at all.
+function popCount(b: u8[]): i64 {
+  let n: i64 = 0;
+  try {
+    n = parseInt64(b);
+  } catch (e) {
+    n = -1;
   }
+  if (n < 0) {
+    throw new CommandError("ERR value is out of range, must be positive");
+  }
+  return n;
+}
+
+function pop(db: Db, name: string, args: u8[][], out: Writer, front: bool) {
+  // LPOP/RPOP take at most a count: more is an arity error (SPOP and ZPOPMIN say "syntax").
+  if (args.length > 3) {
+    throw new CommandError(`ERR wrong number of arguments for '${name}' command`);
+  }
+  const key = text(args[1]);
+  const count = args.length > 2 ? popCount(args[2]) : -1;
   const l = list(db, key, false);
   if (l == null) {
     if (count < 0) {
@@ -529,7 +546,12 @@ export function execute(db: Db, args: u8[][], out: Writer): bool {
   try {
     run(db, name, args, out);
   } catch (e) {
-    out.error(e.message);
+    const detail = e.detail;
+    if (detail != null) {
+      out.errorBytes(detail);
+    } else {
+      out.error(e.message);
+    }
   }
   return name !== "quit";
 }
@@ -551,8 +573,15 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       out.bulk(args[1]);
       return;
     case "quit":
-    case "select":
     case "client":
+      out.ok();
+      return;
+    case "select":
+      // One database, as redis-server with `databases 1`: only 0 exists.
+      arity(name, args, 2);
+      if (parseInt64(args[1]) !== 0) {
+        throw new CommandError("ERR DB index is out of range");
+      }
       out.ok();
       return;
     case "command":
@@ -773,11 +802,11 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     }
     case "lpop":
       arity(name, args, -2);
-      pop(db, args, out, true);
+      pop(db, name, args, out, true);
       return;
     case "rpop":
       arity(name, args, -2);
-      pop(db, args, out, false);
+      pop(db, name, args, out, false);
       return;
     case "llen": {
       arity(name, args, 2);
@@ -981,16 +1010,20 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         return;
       }
       out.array(s.size as i64);
-      for (const m of s) {
+      for (const m of s.items) {
         out.bulkString(m);
       }
       return;
     }
     case "spop": {
       arity(name, args, -2);
+      if (args.length > 3) {
+        throw syntax();
+      }
+      // The count is checked before the key, as in Redis.
+      const count = args.length > 2 ? popCount(args[2]) : -1;
       const key = text(args[1]);
       const s = setOf(db, key, false);
-      const count = args.length > 2 ? parseInt64(args[2]) : -1;
       if (s == null) {
         if (count < 0) {
           out.nil();
@@ -999,13 +1032,13 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         }
         return;
       }
-      const members = s.values();
-      const n = count < 0 ? 1 : count < members.length ? count : members.length;
+      // O(1) per member: a random pick from the set's array, no copy of the set.
+      const n = count < 0 ? 1 : count < s.size ? count : s.size;
       if (count >= 0) {
         out.array(n);
       }
       for (let i: i64 = 0; i < n; i++) {
-        const pick = members.splice(Math.floor(Math.random() * members.length) as i64, 1)[0];
+        const pick = s.random();
         s.delete(pick);
         out.bulkString(pick);
       }
@@ -1046,7 +1079,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "zcard": {
       arity(name, args, 2);
       const z = zset(db, text(args[1]), false);
-      out.integer(z == null ? 0 : z.scores.size as i64);
+      out.integer(z == null ? 0 : z.size);
       return;
     }
     case "zrem": {
@@ -1060,7 +1093,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
             n++;
           }
         }
-        dropIfEmpty(db, key, z.scores.size as i64);
+        dropIfEmpty(db, key, z.size);
       }
       out.integer(n);
       return;
@@ -1078,51 +1111,72 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         out.array(0);
         return;
       }
-      const [a, b] = range(start, stop, z.order.length);
+      const [a, b] = range(start, stop, z.size);
       if (a > b) {
         out.array(0);
         return;
       }
       out.array((b - a + 1) * (withScores ? 2 : 1));
-      for (let i = a; i <= b; i++) {
-        out.bulkString(z.order[i].member);
+      for (const m of z.range(a, b)) {
+        out.bulkString(m.member);
         if (withScores) {
-          out.bulkString(formatScore(z.order[i].score));
+          out.bulkString(formatScore(m.score));
         }
       }
       return;
     }
     case "zpopmin": {
       arity(name, args, -2);
+      if (args.length > 3) {
+        throw syntax();
+      }
+      const count = args.length > 2 ? popCount(args[2]) : 1;
       const key = text(args[1]);
-      const count = args.length > 2 ? parseInt64(args[2]) : 1;
       const z = zset(db, key, false);
       if (z == null || count <= 0) {
         out.array(0);
         return;
       }
-      const n = count < z.order.length ? count : z.order.length;
+      const n = count < z.size ? count : z.size;
       out.array(n * 2);
       for (let i: i64 = 0; i < n; i++) {
-        const first = z.order[0];
+        const first = z.first()!;
         out.bulkString(first.member);
         out.bulkString(formatScore(first.score));
         z.remove(first.member);
       }
-      dropIfEmpty(db, key, z.scores.size as i64);
+      dropIfEmpty(db, key, z.size);
       return;
     }
   }
-  // Redis's wording and limits: the name up to 128 characters, then quoted arguments while the
-  // list is shorter than 128 characters, each cut to what is left of those 128.
-  let shown = "";
-  for (let i = 1; i < args.length && shown.length < 128; i++) {
-    shown += `'${text(args[i]).slice(0, 128 - shown.length)}' `;
+  // Redis's wording and limits, in bytes as Redis counts them: the name up to 128 bytes, then
+  // quoted arguments while the list is shorter than 128 bytes, each cut to what is left.
+  const parts: u8[][] = [
+    utf8Encode("ERR unknown command '"),
+    args[0].slice(0, 128),
+    utf8Encode("'"),
+  ];
+  if (args.length > 1) {
+    parts.push(utf8Encode(", with args beginning with: "));
+    let shown: i64 = 0;
+    for (let i = 1; i < args.length && shown < 128; i++) {
+      const arg = args[i].slice(0, 128 - shown);
+      // One push per element: `push` takes a single value in Velt.
+      parts.push(utf8Encode("'"));
+      parts.push(arg);
+      parts.push(utf8Encode("' "));
+      shown += arg.length + 3;
+    }
   }
-  const command = text(args[0]).slice(0, 128);
-  throw new CommandError(
-    args.length > 1
-      ? `ERR unknown command '${command}', with args beginning with: ${shown}`
-      : `ERR unknown command '${command}'`,
-  );
+  let total: i64 = 0;
+  for (const p of parts) {
+    total += p.length;
+  }
+  const detail = Buffer.alloc(total as usize);
+  let at: i64 = 0;
+  for (const p of parts) {
+    detail.set(p, at as usize);
+    at += p.length;
+  }
+  throw new CommandError(utf8DecodeLossy(detail), detail);
 }

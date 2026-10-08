@@ -2,7 +2,8 @@
 # This server vs a real redis-server with redis-benchmark. Runs parity.vlt first (byte-identical
 # replies), then each test against each server in turn, three times, and prints the median
 # requests/s. The Velt server runs twice: on one worker thread and on all of them (the default).
-# Last, memory: RSS after the same million SETs.
+# Last, memory: RSS after the same million SETs. redis-server runs with one database, like
+# this server, so SELECT answers the same.
 #   ./bench.sh [requests per run] [connections]     (default 200000, 50; needs redis-server)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,7 +25,7 @@ trap cleanup EXIT
 
 "$velt" build --release -o "$tmp/server" >/dev/null
 start_all() {
-    redis-server --port "$rport" --save "" --appendonly no >/dev/null &
+    redis-server --port "$rport" --save "" --appendonly no --databases 1 >/dev/null &
     pids+=($!)
     VELT_THREADS=1 "$tmp/server" "$v1port" >/dev/null &
     pids+=($!)

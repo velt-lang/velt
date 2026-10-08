@@ -191,3 +191,27 @@ export function test_unknown_command_arguments_are_capped() {
     `-ERR unknown command 'NOPE', with args beginning with: '${"x".repeat(128)}' |`,
   );
 }
+
+export function test_select_and_pop_arguments() {
+  const d = db();
+  assertEq(run(d, "SELECT 0"), "+OK|");
+  assertEq(run(d, "SELECT 1"), "-ERR DB index is out of range|");
+  assertEq(run(d, "SELECT 00"), "-ERR value is not an integer or out of range|");
+  run(d, "SADD s a b c");
+  run(d, "ZADD z 1 a 2 b");
+  run(d, "RPUSH l a b c");
+  const range = "-ERR value is out of range, must be positive|";
+  assertEq(run(d, "SPOP s -1"), range);
+  assertEq(run(d, "SPOP s x"), range);
+  assertEq(run(d, "SPOP s 1 2"), "-ERR syntax error|");
+  assertEq(run(d, "SPOP nokey -1"), range);
+  assertEq(run(d, "SCARD s"), ":3|");
+  assertEq(run(d, "ZPOPMIN z -1"), range);
+  assertEq(run(d, "ZPOPMIN z 1 2"), "-ERR syntax error|");
+  assertEq(run(d, "ZCARD z"), ":2|");
+  assertEq(run(d, "LPOP l 1 2"), "-ERR wrong number of arguments for 'lpop' command|");
+  assertEq(run(d, "RPOP l -1"), range);
+  assertEq(run(d, "LPOP l x"), range);
+  assertEq(run(d, "LPOP nokey 0"), "*-1|");
+  assertEq(run(d, "LLEN l"), ":3|");
+}
