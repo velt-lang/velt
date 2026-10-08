@@ -60,7 +60,7 @@ for exe in programs:
     times.sort()
     instr = "-"
     if grind:
-        r = subprocess.run([grind, "--tool=cachegrind", "--cache-sim=no",
+        r = subprocess.run([grind, "--vgdb=no", "--tool=cachegrind", "--cache-sim=no",
                             "--cachegrind-out-file=/dev/null", exe, tree],
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         m = re.search(r"I\s+refs:\s+([\d,]+)", r.stderr)
