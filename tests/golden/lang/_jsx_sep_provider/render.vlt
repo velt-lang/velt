@@ -1,4 +1,4 @@
-// A JSX provider for the text separator goldens (docs/contracts/jsx.md "Text separator"),
+// A JSX provider for the text separator goldens (docs/internals/contracts/jsx.md "Text separator"),
 // rendering text the way a hydrating client needs it: `<!--t-->` between adjacent text nodes of
 // one parent (the HTML parser would merge them), also across fragments and components, and a
 // `<!---->` placeholder for `true`, `false` and `null` children. Elements are lists of parts;

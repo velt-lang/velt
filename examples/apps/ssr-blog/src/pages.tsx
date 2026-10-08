@@ -2,6 +2,7 @@
 // Each async component starts when its element is created, so the loads of one page overlap;
 // renderToStream sends the markup above one while it still loads.
 
+import { Channel } from "velt:channel";
 import { CommentList, NotFound, PostBody, PostList, page } from "./shared/components";
 import type { Post } from "./shared/model";
 import { findPost, loadComments, loadPosts } from "./store";
@@ -11,7 +12,13 @@ async function Posts(props: { tag: string | null }): Promise<JSX.Element> {
   return <PostList posts={posts} tag={props.tag} />;
 }
 
-async function Comments(props: { slug: string }): Promise<JSX.Element> {
+// `gate`: when given, the comments load only once a value arrives on it (demo.vlt uses it to
+// read the top of a streamed page before the comments exist, whatever the timing).
+async function Comments(props: { slug: string; gate: Channel<i64> | null }): Promise<JSX.Element> {
+  const gate = props.gate;
+  if (gate != null) {
+    await gate.receive();
+  }
   const comments = await loadComments(props.slug);
   return <CommentList comments={comments} />;
 }
@@ -31,8 +38,11 @@ export function route(path: string, query: string): Route {
   return { status: post == null ? 404 : 200, path, tag: null, post };
 }
 
-/** The page of route `r`. Its async components start loading now. */
-export function render(r: Route): JSX.Element {
+/**
+ * The page of route `r`. Its async components start loading now; the comments wait for `gate`
+ * when it is given.
+ */
+export function render(r: Route, gate: Channel<i64> | null): JSX.Element {
   const post = r.post;
   if (post != null) {
     const title = post.title;
@@ -41,7 +51,7 @@ export function render(r: Route): JSX.Element {
       title,
       <>
         <PostBody post={post} />
-        <Comments slug={slug} />
+        <Comments slug={slug} gate={gate} />
       </>,
     );
   }

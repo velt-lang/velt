@@ -1,9 +1,9 @@
-// std/jsx/factory: the functions compiled JSX calls (docs/contracts/jsx.md "Required exports"
-// and "SSR precompile"), plus `raw`. Internal: std/jsx/jsx-runtime re-exports them.
+// std/jsx/factory: the functions compiled JSX calls (docs/internals/contracts/jsx.md "Required
+// exports" and "SSR precompile"), plus `raw`. Internal: std/jsx/jsx-runtime re-exports them.
 //
-// Every factory renders what it can at once (node.vlt): text is escaped into the new node's
-// strings and child nodes become its slots, and a child that still waits for an async component
-// is kept as a part, with the markup after it collected in a following complete part.
+// Every factory renders what it can at once (node.vlt): text is escaped into the new node's strings
+// and child nodes become its slots, and a child that still waits for an async component is kept as
+// a part, with the markup after it collected in a following complete part.
 
 import { Element, Deferred, RenderError, markupOf, treeNode } from "velt:jsx/node";
 import type { AttrValue, Child, Text } from "velt:jsx/node";

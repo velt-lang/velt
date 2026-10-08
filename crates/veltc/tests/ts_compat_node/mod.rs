@@ -142,3 +142,116 @@ fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
     }
     assert!(ran >= 5, "behaviour samples with a `main`: {ran}");
 }
+
+/// `examples/apps/ssr-blog` shares its components with a TypeScript client: they render the same
+/// HTML on the server (std/jsx, `velt run`) and in Node (client/jsx-runtime.ts, compiled by the
+/// oracle's `tsc`). `src/shared/samples.tsx` renders them with data escaping must handle.
+#[test]
+fn ssr_blog_shared_components_render_the_same_under_node() {
+    if std::env::var_os("VELT_TSC_ORACLE").is_none() {
+        eprintln!("skipped: set VELT_TSC_ORACLE=1 to render the ssr-blog components under Node");
+        return;
+    }
+    if let Err(why) = node_ready() {
+        panic!("VELT_TSC_ORACLE is set but {why}");
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let tsc = root.join("tests/tscompat-oracle/node_modules/typescript/bin/tsc");
+    assert!(
+        tsc.is_file(),
+        "VELT_TSC_ORACLE is set but {} is missing",
+        tsc.display()
+    );
+    super::runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    for part in [
+        "package.vlt",
+        "tsconfig.json",
+        "jsx",
+        "client",
+        "src/shared",
+    ] {
+        super::copy_tree(
+            &root.join("examples/apps/ssr-blog").join(part),
+            &dir.join(part),
+        );
+    }
+
+    // The server side.
+    std::fs::write(
+        dir.join("samples_main.vlt"),
+        r#"import { renderToStringSync } from "velt:jsx";
+import { samples } from "./src/shared/samples";
+
+function main() {
+  const els = samples();
+  els.reverse();
+  while (els.length > 0) {
+    const el = els.pop();
+    if (el != null) {
+      console.log(renderToStringSync(el));
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let in_velt = run_velt(dir, "samples_main.vlt");
+
+    // The client side: emitted by tsc, with the provider and relative imports made Node paths.
+    std::fs::write(
+        dir.join("tsconfig.emit.json"),
+        r#"{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": false,
+  "allowImportingTsExtensions": false, "outDir": "out", "rootDir": "." } }"#,
+    )
+    .unwrap();
+    let o = Command::new("node")
+        .arg(&tsc)
+        .args(["-p", "tsconfig.emit.json"])
+        .current_dir(dir)
+        .output()
+        .expect("run tsc");
+    assert!(
+        o.status.success(),
+        "tsc:\n{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    for (file, runtime) in [
+        (
+            "out/src/shared/components.js",
+            "../../client/jsx-runtime.js",
+        ),
+        ("out/src/shared/samples.js", "../../client/jsx-runtime.js"),
+        ("out/src/shared/model.js", "../../client/jsx-runtime.js"),
+    ] {
+        let path = dir.join(file);
+        let js = std::fs::read_to_string(&path).unwrap();
+        let js = js
+            .replace("\"ssr-blog-jsx/jsx-runtime\"", &format!("\"{runtime}\""))
+            .replace("from \"./model\"", "from \"./model.js\"")
+            .replace("from \"./components\"", "from \"./components.js\"");
+        std::fs::write(&path, js).unwrap();
+    }
+    std::fs::write(dir.join("out/package.json"), r#"{ "type": "module" }"#).unwrap();
+    std::fs::write(
+        dir.join("samples_main.mjs"),
+        "import { samples } from \"./out/src/shared/samples.js\";\n\
+         for (const el of samples()) console.log(el.html);\n",
+    )
+    .unwrap();
+    let o = Command::new("node")
+        .arg("samples_main.mjs")
+        .current_dir(dir)
+        .output()
+        .expect("run node");
+    assert!(
+        o.status.success(),
+        "node:\n{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let in_node = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert_eq!(in_velt, in_node, "the shared components render differently");
+    assert_eq!(in_velt.lines().count(), 6, "{in_velt}");
+}
