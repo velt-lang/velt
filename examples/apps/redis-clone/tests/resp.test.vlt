@@ -1,0 +1,71 @@
+// The protocol layer: incremental parsing, inline commands, errors, and reply encoding.
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { RespParser, Writer } from "../src/resp";
+
+function all(p: RespParser): string[] {
+  const out: string[] = [];
+  let args = p.next();
+  while (args != null) {
+    out.push(args.map((a) => utf8DecodeLossy(a)).join(" "));
+    args = p.next();
+  }
+  return out;
+}
+
+export function test_whole_and_pipelined_commands() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*2\r\n$3\r\nGET\r\n$1\r\nk\r\n*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$0\r\n\r\n"));
+  assertEq(all(p), ["GET k", "SET k "]);
+}
+
+export function test_commands_split_across_reads() {
+  const p = new RespParser();
+  const wire = "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n";
+  let seen: string[] = [];
+  for (let i = 0; i < wire.length; i++) {
+    p.feed(utf8Encode(wire[i]));
+    seen = [...seen, ...all(p)];
+  }
+  assertEq(seen, ["SET hello world"]);
+}
+
+export function test_binary_safe_values() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*2\r\n$4\r\na\r\nb\r\n$1\r\n\u0000\r\n"));
+  const args = p.next()!;
+  assertEq(args[0].length, 4);
+  assertEq(args[1][0], 0u8);
+}
+
+export function test_inline_commands() {
+  const p = new RespParser();
+  p.feed(utf8Encode("PING\r\nSET  a   b\nECHO"));
+  assertEq(all(p), ["PING", "SET a b"]);
+  p.feed(utf8Encode(" hi\r\n"));
+  assertEq(all(p), ["ECHO hi"]);
+}
+
+export function test_protocol_errors() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*1\r\n+PING\r\n"));
+  let message = "";
+  try {
+    p.next();
+  } catch (e) {
+    message = e.message;
+  }
+  assertEq(message, "expected '$', got '+'");
+}
+
+export function test_writer_grows_and_encodes() {
+  const w = new Writer();
+  w.simple("OK");
+  w.integer(-7);
+  w.bulk(utf8Encode("x".repeat(10000)));
+  w.nil();
+  w.array(0);
+  const text = utf8DecodeLossy(w.take());
+  assert(text.startsWith("+OK\r\n:-7\r\n$10000\r\nxxx"));
+  assert(text.endsWith("\r\n$-1\r\n*0\r\n"));
+  assertEq(w.take().length, 0);
+}

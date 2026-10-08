@@ -1,0 +1,102 @@
+// The network side: one task per connection. Each read is parsed into as many complete commands
+// as it holds (clients pipeline), the batch runs under one lock of the keyspace, and the replies
+// go back in one write.
+import { listen, TcpListener, TcpStream } from "velt:net";
+import { execute } from "./commands";
+import { Db } from "./db";
+import { RespParser, Writer } from "./resp";
+
+type Batch = { reply: u8[]; open: bool };
+
+function runBatch(db: Db, commands: u8[][][], now: f64): Batch {
+  db.now = now;
+  const out = new Writer();
+  let open = true;
+  for (const args of commands) {
+    if (!execute(db, args, out)) {
+      open = false;
+      break;
+    }
+  }
+  return { reply: out.take(), open };
+}
+
+/// Runs `commands` under the lock and writes their replies; false when the client quit.
+// A helper rather than inline in the read loop: inline, `commands` is reported as "still used
+// after `with` stored it" although each iteration declares a new one (#716).
+async function answer(conn: TcpStream, db: shared<Mutex<Db>>, commands: u8[][][]): Promise<bool> {
+  const now = Date.now() as f64; // `Date.now()` is an i64 (#214)
+  const batch = db.with((d) => runBatch(d, commands, now));
+  await conn.writeBytes(batch.reply);
+  return batch.open;
+}
+
+async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void> {
+  const parser = new RespParser();
+  try {
+    while (true) {
+      const data = await conn.read();
+      if (data.length === 0) {
+        break;
+      }
+      parser.feed(data);
+      const commands: u8[][][] = [];
+      let protocolError: string | null = null;
+      try {
+        let args = parser.next();
+        while (args != null) {
+          commands.push(args);
+          args = parser.next();
+        }
+      } catch (e) {
+        protocolError = e.message;
+      }
+      let open = true;
+      if (commands.length > 0) {
+        open = await answer(conn, db, commands);
+      }
+      if (protocolError != null) {
+        await conn.write(`-ERR Protocol error: ${protocolError}\r\n`);
+        open = false;
+      }
+      if (!open) {
+        break;
+      }
+    }
+  } catch (e) {
+    // The client went away mid-write; nothing to answer.
+  }
+  conn.close();
+}
+
+/// Active expiry: every 100 ms, removes due keys among a sample of those with a time to live,
+/// until `stopped` is set.
+async function sweeper(db: shared<Mutex<Db>>, stopped: shared<i64>): Promise<void> {
+  while (stopped.get() === 0) {
+    await sleep(100);
+    const now = Date.now() as f64;
+    db.with((d) => {
+      d.now = now;
+      d.sweep(20);
+    });
+  }
+}
+
+/// Accepts connections on `listener` until it is closed; then stops the expiry sweeper.
+export async function serve(listener: TcpListener, db: shared<Mutex<Db>>): Promise<void> {
+  const stopped = shared(0);
+  spawn(sweeper(db, stopped));
+  try {
+    while (true) {
+      const conn = await listener.accept();
+      spawn(serveClient(conn, db));
+    }
+  } catch (e) {
+    // `listener.close()`: stop serving.
+  }
+  stopped.set(1);
+}
+
+export async function start(addr: string): Promise<TcpListener> {
+  return await listen(addr);
+}

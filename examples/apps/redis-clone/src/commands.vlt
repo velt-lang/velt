@@ -1,0 +1,954 @@
+// The commands: arguments in, a RESP reply out, with Redis's argument rules and error messages.
+import { Set } from "velt:collections/set";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { CommandError, Db, notInteger, Scored, ZSet } from "./db";
+import { Deque } from "velt:collections/deque";
+import { Writer } from "./resp";
+
+const MAX: i64 = 9223372036854775807;
+const MIN: i64 = -9223372036854775807 - 1;
+
+function text(b: u8[]): string {
+  return utf8DecodeLossy(b);
+}
+
+function syntax(): CommandError {
+  return new CommandError("ERR syntax error");
+}
+
+/// A strict integer, as Redis's string2ll: optional '-', digits, no leading zeros or spaces.
+export function parseInt64(b: u8[]): i64 {
+  if (b.length === 0 || b.length > 20) {
+    throw notInteger();
+  }
+  let i = 0;
+  const negative = b[0] === 45;
+  if (negative) {
+    i = 1;
+    if (b.length === 1) {
+      throw notInteger();
+    }
+  }
+  if (b[i] === 48 && b.length > i + 1) {
+    throw notInteger();
+  }
+  let n: i64 = 0;
+  for (; i < b.length; i++) {
+    const c = b[i];
+    if (c < 48 || c > 57) {
+      throw notInteger();
+    }
+    const d = (c - 48) as i64;
+    // Accumulate negatively, so MIN fits.
+    if (n < (MIN + d) / 10) {
+      throw notInteger();
+    }
+    n = n * 10 - d;
+  }
+  if (!negative) {
+    if (n === MIN) {
+      throw notInteger();
+    }
+    return -n;
+  }
+  return n;
+}
+
+function parseScore(b: u8[]): f64 {
+  const s = text(b).toLowerCase();
+  if (s === "inf" || s === "+inf") {
+    return Infinity;
+  }
+  if (s === "-inf") {
+    return -Infinity;
+  }
+  const n = Number(s);
+  if (s.length === 0 || s.trim() !== s || n !== n) {
+    throw new CommandError("ERR value is not a valid float");
+  }
+  return n;
+}
+
+function formatScore(x: f64): string {
+  if (x === Infinity) {
+    return "inf";
+  }
+  if (x === -Infinity) {
+    return "-inf";
+  }
+  return `${x}`;
+}
+
+/// Redis's glob: `*`, `?`, `[abc]`, `[^a]`, `[a-z]` and `\x`.
+export function globMatch(p: string, s: string, pi: i64 = 0, si: i64 = 0): bool {
+  while (pi < p.length) {
+    const c = p[pi];
+    if (c === "*") {
+      while (pi + 1 < p.length && p[pi + 1] === "*") {
+        pi++;
+      }
+      if (pi + 1 === p.length) {
+        return true;
+      }
+      for (let k = si; k <= s.length; k++) {
+        if (globMatch(p, s, pi + 1, k)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (si >= s.length) {
+      return false;
+    }
+    if (c === "?") {
+      pi++;
+      si++;
+      continue;
+    }
+    if (c === "[") {
+      let j = pi + 1;
+      const not = j < p.length && p[j] === "^";
+      if (not) {
+        j++;
+      }
+      let hit = false;
+      while (j < p.length && p[j] !== "]") {
+        if (p[j] === "\\" && j + 1 < p.length) {
+          j++;
+          hit = hit || p[j] === s[si];
+        } else if (j + 2 < p.length && p[j + 1] === "-" && p[j + 2] !== "]") {
+          hit = hit || (s[si] >= p[j] && s[si] <= p[j + 2]);
+          j += 2;
+        } else {
+          hit = hit || p[j] === s[si];
+        }
+        j++;
+      }
+      if (hit === not) {
+        return false;
+      }
+      pi = j + 1;
+      si++;
+      continue;
+    }
+    if (c === "\\" && pi + 1 < p.length) {
+      pi++;
+    }
+    if (p[pi] !== s[si]) {
+      return false;
+    }
+    pi++;
+    si++;
+  }
+  return si === s.length;
+}
+
+/// Redis's index rules for LRANGE / ZRANGE: negative counts from the end, clamped.
+function range(start: i64, stop: i64, length: i64): [i64, i64] {
+  let a = start < 0 ? length + start : start;
+  let b = stop < 0 ? length + stop : stop;
+  if (a < 0) {
+    a = 0;
+  }
+  if (b >= length) {
+    b = length - 1;
+  }
+  return [a, b];
+}
+
+function arity(name: string, args: u8[][], n: i64) {
+  // n > 0: exactly n arguments (with the name); n < 0: at least -n.
+  if ((n > 0 && args.length !== n) || (n < 0 && args.length < -n)) {
+    throw new CommandError(`ERR wrong number of arguments for '${name}' command`);
+  }
+}
+
+function set(db: Db, args: u8[][], out: Writer) {
+  const key = text(args[1]);
+  let expireAt: f64 = 0;
+  let nx = false;
+  let xx = false;
+  let get = false;
+  let keepTtl = false;
+  let timed = false;
+  for (let i = 3; i < args.length; i++) {
+    const opt = text(args[i]).toUpperCase();
+    if (opt === "NX" && !xx) {
+      nx = true;
+    } else if (opt === "XX" && !nx) {
+      xx = true;
+    } else if (opt === "GET") {
+      get = true;
+    } else if (opt === "KEEPTTL" && !timed) {
+      keepTtl = true;
+    } else if (
+      (opt === "EX" || opt === "PX" || opt === "EXAT" || opt === "PXAT") &&
+      !timed &&
+      !keepTtl &&
+      i + 1 < args.length
+    ) {
+      const n = parseInt64(args[++i]);
+      if (n <= 0) {
+        throw new CommandError("ERR invalid expire time in 'set' command");
+      }
+      timed = true;
+      expireAt =
+        opt === "EX"
+          ? db.now + (n as f64) * 1000.0
+          : opt === "PX" ? db.now + (n as f64) : opt === "EXAT" ? (n as f64) * 1000.0 : n as f64;
+    } else {
+      throw syntax();
+    }
+  }
+  const old = get ? db.getString(key) : null;
+  const exists = db.kind(key) !== "none";
+  if ((nx && exists) || (xx && !exists)) {
+    if (get) {
+      if (old == null) {
+        out.nil();
+      } else {
+        out.bulk(old);
+      }
+    } else {
+      out.nil();
+    }
+    return;
+  }
+  db.setString(key, args[2], keepTtl);
+  if (timed) {
+    db.expires.set(key, expireAt);
+  }
+  if (get) {
+    if (old == null) {
+      out.nil();
+    } else {
+      out.bulk(old);
+    }
+  } else {
+    out.ok();
+  }
+}
+
+function incrBy(db: Db, key: string, by: i64, out: Writer) {
+  const cur = db.getString(key);
+  const old = cur == null ? 0 : parseInt64(cur);
+  if ((by > 0 && old > MAX - by) || (by < 0 && old < MIN - by)) {
+    throw new CommandError("ERR increment or decrement would overflow");
+  }
+  const n = old + by;
+  db.setString(key, utf8Encode(`${n}`), true);
+  out.integer(n);
+}
+
+function list(db: Db, key: string, create: bool): Deque<u8[]> | null {
+  if (!db.expect(key, "list")) {
+    if (!create) {
+      return null;
+    }
+    db.lists.set(key, new Deque<u8[]>());
+  }
+  return db.lists.get(key);
+}
+
+function hash(db: Db, key: string, create: bool): Map<string, u8[]> | null {
+  if (!db.expect(key, "hash")) {
+    if (!create) {
+      return null;
+    }
+    db.hashes.set(key, new Map<string, u8[]>());
+  }
+  return db.hashes.get(key);
+}
+
+function setOf(db: Db, key: string, create: bool): Set<string> | null {
+  if (!db.expect(key, "set")) {
+    if (!create) {
+      return null;
+    }
+    db.sets.set(key, new Set<string>());
+  }
+  return db.sets.get(key);
+}
+
+function zset(db: Db, key: string, create: bool): ZSet | null {
+  if (!db.expect(key, "zset")) {
+    if (!create) {
+      return null;
+    }
+    db.zsets.set(key, new ZSet());
+  }
+  return db.zsets.get(key);
+}
+
+/// Drops an emptied container, as Redis does.
+function dropIfEmpty(db: Db, key: string, size: i64) {
+  if (size === 0) {
+    db.remove(key);
+  }
+}
+
+function pop(db: Db, args: u8[][], out: Writer, front: bool) {
+  const key = text(args[1]);
+  const count = args.length > 2 ? parseInt64(args[2]) : -1;
+  if (args.length > 3 || (args.length > 2 && count < 0)) {
+    throw args.length > 3
+      ? syntax()
+      : new CommandError("ERR value is out of range, must be positive");
+  }
+  const l = list(db, key, false);
+  if (l == null) {
+    if (count < 0) {
+      out.nil();
+    } else {
+      out.nilArray();
+    }
+    return;
+  }
+  if (count < 0) {
+    out.bulk((front ? l.popFront() : l.popBack())!);
+  } else {
+    const n = count < l.length ? count : l.length;
+    out.array(n);
+    for (let i: i64 = 0; i < n; i++) {
+      out.bulk((front ? l.popFront() : l.popBack())!);
+    }
+  }
+  dropIfEmpty(db, key, l.length);
+}
+
+function ttl(db: Db, key: string, ms: bool, out: Writer) {
+  if (db.kind(key) === "none") {
+    out.integer(-2);
+    return;
+  }
+  const at = db.expires.get(key);
+  if (at == null) {
+    out.integer(-1);
+    return;
+  }
+  const left = at - db.now;
+  out.integer(ms ? left as i64 : ((left + 500.0) / 1000.0) as i64);
+}
+
+function expire(db: Db, args: u8[][], scale: f64, out: Writer) {
+  const key = text(args[1]);
+  const n = parseInt64(args[2]);
+  if (db.kind(key) === "none") {
+    out.integer(0);
+    return;
+  }
+  const at = db.now + (n as f64) * scale;
+  if (at <= db.now) {
+    db.remove(key);
+  } else {
+    db.expires.set(key, at);
+  }
+  out.integer(1);
+}
+
+/// Runs one command against `db`, writing its reply. `false` when the client asked to QUIT.
+export function execute(db: Db, args: u8[][], out: Writer): bool {
+  if (args.length === 0) {
+    return true;
+  }
+  const name = text(args[0]).toLowerCase();
+  try {
+    run(db, name, args, out);
+  } catch (e) {
+    out.error(e.message);
+  }
+  return name !== "quit";
+}
+
+function run(db: Db, name: string, args: u8[][], out: Writer) {
+  switch (name) {
+    case "ping":
+      if (args.length > 2) {
+        arity(name, args, 1);
+      }
+      if (args.length === 2) {
+        out.bulk(args[1]);
+      } else {
+        out.simple("PONG");
+      }
+      return;
+    case "echo":
+      arity(name, args, 2);
+      out.bulk(args[1]);
+      return;
+    case "quit":
+    case "select":
+    case "client":
+      out.ok();
+      return;
+    case "command":
+      out.array(0);
+      return;
+    case "config": {
+      arity(name, args, -2);
+      if (text(args[1]).toLowerCase() !== "get") {
+        out.ok();
+        return;
+      }
+      out.array(2 * (args.length - 2));
+      for (let i = 2; i < args.length; i++) {
+        const p = text(args[i]).toLowerCase();
+        out.bulkString(p);
+        out.bulkString(p === "save" ? "" : p === "appendonly" ? "no" : "");
+      }
+      return;
+    }
+    case "info":
+      out.bulkString(
+        `# Server\r\nredis_version:7.4.0\r\nredis_mode:standalone\r\nimplementation:velt\r\n\r\n# Keyspace\r\ndb0:keys=${db.size()},expires=${db.expires.size}\r\n`,
+      );
+      return;
+    case "dbsize":
+      arity(name, args, 1);
+      out.integer(db.size());
+      return;
+    case "flushdb":
+    case "flushall":
+      db.flush();
+      out.ok();
+      return;
+    case "get": {
+      arity(name, args, 2);
+      const v = db.getString(text(args[1]));
+      if (v == null) {
+        out.nil();
+      } else {
+        out.bulk(v);
+      }
+      return;
+    }
+    case "set":
+      arity(name, args, -3);
+      set(db, args, out);
+      return;
+    case "setnx": {
+      arity(name, args, 3);
+      const key = text(args[1]);
+      if (db.kind(key) !== "none") {
+        out.integer(0);
+      } else {
+        db.setString(key, args[2], false);
+        out.integer(1);
+      }
+      return;
+    }
+    case "setex":
+    case "psetex": {
+      arity(name, args, 4);
+      const n = parseInt64(args[2]);
+      if (n <= 0) {
+        throw new CommandError(`ERR invalid expire time in '${name}' command`);
+      }
+      const key = text(args[1]);
+      db.setString(key, args[3], false);
+      db.expires.set(key, db.now + (n as f64) * (name === "setex" ? 1000.0 : 1.0));
+      out.ok();
+      return;
+    }
+    case "getdel": {
+      arity(name, args, 2);
+      const key = text(args[1]);
+      const v = db.getString(key);
+      if (v == null) {
+        out.nil();
+      } else {
+        out.bulk(v);
+        db.remove(key);
+      }
+      return;
+    }
+    case "mget":
+      arity(name, args, -2);
+      out.array(args.length - 1);
+      for (let i = 1; i < args.length; i++) {
+        const key = text(args[i]);
+        const v = db.kind(key) === "string" ? db.strings.get(key) : null;
+        if (v == null) {
+          out.nil();
+        } else {
+          out.bulk(v);
+        }
+      }
+      return;
+    case "mset":
+      if (args.length < 3 || args.length % 2 === 0) {
+        throw new CommandError("ERR wrong number of arguments for 'mset' command");
+      }
+      for (let i = 1; i < args.length; i += 2) {
+        db.setString(text(args[i]), args[i + 1], false);
+      }
+      out.ok();
+      return;
+    case "append": {
+      arity(name, args, 3);
+      const key = text(args[1]);
+      const cur = db.getString(key);
+      if (cur == null) {
+        db.setString(key, args[2], true);
+        out.integer(args[2].length);
+      } else {
+        const joined = Buffer.alloc(cur.length + args[2].length);
+        joined.set(cur, 0);
+        joined.set(args[2], cur.length as usize);
+        db.setString(key, joined, true);
+        out.integer(joined.length);
+      }
+      return;
+    }
+    case "strlen": {
+      arity(name, args, 2);
+      const v = db.getString(text(args[1]));
+      out.integer(v == null ? 0 : v.length);
+      return;
+    }
+    case "incr":
+      arity(name, args, 2);
+      incrBy(db, text(args[1]), 1, out);
+      return;
+    case "decr":
+      arity(name, args, 2);
+      incrBy(db, text(args[1]), -1, out);
+      return;
+    case "incrby":
+      arity(name, args, 3);
+      incrBy(db, text(args[1]), parseInt64(args[2]), out);
+      return;
+    case "decrby": {
+      arity(name, args, 3);
+      const by = parseInt64(args[2]);
+      if (by === MIN) {
+        throw new CommandError("ERR decrement would overflow");
+      }
+      incrBy(db, text(args[1]), -by, out);
+      return;
+    }
+    case "del":
+    case "unlink": {
+      arity(name, args, -2);
+      let n: i64 = 0;
+      for (let i = 1; i < args.length; i++) {
+        const key = text(args[i]);
+        if (db.kind(key) !== "none" && db.remove(key)) {
+          n++;
+        }
+      }
+      out.integer(n);
+      return;
+    }
+    case "exists": {
+      arity(name, args, -2);
+      let n: i64 = 0;
+      for (let i = 1; i < args.length; i++) {
+        if (db.kind(text(args[i])) !== "none") {
+          n++;
+        }
+      }
+      out.integer(n);
+      return;
+    }
+    case "type": {
+      arity(name, args, 2);
+      const k = db.kind(text(args[1]));
+      out.simple(k);
+      return;
+    }
+    case "keys": {
+      arity(name, args, 2);
+      const pattern = text(args[1]);
+      const hits = db.keys().filter((k) => globMatch(pattern, k));
+      out.array(hits.length);
+      for (const k of hits) {
+        out.bulkString(k);
+      }
+      return;
+    }
+    case "expire":
+      arity(name, args, 3);
+      expire(db, args, 1000.0, out);
+      return;
+    case "pexpire":
+      arity(name, args, 3);
+      expire(db, args, 1.0, out);
+      return;
+    case "ttl":
+      arity(name, args, 2);
+      ttl(db, text(args[1]), false, out);
+      return;
+    case "pttl":
+      arity(name, args, 2);
+      ttl(db, text(args[1]), true, out);
+      return;
+    case "persist": {
+      arity(name, args, 2);
+      const key = text(args[1]);
+      out.integer(db.kind(key) !== "none" && db.expires.delete(key) ? 1 : 0);
+      return;
+    }
+    case "lpush":
+    case "rpush": {
+      arity(name, args, -3);
+      const l = list(db, text(args[1]), true)!;
+      for (let i = 2; i < args.length; i++) {
+        if (name === "lpush") {
+          l.pushFront(args[i]);
+        } else {
+          l.pushBack(args[i]);
+        }
+      }
+      out.integer(l.length);
+      return;
+    }
+    case "lpop":
+      arity(name, args, -2);
+      pop(db, args, out, true);
+      return;
+    case "rpop":
+      arity(name, args, -2);
+      pop(db, args, out, false);
+      return;
+    case "llen": {
+      arity(name, args, 2);
+      const l = list(db, text(args[1]), false);
+      out.integer(l == null ? 0 : l.length);
+      return;
+    }
+    case "lindex": {
+      arity(name, args, 3);
+      const l = list(db, text(args[1]), false);
+      const v = l == null ? null : l.at(parseInt64(args[2]));
+      if (v == null) {
+        out.nil();
+      } else {
+        out.bulk(v);
+      }
+      return;
+    }
+    case "lrange": {
+      arity(name, args, 4);
+      const start = parseInt64(args[2]);
+      const stop = parseInt64(args[3]);
+      const l = list(db, text(args[1]), false);
+      if (l == null) {
+        out.array(0);
+        return;
+      }
+      const [a, b] = range(start, stop, l.length);
+      if (a > b) {
+        out.array(0);
+        return;
+      }
+      out.array(b - a + 1);
+      for (let i = a; i <= b; i++) {
+        out.bulk(l.at(i)!);
+      }
+      return;
+    }
+    case "hset":
+    case "hmset": {
+      if (args.length < 4 || args.length % 2 === 1) {
+        throw new CommandError(`ERR wrong number of arguments for '${name}' command`);
+      }
+      const h = hash(db, text(args[1]), true)!;
+      let added: i64 = 0;
+      for (let i = 2; i < args.length; i += 2) {
+        const field = text(args[i]);
+        if (!h.has(field)) {
+          added++;
+        }
+        h.set(field, args[i + 1]);
+      }
+      if (name === "hmset") {
+        out.ok();
+      } else {
+        out.integer(added);
+      }
+      return;
+    }
+    case "hget": {
+      arity(name, args, 3);
+      const h = hash(db, text(args[1]), false);
+      const v = h == null ? null : h.get(text(args[2]));
+      if (v == null) {
+        out.nil();
+      } else {
+        out.bulk(v);
+      }
+      return;
+    }
+    case "hmget": {
+      arity(name, args, -3);
+      const h = hash(db, text(args[1]), false);
+      out.array(args.length - 2);
+      for (let i = 2; i < args.length; i++) {
+        const v = h == null ? null : h.get(text(args[i]));
+        if (v == null) {
+          out.nil();
+        } else {
+          out.bulk(v);
+        }
+      }
+      return;
+    }
+    case "hdel": {
+      arity(name, args, -3);
+      const key = text(args[1]);
+      const h = hash(db, key, false);
+      let n: i64 = 0;
+      if (h != null) {
+        for (let i = 2; i < args.length; i++) {
+          if (h.delete(text(args[i]))) {
+            n++;
+          }
+        }
+        dropIfEmpty(db, key, h.size as i64);
+      }
+      out.integer(n);
+      return;
+    }
+    case "hexists": {
+      arity(name, args, 3);
+      const h = hash(db, text(args[1]), false);
+      out.integer(h != null && h.has(text(args[2])) ? 1 : 0);
+      return;
+    }
+    case "hlen": {
+      arity(name, args, 2);
+      const h = hash(db, text(args[1]), false);
+      out.integer(h == null ? 0 : h.size as i64);
+      return;
+    }
+    case "hgetall":
+    case "hkeys":
+    case "hvals": {
+      arity(name, args, 2);
+      const h = hash(db, text(args[1]), false);
+      if (h == null) {
+        out.array(0);
+        return;
+      }
+      out.array(name === "hgetall" ? (h.size as i64) * 2 : h.size as i64);
+      for (const [field, v] of h) {
+        if (name !== "hvals") {
+          out.bulkString(field);
+        }
+        if (name !== "hkeys") {
+          out.bulk(v);
+        }
+      }
+      return;
+    }
+    case "hincrby": {
+      arity(name, args, 4);
+      const h = hash(db, text(args[1]), true)!;
+      const field = text(args[2]);
+      const by = parseInt64(args[3]);
+      const cur = h.get(field);
+      let old: i64 = 0;
+      if (cur != null) {
+        try {
+          old = parseInt64(cur);
+        } catch (e) {
+          throw new CommandError("ERR hash value is not an integer");
+        }
+      }
+      if ((by > 0 && old > MAX - by) || (by < 0 && old < MIN - by)) {
+        throw new CommandError("ERR increment or decrement would overflow");
+      }
+      h.set(field, utf8Encode(`${old + by}`));
+      out.integer(old + by);
+      return;
+    }
+    case "sadd": {
+      arity(name, args, -3);
+      const s = setOf(db, text(args[1]), true)!;
+      let n: i64 = 0;
+      for (let i = 2; i < args.length; i++) {
+        const m = text(args[i]);
+        if (!s.has(m)) {
+          s.add(m);
+          n++;
+        }
+      }
+      out.integer(n);
+      return;
+    }
+    case "srem": {
+      arity(name, args, -3);
+      const key = text(args[1]);
+      const s = setOf(db, key, false);
+      let n: i64 = 0;
+      if (s != null) {
+        for (let i = 2; i < args.length; i++) {
+          if (s.delete(text(args[i]))) {
+            n++;
+          }
+        }
+        dropIfEmpty(db, key, s.size as i64);
+      }
+      out.integer(n);
+      return;
+    }
+    case "sismember": {
+      arity(name, args, 3);
+      const s = setOf(db, text(args[1]), false);
+      out.integer(s != null && s.has(text(args[2])) ? 1 : 0);
+      return;
+    }
+    case "scard": {
+      arity(name, args, 2);
+      const s = setOf(db, text(args[1]), false);
+      out.integer(s == null ? 0 : s.size as i64);
+      return;
+    }
+    case "smembers": {
+      arity(name, args, 2);
+      const s = setOf(db, text(args[1]), false);
+      if (s == null) {
+        out.array(0);
+        return;
+      }
+      out.array(s.size as i64);
+      for (const m of s) {
+        out.bulkString(m);
+      }
+      return;
+    }
+    case "spop": {
+      arity(name, args, -2);
+      const key = text(args[1]);
+      const s = setOf(db, key, false);
+      const count = args.length > 2 ? parseInt64(args[2]) : -1;
+      if (s == null) {
+        if (count < 0) {
+          out.nil();
+        } else {
+          out.array(0);
+        }
+        return;
+      }
+      const members = s.values();
+      const n = count < 0 ? 1 : count < members.length ? count : members.length;
+      if (count >= 0) {
+        out.array(n);
+      }
+      for (let i: i64 = 0; i < n; i++) {
+        const pick = members.splice(Math.floor(Math.random() * members.length) as i64, 1)[0];
+        s.delete(pick);
+        out.bulkString(pick);
+      }
+      dropIfEmpty(db, key, s.size as i64);
+      return;
+    }
+    case "zadd": {
+      if (args.length < 4 || args.length % 2 === 1) {
+        throw args.length < 4
+          ? new CommandError("ERR wrong number of arguments for 'zadd' command")
+          : syntax();
+      }
+      const pairs: Scored[] = [];
+      for (let i = 2; i < args.length; i += 2) {
+        pairs.push({ score: parseScore(args[i]), member: text(args[i + 1]) });
+      }
+      const z = zset(db, text(args[1]), true)!;
+      let n: i64 = 0;
+      for (const p of pairs) {
+        if (z.add(p.score, p.member)) {
+          n++;
+        }
+      }
+      out.integer(n);
+      return;
+    }
+    case "zscore": {
+      arity(name, args, 3);
+      const z = zset(db, text(args[1]), false);
+      const s = z == null ? null : z.scores.get(text(args[2]));
+      if (s == null) {
+        out.nil();
+      } else {
+        out.bulkString(formatScore(s));
+      }
+      return;
+    }
+    case "zcard": {
+      arity(name, args, 2);
+      const z = zset(db, text(args[1]), false);
+      out.integer(z == null ? 0 : z.scores.size as i64);
+      return;
+    }
+    case "zrem": {
+      arity(name, args, -3);
+      const key = text(args[1]);
+      const z = zset(db, key, false);
+      let n: i64 = 0;
+      if (z != null) {
+        for (let i = 2; i < args.length; i++) {
+          if (z.remove(text(args[i]))) {
+            n++;
+          }
+        }
+        dropIfEmpty(db, key, z.scores.size as i64);
+      }
+      out.integer(n);
+      return;
+    }
+    case "zrange": {
+      arity(name, args, -4);
+      const withScores = args.length === 5 && text(args[4]).toUpperCase() === "WITHSCORES";
+      if (args.length > 5 || (args.length === 5 && !withScores)) {
+        throw syntax();
+      }
+      const start = parseInt64(args[2]);
+      const stop = parseInt64(args[3]);
+      const z = zset(db, text(args[1]), false);
+      if (z == null) {
+        out.array(0);
+        return;
+      }
+      const [a, b] = range(start, stop, z.order.length);
+      if (a > b) {
+        out.array(0);
+        return;
+      }
+      out.array((b - a + 1) * (withScores ? 2 : 1));
+      for (let i = a; i <= b; i++) {
+        out.bulkString(z.order[i].member);
+        if (withScores) {
+          out.bulkString(formatScore(z.order[i].score));
+        }
+      }
+      return;
+    }
+    case "zpopmin": {
+      arity(name, args, -2);
+      const key = text(args[1]);
+      const count = args.length > 2 ? parseInt64(args[2]) : 1;
+      const z = zset(db, key, false);
+      if (z == null || count <= 0) {
+        out.array(0);
+        return;
+      }
+      const n = count < z.order.length ? count : z.order.length;
+      out.array(n * 2);
+      for (let i: i64 = 0; i < n; i++) {
+        const first = z.order[0];
+        out.bulkString(first.member);
+        out.bulkString(formatScore(first.score));
+        z.remove(first.member);
+      }
+      dropIfEmpty(db, key, z.scores.size as i64);
+      return;
+    }
+  }
+  const shown = args.slice(1).map((a) => `'${text(a)}' `).join("");
+  throw new CommandError(
+    args.length > 1
+      ? `ERR unknown command '${text(args[0])}', with args beginning with: ${shown}`
+      : `ERR unknown command '${text(args[0])}'`,
+  );
+}

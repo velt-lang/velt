@@ -1,0 +1,245 @@
+// RESP2, the Redis protocol: requests are arrays of bulk strings (`*2\r\n$3\r\nGET\r\n$1\r\nk\r\n`)
+// or inline lines (`PING\r\n`); replies are written into a growable byte buffer.
+import { utf8Encode } from "velt:encoding";
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+
+/// A protocol error: the connection is answered with `-ERR Protocol error: …` and closed.
+export class ProtocolError extends Error {}
+
+/// Splits a byte stream into commands. Feed it what the socket reads; `next()` returns each
+/// complete command (its arguments as bytes), or null until more data arrives.
+export class RespParser {
+  private buf: u8[] = [];
+  private pos: i64 = 0;
+
+  feed(data: u8[]) {
+    if (this.pos === this.buf.length) {
+      this.buf = data;
+      this.pos = 0;
+      return;
+    }
+    // Keep the unparsed tail and append.
+    const rest = this.buf.length - this.pos;
+    const merged = Buffer.alloc(rest + data.length);
+    merged.set(this.buf.slice(this.pos), 0);
+    merged.set(data, rest as usize);
+    this.buf = merged;
+    this.pos = 0;
+  }
+
+  /// A decimal number from `from` up to the CR at `end`.
+  private int(from: i64, end: i64): i64 {
+    let n: i64 = 0;
+    let i = from;
+    let negative = false;
+    if (i < end && this.buf[i] === 45) {
+      negative = true;
+      i++;
+    }
+    if (i === end) {
+      throw new ProtocolError("invalid length");
+    }
+    for (; i < end; i++) {
+      const c = this.buf[i];
+      if (c < 48 || c > 57) {
+        throw new ProtocolError("invalid length");
+      }
+      n = n * 10 + (c as i64) - 48;
+    }
+    return negative ? -n : n;
+  }
+
+  /// The next complete command, or null if the buffer holds only part of one.
+  next(): u8[][] | null {
+    if (this.pos >= this.buf.length) {
+      return null;
+    }
+    if (this.buf[this.pos] !== 42) {
+      return this.inline();
+    }
+    const start = this.pos;
+    const eol = this.buf.indexOf(CR, this.pos);
+    if (eol < 0 || eol + 1 >= this.buf.length) {
+      return null;
+    }
+    const count = this.int(this.pos + 1, eol);
+    if (count > 1048576) {
+      throw new ProtocolError("invalid multibulk length");
+    }
+    let at = eol + 2;
+    const args: u8[][] = [];
+    for (let i: i64 = 0; i < count; i++) {
+      if (at >= this.buf.length) {
+        this.pos = start;
+        return null;
+      }
+      if (this.buf[at] !== 36) {
+        throw new ProtocolError(`expected '$', got '${String.fromCharCode(this.buf[at] as f64)}'`);
+      }
+      const lineEnd = this.buf.indexOf(CR, at);
+      if (lineEnd < 0) {
+        this.pos = start;
+        return null;
+      }
+      const len = this.int(at + 1, lineEnd);
+      if (len < 0 || len > 536870912) {
+        throw new ProtocolError("invalid bulk length");
+      }
+      const dataStart = lineEnd + 2;
+      if (dataStart + len + 2 > this.buf.length) {
+        this.pos = start;
+        return null;
+      }
+      args.push(this.buf.slice(dataStart, dataStart + len));
+      at = dataStart + len + 2;
+    }
+    this.pos = at;
+    return args;
+  }
+
+  /// An inline command: one line, arguments separated by spaces (what `telnet` users type).
+  private inline(): u8[][] | null {
+    const eol = this.buf.indexOf(LF, this.pos);
+    if (eol < 0) {
+      return null;
+    }
+    const end = eol > this.pos && this.buf[eol - 1] === CR ? eol - 1 : eol;
+    const args: u8[][] = [];
+    let i = this.pos;
+    while (i < end) {
+      while (i < end && this.buf[i] === 32) {
+        i++;
+      }
+      const from = i;
+      while (i < end && this.buf[i] !== 32) {
+        i++;
+      }
+      if (i > from) {
+        args.push(this.buf.slice(from, i));
+      }
+    }
+    this.pos = eol + 1;
+    return args;
+  }
+}
+
+/// A growable byte buffer for replies.
+export class Writer {
+  buf: u8[] = Buffer.alloc(4096);
+  length: i64 = 0;
+
+  private reserve(n: i64) {
+    if (this.length + n <= this.buf.length) {
+      return;
+    }
+    let size = this.buf.length * 2;
+    while (size < this.length + n) {
+      size *= 2;
+    }
+    const grown = Buffer.alloc(size);
+    grown.set(this.buf.slice(0, this.length), 0);
+    this.buf = grown;
+  }
+
+  bytes(data: u8[]) {
+    this.reserve(data.length);
+    this.buf.set(data, this.length as usize);
+    this.length += data.length;
+  }
+
+  private byte(b: u8) {
+    this.buf[this.length] = b;
+    this.length++;
+  }
+
+  private crlf() {
+    this.byte(CR);
+    this.byte(LF);
+  }
+
+  /// `prefix`, the decimal digits of `n` and CRLF, written in place (no string, no allocation):
+  /// every bulk reply and array starts with one of these. std has no allocation-free way to
+  /// write text into a `u8[]` yet (#718); with `utf8Encode` here, LRANGE was 31% slower.
+  private header(prefix: u8, n: i64) {
+    this.reserve(24);
+    this.byte(prefix);
+    let v = n;
+    if (v < 0) {
+      this.byte(45);
+      v = -v;
+    }
+    const start = this.length;
+    do {
+      this.byte(48 + (v % 10) as u8);
+      v = v / 10;
+    } while (v > 0);
+    // The digits went in least significant first: reverse them.
+    let i = start;
+    let j = this.length - 1;
+    while (i < j) {
+      const t = this.buf[i];
+      this.buf[i] = this.buf[j];
+      this.buf[j] = t;
+      i++;
+      j--;
+    }
+    this.crlf();
+  }
+
+  ascii(s: string) {
+    this.bytes(utf8Encode(s));
+  }
+
+  simple(s: string) {
+    this.ascii(`+${s}\r\n`);
+  }
+
+  ok() {
+    this.reserve(5);
+    this.byte(43);
+    this.byte(79);
+    this.byte(75);
+    this.crlf();
+  }
+
+  error(message: string) {
+    this.ascii(`-${message}\r\n`);
+  }
+
+  integer(n: i64) {
+    this.header(58, n);
+  }
+
+  bulk(data: u8[]) {
+    this.header(36, data.length);
+    this.reserve(data.length + 2);
+    this.buf.set(data, this.length as usize);
+    this.length += data.length;
+    this.crlf();
+  }
+
+  bulkString(s: string) {
+    this.bulk(utf8Encode(s));
+  }
+
+  nil() {
+    this.header(36, -1);
+  }
+
+  nilArray() {
+    this.header(42, -1);
+  }
+
+  array(n: i64) {
+    this.header(42, n);
+  }
+
+  /// The reply bytes so far; the writer starts over.
+  take(): u8[] {
+    const out = this.buf.slice(0, this.length);
+    this.length = 0;
+    return out;
+  }
+}

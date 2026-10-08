@@ -1,0 +1,327 @@
+// Sends the same commands to this server and to a real Redis and compares the raw RESP replies
+// byte for byte. Replies whose order Redis leaves unspecified (KEYS, SMEMBERS, HGETALL of a
+// large hash) are compared as sorted lines.
+//
+//   redis-server --port 6379 --save '' &
+//   velt run parity.vlt -- 127.0.0.1:6380 127.0.0.1:6379
+import { connect, TcpStream } from "velt:net";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { args, exit } from "velt:process";
+
+/// Reads one complete reply from `conn`, keeping any extra bytes for the next call.
+class ReplyReader {
+  private buf: u8[] = [];
+
+  constructor(private conn: TcpStream) {}
+
+  /// The end of the reply starting at `at` in buf, or -1 if it isn't complete yet.
+  private end(at: i64): i64 {
+    if (at >= this.buf.length) {
+      return -1;
+    }
+    const eol = this.buf.indexOf(13, at);
+    if (eol < 0 || eol + 1 >= this.buf.length) {
+      return -1;
+    }
+    const kind = this.buf[at];
+    const n = Number.parseInt(utf8DecodeLossy(this.buf.slice(at + 1, eol)), 10) as i64;
+    if (kind === 36) {
+      // $n: n bytes + CRLF, or $-1
+      if (n < 0) {
+        return eol + 2;
+      }
+      const stop = eol + 2 + n + 2;
+      return stop <= this.buf.length ? stop : -1;
+    }
+    if (kind === 42) {
+      let pos = eol + 2;
+      for (let i: i64 = 0; i < n; i++) {
+        pos = this.end(pos);
+        if (pos < 0) {
+          return -1;
+        }
+      }
+      return pos;
+    }
+    return eol + 2;
+  }
+
+  async next(): Promise<string> {
+    while (true) {
+      const stop = this.end(0);
+      if (stop >= 0) {
+        const reply = utf8DecodeLossy(this.buf.slice(0, stop));
+        this.buf = this.buf.slice(stop);
+        return reply;
+      }
+      const data = await this.conn.read();
+      if (data.length === 0) {
+        return "<closed>";
+      }
+      const merged = Buffer.alloc(this.buf.length + data.length);
+      merged.set(this.buf, 0);
+      merged.set(data, this.buf.length as usize);
+      this.buf = merged;
+    }
+  }
+}
+
+function encode(argv: string[]): string {
+  let s = `*${argv.length}\r\n`;
+  for (const a of argv) {
+    s += `$${Buffer.byteLength(a)}\r\n${a}\r\n`;
+  }
+  return s;
+}
+
+type Step = { argv: string[]; unordered: bool; sleepMs: i64 };
+
+function c(...argv: string[]): Step {
+  return { argv, unordered: false, sleepMs: 0 };
+}
+
+function u(...argv: string[]): Step {
+  return { argv, unordered: true, sleepMs: 0 };
+}
+
+function pause(ms: i64): Step {
+  return { argv: [], unordered: false, sleepMs: ms };
+}
+
+function script(): Step[] {
+  const big = "x".repeat(100000);
+  return [
+    c("FLUSHALL"),
+    c("PING"),
+    c("PING", "hello"),
+    c("PING", "a", "b"),
+    c("ECHO", "héllo wörld"),
+    c("ECHO"),
+    c("SET", "k", "v"),
+    c("GET", "k"),
+    c("GET", "missing"),
+    c("SET", "k", "v2", "XX"),
+    c("SET", "k", "v3", "NX"),
+    c("SET", "new", "v", "XX"),
+    c("SET", "k", "v4", "GET"),
+    c("SET", "fresh", "v", "NX", "GET"),
+    c("SET", "k", "v", "NX", "XX"),
+    c("SET", "k", "v", "EX", "0"),
+    c("SET", "k", "v", "EX", "-5"),
+    c("SET", "k", "v", "EX", "abc"),
+    c("SET", "k", "v", "EX"),
+    c("SET", "k", "v", "FOO"),
+    c("SET", "k"),
+    c("SET", "big", big),
+    c("STRLEN", "big"),
+    c("GET", "big"),
+    c("SET", "e", ""),
+    c("GET", "e"),
+    c("STRLEN", "e"),
+    c("SETNX", "k", "x"),
+    c("SETNX", "nx1", "x"),
+    c("GETDEL", "nx1"),
+    c("GETDEL", "nx1"),
+    c("MSET", "a", "1", "b", "2", "c", "3"),
+    c("MSET", "a", "1", "b"),
+    c("MGET", "a", "b", "missing", "c"),
+    c("APPEND", "a", "23"),
+    c("APPEND", "ap", "start"),
+    c("GET", "a"),
+    c("INCR", "a"),
+    c("INCR", "counter"),
+    c("INCRBY", "counter", "41"),
+    c("INCRBY", "counter", "-100"),
+    c("DECR", "counter"),
+    c("DECRBY", "counter", "5"),
+    c("INCRBY", "counter", "1.5"),
+    c("INCRBY", "counter", "+1"),
+    c("INCRBY", "counter", " 1"),
+    c("INCRBY", "counter", "007"),
+    c("INCR", "k"),
+    c("SET", "max", "9223372036854775807"),
+    c("INCR", "max"),
+    c("SET", "min", "-9223372036854775808"),
+    c("DECR", "min"),
+    c("INCRBY", "x", "99999999999999999999"),
+    c("DEL", "a", "b", "missing"),
+    c("EXISTS", "a", "c", "c", "missing"),
+    c("TYPE", "c"),
+    c("TYPE", "missing"),
+    c("LPUSH", "list", "a", "b", "c"),
+    c("RPUSH", "list", "d", "e"),
+    c("LLEN", "list"),
+    c("LRANGE", "list", "0", "-1"),
+    c("LRANGE", "list", "1", "2"),
+    c("LRANGE", "list", "-2", "-1"),
+    c("LRANGE", "list", "5", "10"),
+    c("LRANGE", "list", "-100", "100"),
+    c("LRANGE", "list", "3", "1"),
+    c("LRANGE", "list", "a", "1"),
+    c("LINDEX", "list", "0"),
+    c("LINDEX", "list", "-1"),
+    c("LINDEX", "list", "99"),
+    c("LPOP", "list"),
+    c("RPOP", "list"),
+    c("LPOP", "list", "2"),
+    c("RPOP", "list", "0"),
+    c("LPOP", "list", "-1"),
+    c("LPOP", "list", "5"),
+    c("LPOP", "list"),
+    c("LLEN", "list"),
+    c("EXISTS", "list"),
+    c("LPUSH", "k", "x"),
+    c("GET", "nolist"),
+    c("RPUSH", "l2", "x"),
+    c("GET", "l2"),
+    c("HSET", "h", "f1", "v1", "f2", "v2"),
+    c("HSET", "h", "f1", "new", "f3", "v3"),
+    c("HSET", "h", "f1"),
+    c("HGET", "h", "f1"),
+    c("HGET", "h", "nope"),
+    c("HGET", "missing", "f"),
+    c("HMGET", "h", "f1", "nope", "f3"),
+    c("HLEN", "h"),
+    c("HEXISTS", "h", "f2"),
+    c("HEXISTS", "h", "zz"),
+    c("HGETALL", "h"),
+    c("HKEYS", "h"),
+    c("HVALS", "h"),
+    c("HINCRBY", "h", "n", "5"),
+    c("HINCRBY", "h", "n", "-7"),
+    c("HINCRBY", "h", "f1", "1"),
+    c("HDEL", "h", "f1", "f2", "nope"),
+    c("HGETALL", "h"),
+    c("HMSET", "h2", "a", "1"),
+    c("HGET", "k", "f"),
+    c("HDEL", "h", "f3", "n"),
+    c("EXISTS", "h"),
+    c("SADD", "s", "a", "b", "c", "a"),
+    c("SADD", "s", "d"),
+    c("SCARD", "s"),
+    c("SISMEMBER", "s", "a"),
+    c("SISMEMBER", "s", "z"),
+    u("SMEMBERS", "s"),
+    c("SREM", "s", "a", "z"),
+    c("SCARD", "s"),
+    c("SPOP", "missing"),
+    c("SPOP", "missing", "2"),
+    c("SADD", "one", "only"),
+    c("SPOP", "one"),
+    c("EXISTS", "one"),
+    c("SADD", "k", "x"),
+    c("ZADD", "z", "1", "a", "2", "b", "3", "c"),
+    c("ZADD", "z", "1.5", "a"),
+    c("ZADD", "z", "0.1", "d", "-inf", "e", "+inf", "f"),
+    c("ZADD", "z", "x", "a"),
+    c("ZADD", "z", "1"),
+    c("ZADD", "z", "1", "a", "2"),
+    c("ZCARD", "z"),
+    c("ZSCORE", "z", "a"),
+    c("ZSCORE", "z", "e"),
+    c("ZSCORE", "z", "nope"),
+    c("ZRANGE", "z", "0", "-1"),
+    c("ZRANGE", "z", "0", "-1", "WITHSCORES"),
+    c("ZRANGE", "z", "1", "2", "WITHSCORES"),
+    c("ZRANGE", "z", "0", "1", "FOO"),
+    c("ZREM", "z", "a", "nope"),
+    c("ZPOPMIN", "z"),
+    c("ZPOPMIN", "z", "2"),
+    c("ZPOPMIN", "missing"),
+    c("ZADD", "z2", "5", "b", "5", "a", "5", "c"),
+    c("ZRANGE", "z2", "0", "-1"),
+    c("ZADD", "k", "1", "x"),
+    c("SET", "ttl", "v", "EX", "100"),
+    c("TTL", "ttl"),
+    c("TTL", "k"),
+    c("TTL", "missing"),
+    c("PTTL", "missing"),
+    c("PERSIST", "ttl"),
+    c("TTL", "ttl"),
+    c("PERSIST", "ttl"),
+    c("EXPIRE", "ttl", "100"),
+    c("EXPIRE", "missing", "100"),
+    c("EXPIRE", "ttl", "x"),
+    c("SET", "ttl", "again"),
+    c("TTL", "ttl"),
+    c("SET", "keep", "v", "EX", "100"),
+    c("SET", "keep", "v2", "KEEPTTL"),
+    c("TTL", "keep"),
+    c("SET", "short", "v", "PX", "100"),
+    c("SETEX", "sx", "100", "v"),
+    c("TTL", "sx"),
+    c("SETEX", "sx", "0", "v"),
+    c("PSETEX", "psx", "100", "v"),
+    c("RPUSH", "lexp", "a"),
+    c("PEXPIRE", "lexp", "100"),
+    c("EXPIRE", "gone", "-1"),
+    c("SET", "gone", "v"),
+    c("EXPIRE", "gone", "-1"),
+    c("EXISTS", "gone"),
+    pause(250),
+    c("GET", "short"),
+    c("EXISTS", "short"),
+    c("GET", "psx"),
+    c("LLEN", "lexp"),
+    c("TYPE", "lexp"),
+    u("KEYS", "*"),
+    u("KEYS", "h*"),
+    u("KEYS", "?"),
+    u("KEYS", "[sz]*"),
+    u("KEYS", "[^a-k]*"),
+    c("KEYS", "nomatch*"),
+    c("DBSIZE"),
+    c("DEL", "k"),
+    c("UNLINK", "c", "e"),
+    c("DBSIZE"),
+    c("NOSUCHCMD"),
+    c("NOSUCHCMD", "a", "b"),
+    c("GET"),
+    c("get", "big", "extra"),
+    c("FLUSHDB"),
+    c("DBSIZE"),
+  ];
+}
+
+async function main() {
+  const argv = args();
+  if (argv.length !== 2) {
+    console.error("usage: velt run parity.vlt -- <this host:port> <redis host:port>");
+    exit(2);
+  }
+  const ours = await connect(argv[0]);
+  const theirs = await connect(argv[1]);
+  const a = new ReplyReader(ours);
+  const b = new ReplyReader(theirs);
+  let failures = 0;
+  let total = 0;
+  for (const step of script()) {
+    if (step.sleepMs > 0) {
+      await sleep(step.sleepMs);
+      continue;
+    }
+    total++;
+    const req = utf8Encode(encode(step.argv));
+    await ours.writeBytes(req);
+    await theirs.writeBytes(req);
+    let x = await a.next();
+    let y = await b.next();
+    if (step.unordered) {
+      // `toSorted()`: `sort()` returns nothing in Velt, so it can't chain (#719).
+      x = x.split("\r\n").toSorted().join("\r\n");
+      y = y.split("\r\n").toSorted().join("\r\n");
+    }
+    if (x !== y) {
+      failures++;
+      console.log(`DIFF ${step.argv.join(" ").slice(0, 80)}`);
+      console.log(`  ours:  ${JSON.stringify(x.slice(0, 200))}`);
+      console.log(`  redis: ${JSON.stringify(y.slice(0, 200))}`);
+    }
+  }
+  ours.close();
+  theirs.close();
+  console.log(`${total - failures}/${total} replies identical`);
+  if (failures > 0) {
+    exit(1);
+  }
+}

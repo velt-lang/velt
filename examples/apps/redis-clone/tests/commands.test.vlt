@@ -1,0 +1,107 @@
+// Commands against a Db directly (no sockets), with a fixed clock.
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { execute, globMatch, parseInt64 } from "../src/commands";
+import { Db } from "../src/db";
+import { Writer } from "../src/resp";
+
+function run(db: Db, line: string): string {
+  const w = new Writer();
+  execute(db, line.split(" ").map((a) => utf8Encode(a)), w);
+  return utf8DecodeLossy(w.take()).replaceAll("\r\n", "|");
+}
+
+function db(): Db {
+  const d = new Db();
+  d.now = 1000000.0;
+  return d;
+}
+
+export function test_strict_integers() {
+  assertEq(parseInt64(utf8Encode("-9223372036854775808")), -9223372036854775807 - 1);
+  assertEq(parseInt64(utf8Encode("9223372036854775807")), 9223372036854775807);
+  for (const bad of [
+    "",
+    "-",
+    "+1",
+    "01",
+    " 1",
+    "1.0",
+    "9223372036854775808",
+    "-9223372036854775809",
+  ]) {
+    let threw = false;
+    try {
+      parseInt64(utf8Encode(bad));
+    } catch (e) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+export function test_glob() {
+  assert(globMatch("*", "anything"));
+  assert(globMatch("h?llo", "hello"));
+  assert(globMatch("h[ae]llo", "hallo"));
+  assert(!globMatch("h[^e]llo", "hello"));
+  assert(globMatch("h[a-c]x", "hbx"));
+  assert(globMatch("a\\*b", "a*b"));
+  assert(!globMatch("a\\*b", "axb"));
+  assert(globMatch("*:*:end", "user:1:end"));
+}
+
+export function test_expiry_follows_the_clock() {
+  const d = db();
+  assertEq(run(d, "SET k v PX 100"), "+OK|");
+  assertEq(run(d, "PTTL k"), ":100|");
+  d.now += 99.0;
+  assertEq(run(d, "GET k"), "$1|v|");
+  d.now += 1.0;
+  assertEq(run(d, "GET k"), "$-1|");
+  assertEq(run(d, "EXISTS k"), ":0|");
+}
+
+export function test_sweep_removes_due_keys() {
+  const d = db();
+  run(d, "SET a 1 PX 10");
+  run(d, "SET b 1 PX 1000");
+  run(d, "SET c 1");
+  d.now += 50.0;
+  assertEq(d.sweep(20), 1);
+  assertEq(run(d, "DBSIZE"), ":2|");
+}
+
+export function test_types_and_wrongtype() {
+  const d = db();
+  run(d, "RPUSH l a b");
+  assertEq(run(d, "TYPE l"), "+list|");
+  assertEq(run(d, "GET l"), "-WRONGTYPE Operation against a key holding the wrong kind of value|");
+  assertEq(run(d, "SET l now-a-string"), "+OK|");
+  assertEq(run(d, "TYPE l"), "+string|");
+  assertEq(run(d, "LLEN l"), "-WRONGTYPE Operation against a key holding the wrong kind of value|");
+}
+
+export function test_emptied_containers_disappear() {
+  const d = db();
+  run(d, "SADD s x");
+  run(d, "SREM s x");
+  run(d, "HSET h f v");
+  run(d, "HDEL h f");
+  run(d, "RPUSH l x");
+  run(d, "LPOP l");
+  assertEq(run(d, "DBSIZE"), ":0|");
+}
+
+export function test_sorted_set_order_and_ties() {
+  const d = db();
+  run(d, "ZADD z 2 b 1 c 2 a");
+  assertEq(run(d, "ZRANGE z 0 -1"), "*3|$1|c|$1|a|$1|b|");
+  run(d, "ZADD z 0 b");
+  assertEq(run(d, "ZPOPMIN z"), "*2|$1|b|$1|0|");
+}
+
+export function test_quit_closes() {
+  const w = new Writer();
+  assert(!execute(db(), [utf8Encode("QUIT")], w));
+  assert(execute(db(), [utf8Encode("PING")], w));
+}

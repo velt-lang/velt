@@ -1,0 +1,207 @@
+// The keyspace: one map per value type (strings, the hot path, need no tag check), expiry
+// times in a map of their own, checked on access and swept in the background.
+import { Deque } from "velt:collections/deque";
+import { Set } from "velt:collections/set";
+
+/// A value of the wrong type for the command (`WRONGTYPE`), or a bad argument (`ERR …`).
+export class CommandError extends Error {}
+
+export function wrongType(): CommandError {
+  return new CommandError("WRONGTYPE Operation against a key holding the wrong kind of value");
+}
+
+export function notInteger(): CommandError {
+  return new CommandError("ERR value is not an integer or out of range");
+}
+
+/// One member of a sorted set, ordered by score, then member.
+export type Scored = { score: f64; member: string };
+
+function before(a: Scored, score: f64, member: string): bool {
+  return a.score < score || (a.score === score && a.member < member);
+}
+
+/// A sorted set: member → score, plus the members in order (binary search on insert/remove).
+export class ZSet {
+  scores: Map<string, f64> = new Map<string, f64>();
+  order: Scored[] = [];
+
+  /// Where (score, member) is or would go.
+  private position(score: f64, member: string): i64 {
+    let lo: i64 = 0;
+    let hi: i64 = this.order.length;
+    while (lo < hi) {
+      const mid = (lo + hi) / 2;
+      if (before(this.order[mid], score, member)) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /// Adds or moves `member`; true if it is new.
+  add(score: f64, member: string): bool {
+    const old = this.scores.get(member);
+    if (old != null) {
+      if (old === score) {
+        return false;
+      }
+      this.order.splice(this.position(old, member), 1);
+    }
+    this.scores.set(member, score);
+    this.order.splice(this.position(score, member), 0, { score, member });
+    return old == null;
+  }
+
+  remove(member: string): bool {
+    const old = this.scores.get(member);
+    if (old == null) {
+      return false;
+    }
+    this.scores.delete(member);
+    this.order.splice(this.position(old, member), 1);
+    return true;
+  }
+}
+
+export type Kind = "none" | "string" | "list" | "hash" | "set" | "zset";
+
+export class Db {
+  strings: Map<string, u8[]> = new Map<string, u8[]>();
+  lists: Map<string, Deque<u8[]>> = new Map<string, Deque<u8[]>>();
+  hashes: Map<string, Map<string, u8[]>> = new Map<string, Map<string, u8[]>>();
+  sets: Map<string, Set<string>> = new Map<string, Set<string>>();
+  zsets: Map<string, ZSet> = new Map<string, ZSet>();
+  expires: Map<string, f64> = new Map<string, f64>(); // key → ms since the epoch
+  now: f64 = 0; // the time of the current batch of commands
+
+  /// Deletes `key` if its time is up; true if it did.
+  private expireIfDue(key: string): bool {
+    if (this.expires.size === 0) {
+      return false;
+    }
+    const at = this.expires.get(key);
+    if (at == null || at > this.now) {
+      return false;
+    }
+    this.remove(key);
+    return true;
+  }
+
+  kind(key: string): Kind {
+    this.expireIfDue(key);
+    if (this.strings.has(key)) {
+      return "string";
+    }
+    if (this.lists.size > 0 && this.lists.has(key)) {
+      return "list";
+    }
+    if (this.hashes.size > 0 && this.hashes.has(key)) {
+      return "hash";
+    }
+    if (this.sets.size > 0 && this.sets.has(key)) {
+      return "set";
+    }
+    if (this.zsets.size > 0 && this.zsets.has(key)) {
+      return "zset";
+    }
+    return "none";
+  }
+
+  /// Fails with WRONGTYPE unless `key` is missing or of kind `want`.
+  expect(key: string, want: Kind): bool {
+    const k = this.kind(key);
+    if (k !== "none" && k !== want) {
+      throw wrongType();
+    }
+    return k === want;
+  }
+
+  remove(key: string): bool {
+    this.expires.delete(key);
+    return (
+      this.strings.delete(key) ||
+      this.lists.delete(key) ||
+      this.hashes.delete(key) ||
+      this.sets.delete(key) ||
+      this.zsets.delete(key)
+    );
+  }
+
+  size(): i64 {
+    return (
+      this.strings.size + this.lists.size + this.hashes.size + this.sets.size + this.zsets.size
+    ) as i64;
+  }
+
+  flush() {
+    this.strings.clear();
+    this.lists.clear();
+    this.hashes.clear();
+    this.sets.clear();
+    this.zsets.clear();
+    this.expires.clear();
+  }
+
+  getString(key: string): u8[] | null {
+    if (this.expires.size > 0) {
+      this.expireIfDue(key);
+    }
+    const v = this.strings.get(key);
+    if (v == null && this.kind(key) !== "none") {
+      throw wrongType();
+    }
+    return v;
+  }
+
+  /// SET: replaces whatever `key` held; `keepTtl` keeps its expiry.
+  setString(key: string, value: u8[], keepTtl: bool) {
+    if (!this.strings.has(key) && this.size() > this.strings.size) {
+      this.remove(key);
+    }
+    this.strings.set(key, value);
+    if (!keepTtl && this.expires.size > 0) {
+      this.expires.delete(key);
+    }
+  }
+
+  /// Every live key (KEYS); expired ones are removed on the way.
+  keys(): string[] {
+    const out: string[] = [];
+    for (const m of [
+      this.strings.keys(),
+      this.lists.keys(),
+      this.hashes.keys(),
+      this.sets.keys(),
+      this.zsets.keys(),
+    ]) {
+      for (const k of m) {
+        out.push(k);
+      }
+    }
+    return out.filter((k) => !this.expireIfDue(k));
+  }
+
+  /// Active expiry: removes due keys among the first `budget` keys with a time to live.
+  sweep(budget: i64): i64 {
+    let removed: i64 = 0;
+    let seen: i64 = 0;
+    const due: string[] = [];
+    for (const [k, at] of this.expires) {
+      if (seen >= budget) {
+        break;
+      }
+      seen++;
+      if (at <= this.now) {
+        due.push(k);
+      }
+    }
+    for (const k of due) {
+      this.remove(k);
+      removed++;
+    }
+    return removed;
+  }
+}
