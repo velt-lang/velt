@@ -1221,4 +1221,5 @@ call (+8.9M in `append`), and the word count's loop, without `append`'s code in 
 The TechEmpower fortunes page rendered by hand-written template literals, by precompiled TSX and
 by generic TSX: [bench/jsx/README.md](jsx/README.md) (`bench/jsx/run.sh`, with
 `BASE=<ref>` for an A/B of std/jsx). macOS arm64, 100 000 renders, instructions retired:
-hand 2.48 G, precompiled TSX 3.34 G (origin/main's std: 4.02 G), generic TSX 9.92 G.
+hand 2.48 G, precompiled TSX 2.67 G (#676: 3.34 G; origin/main's std: 4.02 G), generic TSX
+9.87 G.

@@ -1,0 +1,8 @@
+// The precompiling test JSX runtime plus the optional `jsxList`, which receives the rows of a
+// list the compiler wrote as strings (docs/contracts/jsx.md "Lists").
+
+export * from "../_jsx_test_template_string/jsx-runtime";
+
+export function jsxList(items: string[]): string {
+  return items.join("");
+}

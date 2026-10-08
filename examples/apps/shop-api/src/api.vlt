@@ -1,0 +1,220 @@
+// Routing: method + path + query + body in, status + JSON body out. No sockets, so the tests and
+// the demo call it directly; src/server.vlt puts it behind std/http.
+import {
+  ApiError,
+  BulkResult,
+  invalid,
+  NewOrder,
+  NewProduct,
+  Order,
+  Page,
+  Product,
+  ProductPatch,
+  StatusChange,
+} from "./model";
+import { OrderQuery, ProductQuery, Store } from "./store";
+
+export type ApiResponse = { status: i64; body: string };
+
+type ErrorBody = { error: { code: string; message: string } };
+
+function json<T>(status: i64, value: T): ApiResponse {
+  return { status, body: JSON.stringify(value) };
+}
+
+export function failure(status: i64, code: string, message: string): ApiResponse {
+  const body: ErrorBody = { error: { code, message } };
+  return json(status, body);
+}
+
+/// `JSON.parse<T>`, with malformed or mistyped JSON reported as a 400.
+function decode<T>(body: string): T {
+  try {
+    return JSON.parse<T>(body);
+  } catch (e) {
+    throw new ApiError(400, "bad_json", e.message);
+  }
+}
+
+/// A positive integer from a path segment or query value; `what` names it in the error.
+function positiveInt(text: string, what: string): i64 {
+  if (text.length === 0 || text.length > 15) {
+    throw invalid(`${what} must be a positive integer`);
+  }
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      throw invalid(`${what} must be a positive integer`);
+    }
+  }
+  const n = Number.parseInt(text, 10) as i64;
+  if (n < 1) {
+    throw invalid(`${what} must be a positive integer`);
+  }
+  return n;
+}
+
+function intParam(params: URLSearchParams, name: string, fallback: i64, max: i64): i64 {
+  const raw = params.get(name);
+  if (raw == null) {
+    return fallback;
+  }
+  const n = positiveInt(raw, name);
+  if (n > max) {
+    throw invalid(`${name} must be at most ${max}`);
+  }
+  return n;
+}
+
+function optionalInt(params: URLSearchParams, name: string): i64 | null {
+  const raw = params.get(name);
+  return raw == null ? null : positiveInt(raw, name);
+}
+
+// A function: module-level array constants are #60.
+function sorts(): string[] {
+  return ["id", "price", "-price", "rating", "name", "newest"];
+}
+
+function productQuery(query: string): ProductQuery {
+  const params = new URLSearchParams(query);
+  const sort = params.get("sort") ?? "id";
+  if (!sorts().includes(sort)) {
+    throw invalid(`sort must be one of ${sorts().join(", ")}`);
+  }
+  const q = params.get("q");
+  return {
+    category: params.get("category"),
+    brand: params.get("brand"),
+    tag: params.get("tag"),
+    q: q == null ? null : q.toLowerCase(),
+    minPrice: optionalInt(params, "minPrice"),
+    maxPrice: optionalInt(params, "maxPrice"),
+    inStock: params.get("inStock") === "true",
+    sort,
+    page: intParam(params, "page", 1, 100000),
+    limit: intParam(params, "limit", 20, 100),
+  };
+}
+
+function orderQuery(query: string): OrderQuery {
+  const params = new URLSearchParams(query);
+  const status = params.get("status");
+  if (
+    status != null &&
+    status !== "pending" &&
+    status !== "paid" &&
+    status !== "shipped" &&
+    status !== "cancelled"
+  ) {
+    throw invalid("status must be one of pending, paid, shipped, cancelled");
+  }
+  return {
+    status,
+    customer: optionalInt(params, "customer"),
+    page: intParam(params, "page", 1, 100000),
+    limit: intParam(params, "limit", 20, 100),
+  };
+}
+
+function notAllowed(method: string, path: string): ApiError {
+  return new ApiError(405, "method_not_allowed", `${method} is not allowed on ${path}`);
+}
+
+function products(
+  store: Store,
+  method: string,
+  rest: string[],
+  query: string,
+  body: string,
+): ApiResponse {
+  if (rest.length === 0) {
+    if (method === "GET") {
+      return json<Page<Product>>(200, store.listProducts(productQuery(query)));
+    }
+    if (method === "POST") {
+      return json<Product>(201, store.createProduct(decode<NewProduct>(body)));
+    }
+    throw notAllowed(method, "/products");
+  }
+  if (rest.length === 1 && rest[0] === "bulk") {
+    if (method !== "POST") {
+      throw notAllowed(method, "/products/bulk");
+    }
+    return json<BulkResult>(200, store.bulkCreate(decode<NewProduct[]>(body)));
+  }
+  if (rest.length === 1) {
+    const id = positiveInt(rest[0], "product id");
+    if (method === "GET") {
+      return json<Product>(200, store.product(id));
+    }
+    if (method === "PATCH") {
+      return json<Product>(200, store.patchProduct(id, decode<ProductPatch>(body)));
+    }
+    throw notAllowed(method, "/products/:id");
+  }
+  throw new ApiError(404, "not_found", "no such route");
+}
+
+function orders(
+  store: Store,
+  method: string,
+  rest: string[],
+  query: string,
+  body: string,
+): ApiResponse {
+  if (rest.length === 0) {
+    if (method === "GET") {
+      return json<Page<Order>>(200, store.listOrders(orderQuery(query)));
+    }
+    if (method === "POST") {
+      return json<Order>(201, store.createOrder(decode<NewOrder>(body)));
+    }
+    throw notAllowed(method, "/orders");
+  }
+  const id = positiveInt(rest[0], "order id");
+  if (rest.length === 1) {
+    if (method !== "GET") {
+      throw notAllowed(method, "/orders/:id");
+    }
+    return json<Order>(200, store.order(id));
+  }
+  if (rest.length === 2 && rest[1] === "status") {
+    if (method !== "POST") {
+      throw notAllowed(method, "/orders/:id/status");
+    }
+    return json<Order>(200, store.setStatus(id, decode<StatusChange>(body).status));
+  }
+  throw new ApiError(404, "not_found", "no such route");
+}
+
+/// Answers one request. Never throws: refusals become `{"error":{"code","message"}}`.
+export function route(
+  store: Store,
+  method: string,
+  path: string,
+  query: string,
+  body: string,
+): ApiResponse {
+  try {
+    const parts = path.split("/").filter((s) => s !== "");
+    if (parts.length === 0 || parts[0] === "health") {
+      return { status: 200, body: "{\"ok\":true}" };
+    }
+    const rest = parts.slice(1);
+    switch (parts[0]) {
+      case "products":
+        return products(store, method, rest, query, body);
+      case "orders":
+        return orders(store, method, rest, query, body);
+      case "stats":
+        if (method !== "GET") {
+          throw notAllowed(method, "/stats");
+        }
+        return json(200, store.stats());
+    }
+    throw new ApiError(404, "not_found", "no such route");
+  } catch (e) {
+    return failure(e.status, e.code, e.message);
+  }
+}

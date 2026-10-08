@@ -1,0 +1,25 @@
+// The types of fetch's signatures are global, as in TypeScript: an init object can be built up
+// before the call (#702).
+function requestInit(body: string | null): RequestInit {
+  const init: RequestInit = { method: "POST" };
+  if (body != null) {
+    init.body = body;
+  }
+  const headers: HeadersInit = { "content-type": "application/json" };
+  init.headers = headers;
+  const redirect: RequestRedirect = "manual";
+  init.redirect = redirect;
+  return init;
+}
+
+async function main() {
+  const init = requestInit("{}");
+  const req = new Request("http://example.com/", init);
+  console.log(req.method, req.redirect, req.headers.get("content-type"));
+  console.log(await req.text());
+
+  const body: BodyInit = "created";
+  const responseInit: ResponseInit = { status: 201, headers: { "x-id": "7" } };
+  const res = new Response(body, responseInit);
+  console.log(res.status, res.headers.get("x-id"), await res.text());
+}

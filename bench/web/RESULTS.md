@@ -9,6 +9,12 @@ Raw data: `results/*.jsonl`; the tables come from `summarize.py` (each cell is t
 over the measured connection levels, with that level's p99 and the server's peak RSS during the
 test; ratios are to Rust).
 
+**Linux arm64: run the bench-arm workflow** (`gh workflow run bench-arm -f suite=web -f
+ref=<branch>`): the fortunes test for `velt` and `velt-tsx` on a GitHub `ubuntu-24.04-arm` runner
+(4 cores shared by Postgres 17 in a service container, the servers and wrk), with the summary in
+the run and the raw `.jsonl`/`.md` as the `bench-web-arm64` artifact. Its req/s compare the
+servers within one run; they are not comparable with the tables below.
+
 ## Lazy `Request` and Postgres batches — not re-run yet
 
 The lazy Request and Postgres batch changes were measured while they were written, but the full suite has

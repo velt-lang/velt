@@ -26,7 +26,7 @@ async function main() {
   console.log(names.join(","));
 
   const st = await stat(`${dir}/b.txt`);
-  console.log(st.size, st.isFile, st.isDir);
+  console.log(st.size, st.isFile(), st.isDirectory(), st.isSymbolicLink());
 
   try {
     await readFile(`${dir}/missing.txt`);

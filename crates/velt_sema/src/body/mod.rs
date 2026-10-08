@@ -98,6 +98,7 @@ pub(crate) enum LocalKind {
 }
 
 /// An enclosing loop or `switch` (a `break` target).
+#[derive(Clone)]
 pub(crate) struct LoopCx {
     pub label: Option<String>,
     pub has_continue: bool,
@@ -122,7 +123,7 @@ impl LoopCx {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Scope {
     pub names: HashMap<String, LocalId>,
     /// Option locals narrowed to their payload inside this scope.
@@ -139,6 +140,7 @@ pub(crate) struct Scope {
 }
 
 /// A captured variable of a closure frame.
+#[derive(Clone)]
 pub(crate) struct CaptureCx {
     pub outer: LocalId,
     pub inner: LocalId,
@@ -151,6 +153,7 @@ pub(crate) struct CaptureCx {
 }
 
 /// Per-function checking state; closures push a new frame (the enclosing one is saved).
+#[derive(Clone)]
 pub(crate) struct Frame {
     pub kind: FnKind,
     pub locals: Vec<LocalDef>,
@@ -294,6 +297,13 @@ pub(crate) struct FnCx<'a, 'm> {
     pub collect_iterable_args: bool,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
+    /// and whether it was.
+    pub jsx_list_fold: Option<Span>,
+    pub jsx_list_folded: bool,
+    /// A list is being checked for a fold: lists inside it are not tried (each try may check
+    /// its rows twice).
+    pub jsx_list_trial: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -314,6 +324,9 @@ impl<'a, 'm> FnCx<'a, 'm> {
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],
+            jsx_list_fold: None,
+            jsx_list_folded: false,
+            jsx_list_trial: false,
         }
     }
 

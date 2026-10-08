@@ -16,9 +16,9 @@ velt run demo.vlt                # the whole pipeline on a generated tree (golde
 ./bench.sh                       # seek vs ripgrep vs git grep on this repository (hyperfine)
 ```
 
-Output is `path:line:text` (or grouped with `--heading`), with matches highlighted. Velt can't
-tell yet whether stdout is a terminal, so colour is on unless `NO_COLOR` is set or you pass
-`--color never` (do that when piping). Exit code: 0 found, 1 nothing found, 2 usage error.
+Output is `path:line:text` (or grouped with `--heading`), with matches highlighted when stdout
+is a terminal (`stdout.isTTY`) and `NO_COLOR` is not set; `--color always` / `never` override
+that. Exit code: 0 found, 1 nothing found, 2 usage error.
 
 It respects `.gitignore` files (nested ones too, with `!` negation), skips hidden files and
 `.git`, and skips binary files. `--hidden`, `--no-ignore`, `--max-depth`, `--max-filesize` and
@@ -31,7 +31,7 @@ It respects `.gitignore` files (nested ones too, with `!` negation), skips hidde
 - **Which files it skips.** Files over 50 MiB are skipped by default (`--max-filesize`). A file
   that isn't valid UTF-8 or that contains a NUL byte is skipped entirely; ripgrep prints the
   matches it finds before the NUL.
-- **Symlinks** are always followed (there's no `lstat` yet, #691). ripgrep needs `-L` for that.
+- **Symlinks** are always followed. ripgrep needs `-L` for that.
 - **`-w`** wraps the pattern in `\b…\b`. For a pattern that starts or ends with a non-word
   character, that matches differently from ripgrep's `-w`.
 - **Exit code** is 0 (found) or 1 (nothing found) even after an I/O error; ripgrep exits 2.
@@ -71,13 +71,11 @@ performance + 6 efficiency cores), macOS, ripgrep 14.1.1 built with `cargo insta
 
 So content search on a tree this size is level with ripgrep, and listing files is about 20%
 slower. On a larger tree (36k files, 521 MiB, not in the repository, so indicative only),
-`-i` regex was about 29% slower than ripgrep (#699), and listing files 2× slower: there every
-entry needs a `stat` (#692).
+`-i` regex was about 29% slower than ripgrep (#699), and listing files was 2× slower while every
+entry needed a `stat`; the walk now takes the types from the listing (`readDirEntriesSync`,
+#692).
 
 ## Known gaps (from #688)
 
-- No `lstat` (#691), so symlinks are always followed, and a symlink loop stops only at
-  `--max-depth` (default 64).
-- `readDir` returns names only (#692), so every entry costs a `stat`. That is most of the gap
-  in listing files.
-- No `isatty` (#693), so colour can't turn itself off when piped.
+- Symlinks are always followed, and a symlink loop stops only at `--max-depth` (default 64).
+  `lstat` and `Dirent.isSymbolicLink()` now make skipping them possible (#691).
