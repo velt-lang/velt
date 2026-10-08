@@ -82,26 +82,151 @@ pub(super) fn condition(func: &Function, b: usize) -> Option<Condition> {
     None
 }
 
-/// The local `op` copies or converts from an integer in block `b` (unchanged since, as is
-/// `op`): refining `op` refines it too. The flag says the conversion is int → `f64`, which is
-/// exact only within ±2^53.
-pub(super) fn converted_from(func: &Function, b: usize, op: &Operand) -> Option<(Operand, bool)> {
+/// How `op` was made from the local [`converted_from`] finds.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Conversion {
+    /// A copy.
+    Copy,
+    /// An integer converted to `f64`, exact only within ±2^53.
+    ToF64,
+    /// An `f64` converted to this integer type (truncated, saturated, NaN gives 0), as an
+    /// index (`xs[k]` with a whole `k`).
+    FromF64(Ty),
+}
+
+/// The facts about the `f64` a conversion to `ty` gave the value `f`: it truncates, so the
+/// double lies within 1 of `f`'s bounds (exclusive), where those are not the saturated ends;
+/// it was NaN only if `f` holds 0.
+pub(super) fn unconverted(f: Fact, ty: Ty) -> Fact {
+    let top = Fact::top(ty);
+    // Below 2^53, `x ± 1` is exact.
+    let near = |x: f64| x.abs() < TWO_53;
+    let lo = if f.lo > top.lo && near(f.lo) {
+        (f.lo - 1.0).next_up()
+    } else {
+        f64::NEG_INFINITY
+    };
+    let hi = if f.hi < top.hi && near(f.hi) {
+        (f.hi + 1.0).next_down()
+    } else {
+        f64::INFINITY
+    };
+    Fact {
+        lo,
+        hi,
+        integral: false,
+        nan: f.may_be_zero(),
+        neg_zero: f.may_be_zero(),
+    }
+}
+
+/// The local `op` copies or converts in block `b` (unchanged since, as is `op`): refining `op`
+/// refines it too, through the conversion.
+pub(super) fn converted_from(
+    func: &Function,
+    b: usize,
+    op: &Operand,
+    preds: &[Vec<usize>],
+) -> Option<(Operand, Conversion)> {
     let Operand::Copy(p) = op else { return None };
     if !p.proj.is_empty() {
         return None;
     }
     let stmts = &func.blocks[b].stmts;
-    let (at, rv) = last_def(stmts, p.local, stmts.len())?;
+    let Some((at, rv)) = last_def(stmts, p.local, stmts.len()) else {
+        return index_converted_from(func, b, p.local, preds);
+    };
     let (src, cast) = match rv {
-        Rvalue::Use(src @ Operand::Copy(z)) if z.proj.is_empty() => (src, false),
+        Rvalue::Use(src @ Operand::Copy(z)) if z.proj.is_empty() => (src, Conversion::Copy),
         Rvalue::Cast(src @ Operand::Copy(z), Ty::F64)
             if z.proj.is_empty() && func.locals[z.local.0 as usize].ty.is_int() =>
         {
-            (src, true)
+            (src, Conversion::ToF64)
+        }
+        Rvalue::Cast(src @ Operand::Copy(z), to)
+            if z.proj.is_empty()
+                && func.locals[z.local.0 as usize].ty == Ty::F64
+                && to.is_int() =>
+        {
+            (src, Conversion::FromF64(*to))
         }
         _ => return None,
     };
     (!assigned_in(&stmts[at..], src)).then(|| (src.clone(), cast))
+}
+
+/// Blocks up the chain of single predecessors of `b` that [`index_converted_from`] searches.
+const CHAIN: usize = 8;
+
+/// The `f64` local that `l` (not assigned in block `b`) converts to an integer in a block up
+/// the chain of single predecessors of `b`, possibly through copies, with none of them changed
+/// since: an index `k as u64` (then `i = t`) tested against a length a few blocks later.
+fn index_converted_from(
+    func: &Function,
+    b: usize,
+    l: Local,
+    preds: &[Vec<usize>],
+) -> Option<(Operand, Conversion)> {
+    // The chain of blocks, `b` first.
+    let mut chain = vec![b];
+    let mut want = l;
+    // Locals read at (chain index, statement index) that must keep their value up to `b`'s end.
+    let mut guards: Vec<(Local, usize, usize)> = vec![];
+    let mut found = None;
+    'walk: for _ in 0..CHAIN {
+        let cur = *chain.last()?;
+        let [p] = preds[cur][..] else { return None };
+        if chain.contains(&p) {
+            return None;
+        }
+        chain.push(p);
+        let ci = chain.len() - 1;
+        if matches!(&func.blocks[p].term, Terminator::Call { dest: Some(d), .. } if d.local == want)
+        {
+            return None;
+        }
+        let stmts = &func.blocks[p].stmts;
+        let mut end = stmts.len();
+        while let Some((at, rv)) = last_def(stmts, want, end) {
+            match rv {
+                Rvalue::Use(Operand::Copy(m)) if m.proj.is_empty() => {
+                    guards.push((m.local, ci, at));
+                    want = m.local;
+                    end = at;
+                }
+                Rvalue::Cast(src @ Operand::Copy(z), to)
+                    if z.proj.is_empty()
+                        && func.locals[z.local.0 as usize].ty == Ty::F64
+                        && to.is_int() =>
+                {
+                    guards.push((z.local, ci, at));
+                    found = Some((src.clone(), Conversion::FromF64(*to)));
+                    break 'walk;
+                }
+                _ => return None,
+            }
+        }
+        // A copy's source may be assigned in this block before the copy: that is fine, the walk
+        // continues with the source in the blocks above.
+    }
+    let found = found?;
+    // Each guarded local keeps its value from where it is read to the end of `b`.
+    let changes = |x: Local, s: &Stmt| matches!(s, Stmt::Assign(d, _) if d.local == x);
+    for &(x, ci, at) in &guards {
+        for (k, &blk) in chain.iter().enumerate().take(ci + 1) {
+            let block = &func.blocks[blk];
+            let from = if k == ci { at + 1 } else { 0 };
+            if block.stmts[from..].iter().any(|s| changes(x, s)) {
+                return None;
+            }
+            let call_sets = matches!(&block.term,
+                Terminator::Call { dest: Some(d), .. } if d.local == x);
+            if call_sets {
+                return None;
+            }
+        }
+    }
+    Some(found)
 }
 
 /// The locals that hold a copy of `op` at the end of block `b` (`sum = t; branch t >= k`):

@@ -497,3 +497,71 @@ fn whole_numbers_format_through_the_integer_formatters() {
         ["velt_rt_str_from_f64", "velt_rt_strbuf_push_f64"]
     );
 }
+
+/// `f(p: f64, n: u32 or u64)`: `k = 0; while (p < 1e18) { i = k as u64; t = i; if (!(t < n))
+/// return -1; k = k + 1; p = p + 1 }; return k`. The loop runs any number of times; only the
+/// index test bounds `k`.
+fn index_bounded_program(len_ty: Ty) -> (Program, Local) {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::F64, len_ty], Ty::F64);
+    let (p, n) = (fb.param(0), fb.param(1));
+    let (len, k, c, i, t, ok, u, q) = (
+        fb.local(Ty::U64),
+        fb.local(Ty::F64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::U64),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::F64),
+        fb.local(Ty::F64),
+    );
+    let (entry, head, check, body, fail, exit) = (
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+    );
+    if len_ty == Ty::U64 {
+        fb.assign(entry, len, Rvalue::Use(copy_local(n)));
+    } else {
+        fb.assign(entry, len, Rvalue::Cast(copy_local(n), Ty::U64));
+    }
+    fb.assign(entry, k, Rvalue::Use(float(0.0, Ty::F64)));
+    fb.goto(entry, head);
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(p), float(1e18, Ty::F64)));
+    fb.branch(head, c, check, exit);
+    fb.assign(check, i, Rvalue::Cast(copy_local(k), Ty::U64));
+    // The test is a block later, through a copy, as lowering leaves an index.
+    let mid = fb.block();
+    fb.goto(check, mid);
+    fb.assign(mid, t, Rvalue::Use(copy_local(i)));
+    fb.assign(mid, ok, bin(BinOp::Lt, copy_local(t), copy_local(len)));
+    fb.branch(mid, ok, body, fail);
+    fb.assign(body, u, bin(BinOp::Add, copy_local(k), float(1.0, Ty::F64)));
+    fb.assign(body, k, Rvalue::Use(copy_local(u)));
+    fb.assign(body, q, bin(BinOp::Add, copy_local(p), float(1.0, Ty::F64)));
+    fb.assign(body, p, Rvalue::Use(copy_local(q)));
+    fb.goto(body, head);
+    fb.ret(fail, float(-1.0, Ty::F64));
+    fb.ret(exit, copy_local(k));
+    pb.add(fb.finish());
+    (pb.finish(), k)
+}
+
+#[test]
+fn an_index_test_bounds_the_double_it_converts() {
+    // `k as u64 < n` with `n < 2^32`: `k` stays below 2^32, so `k + 1` is an integer.
+    let (p, k) = index_bounded_program(Ty::U32);
+    let q = narrowed(&p);
+    assert!(!assigned(&q.funcs[0], k), "k is narrowed");
+    for (x, n) in [(0.0, 5u64), (1e18 - 3.0, 10), (-20.0, 7), (f64::NAN, 3)] {
+        let args = [x.to_bits(), n];
+        assert_eq!(call(&p, &args), call(&q, &args), "f({x}, {n})");
+    }
+    // A `u64` length bounds nothing below 2^53.
+    let (p, k) = index_bounded_program(Ty::U64);
+    let q = narrowed(&p);
+    assert!(assigned(&q.funcs[0], k), "k stays a double");
+}

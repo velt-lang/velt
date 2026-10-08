@@ -59,6 +59,8 @@ pub(super) struct Flow {
     /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
     /// facts wherever it changes.
     caps: Vec<Option<Fact>>,
+    /// Predecessors of each block.
+    preds: Vec<Vec<usize>>,
 }
 
 impl Flow {
@@ -81,6 +83,7 @@ impl Flow {
             entry: vec![None; func.blocks.len()],
             array: env.array,
             caps: vec![None; tracked.len()],
+            preds: crate::map_probe::region::predecessors(func),
         };
         flow.solve(func, env);
         // Counters are bounded by the trip counts the first solution proves.
@@ -375,11 +378,24 @@ impl Flow {
             for copy in super::refine::copies_of(func, b, op) {
                 self.set(st, &Operand::Copy(Place::local(copy)), f);
             }
-            if let Some((src, cast)) = super::refine::converted_from(func, b, op) {
-                // Strictly within ±2^53 the conversion was exact: `2^53 + 1` converts to 2^53.
-                if !cast || f.magnitude() < TWO_53 {
+            use super::refine::Conversion;
+            match super::refine::converted_from(func, b, op, &self.preds) {
+                Some((src, Conversion::Copy)) => {
                     self.set(st, &src, f);
+                    // `i = k as u64; t = i; t < xs.length`.
+                    if let Some((k, Conversion::FromF64(ty))) =
+                        super::refine::converted_from(func, b, &src, &self.preds)
+                    {
+                        self.set(st, &k, super::refine::unconverted(f, ty));
+                    }
                 }
+                // Strictly within ±2^53 the conversion was exact: `2^53 + 1` converts to 2^53.
+                Some((src, Conversion::ToF64)) if f.magnitude() < TWO_53 => self.set(st, &src, f),
+                // `k as u64 < xs.length`: `k` is below the length too.
+                Some((src, Conversion::FromF64(ty))) => {
+                    self.set(st, &src, super::refine::unconverted(f, ty))
+                }
+                _ => {}
             }
         }
         true
