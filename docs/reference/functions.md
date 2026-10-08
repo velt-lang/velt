@@ -482,7 +482,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   the whole program: one such conflict makes every held closure and every `const me = this` in
   it share, as if none of them borrowed.
 - A closure stored in a `let`, a field or an array, held in a `const` that is used other than
-  by calling it, or returned, is **escaping** and captures by
+  by calling it (or one that does not meet the conditions above), or returned, is **escaping**
+  and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
   into the closure, so it is released (and disposed) when the closure is, even if other captures

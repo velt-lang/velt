@@ -120,7 +120,7 @@ hidden classes and no runtime shape checks.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class. A
   call on an object whose class is known from where it was allocated (`const s: Shape = new
-  Square()`) is direct too.
+  Square()`) is usually made direct while the object has not been passed on.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
   there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
   use the private members of its types, which is how std types build each other's handles

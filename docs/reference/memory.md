@@ -38,8 +38,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   handing it on is ``use of moved value `p` ``.
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
   linked list through a `next: Node | null` field or a tree through `left` and `right` is
-  freed in a loop (when the class has no subclasses and no field declared after the link can
-  run a `[Symbol.dispose]()`), and any other chain (through arrays, `Map` values, closures,
+  freed in a loop (when the class is not part of a class hierarchy, with no base class and no
+  subclasses, and no field declared after the link can run a `[Symbol.dispose]()`), and any other chain (through arrays, `Map` values, closures,
   interface values, subclasses, struct values or a recursive object type such as `interface
   Node { next?: Node }`) is freed in nested steps up to a fixed depth (128 levels of such
   nesting), with the objects past it freed when the outer drop is done
@@ -234,7 +234,7 @@ declaration order, each completely (an object a field held is disposed with ever
 holds) before the next. A chain through the class's own field (`next: Node | null`) keeps
 exactly this order at any length (each node is disposed before the rest of the chain) when that
 field is declared after every field whose drop can run a `[Symbol.dispose]()`, and the class
-has no subclasses; otherwise it is released in nested steps like the chains below. In a chain
+is not part of a class hierarchy (no base class and no subclasses); otherwise it is released in nested steps like the chains below. In a chain
 or tree that nests through other values (arrays, `Map` values, closures, interfaces, recursive
 object types), an object more than 128 such levels below the one being released is set aside
 and released, in the order it was reached, once the outer release has finished everything
