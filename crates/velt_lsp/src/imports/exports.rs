@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use lsp_types::CompletionItemKind;
+use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionItemTag, Documentation, MarkupContent, MarkupKind,
+};
 use velt_common::{FileId, SourceMap};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
@@ -28,6 +30,28 @@ pub struct Export {
     pub detail: String,
     /// Whether it names a type (class, struct, interface, enum, type alias).
     pub is_type: bool,
+    /// Its doc comment as Markdown ([`crate::docs`]), if it has one.
+    pub doc: Option<Arc<str>>,
+    /// Documented `@deprecated`.
+    pub deprecated: bool,
+}
+
+impl Export {
+    /// A completion item for this export: its documentation and the deprecated tag (the
+    /// declaring module may not be part of the document's program, so the doc is not resolved
+    /// later).
+    pub fn document(&self, item: &mut CompletionItem) {
+        if let Some(doc) = &self.doc {
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc.to_string(),
+            }));
+        }
+        if self.deprecated {
+            item.tags = Some(vec![CompletionItemTag::DEPRECATED]);
+            item.deprecated = Some(true);
+        }
+    }
 }
 
 /// What one file exports: its own declarations (local export lists included) and its re-exports.
@@ -110,11 +134,17 @@ pub fn of_parsed(sm: SourceMap, file: FileId, ast: ast::Module) -> ModuleExports
 
 /// The export a declaration of `analysis` makes.
 pub fn of_decl(analysis: &Analysis, d: &Decl) -> Export {
+    let doc = crate::docs::doc_at(analysis, d.name_span);
     Export {
         name: d.name.clone(),
         kind: completion::kind(d),
         detail: signature::decl(analysis, d),
         is_type: d.item().is_some_and(declares_type),
+        deprecated: doc.as_ref().is_some_and(|d| d.deprecated.is_some()),
+        doc: doc
+            .map(|d| d.render_markdown())
+            .filter(|md| !md.is_empty())
+            .map(Arc::from),
     }
 }
 
@@ -237,6 +267,8 @@ impl ExportCache {
                         kind: CompletionItemKind::VARIABLE,
                         detail: String::new(),
                         is_type: false,
+                        doc: None,
+                        deprecated: false,
                     });
                 export.name = exported.clone();
                 out.push(export);
