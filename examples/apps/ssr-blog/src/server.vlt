@@ -1,18 +1,19 @@
 // The HTTP side: every page is streamed (`Response.stream` + `renderToStream`), so the browser
 // gets the layout and the post before the comments have loaded.
 
+import { Channel } from "velt:channel";
 import { serve, Request, Response, ResponseWriter, Server } from "velt:http";
 import { renderToStream } from "velt:jsx";
 import { render, route } from "./pages";
 
-async function handle(req: Request): Promise<Response> {
+async function handle(req: Request, gate: Channel<i64> | null): Promise<Response> {
   // Keep the request's properties, not the request: the body below outlives the handler.
   const r = route(req.path, req.query);
   const status = r.status;
   const res = Response.stream(
     async (w: ResponseWriter) => {
       w.write("<!DOCTYPE html>");
-      await renderToStream(render(r), w);
+      await renderToStream(render(r, gate), w);
     },
     status,
   );
@@ -20,7 +21,10 @@ async function handle(req: Request): Promise<Response> {
   return res;
 }
 
-/** Serves the blog on `port` (0 = any free port). */
-export async function startServer(port: i64): Promise<Server> {
-  return await serve({ port }, handle);
+/**
+ * Serves the blog on `port` (0 = any free port). With `gate`, a post's comments load only once a
+ * value arrives on it (for demo.vlt).
+ */
+export async function startServer(port: i64, gate: Channel<i64> | null = null): Promise<Server> {
+  return await serve({ port }, async (req: Request): Promise<Response> => await handle(req, gate));
 }

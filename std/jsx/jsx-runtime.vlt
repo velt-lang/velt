@@ -1,5 +1,5 @@
-// std/jsx/jsx-runtime: the JSX provider module of std/jsx (docs/contracts/jsx.md). A module
-// with JSX imports it implicitly, as the namespace `JSX` for types; generated code calls the
+// std/jsx/jsx-runtime: the JSX provider module of std/jsx (docs/internals/contracts/jsx.md). A
+// module with JSX imports it implicitly, as the namespace `JSX` for types; generated code calls the
 // factories. Includes the SSR precompile exports, so static markup compiles to constant strings.
 
 export { Element, RenderError } from "velt:jsx/node";

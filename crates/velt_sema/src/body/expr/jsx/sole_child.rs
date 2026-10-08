@@ -1,11 +1,12 @@
-//! The provider's `jsxSoleEmpty` in precompiled templates (docs/contracts/jsx.md "Sole child").
-//! A runtime that receives one child as itself and several as an array (sigx) may render a
+//! The provider's `jsxSoleEmpty` in precompiled templates (docs/internals/contracts/jsx.md "Sole
+//! child"). A runtime that receives one child as itself and several as an array (sigx) may render a
 //! `null` or boolean child differently when it is its element's only child. `jsxEscape` and
 //! `Fragment` see only the value, so for an element's only `{expr}` or `{...expr}` child that may
 //! be `null` or a boolean, the compiler writes the export's string in their place:
-//! - a `JSX.Text` child: `{ const t = v; t is text ? jsxEscape(t) : sole }` in the string (just
-//!   `{ const t = v; sole }` when it is never text, and constant text for a literal);
-//! - any other child: the slot `{ const t = v; t is text ? Fragment([t], null) : jsxTemplate([sole], []) }`.
+//! - a `JSX.Text` child: `{ const t = v; t is text ? jsxEscape(t) : sole }` in the string (just `{
+//!   const t = v; sole }` when it is never text, and constant text for a literal);
+//! - any other child: the slot `{ const t = v; t is text ? Fragment([t], null) :
+//!   jsxTemplate([sole], []) }`.
 //!
 //! The value is read once, where the child would be.
 
@@ -71,9 +72,12 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `jsxTemplate([sole], [])`.
+    /// `jsxTemplateString(sole)`, or `jsxTemplate([sole], [])` without that export.
     fn sole_template(&mut self, p: &Provider, pc: Precompile, sole: &str, span: Span) -> hir::Expr {
         let s = self.str_lit(sole, span);
+        if let Some(f) = pc.template_string {
+            return self.jsx_call(p, f, "jsxTemplateString", vec![s], span);
+        }
         let strings_ty = self.cx.ty.array(self.cx.ty.str_);
         let strings = self.mk(H::ArrayLit(vec![s]), strings_ty, span);
         let slots_ty = self.cx.ty.array(p.element);

@@ -1,5 +1,7 @@
 // A scripted session against the real server (golden: demo.out): the post list, tag filters, a
 // post with its comments (streamed: the comments load last), escaped user content, and a 404.
+import { channel } from "velt:channel";
+import { utf8DecodeLossy } from "velt:encoding";
 import { startServer } from "./src/server";
 
 async function get(port: i64, path: string) {
@@ -11,6 +13,31 @@ async function get(port: i64, path: string) {
   console.log(body);
 }
 
+// Reads a post chunk by chunk from a server whose comments wait for `gate`: the top of the page,
+// post included, arrives while the comments don't exist yet (renderToStream flushed it before the
+// pending `Comments`); the comments follow once the gate opens.
+async function streamOrder(path: string) {
+  const gate = channel<i64>();
+  const server = await startServer(0, gate);
+  const res = await fetch(`http://127.0.0.1:${server.port}${path}`);
+  const body = res.body;
+  if (body == null) {
+    return;
+  }
+  let text = "";
+  let postFirst = false;
+  for await (const chunk of body) {
+    text += utf8DecodeLossy(chunk);
+    if (!postFirst && text.includes("</article>")) {
+      postFirst = !text.includes(`class="comments"`);
+      await gate.send(1);
+    }
+  }
+  console.log(`GET ${path} streamed: the post before its comments: ${postFirst}`);
+  console.log(`  then the comments: ${text.includes(`class="comments"`)}`);
+  server.close();
+}
+
 async function main() {
   const server = await startServer(0);
   await get(server.port, "/");
@@ -19,5 +46,6 @@ async function main() {
   await get(server.port, "/posts/hello-tsx");
   await get(server.port, "/posts/escaping");
   await get(server.port, "/posts/nope");
+  await streamOrder("/posts/hello-tsx");
   server.close();
 }

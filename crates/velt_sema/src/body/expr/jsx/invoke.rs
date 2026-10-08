@@ -93,4 +93,5 @@ impl<'a, 'm> FnCx<'a, 'm> {
     }
 }
 
-const CONTRACT_NOTE: &str = "JSX runtimes implement the signatures in docs/contracts/jsx.md";
+const CONTRACT_NOTE: &str =
+    "JSX runtimes implement the signatures in docs/internals/contracts/jsx.md";

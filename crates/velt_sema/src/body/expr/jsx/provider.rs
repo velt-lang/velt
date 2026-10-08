@@ -1,6 +1,7 @@
-//! The JSX runtime of a module (docs/contracts/jsx.md "Required exports"): its factory functions
-//! and `JSX` types, looked up once per module (`Ctx::jsx_providers`). A runtime that lacks a
-//! required export is reported once, at the first JSX of the module; its JSX is then skipped.
+//! The JSX runtime of a module (docs/internals/contracts/jsx.md "Required exports"): its factory
+//! functions and `JSX` types, looked up once per module (`Ctx::jsx_providers`). A runtime that
+//! lacks a required export is reported once, at the first JSX of the module; its JSX is then
+//! skipped.
 
 use std::rc::Rc;
 
@@ -13,8 +14,8 @@ use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
-/// The SSR precompile exports (docs/contracts/jsx.md "SSR precompile"); a runtime has all of
-/// them or the precompile lowering is not used.
+/// The SSR precompile exports (docs/internals/contracts/jsx.md "SSR precompile"); a runtime has all
+/// of them or the precompile lowering is not used.
 #[derive(Clone, Copy)]
 pub(crate) struct Precompile {
     pub template: DefId,
@@ -282,7 +283,7 @@ fn report_missing(cx: &mut Ctx, source: &str, missing: &[&str], at: Span) {
             at,
         )
         .with_note(format!(
-            "`{source}{RUNTIME_SUFFIX}` must export the types `Element`, `Child`, `AttrValue` and `IntrinsicElements` and the functions `jsx`, `Fragment` and `jsxComponent` (docs/contracts/jsx.md)"
+            "`{source}{RUNTIME_SUFFIX}` must export the types `Element`, `Child`, `AttrValue` and `IntrinsicElements` and the functions `jsx`, `Fragment` and `jsxComponent` (docs/internals/contracts/jsx.md)"
         )),
     );
 }
