@@ -133,7 +133,7 @@ pub extern "C" fn velt_rt_write_u64(stream: u32, v: u64) {
 
 #[no_mangle]
 pub extern "C" fn velt_rt_write_f64(stream: u32, v: f64) {
-    emit(stream, |b| fmt::push_f64(b, v));
+    emit(stream, |b| fmt::push_inspect_f64(b, v));
 }
 
 #[no_mangle]

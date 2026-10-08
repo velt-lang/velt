@@ -84,10 +84,10 @@ pub extern "C" fn velt_rt_write_u64(stream: u32, v: u64) {
     emit(stream, |b| fmt::push_u64(b, v));
 }
 
-/// `console.log` of an `f64` (JS formatting).
+/// `console.log` of an `f64` (node's formatting: `-0` is `-0`).
 #[no_mangle]
 pub extern "C" fn velt_rt_write_f64(stream: u32, v: f64) {
-    emit(stream, |b| fmt::push_f64(b, v));
+    emit(stream, |b| fmt::push_inspect_f64(b, v));
 }
 
 /// `console.log` of a `bool`.

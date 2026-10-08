@@ -539,7 +539,8 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
-| `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (same formatter as `velt_rt_write_f64`) |
+| `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`) |
+| `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |
 | `velt_rt_strbuf_push_json_f64` | `(VeltStrBuf* b, f64 v)` | like `JSON.stringify`: JS format, `null` for NaN/±Infinity |
 | `velt_rt_strbuf_push_inspect_str` | `(VeltStrBuf* b, const VeltStr* s)` | a string as `console.log` shows it inside a container (node `util.inspect` quoting and escaping) |
 | `velt_rt_strbuf_push_inspect_key` | `(VeltStrBuf* b, const VeltStr* s)` | an object key as `console.log` shows it: bare if it matches `[A-Za-z_][A-Za-z0-9_]*` (node quotes `$`), else quoted like `push_inspect_str` |
