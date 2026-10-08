@@ -1,7 +1,8 @@
 # Design: utility types and `keyof` on type parameters
 
-Status: accepted with the review in #395 and the owner's decisions of 2026-10-05; being
-implemented in the order of [Implementation order](#implementation-order). Issue #350. It builds
+Status: accepted with the review in #395 and the owner's decisions of 2026-10-05 and 2026-10-08
+([Decisions](#decisions), [Decisions on the revised design](#decisions-on-the-revised-design-2026-10-08));
+being implemented in the order of [Implementation order](#implementation-order). Issue #350. It builds
 on the merged utility types for concrete object types ([shared-models.md](shared-models.md),
 `velt_sema::utility_types`) and on intersections and indexed access on concrete types (#649,
 `velt_sema::intersections`), and changes some of their rules;
@@ -57,7 +58,7 @@ The owner's decisions on the review's questions (#395, section F, 2026-10-05):
 | Change | Effect on this design |
 |---|---|
 | #583: `?` is part of an object type's shape (`anon::ShapeField`), `hir::FieldDef::optional`, `JSON.stringify` leaves out an absent optional field | The first half of P2 landed. P2 keeps `ShapeField` and changes its `ty` to the declared type (`a?: string \| null` and `a?: string` were one shape), and adds presence, printing and spreads. |
-| #649: intersections (`crate::intersections`), branded primitives (`brands.rs`), indexed access on concrete types (`User["name"]`, `TypeExprKind::Indexed`, `Ctx::resolve_indexed`) | `T[K]` needs no new AST node, only the stuck form; `keyof` is the only new type syntax. `T & U` with a parameter part is one more stuck operator (open question 2). `merge_objects` meets declared types under P2, which is TypeScript's rule (`{ a?: string } & { a: string \| null }` has `a: string`). |
+| #649: intersections (`crate::intersections`), branded primitives (`brands.rs`), indexed access on concrete types (`User["name"]`, `TypeExprKind::Indexed`, `Ctx::resolve_indexed`) | `T[K]` needs no new AST node, only the stuck form; `keyof` is the only new type syntax. `T & U` with a parameter part is one more stuck operator (decision 6). `merge_objects` meets declared types under P2, which is TypeScript's rule (`{ a?: string } & { a: string \| null }` has `a: string`). |
 | #599: ES private names | `#x` fields are private (`FieldInfo::private_to`), so the operators and `keyof` already leave them out, as TypeScript does (`keyof C` has neither `#x` nor `private`/`protected` members). Nothing to add. |
 | #602, #603, #659: closures held in a `const` borrow, frame-allocated environments, local async closures share captures | The new HIR expressions (`FieldByName`, `DeferredObject`, `KeyIndex`) must be visited by the capture, borrow and environment analyses like `Field` and `AdtLit`; `crate::visit` gets the cases and the analyses use it. No new rule. |
 | #621 (numrep), #525 (number model) | Operators are reduced before `velt_opt` runs, so numrep sees ordinary loads and switches. A `T[K]` over a `number` field and an `i32` field is the union `number \| i32`, a tagged union like any other, and the tag check of decision 4 compares members by type, so `number` and `i32` stay apart. Literal keys (`pluck(users, "name")` infers `K = "name"`) reuse the literal typing of #525 step 3 rather than adding a second rule. |
@@ -126,7 +127,7 @@ gives and `FieldInfo::declared` the written type):
 - `{ a?: F }` and `{ a: F | null }` are different types with no implicit conversion between them
   (R5: two types of one layout with a free conversion is the #390 crash), and neither is
   `{ a?: F | null }`, whose layout has the flag. TypeScript relates neither of the first two
-  (TS2322 both ways); it does accept `{ a: F | null }` as `{ a?: F | null }` (open question 3).
+  (TS2322 both ways); it does accept `{ a: F | null }` as `{ a?: F | null }` (decision 7).
   The mismatch suggests `{ ...x }`.
 
 Representation: `hir::FieldDef` has `optional` (#583) and gains `presence`. A presence field's
@@ -136,7 +137,7 @@ with `Intrinsic::FieldAbsent`, any write sets the flag, and spreads read it with
 `Intrinsic::FieldPresent`.
 
 Not covered by P2: classes (an optional class field is absent while it is `null`, so a class's
-`a?: F | null` doesn't keep the two apart; open question 4), and a generic object type whose
+`a?: F | null` doesn't keep the two apart; decision 8), and a generic object type whose
 field is `a?: T`, instantiated at a nullable `T` only inside generic code that sema never
 substitutes, so that no concrete def of the nullable shape exists: lowering lays that instance
 out without the flag. The create-on-demand shape table of step 4 closes this gap.
@@ -285,8 +286,8 @@ error, as in TypeScript (TS2322).
   Velt panics there. A write of a value that isn't a `T[K]` (`x[k] = 1`) is an error in both
   (TS2322).
 - **`pick`'s body:** TypeScript writes `const r = {} as Pick<T, K>; for (const k of ks)
-  r[k] = o[k]; return r;`. Velt can't create a `Pick<T, K>` with no fields set. Open question 1
-  proposes how it compiles.
+  r[k] = o[k]; return r;`. Velt can't create a `Pick<T, K>` with no fields set; decision 5 says
+  how it compiles.
 
 ### Inference through operators
 
@@ -342,7 +343,7 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 | TypeScript | Velt | Why |
 |---|---|---|
 | `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` (same object) | in storage positions an error suggesting `{ ...x }`; parameters: #672 | different layouts; a conversion makes a new object |
-| `{ a: F \| null }` assignable to `{ a?: F \| null }` | error suggesting `{ ...x }` (open question 3) | the second has a presence flag |
+| `{ a: F \| null }` assignable to `{ a?: F \| null }` | error suggesting `{ ...x }` (decision 7) | the second has a presence flag |
 | `x[k] = v` with a union `K` stores any member | panics when the member doesn't match | it would store a value of the wrong type |
 | a patch `{ name: undefined }` removes `name` | not expressible; `null` is absent only for `a?: F` without `null` | Velt has no `undefined` |
 | an optional class field without an initializer is an own key holding `undefined`, so spreading the instance clears the target's field | it is absent and isn't copied | Velt has no `undefined` |
@@ -402,22 +403,24 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 6. **C6's forms.**
 7. **#672: implicit generic parameters.**
 
-## Open questions
+## Decisions on the revised design (2026-10-08)
 
-1. **`pick`'s body.** Recommended: accept `{} as D`, where `D` is a deferred object type, only as
-   the initializer of a local. It is stored as `Partial<D>`, `r[k] = …` writes set fields, and its
-   first other use converts it with a run-time check that every field is present (a panic names
-   the missing key, where TypeScript would hand out an object without it). The standard `pick`
-   then compiles unchanged; the cost is one presence test per field at the conversion.
-2. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
-   #350. Recommended: include it as `TyOp::Intersect`, reduced by `crate::intersections` at
+The owner decided the revision's open questions, all as recommended; the design is approved with
+these answers:
+
+5. **`pick`'s body.** `{} as D`, where `D` is a deferred object type, is allowed only as the
+   initializer of a local. It is stored as `Partial<D>`, `r[k] = …` writes set fields, and its
+   first other use converts it with a run-time check that every field is present; a missing key
+   is a run-time error that names it (TypeScript would hand out an object without it). The
+   standard `pick` compiles unchanged, at one presence test per field at the conversion.
+6. **`T & U` with a type parameter part** (`merge<T, U>(t: T, u: U): T & U`), which #649 left to
+   #350, is a deferred operator, `TyOp::Intersect`, reduced by `crate::intersections` at
    instantiation, in step 4; the spread is a `DeferredObject` like `update`'s.
-3. **`{ a: F | null }` as `{ a?: F | null }`**, which TypeScript accepts. Recommended: keep the
-   error with the `{ ...x }` fix-it, like the other storage-position conversions; #672 covers the
-   parameter case.
-4. **Classes and `a?: F | null`.** Recommended: no presence flag in classes for now. Node gives
-   a class's optional field an own key holding `undefined` from the start, which neither absent
-   nor `null` models exactly, and nullable optional class fields are rare.
+7. **`{ a: F | null }` where `{ a?: F | null }` is expected**, which TypeScript accepts, stays an
+   error with the `{ ...x }` fix-it, like the other storage-position conversions (#672 covers
+   parameters); types.md lists it as a difference from TypeScript.
+8. **Classes and `a?: F | null`:** no presence flag. A class's fields always exist in its fixed
+   layout, and Node's own key holding `undefined` is modelled by neither "absent" nor `null`.
 
 ## Review checklist (#395, 2026-10-03)
 
@@ -438,7 +441,7 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 | C4 inference through operators | Inference through operators |
 | C5 termination | Errors at instantiation |
 | C6 missing forms | C6 |
-| C7 numeric keys, P3 strictness, `{ ...x }` of `T \| null`, class optional fields, `pick` | `keyof`, P3, spreads, differences table, open question 1 |
+| C7 numeric keys, P3 strictness, `{ ...x }` of `T \| null`, class optional fields, `pick` | `keyof`, P3, spreads, differences table, decision 5 |
 | D contract changes | Contract changes |
 
 ## Not proposed
