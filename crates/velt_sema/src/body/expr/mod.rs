@@ -23,6 +23,7 @@ mod fn_arity;
 mod gen_closure;
 mod hoist;
 mod iface_call;
+mod in_place_chain;
 mod int32;
 mod intrinsics;
 pub(crate) mod jsx;
@@ -70,6 +71,9 @@ impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         let h = self.expr(e, Some(exp), want);
+        if self.in_place_misuse(e, &h, exp) {
+            return self.error_expr(e.span);
+        }
         self.coerce(h, exp)
     }
 
