@@ -521,3 +521,4 @@ fn ill_formed_text_through_the_string_methods() {
 }
 
 mod positions;
+mod slices;

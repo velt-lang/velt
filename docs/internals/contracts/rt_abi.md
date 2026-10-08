@@ -39,7 +39,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, units << 32 \| len, 0}` | bitwise copy / nothing |
 | inline, ASCII (≤ 23 bytes) | byte 23 ≥ 0x80, bit 0x40 clear | bytes 0..len hold the text, byte 23 = `0x80 \| len` (units = len) | bitwise copy / nothing |
 | inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len`, plus `0x20` when it may hold lone surrogates | bitwise copy / nothing |
-| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
+| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer; a **slice** has bit 62 of `w2` set and other bits there (below) | count +1 / count −1, free at 0 |
 
 - `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
   in its low 32 bits. A string is shorter than 2 GiB (at most `i32::MAX` bytes): allocating a
@@ -49,14 +49,16 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
   static strings may borrow them (same lifetime).
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
-  byte, and the count is always the 8 bytes before it:
+  byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
+  is always the 8 bytes before the buffer's first byte:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
     `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
     absorbed text from a static string, which has no room to record its count; whoever needs the
     number counts then, and records it: the field is accessed atomically, relaxed); `crumbs` is
     the breadcrumb table (below), null until a position in the string is first translated, and
-    freed with the buffer.
+    freed with the buffer (or the value 1 when there is no table but a thread remembers a
+    position in a slice of the buffer, which makes freeing it bump the epoch, as a table does).
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
   `ptr`, and release, growth and free derive the header from the value. An inline string has
@@ -69,8 +71,58 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   common case pays no atomic read-modify-write: dropping the only reference (count 1) frees
   after a plain load; an increment happens only when a string is copied while its source stays
   alive (the compiler moves instead when the source is dead).
+- A **slice** (#402) is a heap string whose bytes lie inside another heap string's buffer, which
+  it shares through the buffer's count: `{ptr, units << 32 | len, w2}`, with `ptr` at the
+  slice's first byte and `w1` its own counts. `w2` tells the two heap forms apart:
+
+  | bits of `w2` | plain heap string | slice |
+  |---|---|---|
+  | 63 | 0 | 0 |
+  | 62 | 0 | 1 |
+  | 61 | 0 | 1 when the buffer has a header (its text is not ASCII, whatever the slice's is) |
+  | 31..60 | 0 | the byte offset of `ptr` from the buffer's first byte |
+  | 30 | capacity (bits 0..30) | 0 |
+  | 0..29 | capacity | the buffer's capacity |
+
+  For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
+  plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
+- **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`),
+  `velt_rt_str_trim`, `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and
+  `velt_rt_str_split` when its separator is not empty and cannot match half of a surrogate pair.
+  Every other function copies the pieces it returns: `split("")`, a split by a lone surrogate,
+  `velt_rt_str_code_points`, and the regex functions (the pieces of `match`, `exec` and `split`
+  are new strings, `VeltStr::from_vec`). Those four return a slice
+  when the piece is too long to be inline, at least a quarter of the buffer's capacity, and the
+  buffer is below 1 GiB (2^30 bytes); otherwise it copies (inline when short).
+  The whole string is shared as it is (count +1, same value), a piece of a static string
+  borrows it, and a piece that ends between the halves of a surrogate pair is a copy (the half
+  is re-encoded). So live slices pin at most four times their own size (a short piece of a huge
+  string never keeps it alive), and a parser that consumes its input from the front
+  (`rest = rest.slice(n)`) copies at most a third of its buffer's capacity in all: a third of
+  the input when the capacity is its length, up to about two thirds when appends grew the
+  buffer (capacity up to twice the length). Linear either way.
+- **Counts and threads.** A buffer's count counts every string that references it, slices
+  included: a slice retains the buffer when made and releases it when dropped, and the last
+  reference, plain or slice, frees it with the buffer's layout (bit 61 says which for a
+  slice). Counts are atomic, so slices cross threads like any string.
+- **Never written in place.** A slice is never appended to in place, nor moved behind a header:
+  appending to one copies it, even when it holds the buffer's only reference. A plain heap
+  string is appended to in place only when its count is 1, which a live slice of it prevents.
+  So neither a slice nor its parent ever writes bytes the other can see.
+- **Header fields.** A slice has no breadcrumbs of its own: the buffer's describe the whole text,
+  and positions in a non-ASCII slice are translated by scanning from its nearer end and the
+  per-thread cursor (remembering a position in a slice sets the buffer's `crumbs` field to 1
+  unless it has a table, so freeing the buffer bumps the epoch). The buffer's `lone` counts the
+  whole buffer, so a slice reads it only as "none" when it is 0, and otherwise counts its own
+  text when asked, without recording it.
+- **Generated code** needs no change for slices and must not assume more: a slice tests as a
+  heap string (`(int64_t)w2 > 0`), its `w0`/`w1` read as for any heap string, and dropping it
+  calls `velt_rt_str_drop`. `w2` of a heap string is not its capacity, and its count is not at
+  `w0 - 8`: only the runtime finds the buffer.
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
-  place only to an inline string with room or a heap buffer with count 1 (of the right layout).
+  place only to an inline string with room or a plain heap string (not a slice) whose buffer has
+  count 1 (of the right layout).
 - Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including
   `velt_rt_str_append` and the builder's pushes, ends there), which keeps the unit count, the lone
   count and the form in step in O(1) per append (geometric growth), and joins a high surrogate ending the string with a
