@@ -182,8 +182,13 @@ fn decided(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> Option<bool> {
 
 /// Simplify the terminator of block `bi`, reached with `st`.
 fn terminator(env: &Env, flow: &Flow, func: &mut Function, bi: usize, st: &State) -> bool {
-    if let Terminator::Call { args, .. } = &func.blocks[bi].term {
-        let printed = args.get(1).and_then(|a| flow.operand(st, func, a));
+    if let Terminator::Call {
+        callee: Callee::Extern(id),
+        args,
+        ..
+    } = &func.blocks[bi].term
+    {
+        let printed = super::print::number(env, *id, args).and_then(|a| flow.operand(st, func, a));
         if printed.is_some_and(|f| super::print::as_integer(env, func, bi, f)) {
             return true;
         }
