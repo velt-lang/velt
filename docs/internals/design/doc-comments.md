@@ -1,7 +1,7 @@
 # Design: doc comments
 
-Status: implemented in `velt doc` (issue #513, part of #512). The language server does not show
-them yet; that is #514. User documentation: [Lexical structure](../../reference/lexical.md#comments-and-semicolons),
+Status: implemented in `velt doc` (issue #513, part of #512) and in the language server (#514).
+User documentation: [Lexical structure](../../reference/lexical.md#comments-and-semicolons),
 [`velt doc`](../../tooling/cli.md#velt-doc).
 
 ## Problem
@@ -116,9 +116,14 @@ too. Without the blank line, the block documents the first declaration instead.
 - **`velt doc`** (and `velt doc --std`, the docs website) shows the rendered Markdown under each
   item: the text, then the sections of the table above, in that order. A deprecated item's name
   is struck through and labelled "deprecated".
-- **The editor** (planned, #514): hover shows the same Markdown under the signature; completion items
-  show it when resolved; signature help shows the active parameter's `@param` text; deprecated
-  items get the LSP `Deprecated` tag (struck through in completion lists).
+- **The editor** (`velt_lsp::docs`, [editors](../../tooling/editors.md#features)): hover shows
+  the same Markdown under the signature; completion items show it when resolved (items of
+  modules outside the program, inside `import { … }` and from auto-import, carry it in the
+  list); signature help shows the description, returns and throws, and each parameter's
+  `@param` text; deprecated items get the LSP `Deprecated` tag (struck through in completion
+  lists), and uses of them a `Deprecated` hint. Each file's comment ranges and declaration
+  index are built once per server process (keyed by the file's text), so a hover parses only the
+  one comment it shows.
 
 Both use one parser, `velt_doc::comment`: `doc_before(src, decl_lo)` finds and parses the doc
 comment of the declaration starting at byte `decl_lo`; `doc_before_in` takes the comment ranges

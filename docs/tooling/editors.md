@@ -18,7 +18,10 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   block or `///` lines right above it; see [doc comments](../reference/lexical.md)), rendered
   as Markdown: the description, then `@param`, `@returns`, `@throws`, `@example`, `@deprecated`
   and `@see`. Hovering a parameter shows its `@param` text. This works for your own code,
-  imports and the standard library.
+  imports and the standard library (the prelude's methods and the `fetch` globals included):
+  functions (generic ones too), classes and their members (constructors, methods, getters,
+  static members, and `#private` members inside the class), interfaces, enum variants, and
+  the fields of object types and of intersections (`A & B`).
 - **Completion**: locals, module items, imports, prelude items, keywords, and members after `.`
   (also while the file doesn't parse). In JSX: tag names after `<` (the elements of the JSX
   runtime's `JSX.IntrinsicElements` and the components in scope) and attribute names inside an
@@ -42,6 +45,8 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
     are sorted), or adds that import after the other imports. A file is named so that the
     import loads it: with its extension when another file shares its name, and a folder module
     as `./shapes/index` when a file `shapes.vlt` would win over the folder.
+  - the exports offered inside the braces and by auto-import show their doc comments, and
+    `@deprecated` ones are struck through.
 - **JSX**: go to definition, hover, references and rename on tags, opening and closing
   (`<Card` and `</Card>` → `function Card`), and on attributes (the attribute's or prop's
   declaration and type).
