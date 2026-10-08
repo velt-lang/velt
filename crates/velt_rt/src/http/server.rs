@@ -86,12 +86,13 @@ struct HandlerFut<S: OwnedStore> {
     key: u64,
     /// A response the handler handed back in a poll that did not finish it.
     early: Option<Box<Response<RespBody>>>,
+    /// Released when the request's future goes (the handler finished, or its client left).
+    _parked: ParkedUpgrade,
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
-    fn new(shared: &Arc<Shared>, req: ReqObj) -> Self {
+    fn new(shared: &Arc<Shared>, req: Arc<ReqObj>, parked: ParkedUpgrade) -> Self {
         let d = &shared.handler();
-        let req = Arc::new(req);
         let key = super::request::register(req.clone());
         let (size, align) = (d.state_size as usize, d.state_align as usize);
         let inner = Compiled::<S>::with_init(d.poll, d.drop, size, align, |st| {
@@ -105,6 +106,7 @@ impl<S: OwnedStore> HandlerFut<S> {
             req,
             key: key.bits(),
             early: None,
+            _parked: parked,
         }
     }
 }
@@ -119,12 +121,12 @@ unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> u64 {
 }
 
 impl<S: OwnedStore> Future for HandlerFut<S> {
-    type Output = Response<RespBody>;
+    type Output = Result<Response<RespBody>, Infallible>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
         let Some(inner) = this.inner.as_mut() else {
-            return Poll::Ready(status_only(StatusCode::INTERNAL_SERVER_ERROR));
+            return Poll::Ready(Ok(status_only(StatusCode::INTERNAL_SERVER_ERROR)));
         };
         let mut frame = Frame::new(this.key, Arc::as_ptr(&this.req));
         let at: *mut Frame = &mut frame;
@@ -145,7 +147,9 @@ impl<S: OwnedStore> Future for HandlerFut<S> {
         } else {
             super::response::take(RespHandle::from_bits(result))
         };
-        Poll::Ready(resp.unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR)))
+        Poll::Ready(Ok(
+            resp.unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR))
+        ))
     }
 }
 
@@ -187,19 +191,22 @@ impl Drop for ParkedUpgrade {
     }
 }
 
-async fn handle<S: OwnedStore>(
-    shared: Arc<Shared>,
+/// The future of one request: its upgrade parked if it asks for one, then its handler. A plain
+/// function returning the handler's future, not an `async fn`, so the request's head moves
+/// once, into its shared allocation (`ReqObj::shared`), instead of through another future's
+/// state first.
+fn handle<S: OwnedStore>(
+    shared: &Arc<Shared>,
     conn: Conn,
     mut req: Request<Incoming>,
-) -> Result<Response<RespBody>, Infallible> {
+) -> HandlerFut<S> {
     let parked = ParkedUpgrade(if req.headers().contains_key(UPGRADE) {
         upgrade::park(hyper::upgrade::on(&mut req))
     } else {
         0
     });
-    let resp = HandlerFut::<S>::new(&shared, ReqObj::new(req, parked.0, conn)).await;
-    drop(parked);
-    Ok(resp)
+    let req = ReqObj::shared(req, parked.0, conn);
+    HandlerFut::new(shared, req, parked)
 }
 
 async fn accept_loop<S: OwnedStore>(
@@ -269,7 +276,7 @@ where
     S: OwnedStore,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
-    let svc = hyper::service::service_fn(move |req| handle::<S>(shared.clone(), conn, req));
+    let svc = hyper::service::service_fn(move |req| handle::<S>(&shared, conn, req));
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // pipeline_flush: responses to pipelined requests go out in one write instead of one
     // `writev` each (5× on TechEmpower's pipelined plaintext, bench/web/RESULTS.md).

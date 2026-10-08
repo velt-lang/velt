@@ -130,21 +130,29 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl ReqObj {
-    /// A request whose head has arrived; its body is received when the handler reads it.
-    /// `upgrade` is the key of its parked upgrade, 0 if none. Not boxed: it moves into the
-    /// registry's allocation (`register`) without a box of its own on the way.
-    pub fn new(req: Request<Incoming>, upgrade: u64, conn: Conn) -> ReqObj {
+    /// A request whose head has arrived, made in the shared allocation the handler's frame and
+    /// the registry hold (`register`); its body is received when the handler reads it. `upgrade`
+    /// is the key of its parked upgrade, 0 if none. The fields are written in place: the head
+    /// is a few hundred bytes, and building the object first would copy it twice more.
+    pub fn shared(req: Request<Incoming>, upgrade: u64, conn: Conn) -> Arc<ReqObj> {
         let (mut parts, body) = req.into_parts();
         if parts.version == hyper::Version::HTTP_2 {
             join_cookies(&mut parts.headers);
         }
         let body = ReqBody::new(body);
-        ReqObj {
-            parts,
-            has_body: body.is_some(),
-            body: Mutex::new(body),
-            upgrade,
-            conn,
+        let mut obj = Arc::<ReqObj>::new_uninit();
+        let at = Arc::get_mut(&mut obj)
+            .expect("ICE: a new Arc is unique")
+            .as_mut_ptr();
+        // SAFETY: `at` points to the new allocation; every field is written once before
+        // `assume_init`.
+        unsafe {
+            std::ptr::addr_of_mut!((*at).parts).write(parts);
+            std::ptr::addr_of_mut!((*at).has_body).write(body.is_some());
+            std::ptr::addr_of_mut!((*at).body).write(Mutex::new(body));
+            std::ptr::addr_of_mut!((*at).upgrade).write(upgrade);
+            std::ptr::addr_of_mut!((*at).conn).write(conn);
+            obj.assume_init()
         }
     }
 }
