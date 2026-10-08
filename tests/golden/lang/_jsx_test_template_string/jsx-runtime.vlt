@@ -1,0 +1,12 @@
+// The precompiling test JSX runtime plus the optional `jsxTemplateString`, which the compiler
+// calls for a template without slots (docs/contracts/jsx.md "SSR precompile").
+
+import { Element } from "../_jsx_test_provider/render";
+
+export * from "../_jsx_test_precompile/jsx-runtime";
+
+export function jsxTemplateString(html: string): Element {
+  const el = new Element();
+  el.parts.push(html);
+  return el;
+}

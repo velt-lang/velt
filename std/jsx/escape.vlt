@@ -1,27 +1,22 @@
 // std/jsx/escape: HTML escaping of text and attributes (docs/contracts/jsx.md "Escaping").
 //
-// Text escapes `&`, `<` and `>`; attribute values also `"` and `'`, which is exactly std/html
-// `escapeHtml`. The compiler escapes static text of precompiled templates with the same rules,
-// so text must not escape quotes: `escapeText` returns text without `& < >` as it is (runtime
-// searches, the common case) and otherwise uses the runtime's one-pass `escapeHtml`, putting
-// the quotes back when there were any.
+// Text and attribute values escape `&`, `<`, `>`, `"` and `'` as react-dom does: like std/html
+// `escapeHtml`, but `'` is `&#x27;` (`velt_rt_jsx_escape`, one pass in the runtime). The
+// compiler escapes static text and attributes of precompiled templates the same way, and leaves
+// those with a `'` to `jsxEscape`/`jsxAttr`, so both lowerings render the same bytes.
 
-import { escapeHtml } from "velt:html";
 import type { AttrValue } from "velt:jsx/node";
 import { renderStyle } from "velt:jsx/style";
 
-/** `s` with `&`, `<` and `>` replaced by `&amp;`, `&lt;` and `&gt;` (quotes are kept). */
+// `(const VeltStr* s, VeltStr* out)`: `s` with `& < > " '` replaced by entities (`'`: `&#x27;`).
+declare function velt_rt_jsx_escape(s: string): string;
+
+/**
+ * `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and
+ * `&#x27;`, as react-dom writes them.
+ */
 export function escapeText(s: string): string {
-  if (!s.includes("<") && !s.includes("&") && !s.includes(">")) {
-    return s;
-  }
-  const escaped = escapeHtml(s);
-  if (!s.includes("\"") && !s.includes("'")) {
-    return escaped;
-  }
-  // Every `&quot;` / `&#39;` in `escaped` came from a quote: a literal one in `s` was escaped to
-  // `&amp;quot;`.
-  return escaped.replaceAll("&quot;", "\"").replaceAll("&#39;", "'");
+  return velt_rt_jsx_escape(s);
 }
 
 /**
@@ -33,13 +28,13 @@ export function renderAttr(name: string, value: AttrValue): string {
     return "";
   }
   if (typeof value === "string") {
-    return ` ${name}="${escapeHtml(value)}"`;
+    return ` ${name}="${escapeText(value)}"`;
   }
   if (typeof value === "boolean") {
     return value ? ` ${name}` : "";
   }
   if (typeof value === "object") {
-    return ` ${name}="${escapeHtml(renderStyle(value))}"`;
+    return ` ${name}="${escapeText(renderStyle(value))}"`;
   }
   return ` ${name}="${value}"`;
 }

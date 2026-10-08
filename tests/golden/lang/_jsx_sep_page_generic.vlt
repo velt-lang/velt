@@ -56,5 +56,10 @@ export function cases(
     <p>{flag ? name : false}{n}</p>,
     // An array child is a slot; the elements in it are no text.
     <p>a{names.map((s) => <span>{s}</span>)}c</p>,
+    // `'` is the provider's to escape (this one writes `&#39;`, std/jsx `&#x27;`): static text
+    // and attributes with one go through `jsxEscape`/`jsxAttr`, still one text part.
+    <p>it's</p>,
+    <p>it's {name}'s</p>,
+    <p title="a'b">x</p>,
   ];
 }

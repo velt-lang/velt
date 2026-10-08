@@ -146,7 +146,13 @@ shape of Deno's precompile transform, with text folded into the strings):
 - every other dynamic part becomes an `Element` slot: components (`jsxComponent(C, props, …)`/
   `jsxAsyncComponent`), fragments, `Element`-typed expressions as they are, and any other
   `Child` (arrays, unions containing `Element`) as `Fragment([v], null)`;
-- a subtree with no `Element` slot is `jsxTemplate([html], [])`.
+- a subtree with no `Element` slot is `jsxTemplate([html], [])`, or `jsxTemplateString(html)`
+  when the runtime also exports
+
+  ```ts
+  function jsxTemplateString(html: string): Element;                 // optional: no slots, no arrays
+  ```
+  which saves the two arrays per call: in a list, every row is such a subtree.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
   wbr`) have no closing tag; any other self-closing element is written `<x></x>`.
 - An element with an attribute spread or a `key` is not precompiled (it goes through `jsx`);
@@ -199,12 +205,14 @@ The golden `lang/jsx_text_separator` renders the cases above through a provider 
 lowerings.
 
 ## Escaping (all providers that render HTML)
-- Text: `&` `<` `>` → `&amp;` `&lt;` `&gt;`; attribute values additionally `"` → `&quot;` and
-  `'` → `&#39;`. `std/html` `escapeHtml` implements this set.
+- Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
+  provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
+  `escapeHtml`.
 - `true` attributes render as the bare name, `false`/`null` attributes are omitted.
-- The precompile lowering escapes static text and attribute values at compile time with exactly
-  `escapeHtml`'s five replacements (also `"` and `'` in text), so a runtime that escapes with
-  `escapeHtml` renders byte-identically.
+- The precompile lowering escapes static text and attribute values at compile time with the four
+  replacements every provider shares; static text or an attribute value that contains a `'` is
+  passed to `jsxEscape`/`jsxAttr` at run time instead (as one text part: no separator inside
+  it), so the provider's own apostrophe appears in both lowerings.
 - Raw HTML only through an explicit provider API (`std/jsx` `raw(html)`), never by default.
 
 ## `std/jsx` specifics
