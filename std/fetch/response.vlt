@@ -5,9 +5,9 @@
 // arrived; its body is received by the first `text()`, `json()`, `bytes()` or `arrayBuffer()`,
 // or chunk by chunk through `res.body` (a second read throws, as in JS). A compressed body
 // (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. The handle is released when the
-// response is dropped, which closes the connection of a body nobody read. The status text, URL
-// and headers are copied out of the runtime the first time they are read (most programs read
-// none of them), and stay readable after the body was read.
+// response is dropped, which closes the connection of a body nobody read. The status text, URL,
+// `redirected` and headers are copied out of the runtime the first time they are read (most
+// programs read none of them), and stay readable after the body was read.
 
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
@@ -45,7 +45,8 @@ export class Response {
   // A fetched response's status text and URL: null until first read.
   #reason: string | null = "";
   #where: string | null = "";
-  #hops: bool = false;
+  // Null for a fetched response until first read.
+  #hops: bool | null = false;
   #kind: string = "default";
   #used: bool = false;
   #source: i64 = 0;
@@ -87,7 +88,7 @@ export class Response {
     r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
     r.#reason = null;
     r.#where = null;
-    r.#hops = velt_rt_http_fetch_resp_redirected(handle);
+    r.#hops = null;
     r.#kind = "basic";
     r.#source = head ? NONE : RUNTIME;
     r.#handle = handle;
@@ -173,7 +174,13 @@ export class Response {
 
   // Whether `fetch` followed a redirect to get it.
   get redirected(): bool {
-    return this.#hops;
+    const known = this.#hops;
+    if (known != null) {
+      return known;
+    }
+    const hops = velt_rt_http_fetch_resp_redirected(this.#handle);
+    this.#hops = hops;
+    return hops;
   }
 
   // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
