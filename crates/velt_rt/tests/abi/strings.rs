@@ -430,7 +430,9 @@ fn short_needles_match_js() {
         ("", "a", 0, -1),
     ];
     for &(s, n, from, want) in cases {
-        let got = both(s, |v| unsafe { velt_rt_str_index_of(v, &lit(n), from) }.to_string());
+        let got = both(s, |v| {
+            unsafe { velt_rt_str_index_of(v, &lit(n), from) }.to_string()
+        });
         assert_eq!(got, want.to_string(), "{s:?}.indexOf({n:?}, {from})");
     }
 }

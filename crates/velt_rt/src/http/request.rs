@@ -107,7 +107,6 @@ impl ReqObj {
             conn,
         })
     }
-
 }
 
 /// A request's absolute URL: `http(s)://`, the `host` header (HTTP/2: `:authority`; without
@@ -118,7 +117,12 @@ fn url_of(parts: &hyper::http::request::Parts, conn: &Conn) -> VeltStr {
     let path = uri.path_and_query().map_or("/", |p| p.as_str()).as_bytes();
     if let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) {
         // Absolute form (HTTP/2, or a proxy request over HTTP/1.1).
-        let parts = [scheme.as_bytes(), b"://", authority.as_str().as_bytes(), path];
+        let parts = [
+            scheme.as_bytes(),
+            b"://",
+            authority.as_str().as_bytes(),
+            path,
+        ];
         return joined(&parts);
     }
     let scheme: &[u8] = if conn.tls { b"https://" } else { b"http://" };

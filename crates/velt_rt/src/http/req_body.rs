@@ -82,7 +82,12 @@ impl ReqBody {
 
     /// The rest of the body in one buffer.
     pub async fn read_all(mut self) -> Result<Vec<u8>, VeltErr> {
-        let len = self.incoming.size_hint().exact().unwrap_or(0).min(MAX_RESERVE);
+        let len = self
+            .incoming
+            .size_hint()
+            .exact()
+            .unwrap_or(0)
+            .min(MAX_RESERVE);
         let mut buf = Vec::with_capacity(self.rest.len().max(len as usize));
         buf.extend_from_slice(&std::mem::take(&mut self.rest));
         while !self.done {

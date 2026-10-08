@@ -143,7 +143,11 @@ fn the_abi_opens_writes_and_releases_writers() {
         let data = crate::bytes::VeltBytes::from_vec(b"hi".to_vec());
         assert_eq!(velt_rt_http_resp_stream_write_bytes(w, &data), 1);
         velt_rt_http_resp_stream_abort(w);
-        assert_eq!(velt_rt_http_resp_stream_write_bytes(w, &data), 0, "released");
+        assert_eq!(
+            velt_rt_http_resp_stream_write_bytes(w, &data),
+            0,
+            "released"
+        );
         velt_rt_http_resp_stream_abort(w);
         velt_rt_http_resp_drop(r);
     }

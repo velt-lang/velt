@@ -1,9 +1,9 @@
 //! Trimming and case mapping: `trim`, `trimStart`, `trimEnd`, `toUpperCase`, `toLowerCase`.
 
 use super::{bytes, is_js_whitespace_cp, sub_string, text};
+use crate::str::velt_rt_str_own;
 use crate::str::wtf8;
 use crate::str::VeltStr;
-use crate::str::velt_rt_str_own;
 
 /// Bytes of JS whitespace at the start of the WTF-8 `t` (a lone surrogate is not whitespace).
 fn trimmed_start(t: &[u8]) -> usize {

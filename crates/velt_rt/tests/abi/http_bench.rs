@@ -11,11 +11,11 @@
 
 use super::command::command;
 use super::fake::{arg, block_on_fut, ok};
+use crate::bytes::VeltBytes;
 use crate::http::request::*;
 use crate::http::response::*;
 use crate::http::server::*;
 use crate::result::IoResult;
-use crate::bytes::VeltBytes;
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use crate::task::READY;

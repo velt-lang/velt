@@ -238,9 +238,18 @@ mod tests {
     fn bodiless_statuses_get_no_body_headers() {
         unsafe {
             let ct = 1;
-            assert_eq!(headers_and_len(build(200, &[], kind::TEXT, "hi", ct)), (1, 2));
-            assert_eq!(headers_and_len(build(204, &[], kind::TEXT, "hi", ct)), (0, 0));
-            assert_eq!(headers_and_len(build(304, &[], kind::TEXT, "hi", ct)), (0, 0));
+            assert_eq!(
+                headers_and_len(build(200, &[], kind::TEXT, "hi", ct)),
+                (1, 2)
+            );
+            assert_eq!(
+                headers_and_len(build(204, &[], kind::TEXT, "hi", ct)),
+                (0, 0)
+            );
+            assert_eq!(
+                headers_and_len(build(304, &[], kind::TEXT, "hi", ct)),
+                (0, 0)
+            );
             assert_eq!(headers_and_len(build(200, &[], kind::BYTES, "", 0)), (0, 2));
         }
     }
