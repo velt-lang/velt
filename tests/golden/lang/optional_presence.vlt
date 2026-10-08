@@ -2,8 +2,14 @@
 // `null`, as JavaScript does (#350, review #395 P2b, decision 2): JSON and console.log leave out
 // an absent one and print a present `null`, `JSON.parse` keeps the difference, and a spread
 // copies a present `null` over an earlier value (PATCH semantics) but not an absent field.
-type T = { a: string; d?: string };
-type User = { id: i64; name: string; nick: string | null; email?: string; deletedAt?: string };
+type T = { a: string; d?: string | null };
+type User = {
+  id: i64;
+  name: string;
+  nick: string | null;
+  email?: string;
+  deletedAt?: string | null;
+};
 
 function update(u: User, patch: Partial<User>): User {
   return { ...u, ...patch };

@@ -1,7 +1,7 @@
 // `?` in an object type is part of the type (#350, review #395 P2): an absent optional field is
 // left out by JSON.stringify and console.log, a spread doesn't copy it over an earlier value,
 // `Partial` sets it and `Required` clears only it (a written `| null` stays), as in TypeScript.
-type U = { a: string; b?: string; c: string | null; d?: string };
+type U = { a: string; b?: string; c: string | null; d?: string | null };
 type User = { id: i64; name: string; email?: string };
 
 class K {
