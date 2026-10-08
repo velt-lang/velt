@@ -56,9 +56,11 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     if code == 0 {
         crate::task::runtime::wait_for_keep_alive();
         crate::str::stats::settle(|| crate::task::runtime::alive_tasks() > 0);
+        // Nothing receives any more: drop the values still queued in channels. Not on a failing
+        // exit: tasks may still be running then, and drop glue runs user code.
+        let left = crate::task::channel::drop_abandoned_items();
+        crate::str::stats::channel_leftovers(left);
     }
-    // Nothing receives any more: drop the values still queued in channels.
-    crate::task::channel::drop_abandoned_items();
     crate::io::flush_stdout();
     crate::str::stats::report();
     crate::io::stats::report();

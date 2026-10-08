@@ -35,11 +35,9 @@ fn retire_if_done(key: Key<Chan>, chan: &Chan) {
 }
 
 /// At program end (`main` returned and the tasks settled): drop the items still queued in every
-/// channel, which nobody can receive any more.
-pub(crate) fn drop_abandoned_items() {
-    for chan in CHANNELS.all() {
-        chan.drop_items();
-    }
+/// channel, which nobody can receive any more. Returns how many there were.
+pub(crate) fn drop_abandoned_items() -> u64 {
+    CHANNELS.all().iter().map(|c| c.drop_items() as u64).sum()
 }
 
 /// A new channel; `capacity == 0` is unbounded. Items are passed with their size (align <= 16).

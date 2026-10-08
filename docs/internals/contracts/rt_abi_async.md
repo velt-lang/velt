@@ -166,8 +166,9 @@ sender still shares is deep-copied). No code pointers are stored except drop glu
 `item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
 Values still queued in a channel nobody drains, closed or not, are not dropped while the program
 runs (any copy of the handle may still receive them); when it ends (`main` returned and the
-remaining tasks settled, before the `VELT_RC_STATS` report) the runtime drops every item still
-queued in any channel with that function. velt_rt_wasm does not: the instance's memory goes with
+remaining tasks settled) the runtime drops every item still
+queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
+counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
 it.
 
 | Symbol | Signature | Notes |

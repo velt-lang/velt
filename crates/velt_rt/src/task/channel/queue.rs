@@ -180,11 +180,13 @@ impl Chan {
 
     /// Take every queued item out and drop it with the channel's drop glue: what is left in a
     /// channel nobody drained, when the program ends. The channel stays usable (and empty).
-    pub(super) fn drop_items(&self) {
+    /// Returns the number of items taken out (with or without drop glue).
+    pub(super) fn drop_items(&self) -> usize {
         let mut s = self.lock();
         let mut items = std::mem::replace(&mut s.items, Ring::new());
         let item_drop = s.item_drop;
         drop(s);
+        let count = items.len();
         // Drop glue runs outside the lock, on a 16-aligned copy of each item (ring slots are
         // not aligned).
         if let Some(d) = item_drop {
@@ -200,6 +202,7 @@ impl Chan {
                 }
             }
         }
+        count
     }
 }
 

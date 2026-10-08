@@ -314,14 +314,14 @@ fn leftover_items_are_dropped_once_with_the_kept_drop_glue() {
             "only the refused item so far"
         );
         let chan = CHANNELS.get(h).expect("closed but not drained: still open");
-        chan.drop_items();
+        assert_eq!(chan.drop_items(), 7, "seven items were left");
         assert_eq!(
             dropped_in(1000..1100),
             (1003..=1010).collect::<Vec<_>>(),
             "each leftover item dropped exactly once"
         );
         assert_eq!(velt_rt_chan_len(h), 0);
-        chan.drop_items();
+        assert_eq!(chan.drop_items(), 0);
         assert_eq!(dropped_in(1000..1100).len(), 8, "nothing dropped twice");
         let mut slot = [0xffu64; 4];
         // SAFETY: as above.
@@ -339,7 +339,7 @@ fn leftover_items_without_drop_glue_are_just_discarded() {
         assert!(unsafe { velt_rt_chan_try_send(h, v.as_ptr() as *const u8, 24, None) });
     }
     let chan = CHANNELS.get(h).expect("open");
-    chan.drop_items();
+    assert_eq!(chan.drop_items(), 5, "counted, though nothing is dropped");
     assert_eq!(velt_rt_chan_len(h), 0);
     assert!(dropped_in(2000..2100).is_empty(), "no drop glue was called");
     // Still usable afterwards, with items of the same size.
