@@ -6,6 +6,7 @@
 
 use std::mem::MaybeUninit;
 
+use super::slice::SLICE_TAG;
 use super::{
     fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE, INLINE_LEN, INLINE_LONE,
     INLINE_MAX, INLINE_MAX_NON_ASCII, INLINE_UNITS, MAX_LEN, NON_ASCII,
@@ -53,7 +54,8 @@ impl VeltStr {
         let n = bytes.len();
         debug_assert!(bytes.is_ascii());
         let tag = self.tag();
-        if tag & INLINE == 0 {
+        // A static or plain heap string (a slice is never appended to in place).
+        if tag & (INLINE | SLICE_TAG) == 0 {
             let len = self.w1 as u32 as usize;
             if self.w2 != 0 && len + n <= self.w2 as usize && heap::is_unique(self.ptr()) {
                 let dst = self.ptr().add(len);
@@ -62,7 +64,7 @@ impl VeltStr {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, n);
                 return;
             }
-        } else if tag & NON_ASCII == 0 {
+        } else if tag & (INLINE | NON_ASCII) == INLINE {
             let len = (tag & INLINE_LEN) as usize;
             if len + n <= INLINE_MAX {
                 let p = self as *mut VeltStr as *mut u8;
@@ -289,7 +291,8 @@ impl VeltStr {
     unsafe fn append(&mut self, bytes: &[u8], sum: Summary) {
         let n = bytes.len();
         let tag = self.tag();
-        if tag & INLINE == 0 {
+        // A static or plain heap string (a slice is never appended to in place).
+        if tag & (INLINE | SLICE_TAG) == 0 {
             if self.w2 != 0 {
                 let len = self.w1 as u32 as usize;
                 let ascii = (self.w1 >> 32) as u32 as usize == len;
@@ -302,7 +305,7 @@ impl VeltStr {
                     return;
                 }
             }
-        } else {
+        } else if tag & INLINE != 0 {
             let len = (tag & INLINE_LEN) as usize;
             let need = len + n;
             let p = self as *mut VeltStr as *mut u8;
@@ -339,8 +342,8 @@ impl VeltStr {
     }
 
     /// [`Self::append`] when the text must move: a unique heap buffer of the right kind that is
-    /// full grows; anything else (static, full inline, shared heap, an ASCII buffer getting its
-    /// first non-ASCII text) moves to a new string.
+    /// full grows; anything else (static, full inline, shared heap, a slice, an ASCII buffer
+    /// getting its first non-ASCII text) moves to a new string.
     #[cold]
     #[inline(never)]
     unsafe fn append_slow(&mut self, bytes: &[u8], sum: Summary) {
@@ -350,7 +353,7 @@ impl VeltStr {
         let need = self.len() + bytes.len();
         let units = self.units() + sum.units;
         let header = units != need;
-        let unique = self.is_heap() && heap::is_unique(self.ptr());
+        let unique = self.own_cap() != 0 && heap::is_unique(self.ptr());
         if unique && self.buffer_holds(bytes) {
             // The text lies in the buffer that is about to grow or move: copy it out first.
             let copy = bytes.to_vec();
@@ -394,7 +397,7 @@ impl VeltStr {
     unsafe fn joins(&self, bytes: &[u8]) -> bool {
         wtf8::starts_with_low(bytes)
             && !self.is_ascii()
-            && (!self.is_heap() || heap::lone(self.ptr()) > 0)
+            && (!self.is_heap() || self.heap_lone() > 0)
             && wtf8::ends_with_high(self.as_bytes())
     }
 

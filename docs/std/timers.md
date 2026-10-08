@@ -51,14 +51,18 @@ Differences from Node:
 - An interval waits for its callback's promise before scheduling the next run, so runs of a
   slow callback never overlap (Node calls an async callback again whether or not its last
   promise settled).
-- `new Ticker(periodMs)`: a drift-free schedule; missed ticks are skipped, not burst.
-  - `tick(): Promise<bool>`: resolves false once the ticker is stopped.
-  - `stop()`, `stopper(): TickerStop`: `TickerStop.stop()` works from another task. A stop
-    wakes a pending `tick()` at once, which resolves to false; the sleep it was in is
-    cancelled, so a long period never delays shutdown.
-  - A `Ticker` is an `AsyncIterable<i64>`: `for await (const n of ticker)` waits for each tick
-    like `tick()` and gets its number (1, 2, … counted per loop) until the ticker is stopped.
-    Leaving the loop early does not stop the ticker.
+
+## Ticker
+
+`new Ticker(periodMs)` is a drift-free schedule; missed ticks are skipped, not burst.
+
+- `tick(): Promise<bool>`: resolves false once the ticker is stopped.
+- `stop()`, `stopper(): TickerStop`: `TickerStop.stop()` works from another task. A stop wakes
+  a pending `tick()` at once, which resolves to false; the sleep it was in is cancelled, so a
+  long period never delays shutdown.
+- A `Ticker` is an `AsyncIterable<i64>`: `for await (const n of ticker)` waits for each tick
+  like `tick()` and gets its number (1, 2, … counted per loop) until the ticker is stopped.
+  Leaving the loop early does not stop the ticker.
 
 ```ts
 import { Ticker } from "velt:timers";

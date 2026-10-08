@@ -9,6 +9,13 @@ under its signature. Where TypeScript has the same function, the text is adapted
 of TypeScript's `lib.*.d.ts` (Apache-2.0, see `NOTICE`) and edited for Velt's differences; this
 page lists those differences.
 
+Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
+([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
+`AbortSignal` ([velt:task](task.md)). They are loaded when a module names one and doesn't bind
+that name itself. The builtin `process` (`process.stdout.write(s)`, `process.env`,
+`process.argv`, `process.exit(code)`, `process.memoryUsage()`; [velt:process](process.md)) needs
+no import either.
+
 ## Strings
 
 `string` is an immutable sequence of UTF-16 code units, as in JS

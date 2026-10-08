@@ -1,0 +1,126 @@
+// check: no leaks
+// Appends next to shared slices (#402): a slice shares its parent's buffer, so neither the parent
+// nor the slice may append into that buffer in place (#381) while the other can see it. The
+// parent's in-place append, its move behind a header at its first non-ASCII byte, an append to
+// a slice, to a slice of a slice, and a builder that backtracks with `slice` all leave every
+// other string as it was.
+
+function build(n: number, unit: string): string {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += unit;
+  }
+  return s;
+}
+
+function parentAfterSlicing() {
+  // `build` leaves spare capacity, so a unique parent would grow in place.
+  let parent = build(40, "abcd");
+  const tail = parent.slice(20);
+  const head = parent.slice(0, 120);
+  parent += "XYZ";
+  parent += "é";
+  parent += "😀";
+  console.log(parent.length, parent.slice(-6), JSON.stringify(parent.slice(-1)));
+  console.log(tail.length, tail.slice(-4), head.length, head.slice(-4));
+  console.log(tail === "abcd".repeat(40).slice(20), head === "abcd".repeat(30));
+}
+
+function toTheSlice() {
+  const base = build(50, "0123456789");
+  let piece = base.slice(100, 400);
+  piece += "!";
+  piece += "ü";
+  console.log(piece.length, piece.slice(295), base.slice(395, 405), base.length);
+  // The bytes after the slice in the shared buffer are still the parent's.
+  console.log(base.charCodeAt(400), base.substring(398, 402), base === "0123456789".repeat(50));
+}
+
+function slicesOfSlices() {
+  const base = build(50, "0123456789");
+  const s1 = base.slice(10);
+  const s2 = s1.slice(10, 400);
+  let s3 = s2.slice(5, 300);
+  const before = s3;
+  s3 += "#";
+  console.log(s1.length, s2.length, s3.length, s3.slice(-3), before.slice(-2));
+  console.log(s2.slice(294, 297), base.slice(314, 317), s1.slice(304, 307));
+  // The parent goes first; the slices keep its buffer alive.
+  console.log(s2.slice(0, 5), s3.slice(0, 5), before.length);
+}
+
+function backtrackingBuilder() {
+  // `out = out.slice(0, -1)` shares the buffer and drops the old string, so the slice is the
+  // buffer's only reference: the append after it must still copy, not write in place.
+  let out = "";
+  let semis = 0;
+  for (let i = 0; i < 300; i++) {
+    out += `${i},`;
+    if (i % 7 === 0) {
+      const kept = out;
+      out = out.slice(0, -1);
+      out += ";";
+      if (kept.endsWith(",")) {
+        semis++;
+      }
+    }
+  }
+  let count = 0;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === ";") {
+      count++;
+    }
+  }
+  console.log(out.length, count, semis, out.slice(0, 12), out.slice(-8));
+}
+
+function parentGoneAndSelfAppend() {
+  let keep = "";
+  {
+    const tmp = build(64, "pq");
+    keep = tmp.slice(8);
+  }
+  keep += "-end";
+  console.log(keep.length, keep.slice(0, 4), keep.slice(-6));
+  // A string appended with a slice of itself.
+  let p = build(30, "xy");
+  p += p.slice(10);
+  p += p.slice(20, 60);
+  console.log(p.length, p.slice(0, 6), p.slice(-6));
+}
+
+function surrogatesAtTheEnds() {
+  const emoji = build(30, "x") + build(30, "😀");
+  // Ends between the halves of a pair: appending the low half rejoins it.
+  let high = emoji.slice(0, 41);
+  const saved = high;
+  high += String.fromCharCode(0xde00);
+  console.log(
+    high.length,
+    high.charCodeAt(40),
+    high.charCodeAt(41),
+    saved.length,
+    saved.charCodeAt(40),
+  );
+  // The parent appended after slicing, with the other half.
+  let whole = emoji.slice(0, 61);
+  const lowStart = emoji.slice(61);
+  whole += String.fromCharCode(0xde00);
+  console.log(
+    whole.length,
+    whole.charCodeAt(60),
+    whole.charCodeAt(61),
+    lowStart.length,
+    lowStart.charCodeAt(0),
+  );
+  console.log(emoji.length, JSON.stringify(emoji.slice(29, 33)));
+}
+
+function main() {
+  parentAfterSlicing();
+  toTheSlice();
+  slicesOfSlices();
+  backtrackingBuilder();
+  parentGoneAndSelfAppend();
+  surrogatesAtTheEnds();
+}

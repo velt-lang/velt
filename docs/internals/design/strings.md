@@ -291,9 +291,17 @@ today's translator is neither JavaScript's `u` mode nor its default mode.
 - In-place append (`s += x` on a uniquely owned string, #381) stays O(1): units add (a join
   doesn't change them), the layout moves once to a buffer with a header, the lone count follows
   the formula above, crumbs are extended lazily, and a cursor is reset on a join.
-- Not changed by this design: a heap `slice` copies (`str/mod.rs` `substring`), so
-  `rest = rest.slice(n)` parsers are O(n²), where V8 uses sliced strings. That is #402; the
-  header layout must not prevent a later shared-slice form.
+- A heap `slice` that is at least a quarter of its buffer shares it (#402, `str/slice.rs`): a
+  slice is a heap string whose `w0` points into another string's buffer and whose `w2` holds
+  the buffer's offset and capacity and whether it has a header (rt_abi.md "Strings"), so
+  `rest = rest.slice(n)` parsers are linear, as with V8's sliced strings. Smaller pieces are
+  copied (they would pin a buffer more than four times their size); a front-consuming parser
+  then copies at most a third of the buffer's capacity in all (the share test is against the
+  capacity), so up to about two thirds of an input built by appends, whose capacity can be twice
+  its length: still linear. A slice has no breadcrumbs (the buffer's
+  table describes the whole text): it translates positions by a scan from the closer end, and
+  the per-thread cursor keeps sequential loops over it linear, as for a static string; a
+  remembered slice marks its buffer so that freeing it bumps the epoch.
 
 ## Cost
 
