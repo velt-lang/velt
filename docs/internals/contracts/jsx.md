@@ -153,6 +153,9 @@ shape of Deno's precompile transform, with text folded into the strings):
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
   `lang/jsx_precompile_equals_generic` checks `std/jsx`).
+- The optional exports below (`jsxTextSeparator`, `jsxSoleEmpty`) are read only for the
+  precompile lowering: a provider without the four exports above may export them, and they are
+  ignored (not even checked).
 
 ### Text separator (optional export)
 The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
