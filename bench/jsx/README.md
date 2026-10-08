@@ -18,10 +18,28 @@ BASE=origin/main bench/jsx/run.sh        # also against origin/main's std/, same
 ```
 
 `run.sh` prints the best wall-clock time over the runs and the instructions retired by one run
-(macOS `time -l`; Linux `perf stat` when installed). Instructions are the number to compare
-on a loaded machine. Each build first checks that the precompiled and generic pages are the
+(macOS `time -l`; Linux `perf stat` when installed, or valgrind's cachegrind with
+`COUNT=valgrind`). Instructions are the number to compare on a loaded machine. The other knobs
+(`VELT`, `VARIANTS`, `LABEL`, `OUT`) are listed at the top of `run.sh`. Each build first checks that the precompiled and generic pages are the
 same, and the same as `hand` apart from the apostrophe (std/jsx writes `&#x27;` as react-dom
 does, `escapeHtml` `&#39;`).
+
+## Linux arm64: run the bench-arm workflow
+
+No arm64 Linux machine needed: the `bench-arm` workflow (`.github/workflows/bench-arm.yml`)
+runs `run.sh` on GitHub's `ubuntu-24.04-arm` runners, release velt (LLVM, clang 18),
+`COUNT=valgrind`, for `hand`, `precompiled` and `generic`:
+
+```sh
+gh workflow run bench-arm -f suite=jsx -f ref=<branch|tag|sha>              # one ref
+gh workflow run bench-arm -f suite=jsx -f ref=<branch> -f base=main          # A/B
+gh run watch; gh run view --web                                              # the summary
+```
+
+With `base`, the base ref's compiler, runtime and std build the ref's programs. The job summary
+has the table (and the precompiled / hand ratio); the raw tables are the `bench-jsx-arm64`
+artifact. The cachegrind counts are the acceptance measure; wall time on a shared runner is
+indicative only.
 
 ## Results
 
