@@ -136,3 +136,41 @@ fn optional_and_nullable_fields_are_different_types() {
     );
     assert!(!msg.contains("in another order"), "{msg}");
 }
+
+/// Every substitution outside `anon.rs` goes through `Ctx::subst`/`subst_known`, which keep
+/// types canonical; a raw `cx.ty.subst(…)` would leave a generic instance where the written type
+/// is expected (design R3).
+#[test]
+fn substitution_goes_through_the_canonicalizing_ctx_methods() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut stack = vec![src];
+    let mut raw = vec![];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read src") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with(".rs") || name == "anon.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("read source");
+            for (i, line) in text.lines().enumerate() {
+                if line.contains(".ty.subst(") || line.contains(".ty.subst_known(") {
+                    raw.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        raw.is_empty(),
+        "use `cx.subst` / `cx.subst_known`:
+{}",
+        raw.join(
+            "
+"
+        )
+    );
+}

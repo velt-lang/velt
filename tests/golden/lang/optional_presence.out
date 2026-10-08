@@ -1,5 +1,6 @@
 {"a":"x"} {"a":"y","d":null} {"a":"z","d":"dd"}
 { a: 'x' } { a: 'y', d: null } { a: 'z', d: 'dd' }
+[ 'a' ] [ 'a', 'd' ] [ 'a', 'd' ]
 {"a":"x","d":null} true
 {"a":"r"} {"a":"s","d":null} {"a":"y","d":null}
 {"id":1,"name":"a","nick":"n","email":"e@x","deletedAt":"d"}

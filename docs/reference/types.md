@@ -248,6 +248,9 @@ has type `T | null`, stored without an extra allocation where possible.
 - In an object type, `?` is part of the type, as in TypeScript: `{ a?: string }` and
   `{ a: string | null }` read alike but are different types (the first may be absent), with no
   implicit conversion between them; copy with `{ ...x }`.
+  Difference from TypeScript: TypeScript also accepts a `{ a: F | null }` where a
+  `{ a?: F | null }` is expected; in Velt the two are different types (the second keeps a
+  presence flag), so copy with `{ ...x }` there too.
 
 ```ts
 type User = { name: string; deletedAt?: string | null };

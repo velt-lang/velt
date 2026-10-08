@@ -206,12 +206,11 @@ pub struct Program {
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).
     pub impls: Vec<ImplDef>,
-    /// The anonymous object def of each concrete shape (field names, types and whether each is
-    /// optional, i.e. has the default `null`, in order) that
-    /// lowering sees: no type parameters, and none replaced by a twin before lowering
-    /// (readonly erasure). Lowering maps every instance of a generic anonymous def onto these,
-    /// so one shape is one type (velt_vir `Cx::canon`).
-    pub anon_shapes: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// The anonymous object def of each concrete shape (per field, in order: name, type,
+    /// `optional`, `presence`) that lowering sees: no type parameters, and none replaced by a
+    /// twin before lowering (readonly erasure). Lowering maps every instance of a generic
+    /// anonymous def onto these, so one shape is one type (velt_vir `Cx::canon`).
+    pub anon_shapes: HashMap<Vec<(String, TyId, bool, bool)>, DefId>,
     /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
     /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
     pub union_shapes: HashMap<Vec<TyId>, DefId>,

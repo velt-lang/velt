@@ -57,7 +57,13 @@ impl Cx<'_> {
                     .fields
                     .iter()
                     .map(|f| {
-                        let q = if f.optional { "?" } else { "" };
+                        // `??` marks a presence field (`d?: T | null`), whose layout differs
+                        // from `d?: T`'s although both read as `Option<T>`.
+                        let q = match (f.optional, f.presence) {
+                            (_, true) => "??",
+                            (true, false) => "?",
+                            (false, false) => "",
+                        };
                         format!("{}{q}: {}", f.name, self.type_key_in(f.ty, &env, stack))
                     })
                     .collect();

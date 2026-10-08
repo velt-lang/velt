@@ -80,18 +80,19 @@ impl<'h> Cx<'h> {
                 _ => None,
             };
             if let Some(a) = anon.filter(|_| !self.reaches_itself(d)) {
-                // An optional field (`a?: T`, default `null`) is part of the shape: `{ a?: T }`
-                // and `{ a: T | null }` print and serialize differently.
-                let fields: Vec<(String, TyId, bool)> = a
+                // The optional and presence flags are part of the shape: `{ a?: T }` and
+                // `{ a: T | null }` print and serialize differently, and `{ a?: T | null }` also
+                // has a presence flag in its layout.
+                let fields: Vec<(String, TyId, bool, bool)> = a
                     .fields
                     .iter()
-                    .map(|f| (f.name.clone(), f.ty, f.optional))
+                    .map(|f| (f.name.clone(), f.ty, f.optional, f.presence))
                     .collect();
-                let key: Vec<(String, TyId, bool)> = fields
+                let key: Vec<(String, TyId, bool, bool)> = fields
                     .into_iter()
-                    .map(|(n, ft, opt)| {
+                    .map(|(n, ft, opt, presence)| {
                         let ft = self.subst_raw(ft, &args);
-                        (n, self.canon(ft), opt)
+                        (n, self.canon(ft), opt, presence)
                     })
                     .collect();
                 out = match self.concrete_anon(&key) {
@@ -237,7 +238,7 @@ impl<'h> Cx<'h> {
     }
 
     /// Sema's anonymous def with exactly these (concrete) fields, if lowering sees one.
-    fn concrete_anon(&self, key: &[(String, TyId, bool)]) -> Option<DefId> {
+    fn concrete_anon(&self, key: &[(String, TyId, bool, bool)]) -> Option<DefId> {
         self.hir.anon_shapes.get(key).copied()
     }
 
@@ -554,7 +555,7 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
 pub(super) struct AnonShapes {
     memo: HashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
-    reps: HashMap<Vec<(String, TyId, bool)>, TyId>,
+    reps: HashMap<Vec<(String, TyId, bool, bool)>, TyId>,
     /// The same for unions, by sorted member list.
     union_reps: HashMap<Vec<TyId>, TyId>,
     /// Anonymous defs that reach themselves through fields (`Cx::reaches_itself`).

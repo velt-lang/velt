@@ -21,6 +21,7 @@ function main() {
   const z: T = { a: "z", d: "dd" };
   console.log(JSON.stringify(x), JSON.stringify(y), JSON.stringify(z));
   console.log(x, y, z);
+  console.log(Object.keys(x), Object.keys(y), Object.keys(z));
   x.d = null;
   console.log(JSON.stringify(x), x.d === null);
   const r = JSON.parse<T>('{"a":"r"}');

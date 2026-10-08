@@ -69,7 +69,8 @@ impl Ctx<'_> {
             return c;
         }
         // Instances of object types that reach themselves are left as they are
-        // (`reaches_itself`), so this only guards against an ICE elsewhere.
+        // (`reaches_itself`), so this only guards against an ICE elsewhere. Should it fire, the
+        // callers memoize a form that is canonical only above this depth; nothing reaches it.
         if depth > 64 {
             return t;
         }
@@ -398,7 +399,7 @@ impl Ctx<'_> {
 /// `hir::Program::anon_shapes`: every concrete anonymous def lowering sees, by its (erased)
 /// fields. Defs replaced by a twin before lowering (`crate::readonly`) are left out: lowering
 /// never sees them, and a shape must not resolve to one of them.
-pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool)>, DefId> {
+pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool, bool)>, DefId> {
     let mut out = HashMap::new();
     for (i, d) in cx.defs.iter().enumerate() {
         let id = DefId(i as u32);
@@ -407,7 +408,11 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool)>, De
                 let key = a
                     .fields
                     .iter()
-                    .map(|f| (f.name.clone(), f.ty, f.optional))
+                    .map(|f| {
+                        // `{ d?: string }` and `{ d?: string | null }` read alike (one `null`),
+                        // but only the second keeps a presence flag: two layouts.
+                        (f.name.clone(), f.ty, f.optional, f.presence)
+                    })
                     .collect();
                 out.entry(key).or_insert(id);
             }
