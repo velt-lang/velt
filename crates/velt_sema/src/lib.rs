@@ -53,6 +53,7 @@ mod object_copies;
 mod ownership;
 mod promise_copies;
 mod readonly;
+mod recursive_aliases;
 mod record_keys;
 mod resolve;
 mod suggest;
@@ -165,6 +166,8 @@ fn check_on_current_thread(
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
+    let rewritten = recursive_aliases::rewrite(modules);
+    let modules = rewritten.as_deref().unwrap_or(modules);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);

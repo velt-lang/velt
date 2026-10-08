@@ -246,7 +246,15 @@ fn reordered_parts_convert_by_copying_unless_printed() {
 }
 
 #[test]
-fn an_alias_cannot_refer_to_itself_through_an_intersection() {
-    let e = err_src("type T = { kids: T[] } & { v: f64 }; function main() {}");
+fn an_alias_may_refer_to_itself_through_written_object_types() {
+    let p = ok_src(
+        "type T = { kids: T[] } & { v: f64 }; function f(x: T): f64 { return x.kids.length + x.v; }
+         function main() { const t: T = { kids: [{ kids: [], v: 2 }], v: 1 }; console.log(f(t)); }",
+    );
+    assert_eq!(show(&p, func(&p, "f").params[0].ty).matches("v: f64").count(), 1);
+    // Parts that are not written out, or that share a field, still can't.
+    let e = err_src("type A = { v: f64 }; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
+    assert!(e.contains("an alias may refer to itself when"), "{e}");
 }

@@ -20,8 +20,10 @@
 
 Types are required on function parameters. A missing return type is inferred from the
 function's `return`s ([Return types](functions.md#return-types)), and everything else is
-inferred too. `type Name = …` declares an alias; an
-alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
+inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
+alias may refer to itself only when it is an object type, or an intersection of object types,
+written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
+fields ([Intersection types](#intersection-types)). There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
 ## Booleans
@@ -441,7 +443,8 @@ for (const s of shapes) {
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
 - Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias cannot refer to itself.
+  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
+  to itself.
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
@@ -497,8 +500,10 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   expected type with `===`, or prints, serializes or lists the keys of a value holding the
   expected type (Node would show the original's fields, in its order). Arrays and other
   containers convert only when fresh, like [wider element types](#objects-arrays-tuples-and-maps).
-- An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
-  give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
+- An alias may refer to itself through `&` when its parts are object types written out:
+  `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
+  `v` (an alias that names itself otherwise is an error, as is one whose parts share a field
+  name).
 
 ```ts
 type Named = { name: string };
@@ -512,8 +517,12 @@ function rank(p: Scored & Named): string {
   return `${p.name}: ${p.score}`;
 }
 
+type Tree = { kids: Tree[] } & { v: number };
+
 const ken: Named & Scored = { name: "Ken", score: 7 };
 console.log(greet(ken), rank(ken)); // hi Ken Ken: 7
+const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
+console.log(t.kids[0].v); // 2
 ```
 
 Differences from TypeScript, each a compile error with a note on what to write instead:

@@ -30,5 +30,6 @@ interface Shape {
   h: number;
 }
 
-// An alias can't refer to itself through `&` either.
-type Tree = { kids: Tree[] } & { value: number };
+// An alias can refer to itself through `&` only when its parts are object types written out.
+type Base = { value: number };
+type Tree = Base & { kids: Tree[] };
