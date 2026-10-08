@@ -4,6 +4,7 @@
 use velt_sema::hir::{self, TyId};
 
 use crate::lower::operand::proj;
+use crate::lower::sequence::may_write;
 use crate::lower::{cint, ice, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -25,7 +26,18 @@ impl FnLower<'_, '_> {
             return self.array_move(args);
         }
         let aty = self.sub(args[0].ty);
-        let av = self.expr(&args[0]);
+        // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
+        // runs after the array's address is taken: borrow the array as a call borrows its
+        // receiver, so that address stays valid.
+        let av = match args[1..].iter().any(may_write) {
+            true => {
+                let outer = self.start_borrows();
+                let v = self.stable_borrow(&args[0], &args[1..]);
+                self.finish_borrows(outer);
+                v
+            }
+            false => self.expr(&args[0]),
+        };
         let arr = self.place_of(av, aty);
         let arr = self.content(&arr, aty);
         let elem = self.elem_ty(aty);

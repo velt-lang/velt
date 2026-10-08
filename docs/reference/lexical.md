@@ -88,5 +88,10 @@ From highest to lowest precedence, with JavaScript's associativity:
 The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
 right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). As in JavaScript, a compound
 assignment or `++` / `--` evaluates its target's object and indices once, before the right
-side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. A postfix `!` after an
-expression on the same line is the non-null assertion (`m.get(k)!`).
+side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. The write goes to
+that element where it is after the right side ran: `xs[0] += grow(xs)` updates `xs[0]` even when
+`grow` made `xs` longer. If the right side made the array shorter than the index, that write
+is out of bounds and panics, where JavaScript extends the array: `xs[0] += xs.pop()!` on `[5]`
+panics, on `[5, 6]` it makes `[11]` (Velt arrays never grow by assignment, see
+[Types](types.md#objects-arrays-tuples-and-maps)). A postfix `!` after an expression on the same
+line is the non-null assertion (`m.get(k)!`).

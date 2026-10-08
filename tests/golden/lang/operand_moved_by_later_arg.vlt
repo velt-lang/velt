@@ -1,0 +1,42 @@
+// check: no leaks
+// An operand read through a variable before a later argument takes the variable's last use
+// (#647): `treeSize(t)` moves `t` into an array and frees it, so `t.depth` is read first, as
+// JS evaluates arguments left to right.
+class TNode {
+  depth: number;
+  name: string;
+  children: TNode[] = [];
+  constructor(depth: number) {
+    this.depth = depth;
+    this.name = `node at depth ${depth}`;
+  }
+}
+
+function treeSize(root: TNode): number {
+  let n = 0;
+  // Keeps the parameter: a last-use argument is moved in.
+  const stack: TNode[] = [root];
+  while (stack.length > 0) {
+    const t = stack.pop()!;
+    n++;
+    for (const c of t.children) {
+      stack.push(c);
+    }
+  }
+  return n;
+}
+
+function tree(): TNode {
+  const t = new TNode(1);
+  t.children.push(new TNode(0));
+  return t;
+}
+
+function main() {
+  const t = tree();
+  console.log(t.depth, treeSize(t));
+  const v = tree();
+  console.log(v.depth + treeSize(v));
+  const w = tree();
+  console.log(`${w.name}: ${treeSize(w)}`);
+}

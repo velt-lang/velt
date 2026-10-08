@@ -54,6 +54,22 @@ impl Cx<'_> {
         }
     }
 
+    /// Can a value of `t` be shared without counting another type? A share of an uncounted
+    /// reference type, or of a value holding one, asks the next pass to count it (`close_share`).
+    /// Interface values qualify: every vtable's share entry is built whether or not it is used.
+    pub(in crate::lower) fn shares_as_counted(&mut self, t: TyId) -> bool {
+        match self.share_kind(t) {
+            ShareKind::Object => self.counted(t),
+            ShareKind::Value => {
+                let parts = self.part_types(t);
+                parts.into_iter().all(|p| self.shares_as_counted(p))
+            }
+            ShareKind::Promise => false,
+            ShareKind::Plain | ShareKind::Str | ShareKind::Closure => true,
+            ShareKind::Dyn | ShareKind::Shared => true,
+        }
+    }
+
     /// The value types inside a `t` (stored inline, `t` itself included) that can be changed in
     /// place and that a share would copy: tuples, and object types stored inline whose parts
     /// include such a type. Strings, plain values, counted objects, function and interface
