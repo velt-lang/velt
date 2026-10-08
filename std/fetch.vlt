@@ -10,7 +10,7 @@
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
-import { BodyParts, bodyParts } from "velt:fetch/body";
+import { bodyParts } from "velt:fetch/body";
 import { Headers } from "velt:fetch/headers";
 import { normalizeMethod, Request, RequestInit, RequestRedirect } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
@@ -53,14 +53,14 @@ export async function fetch(
   init: RequestInit = {},
 ): Promise<Response, IoError | AbortError> {
   const o = outgoing(input, init);
-  let text = o.body.text;
-  let bytes = o.body.bytes;
+  let text = o.text;
+  let bytes = o.bytes;
   const signal = o.signal;
   const r = await velt_rt_http_fetch_send(
     o.method,
     o.url,
     o.headers,
-    o.body.kind,
+    o.kind,
     text,
     bytes,
     redirectMode(o.redirect),
@@ -79,7 +79,10 @@ struct Outgoing {
   url: string;
   // `[name, value, …]`
   headers: string[];
-  body: BodyParts;
+  // The body, as `BodyParts` has it.
+  kind: u32;
+  text: string;
+  bytes: u8[];
   redirect: RequestRedirect;
   signal: AbortSignal | null;
   ca: string;
@@ -103,11 +106,14 @@ function outgoing(
     if (signal != null) {
       signal.throwIfAborted();
     }
+    const body = req.parts();
     return {
-      body: req.parts(),
       method: req.method,
       url: req.url,
       headers: req.headers.raw(),
+      kind: body.kind,
+      text: body.text,
+      bytes: body.bytes,
       redirect: req.redirect,
       signal: signal,
       ca: req.ca(),
@@ -115,12 +121,31 @@ function outgoing(
   }
   const m = init.method;
   const method = m == null ? "GET" : normalizeMethod(m);
-  const body = bodyParts(init.body);
-  if (body.kind != 0 && (method == "GET" || method == "HEAD")) {
+  const given = init.headers;
+  const signal = init.signal;
+  const b = init.body;
+  if (b == null) {
+    // Most requests: no body parts to make.
+    if (signal != null) {
+      signal.throwIfAborted();
+    }
+    return {
+      method: method,
+      url: url,
+      headers: given == null ? [] : new Headers(given).raw(),
+      kind: 0,
+      text: "",
+      bytes: [],
+      redirect: init.redirect ?? "follow",
+      signal: signal,
+      ca: init.ca ?? "",
+    };
+  }
+  const body = bodyParts(b);
+  if (method == "GET" || method == "HEAD") {
     throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
   }
   let headers: string[] = [];
-  const given = init.headers;
   const ct = body.contentType;
   if (given != null) {
     const h = new Headers(given);
@@ -131,7 +156,6 @@ function outgoing(
   } else if (ct != null) {
     headers = ["content-type", ct];
   }
-  const signal = init.signal;
   if (signal != null) {
     signal.throwIfAborted();
   }
@@ -139,7 +163,9 @@ function outgoing(
     method: method,
     url: url,
     headers: headers,
-    body: body,
+    kind: body.kind,
+    text: body.text,
+    bytes: body.bytes,
     redirect: init.redirect ?? "follow",
     signal: signal,
     ca: init.ca ?? "",

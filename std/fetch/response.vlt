@@ -55,10 +55,6 @@ export class Response {
   #signal: AbortSignal | null = null;
 
   constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
-    const parts = bodyParts(body);
-    this.#source = parts.kind as i64;
-    this.#str = parts.text;
-    this.#data = parts.bytes;
     const status = init.status ?? 200;
     if (status < 200 || status > 599) {
       panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
@@ -69,6 +65,14 @@ export class Response {
     if (given != null) {
       this.#fields = new Headers(given);
     }
+    if (body == null) {
+      // `Response.adopt` too: no body parts to make.
+      return;
+    }
+    const parts = bodyParts(body);
+    this.#source = parts.kind as i64;
+    this.#str = parts.text;
+    this.#data = parts.bytes;
     const ct = parts.contentType;
     if (ct != null && !this.headers.has("content-type")) {
       this.headers.set("content-type", ct);
