@@ -3,8 +3,9 @@
 //! A doc comment is a JSDoc block (`/** … */`) or a block of `///` lines that ends on the line
 //! right above a declaration (or on the declaration's own line, before it). A plain `//` or
 //! `/* */` comment is not a doc comment, and neither is one separated from the declaration by a
-//! blank line. Comments are found by the lexer ([`velt_syntax::comment_ranges`]), so `//` inside
-//! a string or template is never mistaken for one.
+//! blank line; plain comments on the lines in between are skipped, as in TypeScript. Comments
+//! are found by the lexer ([`velt_syntax::comment_ranges`]), so `//` inside a string or
+//! template is never mistaken for one.
 //!
 //! The text is Markdown. JSDoc tags are read into [`DocComment`]'s fields: `@param`,
 //! `@returns` (`@return`), `@throws`, `@example`, `@deprecated` and `@see`; `{@link x}` becomes
@@ -123,48 +124,74 @@ pub fn doc_before_in(src: &str, comments: &[Range<u32>], decl_lo: u32) -> Option
 }
 
 /// The byte range of the doc comment of the declaration at `decl_lo`: one `/** … */` comment,
-/// or a block of `///` lines.
+/// or a block of `///` lines. Plain comments on the lines between it and the declaration
+/// (`// eslint-disable-next-line`, `// @ts-expect-error`) are skipped, as TypeScript does.
 pub fn doc_range_before(src: &str, comments: &[Range<u32>], decl_lo: u32) -> Option<Range<u32>> {
     let k = comments.partition_point(|c| c.start < decl_lo);
     let last = comments.get(k.checked_sub(1)?)?;
     if last.end > decl_lo || !next_to_declaration(src.get(last.end as usize..decl_lo as usize)?) {
         return None;
     }
-    if !starts_line(src, last.start) {
-        return None; // a trailing comment of the code before it
-    }
-    let text = src.get(last.start as usize..last.end as usize)?;
-    if is_jsdoc(text) {
-        return Some(last.clone());
-    }
-    if !is_triple_slash(text) {
-        return None;
-    }
-    let mut start = last.start;
-    for c in comments[..k - 1].iter().rev() {
-        let gap = src.get(c.end as usize..start as usize)?;
+    // The closest comment that is not a plain one on its own line, if line-adjacent ones lead
+    // to it.
+    let mut i = k - 1;
+    loop {
+        let c = &comments[i];
+        if !starts_line(src, c.start) {
+            return None; // a trailing comment of the code before it
+        }
         let text = src.get(c.start as usize..c.end as usize)?;
-        let adjacent = gap.trim().is_empty() && gap.matches('\n').count() == 1;
-        if !adjacent || !is_triple_slash(text) || !starts_line(src, c.start) {
+        if is_jsdoc(text) {
+            return Some(c.clone());
+        }
+        if is_triple_slash(text) {
+            break;
+        }
+        let above = comments.get(i.checked_sub(1)?)?;
+        if !line_adjacent(src, above, c.start) {
+            return None;
+        }
+        i -= 1;
+    }
+    let mut start = comments[i].start;
+    for c in comments[..i].iter().rev() {
+        let text = src.get(c.start as usize..c.end as usize)?;
+        if !line_adjacent(src, c, start) || !is_triple_slash(text) || !starts_line(src, c.start) {
             break;
         }
         start = c.start;
     }
-    Some(start..last.end)
+    Some(start..comments[i].end)
 }
 
-/// The text between a doc comment and its declaration: whitespace with at most one line break,
-/// or whole lines of decorators (`@name(…)`).
+/// A plain comment (not a doc comment) on its own line ends right above the declaration at
+/// `decl_lo`.
+pub fn plain_comment_before(src: &str, comments: &[Range<u32>], decl_lo: u32) -> bool {
+    let k = comments.partition_point(|c| c.start < decl_lo);
+    let Some(last) = k.checked_sub(1).and_then(|i| comments.get(i)) else {
+        return false;
+    };
+    let text = src
+        .get(last.start as usize..last.end as usize)
+        .unwrap_or("");
+    last.end <= decl_lo
+        && src
+            .get(last.end as usize..decl_lo as usize)
+            .is_some_and(next_to_declaration)
+        && starts_line(src, last.start)
+        && !is_jsdoc(text)
+        && !is_triple_slash(text)
+}
+
+/// Comment `c` ends on the line before the one where byte `next` starts.
+fn line_adjacent(src: &str, c: &Range<u32>, next: u32) -> bool {
+    src.get(c.end as usize..next as usize)
+        .is_some_and(|gap| gap.trim().is_empty() && gap.matches('\n').count() == 1)
+}
+
+/// The text between a doc comment and its declaration: whitespace with at most one line break.
 fn next_to_declaration(gap: &str) -> bool {
-    let lines: Vec<&str> = gap.split('\n').collect();
-    let (first, last) = (lines[0], lines[lines.len() - 1]);
-    first.trim().is_empty()
-        && last.trim().is_empty()
-        && lines
-            .iter()
-            .skip(1)
-            .take(lines.len().saturating_sub(2))
-            .all(|l| l.trim_start().starts_with('@'))
+    gap.trim().is_empty() && gap.matches('\n').count() <= 1
 }
 
 /// Only whitespace precedes byte `lo` on its line.
@@ -398,7 +425,20 @@ fn skip_type(text: &str) -> (&str, Option<&str>) {
 /// optional `-`.
 fn param_name(text: &str) -> (String, &str) {
     let (name, rest) = if let Some(inner) = text.strip_prefix('[') {
-        let end = inner.find(']').unwrap_or(inner.len());
+        // The `]` that closes this one: a default may hold brackets (`[opts=[]]`).
+        let mut depth = 0;
+        let end = inner
+            .char_indices()
+            .find(|&(_, c)| {
+                match c {
+                    '[' => depth += 1,
+                    ']' if depth == 0 => return true,
+                    ']' => depth -= 1,
+                    _ => {}
+                }
+                false
+            })
+            .map_or(inner.len(), |(i, _)| i);
         let name = inner[..end].split('=').next().unwrap_or("").trim();
         (name, inner.get(end + 1..).unwrap_or(""))
     } else {
@@ -528,8 +568,36 @@ mod tests {
         assert_eq!(body("/* Adds. */\nexport function f() {}\n"), None);
         assert_eq!(body("//// Adds.\nexport function f() {}\n"), None);
         assert_eq!(body("/**/\nexport function f() {}\n"), None);
-        // The closest comment decides: a plain one after the doc comment hides it.
-        assert_eq!(body("/** Doc. */\n// note\nexport function f() {}\n"), None);
+    }
+
+    #[test]
+    fn plain_comments_between_a_doc_comment_and_its_declaration_are_skipped() {
+        // As in TypeScript: line-adjacent plain comments (lint and compiler directives).
+        let src = "/** Doc. */\n// eslint-disable-next-line\n// @ts-expect-error\nexport function f() {}\n";
+        assert_eq!(body(src).as_deref(), Some("Doc."));
+        let src = "/// Doc.\n/* prettier-ignore */\nexport function f() {}\n";
+        assert_eq!(body(src).as_deref(), Some("Doc."));
+        let src = "class A {\n  /** Count. */\n  // prettier-ignore\n  count: i64 = 0;\n}\n";
+        let lo = src.find("count:").unwrap() as u32;
+        assert_eq!(
+            doc_before(src, lo).map(|d| d.body).as_deref(),
+            Some("Count.")
+        );
+        // A blank line still ends the association, wherever it is.
+        assert_eq!(
+            body("/** Doc. */\n\n// note\nexport function f() {}\n"),
+            None
+        );
+        assert_eq!(
+            body("/** Doc. */\n// note\n\nexport function f() {}\n"),
+            None
+        );
+        // Plain comments alone document nothing; a trailing comment of code is no doc comment.
+        assert_eq!(body("// a\n// b\nexport function f() {}\n"), None);
+        assert_eq!(
+            body("let a = 1; /** a */\n// b\nexport function f() {}\n"),
+            None
+        );
     }
 
     #[test]
@@ -558,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn export_modifiers_and_decorators() {
+    fn export_and_modifiers() {
         let src = "/** Doc. */\nexport async function f() {}\n";
         assert_eq!(body(src).as_deref(), Some("Doc."));
         let src = "class A {\n  /** Count. */\n  static count: i64 = 0;\n}\n";
@@ -567,10 +635,6 @@ mod tests {
             doc_before(src, lo).map(|d| d.body).as_deref(),
             Some("Count.")
         );
-        let src = "/** Doc. */\n@sealed\n@tag(\"x\")\nexport class A {}\n";
-        assert_eq!(body(src).as_deref(), Some("Doc."));
-        let src = "/** Doc. */\n@sealed\n\nexport class A {}\n";
-        assert_eq!(body(src), None);
     }
 
     #[test]
@@ -589,6 +653,10 @@ mod tests {
             ]
         );
         assert_eq!(doc.param("b"), Some("the second,\non two lines"));
+        // A default with brackets of its own.
+        let doc = parse("/** @param [opts=[]] - the options\n * @param [m=[[1], [2]]] rows */");
+        assert_eq!(doc.param("opts"), Some("the options"));
+        assert_eq!(doc.param("m"), Some("rows"));
         assert_eq!(doc.param("z"), None);
     }
 

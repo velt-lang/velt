@@ -25,9 +25,11 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 - Doc comments: a JSDoc `/** … */` comment, or a block of `///` lines, that ends on the line
   right above a declaration documents it. The text is Markdown, with JSDoc tags (`@param`,
   `@returns`, `@throws`, `@example`, `@deprecated`, `@see`, `{@link name}`). A plain `//` or
-  `/* */` comment is not documentation, and a blank line between a comment and the declaration
-  ends the association. The comment block at the very top of a file, followed by a blank line,
-  documents the module (any comment style). `velt doc` and the editor show doc comments.
+  `/* */` comment is not documentation. Plain comments on the lines between a doc comment and
+  its declaration (`// eslint-disable-next-line`, `// @ts-expect-error`) are skipped, as in
+  TypeScript, but a blank line between them ends the association (TypeScript allows blank
+  lines). The comment block at the very top of a file, followed by a blank line, documents the
+  module (any comment style). `velt doc` shows doc comments.
 
 ```ts
 /**
