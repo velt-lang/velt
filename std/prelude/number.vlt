@@ -74,7 +74,7 @@ export class NumberConstructor {
 
   /**
    * Returns true if passed value is finite: neither NaN nor ±Infinity. The same as the global
-   * `isFinite`.
+   * `isFinite`, because neither converts its argument (JS's global one does).
    * @param x - A numeric value.
    */
   static isFinite(x: f64): bool {

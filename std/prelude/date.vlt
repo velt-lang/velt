@@ -23,7 +23,8 @@ const MAX_TIME: f64 = 8640000000000000.0;
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
  * 1970-01-01T00:00:00Z, NaN for an invalid date, with JS's conventions (months 0-11, local-time
- * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code.
+ * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code. Unlike JS, the
+ * setters currently turn a year of 0-99 into 1900-1999 (#674).
  */
 export class Date implements Comparable<Date> {
   private t: f64;
@@ -91,12 +92,18 @@ export class Date implements Comparable<Date> {
     return fromFields(true, [year, month, day, hours, minutes, seconds, ms]);
   }
 
-  /** Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC. */
+  /**
+   * Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC, or NaN
+   * for an invalid date.
+   */
   getTime(): number {
     return this.t;
   }
 
-  /** Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC. */
+  /**
+   * Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC, or NaN
+   * for an invalid date.
+   */
   valueOf(): number {
     return this.t;
   }

@@ -7,8 +7,8 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**
- * An intrinsic object that provides basic mathematics functionality and constants, on `f64`
- * values.
+ * Basic mathematics functionality and constants, on `f64` values. A number literal or an
+ * inferred integer converts to `f64` here, but a declared integer does not: write `x as f64`.
  */
 export class Math {
   /** Pi. This is the ratio of the circumference of a circle to its diameter. */
@@ -47,7 +47,8 @@ export class Math {
 
   /**
    * Returns the integral part of a numeric expression, `x`, removing any fractional digits.
-   * If `x` is already an integer, the result is `x`.
+   * If `x` is already an integer, the result is `x`. `Math.trunc(a / b)` with two integer
+   * operands is integer division instead, and its result is an integer.
    * @param x - A numeric expression.
    */
   static trunc(x: f64): f64 {

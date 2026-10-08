@@ -95,9 +95,10 @@ function jsonMaxDepth(options: JsonParseOptions | null): i64 {
 }
 
 /**
- * An intrinsic object that provides functions to convert values to and from the JavaScript
- * Object Notation (JSON) format. `stringify` and `parse` are generated for each type at compile
- * time.
+ * Converts values to and from the JavaScript Object Notation (JSON) format. Unlike JS, it is
+ * typed: `stringify` and `parse` are generated for the static type at compile time, `parse<T>`
+ * checks the text against `T` and throws `JsonError` instead of returning `any`, and there are
+ * no `reviver`, `replacer` or `space` arguments. `parseValue` reads a document of any shape.
  */
 export class JSON {
   /**

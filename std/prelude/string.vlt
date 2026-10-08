@@ -121,7 +121,10 @@ extend string {
     return velt_rt_str_to_upper(this);
   }
 
-  /** Converts all the alphabetic characters in a string to lowercase. */
+  /**
+   * Converts all the alphabetic characters in a string to lowercase: full Unicode case mapping,
+   * like JS (a final `Σ` becomes `ς`).
+   */
   toLowerCase(): string {
     return velt_rt_str_to_lower(this);
   }
@@ -161,14 +164,15 @@ extend string {
 
   /**
    * Pads the current string with a given string (possibly repeated) so that the resulting string
-   * reaches a given length in bytes.
+   * reaches a given length in UTF-16 code units, as in JS.
    * The padding is applied from the end (right) of the current string.
    * @param target - The length of the resulting string once the current string has been padded.
    * If this parameter is smaller than the current string's length, the current string will be
    * returned as it is.
    * @param fill - The string to pad the current string with.
-   * If this string is too long, it will be truncated (at a character boundary) and the left-most
-   * part will be applied. The default value for this parameter is " " (U+0020).
+   * If this string is too long, it will be truncated and the left-most part will be applied; the
+   * cut may fall between the halves of a surrogate pair, as in JS. The default value for this
+   * parameter is " " (U+0020).
    */
   padEnd(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_end(this, target, fill);
@@ -224,7 +228,7 @@ extend string {
 
 /**
  * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
- * `string` itself; `String(x)` converts a value to its string.
+ * `string` itself. Unlike JS, `String(x)` is not a conversion: write `x.toString()` or `${x}`.
  */
 export class String {
   /**

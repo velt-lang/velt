@@ -126,7 +126,10 @@ extend f64 {
 }
 
 extend string {
-  /** -1, 0 or 1: the bytewise (UTF-8, so code point) order of `this` and `other`. */
+  /**
+   * -1, 0 or 1: the order of `this` and `other` by UTF-16 code units, as JS's `<` compares strings
+   * (not locale-aware; see `localeCompare`).
+   */
   compareTo(other: string): i64 {
     return this < other ? -1 : this > other ? 1 : 0;
   }

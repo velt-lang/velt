@@ -152,8 +152,8 @@ extend Array<string> {
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the strings are
-   * sorted in ascending UTF-8 byte order, which is code point order (JS sorts by UTF-16 code
-   * units, which differs only for characters above U+FFFF).
+   * sorted in ascending UTF-16 code unit order, as in JS (not locale-aware; pass
+   * `(a, b) => a.localeCompare(b)` for that).
    * @example
    * names.sort((a, b) => a.localeCompare(b));
    */

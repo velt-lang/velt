@@ -44,10 +44,11 @@ const MAX_ENTRIES: usize = 0x80000000;
 
 /**
  * A collection of key/value pairs that remembers insertion order, with JS `Map` semantics:
- * re-setting a key keeps its position, and float keys compare like JS (`NaN` finds itself).
- * Numbers, `bool` and strings compare by value, class instances by identity, and structs, object
- * types, tuples, arrays, maps and records by content (don't change such a key while it is in a
- * map: it is hashed when inserted).
+ * re-setting a key keeps its position, and float keys compare like JS (`NaN` finds itself, `0`
+ * and `-0` are one key). Numbers, `bool` and strings compare by value; class instances,
+ * interface and function values by identity, as in JS; unlike JS, structs, object types,
+ * tuples, arrays, maps and records compare by content, like `deepEqual` (don't change such a key
+ * while it is in a map: it is hashed when inserted).
  */
 export class Map<K, V> {
   // Number of live entries (read through the `size` getter; kept up to date by the mutating
@@ -109,7 +110,7 @@ export class Map<K, V> {
     return __intrinsic_share(this.entryValues[e as usize]);
   }
 
-  /** @returns boolean indicating whether an element with the specified key exists or not. */
+  /** Whether the map has an entry for `key`, matched as `get` matches it. */
   has(key: K): bool {
     return this.lookup(key, __intrinsic_hash(key) * FIB) >= 0;
   }

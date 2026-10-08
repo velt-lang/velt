@@ -29,7 +29,8 @@ extend<T> Array<T> {
   /**
    * Performs the specified action for each element in an array.
    * @param f - A function that accepts up to two arguments, the element and its index. forEach
-   * calls `f` one time for each element in the array, in order.
+   * calls `f` one time for each element in the array, in order. Elements pushed meanwhile are
+   * not visited, and elements removed meanwhile are skipped, as in JS.
    * @throws what `f` throws.
    */
   forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
@@ -52,7 +53,8 @@ extend<T> Array<T> {
    * Calls a defined callback function on each element of an array, and returns an array that
    * contains the results.
    * @param f - A function that accepts up to two arguments, the element and its index. The map
-   * method calls `f` one time for each element in the array.
+   * method calls `f` one time for each element in the array. If `f` shortens the array (through
+   * another reference to it), `map` panics, where JS would return an array with holes.
    * @throws what `f` throws.
    */
   map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
@@ -310,7 +312,8 @@ extend<T> Array<T> {
 
   /**
    * Determines whether an array includes a certain element, returning true or false as
-   * appropriate. Compares like `indexOf`, so unlike JS, `NaN` is never found.
+   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
+   * `includes`, `NaN` is never found.
    * @param x - The element to search for.
    */
   includes(x: T): bool {
@@ -535,7 +538,7 @@ extend Array<string> {
 extend Array<i8> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -547,7 +550,7 @@ extend Array<i8> {
 extend Array<i16> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -559,7 +562,7 @@ extend Array<i16> {
 extend Array<i32> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -571,7 +574,7 @@ extend Array<i32> {
 extend Array<i64> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -583,7 +586,7 @@ extend Array<i64> {
 extend Array<isize> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -595,7 +598,7 @@ extend Array<isize> {
 extend Array<u8> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -607,7 +610,7 @@ extend Array<u8> {
 extend Array<u16> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -619,7 +622,7 @@ extend Array<u16> {
 extend Array<u32> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -631,7 +634,7 @@ extend Array<u32> {
 extend Array<u64> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -643,7 +646,7 @@ extend Array<u64> {
 extend Array<usize> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -655,7 +658,7 @@ extend Array<usize> {
 extend Array<f32> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -667,7 +670,7 @@ extend Array<f32> {
 extend Array<f64> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
@@ -679,7 +682,7 @@ extend Array<f64> {
 extend Array<bool> {
   /**
    * Adds all the elements of an array into a string, separated by the specified separator string.
-   * Each element is converted like `String(x)`.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
    * @param sep - A string used to separate one element of the array from the next in the
    * resulting string. If omitted, the array elements are separated with a comma.
    */
