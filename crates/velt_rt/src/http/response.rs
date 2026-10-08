@@ -114,14 +114,20 @@ fn strip_for_stream(headers: &mut HeaderMap, fetched: bool) {
 }
 
 /// The `content-type` a body implies (`implied` of `velt_rt_http_resp_build`; std/fetch/body.vlt
-/// numbers them the same): 0 none, 1 a string's, 2 JSON's, 3 form fields'.
+/// numbers them the same): 0 none, 1 a string's, 2 JSON's, 3 form fields'. The values are made
+/// at compile time (`HeaderValue::from_static` checks every byte when it runs, about 200
+/// instructions for a text response); cloning one over static bytes is a copy.
 fn implied_type(code: u32) -> Option<HeaderValue> {
-    Some(HeaderValue::from_static(match code {
-        1 => "text/plain;charset=UTF-8",
-        2 => "application/json",
-        3 => "application/x-www-form-urlencoded;charset=UTF-8",
-        _ => return None,
-    }))
+    static TEXT: HeaderValue = HeaderValue::from_static("text/plain;charset=UTF-8");
+    static JSON: HeaderValue = HeaderValue::from_static("application/json");
+    static FORM: HeaderValue =
+        HeaderValue::from_static("application/x-www-form-urlencoded;charset=UTF-8");
+    match code {
+        1 => Some(TEXT.clone()),
+        2 => Some(JSON.clone()),
+        3 => Some(FORM.clone()),
+        _ => None,
+    }
 }
 
 /// A `Response` returned from a handler (std/fetch/response.vlt), as one response: `status`
