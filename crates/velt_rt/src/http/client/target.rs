@@ -66,86 +66,122 @@ impl Target {
 /// IDNA step changes, or a dotted-decimal IPv4 address), a port only when it is not the default
 /// one and has no leading zero, a path that starts with `/` and has no dot segments, and path and
 /// query bytes that are never percent-encoded or rewritten. No userinfo, no fragment. `false`
-/// says nothing: the URL may still be valid.
+/// says nothing: the URL may still be valid. One pass over the bytes, with no allocation.
 pub(super) fn is_canonical(url: &str) -> bool {
     let b = url.as_bytes();
-    let (rest, default_port) = if let Some(r) = b.strip_prefix(b"http://") {
-        (r, 80)
-    } else if let Some(r) = b.strip_prefix(b"https://") {
-        (r, 443)
+    let (start, default_port) = if b.starts_with(b"http://") {
+        (7, 80)
+    } else if b.starts_with(b"https://") {
+        (8, 443)
     } else {
         return false;
     };
-    let Some(slash) = rest.iter().position(|&c| matches!(c, b'/' | b'?')) else {
+    let Some(host_len) = canonical_host(&b[start..]) else {
         return false;
     };
-    let (authority, tail) = rest.split_at(slash);
-    if tail[0] != b'/' {
-        return false;
+    let mut i = start + host_len;
+    if b.get(i) == Some(&b':') {
+        let digits = b[i + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let port = number(&b[i + 1..i + 1 + digits]);
+        if !port.is_some_and(|p| p <= 65535 && p != default_port) {
+            return false;
+        }
+        i += 1 + digits;
     }
-    let (host, port) = match authority.iter().position(|&c| c == b':') {
-        Some(i) => (&authority[..i], Some(&authority[i + 1..])),
-        None => (authority, None),
-    };
-    let path_end = tail.iter().position(|&c| c == b'?').unwrap_or(tail.len());
-    is_canonical_host(host)
-        && port.is_none_or(|p| is_canonical_port(p, default_port))
-        && tail.iter().all(|&c| is_plain_byte(c))
-        && !tail[..path_end].split(|&c| c == b'/').any(is_dot_segment)
+    b.get(i) == Some(&b'/') && is_canonical_tail(&b[i..])
 }
 
-/// A byte that the parser keeps as it is in a path and in a query: printable ASCII except the
+/// The length of the host `b` starts with (it ends at the first byte that is not `a-z`, `0-9`,
+/// `-` or `.`), when the parser keeps it as it is: dot-separated non-empty labels, none an IDNA
+/// `xn--` label. A host whose last label starts with a digit may be an IPv4 address in another
+/// notation (`127.1`, `0x7f.0.0.1`), so it must be four canonical decimal numbers up to 255.
+fn canonical_host(b: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    let mut labels = 0;
+    // Every label so far is a canonical decimal number up to 255.
+    let mut ipv4 = true;
+    loop {
+        let start = i;
+        // The label's value, capped (only whether it is above 255 matters).
+        let mut n: u32 = 0;
+        while let Some(&c) = b.get(i) {
+            match c {
+                b'0'..=b'9' => n = (n * 10 + u32::from(c - b'0')).min(256),
+                b'a'..=b'z' | b'-' => ipv4 = false,
+                _ => break,
+            }
+            i += 1;
+        }
+        let label = &b[start..i];
+        if label.is_empty() || label.starts_with(b"xn--") {
+            return None;
+        }
+        labels += 1;
+        ipv4 &= n <= 255 && (label.len() == 1 || label[0] != b'0');
+        if b.get(i) != Some(&b'.') {
+            let numeric = label[0].is_ascii_digit();
+            return (!numeric || (ipv4 && labels == 4)).then_some(i);
+        }
+        i += 1;
+    }
+}
+
+/// Whether the parser keeps the path and query `t` (which starts with `/`) as they are: bytes
+/// it never percent-encodes or rewrites ([`PLAIN`]), and no dot segment in the path (`.`, `..`,
+/// or one spelled with `%2e`, which it removes).
+fn is_canonical_tail(t: &[u8]) -> bool {
+    let mut in_path = true;
+    let mut segment = 1;
+    for (i, &c) in t.iter().enumerate() {
+        if !PLAIN[c as usize] {
+            return false;
+        }
+        if !in_path {
+            continue;
+        }
+        match c {
+            b'/' | b'?' if i > 0 => {
+                if is_dot_segment(&t[segment..i]) {
+                    return false;
+                }
+                segment = i + 1;
+                in_path = c == b'/';
+            }
+            b'%' if t
+                .get(i + 1..i + 3)
+                .is_some_and(|h| h.eq_ignore_ascii_case(b"2e")) =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    !(in_path && is_dot_segment(&t[segment..]))
+}
+
+fn is_dot_segment(seg: &[u8]) -> bool {
+    matches!(seg, b"." | b"..")
+}
+
+/// The bytes the parser keeps as they are in a path and in a query: printable ASCII except the
 /// ones it percent-encodes (`"`, `#`, `<`, `>`, `` ` ``, `{`, `}`, `^`, `'`), `\` (a path
 /// separator in `http:`) and `|`.
-fn is_plain_byte(c: u8) -> bool {
-    matches!(c, b'!'..=b'~')
-        && !matches!(
+const PLAIN: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut c = b'!';
+    while c <= b'~' {
+        table[c as usize] = !matches!(
             c,
             b'"' | b'#' | b'<' | b'>' | b'`' | b'{' | b'}' | b'^' | b'\'' | b'\\' | b'|'
-        )
-}
-
-/// `.`, `..` and their percent-encoded spellings, which the parser removes from a path.
-fn is_dot_segment(seg: &[u8]) -> bool {
-    matches!(seg, b"." | b"..") || seg.windows(3).any(|w| w.eq_ignore_ascii_case(b"%2e"))
-}
-
-/// A host the parser keeps as it is: dot-separated non-empty labels of `a-z`, `0-9` and `-`,
-/// none an IDNA `xn--` label. A host whose last label starts with a digit may be an IPv4
-/// address in another notation (`127.1`, `0x7f.0.0.1`), so it must be four canonical decimal
-/// numbers up to 255.
-fn is_canonical_host(host: &[u8]) -> bool {
-    let labels_ok = host.split(|&c| c == b'.').all(|l| {
-        !l.is_empty()
-            && !l.starts_with(b"xn--")
-            && l.iter()
-                .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-    });
-    if !labels_ok {
-        return false;
+        );
+        c += 1;
     }
-    let last = host.rsplit(|&c| c == b'.').next().unwrap_or_default();
-    if !last.first().is_some_and(u8::is_ascii_digit) {
-        return true;
-    }
-    let mut parts = 0;
-    host.split(|&c| c == b'.').all(|p| {
-        parts += 1;
-        number(p).is_some_and(|n| n <= 255)
-    }) && parts == 4
-}
-
-/// A port the parser keeps: a canonical number up to 65535, not the scheme's default.
-fn is_canonical_port(p: &[u8], default: u32) -> bool {
-    number(p).is_some_and(|n| n <= 65535 && n != default)
-}
+    table
+};
 
 /// The value of up to five decimal digits without a leading zero (`0` itself is fine).
 fn number(p: &[u8]) -> Option<u32> {
-    let canonical = !p.is_empty()
-        && p.len() <= 5
-        && p.iter().all(u8::is_ascii_digit)
-        && (p.len() == 1 || p[0] != b'0');
+    let canonical = !p.is_empty() && p.len() <= 5 && (p.len() == 1 || p[0] != b'0');
     canonical.then(|| p.iter().fold(0, |n, &d| n * 10 + u32::from(d - b'0')))
 }
 
@@ -234,6 +270,12 @@ mod tests {
             "00.0.0.0",
             "xn--a",
             "localhost",
+            "1.2.3.04",
+            "a.b-",
+            "a_b",
+            "u@a",
+            "a.b.",
+            "127.0.0.1",
         ];
         let ports = [
             "", ":0", ":1", ":80", ":443", ":8080", ":08", ":65535", ":99999",
@@ -258,6 +300,13 @@ mod tests {
             "/~x!$&()*+,=:@",
             "/a%",
             "/%2E.",
+            "/a?%2e",
+            "/A/B",
+            "/a/%2E",
+            "/a?x#y",
+            "/a b",
+            "/a^b",
+            r"/a\b",
         ];
         for s in schemes {
             for h in hosts {
