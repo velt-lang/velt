@@ -253,7 +253,13 @@ impl FnLower<'_, '_> {
         let n = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, len, cint(1, Ty::U64)));
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n.clone()));
         let p = self.elem_place(arr, n, elem);
-        self.set_some(Place::local(res), ot, Operand::Copy(p));
+        if self.sub(elem) == opt {
+            // Nullable elements: `(T | null)[]`'s pop is `T | null` (TyTable::intern), the
+            // element itself.
+            self.assign(Place::local(res), Rvalue::Use(Operand::Copy(p)));
+        } else {
+            self.set_some(Place::local(res), ot, Operand::Copy(p));
+        }
         self.goto(join);
         self.switch_to(join);
         self.owned_result(Some(res), opt)

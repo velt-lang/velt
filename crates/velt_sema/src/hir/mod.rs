@@ -31,6 +31,8 @@
 
 mod intrinsic;
 
+use std::collections::HashMap;
+
 use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
@@ -154,6 +156,15 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
+        // `T | null | null` is `T | null`: an option of an option is the inner option (one
+        // `null`, as in JavaScript), however it was built (substituting `U | null` with a
+        // nullable `U`, for instance). Wrapping a value whose type is already that option is the
+        // identity (`ExprKind::WrapSome`, `UnwrapSome`).
+        if let TyKind::Option(inner) = kind {
+            if matches!(self.kinds[inner.0 as usize], TyKind::Option(_)) {
+                return inner;
+            }
+        }
         if let Some(&id) = self.map.get(&kind) {
             return id;
         }
@@ -195,6 +206,15 @@ pub struct Program {
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).
     pub impls: Vec<ImplDef>,
+    /// The anonymous object def of each concrete shape (field names, types and whether each is
+    /// optional, i.e. has the default `null`, in order) that
+    /// lowering sees: no type parameters, and none replaced by a twin before lowering
+    /// (readonly erasure). Lowering maps every instance of a generic anonymous def onto these,
+    /// so one shape is one type (velt_vir `Cx::canon`).
+    pub anon_shapes: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
+    /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
+    pub union_shapes: HashMap<Vec<TyId>, DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
@@ -330,12 +350,18 @@ pub struct FieldDef {
     pub ty: TyId,
     /// Default initializer (class field `= expr`, or `null` for optional fields).
     pub default: Option<Expr>,
-    /// Declared optional (`x?: T`): JavaScript leaves such a field out of `JSON.stringify`
-    /// while it is absent, whereas a `T | null` field holding `null` is written.
+    /// Declared optional (`x?: T`): it may be absent. JSON and printing leave an absent
+    /// (`null`) one out, as JavaScript leaves out a missing key, whereas a `T | null` field
+    /// holding `null` is written; a spread copies it only while present.
     pub optional: bool,
     /// Declared `private` (in this type or the base class that declares it), or an ES private
     /// field (`#x`). Interface fields are never private.
     pub private: bool,
+    /// An optional field whose declared type is nullable (`a?: T | null`) in a struct or object
+    /// type: it keeps "absent" apart from a present `null` with a presence flag, which lowering
+    /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
+    /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
+    pub presence: bool,
 }
 
 #[derive(Clone, Debug)]

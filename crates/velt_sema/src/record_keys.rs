@@ -179,7 +179,7 @@ fn requirements(
     let mut reqs = vec![];
     for (d, targs, span) in &u.calls {
         for (k, origin) in needs.get(d).into_iter().flatten() {
-            reqs.push((cx.ty.subst(*k, targs), *span, *origin));
+            reqs.push((cx.subst(*k, targs), *span, *origin));
         }
     }
     for c in &u.closures {
@@ -294,7 +294,7 @@ fn keys_in(
         out.push(k);
     } else if let TyKind::Adt(d, args) = &kind {
         for f in member_types(cx, *d) {
-            parts.push(cx.ty.subst(f, args));
+            parts.push(cx.subst(f, args));
         }
     }
     for p in parts {

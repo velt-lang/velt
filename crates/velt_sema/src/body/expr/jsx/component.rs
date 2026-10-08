@@ -68,7 +68,7 @@ impl FnCx<'_, '_> {
         if type_args.contains(&self.cx.ty.error) {
             return self.error_expr(el.span);
         }
-        let ret = self.cx.ty.subst(c.ret, &type_args);
+        let ret = self.cx.subst(c.ret, &type_args);
         let natural = self.cx.ty.fn_ptr(vec![props.ty], ret);
         let expected = self.runtime_component_type(d, props.ty, natural);
         if matches!(c.func, ComponentFn::Named { .. }) && !self.result_fits(natural, expected) {
@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
         if slots.iter().any(Option::is_none) {
             return natural;
         }
-        self.cx.ty.subst_known(component.ty, &slots)
+        self.cx.subst_known(component.ty, &slots)
     }
 
     /// Does the result of function type `natural` convert to the result of `expected`?

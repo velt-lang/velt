@@ -188,6 +188,8 @@ fn check_on_current_thread(
     }
     finalize::build_defs(&mut cx);
     readonly::erase(&mut cx);
+    let anon_shapes = anon::concrete_shapes(&cx);
+    let union_shapes = anon::concrete_unions(&cx);
     let ctx::Ctx {
         ty,
         defs,
@@ -204,6 +206,8 @@ fn check_on_current_thread(
         defs,
         entry,
         impls,
+        anon_shapes,
+        union_shapes,
     };
     (Some(program), diags)
 }

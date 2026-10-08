@@ -63,11 +63,15 @@ impl FnLower<'_, '_> {
     fn pat_keys(&mut self, p: &Pat, ty: TyId, vt: Ty) -> Option<Vec<i128>> {
         match &p.kind {
             PatKind::Variant { variant, args, .. } if args.iter().all(catch_all) => {
+                let super::types::VariantAt::Index(variant) = self.variant_at(p.ty, *variant, ty)
+                else {
+                    return None;
+                };
                 match self.cx.kind(ty) {
                     TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => Some(vec![
-                        self.cx.enum_def(d).variants[*variant as usize].discriminant as i128,
+                        self.cx.enum_def(d).variants[variant as usize].discriminant as i128,
                     ]),
-                    _ => Some(vec![*variant as i128]),
+                    _ => Some(vec![variant as i128]),
                 }
             }
             PatKind::Lit(Lit::Int(n)) if matches!(self.cx.kind(ty), TyKind::Int(_)) => {

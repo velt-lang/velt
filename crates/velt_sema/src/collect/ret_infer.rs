@@ -91,7 +91,7 @@ pub(super) fn impl_ret(
 ) -> bool {
     if !is_pending(cx, def) {
         let have = cx.fn_info(def).ret;
-        return cx.ty.subst(have, owner_args) == want;
+        return cx.subst(have, owner_args) == want;
     }
     let identity = owner_args
         .iter()

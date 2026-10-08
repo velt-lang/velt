@@ -206,9 +206,7 @@ impl FnCx<'_, '_> {
                     }
                     _ => vec![],
                 };
-                tys.into_iter()
-                    .map(|f| self.cx.ty.subst(f, &args))
-                    .collect()
+                tys.into_iter().map(|f| self.cx.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };

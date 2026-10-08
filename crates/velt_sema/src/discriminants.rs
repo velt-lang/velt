@@ -38,7 +38,7 @@ impl Ctx<'_> {
                 .find(|(_, f)| f.name == name && f.private_to == Some(owner));
             if let Some((i, f)) = found {
                 let fty = f.ty;
-                return Some((i as u32, self.ty.subst(fty, &args)));
+                return Some((i as u32, self.subst(fty, &args)));
             }
             if self.declares_private_name(owner, name) {
                 return None;
@@ -68,7 +68,7 @@ impl Ctx<'_> {
         let a = self.adt(d)?;
         let (i, f) = a.fields.iter().enumerate().find(|(_, f)| f.name == name)?;
         let fty = f.ty;
-        Some((i as u32, self.ty.subst(fty, &args)))
+        Some((i as u32, self.subst(fty, &args)))
     }
 
     /// The literal value of field `prop` in each member of union `u` (variant order), if `prop`

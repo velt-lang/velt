@@ -145,8 +145,7 @@ contents.
   `match` don't exist).
 - `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types, also through
   generic aliases like `type WithoutChildren<P> = Omit<P, "children">` (not yet on a type
-  parameter inside a generic function, #350). `Required` also strips `null` from `a: T | null`
-  fields, since `a?: T` *is* `T | null`, and `Pick` rejects a key that isn't a field (`Omit`
+  parameter inside a generic function, #350). `Pick` rejects a key that isn't a field (`Omit`
   warns).
 - Intersections `A & B` of object types work as in TypeScript, unions distributing over them,
   and so do indexed access types (`User["name"]`) and branded primitives

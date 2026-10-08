@@ -166,7 +166,7 @@ fn inherited_iface_defaults(cx: &mut Ctx, d: DefId) {
         args.push(cx.ty.param(n));
         for (k, p) in params.into_iter().enumerate() {
             let Some(mut h) = p.default else { continue };
-            crate::visit::map_expr_types(&mut h, &mut |t| cx.ty.subst(t, &args));
+            crate::visit::map_expr_types(&mut h, &mut |t| cx.subst(t, &args));
             iface_method_mut(cx, d, slot).params[k].default = Some(h);
         }
     }

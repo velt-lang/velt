@@ -37,7 +37,7 @@ impl Ctx<'_> {
         let mut operands: Vec<(TyId, Span)> = vec![];
         for p in parts {
             let ty = self.resolve_type(p, env);
-            let ty = self.ty.subst(ty, &env.args);
+            let ty = self.subst(ty, &env.args);
             if ty == self.ty.error {
                 return ty;
             }
@@ -268,7 +268,7 @@ impl Ctx<'_> {
             .into_iter()
             .filter(|(_, public)| *public)
             .map(|(f, _)| ShapeField {
-                ty: self.ty.subst(f.ty, &args),
+                ty: self.subst(f.ty, &args),
                 ..f
             })
             .collect()

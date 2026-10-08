@@ -86,7 +86,7 @@ impl Ctx<'_> {
                 Some(d) => d[i].unwrap_or(self.ty.error),
                 None => self.ty.error,
             };
-            let t = self.ty.subst(t, &args);
+            let t = self.subst(t, &args);
             args.push(t);
         }
         args

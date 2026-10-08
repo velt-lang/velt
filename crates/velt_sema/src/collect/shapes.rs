@@ -128,7 +128,7 @@ fn contains_by_value(
                 DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
                 _ => vec![],
             };
-            tys.into_iter().map(|f| cx.ty.subst(f, &args)).collect()
+            tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Tuple(ts) => ts,
         TyKind::Option(x) => vec![x],
@@ -181,6 +181,7 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
+    let declared = ty;
     if f.optional && cx.ty.opt_payload(ty).is_none() && ty != cx.ty.error {
         ty = cx.ty.option(ty);
     }
@@ -193,6 +194,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
     FieldInfo {
         name: f.name.name.clone(),
         ty,
+        declared,
         span: f.name.span,
         readonly: f.readonly,
         optional: f.optional,
@@ -449,7 +451,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let inherited: Vec<FieldInfo> = cx.adt(bd).map(|b| b.fields.clone()).unwrap_or_default();
     let mut all = vec![];
     for mut f in inherited {
-        f.ty = cx.ty.subst(f.ty, &bargs);
+        f.ty = cx.subst(f.ty, &bargs);
         all.push(f);
     }
     let start = all.len();

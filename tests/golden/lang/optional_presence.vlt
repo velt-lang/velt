@@ -1,0 +1,36 @@
+// An optional field whose type is nullable (`a?: T | null`) keeps "absent" apart from a present
+// `null`, as JavaScript does (#350, review #395 P2b, decision 2): JSON and console.log leave out
+// an absent one and print a present `null`, `JSON.parse` keeps the difference, and a spread
+// copies a present `null` over an earlier value (PATCH semantics) but not an absent field.
+type T = { a: string; d?: string };
+type User = { id: i64; name: string; nick: string | null; email?: string; deletedAt?: string };
+
+function update(u: User, patch: Partial<User>): User {
+  return { ...u, ...patch };
+}
+
+function main() {
+  const x: T = { a: "x" };
+  const y: T = { a: "y", d: null };
+  const z: T = { a: "z", d: "dd" };
+  console.log(JSON.stringify(x), JSON.stringify(y), JSON.stringify(z));
+  console.log(x, y, z);
+  x.d = null;
+  console.log(JSON.stringify(x), x.d === null);
+  const r = JSON.parse<T>('{"a":"r"}');
+  const s = JSON.parse<T>('{"a":"s","d":null}');
+  console.log(JSON.stringify(r), JSON.stringify(s), JSON.stringify(y.clone()));
+
+  const u: User = { id: 1, name: "a", nick: "n", email: "e@x", deletedAt: "d" };
+  console.log(JSON.stringify(update(u, {})));
+  console.log(JSON.stringify(update(u, { name: "b", nick: null })));
+  console.log(JSON.stringify(update(u, { deletedAt: null })));
+  const bare: User = { id: 2, name: "b", nick: null };
+  console.log(JSON.stringify(bare), JSON.stringify(update(bare, { deletedAt: "now" })));
+  const p1: Partial<User> = { deletedAt: null };
+  const p2: Partial<User> = {};
+  const both = { ...p1, ...p2 };
+  const merged: Partial<User> = { ...p2, ...p1 };
+  const withDefault = { deletedAt: "x", ...p2 };
+  console.log(JSON.stringify(both), JSON.stringify(merged), JSON.stringify(withDefault));
+}

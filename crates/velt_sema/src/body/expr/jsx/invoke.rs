@@ -69,7 +69,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
         let type_args = self.solve_slots(&c, &slots, false, span);
         let mut hargs = vec![];
         for (h, param) in args.into_iter().zip(&c.params) {
-            let target = self.cx.ty.subst(param.ty, &type_args);
+            let target = self.cx.subst(param.ty, &type_args);
             let mut h = match self.try_coerce(h, target) {
                 Ok(h) => h,
                 Err(h) => {
@@ -83,7 +83,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             hargs.push(h);
         }
         self.note_async_args(d, &hargs);
-        let ret = self.cx.ty.subst(c.ret, &type_args);
+        let ret = self.cx.subst(c.ret, &type_args);
         self.call_throws(d, &type_args, ret, span);
         let kind = H::Call {
             callee: Callee::Def(d, type_args),

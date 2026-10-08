@@ -107,7 +107,14 @@ impl Ctx<'_> {
         let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            let t = self.resolve_type(&f.ty, env);
+            // The declared type: without the `| null` the parser adds for `name?: T`
+            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            let written = if f.optional {
+                written_type(&f.ty)
+            } else {
+                f.ty.clone()
+            };
+            let t = self.resolve_type(&written, env);
             if out.iter().any(|o| o.name == f.name.name) {
                 self.err(
                     format!("duplicate field `{}` in object type", f.name.name),
@@ -387,7 +394,7 @@ impl Ctx<'_> {
                 .entry(body)
                 .or_insert_with(|| decl.name.name.clone());
         }
-        self.ty.subst(body, &args)
+        self.subst(body, &args)
     }
 
     /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`
@@ -429,4 +436,28 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
         cx.aliases[a].expanding = false;
     }
     cx.checking_unused_aliases = false;
+}
+
+/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
+/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
+/// that already admits `null` (`name?: T | null`) is kept as written.
+fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
+    let ast::TypeExprKind::Union(ms) = &ty.kind else {
+        return ty.clone();
+    };
+    let added =
+        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    match ms.last() {
+        Some(last) if added(last) => {
+            let rest = &ms[..ms.len() - 1];
+            match rest {
+                [one] => one.clone(),
+                _ => ast::TypeExpr {
+                    kind: ast::TypeExprKind::Union(rest.to_vec()),
+                    span: ty.span,
+                },
+            }
+        }
+        _ => ty.clone(),
+    }
 }
