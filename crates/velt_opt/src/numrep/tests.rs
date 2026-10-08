@@ -9,7 +9,7 @@ use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, Program, UnOp};
+use velt_vir::vir::{BinOp, BlockId, LocalDecl, Place, Program, UnOp};
 
 /// Runs the math externs like the runtime.
 pub(super) struct MathHost;
@@ -573,4 +573,39 @@ fn an_index_test_bounds_the_double_it_converts() {
     let (p, k) = index_bounded_program(Ty::U64);
     let q = narrowed(&p);
     assert!(assigned(&q.funcs[0], k), "k stays a double");
+}
+
+#[test]
+fn a_counter_used_as_an_index_is_64_bits() {
+    // `k as u64` at every access: an `i64` `k` needs no sign extension there.
+    let (mut p, _, k) = counter_program(0.0, 1000.0);
+    let f = &mut p.funcs[0];
+    let idx = Local(f.locals.len() as u32);
+    f.locals.push(LocalDecl {
+        ty: Ty::U64,
+        name: None,
+    });
+    let body = f
+        .blocks
+        .iter()
+        .position(|b| {
+            b.stmts.iter().any(
+                |s| matches!(s, Stmt::Assign(d, Rvalue::Use(Operand::Copy(_))) if d.local == k),
+            )
+        })
+        .expect("the step");
+    f.blocks[body].stmts.insert(
+        0,
+        Stmt::Assign(Place::local(idx), Rvalue::Cast(copy_local(k), Ty::U64)),
+    );
+    f.locs.clear();
+    f.locals[k.0 as usize].name = Some("k".into());
+    let q = narrowed(&p);
+    let twins: Vec<Ty> = q.funcs[0]
+        .locals
+        .iter()
+        .filter(|l| l.name.as_deref() == Some("k") && l.ty != Ty::F64)
+        .map(|l| l.ty)
+        .collect();
+    assert_eq!(twins, [Ty::I64]);
 }

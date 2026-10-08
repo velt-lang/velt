@@ -230,11 +230,14 @@ impl Rules {
                 continue;
             }
             let wide = |l: &Local| p.to[l.0 as usize] == Some(Ty::I64);
-            let feeds_wide = match (r.into, r.int_use) {
-                (Some(d), _) => wide(&d),
-                (None, IntUse::With(m)) => wide(&m),
-                _ => false,
-            };
+            // Also an `i32` converted to a 64-bit integer (an index): one sign extension at its
+            // definition instead of one at every access.
+            let feeds_wide = r.to_wide
+                || match (r.into, r.int_use) {
+                    (Some(d), _) => wide(&d),
+                    (None, IntUse::With(m)) => wide(&m),
+                    _ => false,
+                };
             if feeds_wide {
                 p.to[i] = Some(Ty::I64);
                 changed = true;
