@@ -72,3 +72,18 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
 ) -> u64 {
     crate::panic::fatal("WebAssembly programs cannot serve HTTP")
 }
+
+/// Handing a response to a server request: there is none (only `velt:http` serves).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_respond(
+    _req: u64,
+    _status: u32,
+    _reason: *const VeltStr,
+    _headers: *const VeltStrArray,
+    _kind: u32,
+    _text: *mut VeltStr,
+    _bytes: *const crate::bytes::VeltBytes,
+    _implied: u32,
+) -> u64 {
+    no_request()
+}

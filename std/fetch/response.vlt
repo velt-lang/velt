@@ -46,6 +46,18 @@ declare function velt_rt_http_resp_build(
   bytes: u8[],
   implied: u32,
 ): u64;
+// The response a handler returns for server request `raw`, with a complete body (`kind` 0, 1 or
+// 2), handed straight to the request: what the handler returns next (std/http).
+declare function velt_rt_http_req_respond(
+  raw: u64,
+  status: u32,
+  reason: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
@@ -378,12 +390,14 @@ export class Response {
     }
   }
 
-  // This response as a server response (std only: std/http returns it from the handler): its
-  // runtime key, 0 if a header name or value is not valid HTTP. A response the runtime built
-  // is given up as it is. A streamed body (a `BodyStream`, or a fetched response's body) is
-  // left for std/http to copy into the response (`serverStream`).
-  private toServer(): u64 {
-    if (this.#source == BUILT) {
+  // This response as what a server handler returns for request `raw` (std only: std/http): a
+  // complete body goes straight to the request (`velt_rt_http_req_respond`); a response the
+  // runtime built is given up as it is; a streamed body (a `BodyStream`, or a fetched
+  // response's body) gets a runtime response for std/http to copy the body into
+  // (`serverStream`). 0 if a header name or value is not valid HTTP.
+  private toServer(raw: u64): u64 {
+    const source = this.#source;
+    if (source == BUILT) {
       const h = this.#handle;
       this.#handle = 0;
       return h;
@@ -395,17 +409,29 @@ export class Response {
       const [list, type] = fields.serverList();
       headers = list;
       implied = type;
-    } else if (this.#source == RUNTIME) {
+    } else if (source == RUNTIME) {
       headers = this.headers.raw();
     } else {
       implied = this.#implied;
     }
     let text = this.#str;
-    return velt_rt_http_resp_build(
+    if (source == STREAM || source == RUNTIME) {
+      return velt_rt_http_resp_build(
+        this.#code as u32,
+        this.#reason ?? "",
+        headers,
+        source as u32,
+        text,
+        this.#data,
+        implied,
+      );
+    }
+    return velt_rt_http_req_respond(
+      raw,
       this.#code as u32,
       this.#reason ?? "",
       headers,
-      this.#source as u32,
+      source as u32,
       text,
       this.#data,
       implied,

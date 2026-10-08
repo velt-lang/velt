@@ -86,6 +86,35 @@ unsafe fn build(status: u32, headers: &[&str], body: String, implied: u32) -> Re
     r
 }
 
+/// Responses handed straight to their request (`velt_rt_http_req_respond`) and left in the
+/// handler's frame.
+static IN_FRAME: AtomicU64 = AtomicU64::new(0);
+
+/// A text response handed to request `req`, as std hands over a complete body: what the
+/// handler returns.
+unsafe fn hand_over(req: ReqHandle, status: u32, headers: &[&str], body: String) -> RespHandle {
+    let list = VeltStrArray::from_vec(headers.iter().map(|h| VeltStr::from_text(h)).collect());
+    let mut owned = VeltStr::from_vec(body.into_bytes());
+    let bytes = VeltBytes::from_vec(vec![]);
+    let r = velt_rt_http_req_respond(
+        req.bits(),
+        status,
+        &VeltStr::empty(),
+        &list,
+        1,
+        &mut owned,
+        &bytes,
+        1,
+    );
+    assert!(owned.is_empty(), "body ownership moved to the response");
+    match r {
+        crate::http::context::RESPONDED => IN_FRAME.fetch_add(1, Ordering::SeqCst),
+        0 => panic!("a valid response was refused"),
+        _ => 0,
+    };
+    RespHandle::from_bits(r)
+}
+
 unsafe fn respond(req: ReqHandle, body: String) -> RespHandle {
     let method = text_of(velt_rt_http_req_method, req);
     let (path, query) = path_and_query(req);
@@ -101,7 +130,7 @@ unsafe fn respond(req: ReqHandle, body: String) -> RespHandle {
     }
     let status = if path == "/missing" { 404 } else { 200 };
     let text = format!("{method} {path}?{query} [{hdr}] {body}");
-    build(status, &["x-path", &path], text, 1)
+    hand_over(req, status, &["x-path", &path], text)
 }
 
 /// Handlers of `/slow` started (`a_handler_finishes_after_its_client_left`).
@@ -240,6 +269,8 @@ fn raw_http11_keep_alive() {
     );
     let (status, _, body) = read_response(&mut r);
     assert_eq!((status, body.as_str()), (404, "GET /missing? [-] "));
+    // The text responses went straight to their request's frame.
+    assert!(IN_FRAME.load(Ordering::SeqCst) >= 2);
 }
 
 #[test]

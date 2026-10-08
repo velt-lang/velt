@@ -9,6 +9,7 @@
 
 pub mod body;
 pub mod client;
+pub mod context;
 pub mod handler;
 mod interned;
 pub mod req_body;

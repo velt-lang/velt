@@ -353,7 +353,8 @@ alive, so `close` may be called at any time.
 typedef struct {
     void     (*init)(void* env, void* req, void* state);    // write the initial state; owns req
                                                             // (the VeltReq handle as a pointer)
-    uint32_t (*poll)(void* state, void* cx);                // result at state+0: VeltResp (0 ⇒ 500)
+    uint32_t (*poll)(void* state, void* cx);                // result at state+0: VeltResp, or 1 =
+                                                            // responded (req_respond); 0 ⇒ 500
     void     (*drop)(void* state);                          // request cancelled (client gone)
     uint64_t state_size, state_align;
     void*    env;   // closure captures; shared read-only by concurrent requests (§14.14)
@@ -365,7 +366,10 @@ body is received while the handler reads it (`req_text`, `req_bytes`, `req_chunk
 The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
 `VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
 it, and using a request after it was dropped stops the program with a clear message instead of
-reading freed memory.
+reading freed memory. While the runtime polls a handler it keeps that handler's request in a
+per-worker frame: accessors given its key read it there (no registry lock or count), and
+`velt_rt_http_req_drop` takes it out of the frame as well as out of the registry, so the check
+still holds. Any other key (a request handed to another task) is looked up in the registry.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -386,6 +390,7 @@ reading freed memory.
 | `velt_rt_http_req_remote_port` | `(VeltReq r) -> u32` | the client's port |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
 | `velt_rt_http_resp_build` | `(u32 status, const VeltStr* reason, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> VeltResp` | a handler's `Response` in one call; see below |
+| `velt_rt_http_req_respond` | `(VeltReq r, u32 status, const VeltStr* reason, const VeltStrArray* headers, u32 kind, VeltStr* text, const VeltBytes* bytes, u32 implied) -> u64` | `resp_build` with a complete body (`kind` 0–2) for the handler of `r`, handed straight to it: returns 1 (the response is in the handler's frame; the handler returns 1) while the runtime polls that handler, else a `VeltResp` (a handler that runs on after its client left), 0 if a header is invalid |
 | `velt_rt_http_resp_drop` | `(VeltResp r)` | only for responses not returned from a handler |
 
 A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,

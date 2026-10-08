@@ -133,24 +133,20 @@ fn implied_type(code: u32) -> Option<HeaderValue> {
 /// flat list `[name, value, …]`, and the body as `kind` says: `text` (taken without a copy:
 /// the caller's value is left empty), `bytes` (copied: the array may be borrowed), or a stream
 /// std opens next. `implied` is the `content-type` the body implies (`implied_type`), added
-/// unless the headers have one. A 1xx, 204 or 304 status gets no body and no `content-type`. Returns
-/// the null key (nothing built) if a header name or value is not valid HTTP.
-///
-/// # Safety
-/// The pointers must be valid Velt values.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_resp_build(
+/// unless the headers have one. A 1xx, 204 or 304 status gets no body and no `content-type`.
+/// `None` if a header name or value is not valid HTTP.
+unsafe fn build(
     status: u32,
-    reason: *const VeltStr,
-    headers: *const VeltStrArray,
+    reason: &VeltStr,
+    headers: &VeltStrArray,
     kind: u32,
     text: *mut VeltStr,
-    bytes: *const VeltBytes,
+    bytes: &VeltBytes,
     implied: u32,
-) -> RespHandle {
+) -> Option<RespObj> {
     let body = match kind {
         kind::TEXT => take_text(text),
-        kind::BYTES => Bytes::copy_from_slice((*bytes).as_bytes()),
+        kind::BYTES => Bytes::copy_from_slice(bytes.as_bytes()),
         _ => Bytes::new(),
     };
     let mut r = empty();
@@ -158,17 +154,15 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
         .ok()
         .and_then(|s| StatusCode::from_u16(s).ok())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    if append_headers(&*headers, r.headers_mut()).is_none() {
-        return RespHandle::NULL;
-    }
-    let reason = (*reason).as_bytes();
+    append_headers(headers, r.headers_mut())?;
+    let reason = reason.as_bytes();
     if !reason.is_empty() {
         if let Ok(p) = hyper::ext::ReasonPhrase::try_from(reason.to_vec()) {
             r.extensions_mut().insert(p);
         }
     }
     if bodiless(r.status()) {
-        return register(r);
+        return Some(r);
     }
     match kind {
         kind::STREAM | kind::FETCHED => strip_for_stream(r.headers_mut(), kind == kind::FETCHED),
@@ -185,7 +179,55 @@ pub unsafe extern "C" fn velt_rt_http_resp_build(
             headers.entry(CONTENT_TYPE).or_insert(v);
         }
     }
-    register(r)
+    Some(r)
+}
+
+/// [`build`] as a registered response (std opens a streamed body on it next, or a handler
+/// returns it); the null key (nothing built) if a header name or value is not valid HTTP.
+///
+/// # Safety
+/// The pointers must be valid Velt values.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_resp_build(
+    status: u32,
+    reason: *const VeltStr,
+    headers: *const VeltStrArray,
+    kind: u32,
+    text: *mut VeltStr,
+    bytes: *const VeltBytes,
+    implied: u32,
+) -> RespHandle {
+    build(status, &*reason, &*headers, kind, text, &*bytes, implied)
+        .map_or(RespHandle::NULL, register)
+}
+
+/// The response a handler returns for request `req`, with a complete body (`kind` 0, 1 or 2;
+/// the arguments as for [`build`]), handed straight to the request: what the handler returns
+/// next. That is `context::RESPONDED` when the response was left in the handler's frame (the
+/// handler is being polled for `req`, as it is when it returns), else a registered response's
+/// key (a handler that runs on in a task of its own after its client left), or 0 if a header
+/// name or value is not valid HTTP.
+///
+/// # Safety
+/// The pointers must be valid Velt values.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_respond(
+    req: u64,
+    status: u32,
+    reason: *const VeltStr,
+    headers: *const VeltStrArray,
+    kind: u32,
+    text: *mut VeltStr,
+    bytes: *const VeltBytes,
+    implied: u32,
+) -> u64 {
+    let Some(r) = build(status, &*reason, &*headers, kind, text, &*bytes, implied) else {
+        return 0;
+    };
+    match super::context::respond(req, r) {
+        None => super::context::RESPONDED,
+        Some(r) => register(r).bits(),
+    }
 }
 
 /// Free a response that was not returned from a handler (a dead key is ignored).

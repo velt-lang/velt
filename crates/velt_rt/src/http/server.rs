@@ -18,6 +18,7 @@
 //! upgrades: a request asking for one parks its `OnUpgrade` (`upgrade.rs`) for std/websocket.
 
 use super::body::RespBody;
+use super::context::{self, Frame};
 use super::handler::Shared;
 pub use super::handler::{InitFn, VeltHandler};
 use super::request::{Conn, ReqObj};
@@ -71,57 +72,80 @@ pub struct ServerObj {
 /// client disconnected, so the cleanup it would do after its next `await` (returning a pooled
 /// connection, committing, `close()`) still happens. That is why the state is boxed: an
 /// unfinished handler must be able to leave the request's future.
+///
+/// Every poll runs in a frame (`context.rs`) that holds the request, so the handler's accessors
+/// and its response skip the registries.
 struct HandlerFut<S: OwnedStore> {
     /// `None` once the handler returned.
     inner: Option<Pin<Box<Compiled<S>>>>,
     /// The request's state borrows the handler's environment, which lives as long as `Shared`
     /// (an HTTP/2 stream's task can outlive its connection's).
     shared: Arc<Shared>,
+    /// The request, as the frame shows it to the handler, and its key.
+    req: Arc<ReqObj>,
+    key: u64,
+    /// A response the handler handed back in a poll that did not finish it.
+    early: Option<Box<Response<RespBody>>>,
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
     fn new(shared: &Arc<Shared>, req: ReqObj) -> Self {
         let d = &shared.handler();
-        let req = super::request::register(req);
+        let req = Arc::new(req);
+        let key = super::request::register(req.clone());
         let (size, align) = (d.state_size as usize, d.state_align as usize);
         let inner = Compiled::<S>::with_init(d.poll, d.drop, size, align, |st| {
             // SAFETY: generated init writes a fresh state; ownership of the request key (passed
             // in the pointer-sized slot) moves to it.
-            unsafe { (d.init)(d.env, req.bits() as usize as *mut ReqObj, st) }
+            unsafe { (d.init)(d.env, key.bits() as usize as *mut ReqObj, st) }
         });
         HandlerFut {
             inner: Some(Box::pin(inner)),
             shared: shared.clone(),
+            req,
+            key: key.bits(),
+            early: None,
         }
     }
 }
 
-/// Takes the handler's result (state offset 0) once its poll returned `Ready`.
+/// Takes the handler's result (state offset 0) once its poll returned `Ready`: a response key,
+/// `context::RESPONDED`, or 0.
 ///
 /// # Safety
 /// The handler must have completed and its result must not have been taken yet.
-unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> RespHandle {
-    *(inner.state_ptr() as *const RespHandle)
+unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> u64 {
+    *(inner.state_ptr() as *const u64)
 }
 
 impl<S: OwnedStore> Future for HandlerFut<S> {
     type Output = Response<RespBody>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Some(inner) = self.inner.as_mut() else {
+        let this = &mut *self;
+        let Some(inner) = this.inner.as_mut() else {
             return Poll::Ready(status_only(StatusCode::INTERNAL_SERVER_ERROR));
         };
-        if inner.as_mut().poll(cx).is_pending() {
+        let mut frame = Frame::new(this.key, Arc::as_ptr(&this.req));
+        let at: *mut Frame = &mut frame;
+        let ready = context::enter(at, || inner.as_mut().poll(cx).is_ready());
+        let responded = frame.response.take();
+        if !ready {
+            if let Some(r) = responded {
+                this.early = Some(Box::new(r));
+            }
             return Poll::Pending;
         }
-        // SAFETY: the handler completed just now; its result is a response key (0 = none).
-        let resp = unsafe { take_response(inner.as_mut()) };
-        self.inner = None;
-        // Ownership of the response moves back to the runtime; a dead key is a 500.
-        Poll::Ready(
-            super::response::take(resp)
-                .unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR)),
-        )
+        // SAFETY: the handler completed just now; its result was not taken.
+        let result = unsafe { take_response(inner.as_mut()) };
+        this.inner = None;
+        // Ownership of the response moves back to the runtime; none (or a dead key) is a 500.
+        let resp = if result == context::RESPONDED {
+            responded.or_else(|| this.early.take().map(|r| *r))
+        } else {
+            super::response::take(RespHandle::from_bits(result))
+        };
+        Poll::Ready(resp.unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR)))
     }
 }
 
@@ -134,13 +158,16 @@ impl<S: OwnedStore> Drop for HandlerFut<S> {
     }
 }
 
-/// Runs a handler whose request was dropped to completion and discards its response.
+/// Runs a handler whose request was dropped to completion and discards its response. Its polls
+/// have no frame, so a response it builds is registered (`velt_rt_http_req_respond`).
 async fn finish_detached<S: OwnedStore>(mut inner: Pin<Box<Compiled<S>>>, _shared: Arc<Shared>) {
     inner.as_mut().await;
     // SAFETY: the handler completed; nobody else takes its result.
     let resp = unsafe { take_response(inner.as_mut()) };
     // A response nobody will send.
-    drop(super::response::take(resp));
+    if resp != context::RESPONDED {
+        drop(super::response::take(RespHandle::from_bits(resp)));
+    }
 }
 
 fn status_only(status: StatusCode) -> Response<RespBody> {

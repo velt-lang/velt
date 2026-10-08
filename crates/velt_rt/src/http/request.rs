@@ -6,7 +6,8 @@
 //! are async. A request is a key into a registry (`crate::registry`): the handler releases it
 //! with `velt_rt_http_req_drop`, and any later use (a `Request` captured by a streamed body or
 //! a spawned task that outlives its handler) is a clear runtime error instead of a read of freed
-//! memory. Accessors return owned copies, so their results never dangle.
+//! memory. Accessors return owned copies, so their results never dangle. While the handler is
+//! polled, accessors find its request in the worker's frame (`context.rs`) without the registry.
 
 use super::client::text_of;
 use super::owned_str;
@@ -28,13 +29,53 @@ pub type ReqHandle = Key<ReqObj>;
 
 static REQUESTS: Registry<ReqObj> = Registry::new();
 
-/// Register a request read by the server; the handler receives the returned key.
-pub fn register(req: ReqObj) -> ReqHandle {
-    REQUESTS.insert(req)
+/// Register a request read by the server; the handler receives the returned key, and the
+/// server keeps `req` to put in the handler's frame (`context.rs`).
+pub fn register(req: Arc<ReqObj>) -> ReqHandle {
+    REQUESTS.insert_shared(req)
 }
 
-/// The request behind `req`, or a fatal error when it was already released.
-fn obj(req: ReqHandle) -> Arc<ReqObj> {
+/// A request an accessor reads: the one in this thread's frame, or a registry reference.
+enum ReqRef {
+    /// Kept alive by the handler's future while it is polled (`context.rs`).
+    Current(*const ReqObj),
+    Held(Arc<ReqObj>),
+}
+
+impl std::ops::Deref for ReqRef {
+    type Target = ReqObj;
+
+    fn deref(&self) -> &ReqObj {
+        match self {
+            // SAFETY: valid for the poll this accessor runs in (`context::request`).
+            ReqRef::Current(r) => unsafe { &**r },
+            ReqRef::Held(r) => r,
+        }
+    }
+}
+
+/// The request behind `req` for the duration of an accessor call, or a fatal error when it was
+/// already released.
+fn obj(req: ReqHandle) -> ReqRef {
+    match super::context::request(req.bits()) {
+        Some(r) => ReqRef::Current(r),
+        None => ReqRef::Held(held(req)),
+    }
+}
+
+/// A reference to the request behind `req` that a body read can keep.
+fn shared(req: ReqHandle) -> Arc<ReqObj> {
+    match super::context::request(req.bits()) {
+        // SAFETY: the frame's request is an `Arc` the handler's future holds.
+        Some(r) => unsafe {
+            Arc::increment_strong_count(r);
+            Arc::from_raw(r)
+        },
+        None => held(req),
+    }
+}
+
+fn held(req: ReqHandle) -> Arc<ReqObj> {
     REQUESTS.get(req).unwrap_or_else(|| {
         crate::panic::fatal(concat!(
             "a Request was used after its handler finished (e.g. in a streamed body or a ",
@@ -206,7 +247,7 @@ async fn receive(r: Arc<ReqObj>) -> Result<Vec<u8>, crate::result::VeltErr> {
 /// decoded to U+FFFD and a leading byte order mark dropped (as JS decodes).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_text(req: ReqHandle) -> *mut VeltFut {
-    let r = obj(req);
+    let r = shared(req);
     new_leaf(async move {
         match receive(r).await {
             Ok(bytes) => {
@@ -222,7 +263,7 @@ pub unsafe extern "C" fn velt_rt_http_req_text(req: ReqHandle) -> *mut VeltFut {
 /// again).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_bytes(req: ReqHandle) -> *mut VeltFut {
-    let r = obj(req);
+    let r = shared(req);
     new_leaf(async move {
         match receive(r).await {
             Ok(bytes) => IoResult::ok(VeltBytes::from_vec(bytes)),
@@ -235,7 +276,7 @@ pub unsafe extern "C" fn velt_rt_http_req_bytes(req: ReqHandle) -> *mut VeltFut 
 /// empty array once the body is complete (and on every read after that).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_chunk(req: ReqHandle) -> *mut VeltFut {
-    let r = obj(req);
+    let r = shared(req);
     new_leaf(async move {
         let Some(mut body) = lock(&r.body).take() else {
             return IoResult::ok(VeltBytes::from_vec(vec![]));
@@ -255,6 +296,7 @@ pub unsafe extern "C" fn velt_rt_http_req_chunk(req: ReqHandle) -> *mut VeltFut 
 /// Free a request.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_drop(req: ReqHandle) {
+    super::context::forget(req.bits());
     REQUESTS.remove(req);
 }
 

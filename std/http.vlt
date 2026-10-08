@@ -4,16 +4,16 @@
 //
 // Server: `serve` hands the runtime a `VeltHandler` (init/poll/drop/state size/align/env). That
 // descriptor is produced by the compiler intrinsic `__intrinsic_http_handler(f)` from an async
-// closure literal `f: (raw: u64) => Promise<u64>` (`VeltReq` handle in, `VeltResp` handle out):
+// closure literal `f: (raw: u64) => Promise<u64>` (`VeltReq` handle in, response out):
 // the closure's own state machine is the per-request state (result at offset 0), `init` writes its
 // initial state from `(env, req)`, `poll`/`drop` are the closure's `$poll`/`$drop`, and `env` is
 // the closure's heap environment (shared with in-flight requests; the runtime drops it once the
 // server is closed and its last request finished, so captured values' `[Symbol.dispose]()`
 // hooks run). `serve` wraps the user handler in such a closure, which hands it the raw request as
 // a `Request` that reads it lazily (std/fetch/request.vlt), releases the raw request once the
-// handler settled, and builds the returned `Response` into a runtime response in one call (a
-// `BodyStream` body is then copied into it by std/http/stream.vlt), so the intrinsic only ever
-// sees one closure type.
+// handler settled, and hands the returned `Response` to the request in one call (a complete
+// body), or builds it into a runtime response that a `BodyStream` body is then copied into
+// (std/http/stream.vlt), so the intrinsic only ever sees one closure type.
 //
 // Handles (`VeltServer`: a `u64`, rt_abi_async.md §3.2) are released by the owning value's
 // `[Symbol.dispose]()` drop hook, which zeroes the handle so it runs at most once. A `Server`
@@ -134,10 +134,11 @@ export class Server {
   }
 }
 
-// The runtime response for what a handler returned; 0 if a header name or value is not valid
-// HTTP.
-function build(res: Response): u64 {
-  const r = res.toServer();
+// What the handler for request `raw` returns to the runtime for the response `res`: the
+// response is handed to the request, or a runtime response a streamed body is copied into; 0 if
+// a header name or value is not valid HTTP.
+function build(res: Response, raw: u64): u64 {
+  const r = res.toServer(raw);
   const stream = res.serverStream();
   if (r != 0 && stream != null) {
     pump(r, stream);
@@ -146,8 +147,8 @@ function build(res: Response): u64 {
 }
 
 // The response to a handler that failed.
-function failure(): u64 {
-  return new Response("Internal Server Error", { status: 500 }).toServer();
+function failure(raw: u64): u64 {
+  return new Response("Internal Server Error", { status: 500 }).toServer(raw);
 }
 
 /**
@@ -165,7 +166,7 @@ export async function serve<E>(
     let out: u64 = 0;
     try {
       const res = await handler(Request.adopt(raw), ServeInfo { raw: raw });
-      out = build(res);
+      out = build(res, raw);
       if (out == 0) {
         console.error("request handler failed: the response has an invalid header name or value");
       }
@@ -173,7 +174,7 @@ export async function serve<E>(
       console.error("request handler failed:", e);
     }
     if (out == 0) {
-      out = failure();
+      out = failure(raw);
     }
     velt_rt_http_req_drop(raw);
     return out;
