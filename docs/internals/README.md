@@ -127,6 +127,8 @@ Decisions and their rationale, including what is still planned:
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [TSX for server-side rendering](design/tsx.md): the JSX support, and the common subset of
   TypeScript and Velt that `velt check --ts-compat` lints.
+- [Typed causes of render errors](design/jsx-render-errors.md): `RenderError.cause` for a
+  failing component's own error (#82), and the intrinsic it needs.
 - [`Record<K, V>`](design/record.md): TypeScript object syntax over an insertion-ordered
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
