@@ -8,7 +8,8 @@ This product includes documentation text adapted from TypeScript
   The doc comments in std/prelude/*.vlt are partly adapted from the JSDoc in TypeScript's
   standard library declarations (src/lib/*.d.ts, as shipped in the `typescript` package,
   lib/lib.*.d.ts). The prelude files that contain such text say so in a comment at the top.
-  The text was extracted with scripts/gen-prelude-docs.js and edited for Velt.
+  The text was extracted with scripts/gen-prelude-docs.js and edited for Velt. These adapted
+  passages remain under the Apache License 2.0 only; they are not offered under the MIT license.
 
   Copyright (c) Microsoft Corporation. All rights reserved.
 

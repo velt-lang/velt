@@ -87,7 +87,8 @@ export class Object {
   }
 
   /**
-   * Returns an array of the values of a record, in insertion order.
+   * Returns an array of the values of a record, in insertion order. An object literal works
+   * too, read as a `Record<string, V>`: `Object.values({ x: 1, y: 2 })` is `[1, 2]`.
    * @param r - The record whose values to list.
    */
   static values<K, V>(r: Record<K, V>): V[] {
@@ -95,7 +96,8 @@ export class Object {
   }
 
   /**
-   * Returns an array of the `[key, value]` pairs of a record, in insertion order.
+   * Returns an array of the `[key, value]` pairs of a record, in insertion order. An object
+   * literal works too, read as a `Record<string, V>`.
    * @param r - The record whose entries to list.
    */
   static entries<K, V>(r: Record<K, V>): [K, V][] {

@@ -58,7 +58,7 @@ extend Array<i32> {
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
    * sorted in ascending numeric order (JS would compare them as strings).
    * @example
-   * xs.sort((a, b) => b - a); // descending
+   * xs.sort((a, b) => b.compareTo(a)); // descending
    */
   sort(cmp: ((x: i32, y: i32) => i64) | null = null) {
     if (cmp != null) {
@@ -84,7 +84,7 @@ extend Array<u64> {
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
    * sorted in ascending numeric order (JS would compare them as strings).
    * @example
-   * xs.sort((a, b) => b - a); // descending
+   * xs.sort((a, b) => b.compareTo(a)); // descending
    */
   sort(cmp: ((x: u64, y: u64) => i64) | null = null) {
     if (cmp != null) {
@@ -110,7 +110,7 @@ extend Array<usize> {
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
    * sorted in ascending numeric order (JS would compare them as strings).
    * @example
-   * xs.sort((a, b) => b - a); // descending
+   * xs.sort((a, b) => b.compareTo(a)); // descending
    */
   sort(cmp: ((x: usize, y: usize) => i64) | null = null) {
     if (cmp != null) {

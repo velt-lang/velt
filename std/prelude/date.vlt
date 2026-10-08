@@ -217,6 +217,8 @@ export class Date implements Comparable<Date> {
 
   /**
    * Sets the year of the Date object using local time.
+   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setFullYear(50)` gives
+   * 1950.
    * @param year - A numeric value for the year.
    * @param month - A zero-based numeric value for the month (0 for January, 11 for December).
    * @param day - A numeric value equal to the day of the month.
@@ -296,6 +298,8 @@ export class Date implements Comparable<Date> {
 
   /**
    * Sets the year value in the Date object using Universal Coordinated Time (UTC).
+   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setUTCFullYear(50)` gives
+   * 1950.
    * @param year - A numeric value equal to the year.
    * @param month - A numeric value equal to the month. The value for January is 0, and other month
    * values follow consecutively.

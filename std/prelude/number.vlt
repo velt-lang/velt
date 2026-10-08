@@ -49,9 +49,9 @@ export class NumberConstructor {
    * value is equivalent to NaN, use the `Number.isNaN` function.
    */
   static readonly NaN: f64 = 0.0 / 0.0;
-  /** A value greater than the largest `f64`, shown as `Infinity`. */
+  /** An `f64` greater than every finite `f64`, shown as `Infinity`. */
   static readonly POSITIVE_INFINITY: f64 = 1.0 / 0.0;
-  /** A value less than the most negative `f64`, shown as `-Infinity`. */
+  /** An `f64` less than every finite `f64`, shown as `-Infinity`. */
   static readonly NEGATIVE_INFINITY: f64 = -1.0 / 0.0;
   /** 2^53 - 1: the largest integer an f64 holds exactly, and its negation. */
   static readonly MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
