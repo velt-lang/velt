@@ -16,8 +16,9 @@ Breakpoints go on `.vlt` lines, and the call stack shows Velt function names.
 
 The LLVM backend needs clang ([Platforms](platforms.md#prerequisites)). On Windows the linker
 writes a `.pdb` next to the `.exe` (CodeView); elsewhere the debug info is DWARF. On macOS it
-stays in the object file next to the executable (`target/velt/<name>.o`), so keep it there, or
-run `dsymutil target/velt/<name>` to bundle it.
+stays in the object files next to the executable (`target/velt/<name>.o`, plus `<name>.cgu1.o`,
+… when a large program is split into codegen units), so keep them there, or run `dsymutil
+target/velt/<name>` to bundle it.
 
 Cranelift builds carry line tables only: breakpoints, stepping and backtraces work by `.vlt`
 line, but locals are not shown (use `--backend llvm` for those). On Windows they have function
