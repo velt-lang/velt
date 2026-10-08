@@ -171,6 +171,17 @@ impl<T> Registry<T> {
         }
     }
 
+    /// Every open object (a snapshot; taken one shard lock at a time).
+    pub fn all(&self) -> Vec<Arc<T>> {
+        let mut out = Vec::new();
+        for shard in 0..SHARDS {
+            if let Some(t) = self.lock(shard) {
+                out.extend(t.slots.iter().filter_map(|s| s.obj.clone()));
+            }
+        }
+        out
+    }
+
     /// Close the handle: every copy of it is dead afterwards. Returns the table's reference
     /// (`None` if the handle was already closed or never valid).
     pub fn remove(&self, key: Key<T>) -> Option<Arc<T>> {

@@ -188,6 +188,11 @@ impl ItemBuf {
         SendPtr(self.ptr.0)
     }
 
+    /// The item's drop glue.
+    pub(super) fn item_drop(&self) -> Option<ResultDropFn> {
+        self.item_drop
+    }
+
     /// The bytes were queued: the channel owns the item now.
     pub(super) fn moved(&mut self) {
         self.owned = false;

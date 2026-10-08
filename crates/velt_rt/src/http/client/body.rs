@@ -7,6 +7,7 @@ use super::send::body_failed;
 use crate::result::VeltErr;
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use hyper::body::Body;
 use hyper::body::Incoming;
 
 /// The most a `content-length` header makes us reserve before any data arrived (a larger body
@@ -90,8 +91,10 @@ impl Reader {
         Ok(None)
     }
 
-    /// Read the rest of the body; `len` is the `content-length`, if any.
-    pub async fn read_all(mut self, len: Option<u64>) -> Result<Whole, VeltErr> {
+    /// Read the rest of the body.
+    pub async fn read_all(mut self) -> Result<Whole, VeltErr> {
+        // The `content-length`, if the server sent one (hyper has parsed it).
+        let len = self.incoming.size_hint().exact();
         if !self.decoder.is_identity() {
             let mut buf = Vec::new();
             while let Some(chunk) = self.next().await? {

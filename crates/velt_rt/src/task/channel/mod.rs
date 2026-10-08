@@ -4,15 +4,16 @@
 //!
 //! The runtime never sees a `T`, only its bytes: `send` moves the value's bytes into the
 //! channel (ownership moves with them), `receive` moves an item's bytes into the result slot of
-//! its future, laid out as the compiler's `T | null` (see [`write_option`]). The runtime keeps
-//! no drop function beyond the `send` future that owns the bytes in flight (like
-//! `velt_rt_race_ok`'s), and no other code pointer (rt_abi_async.md §13.5).
+//! its future, laid out as the compiler's `T | null` (see [`write_option`]). The only code
+//! pointers kept are drop glue: the `item_drop` of a `send` future that owns the bytes in flight
+//! (like `velt_rt_race_ok`'s), and the channel's copy of it (rt_abi_async.md §2.2, §13.5).
 //!
 //! Handles: `Channel<T>` is a Copy struct (like `TcpStream`, std/net.vlt), so its handle is a
 //! [`Registry`] key. A channel leaves the table once it is closed and drained; every copy then
 //! sees a closed, empty channel (`send` fails, `receive` gets null) instead of freed memory.
-//! Operations in flight keep their own `Arc`. Values still queued in a closed channel that
-//! nobody drains are not dropped, and an unclosed channel lives until the process exits.
+//! Operations in flight keep their own `Arc`. Since any copy may still receive, values queued in
+//! a channel nobody drains (closed or not) are only known to be abandoned when the program ends:
+//! [`drop_abandoned_items`] drops them then, with the drop glue the channel kept from its sends.
 
 mod fut;
 mod queue;
@@ -31,6 +32,12 @@ fn retire_if_done(key: Key<Chan>, chan: &Chan) {
     if chan.is_closed() && chan.len() == 0 {
         CHANNELS.remove(key);
     }
+}
+
+/// At program end (`main` returned and the tasks settled): drop the items still queued in every
+/// channel, which nobody can receive any more. Returns how many there were.
+pub(crate) fn drop_abandoned_items() -> u64 {
+    CHANNELS.all().iter().map(|c| c.drop_items() as u64).sum()
 }
 
 /// A new channel; `capacity == 0` is unbounded. Items are passed with their size (align <= 16).
@@ -79,7 +86,9 @@ pub unsafe extern "C" fn velt_rt_chan_send(
     let c = CHANNELS.get(h);
     let size = size as usize;
     // Fast path: queued (or refused) at once, with no allocation.
-    let now = c.as_ref().map_or(Push::Closed, |c| c.try_push(src, size));
+    let now = c
+        .as_ref()
+        .map_or(Push::Closed, |c| c.try_push(src, size, item_drop));
     match now {
         Push::Sent => return SENT.ptr(),
         Push::Closed => {
@@ -95,7 +104,7 @@ pub unsafe extern "C" fn velt_rt_chan_send(
         // Whole-value captures: the closure would otherwise capture the raw `slot.0` (not Send).
         let (slot, mut item) = (slot, item);
         let sent = match c {
-            Some(c) => c.send(item.ptr(), size).await,
+            Some(c) => c.send(item.ptr(), size, item.item_drop()).await,
             None => false,
         };
         if sent {
@@ -120,7 +129,7 @@ pub unsafe extern "C" fn velt_rt_chan_try_send(
 ) -> bool {
     let now = CHANNELS
         .get(h)
-        .map_or(Push::Closed, |c| c.try_push(src, size as usize));
+        .map_or(Push::Closed, |c| c.try_push(src, size as usize, item_drop));
     let sent = matches!(now, Push::Sent);
     if !sent {
         if let Some(d) = item_drop {

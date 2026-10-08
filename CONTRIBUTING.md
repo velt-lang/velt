@@ -24,6 +24,8 @@ cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt
 Builds are large. Point `CARGO_TARGET_DIR` at a disk with room if needed; `VELT_GOLDEN_WORK`
 moves the end-to-end tests' build directories the same way (the goldens build in it, and the
 LLVM, wasm, playground, panic, debugger and debug-info tests in subdirectories of it).
+Debug builds of the compiler carry line tables only (file and line in backtraces and panics);
+set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a debugger.
 
 ## Testing
 

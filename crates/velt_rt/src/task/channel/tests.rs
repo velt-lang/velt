@@ -149,7 +149,7 @@ fn hand_offs_publish_this_threads_output_first() {
     unsafe {
         buffer_output();
         assert!(matches!(
-            bounded.try_push(&v as *const u64 as *const u8, 8),
+            bounded.try_push(&v as *const u64 as *const u8, 8, None),
             queue::Push::Sent
         ));
         assert!(published(), "send");
@@ -168,7 +168,7 @@ fn hand_offs_publish_this_threads_output_first() {
     let unbounded = queue::Chan::new(0);
     // SAFETY: as above.
     unsafe {
-        unbounded.try_push(&v as *const u64 as *const u8, 8);
+        unbounded.try_push(&v as *const u64 as *const u8, 8, None);
         buffer_output();
         unbounded.try_pop(&mut out as *mut u64 as *mut u8, 8);
     }
@@ -238,4 +238,127 @@ fn items_queued_before_close_are_still_received_whole() {
     unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 37, 1) };
     assert_eq!(slot[0], 0, "drained: null");
     assert!(CHANNELS.get(h).is_none());
+}
+
+/// The ids of the items `record_drop` dropped (the leftover tests use ids of their own).
+static LEFTOVERS_DROPPED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+unsafe extern "C" fn record_drop(item: *mut u8) {
+    assert_eq!(item as usize % 16, 0, "drop glue gets an aligned item");
+    let id = *(item as *const u64);
+    LEFTOVERS_DROPPED.lock().unwrap().push(id);
+}
+
+fn dropped_in(range: std::ops::Range<u64>) -> Vec<u64> {
+    let mut ids: Vec<u64> = LEFTOVERS_DROPPED
+        .lock()
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|id| range.contains(id))
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// A 24-byte item (not a multiple of 16, so ring slots are unaligned) whose first word is `id`,
+/// 16-aligned like the values generated code sends.
+#[repr(C, align(16))]
+struct IdItem([u64; 3]);
+
+impl IdItem {
+    fn as_ptr(&self) -> *const u64 {
+        self.0.as_ptr()
+    }
+}
+
+fn item_with_id(id: u64) -> IdItem {
+    IdItem([id, !id, id ^ 0x5555])
+}
+
+#[test]
+fn leftover_items_are_dropped_once_with_the_kept_drop_glue() {
+    let h = velt_rt_chan_new(0);
+    let hb = h.bits();
+    run(async move {
+        let h = Key::<Chan>::from_bits(hb);
+        for id in 1000..1010u64 {
+            let v = item_with_id(id);
+            let sent = if id % 2 == 0 {
+                // SAFETY: a 24-byte item with drop glue.
+                unsafe { velt_rt_chan_try_send(h, v.as_ptr() as *const u8, 24, Some(record_drop)) }
+            } else {
+                // SAFETY: as above, through the `send` future.
+                let f =
+                    unsafe { velt_rt_chan_send(h, v.as_ptr() as *const u8, 24, Some(record_drop)) };
+                Await::<1>(SendPtr(f)).await == [1]
+            };
+            assert!(sent);
+        }
+        // Receive three; the receiver owns them now (the runtime must not drop them).
+        for id in 1000..1003u64 {
+            let mut slot = [0u64; 4];
+            // SAFETY: a 32-byte `[u64; 3] | null` slot, item @8.
+            unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr() as *mut u8, 24, 8) };
+            assert_eq!((slot[0] & 0xff, slot[1]), (1, id));
+        }
+        velt_rt_chan_close(h);
+        let v = item_with_id(1010);
+        // SAFETY: as above; refused (closed), so dropped at once.
+        assert!(!unsafe {
+            velt_rt_chan_try_send(h, v.as_ptr() as *const u8, 24, Some(record_drop))
+        });
+        assert_eq!(
+            dropped_in(1000..1100),
+            [1010],
+            "only the refused item so far"
+        );
+        let chan = CHANNELS.get(h).expect("closed but not drained: still open");
+        assert_eq!(chan.drop_items(), 7, "seven items were left");
+        assert_eq!(
+            dropped_in(1000..1100),
+            (1003..=1010).collect::<Vec<_>>(),
+            "each leftover item dropped exactly once"
+        );
+        assert_eq!(velt_rt_chan_len(h), 0);
+        assert_eq!(chan.drop_items(), 0);
+        assert_eq!(dropped_in(1000..1100).len(), 8, "nothing dropped twice");
+        let mut slot = [0xffu64; 4];
+        // SAFETY: as above.
+        unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr() as *mut u8, 24, 8) };
+        assert_eq!(slot[0] & 0xff, 0, "drained: null");
+    });
+}
+
+#[test]
+fn leftover_items_without_drop_glue_are_just_discarded() {
+    let h = velt_rt_chan_new(0);
+    for id in 2000..2005u64 {
+        let v = item_with_id(id);
+        // SAFETY: a 24-byte Copy item: no drop glue.
+        assert!(unsafe { velt_rt_chan_try_send(h, v.as_ptr() as *const u8, 24, None) });
+    }
+    let chan = CHANNELS.get(h).expect("open");
+    assert_eq!(chan.drop_items(), 5, "counted, though nothing is dropped");
+    assert_eq!(velt_rt_chan_len(h), 0);
+    assert!(dropped_in(2000..2100).is_empty(), "no drop glue was called");
+    // Still usable afterwards, with items of the same size.
+    let v = item_with_id(2005);
+    // SAFETY: as above.
+    assert!(unsafe { velt_rt_chan_try_send(h, v.as_ptr() as *const u8, 24, None) });
+    assert_eq!(velt_rt_chan_len(h), 1);
+    velt_rt_chan_close(h);
+}
+
+#[test]
+fn every_open_channel_is_listed_for_the_exit_drain() {
+    let a = velt_rt_chan_new(0);
+    let b = velt_rt_chan_new(4);
+    let all = CHANNELS.all();
+    for h in [a, b] {
+        let c = CHANNELS.get(h).expect("open");
+        assert!(all.iter().any(|x| std::sync::Arc::ptr_eq(x, &c)));
+    }
+    velt_rt_chan_close(a);
+    velt_rt_chan_close(b);
 }

@@ -161,8 +161,15 @@ compiler's layout: `payload` is the offset of the value after the `bool` present
 `T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
 through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
-sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
-`send` future owns (§13.5).
+sender still shares is deep-copied). No code pointers are stored except drop glue (§13.5): the
+`item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
+`item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
+Values still queued in a channel nobody drains, closed or not, are not dropped while the program
+runs (any copy of the handle may still receive them); when it ends (`main` returned and the
+remaining tasks settled) the runtime drops every item still
+queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
+counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
+it.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -806,8 +813,11 @@ one state layout, so all of them change together; `env` stays). In dev builds th
 Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
 store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
-flight (a join's or a spawned task's result, a channel item being sent): it matches that value's
-layout, which a swap doesn't change, and it goes away with the value.
+flight (a join's or a spawned task's result, a channel item being sent) or with the values a
+channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
+matches the values' layout, which a swap doesn't change (a changed layout restarts the program),
+and old code is never freed, so the pointer stays callable after a swap. A value's drop glue goes
+away with the value; a channel's lives as long as the channel.
 
 
 ## 14. Standard library breadth (stream std-net; additive)

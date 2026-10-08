@@ -27,15 +27,51 @@ The server ignores it except on `/json-gzip`.
 ## Results
 
 Instructions each client executed in user space (`COUNT=valgrind`: cachegrind's `I refs`, in
-millions, the mean of 2 runs, which differed by less than 0.1%), Ubuntu 20.04 in WSL 2 on a
+millions, the mean of 2 runs, which differed by less than 0.2%), Ubuntu 20.04 in WSL 2 on a
 shared Windows machine. Wall-clock times on that machine vary by ±30% between runs, so they
-are not shown. The Velt clients come from five compilers: `main` before the global `fetch`
+are not shown. Node is not counted: V8's JIT under cachegrind says little about its speed.
+
+| Scenario | `main` before #577 | `main` (9f81cea) | #601 / #653 | reqwest 0.12 |
+|---|---|---|---|---|
+| `seq` | 341.0 | 476.9 | 361.8 | 666.8 |
+| `conc` | 3,110 | 4,482 | 3,342 | 5,955 |
+| `big` | 121.7 | 107.8 | 107.7 | 107.9 |
+| `json` | 673.4 | 805.3 | 665.5 | 787.4 |
+| `gzip` | – | 1,055.6 | 915.2 | 984.0 |
+
+The pull request for #601 and #653 took back most of what the global `fetch` added per
+request (`seq`: from 13,600 instructions per request more than before #577 to 2,100 more):
+
+- The URL: a URL already in the form WHATWG parsing would give it (`http://host:port/path`,
+  a lowercase ASCII host, nothing to normalize; one pass over its bytes) is taken as it is,
+  and only other URLs go through the `url` crate and IDNA (`seq` −42.6 M). The `Uri` shares
+  the URL's buffer and moves into the request.
+- The response: its status text, URL, `redirected` and headers are copied out of the runtime
+  the first time a program reads them, not on every response (−31.1 M); a response or request
+  without a body makes no body parts.
+- `fetch(url)` sends without making a `Request` object.
+- The request's headers: the defaults (`accept`, `user-agent`, `accept-encoding`) are copied
+  from a map made once, and an `http:` request gets its `host` from the URL instead of hyper's
+  `format!`; a request without headers of its own copies none for a redirect, and `location` and
+  `content-length` are only looked up when needed.
+- `text()` (#653): valid UTF-8 is only validated (ASCII only scanned) and copied once, where
+  `String::from_utf8_lossy` took about 7 instructions per byte; invalid UTF-8 still becomes
+  U+FFFD (`json` −140 M, `gzip` −140 M). Header values take the same path.
+
+What remains of the 2,100 per request against `main` before #577 is what the Fetch API asks
+for: the three request headers Node sends (`accept`, `user-agent` and #594's
+`accept-encoding`: hashing, writing and the server parsing them), a response that resolves
+with its head and receives its body in a second step (a second runtime future and registry
+lookup), and the `Response` object.
+
+### History
+
+The Velt clients of the table below come from five compilers: `main` before the global `fetch`
 (080387d, calling `fetch` from `velt:http`), the global `fetch` (#577, a0b9bd5), the base of
 #594 (d52bf62, #577 plus #557), the decoding of #594 (891150d) and this benchmark's pull
 request (#600). `seq` and `conc` were counted again after both were merged with `main`: those
 two rows show `main` at 4b459dc as #594's base, #594 at 683cdbe (which sizes the request's
-header map for its three default headers) and #600 on top of it. Node is not counted: V8's JIT
-under cachegrind says little about its speed.
+header map for its three default headers) and #600 on top of it.
 
 | Scenario | `main` | #577 | #594's base | #594 | #600 | reqwest 0.12 |
 |---|---|---|---|---|---|---|
