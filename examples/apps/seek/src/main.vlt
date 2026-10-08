@@ -1,11 +1,12 @@
 // Process glue: arguments in, output to stdout, messages to stderr, the exit code out.
-import { args } from "velt:process";
+import { args, stdout } from "velt:process";
 import { execute } from "./app";
 
 async function main(): Promise<i32> {
   return await execute(
     args(),
-    process.env.NO_COLOR != null,
+    // `--color auto` colours only a terminal, and honours NO_COLOR.
+    process.env.NO_COLOR != null || !stdout.isTTY,
     // A block body: `(s) => process.stdout.write(s)` returns a boolean, which Velt rejects
     // where `(s: string) => void` is expected (#694).
     (s) => {

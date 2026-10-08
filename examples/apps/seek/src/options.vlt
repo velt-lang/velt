@@ -60,7 +60,7 @@ export function parser(): ArgParser {
     })
     .option("color", {
       default: "auto",
-      help: "auto | always | never (auto honours NO_COLOR)",
+      help: "auto | always | never (auto: on a terminal, unless NO_COLOR is set)",
       valueName: "when",
     })
     .flag("heading", { help: "Group matches under each file name" })
@@ -81,7 +81,7 @@ function intOption(value: i64 | null, fallback: i64, name: string, min: i64): i6
 }
 
 /// The settings from `argv` (without the program name), or null when `--help` was asked for.
-/// `noColorEnv` is whether NO_COLOR is set. Throws `CliError` for usage mistakes.
+/// `noColorEnv` is whether `--color auto` means no colour (NO_COLOR set, or not a terminal). Throws `CliError` for usage mistakes.
 export function parseOptions(argv: string[], noColorEnv: bool): Options | null {
   const a = parser().parse(argv);
   const filesMode = a.flag("files");
