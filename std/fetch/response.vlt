@@ -46,9 +46,10 @@ declare function velt_rt_http_resp_build(
   bytes: u8[],
   implied: u32,
 ): u64;
-// The response a handler returns for server request `raw`, with a complete body (`kind` 0, 1 or
-// 2), handed straight to the request: what the handler returns next (std/http). `name` and
-// `value` are a first header as given ("" for none); `_list` adds `headers`, the rest.
+// The response a handler returns for server request `raw`, with no body or a text one (`kind`
+// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
+// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
+// (`headers`), and takes a bytes body (`kind` 2) too.
 declare function velt_rt_http_req_respond(
   raw: u64,
   status: u32,
@@ -57,7 +58,6 @@ declare function velt_rt_http_req_respond(
   value: string,
   kind: u32,
   text: string,
-  bytes: u8[],
   implied: u32,
 ): u64;
 declare function velt_rt_http_req_respond_list(
@@ -104,7 +104,8 @@ export class Response {
   #used: bool = false;
   #source: i64 = 0;
   #str: string = "";
-  #data: u8[] = [];
+  // A bytes body (null for any other), so a response without one allocates no array.
+  #data: u8[] | null = null;
   #stream: BodyStream | null = null;
   #handle: u64 = 0;
 
@@ -143,7 +144,9 @@ export class Response {
       const parts = bodyParts(body);
       this.#source = parts.kind as i64;
       this.#str = parts.text;
-      this.#data = parts.bytes;
+      if (parts.kind == 2) {
+        this.#data = parts.bytes;
+      }
       this.#stream = parts.stream;
       implied = type != 0 ? type : parts.implied;
     }
@@ -337,7 +340,7 @@ export class Response {
     if (this.#source == TEXT) {
       return this.#str;
     }
-    let d = this.#data;
+    let d = this.#data ?? [];
     const s = this.#stream;
     if (this.#source == STREAM && s != null) {
       d = await collect(s);
@@ -370,7 +373,7 @@ export class Response {
     if (this.#source == STREAM && s != null) {
       return await collect(s);
     }
-    return this.#data;
+    return this.#data ?? [];
   }
 
   /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
@@ -399,8 +402,11 @@ export class Response {
       for await (const chunk of s) {
         yield chunk;
       }
-    } else if (this.#data.length > 0) {
-      yield this.#data;
+    } else {
+      const d = this.#data;
+      if (d != null && d.length > 0) {
+        yield d;
+      }
     }
   }
 
@@ -418,42 +424,22 @@ export class Response {
     }
     const fields = this.#fields;
     if (source == STREAM || source == RUNTIME) {
-      let headers: string[] = [];
-      let implied: u32 = 0;
-      if (fields != null) {
-        const [list, type] = fields.serverFlat();
-        headers = list;
-        implied = type;
-      } else if (source == RUNTIME) {
-        headers = this.headers.raw();
-      }
-      let none = "";
-      return velt_rt_http_resp_build(
-        this.#code as u32,
-        this.#reason ?? "",
-        headers,
-        source as u32,
-        none,
-        this.#data,
-        implied,
-      );
+      return this.streamed(fields);
+    }
+    let name = "";
+    let value = "";
+    let list: string[] | null = null;
+    let implied = this.#implied;
+    if (fields != null) {
+      const [n, v, l, type] = fields.serverList();
+      name = n;
+      value = v;
+      list = l;
+      implied = type;
     }
     let text = this.#str;
-    if (fields == null) {
-      return velt_rt_http_req_respond(
-        raw,
-        this.#code as u32,
-        this.#reason ?? "",
-        "",
-        "",
-        source as u32,
-        text,
-        this.#data,
-        this.#implied,
-      );
-    }
-    const [name, value, list, implied] = fields.serverList();
-    if (list == null) {
+    const data = this.#data;
+    if (list == null && data == null) {
       return velt_rt_http_req_respond(
         raw,
         this.#code as u32,
@@ -462,7 +448,6 @@ export class Response {
         value,
         source as u32,
         text,
-        this.#data,
         implied,
       );
     }
@@ -472,10 +457,33 @@ export class Response {
       this.#reason ?? "",
       name,
       value,
-      list,
+      list ?? [],
       source as u32,
       text,
-      this.#data,
+      data ?? [],
+      implied,
+    );
+  }
+
+  // `toServer` of a streamed body: a runtime response std/http copies the body into.
+  private streamed(fields: Headers | null): u64 {
+    let headers: string[] = [];
+    let implied: u32 = 0;
+    if (fields != null) {
+      const [list, type] = fields.serverFlat();
+      headers = list;
+      implied = type;
+    } else if (this.#source == RUNTIME) {
+      headers = this.headers.raw();
+    }
+    let none = "";
+    return velt_rt_http_resp_build(
+      this.#code as u32,
+      this.#reason ?? "",
+      headers,
+      this.#source as u32,
+      none,
+      [],
       implied,
     );
   }

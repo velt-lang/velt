@@ -83,7 +83,6 @@ pub unsafe extern "C" fn velt_rt_http_req_respond(
     _value: *const VeltStr,
     _kind: u32,
     _text: *mut VeltStr,
-    _bytes: *const crate::bytes::VeltBytes,
     _implied: u32,
 ) -> u64 {
     no_request()

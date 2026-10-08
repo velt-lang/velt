@@ -95,7 +95,7 @@ pub(super) fn respond(key: u64, resp: RespObj) -> Option<RespObj> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::VeltBytes;
+
     use crate::str::VeltStr;
 
     fn response() -> RespObj {
@@ -107,10 +107,9 @@ mod tests {
         let mut text = VeltStr::from_text("made");
         let reason = VeltStr::empty();
         let (name, value) = (VeltStr::empty(), VeltStr::empty());
-        let bytes = VeltBytes::from_vec(vec![]);
         unsafe {
             super::super::respond::velt_rt_http_req_respond(
-                key, 201, &reason, &name, &value, 1, &mut text, &bytes, 1,
+                key, 201, &reason, &name, &value, 1, &mut text, 1,
             )
         }
     }

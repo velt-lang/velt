@@ -7,10 +7,12 @@
 
 use super::context;
 use super::interned::{header_name, header_value};
-use super::response::{append_headers, body_of, build, register, RespObj};
+use super::response::{append_headers, body_of, build, kind, register, RespObj};
+use super::take_text;
 use crate::bytes::VeltBytes;
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
+use bytes::Bytes;
 use hyper::header::HeaderMap;
 
 /// The first header of `velt_rt_http_req_respond`, as std passes it (`name` "" for none): the
@@ -39,9 +41,10 @@ unsafe fn append_first(name: &VeltStr, value: &VeltStr, map: &mut HeaderMap) -> 
     Some(())
 }
 
-/// The response a handler returns for request `req`, with a complete body (`kind` 0, 1 or 2,
-/// as for `velt_rt_http_resp_build`) and at most one header of its own (as given; `name` ""
-/// for none; `append_first`), handed straight to the request: what the handler returns next.
+/// The response a handler returns for request `req`, with no body or a text one (`kind` 0 or 1;
+/// `text` is taken, as by `velt_rt_http_resp_build`) and at most one header of its own (as
+/// given; `name` "" for none; `append_first`), handed straight to the request: what the handler
+/// returns next.
 /// That is `context::RESPONDED` when the response was left in the handler's frame (the handler
 /// is being polled for `req`, as it is when it returns), else a registered response's key (a
 /// handler that runs on in a task of its own after its client left), or 0 if a header name or
@@ -58,10 +61,12 @@ pub unsafe extern "C" fn velt_rt_http_req_respond(
     value: *const VeltStr,
     kind: u32,
     text: *mut VeltStr,
-    bytes: *const VeltBytes,
     implied: u32,
 ) -> u64 {
-    let body = body_of(kind, text, &*bytes);
+    let (kind, body) = match kind {
+        kind::TEXT => (kind::TEXT, take_text(text)),
+        _ => (kind::NONE, Bytes::new()),
+    };
     let add = |m: &mut HeaderMap| append_first(&*name, &*value, m);
     hand_over(
         req,

@@ -73,7 +73,7 @@ pub(crate) fn bodiless(status: StatusCode) -> bool {
 }
 
 /// How `velt_rt_http_resp_build` receives the body (std/fetch/response.vlt says the same).
-mod kind {
+pub(super) mod kind {
     /// No body.
     pub const NONE: u32 = 0;
     /// `text` (taken).

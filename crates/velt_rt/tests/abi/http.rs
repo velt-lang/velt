@@ -110,17 +110,7 @@ unsafe fn hand_over(
     let bytes = VeltBytes::from_vec(vec![]);
     let reason = VeltStr::empty();
     let r = if extra.is_empty() {
-        velt_rt_http_req_respond(
-            req.bits(),
-            status,
-            &reason,
-            &name,
-            &value,
-            1,
-            &mut owned,
-            &bytes,
-            1,
-        )
+        velt_rt_http_req_respond(req.bits(), status, &reason, &name, &value, 1, &mut owned, 1)
     } else {
         let list = VeltStrArray::from_vec(extra.iter().map(|h| VeltStr::from_text(h)).collect());
         velt_rt_http_req_respond_list(
