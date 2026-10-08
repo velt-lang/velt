@@ -257,6 +257,15 @@ impl FnCx<'_, '_> {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, name) = (g.ty, g.name.clone());
+        let fresh = g
+            .init
+            .as_ref()
+            .is_some_and(crate::body::pure_init::has_call);
+        if want == Want::Move && fresh && !self.cx.is_copy(ty) {
+            // A call computes a new value at each use: another reference to it is owned.
+            let read = self.mk(H::Global(d), ty, span);
+            return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+        }
         if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
