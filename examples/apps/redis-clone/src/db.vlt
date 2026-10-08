@@ -74,8 +74,10 @@ export class Db {
   hashes: Map<string, Map<string, u8[]>> = new Map<string, Map<string, u8[]>>();
   sets: Map<string, Set<string>> = new Map<string, Set<string>>();
   zsets: Map<string, ZSet> = new Map<string, ZSet>();
-  expires: Map<string, f64> = new Map<string, f64>(); // key → ms since the epoch
-  now: f64 = 0; // the time of the current batch of commands
+  expires: Map<string, i64> = new Map<string, i64>(); // key → ms since the epoch
+  now: i64 = 0; // the time of the current batch of commands (ms since the epoch)
+  private sweepKeys: string[] = []; // the active-expiry cursor walks this snapshot
+  private sweepAt: i64 = 0;
 
   /// Deletes `key` if its time is up; true if it did.
   private expireIfDue(key: string): bool {
@@ -184,23 +186,33 @@ export class Db {
     return out.filter((k) => !this.expireIfDue(k));
   }
 
-  /// Active expiry: removes due keys among the first `budget` keys with a time to live.
-  sweep(budget: i64): i64 {
+  /// Active expiry, like Redis's: checks the next `sample` keys that have a time to live and
+  /// removes the due ones, and repeats while more than a quarter of a sample was due (at most
+  /// `rounds` times). A cursor walks every key with a time to live over successive sweeps, so
+  /// no key is skipped for good.
+  sweep(sample: i64, rounds: i64 = 16): i64 {
     let removed: i64 = 0;
-    let seen: i64 = 0;
-    const due: string[] = [];
-    for (const [k, at] of this.expires) {
-      if (seen >= budget) {
+    for (let round: i64 = 0; round < rounds && this.expires.size > 0; round++) {
+      let due: i64 = 0;
+      let seen: i64 = 0;
+      while (seen < sample && seen < (this.expires.size as i64)) {
+        if (this.sweepAt >= this.sweepKeys.length) {
+          this.sweepKeys = [...this.expires.keys()];
+          this.sweepAt = 0;
+        }
+        const k = this.sweepKeys[this.sweepAt];
+        this.sweepAt++;
+        seen++;
+        const at = this.expires.get(k);
+        if (at != null && at <= this.now) {
+          this.remove(k);
+          due++;
+        }
+      }
+      removed += due;
+      if (due * 4 <= seen) {
         break;
       }
-      seen++;
-      if (at <= this.now) {
-        due.push(k);
-      }
-    }
-    for (const k of due) {
-      this.remove(k);
-      removed++;
     }
     return removed;
   }

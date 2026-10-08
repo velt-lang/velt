@@ -75,8 +75,15 @@ row "set, pipeline 16" set -P 16
 row "get, pipeline 16" get -P 16
 
 # CPU time each server spends on the same million GETs (steadier than requests/s on a busy
-# machine): ps reports the process's CPU time as [h:]m:ss.cc.
-cpu_ms() { ps -o time= -p "$1" | awk -F'[:.]' '{ if (NF == 3) print ($1 * 60 + $2) * 1000 + $3 * 10; else print (($1 * 60 + $2) * 60 + $3) * 1000 + $4 * 10 }'; }
+# machine), in ms. Linux: utime + stime from /proc/<pid>/stat (in clock ticks; the fields are
+# counted after the ")" that ends the command name). macOS: ps's [h:]m:ss.cc.
+cpu_ms() {
+    if [ -r "/proc/$1/stat" ]; then
+        sed 's/.*) //' "/proc/$1/stat" | awk -v hz="$(getconf CLK_TCK)" '{ printf "%d\n", ($12 + $13) * 1000 / hz }'
+    else
+        ps -o time= -p "$1" | awk -F'[:.]' '{ if (NF == 3) print ($1 * 60 + $2) * 1000 + $3 * 10; else print (($1 * 60 + $2) * 60 + $3) * 1000 + $4 * 10 }'
+    fi
+}
 echo
 for i in 0 1 2; do
     port=$([ $i = 0 ] && echo $rport || ([ $i = 1 ] && echo $v1port || echo $vnport))

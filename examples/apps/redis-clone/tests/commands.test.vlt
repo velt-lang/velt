@@ -1,6 +1,6 @@
 // Commands against a Db directly (no sockets), with a fixed clock.
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { execute, globMatch, parseInt64 } from "../src/commands";
+import { execute, formatScore, globMatch, parseInt64, parseScore } from "../src/commands";
 import { Db } from "../src/db";
 import { Writer } from "../src/resp";
 
@@ -12,7 +12,7 @@ function run(db: Db, line: string): string {
 
 function db(): Db {
   const d = new Db();
-  d.now = 1000000.0;
+  d.now = 1000000;
   return d;
 }
 
@@ -54,9 +54,9 @@ export function test_expiry_follows_the_clock() {
   const d = db();
   assertEq(run(d, "SET k v PX 100"), "+OK|");
   assertEq(run(d, "PTTL k"), ":100|");
-  d.now += 99.0;
+  d.now += 99;
   assertEq(run(d, "GET k"), "$1|v|");
-  d.now += 1.0;
+  d.now += 1;
   assertEq(run(d, "GET k"), "$-1|");
   assertEq(run(d, "EXISTS k"), ":0|");
 }
@@ -66,7 +66,7 @@ export function test_sweep_removes_due_keys() {
   run(d, "SET a 1 PX 10");
   run(d, "SET b 1 PX 1000");
   run(d, "SET c 1");
-  d.now += 50.0;
+  d.now += 50;
   assertEq(d.sweep(20), 1);
   assertEq(run(d, "DBSIZE"), ":2|");
 }
@@ -104,4 +104,90 @@ export function test_quit_closes() {
   const w = new Writer();
   assert(!execute(db(), [utf8Encode("QUIT")], w));
   assert(execute(db(), [utf8Encode("PING")], w));
+}
+
+export function test_scores_parse_like_strtod() {
+  for (const ok of ["1", "-1.5", ".5", "5.", "+5", "-.5", "1e3", "0x10", "inf", "-Infinity", "0"]) {
+    parseScore(utf8Encode(ok));
+  }
+  assertEq(parseScore(utf8Encode("0x10")), 16.0);
+  for (const bad of ["", " 1", "1 ", "1e", "nan", "0b1", "0o7", "1_0", "1e400", "1e-400", "abc"]) {
+    let threw = false;
+    try {
+      parseScore(utf8Encode(bad));
+    } catch (e) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+export function test_scores_format_like_redis() {
+  const cases: [f64, string][] = [
+    [1e17, "100000000000000000"],
+    [1234567890123456789.0, "1234567890123456768"],
+    [1e19, "1e+19"],
+    [-1e19, "-1e+19"],
+    [12345678901234567890.0, "12345678901234567000"],
+    [1.5e300, "1.5e+300"],
+    [0.000001, "0.000001"],
+    [1.5e-6, "1.5e-6"],
+    [1e-7, "1e-7"],
+    [2.5e-5, "0.000025"],
+    [123.456, "123.456"],
+    [-0.0, "0"],
+    [5e-324, "5e-324"],
+    [1.7976931348623157e308, "1.7976931348623157e+308"],
+  ];
+  for (const [x, want] of cases) {
+    assertEq(formatScore(x), want);
+  }
+}
+
+export function test_expire_overflow_and_options() {
+  const d = db();
+  assertEq(run(d, "SET k v EX 9223372036854775807"), "-ERR invalid expire time in 'set' command|");
+  // Overflowing a relative time wraps into the past in Redis: OK, and the key is gone at once.
+  assertEq(run(d, "SET k v PX 9223372036854775807"), "+OK|");
+  assertEq(run(d, "EXISTS k"), ":0|");
+  assertEq(run(d, "SET k v"), "+OK|");
+  assertEq(run(d, "EXPIRE k 9223372036854775807"), "-ERR invalid expire time in 'expire' command|");
+  assertEq(run(d, "EXPIRE k 100 XX"), ":0|");
+  assertEq(run(d, "EXPIRE k 100 NX"), ":1|");
+  assertEq(run(d, "EXPIRE k 200 NX"), ":0|");
+  assertEq(run(d, "EXPIRE k 50 GT"), ":0|");
+  assertEq(run(d, "EXPIRE k 300 GT"), ":1|");
+  assertEq(run(d, "EXPIRE k 10 LT"), ":1|");
+  assertEq(run(d, "TTL k"), ":10|");
+  assertEq(
+    run(d, "EXPIRE k 10 NX XX"),
+    "-ERR NX and XX, GT or LT options at the same time are not compatible|",
+  );
+  assertEq(
+    run(d, "EXPIRE k 10 GT LT"),
+    "-ERR GT and LT options at the same time are not compatible|",
+  );
+  assertEq(run(d, "EXPIRE k 10 FOO"), "-ERR Unsupported option FOO|");
+}
+
+export function test_sweep_reaches_keys_behind_long_ttls() {
+  const d = db();
+  for (let i = 0; i < 30; i++) {
+    run(d, `SET long${i} v EX 1000`);
+  }
+  run(d, "SET short v PX 10");
+  d.now += 50;
+  // The first 20 keys with a TTL are all long-lived; the cursor gets to `short` next time.
+  d.sweep(20);
+  d.sweep(20);
+  assertEq(run(d, "DBSIZE"), ":30|");
+}
+
+export function test_unknown_command_arguments_are_capped() {
+  const d = db();
+  const long = "x".repeat(200);
+  assertEq(
+    run(d, `NOPE ${long} b`),
+    `-ERR unknown command 'NOPE', with args beginning with: '${"x".repeat(128)}' |`,
+  );
 }

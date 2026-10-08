@@ -278,9 +278,137 @@ function script(): Step[] {
     c("NOSUCHCMD", "a", "b"),
     c("GET"),
     c("get", "big", "extra"),
+    c("SET", "m", "-9223372036854775807"),
+    c("DECR", "m"),
+    c("DECR", "m"),
+    c("GET", "m"),
+    c(
+      "ZADD",
+      "zf",
+      "1e17",
+      "a",
+      "1e19",
+      "b",
+      "1.5e-6",
+      "c",
+      "1e-7",
+      "d",
+      "2.5e-5",
+      "e",
+      "1234567890123456789",
+      "f",
+    ),
+    c(
+      "ZADD",
+      "zf",
+      "-0",
+      "g",
+      "1.5e300",
+      "h",
+      "0x10",
+      "i",
+      ".5",
+      "j",
+      "5.",
+      "k",
+      "+5",
+      "l",
+      "Infinity",
+      "n",
+    ),
+    c("ZRANGE", "zf", "0", "-1", "WITHSCORES"),
+    c("ZADD", "zf", "0b1", "x"),
+    c("ZADD", "zf", "0o7", "x"),
+    c("ZADD", "zf", "1e400", "x"),
+    c("ZADD", "zf", " 1", "x"),
+    c("ZADD", "zf", "nan", "x"),
+    c("SET", "t", "v", "EX", "9223372036854775807"),
+    c("SET", "t", "v", "PX", "9223372036854775807"),
+    c("SET", "t", "v"),
+    c("EXPIRE", "t", "9223372036854775807"),
+    c("EXPIRE", "t", "100", "XX"),
+    c("EXPIRE", "t", "100", "NX"),
+    c("EXPIRE", "t", "200", "NX"),
+    c("EXPIRE", "t", "50", "GT"),
+    c("EXPIRE", "t", "300", "GT"),
+    c("EXPIRE", "t", "10", "LT"),
+    c("TTL", "t"),
+    c("EXPIRE", "t", "10", "NX", "XX"),
+    c("EXPIRE", "t", "10", "GT", "LT"),
+    c("EXPIRE", "t", "10", "foo"),
+    c("PERSIST", "t"),
+    c("EXPIRE", "t", "10", "GT"),
+    c("EXPIRE", "t", "10", "LT"),
+    c("SETEX", "t", "9223372036854775807", "v"),
+    c("PSETEX", "t", "9223372036854775807", "v"),
+    c("EXISTS", "t"),
+    c("SET", "t", "v", "PX", "9223372036854775807"),
+    c("EXISTS", "t"),
+    c("PEXPIRE", "t", "9223372036854775807"),
+    c("NOSUCH", "x".repeat(200), "b"),
+    c("NOSUCH", "a\r\nb", "c\nd"),
+    c("Z".repeat(200)),
     c("FLUSHDB"),
     c("DBSIZE"),
   ];
+}
+
+/// Raw protocol cases, each on fresh connections: the bytes are sent in the given pieces (a
+/// short pause between them), then everything each server writes until it closes is compared.
+type RawCase = { name: string; pieces: string[] };
+
+function rawCases(): RawCase[] {
+  return [
+    { name: "inline commands", pieces: ["PING\r\nSET  a   b\r\nGET a\nECHO hi\r\nQUIT\r\n"] },
+    {
+      name: "a command split across reads",
+      pieces: ["*2\r\n$4\r\nEC", "HO\r\n$5\r\nhel", "lo\r\n", "*1\r\n$4\r\nQUIT\r\n"],
+    },
+    {
+      name: "pipelined, split mid-header",
+      pieces: ["*1\r\n$4\r\nPING\r\n*1\r", "\n$4\r\nPING\r\n*1\r\n$4\r\nQUIT\r\n"],
+    },
+    {
+      name: "negative multibulk count",
+      pieces: ["*-5\r\n*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nQUIT\r\n"],
+    },
+    { name: "negative bulk length", pieces: ["*1\r\n$-5\r\n"] },
+    { name: "overflowing multibulk count", pieces: ["*18446744073709551617\r\n"] },
+    { name: "overflowing bulk length", pieces: ["*1\r\n$99999999999999999999\r\n"] },
+    { name: "bulk without $", pieces: ["*1\r\n+PING\r\n"] },
+    { name: "too big inline request", pieces: ["a".repeat(70000)] },
+    { name: "too big mbulk count string", pieces: [`*${"1".repeat(70000)}`] },
+    // Not compared: "too big bulk count string". Redis 8.8 doesn't answer a 70 kB bulk header
+    // within the timeout (with or without a line ending); this server rejects it at 64 kB.
+  ];
+}
+
+/// Everything `conn` sends until it closes (or "<timeout>" after 2 s).
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const data = await conn.read();
+    if (data.length === 0) {
+      return out;
+    }
+    out += utf8DecodeLossy(data);
+  }
+}
+
+async function timeout(ms: i64): Promise<string> {
+  await sleep(ms);
+  return "<timeout>";
+}
+
+async function rawExchange(addr: string, c: RawCase): Promise<string> {
+  const conn = await connect(addr);
+  for (const piece of c.pieces) {
+    await conn.writeBytes(utf8Encode(piece));
+    await sleep(20);
+  }
+  const reply = await Promise.race([readAll(conn), timeout(2000)]);
+  conn.close();
+  return reply;
 }
 
 async function main() {
@@ -320,6 +448,17 @@ async function main() {
   }
   ours.close();
   theirs.close();
+  for (const rc of rawCases()) {
+    total++;
+    const x = await rawExchange(argv[0], rc);
+    const y = await rawExchange(argv[1], rc);
+    if (x !== y) {
+      failures++;
+      console.log(`DIFF raw: ${rc.name}`);
+      console.log(`  ours:  ${JSON.stringify(x.slice(0, 200))}`);
+      console.log(`  redis: ${JSON.stringify(y.slice(0, 200))}`);
+    }
+  }
   console.log(`${total - failures}/${total} replies identical`);
   if (failures > 0) {
     exit(1);

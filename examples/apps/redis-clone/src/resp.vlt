@@ -8,88 +8,127 @@ const LF: u8 = 10;
 /// A protocol error: the connection is answered with `-ERR Protocol error: …` and closed.
 export class ProtocolError extends Error {}
 
+/// What Redis accepts at most for a header line or an inline command before a line ending.
+const MAX_LINE: i64 = 65536;
+const MAX_ARGS: i64 = 2147483647;
+const MAX_BULK: i64 = 536870912;
+
 /// Splits a byte stream into commands. Feed it what the socket reads; `next()` returns each
 /// complete command (its arguments as bytes), or null until more data arrives.
+///
+/// The buffer grows by doubling and is compacted in place, so feeding is amortized O(1) per
+/// byte; when a command is incomplete, `need` remembers how many bytes it needs, so a large
+/// value arriving in many reads isn't re-parsed after each one.
 export class RespParser {
-  private buf: u8[] = [];
-  private pos: i64 = 0;
+  private buf: u8[] = Buffer.alloc(16384);
+  private pos: i64 = 0; // next unparsed byte
+  private end: i64 = 0; // bytes filled
+  private need: i64 = 0; // don't try again until end - pos >= need
 
   feed(data: u8[]) {
-    if (this.pos === this.buf.length) {
-      this.buf = data;
+    if (this.pos === this.end) {
       this.pos = 0;
-      return;
+      this.end = 0;
     }
-    // Keep the unparsed tail and append.
-    const rest = this.buf.length - this.pos;
-    const merged = Buffer.alloc(rest + data.length);
-    merged.set(this.buf.slice(this.pos), 0);
-    merged.set(data, rest as usize);
-    this.buf = merged;
-    this.pos = 0;
+    if (this.end + data.length > this.buf.length) {
+      // Make room: drop the parsed prefix, then grow if that isn't enough.
+      if (this.pos > 0) {
+        this.buf.copyWithin(0, this.pos, this.end);
+        this.end -= this.pos;
+        this.pos = 0;
+      }
+      if (this.end + data.length > this.buf.length) {
+        let size = this.buf.length * 2;
+        while (size < this.end + data.length) {
+          size *= 2;
+        }
+        const grown = Buffer.alloc(size);
+        grown.set(this.buf.slice(0, this.end), 0);
+        this.buf = grown;
+      }
+    }
+    this.buf.set(data, this.end as usize);
+    this.end += data.length;
   }
 
-  /// A decimal number from `from` up to the CR at `end`.
-  private int(from: i64, end: i64): i64 {
-    let n: i64 = 0;
+  /// The CR that ends the line starting at `from`, or -1 if it hasn't arrived.
+  private lineEnd(from: i64): i64 {
+    const cr = this.buf.indexOf(CR, from);
+    return cr < 0 || cr + 1 >= this.end ? -1 : cr;
+  }
+
+  /// A decimal number from `from` up to `stop`, as Redis's string2ll reads it; `what` names the
+  /// header in the error ("multibulk" or "bulk").
+  private int(from: i64, stop: i64, what: string): i64 {
     let i = from;
-    let negative = false;
-    if (i < end && this.buf[i] === 45) {
-      negative = true;
+    const negative = i < stop && this.buf[i] === 45;
+    if (negative) {
       i++;
     }
-    if (i === end) {
-      throw new ProtocolError("invalid length");
+    // At most 19 digits: anything longer can't fit, and the loop below can't overflow.
+    if (i === stop || stop - i > 19) {
+      throw new ProtocolError(`invalid ${what} length`);
     }
-    for (; i < end; i++) {
+    let n: i64 = 0;
+    for (; i < stop; i++) {
       const c = this.buf[i];
       if (c < 48 || c > 57) {
-        throw new ProtocolError("invalid length");
+        throw new ProtocolError(`invalid ${what} length`);
       }
-      n = n * 10 + (c as i64) - 48;
+      const d = (c as i64) - 48;
+      if (n > (9223372036854775807 - d) / 10) {
+        throw new ProtocolError(`invalid ${what} length`);
+      }
+      n = n * 10 + d;
     }
     return negative ? -n : n;
   }
 
-  /// The next complete command, or null if the buffer holds only part of one.
+  /// The next complete command, or null if the buffer holds only part of one. An empty array
+  /// is a command to skip (`*0` or `*-1`, which Redis ignores too).
   next(): u8[][] | null {
-    if (this.pos >= this.buf.length) {
+    if (this.pos >= this.end || this.end - this.pos < this.need) {
       return null;
     }
+    this.need = 0;
     if (this.buf[this.pos] !== 42) {
       return this.inline();
     }
-    const start = this.pos;
-    const eol = this.buf.indexOf(CR, this.pos);
-    if (eol < 0 || eol + 1 >= this.buf.length) {
+    const eol = this.lineEnd(this.pos);
+    if (eol < 0) {
+      if (this.end - this.pos > MAX_LINE) {
+        throw new ProtocolError("too big mbulk count string");
+      }
       return null;
     }
-    const count = this.int(this.pos + 1, eol);
-    if (count > 1048576) {
+    const count = this.int(this.pos + 1, eol, "multibulk");
+    if (count > MAX_ARGS) {
       throw new ProtocolError("invalid multibulk length");
     }
     let at = eol + 2;
     const args: u8[][] = [];
     for (let i: i64 = 0; i < count; i++) {
-      if (at >= this.buf.length) {
-        this.pos = start;
+      if (at >= this.end) {
+        this.need = at - this.pos + 1;
         return null;
       }
       if (this.buf[at] !== 36) {
-        throw new ProtocolError(`expected '$', got '${String.fromCharCode(this.buf[at] as f64)}'`);
+        throw new ProtocolError(`expected '$', got '${String.fromCharCode(this.buf[at] as i64)}'`);
       }
-      const lineEnd = this.buf.indexOf(CR, at);
+      const lineEnd = this.lineEnd(at);
       if (lineEnd < 0) {
-        this.pos = start;
+        if (this.end - at > MAX_LINE) {
+          throw new ProtocolError("too big bulk count string");
+        }
         return null;
       }
-      const len = this.int(at + 1, lineEnd);
-      if (len < 0 || len > 536870912) {
+      const len = this.int(at + 1, lineEnd, "bulk");
+      if (len < 0 || len > MAX_BULK) {
         throw new ProtocolError("invalid bulk length");
       }
       const dataStart = lineEnd + 2;
-      if (dataStart + len + 2 > this.buf.length) {
-        this.pos = start;
+      if (dataStart + len + 2 > this.end) {
+        this.need = dataStart + len + 2 - this.pos;
         return null;
       }
       args.push(this.buf.slice(dataStart, dataStart + len));
@@ -102,18 +141,21 @@ export class RespParser {
   /// An inline command: one line, arguments separated by spaces (what `telnet` users type).
   private inline(): u8[][] | null {
     const eol = this.buf.indexOf(LF, this.pos);
-    if (eol < 0) {
+    if (eol < 0 || eol >= this.end) {
+      if (this.end - this.pos > MAX_LINE) {
+        throw new ProtocolError("too big inline request");
+      }
       return null;
     }
-    const end = eol > this.pos && this.buf[eol - 1] === CR ? eol - 1 : eol;
+    const stop = eol > this.pos && this.buf[eol - 1] === CR ? eol - 1 : eol;
     const args: u8[][] = [];
     let i = this.pos;
-    while (i < end) {
-      while (i < end && this.buf[i] === 32) {
+    while (i < stop) {
+      while (i < stop && this.buf[i] === 32) {
         i++;
       }
       const from = i;
-      while (i < end && this.buf[i] !== 32) {
+      while (i < stop && this.buf[i] !== 32) {
         i++;
       }
       if (i > from) {
@@ -165,16 +207,16 @@ export class Writer {
   private header(prefix: u8, n: i64) {
     this.reserve(24);
     this.byte(prefix);
-    let v = n;
-    if (v < 0) {
+    if (n < 0) {
       this.byte(45);
-      v = -v;
     }
+    // Digits from the non-positive value, so i64's minimum (which has no positive) works too.
+    let v = n < 0 ? n : -n;
     const start = this.length;
     do {
-      this.byte(48 + (v % 10) as u8);
+      this.byte((48 - v % 10) as u8);
       v = v / 10;
-    } while (v > 0);
+    } while (v < 0);
     // The digits went in least significant first: reverse them.
     let i = start;
     let j = this.length - 1;
@@ -204,8 +246,10 @@ export class Writer {
     this.crlf();
   }
 
+  /// An error reply. CR and LF in the message become spaces, as in Redis, so text echoed from a
+  /// request can't break the reply stream.
   error(message: string) {
-    this.ascii(`-${message}\r\n`);
+    this.ascii(`-${message.replaceAll("\r", " ").replaceAll("\n", " ")}\r\n`);
   }
 
   integer(n: i64) {

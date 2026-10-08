@@ -8,7 +8,7 @@ import { RespParser, Writer } from "./resp";
 
 type Batch = { reply: u8[]; open: bool };
 
-function runBatch(db: Db, commands: u8[][][], now: f64): Batch {
+function runBatch(db: Db, commands: u8[][][], now: i64): Batch {
   db.now = now;
   const out = new Writer();
   let open = true;
@@ -25,7 +25,7 @@ function runBatch(db: Db, commands: u8[][][], now: f64): Batch {
 // A helper rather than inline in the read loop: inline, `commands` is reported as "still used
 // after `with` stored it" although each iteration declares a new one (#716).
 async function answer(conn: TcpStream, db: shared<Mutex<Db>>, commands: u8[][][]): Promise<bool> {
-  const now = Date.now() as f64; // `Date.now()` is an i64 (#214)
+  const now = Date.now();
   const batch = db.with((d) => runBatch(d, commands, now));
   await conn.writeBytes(batch.reply);
   return batch.open;
@@ -74,7 +74,7 @@ async function serveClient(conn: TcpStream, db: shared<Mutex<Db>>): Promise<void
 async function sweeper(db: shared<Mutex<Db>>, stopped: shared<i64>): Promise<void> {
   while (stopped.get() === 0) {
     await sleep(100);
-    const now = Date.now() as f64;
+    const now = Date.now();
     db.with((d) => {
       d.now = now;
       d.sweep(20);

@@ -69,3 +69,55 @@ export function test_writer_grows_and_encodes() {
   assert(text.endsWith("\r\n$-1\r\n*0\r\n"));
   assertEq(w.take().length, 0);
 }
+
+function protocolError(wire: string): string {
+  const p = new RespParser();
+  p.feed(utf8Encode(wire));
+  try {
+    p.next();
+  } catch (e) {
+    return e.message;
+  }
+  return "";
+}
+
+export function test_lengths_that_overflow_or_run_on() {
+  assertEq(protocolError("*18446744073709551617\r\n"), "invalid multibulk length");
+  assertEq(protocolError("*1\r\n$99999999999999999999\r\n"), "invalid bulk length");
+  assertEq(protocolError("*1\r\n$-5\r\n"), "invalid bulk length");
+  assertEq(protocolError(`*${"1".repeat(70000)}`), "too big mbulk count string");
+  assertEq(protocolError(`*1\r\n$${"1".repeat(70000)}`), "too big bulk count string");
+  assertEq(protocolError("a".repeat(70000)), "too big inline request");
+}
+
+export function test_negative_count_is_skipped() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*-1\r\n*1\r\n$4\r\nPING\r\n"));
+  assertEq(p.next()!.length, 0);
+  assertEq(all(p), ["PING"]);
+}
+
+export function test_large_value_in_many_reads() {
+  const p = new RespParser();
+  const value = "v".repeat(300000);
+  const wire = `*2\r\n$3\r\nSET\r\n$${value.length}\r\n${value}\r\n`;
+  for (let i = 0; i < wire.length; i += 1000) {
+    p.feed(utf8Encode(wire.slice(i, i + 1000)));
+    if (i + 1000 < wire.length) {
+      assert(p.next() == null);
+    }
+  }
+  assertEq(p.next()![1].length, 300000);
+}
+
+export function test_integer_extremes_and_sanitized_errors() {
+  const w = new Writer();
+  w.integer(-9223372036854775807 - 1);
+  w.integer(9223372036854775807);
+  w.integer(0);
+  w.error("ERR bad\r\n+OK");
+  assertEq(
+    utf8DecodeLossy(w.take()),
+    ":-9223372036854775808\r\n:9223372036854775807\r\n:0\r\n-ERR bad  +OK\r\n",
+  );
+}

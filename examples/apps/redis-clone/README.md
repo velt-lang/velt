@@ -3,8 +3,8 @@
 A Redis-compatible server: the RESP2 protocol over `velt:net`, with pipelining, 65 commands
 over strings, lists, hashes, sets and sorted sets, and key expiry (on access, plus a background
 sweep). `redis-cli` and `redis-benchmark` work against it unchanged, and `parity.vlt` checks
-that its replies match a real Redis byte for byte (188 commands, including errors and edge
-cases).
+that its replies match a real Redis byte for byte: 236 cases, including errors, integer and
+float edge cases, inline commands, commands split across reads, and malformed input.
 
 ```sh
 velt run                       # 127.0.0.1:6380 (velt run -- <port> for another)
@@ -29,26 +29,41 @@ velt run demo.vlt              # a client session against an in-process server (
 - **Commands:** 65 commands, not about 240, and only one database.
 - **Binary keys:** values are binary-safe, but keys and set/hash members are decoded as UTF-8
   (invalid bytes become U+FFFD).
-- **Active expiry:** each sweep looks at the first 20 keys with a time to live, where Redis
-  samples at random. Keys outside that window are only removed when they are accessed.
+- **Active expiry:** every 100 ms a cursor checks the next 20 keys with a time to live, and
+  repeats while more than a quarter were due, as Redis does. Redis samples at random; the cursor
+  walks all of them in turn.
+- **Protocol limits:** as in Redis, a header or inline line without a line ending is rejected
+  after 64 KB ("too big mbulk count string", "too big inline request"). The same limit applies
+  to a bulk length header ("too big bulk count string"), where Redis 8.8 doesn't answer at all.
+  Inline commands don't support quoting (`SET "a b" c`).
+- **Floats:** scores accept what Redis's `strtod` does except hexadecimal floats (`0x1p3`).
 - **Atomicity:** each batch of pipelined commands runs under one lock, so other clients never
   see it half done, which is stronger than Redis guarantees.
 
 | File | What |
 |---|---|
-| `src/resp.vlt` | `RespParser` (incremental: commands may arrive split or pipelined), `Writer` (replies into a growable `u8[]`) |
+| `src/resp.vlt` | `RespParser` (incremental and amortized: commands may arrive split or pipelined; Redis's length and line limits), `Writer` (replies into a growable `u8[]`, headers written in place) |
 | `src/db.vlt` | `Db`: one map per value type plus an expiry map; `ZSet` (scores + an ordered array) |
 | `src/commands.vlt` | `execute(db, args, out)`: each command with Redis's argument rules and error messages |
 | `src/server.vlt` | a task per connection; each read's commands run as one batch under the keyspace lock |
-| `parity.vlt` | 188 commands against this server and a real Redis, replies compared byte for byte |
+| `parity.vlt` | 236 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
 | `bench.sh` | parity, then `redis-benchmark` (median of 3, interleaved), CPU per request, memory |
 
 ## Performance
 
-`./bench.sh` on an Apple M-series laptop (4 performance + 6 efficiency cores), Redis 8.8.1,
-50 connections, 200k requests per run, median of 3 runs interleaved between the servers. The
-Velt server runs twice: on one worker thread (`VELT_THREADS=1`) and with the default (one per
-core):
+**Basis.** redis-server runs commands on one thread. "Velt, default" uses every core, so rows
+where it leads (pipelining) compare many cores with one. "Velt, 1 thread" is the like-for-like
+column.
+
+`./bench.sh` was run on an Apple M-series laptop (4 performance + 6 efficiency cores) with Redis
+8.8.1, on a quiet machine (load average under 5), at commit `558551b6`. It uses 50 connections,
+200k requests per run, and the median of 3 runs interleaved between the servers. The Velt
+server runs twice: on one worker thread (`VELT_THREADS=1`) and with the default (one per core).
+
+The review changes since then (the parser's buffering and limits, strict score parsing) were
+checked with an interleaved A/B of the old and new builds on ZADD, LRANGE, GET and SET: no
+regression. The machine wasn't quiet enough for a full rerun. That A/B caught a first version
+of the score parser that compiled a `RegExp` per call and made ZADD 6× slower.
 
 | requests/s | Redis | Velt, 1 thread | Velt, default |
 |---|---|---|---|

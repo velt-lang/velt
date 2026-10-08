@@ -54,29 +54,144 @@ export function parseInt64(b: u8[]): i64 {
   return n;
 }
 
-function parseScore(b: u8[]): f64 {
-  const s = text(b).toLowerCase();
-  if (s === "inf" || s === "+inf") {
-    return Infinity;
-  }
-  if (s === "-inf") {
-    return -Infinity;
-  }
-  const n = Number(s);
-  if (s.length === 0 || s.trim() !== s || n !== n) {
-    throw new CommandError("ERR value is not a valid float");
-  }
-  return n;
+function notFloat(): CommandError {
+  return new CommandError("ERR value is not a valid float");
 }
 
-function formatScore(x: f64): string {
+/// Whether `s[from..]` is a decimal float in strtod's syntax: digits with an optional point
+/// (at least one digit), then an optional exponent (`e`, a sign, digits).
+function isDecimal(s: string, from: i64): bool {
+  let i = from;
+  let digits: i64 = 0;
+  while (i < s.length && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+    i++;
+    digits++;
+  }
+  if (i < s.length && s[i] === ".") {
+    i++;
+    while (i < s.length && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+      i++;
+      digits++;
+    }
+  }
+  if (digits === 0) {
+    return false;
+  }
+  if (i < s.length && (s[i] === "e" || s[i] === "E")) {
+    i++;
+    if (i < s.length && (s[i] === "+" || s[i] === "-")) {
+      i++;
+    }
+    const start = i;
+    while (i < s.length && s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) {
+      i++;
+    }
+    if (i === start) {
+      return false;
+    }
+  }
+  return i === s.length;
+}
+
+/// A score, as Redis's strtod-based parser reads it: decimal (`1`, `.5`, `5.`, `+1e3`), hex
+/// integers (`0x10`), `inf` / `infinity` with a sign. No spaces, no `nan`, and a value that
+/// overflows to infinity or underflows to zero is an error. Scanned by hand: ZADD is hot, and a
+/// RegExp per call (they can't be module constants yet, #60) made it 6x slower.
+export function parseScore(b: u8[]): f64 {
+  const s = text(b);
+  const signed = s.length > 0 && (s[0] === "+" || s[0] === "-");
+  const negative = signed && s[0] === "-";
+  const body = signed ? 1 : 0;
+  const rest = s.slice(body).toLowerCase();
+  if (rest === "inf" || rest === "infinity") {
+    return negative ? -Infinity : Infinity;
+  }
+  if (rest.startsWith("0x")) {
+    if (rest.length === 2) {
+      throw notFloat();
+    }
+    let v = 0.0;
+    for (let i = 2; i < rest.length; i++) {
+      const d = Number.parseInt(rest[i], 16);
+      if (d !== d) {
+        throw notFloat();
+      }
+      v = v * 16.0 + d;
+    }
+    return negative ? -v : v;
+  }
+  if (!isDecimal(s, body)) {
+    throw notFloat();
+  }
+  const v = Number(s);
+  if (v === Infinity || v === -Infinity) {
+    throw notFloat();
+  }
+  // Underflow: a mantissa with a non-zero digit that came out as zero.
+  if (v === 0.0) {
+    for (let i = body; i < s.length && s[i] !== "e" && s[i] !== "E"; i++) {
+      if (s.charCodeAt(i) >= 49 && s.charCodeAt(i) <= 57) {
+        throw notFloat();
+      }
+    }
+  }
+  return v;
+}
+
+/// A score as Redis writes it: an integer when it is whole and within +-2^62, else the shortest
+/// digits that round-trip, laid out by fpconv_dtoa's rules (exponent form for large or small
+/// magnitudes, with different cut-offs than JavaScript: 1e19 is "1e+19", 1.5e-6 "1.5e-6").
+export function formatScore(x: f64): string {
   if (x === Infinity) {
     return "inf";
   }
   if (x === -Infinity) {
     return "-inf";
   }
-  return `${x}`;
+  if (x === Math.trunc(x) && x >= -4611686018427387903.0 && x <= 4611686018427387903.0) {
+    return `${x as i64}`;
+  }
+  const negative = x < 0.0;
+  // `${v}` is JavaScript's shortest round-trip form; take its digits and decimal exponent K
+  // (value = digits * 10^K). Velt has no toExponential() to ask for them directly.
+  const plain = `${negative ? -x : x}`;
+  let mantissa = plain;
+  let k: i64 = 0;
+  const e = plain.indexOf("e");
+  if (e >= 0) {
+    mantissa = plain.slice(0, e);
+    k = Number.parseInt(plain.slice(e + 1), 10) as i64;
+  }
+  const dot = mantissa.indexOf(".");
+  if (dot >= 0) {
+    k -= (mantissa.length - dot - 1) as i64;
+    mantissa = mantissa.slice(0, dot) + mantissa.slice(dot + 1);
+  }
+  let lead = 0;
+  while (lead < mantissa.length - 1 && mantissa[lead] === "0") {
+    lead++;
+  }
+  let digits = mantissa.slice(lead);
+  while (digits.length > 1 && digits.endsWith("0")) {
+    digits = digits.slice(0, digits.length - 1);
+    k++;
+  }
+  const n = digits.length as i64;
+  const exp = k + n - 1 < 0 ? -(k + n - 1) : k + n - 1;
+  const sign = negative ? "-" : "";
+  if (k >= 0 && exp < n + 7) {
+    return `${sign}${digits}${"0".repeat(k as f64)}`;
+  }
+  if (k < 0 && (k > -7 || exp < 4)) {
+    const offset = n + k; // digits before the point
+    if (offset <= 0) {
+      return `${sign}0.${"0".repeat(-offset as f64)}${digits}`;
+    }
+    return `${sign}${digits.slice(0, offset)}.${digits.slice(offset)}`;
+  }
+  const shown = digits.slice(0, negative ? 17 : 18);
+  const body = shown.length > 1 ? `${shown[0]}.${shown.slice(1)}` : shown;
+  return `${sign}${body}e${k + n - 1 < 0 ? "-" : "+"}${exp}`;
 }
 
 /// Redis's glob: `*`, `?`, `[abc]`, `[^a]`, `[a-z]` and `\x`.
@@ -163,9 +278,24 @@ function arity(name: string, args: u8[][], n: i64) {
   }
 }
 
+/// SET/SETEX/PSETEX's expiry: `n` seconds (`seconds`) or ms, relative to now unless `absolute`,
+/// as an absolute time in ms. Redis's rules: positive, seconds that fit in ms. A relative time
+/// that overflows when now is added wraps into the past in Redis, so the command answers OK
+/// and the key is gone at once; 0 (the epoch) does the same here.
+function expireTime(db: Db, n: i64, seconds: bool, absolute: bool, command: string): i64 {
+  if (n <= 0 || (seconds && n > MAX / 1000)) {
+    throw new CommandError(`ERR invalid expire time in '${command}' command`);
+  }
+  const ms = seconds ? n * 1000 : n;
+  if (absolute) {
+    return ms;
+  }
+  return ms > MAX - db.now ? 0 : ms + db.now;
+}
+
 function set(db: Db, args: u8[][], out: Writer) {
   const key = text(args[1]);
-  let expireAt: f64 = 0;
+  let expireAt: i64 = 0;
   let nx = false;
   let xx = false;
   let get = false;
@@ -188,14 +318,14 @@ function set(db: Db, args: u8[][], out: Writer) {
       i + 1 < args.length
     ) {
       const n = parseInt64(args[++i]);
-      if (n <= 0) {
-        throw new CommandError("ERR invalid expire time in 'set' command");
-      }
       timed = true;
-      expireAt =
-        opt === "EX"
-          ? db.now + (n as f64) * 1000.0
-          : opt === "PX" ? db.now + (n as f64) : opt === "EXAT" ? (n as f64) * 1000.0 : n as f64;
+      expireAt = expireTime(
+        db,
+        n,
+        opt === "EX" || opt === "EXAT",
+        opt === "EXAT" || opt === "PXAT",
+        "set",
+      );
     } else {
       throw syntax();
     }
@@ -327,21 +457,65 @@ function ttl(db: Db, key: string, ms: bool, out: Writer) {
     return;
   }
   const left = at - db.now;
-  out.integer(ms ? left as i64 : ((left + 500.0) / 1000.0) as i64);
+  out.integer(ms ? left : (left + 500) / 1000);
 }
 
-function expire(db: Db, args: u8[][], scale: f64, out: Writer) {
+/// EXPIRE / PEXPIRE key n [NX|XX|GT|LT], with Redis's option rules and overflow checks.
+function expire(db: Db, name: string, args: u8[][], seconds: bool, out: Writer) {
+  let nx = false;
+  let xx = false;
+  let gt = false;
+  let lt = false;
+  for (let i = 3; i < args.length; i++) {
+    const opt = text(args[i]).toLowerCase();
+    if (opt === "nx") {
+      nx = true;
+    } else if (opt === "xx") {
+      xx = true;
+    } else if (opt === "gt") {
+      gt = true;
+    } else if (opt === "lt") {
+      lt = true;
+    } else {
+      throw new CommandError(`ERR Unsupported option ${text(args[i])}`);
+    }
+  }
+  if (nx && (xx || gt || lt)) {
+    throw new CommandError("ERR NX and XX, GT or LT options at the same time are not compatible");
+  }
+  if (gt && lt) {
+    throw new CommandError("ERR GT and LT options at the same time are not compatible");
+  }
+  let when = parseInt64(args[2]);
+  if (seconds) {
+    if (when > MAX / 1000 || when < MIN / 1000) {
+      throw new CommandError(`ERR invalid expire time in '${name}' command`);
+    }
+    when *= 1000;
+  }
+  if (when > MAX - db.now) {
+    throw new CommandError(`ERR invalid expire time in '${name}' command`);
+  }
+  when += db.now;
   const key = text(args[1]);
-  const n = parseInt64(args[2]);
   if (db.kind(key) === "none") {
     out.integer(0);
     return;
   }
-  const at = db.now + (n as f64) * scale;
-  if (at <= db.now) {
+  const current = db.expires.get(key); // null: no time to live (infinite)
+  const refused =
+    (nx && current != null) ||
+    (xx && current == null) ||
+    (gt && (current == null || when <= current)) ||
+    (lt && current != null && when >= current);
+  if (refused) {
+    out.integer(0);
+    return;
+  }
+  if (when <= db.now) {
     db.remove(key);
   } else {
-    db.expires.set(key, at);
+    db.expires.set(key, when);
   }
   out.integer(1);
 }
@@ -440,13 +614,10 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "setex":
     case "psetex": {
       arity(name, args, 4);
-      const n = parseInt64(args[2]);
-      if (n <= 0) {
-        throw new CommandError(`ERR invalid expire time in '${name}' command`);
-      }
+      const at = expireTime(db, parseInt64(args[2]), name === "setex", false, name);
       const key = text(args[1]);
       db.setString(key, args[3], false);
-      db.expires.set(key, db.now + (n as f64) * (name === "setex" ? 1000.0 : 1.0));
+      db.expires.set(key, at);
       out.ok();
       return;
     }
@@ -568,12 +739,9 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       return;
     }
     case "expire":
-      arity(name, args, 3);
-      expire(db, args, 1000.0, out);
-      return;
     case "pexpire":
-      arity(name, args, 3);
-      expire(db, args, 1.0, out);
+      arity(name, args, -3);
+      expire(db, name, args, name === "expire", out);
       return;
     case "ttl":
       arity(name, args, 2);
@@ -945,10 +1113,16 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       return;
     }
   }
-  const shown = args.slice(1).map((a) => `'${text(a)}' `).join("");
+  // Redis's wording and limits: the name up to 128 characters, then quoted arguments while the
+  // list is shorter than 128 characters, each cut to what is left of those 128.
+  let shown = "";
+  for (let i = 1; i < args.length && shown.length < 128; i++) {
+    shown += `'${text(args[i]).slice(0, 128 - shown.length)}' `;
+  }
+  const command = text(args[0]).slice(0, 128);
   throw new CommandError(
     args.length > 1
-      ? `ERR unknown command '${text(args[0])}', with args beginning with: ${shown}`
-      : `ERR unknown command '${text(args[0])}'`,
+      ? `ERR unknown command '${command}', with args beginning with: ${shown}`
+      : `ERR unknown command '${command}'`,
   );
 }
