@@ -147,7 +147,7 @@ function id<T>(x: T): T {
 
 function main() {
   const inc: (x: i32) => i32 = id((x) => x + 1); // x: i32
-  const lengths: ((s: string) => usize)[] = id([(s) => s.length]);
+  const lengths: ((s: string) => number)[] = id([(s) => s.length]);
   console.log(inc(1), lengths[0]("abc")); // 2 3
 }
 ```

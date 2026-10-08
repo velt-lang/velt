@@ -7,14 +7,14 @@ sitting. Every example compiles; the full rules are in [the Reference](../refere
 ## Values and types
 
 ```ts
-const a = 7;             // an integer (stored as i64) that behaves like a JS number
+const a = 7;             // a number, exactly as in JS (stored as an integer where that's exact)
 const x: f64 = 1.5;      // number is f64
 console.log(a / 2, a + x);  // 3.5 8.5, like JS
-const n: i64 = 7;        // a declared integer type: integer math, opt-in for speed
+const n: i64 = 7;        // a declared integer type: integer math, opt-in
 console.log(n / 2, Math.trunc(a / 2));   // 3 3: integer division
 let small: u8 = 250;
 small += 10;             // 4: integer math wraps
-console.log(n as f64 / 2.0, 300 as u8);  // 3.5 44: declared types convert only with `as`
+console.log(n as number / 2, 300 as u8); // 3.5 44: 64-bit integers convert only with `as`
 const s = `a=${a} x=${x}`;               // template literals; "a=" + a is a compile error
 ```
 
