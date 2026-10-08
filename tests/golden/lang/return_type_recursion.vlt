@@ -1,0 +1,92 @@
+// Recursion outside `return` expressions needs no return type annotation, as in TypeScript
+// (#75): accumulators, conditions, methods, generic functions and mutual recursion.
+class Node {
+  kids: Node[] = [];
+  value: i64 = 1;
+}
+
+function count(n: Node) {
+  let total = 1;
+  for (const c of n.kids) {
+    total += count(c);
+  }
+  return total;
+}
+
+function depth(n: Node) {
+  let best = 0;
+  for (const c of n.kids) {
+    const d = depth(c);
+    if (d > best) {
+      best = d;
+    }
+  }
+  return best + 1;
+}
+
+function deep(n: Node) {
+  if (depth(n) > 2) {
+    return "deep";
+  }
+  for (const c of n.kids) {
+    if (deep(c) == "deep") {
+      return "deep inside";
+    }
+  }
+  return "shallow";
+}
+
+function collect(n: Node, out: i64[]) {
+  out.push(n.value);
+  let added = 1;
+  for (const c of n.kids) {
+    added += collect(c, out);
+  }
+  return added;
+}
+
+function sizeOf<T>(xs: T[], i: i64) {
+  let n = 0;
+  if (i < (xs.length as i64)) {
+    n = 1 + sizeOf(xs, i + 1);
+  }
+  return n;
+}
+
+class Walker {
+  visited: i64 = 0;
+  walk(n: Node) {
+    let seen = 1;
+    for (const c of n.kids) {
+      seen += this.walk(c);
+    }
+    this.visited += 1;
+    return seen;
+  }
+}
+
+function weightA(n: Node) {
+  let w = n.value;
+  for (const c of n.kids) {
+    w += weightB(c);
+  }
+  return w;
+}
+
+function weightB(n: Node) {
+  return weightA(n) * 2;
+}
+
+function main() {
+  const root = new Node();
+  const a = new Node();
+  const b = new Node();
+  b.kids.push(new Node());
+  a.kids.push(b);
+  root.kids.push(a);
+  root.kids.push(new Node());
+  console.log(count(root), depth(root), deep(root), collect(root, []));
+  console.log(sizeOf(["a", "b", "c"], 0));
+  const w = new Walker();
+  console.log(w.walk(root), w.visited, weightA(root));
+}

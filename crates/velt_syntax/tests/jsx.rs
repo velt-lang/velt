@@ -54,6 +54,34 @@ fn member_namespaced_and_dashed_names() {
 }
 
 #[test]
+fn type_arguments_on_tags() {
+    assert_eq!(j("<List<i64> items={xs} />"), "<List<i64> items={xs}/>");
+    assert_eq!(j("<List<string>>{x}</List>"), "<List<string>>[{x}]");
+    assert_eq!(j("<ui.List<i64>></ui.List>"), "<ui.List<i64>/>");
+    // Nested arguments close with `>>` and `>>>`; object and function types inside.
+    assert_eq!(
+        j("<Map<Array<Array<i64>>> a={1} />"),
+        "<Map<Array<Array<i64>>> a={1}/>"
+    );
+    assert_eq!(
+        j("<A<{ x: i64 }, (y: i64) => bool> />"),
+        "<A<{x: i64}, fn(i64) => bool>/>"
+    );
+    // A `<` after `=` still starts an element as the attribute value.
+    assert_eq!(j("<A<i64> icon=<B /> />"), "<A<i64> icon=<B/>/>");
+    // The closing tag takes no type arguments.
+    assert_eq!(
+        errors("const a = <List<i64>></List<i64>>;"),
+        ["a closing tag takes no type arguments"]
+    );
+    // An empty list is TypeScript's TS1099, not "no type arguments".
+    assert_eq!(
+        errors("const a = <List<> />;"),
+        ["Type argument list cannot be empty."]
+    );
+}
+
+#[test]
 fn attributes() {
     assert_eq!(
         j(r#"<input type="text" disabled value={v} />"#),

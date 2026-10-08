@@ -18,7 +18,7 @@
 //! (`LocalDef::mutable` records the modification instead; see `crate::ownership`).
 //! Capture modes that depend on inferred mutation are finalized by `crate::ownership`.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 use velt_syntax::ast;
 
 use super::closure_sig::Expected;
@@ -77,10 +77,10 @@ impl FnCx<'_, '_> {
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
-                    "a generic arrow function must be a module-level constant with typed parameters and a return type",
+                    "a generic arrow function must be the value of a `const` with typed parameters",
                     e.span,
                 )
-                .with_note("a function value has one type; write `const id = <T>(x: T): T => x;` at module level, or a generic `function`"),
+                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
         }
@@ -125,6 +125,7 @@ impl FnCx<'_, '_> {
         let def = self.alloc_closure(span);
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
+        frame.closure_assigned = closure_assigned_in(params, body);
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.is_async = is_async;
@@ -167,10 +168,12 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
-        if is_async {
-            self.no_mutated_captures(&frame);
+        let mutated = if is_async {
             self.no_captured_generators(&frame);
-        }
+            mutated_captures(&frame)
+        } else {
+            vec![]
+        };
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
         let err = self.closure_error(def, declared_err, &frame, clause);
@@ -180,7 +183,9 @@ impl FnCx<'_, '_> {
         } else {
             body_ret
         };
-        self.cx.fn_info_mut(def).escaping = escaping || is_async;
+        let info = self.cx.fn_info_mut(def);
+        info.escaping = escaping || is_async;
+        info.mutated_captures = mutated;
         self.finish_closure(Checked {
             def,
             frame,
@@ -211,25 +216,6 @@ impl FnCx<'_, '_> {
                 init: Some(init),
             },
             span: p.name.span,
-        }
-    }
-
-    /// Async closures run as tasks, possibly on another thread and after the enclosing function
-    /// has moved on: mutating a captured variable would be a data race (or lost), so it is an
-    /// error; shared state goes through `shared` (docs/reference/async.md).
-    pub(super) fn no_mutated_captures(&mut self, frame: &Frame) {
-        for c in &frame.captures {
-            let Some(at) = c.mutated_at else { continue };
-            let name = frame.locals[c.inner.0 as usize].name.clone();
-            self.cx.error(
-                Diagnostic::error(
-                    format!("cannot mutate captured variable `{name}` in a spawned task (async closure)"),
-                    at,
-                )
-                .with_note(format!(
-                    "tasks may run concurrently on other threads; share it with `shared` instead: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
-                )),
-            );
         }
     }
 
@@ -285,12 +271,18 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
                 self.stmts_into(&b.stmts, &mut stmts);
-                let block = hir::Block {
+                let mut block = hir::Block {
                     stmts,
                     value: None,
                     span: b.span,
                 };
-                let ret = self.f.ret.unwrap_or(self.cx.ty.unit);
+                let ret = match self.f.ret {
+                    Some(r) => r,
+                    None => {
+                        self.finish_inferred_ret(&mut block, "this arrow function")
+                            .0
+                    }
+                };
                 self.check_returns("closure", ret, span, &block);
                 block
             }
@@ -405,6 +397,7 @@ impl FnCx<'_, '_> {
             is_generator: generator.is_some(),
             self_ty: None,
             captures,
+            shares_captures: false,
             body: hir::Body { locals, block },
             throws: None,
             span,
@@ -466,4 +459,33 @@ impl FnCx<'_, '_> {
             }
         }
     }
+}
+
+/// The variables that closures created in an arrow function (`params`, `body`) assign.
+fn closure_assigned_in(
+    params: &[ast::ArrowParam],
+    body: &ast::ArrowBody,
+) -> std::collections::HashMap<String, Span> {
+    let defaults = params.iter().filter_map(|p| p.default.as_ref());
+    let assigned = match body {
+        ast::ArrowBody::Block(b) => crate::body::assigned::assigned_by_closures(&b.stmts, defaults),
+        ast::ArrowBody::Expr(e) => {
+            crate::body::assigned::assigned_by_closures(&[], defaults.chain([&**e]))
+        }
+    };
+    crate::body::closure_assigned::owned(assigned)
+}
+
+/// The captured variables an async closure's body modifies, with the first place each is
+/// modified. They are only allowed when the closure stays on its task
+/// (`crate::ownership::local_async`).
+fn mutated_captures(frame: &Frame) -> Vec<(String, Span)> {
+    frame
+        .captures
+        .iter()
+        .filter_map(|c| {
+            let at = c.mutated_at?;
+            Some((frame.locals[c.inner.0 as usize].name.clone(), at))
+        })
+        .collect()
 }

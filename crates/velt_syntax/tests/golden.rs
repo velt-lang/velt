@@ -34,6 +34,7 @@ fn golden_m1_files_parse() {
                 | "strict_mode_names.vlt"
                 | "generator_syntax.vlt"
                 | "generator_done_undefined.vlt"
+                | "private_names_syntax.vlt"
         ) {
             continue;
         }

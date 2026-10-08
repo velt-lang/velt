@@ -1,0 +1,96 @@
+// `sort(cmp)` with a comparator that reaches the array through an alias (#530). The stable sort
+// works on buffers of its own. Numbers are copied: the comparator sees the array as it was,
+// its stores are overwritten by the sorted result and its pushes stay after it, all as in
+// Node. Objects are moved and the array stays empty until the sort is done: what the
+// comparator pushes ends up after the sorted elements (as in Node), and a store into the
+// array is an index out of bounds, never a double free of an element the sort is moving
+// (Node writes the sorted elements over it instead). Node prints the same up to the last
+// line.
+
+class Item {
+  key: number;
+  label: string;
+  constructor(key: number) {
+    this.key = key;
+    this.label = `item-${key}-with-a-heap-allocated-label`;
+  }
+}
+
+class Holder {
+  items: Item[] = [];
+}
+
+function keys(items: Item[]): string {
+  return items.map((it) => `${it.key}`).join(",");
+}
+
+// Sorts `n` items whose comparator pushes two more through an alias on its first call.
+function pushWhileSorting(n: number) {
+  const xs: Item[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(new Item((i * 17) % 23));
+  }
+  const ys = xs;
+  let calls = 0;
+  xs.sort((a, b) => {
+    calls++;
+    if (calls === 1) {
+      ys.push(new Item(100));
+      ys.push(new Item(99));
+    }
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  console.log(xs.length, keys(xs));
+}
+
+// Sorts `n` numbers with a comparator that checks every element through an alias on each
+// call (it must see the array as it was, plus its own changes), and on its first call stores
+// into it and pushes onto it.
+function numbersThroughAlias(n: number) {
+  const xs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push((i * 17) % 23);
+  }
+  const expected = xs.slice();
+  const ys = xs;
+  let calls = 0;
+  let unexpected = 0;
+  xs.sort((a, b) => {
+    calls++;
+    if (ys.length !== expected.length) {
+      unexpected++;
+    }
+    for (let i = 0; i < expected.length; i++) {
+      if (ys[i] !== expected[i]) {
+        unexpected++;
+      }
+    }
+    if (calls === 1) {
+      ys[1] = -5;
+      expected[1] = -5;
+      ys.push(100);
+      expected.push(100);
+    }
+    return a - b;
+  });
+  console.log(xs.length, unexpected, xs.join(","));
+}
+
+function main() {
+  numbersThroughAlias(10);
+  numbersThroughAlias(40);
+  // Objects: a short array (insertion sorted) and a long one, both moved into the buffer.
+  pushWhileSorting(10);
+  pushWhileSorting(40);
+  const h = new Holder();
+  for (let i = 0; i < 40; i++) {
+    h.items.push(new Item((i * 7) % 13));
+  }
+  const alias = h;
+  console.log("store through an alias");
+  h.items.sort((a, b) => {
+    alias.items[3] = new Item(-1);
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  console.log("not reached", keys(h.items));
+}

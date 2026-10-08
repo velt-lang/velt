@@ -1,5 +1,5 @@
-// std/redis/reply: `RedisReply`, the `RedisError` mapping and the decoding of runtime replies for std/redis
-// (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
+// std/redis/reply: `RedisReply`, the `RedisError` mapping and the decoding of runtime replies for
+// std/redis (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
 //
 // The runtime hands a reply over as three parallel arrays in pre-order (a node, then its
 // children): `tags` (the kind), `nums` (an integer, or an array's length) and `strs` (text).
@@ -81,7 +81,7 @@ export class RedisReply {
     return null;
   }
 
-  /** The string elements of an array reply (nil and non-string elements become ""). */
+  /** The elements of an array reply as text (string and status elements; others become ""). */
   asStrings(): string[] {
     const out: string[] = __intrinsic_array_with_capacity(this.items.length);
     for (const it of this.items) {

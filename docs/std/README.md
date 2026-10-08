@@ -9,8 +9,9 @@ import { Set } from "velt:collections/set";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
-scope everywhere without an import. `velt doc --std` generates HTML API documentation from the
-sources.
+scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
+`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL` and `URLSearchParams`.
+`velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions
 
@@ -25,8 +26,9 @@ sources.
 - **I/O errors** are `IoError { code, message }` from [`velt:io`](io.md). `code` is a
   Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, … A failed file-system
   call has Node's message: `ENOENT: no such file or directory, open 'data.txt'`.
-- **Strings** are UTF-8, and string positions (`slice`, `indexOf`, regex match offsets) are
-  **byte offsets**.
+- **Strings** are sequences of UTF-16 code units, as in JS: lengths and positions (`slice`,
+  `indexOf`, regex match offsets, CSV and CLI column widths) count code units. Their text is
+  stored and written as UTF-8; `Buffer.byteLength(s)` is that size.
 - **Async functions return promises that start at once**, like JS (a direct `await` costs
   nothing). A promise that is neither awaited nor spawned is a compile error. `*Sync` variants
   block the calling thread.
@@ -41,7 +43,7 @@ sources.
 | Area | Modules |
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
-| Network | [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
+| Network | [fetch](fetch.md) (global) · [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
 | Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
@@ -62,13 +64,14 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
+| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
 | `velt:websocket` | tokio-tungstenite connections and server upgrades |
 | `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
 | `velt:regex` | Rust's `regex` engine |
+| `velt:channel`, `velt:task` | channel queues, abort signals and task groups |
 | `velt:child_process` | process spawning and pipes |
 | `velt:udp`, `velt:dns` | sockets and the system resolver |
-| `velt:bigint` | arbitrary-precision integers (num-bigint) |
+| `velt:bigint` | arbitrary-precision integers (dashu-int) |
 | `velt:crypto`, `velt:uuid` | only the operating system's secure random generator; hashing, HMAC and formatting are pure Velt |
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
@@ -78,9 +81,10 @@ what Velt can't do on its own:
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
-Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
-`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:json`
-and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
+Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:csv`, `velt:cli`,
+`velt:timers` (built on `sleep`, `spawn` and `velt:task` signals) and `velt:json`; `velt:jsx`
+too (escaping through `velt:html`). `velt:encoding`, `velt:url` and `velt:io` use only the
+runtime's UTF-8 conversions and error-code names. The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly

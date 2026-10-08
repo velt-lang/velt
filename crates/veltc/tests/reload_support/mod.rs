@@ -19,24 +19,12 @@ mod job;
 /// first `--exe` build took over 30 s there.
 const TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Build the runtime staticlib `velt --exe` links (as the golden harness does), in this test's
-/// profile: `velt` looks for it next to itself.
+/// Build the runtime libraries `velt` links, in this test's profile, and check they are current
+/// (`tests/runtime_support/mod.rs`).
 pub fn build_runtime() {
-    // Already built by the gate (see `tests/runtime_support/mod.rs`).
-    if cfg!(debug_assertions) && std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1") {
-        return;
-    }
-    let profile: &[&str] = if cfg!(debug_assertions) {
-        &[]
-    } else {
-        &["--release"]
-    };
-    let status = crate::no_window::command(env!("CARGO"))
-        .args(["build", "-q", "-p", "velt_rt"])
-        .args(profile)
-        .status()
-        .expect("run cargo");
-    assert!(status.success(), "cargo build -p velt_rt failed");
+    crate::runtime_support::build_native_runtime(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    );
 }
 
 /// Captured lines of both output streams, with the time each arrived.
@@ -65,7 +53,13 @@ pub struct Dev {
 impl Dev {
     /// `velt dev <mode flags> main.vlt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
+        Dev::start_with_env(dir, mode, &[])
+    }
+
+    /// [`Dev::start`] with extra environment variables.
+    pub fn start_with_env(dir: &Path, mode: &[&str], env: &[(&str, &str)]) -> Dev {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.envs(env.iter().copied());
         cmd.arg("dev")
             .args(mode)
             .arg("main.vlt")
@@ -269,8 +263,9 @@ pub fn get(port: u16, path: &str) -> Result<String, String> {
 
 fn request(port: u16, path: &str) -> std::io::Result<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
-    // Long enough for a slow handler left running across a reload (tests/reload/in_flight).
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    // A hang guard: a handler held across a reload (tests/reload/in_flight) answers once the
+    // test releases it.
+    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
     write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"

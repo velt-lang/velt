@@ -1,11 +1,10 @@
 // std/csv: RFC 4180 CSV parsing and writing.
 //
-// The parser scans the UTF-8 bytes once; unquoted fields are slices of the input, quoted fields
+// The parser scans the text once with `charCodeAt` (the delimiter, quotes and line breaks are
+// ASCII, so an ASCII text is read inline); unquoted fields are slices of the input, quoted fields
 // are slices with `""` unescaped. Records end at LF, CRLF or a lone CR; a final line break does
-// not start another record, and a leading UTF-8 BOM is skipped. Quoted fields may contain
-// delimiters and line breaks. Fields are strings; no type inference.
-
-declare function velt_rt_bytes_from_str(s: string): u8[];
+// not start another record, and a leading byte order mark (U+FEFF) is skipped. Quoted fields may
+// contain delimiters and line breaks. Fields are strings; no type inference.
 
 /**
  * A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
@@ -38,96 +37,104 @@ export struct CsvWriteOptions {
   crlf?: bool;
 }
 
-// Byte values used by the scanner.
-const QUOTE: u8 = 34;
-const LF: u8 = 10;
-const CR: u8 = 13;
-const SPACE: u8 = 32;
-const TAB: u8 = 9;
+// Code units the scanner looks for.
+const QUOTE: i64 = 34;
+const LF: i64 = 10;
+const CR: i64 = 13;
+const SPACE: i64 = 32;
+const TAB: i64 = 9;
+const BOM: i64 = 0xfeff;
 
-// The delimiter byte of `d`; throws `CsvError` unless it is one ASCII character.
-function delimiterByte(d: string): u8 {
+// The delimiter code unit of `d`; throws `CsvError` unless it is one ASCII character.
+function delimiterUnit(d: string): i64 {
   const c = d.charCodeAt(0);
   if (d.length != 1 || c >= 128 || c == 34 || c == 10 || c == 13) {
     throw new CsvError(`Invalid CSV delimiter: ${JSON.stringify(d)}`, 0);
   }
-  return c as u8;
+  return c;
 }
 
-// Scanner state over the input bytes.
+// Scanner state over the input text; positions are code units, as `slice` takes them.
 class CsvScanner {
-  b: u8[];
+  text: string;
+  len: usize;
   pos: usize = 0;
   line: i64 = 1;
-  delim: u8;
+  delim: i64;
   trim: bool;
 
-  constructor(b: u8[], delim: u8, trim: bool) {
-    // Skip a UTF-8 byte order mark.
-    if (b.length >= 3 && b[0] == (0xef as u8) && b[1] == (0xbb as u8) && b[2] == (0xbf as u8)) {
-      this.pos = 3;
+  constructor(text: string, delim: i64, trim: bool) {
+    this.len = text.length;
+    // Skip a byte order mark.
+    if (text.charCodeAt(0) == BOM) {
+      this.pos = 1;
     }
-    this.b = b;
+    this.text = text;
     this.delim = delim;
     this.trim = trim;
   }
 
+  // The code unit at `i` (below `len`).
+  private at(i: usize): i64 {
+    return this.text.charCodeAt(i as i64);
+  }
+
   private skipBlanks() {
-    while (this.pos < this.b.length && (this.b[this.pos] == SPACE || this.b[this.pos] == TAB)) {
+    while (this.pos < this.len && (this.at(this.pos) == SPACE || this.at(this.pos) == TAB)) {
       this.pos++;
     }
   }
 
-  // The next field of `text`; leaves `pos` on the delimiter / line break / end after it.
-  field(text: string): string {
+  // The next field; leaves `pos` on the delimiter / line break / end after it.
+  field(): string {
     if (this.trim) {
       this.skipBlanks();
     }
-    if (this.pos < this.b.length && this.b[this.pos] == QUOTE) {
-      return this.quoted(text);
+    if (this.pos < this.len && this.at(this.pos) == QUOTE) {
+      return this.quoted();
     }
     const start = this.pos;
-    while (this.pos < this.b.length) {
-      const c = this.b[this.pos];
+    while (this.pos < this.len) {
+      const c = this.at(this.pos);
       if (c == this.delim || c == LF || c == CR) {
         break;
       }
       this.pos++;
     }
-    const raw = text.slice(start as i64, this.pos as i64);
+    const raw = this.text.slice(start as i64, this.pos as i64);
     return this.trim ? raw.trimEnd() : raw;
   }
 
-  private quoted(text: string): string {
+  private quoted(): string {
     const startLine = this.line;
     const start = this.pos + 1;
     let escaped = false;
     let j = start;
     while (true) {
-      if (j >= this.b.length) {
+      if (j >= this.len) {
         throw new CsvError(`Unterminated quoted field starting on line ${startLine}`, startLine);
       }
-      const c = this.b[j];
+      const c = this.at(j);
       if (c == QUOTE) {
-        if (j + 1 < this.b.length && this.b[j + 1] == QUOTE) {
+        if (j + 1 < this.len && this.at(j + 1) == QUOTE) {
           escaped = true;
           j += 2;
           continue;
         }
         break;
       }
-      if (c == LF || (c == CR && (j + 1 >= this.b.length || this.b[j + 1] != LF))) {
+      if (c == LF || (c == CR && (j + 1 >= this.len || this.at(j + 1) != LF))) {
         this.line++;
       }
       j++;
     }
-    const inner = text.slice(start as i64, j as i64);
+    const inner = this.text.slice(start as i64, j as i64);
     this.pos = j + 1;
     if (this.trim) {
       this.skipBlanks();
     }
-    if (this.pos < this.b.length) {
-      const c = this.b[this.pos];
+    if (this.pos < this.len) {
+      const c = this.at(this.pos);
       if (c != this.delim && c != LF && c != CR) {
         throw new CsvError(
           `Unexpected character after closing quote on line ${this.line}`,
@@ -141,15 +148,15 @@ class CsvScanner {
   // Consumes the delimiter after a field; false (consuming the line break, if any) at the end
   // of a record.
   next(): bool {
-    if (this.pos >= this.b.length) {
+    if (this.pos >= this.len) {
       return false;
     }
-    const c = this.b[this.pos];
+    const c = this.at(this.pos);
     this.pos++;
     if (c == this.delim) {
       return true;
     }
-    if (c == CR && this.pos < this.b.length && this.b[this.pos] == LF) {
+    if (c == CR && this.pos < this.len && this.at(this.pos) == LF) {
       this.pos++;
     }
     this.line++;
@@ -157,27 +164,23 @@ class CsvScanner {
   }
 
   done(): bool {
-    return this.pos >= this.b.length;
+    return this.pos >= this.len;
   }
 }
 
 /**
- * Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field or
- * text after a closing quote.
+ * Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field,
+ * text after a closing quote, or an invalid `delimiter`.
  */
 export function parseCsv(text: string, opts: CsvOptions = {}): string[][] {
-  const s = new CsvScanner(
-    velt_rt_bytes_from_str(text),
-    delimiterByte(opts.delimiter ?? ","),
-    opts.trim ?? false,
-  );
+  const s = new CsvScanner(text, delimiterUnit(opts.delimiter ?? ","), opts.trim ?? false);
   const skipEmpty = opts.skipEmptyLines ?? false;
   const rows: string[][] = [];
   while (!s.done()) {
     const row: string[] = [];
-    row.push(s.field(text));
+    row.push(s.field());
     while (s.next()) {
-      row.push(s.field(text));
+      row.push(s.field());
     }
     if (!(skipEmpty && row.length == 1 && row[0].length == 0)) {
       rows.push(row);
@@ -215,10 +218,13 @@ function needsQuotes(field: string, delim: string): bool {
     field.includes("\r");
 }
 
-/** Writes records as CSV, quoting only fields that need it; every record ends with a line break. */
+/**
+ * Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+ * Throws `CsvError` on an invalid `delimiter`.
+ */
 export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): string {
   const delim = opts.delimiter ?? ",";
-  delimiterByte(delim);
+  delimiterUnit(delim);
   const eol = (opts.crlf ?? false) ? "\r\n" : "\n";
   const lines: string[] = __intrinsic_array_with_capacity(rows.length + 1);
   for (const row of rows) {

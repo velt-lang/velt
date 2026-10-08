@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
-        let c = self.fn_callable(d, format!("`{what}`"));
+        let c = self.fn_callable(d, format!("`{what}`"), span);
         let mut slots = vec![None; c.slot_names.len()];
         for (slot, t) in slots.iter_mut().zip(type_args) {
             *slot = Some(*t);
@@ -255,7 +255,7 @@ impl FnCx<'_, '_> {
             let mut place = a;
             loop {
                 place = match &place.kind {
-                    H::WrapSome(x) | H::Upcast(x) => x,
+                    H::WrapSome(x) | H::Upcast(x) | H::Downcast(x) => x,
                     // A narrowed union value passed as the union (the member re-wrapped).
                     H::Variant { args, .. } if args.len() == 1 && is_place(&args[0]) => &args[0],
                     _ => break,
@@ -445,14 +445,14 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The place an argument passes (under re-wrapping: `Some`, an upcast, a union member), and
+/// The place an argument passes (under re-wrapping: `Some`, an up- or downcast, a union member), and
 /// the interface value coercion it went through, if any.
 fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;
     loop {
         place = match &place.kind {
-            H::WrapSome(x) | H::Upcast(x) => x,
+            H::WrapSome(x) | H::Upcast(x) | H::Downcast(x) => x,
             H::ToDyn { expr, .. } => {
                 coerced = Some(&**expr);
                 expr

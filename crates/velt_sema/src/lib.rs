@@ -30,17 +30,21 @@ mod anon;
 mod assigned_fields;
 mod ast_walk;
 mod body;
+mod brands;
 mod collect;
 mod ctx;
 mod defs;
 mod discriminants;
 mod dispatch;
+pub mod effects;
 mod finalize;
 mod flow;
+mod fresh_returns;
 mod generic_arrows;
 pub mod ide;
 mod infer;
 mod instantiation_cycles;
+mod intersections;
 mod json;
 mod known;
 mod literals;
@@ -59,6 +63,7 @@ mod unions;
 mod utility_types;
 mod visit;
 mod void_fields;
+mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast;
@@ -92,6 +97,22 @@ pub struct SourceModule {
 /// nesting limit), which can exceed the 1 MB main-thread stack on Windows.
 pub(crate) const SEMA_STACK_BYTES: usize = 64 << 20;
 
+/// How much of the checking thread's stack inferring return types may use: the rest is left for
+/// checking the deepest body (`body::returns::ret_of`).
+pub(crate) const SEMA_STACK_BUDGET: usize = 48 << 20;
+
+/// The budget when the checking thread could not be spawned and the caller's stack (of unknown
+/// size, at least the 1 MB of a Windows main thread) is used instead.
+pub(crate) const FALLBACK_STACK_BUDGET: usize = 512 << 10;
+
+/// The address of a local of the caller's frame: how deep the stack is here (it grows down on
+/// every supported target).
+#[inline(never)]
+pub(crate) fn stack_address() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
+
 /// CONTRACT: check a whole program. `modules[root]` must define `main`.
 /// Returns `Some(program)` iff there are no errors; warnings may accompany either outcome.
 pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Diagnostics) {
@@ -123,12 +144,14 @@ pub fn check_with(
         let spawned = std::thread::Builder::new()
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root, opts));
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, SEMA_STACK_BUDGET)
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts),
+            Err(_) => check_on_current_thread(modules, root, opts, FALLBACK_STACK_BUDGET),
         }
     })
 }
@@ -137,19 +160,29 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
-    let mut cx = ctx::Ctx::new(modules, root);
-    analyze(&mut cx);
-    let entry = check_main(&mut cx, root, root_mod, opts.require_main);
-    check_imported_scripts(&mut cx, root, modules);
-    resolve::check_unused_aliases(&mut cx);
-
+    let new_cx = |held_borrows: bool| {
+        let mut cx = ctx::Ctx::new(modules, root);
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        (cx, entry)
+    };
+    let (mut cx, mut entry) = new_cx(true);
+    if retry_sharing(&cx) {
+        (cx, entry) = new_cx(false);
+    }
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
     }
@@ -175,15 +208,55 @@ fn check_on_current_thread(
     (Some(program), diags)
 }
 
+/// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
+fn analyze(
+    cx: &mut ctx::Ctx,
+    root: usize,
+    root_mod: &SourceModule,
+    modules: &[SourceModule],
+    opts: CheckOptions,
+) -> Option<hir::DefId> {
+    analyze_bodies(cx);
+    let entry = check_main(cx, root, root_mod, opts.require_main);
+    check_imported_scripts(cx, root, modules);
+    resolve::check_unused_aliases(cx);
+    entry
+}
+
+/// Should the program be checked again with held closures and `const me = this` sharing?
+/// Borrowing in them only changes the cost, never which programs are accepted
+/// (docs/reference/functions.md "Captures"). So when some of them borrowed and a pass from
+/// `demote_local_closures` on reported an error, the program is checked again with them
+/// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
+/// borrowing and never cause a second check. The CLI and the IDE both use this rule.
+fn retry_sharing(cx: &ctx::Ctx) -> bool {
+    cx.held_borrows_used && cx.borrow_pass_errors
+}
+
+fn error_count(cx: &ctx::Ctx) -> usize {
+    cx.diags.iter().filter(|d| d.is_error()).count()
+}
+
 /// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
-fn analyze(cx: &mut ctx::Ctx) {
+fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if instantiation_cycles::check(cx) {
         return;
     }
+    let before = error_count(cx);
+    ownership_passes(cx);
+    cx.borrow_pass_errors = error_count(cx) > before;
+}
+
+/// The passes from `demote_local_closures` on: the ones whose errors may come from a held
+/// closure or `const me = this` borrowing ([`retry_sharing`]).
+fn ownership_passes(cx: &mut ctx::Ctx) {
+    ownership::demote_local_closures(cx);
+    ownership::infer_local_async(cx);
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);

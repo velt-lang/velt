@@ -21,8 +21,9 @@ mod messages;
 mod precompile;
 mod props;
 mod provider;
+mod text_run;
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
@@ -46,7 +47,10 @@ impl FnCx<'_, '_> {
         let h = match &el.name {
             None => self.jsx_fragment(p, el),
             Some(name) => match intrinsic_tag(name) {
-                Some(tag) => self.jsx_intrinsic(p, el, &tag, name.span()),
+                Some(tag) => {
+                    self.intrinsic_type_args(el, &tag);
+                    self.jsx_intrinsic(p, el, &tag, name.span())
+                }
                 None => self.jsx_component(p, el, name),
             },
         };
@@ -71,6 +75,22 @@ impl FnCx<'_, '_> {
                 self.cx.rec_mirror(mark, o.span, c.span);
             }
         }
+    }
+
+    /// Type arguments on an intrinsic element (`<div<T>>`) are an error.
+    fn intrinsic_type_args(&mut self, el: &ast::JsxElement, tag: &str) {
+        let Some(span) = props::type_args_span(el) else {
+            return;
+        };
+        self.cx.error(
+            Diagnostic::error(
+                format!("expected 0 type argument(s), found {}", el.type_args.len()),
+                span,
+            )
+            .with_note(format!(
+                "<{tag}> is an intrinsic element, not a generic component"
+            )),
+        );
     }
 
     fn jsx_fragment(&mut self, p: &Provider, el: &ast::JsxElement) -> hir::Expr {

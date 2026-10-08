@@ -1,0 +1,101 @@
+// check: no leaks
+// Narrowing with closures around (#435): a variable that a closure assigns is not narrowed (a
+// call may run the closure between a check and a use), so these programs test a `const` copy of
+// it; variables closures only read, and a closure's own variables, narrow as usual.
+class Base {
+  b = 1;
+}
+
+class Sub extends Base {
+  tail = 0;
+}
+
+class Foo {
+  constructor(readonly name: string) {}
+  m(): string {
+    return `m of ${this.name}`;
+  }
+}
+
+function copies() {
+  let x: Base = new Sub();
+  const reset = () => {
+    x = new Base();
+  };
+  const sub = x;
+  if (sub instanceof Sub) {
+    reset();
+    sub.tail = 99;
+    console.log(sub.tail, x instanceof Sub);
+  }
+  let g: Foo | null = new Foo("g");
+  const clear = () => {
+    g = null;
+  };
+  const current = g;
+  if (current !== null) {
+    clear();
+    console.log(current.m(), g === null);
+  }
+  // `?.` keeps its null check on a variable a closure assigns.
+  g = new Foo("again");
+  clear();
+  console.log(g?.m() ?? "cleared");
+  let u: string | number = "text";
+  const setNumber = () => {
+    u = 1;
+  };
+  const now = u;
+  if (typeof now === "string") {
+    setNumber();
+    console.log(now.length, typeof u);
+  }
+}
+
+function onlyRead() {
+  const x: Base = new Sub();
+  let y: Foo | null = new Foo("y");
+  const show = (): string => (y === null ? "none" : y.m());
+  if (x instanceof Sub && y !== null) {
+    console.log(show(), x.tail, y.m());
+  }
+  y = null;
+  console.log(show());
+}
+
+function cached() {
+  // A lazily computed value that the closure itself assigns: copy it to test it.
+  let cache: string | null = null;
+  let computed = 0;
+  const get = (): string => {
+    const hit = cache;
+    if (hit !== null) {
+      return hit;
+    }
+    computed += 1;
+    const v = `value ${computed}`;
+    cache = v;
+    return v;
+  };
+  console.log(get(), get(), computed);
+}
+
+function ownVariables() {
+  const lengths = ["a", "bcd"].map((s) => {
+    let found: string | null = null;
+    found = s;
+    let n = 0;
+    if (found !== null) {
+      n = found.length;
+    }
+    return n;
+  });
+  console.log(lengths.join(","));
+}
+
+function main() {
+  copies();
+  onlyRead();
+  cached();
+  ownVariables();
+}

@@ -94,7 +94,13 @@ fn operations_follow_vir_semantics() {
         "trunc i64",
         "and i32 %t",
         "icmp eq i32 -1, -1",
-        "frem double 0x4016000000000000, 0x4000000000000000",
+        // `%` on f64: the whole-number fast path, `frem` (C `fmod`) for the rest.
+        "call double @\"velt.frem.f64\"(double 0x4016000000000000, double 0x4000000000000000)",
+        "define internal double @\"velt.frem.f64\"(double %x, double %y) noinline",
+        "%ri = srem i64 %xi, %yi",
+        "%s = frem double %x, %y",
+        "call double @\"velt.frem.f64.slow\"(double %x, double %y)",
+        "declare double @llvm.copysign.f64(double, double)",
         "call void @llvm.memcpy.p0.p0.i64(ptr align 8 %l",
         "call zeroext i8 @\"helper\"(i8 signext -1, i16 zeroext -1)",
         "i32 -1, label %bb",
@@ -146,10 +152,15 @@ fn debug_metadata_follows_source_locations() {
     ] {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }
-    // Every instruction line inside a function carries a location.
-    let body_lines = ir
-        .lines()
-        .filter(|l| l.starts_with("  ") && !l.trim_end().ends_with(':'));
+    // Every instruction line inside a function compiled from VIR carries a location (the
+    // backend's own helpers, such as `velt.frem.f64`, have no source and no debug info).
+    let mut in_helper = false;
+    let body_lines = ir.lines().filter(|l| {
+        if l.starts_with("define ") {
+            in_helper = l.contains("@\"velt.");
+        }
+        !in_helper && l.starts_with("  ") && !l.trim_end().ends_with(':')
+    });
     for line in body_lines {
         assert!(line.contains("!dbg"), "no location on `{line}`");
     }
@@ -235,7 +246,7 @@ fn relocated_statics_and_memory_intrinsics() {
 }
 
 /// `velt_main` calling runtime functions the backend knows: math with an exact intrinsic,
-/// `Math.round` (no exact intrinsic, but pure), a read-only string compare and the allocator.
+/// `Math.round` (an inline helper), a read-only string compare and the allocator.
 fn runtime_sample() -> Program {
     let mut pb = ProgramBuilder::new();
     let sqrt = pb.ext("velt_rt_math_sqrt", &[F64], F64, false);
@@ -266,7 +277,9 @@ fn runtime_functions_get_intrinsics_and_attributes() {
     for needle in [
         "declare double @llvm.sqrt.f64(double)",
         "call double @llvm.sqrt.f64(double 0x4000000000000000)",
-        "call double @\"velt_rt_math_round\"(double %",
+        "call double @velt.round(double %",
+        "define internal double @velt.round(double %x) alwaysinline nounwind {",
+        "define internal double @velt.floor(double %x) alwaysinline nounwind {",
         "declare double @\"velt_rt_math_round\"(double) #3",
         "declare i32 @\"velt_rt_str_cmp\"(ptr, ptr) #4",
         "declare noalias noundef ptr @\"velt_rt_alloc\"(i64 noundef, i64 noundef allocalign) #5",
@@ -280,6 +293,14 @@ fn runtime_functions_get_intrinsics_and_attributes() {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }
     assert!(!ir.contains("call double @\"velt_rt_math_sqrt\""));
+    assert!(!ir.contains("call double @\"velt_rt_math_round\""));
+    // Elsewhere `Math.round` floors with the one-instruction intrinsic.
+    let arm = emit_ir(&runtime_sample(), "aarch64-unknown-linux-gnu").unwrap();
+    assert!(
+        arm.contains("call double @llvm.floor.f64(double %x)"),
+        "{arm}"
+    );
+    assert!(!arm.contains("@velt.floor"));
 }
 
 #[test]

@@ -1,8 +1,8 @@
 // std/path: POSIX path manipulation (Node's `path.posix`), pure string code.
 //
 // The separator is always "/", on every platform (the runtime's file APIs accept "/" on Windows
-// too); a backslash is an ordinary character. Results match Node for ASCII paths; offsets are
-// byte offsets like every string method in the POC.
+// too); a backslash is an ordinary character. Results match Node; like every string method,
+// offsets count UTF-16 code units.
 
 // `/`
 const SLASH: i64 = 47;
@@ -61,7 +61,7 @@ export function joinAll(parts: string[]): string {
   return normalize(nonEmpty.join("/"));
 }
 
-/** `join(a, b)`; use `joinAll` for more parts (Velt has no rest parameters). */
+/** `join(a, b)`; use `joinAll` for more parts. */
 export function join(a: string, b: string): string {
   return joinAll([a, b]);
 }

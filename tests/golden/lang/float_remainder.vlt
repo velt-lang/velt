@@ -1,0 +1,38 @@
+// `%` on numbers is C `fmod` (JS semantics): the sign of the dividend, exact, NaN for a zero
+// divisor or an infinite dividend. Whole numbers take an integer fast path in release builds;
+// these cases cross its edges (signs, -0, fractions, 2^53, NaN, ±Infinity, huge values).
+function rem(x: number, y: number): number {
+  return x % y;
+}
+
+// Shows the sign of zero, which `console.log` doesn't.
+function show(r: number): string {
+  if (r === 0) {
+    return 1 / r > 0 ? "0" : "-0";
+  }
+  return `${r}`;
+}
+
+function main() {
+  const xs: number[] = [7, -7, 6, -6, 0, -0.0, 5.5, -5.5, 1e300, -1e300, 9007199254740992,
+    9007199254740993, -9007199254740992, 18014398509481984, 0.5, 2 ** 60, NaN, Infinity,
+    -Infinity];
+  const ys: number[] = [3, -3, 1, -1, 2.5, 0.5, 0, -0.0, 9007199254740992, 18014398509481984,
+    1e300, NaN, Infinity, -Infinity, 256, 0.75];
+  const lines: string[] = [];
+  for (const x of xs) {
+    const row: string[] = [];
+    for (const y of ys) {
+      row.push(show(rem(x, y)));
+    }
+    lines.push(row.join(" "));
+  }
+  console.log(lines.join("\n"));
+  // Loops of whole numbers in `number`s, the case the fast path exists for.
+  let s = 0.0;
+  const n: number = 256;
+  for (let i = -1000; i < 1000; i++) {
+    s += (i + n) % n + (i % 7) + (i % -7);
+  }
+  console.log(s, show(-256 % n), show(-0.0 % n), show(-3.0 % 1.0));
+}

@@ -21,6 +21,7 @@ pub mod db_json;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
 pub mod dev;
+pub mod drop_depth;
 pub mod entry;
 pub mod fmt;
 pub mod fnv;
@@ -30,6 +31,7 @@ pub mod hash;
 pub mod html;
 pub mod http;
 pub mod inspect;
+mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
@@ -59,6 +61,7 @@ pub mod strbuf;
 pub mod task;
 pub mod timer;
 pub mod tls;
+pub mod transfer_map;
 pub mod ws;
 
 pub use crate::str::VeltStr;
@@ -76,7 +79,11 @@ static GLOBAL: InnerAlloc = InnerAlloc {};
 // The debug runtime linked into programs can check every allocation (`VELT_RT_DEBUG_ALLOC=1`).
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 #[global_allocator]
-static GLOBAL: debug_alloc::DebugAlloc<InnerAlloc> = debug_alloc::DebugAlloc(InnerAlloc {});
+static GLOBAL: debug_alloc::DebugAlloc<InnerAlloc> =
+    debug_alloc::DebugAlloc::new(InnerAlloc {}, &GLOBAL_QUARANTINE);
+
+#[cfg(all(debug_assertions, not(velt_rt_host)))]
+static GLOBAL_QUARANTINE: debug_alloc::Quarantine = debug_alloc::Quarantine::new();
 
 /// ABI tests written as a "fake compiler": hand-written C-ABI state machines driven through the
 /// public ABI. They live under tests/abi/ but are compiled into the unit-test binary because the

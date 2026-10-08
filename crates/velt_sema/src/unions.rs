@@ -103,6 +103,9 @@ impl Ctx<'_> {
     /// What JS `typeof` answers for a (non-null) value of type `t`: every number type is
     /// `"number"`, closures `"function"`, classes / structs / arrays / maps / … `"object"`.
     pub fn typeof_tag(&self, t: TyId) -> &'static str {
+        if let Some(base) = self.brand_base(t) {
+            return self.typeof_tag(base);
+        }
         match self.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) => "number",
             TyKind::Str => "string",

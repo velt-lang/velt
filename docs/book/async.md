@@ -147,9 +147,11 @@ async function main() {
 ## Sharing state between tasks
 
 Spawned tasks run in parallel, so the compiler doesn't let them modify captured variables
-("cannot mutate captured variable `n` in a spawned task"), and an object a task captures is
-copied for it (a structured clone) when the rest of the program still uses it. Data races are
-compile errors. Share state explicitly:
+("this async closure modifies captured `n`, so it must stay on the task that created it", with
+the `spawn` it reaches), and an object a task captures is copied for it (a structured clone)
+when the rest of the program still uses it. Data races are compile errors. An async closure that
+never leaves its task (it is only called, stored or returned, never spawned or sent) may change
+what it captured, as in JavaScript. Share state between tasks explicitly:
 
 - `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
   same value. On 64-bit integers, `add`, `get` and `set` are atomic.

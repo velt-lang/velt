@@ -14,9 +14,13 @@ impl<'a> Parser<'a> {
             let kind = match self.peek() {
                 Tok::Dot => {
                     self.bump();
+                    let prop = match self.at(Tok::PrivateName) {
+                        true => self.take_ident(),
+                        false => self.parse_prop_name()?,
+                    };
                     ExprKind::Member {
                         object: Box::new(e),
-                        prop: self.parse_prop_name()?,
+                        prop,
                         optional: false,
                     }
                 }
@@ -108,6 +112,12 @@ impl<'a> Parser<'a> {
                 object,
                 optional: true,
             }),
+            Tok::PrivateName => {
+                // TS18030.
+                let span = self.cur_span();
+                self.error("an optional chain cannot contain private names", span);
+                Err(Fail)
+            }
             t if Self::is_name(t) => Ok(ExprKind::Member {
                 prop: self.take_ident(),
                 object,

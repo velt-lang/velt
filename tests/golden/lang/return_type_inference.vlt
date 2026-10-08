@@ -1,0 +1,162 @@
+// Functions and methods without a return type return the type of their `return` expressions,
+// as in TypeScript (#75): one type, a common type (a base class, a float), a union when they
+// differ, `T | null` with a `return null`, `Promise<T>` when `async`, `void` without a value.
+
+import { Counter, greet, parsePort } from "./_return_types_lib";
+
+class Animal {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  speak() {
+    return `${this.name} makes a sound`;
+  }
+
+  get loud() {
+    return this.speak().toUpperCase();
+  }
+}
+
+class Dog extends Animal {
+  override speak() {
+    return `${this.name} barks`;
+  }
+}
+
+interface Shape {
+  area(): f64;
+}
+
+class Square implements Shape {
+  side: f64;
+
+  constructor(side: f64) {
+    this.side = side;
+  }
+
+  area() {
+    return this.side * this.side;
+  }
+}
+
+interface Loader {
+  load(): Promise<string>;
+}
+
+class FileLoader implements Loader {
+  async load() {
+    return "data";
+  }
+}
+
+class Wrapper {
+  wrap<T>(x: T) {
+    return [x];
+  }
+}
+
+extend string {
+  shout() {
+    return this.toUpperCase() + "!";
+  }
+}
+
+function risky(fail: bool) {
+  if (fail) {
+    throw new Error("boom");
+  }
+  return 1;
+}
+
+function add(a: i64, b: i64) {
+  return a + b;
+}
+
+function one() {
+  return 1;
+}
+
+function scale(big: bool) {
+  if (big) {
+    return 1;
+  }
+  return 0.5;
+}
+
+function describe(n: i64) {
+  if (n > 0) {
+    return "positive";
+  }
+  return n;
+}
+
+function positive(n: i64) {
+  if (n > 0) {
+    return n;
+  }
+  return null;
+}
+
+function pet(dog: bool) {
+  if (dog) {
+    return new Dog("Rex");
+  }
+  return new Animal("Generic");
+}
+
+function first<T>(xs: T[]) {
+  return xs[0];
+}
+
+async function double(n: i64) {
+  return n * 2;
+}
+
+function fail(message: string) {
+  throw new Error(message);
+}
+
+function unreachable() {
+  return fail("unreachable");
+}
+
+function log(message: string) {
+  console.log(message);
+  return;
+}
+
+async function main() {
+  console.log(add(1, 2), one() / 2, scale(true), scale(false));
+  console.log(describe(3), describe(-1), positive(2), positive(-2));
+  console.log(pet(true).speak(), pet(false).speak(), new Dog("Fido").loud);
+  const a: Animal = new Dog("Max");
+  const s: Shape = new Square(1.5);
+  console.log(a.speak(), s.area(), first(["x", "y"]), await double(21));
+  console.log(greet("velt"), parsePort("8080"), parsePort("http"));
+  const c = new Counter();
+  c.next();
+  console.log(c.next());
+  log("done");
+  const pick = (n: i64) => {
+    if (n > 1) {
+      return 1.5;
+    }
+    return n;
+  };
+  console.log(pick(2), pick(1));
+  const l: Loader = new FileLoader();
+  console.log(await l.load(), new Wrapper().wrap(3), "hi".shout(), risky(false));
+  try {
+    risky(true);
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    unreachable();
+  } catch (e) {
+    console.log("caught");
+  }
+}

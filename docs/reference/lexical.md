@@ -25,9 +25,11 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 - Doc comments: a JSDoc `/** … */` comment, or a block of `///` lines, that ends on the line
   right above a declaration documents it. The text is Markdown, with JSDoc tags (`@param`,
   `@returns`, `@throws`, `@example`, `@deprecated`, `@see`, `{@link name}`). A plain `//` or
-  `/* */` comment is not documentation, and a blank line between a comment and the declaration
-  ends the association. The comment block at the very top of a file, followed by a blank line,
-  documents the module (any comment style). `velt doc` and the editor show doc comments.
+  `/* */` comment is not documentation. Plain comments on the lines between a doc comment and
+  its declaration (`// eslint-disable-next-line`, `// @ts-expect-error`) are skipped, as in
+  TypeScript, but a blank line between them ends the association (TypeScript allows blank
+  lines). The comment block at the very top of a file, followed by a blank line, documents the
+  module (any comment style). `velt doc` shows doc comments.
 
 ```ts
 /**
@@ -105,5 +107,12 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `=>` | arrow function |
 
 The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
-right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). A postfix `!` after an
-expression on the same line is the non-null assertion (`m.get(k)!`).
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). As in JavaScript, a compound
+assignment or `++` / `--` evaluates its target's object and indices once, before the right
+side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. The write goes to
+that element where it is after the right side ran: `xs[0] += grow(xs)` updates `xs[0]` even when
+`grow` made `xs` longer. If the right side made the array shorter than the index, that write
+is out of bounds and panics, where JavaScript extends the array: `xs[0] += xs.pop()!` on `[5]`
+panics, on `[5, 6]` it makes `[11]` (Velt arrays never grow by assignment, see
+[Types](types.md#objects-arrays-tuples-and-maps)). A postfix `!` after an expression on the same
+line is the non-null assertion (`m.get(k)!`).

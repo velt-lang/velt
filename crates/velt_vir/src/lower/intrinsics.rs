@@ -2,9 +2,9 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId};
 
-use super::expr::may_write;
 use super::operand::proj;
 use super::rt::Rt;
+use super::sequence::Later;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Ty, STR_AGG};
 
@@ -76,7 +76,9 @@ impl FnLower<'_, '_> {
                 | I::ArrayPop
                 | I::ArraySwap
                 | I::ArrayRemove
-                | I::ArrayTruncate,
+                | I::ArrayTruncate
+                | I::ArrayMove
+                | I::ArraySetLen,
                 [_, ..],
             ) => self.array_intrinsic(i, args, ty),
             (I::Clone, [a]) => {
@@ -95,6 +97,14 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
             }
+            (I::NeedsDrop, [a]) => {
+                Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
+            }
+            (I::MayAlias, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
+            }
+            (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
@@ -161,15 +171,10 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Evaluate two operands to places (the first frozen if the second may write).
+    /// Evaluate two operands to places (the first held if the second may change it).
     pub(super) fn two_places(&mut self, a: &hir::Expr, b: &hir::Expr) -> (Place, Place) {
         let (ta, tb) = (self.sub(a.ty), self.sub(b.ty));
-        let va = self.expr(a);
-        let va = if may_write(b) {
-            self.freeze(va, a.ty)
-        } else {
-            va
-        };
+        let va = self.expr_held(a, Later::of(b));
         let vb = self.expr(b);
         (self.place_of(va, ta), self.place_of(vb, tb))
     }

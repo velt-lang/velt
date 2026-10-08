@@ -1,0 +1,64 @@
+// check: no leaks
+// Values still queued in a channel nobody drains are dropped when the program ends: a closed
+// channel of strings, one of objects and one of arrays, a channel never closed, one half drained,
+// a bounded one filled by `send` in another task, and one of numbers (nothing to drop).
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+class Job {
+  name: string;
+  tags: string[];
+
+  constructor(name: string) {
+    this.name = name;
+    this.tags = [name + "-a", name + "-b"];
+  }
+}
+
+async function fill(ch: Channel<string>, count: i64): Promise<void> throws ChannelClosed {
+  for (let i = 0; i < count; i++) {
+    await ch.send(`item ${i} of a bounded channel`);
+  }
+}
+
+async function main() {
+  const words = channel<string>();
+  for (const w of ["alpha", "beta", "gamma"]) {
+    words.trySend(`${w} (a heap string)`);
+  }
+  words.close();
+  console.log("strings:", words.length, "queued, closed:", words.closed);
+
+  const jobs = channel<Job>();
+  jobs.trySend(new Job("one"));
+  jobs.trySend(new Job("two"));
+  jobs.close();
+  console.log("objects:", jobs.length);
+
+  const lists = channel<string[]>(4);
+  lists.trySend(["x", "y", `z${lists.length}`]);
+  lists.trySend([]);
+  lists.close();
+  console.log("arrays:", lists.length);
+
+  const open = channel<string>();
+  open.trySend(`never ${"closed"}`);
+  console.log("open:", open.length, "closed:", open.closed);
+
+  const half = channel<Job>();
+  for (const n of ["a", "b", "c", "d"]) {
+    half.trySend(new Job(n));
+  }
+  console.log("half: got", half.tryReceive()?.name, (await half.receive())?.name);
+  half.close();
+  console.log("half: left", half.length);
+
+  const bounded = channel<string>(3);
+  await spawn(fill(bounded, 3));
+  console.log("bounded:", bounded.length);
+
+  const numbers = channel<i64>();
+  numbers.trySend(1);
+  numbers.trySend(2);
+  numbers.close();
+  console.log("numbers:", numbers.length);
+}

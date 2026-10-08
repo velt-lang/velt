@@ -93,7 +93,7 @@ impl FnLower<'_, '_> {
             // The result reaches the joining task: the task transfers it as it finishes, while
             // promises it started (which may still use the result's objects) are on its thread.
             if !detached && self.cx.holds_counted(slot) {
-                args.push(cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot))));
+                args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));
                 return self.rt_value(Rt::SpawnTransfer, args, ty);
             }
             return self.rt_value(Rt::Spawn, args, ty);
@@ -161,7 +161,7 @@ impl FnLower<'_, '_> {
     fn transfer_result(&mut self, fut: Operand, pty: TyId) {
         let slot = self.cx.promise_slot(pty);
         if self.cx.holds_counted(slot) {
-            let g = cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot)));
+            let g = cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot)));
             self.call_rt(Rt::FutTransfer, vec![fut, g], None);
         }
     }

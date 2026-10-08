@@ -1,4 +1,5 @@
-// std/http: HTTP/1.1 server and client over the runtime (hyper; rt_abi_async.md §7).
+// std/http: the HTTP server over the runtime (hyper; rt_abi_async.md §7). The client is the
+// global `fetch` (std/fetch.vlt).
 //
 // Server: `serve` hands the runtime a `VeltHandler` (init/poll/drop/state size/align/env). That
 // descriptor is produced by the compiler intrinsic `__intrinsic_http_handler(f)` from an async
@@ -12,14 +13,14 @@
 // the returned `Response` back into its raw pointer, so the intrinsic only ever sees one closure
 // type.
 //
-// Handles (`VeltServer`, `VeltResp`, `VeltFetchResp`: `u64`s, rt_abi_async.md §3.2) are
-// released by the owning value's `[Symbol.dispose]()` drop hook, which zeroes the handle so it runs at
-// most once: a `Response` that is dropped instead of returned from a handler, a `FetchResponse`
-// when it is dropped (reading its body consumes it). A `Server` stops only on `close()`;
+// Handles (`VeltServer`, `VeltResp`: `u64`s, rt_abi_async.md §3.2) are released by the owning
+// value's `[Symbol.dispose]()` drop hook, which zeroes the handle so it runs at most once: a
+// `Response` that is dropped instead of returned from a handler. A `Server` stops only on `close()`;
 // dropping it releases the handle but keeps it serving (like Node).
 
 import { IoResult, unwrapIo } from "velt:io";
 import { ResponseWriter as Writer_, openStream } from "velt:http/stream";
+import { Headers } from "velt:fetch/headers";
 
 /** A streamed response's body (`Response.stream`; std/http/stream.vlt). */
 export type ResponseWriter = Writer_;
@@ -44,35 +45,18 @@ declare function velt_rt_http_req_path(r: u64): string;
 declare function velt_rt_http_req_query(r: u64): string;
 declare function velt_rt_http_req_body(r: u64): string;
 declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
-declare function velt_rt_http_req_header_names(r: u64): string[];
-declare function velt_rt_http_req_header_values(r: u64): string[];
+declare function velt_rt_http_req_headers(r: u64): string[];
 declare function velt_rt_http_req_upgrade(r: u64): u64;
 declare function velt_rt_http_req_drop(r: u64);
 
 declare function velt_rt_http_resp_new(status: u32): u64;
 declare function velt_rt_http_resp_header(r: u64, name: string, value: string): bool;
 declare function velt_rt_http_resp_set_header(r: u64, name: string, value: string): bool;
-// These three take the body: the string/array is moved out and left empty.
+// The text and JSON setters take the string (moved out, left empty); the bytes setter copies.
 declare function velt_rt_http_resp_body_text(r: u64, body: string);
 declare function velt_rt_http_resp_body_bytes(r: u64, body: u8[]);
 declare function velt_rt_http_resp_json(r: u64, json: string);
 declare function velt_rt_http_resp_drop(r: u64);
-
-// `headers` points at `2 * nHeaders` contiguous strings (name, value, …); `ca` = extra trusted
-// PEM CA certificates ("" = none).
-declare async function velt_rt_http_fetch_ca(
-  method: string,
-  url: string,
-  headers: string,
-  nHeaders: u64,
-  body: string,
-  ca: string,
-): Promise<IoResult<u64>>;
-declare function velt_rt_http_fetch_resp_status(r: u64): u32;
-declare function velt_rt_http_fetch_resp_header(r: u64, name: string, out: string): bool;
-declare function velt_rt_http_fetch_resp_text(r: u64): IoResult<string>;
-declare function velt_rt_http_fetch_resp_bytes(r: u64): u8[];
-declare function velt_rt_http_fetch_resp_drop(r: u64);
 
 // Loopback unless the caller asks for more (pass `host: "0.0.0.0"` to listen on all interfaces).
 const DEFAULT_HOST = "127.0.0.1";
@@ -90,32 +74,6 @@ export struct ServeOptions {
   tls?: TlsOptions;
 }
 
-/** Request headers, copied out of the runtime request (`req.headers`); names are lowercase. */
-export class Headers {
-  names: string[];
-  values: string[];
-
-  constructor(names: string[], values: string[]) {
-    this.names = names;
-    this.values = values;
-  }
-
-  /** The first value of header `name` (case-insensitive), or null. */
-  get(name: string): string | null {
-    const key = name.toLowerCase();
-    for (let i: usize = 0; i < this.names.length; i++) {
-      if (this.names[i] == key) {
-        return this.values[i];
-      }
-    }
-    return null;
-  }
-
-  has(name: string): bool {
-    return this.names.includes(name.toLowerCase());
-  }
-}
-
 /**
  * An incoming request; the body has been read completely (decoded as UTF-8, lossily). A view of
  * the runtime request (`VeltReq`) that reads each property on access, so a handler pays only for
@@ -129,50 +87,50 @@ export class Headers {
  * passes the same object since #196.)
  */
 export class Request {
-  private raw: u64 = 0;
+  #raw: u64 = 0;
 
   // The request behind runtime key `raw` (only std builds requests; `new Request()` is none).
   private static adopt(raw: u64): Request {
     const r = new Request();
-    r.raw = raw;
+    r.#raw = raw;
     return r;
   }
 
   get method(): string {
-    return velt_rt_http_req_method(this.raw);
+    return velt_rt_http_req_method(this.#raw);
   }
 
   /** Without the query string. */
   get path(): string {
-    return velt_rt_http_req_path(this.raw);
+    return velt_rt_http_req_path(this.#raw);
   }
 
   /** Without the leading `?`. */
   get query(): string {
-    return velt_rt_http_req_query(this.raw);
+    return velt_rt_http_req_query(this.#raw);
   }
 
   get body(): string {
-    return velt_rt_http_req_body(this.raw);
+    return velt_rt_http_req_body(this.#raw);
   }
 
-  /** Every header, copied; `header(name)` looks up one without copying the rest. */
+  /**
+   * Every header, copied into the global `Headers`; `header(name)` looks up one without copying
+   * the rest.
+   */
   get headers(): Headers {
-    return new Headers(
-      velt_rt_http_req_header_names(this.raw),
-      velt_rt_http_req_header_values(this.raw),
-    );
+    return Headers.adopt(velt_rt_http_req_headers(this.#raw));
   }
 
   /** Runtime key of a requested protocol upgrade (0 = none); consumed by std/websocket. */
   get upgrade(): u64 {
-    return velt_rt_http_req_upgrade(this.raw);
+    return velt_rt_http_req_upgrade(this.#raw);
   }
 
   /** The first value of header `name` (case-insensitive), or null. */
   header(name: string): string | null {
     let out = "";
-    if (velt_rt_http_req_header(this.raw, name, out)) {
+    if (velt_rt_http_req_header(this.#raw, name, out)) {
       return out;
     }
     return null;
@@ -186,12 +144,12 @@ export class Request {
  * an empty one (a handler that returns it answers 500).
  */
 export class Response {
-  private raw: u64 = 0;
+  #raw: u64 = 0;
 
   // The response behind runtime key `raw` (std only).
   private static adopt(raw: u64): Response {
     const r = new Response();
-    r.raw = raw;
+    r.#raw = raw;
     return r;
   }
 
@@ -222,7 +180,7 @@ export class Response {
     return Response.adopt(r);
   }
 
-  /** `application/octet-stream` unless a `content-type` header is set. */
+  /** Default `content-type: application/octet-stream` (replace it with `setHeader`). */
   static bytes(body: u8[], status: i64 = 200): Response {
     const r = velt_rt_http_resp_new(status as u32);
     let owned = body;
@@ -245,7 +203,7 @@ export class Response {
 
   /** Appends a header; false if the name or value is not valid in HTTP. */
   header(name: string, value: string): bool {
-    return velt_rt_http_resp_header(this.raw, name, value);
+    return velt_rt_http_resp_header(this.#raw, name, value);
   }
 
   /**
@@ -253,21 +211,21 @@ export class Response {
    * name or value is not valid in HTTP.
    */
   setHeader(name: string, value: string): bool {
-    return velt_rt_http_resp_set_header(this.raw, name, value);
+    return velt_rt_http_resp_set_header(this.#raw, name, value);
   }
 
   // Gives up the runtime response (the handler adapter returns it to the runtime).
   private intoRaw(): u64 {
-    const r = this.raw;
-    this.raw = 0;
+    const r = this.#raw;
+    this.#raw = 0;
     return r;
   }
 
   /** Drop hook: frees a response that was not returned from a handler. */
   [Symbol.dispose]() {
-    if (this.raw != 0) {
-      velt_rt_http_resp_drop(this.raw);
-      this.raw = 0;
+    if (this.#raw != 0) {
+      velt_rt_http_resp_drop(this.#raw);
+      this.#raw = 0;
     }
   }
 }
@@ -276,13 +234,13 @@ export class Response {
 export class Server {
   /** The real port (useful after `port: 0`). */
   port: i64 = 0;
-  private handle: u64 = 0;
+  #handle: u64 = 0;
 
   // The server behind runtime key `handle` (std only).
   private static adopt(handle: u64): Server {
     const s = new Server();
     s.port = velt_rt_http_server_port(handle) as i64;
-    s.handle = handle;
+    s.#handle = handle;
     return s;
   }
 
@@ -291,9 +249,9 @@ export class Server {
    * handler (and whatever it captured) is dropped once the last request finished.
    */
   close() {
-    if (this.handle != 0) {
-      velt_rt_http_server_close(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_server_close(this.#handle);
+      this.#handle = 0;
     }
   }
 
@@ -302,9 +260,9 @@ export class Server {
    * everything it captured) was dropped. Consumes the server (an async method takes `this`).
    */
   async shutdown() {
-    if (this.handle != 0) {
-      const handle = this.handle;
-      this.handle = 0;
+    if (this.#handle != 0) {
+      const handle = this.#handle;
+      this.#handle = 0;
       await velt_rt_http_server_shutdown(handle);
     }
   }
@@ -314,9 +272,9 @@ export class Server {
    * keeps the process alive, until `close()` or process exit).
    */
   [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_http_server_detach(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_server_detach(this.#handle);
+      this.#handle = 0;
     }
   }
 }
@@ -351,98 +309,4 @@ export async function serve<E>(
       ? unwrapIo(await velt_rt_http_serve(addr, h))
       : unwrapIo(await velt_rt_http_serve_tls(addr, h, tls.cert, tls.key));
   return Server.adopt(handle);
-}
-
-export struct FetchOptions {
-  /** Default "GET". */
-  method?: string;
-  body?: string;
-  headers?: Map<string, string>;
-  /** Extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
-  ca?: string;
-}
-
-/**
- * Header lookup on a fetched response. A view of the response's handle: valid only while the
- * response is alive (i.e. before `text()`/`json()`/`bytes()` consume it or it is dropped).
- */
-export struct FetchHeaders {
-  private handle: u64;
-
-  /** The value of header `name` (case-insensitive), or null. */
-  get(name: string): string | null {
-    let out = "";
-    if (velt_rt_http_fetch_resp_header(this.handle, name, out)) {
-      return out;
-    }
-    return null;
-  }
-}
-
-/**
- * A fetched response; the body has been read completely. Reading the body (`text`, `json`,
- * `bytes`) consumes the response (async methods own `this`), like Rust's reqwest; the handle is
- * released when the response is dropped.
- */
-export class FetchResponse {
-  status: i64 = 0;
-  headers: FetchHeaders = FetchHeaders { handle: 0 };
-  private handle: u64 = 0;
-
-  // The response behind runtime key `handle` (std only).
-  private static adopt(handle: u64): FetchResponse {
-    const r = new FetchResponse();
-    r.status = velt_rt_http_fetch_resp_status(handle) as i64;
-    r.headers = FetchHeaders { handle: handle };
-    r.handle = handle;
-    return r;
-  }
-
-  /** The body as UTF-8 (`IoError` "EILSEQ" if it is not). */
-  async text(): Promise<string> {
-    return unwrapIo(velt_rt_http_fetch_resp_text(this.handle));
-  }
-
-  /** `JSON.parse<T>` of the body; throws `IoError | JsonError`. */
-  async json<T>(): Promise<T> {
-    return JSON.parse<T>(await this.text());
-  }
-
-  async bytes(): Promise<u8[]> {
-    return velt_rt_http_fetch_resp_bytes(this.handle);
-  }
-
-  /** Drop hook: releases the runtime response. */
-  [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_http_fetch_resp_drop(this.handle);
-      this.handle = 0;
-    }
-  }
-}
-
-/**
- * `http://` and `https://` (TLS through rustls with Mozilla's root certificates plus `ca`;
- * HTTP/2 when the server offers it). Resolves once the whole response body has been received.
- */
-export async function fetch(url: string, opts: FetchOptions = {}): Promise<FetchResponse> {
-  const method = opts.method ?? "GET";
-  const body = opts.body ?? "";
-  const flat: string[] = [];
-  const extra = opts.headers;
-  if (extra != null) {
-    for (const [name, value] of extra) {
-      flat.push(name);
-      flat.push(value);
-    }
-  }
-  // The runtime reads the headers straight out of `flat`'s buffer (a borrow of `flat[0]` is a
-  // pointer to it); with no headers it reads nothing, so any string can stand in.
-  const n = (flat.length / 2) as u64;
-  const ca = opts.ca ?? "";
-  const r =
-    n > 0
-      ? await velt_rt_http_fetch_ca(method, url, flat[0], n, body, ca)
-      : await velt_rt_http_fetch_ca(method, url, method, 0, body, ca);
-  return FetchResponse.adopt(unwrapIo(r));
 }

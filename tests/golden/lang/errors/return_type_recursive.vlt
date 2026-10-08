@@ -1,0 +1,30 @@
+// A function whose inferred return type depends on itself needs an annotation (#75), like
+// TypeScript's "implicitly has return type 'any' because ... referenced directly or
+// indirectly in one of its return expressions". A use outside `return` whose value flows into a
+// `return` through a local counts too.
+function fib(n: i64) {
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function sumTo(n: i64, acc: i64) {
+  if (n == 0) {
+    return acc;
+  }
+  const next = sumTo(n - 1, acc + n);
+  return next;
+}
+
+// The fix repeats the parameter types as written (`number`, `label?: string`).
+function halve(n: number, label?: string) {
+  if (n < 1) {
+    return 0;
+  }
+  return halve(n / 2, label) + 1;
+}
+
+function main() {
+  console.log(fib(10), sumTo(4, 0), halve(8));
+}

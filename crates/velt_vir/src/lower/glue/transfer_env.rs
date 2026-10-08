@@ -12,23 +12,18 @@ use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }`: a heap env goes through its transfer entry; a null env (no captures)
-    /// or one in a frame (null drop entry: it only borrows) has nothing of its own to move.
+    /// or one without a transfer entry (a frame env, closure.rs) has nothing of its own to move.
     pub(super) fn transfer_closure(&mut self, place: &Place) {
-        let hdr = self.cx.closure_agg();
         let envp = proj(place, Proj::Field(1));
         let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(envp.clone())));
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
-        let ep = self.operand_place(env.clone(), Ty::Ptr);
-        let header = proj(&ep, Proj::Deref(Ty::Agg(hdr)));
-        let drop = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&header, Proj::Field(0)))),
-        );
-        let heap = self.non_null(drop);
-        self.when(heap, done);
+        // The transfer entry, not the drop entry, tells: a frame env that owns captures has a
+        // drop entry (its frame drop) but never a transfer entry.
         let f = self.env_transfer_entry(env.clone());
+        let has = self.non_null(f.clone());
+        self.when(has, done);
         let new = self.call_entry(f, vec![env], vec![Ty::Ptr], Ty::Ptr);
         self.assign(envp, Rvalue::Use(new));
         self.goto(done);
@@ -74,10 +69,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .iter()
             .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty))
             .map(|c| c.2);
+        // A local async closure's calls share what it captured (async_fn/ctor.rs
+        // `take_capture`): calls from several threads would update the counts at once. Sema
+        // keeps such closures away from these places (ownership/local_async); this catches a
+        // path it does not follow.
+        let local = lw.cx.fn_def(def).shares_captures
+            && (!cells.is_empty()
+                || caps
+                    .iter()
+                    .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty)));
         let (caps2, cells2) = (caps.clone(), cells.clone());
         lw.check_if_tagged(env, |lw, e| {
             if let Some(t) = uncopyable {
                 lw.panic_many_threads(t);
+            }
+            if local {
+                lw.panic_msg(
+                    "an async closure that changes or shares what it captured is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): its calls would use the captured values from several threads at once; capture `shared` values instead",
+                );
             }
             let ep = lw.operand_place(e, Ty::Ptr);
             let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
@@ -149,7 +158,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(shared);
         let cp = self.operand_place(cell.clone(), Ty::Ptr);
         let value = proj(&cp, Proj::Deref(vt));
-        let new = self.shared_copy(cell.clone(), ty, |lw, _| {
+        let new = self.shared_copy(cell.clone(), ty, false, |lw, _| {
             let fresh = lw.counted_alloc(vt);
             let fp = lw.operand_place(fresh.clone(), Ty::Ptr);
             let copy = lw.thread_copy(Operand::Copy(value.clone()), ty);

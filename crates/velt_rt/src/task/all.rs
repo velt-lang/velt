@@ -74,6 +74,22 @@ impl Future for Child {
     }
 }
 
+/// Give up the unfinished children of a combinator that settled, in array order: a started
+/// promise among them is handed back to its task, which resumes it in that order
+/// (`FuturesUnordered` would drop them newest first; timers due in the same tick then resume in
+/// timer order, like in JS, #157), and one that is ready to go on runs now, before the
+/// combinator's awaiter (`local::give_up`, #150).
+pub(super) fn give_up_in_order(children: FuturesUnordered<Child>) {
+    let mut losers: Vec<Child> = children.into_iter().collect();
+    losers.sort_unstable_by_key(|c| c.index);
+    for c in losers {
+        let f = c.fut.0;
+        std::mem::forget(c);
+        // SAFETY: `f` was owned by the child, which no longer drops it.
+        unsafe { crate::task::local::give_up(f) };
+    }
+}
+
 impl Drop for Child {
     fn drop(&mut self) {
         let f = self.fut.0;
@@ -213,6 +229,7 @@ unsafe fn new_join<const REJECT: bool>(
             if REJECT && unsafe { *finished.results.0.add(i * finished.size) } != 0 {
                 // SAFETY: slots 0 and `i` belong to this join; `done` tracks which are set.
                 unsafe { finished.reject_into_first(i) };
+                give_up_in_order(std::mem::take(&mut set));
                 return;
             }
             if let Some(d) = finished.done.get_mut(i) {
@@ -359,10 +376,12 @@ mod tests {
                 })
             };
             Await(all).await;
-            // The pending children are dropped (their timers cancelled), so this ends at once.
+            // The pending children are dropped (their timers cancelled), so this ends at once:
+            // waiting for either of them would take 20 s at least. A bound that wide is a hang
+            // guard, not a time limit.
             assert!(
-                t.elapsed() < Duration::from_secs(10),
-                "long before the 20 s and 30 s children"
+                t.elapsed() < Duration::from_secs(20),
+                "the join waited for the 20 s and 30 s children"
             );
             assert_eq!(
                 results[0],

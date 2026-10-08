@@ -1,0 +1,799 @@
+// A virtual-actor runtime in the shape of @sigx/actors: addressable `(type, key)` actors that
+// activate on first call, run one turn at a time, persist with an etag compare-and-swap and
+// deactivate when idle.
+//
+// The host is sharded, one shard per core. A shard is one task that owns a slice of the actor
+// directory (`hash(type, key) % shards`); inside it, turns of different actors interleave at
+// their `await`s exactly like Node's single thread, so no actor state is ever touched by two
+// threads and nothing needs a lock. Callers on any thread reach a shard through its channel and
+// get the answer back through a `Promise.withResolvers` promise.
+//
+// Where this differs from the TypeScript original because Velt lacks something (issue #182):
+// - methods receive `ctx` as a parameter instead of closing over it the way
+//   `methods: (ctx) => ({ ... })` does, because an async closure cannot change what it
+//   captures (#208);
+// - methods are registered by hand per arity (`method0/1/2`) and actor-to-actor calls are
+//   untyped (`ctx.call(type, key, method, args)`): there are no variadic tuple generics or
+//   `Parameters<F>` (#209);
+// - `Host` is a struct of channel handles, not a class holding the shards' promises: a promise
+//   has one owner (#212).
+import { Value } from "velt:json";
+import { channel, Channel } from "velt:channel";
+import { Ticker } from "velt:timers";
+import { fnv1a64 } from "velt:hash";
+
+// ---------------------------------------------------------------------------------------------
+// Errors and replies
+
+// Thrown by actor methods; `status` is the HTTP status the wire endpoint answers with, `kind`
+// the `data.kind` of the sigx error envelope.
+export class ActorError extends Error {
+  status: i64;
+  kind: string;
+
+  constructor(status: i64, kind: string, message: string) {
+    super(message);
+    this.status = status;
+    this.kind = kind;
+  }
+}
+
+// The outcome of one call, already encoded as the sigx wire body:
+// `{"data":<result>}` or `{"error":{"status":…,"message":…,"data":{"kind":…}}}`.
+export struct Reply {
+  status: i64;
+  body: string;
+}
+
+export function okReply(json: string): Reply {
+  return { status: 200, body: `{"data":${json}}` };
+}
+
+export function errorReply(status: i64, kind: string, message: string): Reply {
+  const msg = JSON.stringify(message);
+  const k = JSON.stringify(kind);
+  return {
+    status: status,
+    body: `{"error":{"status":${status},"message":${msg},"data":{"kind":${k}}}}`,
+  };
+}
+
+function fromError(e: ActorError): Reply {
+  return errorReply(e.status, e.kind, e.message);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Messages between callers and shards
+
+// One call. `args` is the JSON array of the wire body, `[key, ...args]`.
+export struct Envelope {
+  type: string;
+  key: string;
+  method: string;
+  // The JSON array `[key, ...args]`.
+  args: Value;
+  // Absolute `performance.now()` deadline; 0 = none. A turn that starts after it is skipped.
+  deadline: f64;
+  // Actor ids (`type/key`) of the calls in progress above this one, for deadlock detection.
+  chain: string[];
+  // Settles the caller's promise (`Promise.withResolvers`).
+  reply: (r: Reply) => void;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Actor definitions
+
+// What a method sees: its actor's key and state, and the runtime.
+export class Ctx<S> {
+  key: string;
+  state: S;
+  saveRequested: bool = false;
+  deactivateRequested: bool = false;
+  // Set by the shard for the duration of a turn.
+  router: Router;
+  chain: string[] = [];
+  deadline: f64 = 0.0;
+
+  constructor(key: string, state: S, router: Router) {
+    this.key = key;
+    this.state = state;
+    this.router = router;
+  }
+
+  // Persist the state when this turn ends, before the caller gets its answer (the same
+  // observable order as `await ctx.save()` at the end of a sigx method).
+  save() {
+    this.saveRequested = true;
+  }
+
+  // Deactivate after this turn.
+  deactivate() {
+    this.deactivateRequested = true;
+  }
+
+  // Calls another actor with `args`, the JSON array of the arguments after the key. The answer
+  // is the raw JSON result; decode it with `JSON.parse<T>`.
+  async call(
+    type: string,
+    key: string,
+    method: string,
+    args: Value,
+  ): Promise<string> throws ActorError {
+    const r = await this.router.call(type, key, method, args, this.chain, this.deadline);
+    if (r.status != 200) {
+      throw remoteError(r);
+    }
+    return unwrapData(r.body);
+  }
+}
+
+// The callee's error, rethrown as is: status, kind and message.
+function remoteError(r: Reply): ActorError {
+  const err = parseOrNull(r.body)?.get("error");
+  const message = err?.get("message")?.asString() ?? r.body;
+  const kind = err?.get("data")?.get("kind")?.asString() ?? "remote";
+  return new ActorError(r.status, kind, message);
+}
+
+// `{"data":X}` → `X`.
+function unwrapData(body: string): string {
+  return body.slice(8, (body.length as i64) - 1);
+}
+
+// `JSON.parse<T>` for method bodies: a malformed answer from another actor is an `ActorError`.
+export function decode<T>(json: string): T throws ActorError {
+  try {
+    return JSON.parse<T>(json);
+  } catch (e) {
+    throw new ActorError(500, "decode", e.message);
+  }
+}
+
+// One method of an actor of state `S`, type-erased over its argument and result types: it
+// decodes its arguments from the wire array `[key, ...args]` and answers the result as JSON.
+export type Method<S> = (ctx: Ctx<S>, args: Value) => Promise<string> throws ActorError;
+
+function missing(method: string, i: i64): ActorError {
+  return new ActorError(400, "bad-request", `${method}: missing argument ${i}`);
+}
+
+function badArgument(method: string, i: i64, message: string): ActorError {
+  return new ActorError(400, "bad-request", `${method}: argument ${i}: ${message}`);
+}
+
+// A live actor, type-erased over its state.
+export interface Activation {
+  invoke(method: string, args: Value, chain: string[], deadline: f64): Promise<Reply>;
+  // The state as JSON, for storage.
+  snapshot(): string;
+  // Read and reset the turn's save / deactivate requests.
+  takeSave(): bool;
+  takeDeactivate(): bool;
+}
+
+// An actor type, type-erased over its state, as the registry holds it.
+export interface ActorType {
+  name(): string;
+  // A new activation for `key`: from the stored JSON state, or from the initial state.
+  activate(key: string, stored: string | null, router: Router): Activation throws ActorError;
+}
+
+// The methods of an actor of state `S`, by name: `new Methods<S>().method1<A, R>("name", f)…`.
+export class Methods<S> {
+  table: Map<string, Method<S>> = new Map<string, Method<S>>();
+
+  method0<R>(name: string, f: (ctx: Ctx<S>) => Promise<R> throws ActorError): Methods<S> {
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      return JSON.stringify(await f(ctx));
+    });
+    return this;
+  }
+
+  method1<A, R>(name: string, f: (ctx: Ctx<S>, a: A) => Promise<R> throws ActorError): Methods<S> {
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      const raw = args.at(1);
+      if (raw == null) {
+        throw missing(name, 1);
+      }
+      let a: A;
+      try {
+        a = raw.as<A>();
+      } catch (e) {
+        throw badArgument(name, 1, e.message);
+      }
+      return JSON.stringify(await f(ctx, a));
+    });
+    return this;
+  }
+
+  method2<A, B, R>(
+    name: string,
+    f: (ctx: Ctx<S>, a: A, b: B) => Promise<R> throws ActorError,
+  ): Methods<S> {
+    this.table.set(name, async (ctx: Ctx<S>, args: Value): Promise<string> throws ActorError => {
+      const rawA = args.at(1);
+      const rawB = args.at(2);
+      if (rawA == null || rawB == null) {
+        throw missing(name, rawA == null ? 1 : 2);
+      }
+      let a: A;
+      let b: B;
+      try {
+        a = rawA.as<A>();
+      } catch (e) {
+        throw badArgument(name, 1, e.message);
+      }
+      try {
+        b = rawB.as<B>();
+      } catch (e) {
+        throw badArgument(name, 2, e.message);
+      }
+      return JSON.stringify(await f(ctx, a, b));
+    });
+    return this;
+  }
+}
+
+// `defineActor`: a type name, a state factory and a methods factory.
+//
+//   const Counter = new ActorDef<CounterState>("Counter", (key) => new CounterState(), counterMethods);
+//   function counterMethods(): Methods<CounterState> {
+//     return new Methods<CounterState>().method1<i64, i64>("increment", async (ctx, by) => { … });
+//   }
+//
+// Like `methods: (ctx) => ({ … })` in sigx, the methods factory runs once per activation. The
+// state must round-trip through `JSON.stringify` / `JSON.parse<S>`.
+export class ActorDef<S> implements ActorType {
+  typeName: string;
+  init: (key: string) => S;
+  methods: () => Methods<S>;
+
+  constructor(typeName: string, init: (key: string) => S, methods: () => Methods<S>) {
+    this.typeName = typeName;
+    this.init = init;
+    this.methods = methods;
+  }
+
+  name(): string {
+    return this.typeName;
+  }
+
+  activate(key: string, stored: string | null, router: Router): Activation throws ActorError {
+    if (stored == null) {
+      return new Live<S>(
+        this.typeName,
+        this.methods().table,
+        new Ctx<S>(key, this.init(key), router),
+      );
+    }
+    try {
+      return new Live<S>(
+        this.typeName,
+        this.methods().table,
+        new Ctx<S>(key, JSON.parse<S>(stored), router),
+      );
+    } catch (e) {
+      throw new ActorError(
+        500,
+        "activation",
+        `${this.typeName}/${key}: stored state: ${e.message}`,
+      );
+    }
+  }
+}
+
+class Live<S> implements Activation {
+  typeName: string;
+  methods: Map<string, Method<S>>;
+  ctx: Ctx<S>;
+
+  constructor(typeName: string, methods: Map<string, Method<S>>, ctx: Ctx<S>) {
+    this.typeName = typeName;
+    this.methods = methods;
+    this.ctx = ctx;
+  }
+
+  async invoke(method: string, args: Value, chain: string[], deadline: f64): Promise<Reply> {
+    if (method == "$deactivate") {
+      this.ctx.deactivate();
+      return okReply("true");
+    }
+    const m = this.methods.get(method);
+    if (m == null) {
+      return errorReply(404, "method-not-found", `${this.typeName} has no method ${method}`);
+    }
+    this.ctx.chain = chain;
+    this.ctx.deadline = deadline;
+    try {
+      return okReply(await m(this.ctx, args));
+    } catch (e) {
+      return fromError(e);
+    }
+  }
+
+  snapshot(): string {
+    return JSON.stringify(this.ctx.state);
+  }
+
+  takeSave(): bool {
+    const s = this.ctx.saveRequested;
+    this.ctx.saveRequested = false;
+    return s;
+  }
+
+  takeDeactivate(): bool {
+    const d = this.ctx.deactivateRequested;
+    this.ctx.deactivateRequested = false;
+    return d;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Storage
+
+export struct StoredRecord {
+  state: string;
+  etag: string;
+}
+
+// The result of a save: the new etag, or `conflict` when `expectedEtag` was stale.
+export struct SaveResult {
+  conflict: bool;
+  etag: string;
+}
+
+// `ActorStorage`: load and etag-CAS save of one actor's JSON state. Each shard owns its own
+// storage value (`HostConfig.storage` makes one per shard).
+export interface ActorStorage {
+  load(type: string, key: string): Promise<StoredRecord | null>;
+  save(type: string, key: string, json: string, expectedEtag: string | null): Promise<SaveResult>;
+}
+
+// In memory. Keys are partitioned by shard, so one map per shard is the whole store's slice.
+export class MemoryStorage implements ActorStorage {
+  records: Map<string, StoredRecord> = new Map<string, StoredRecord>();
+  next: i64 = 0;
+
+  async load(type: string, key: string): Promise<StoredRecord | null> {
+    return this.records.get(`${type}\u0000${key}`);
+  }
+
+  async save(
+    type: string,
+    key: string,
+    json: string,
+    expectedEtag: string | null,
+  ): Promise<SaveResult> {
+    const id = `${type}\u0000${key}`;
+    const current = this.records.get(id);
+    const currentEtag = current?.etag;
+    if (currentEtag != expectedEtag) {
+      return { conflict: true, etag: currentEtag ?? "" };
+    }
+    this.next += 1;
+    const etag = `${this.next}`;
+    this.records.set(id, { state: json, etag: etag });
+    return { conflict: false, etag: etag };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shard: a slice of the directory and its turn queues, all on one task.
+
+class Slot {
+  type: string;
+  key: string;
+  act: Activation | null = null;
+  etag: string | null = null;
+  // Calls waiting for their turn, oldest first.
+  queue: Envelope[] = [];
+  running: bool = false;
+  lastActivity: f64 = 0.0;
+
+  constructor(type: string, key: string) {
+    this.type = type;
+    this.key = key;
+  }
+}
+
+export struct HostOptions {
+  // Shards (tasks); 0 = one per core.
+  shards: i64;
+  // Deactivate an actor this long after its last turn (ms).
+  idleAfterMs: f64;
+  // How often the idle sweep runs (ms); 0 disables it.
+  sweepIntervalMs: i64;
+  // Refuse calls with 429 when an actor already has this many queued; 0 = no limit.
+  maxQueued: usize;
+}
+
+export function defaultHostOptions(): HostOptions {
+  return { shards: 0, idleAfterMs: 20.0 * 60.0 * 1000.0, sweepIntervalMs: 60000, maxQueued: 0 };
+}
+
+// Per-shard counters, reported by `Host.stats()`.
+export struct ShardStats {
+  activations: i64;
+  deactivations: i64;
+  turns: i64;
+  saves: i64;
+  live: i64;
+}
+
+class Shard {
+  id: i64;
+  opts: HostOptions;
+  types: Map<string, ActorType>;
+  storage: ActorStorage;
+  router: Router;
+  directory: Map<string, Slot> = new Map<string, Slot>();
+  activations: i64 = 0;
+  deactivations: i64 = 0;
+  turns: i64 = 0;
+  saves: i64 = 0;
+
+  constructor(
+    id: i64,
+    opts: HostOptions,
+    types: Map<string, ActorType>,
+    storage: ActorStorage,
+    router: Router,
+  ) {
+    this.id = id;
+    this.opts = opts;
+    this.types = types;
+    this.storage = storage;
+    this.router = router;
+  }
+}
+
+function slotFor(shard: Shard, type: string, key: string, id: string): Slot | null {
+  const found = shard.directory.get(id);
+  if (found != null) {
+    return found;
+  }
+  if (!shard.types.has(type)) {
+    return null;
+  }
+  const slot = new Slot(type, key);
+  shard.directory.set(id, slot);
+  return slot;
+}
+
+// Queues `env` on its actor and starts the actor's turn loop if it is idle.
+function accept(shard: Shard, env: Envelope): Reply | null {
+  const id = `${env.type}/${env.key}`;
+  if (env.chain.includes(id)) {
+    return errorReply(500, "deadlock", `call cycle: ${env.chain.join(" -> ")} -> ${id}`);
+  }
+  const slot = slotFor(shard, env.type, env.key, id);
+  if (slot == null) {
+    return errorReply(404, "actor-not-found", `no actor type ${env.type}`);
+  }
+  if (shard.opts.maxQueued > 0 && slot.queue.length >= shard.opts.maxQueued) {
+    return errorReply(429, "overloaded", `${id}: ${shard.opts.maxQueued} calls queued`);
+  }
+  slot.queue.push(env);
+  if (!slot.running) {
+    slot.running = true;
+    // Started, not awaited: the loop runs on the shard's task, interleaved with other actors'.
+    // The binding is never read, but it is needed: a bare call is a "floating promise" error,
+    // and `spawn` would move the loop to another worker, off the shard that owns the slot.
+    const turns = runTurns(shard, slot);
+  }
+  return null;
+}
+
+function activate(shard: Shard, slot: Slot, stored: string | null): Activation throws ActorError {
+  const def = shard.types.get(slot.type);
+  if (def == null) {
+    throw new ActorError(404, "actor-not-found", `no actor type ${slot.type}`);
+  }
+  return def.activate(slot.key, stored, shard.router);
+}
+
+// Runs `slot`'s queued turns one at a time, activating it first when needed (also again after
+// a turn deactivated or faulted it, while calls are still queued).
+async function runTurns(shard: Shard, slot: Slot): Promise<void> {
+  const id = `${slot.type}/${slot.key}`;
+  while (slot.queue.length > 0) {
+    if (slot.act == null) {
+      const rec = await shard.storage.load(slot.type, slot.key);
+      const stored = rec?.state;
+      slot.etag = rec?.etag;
+      const failure = activateSlot(shard, slot, stored);
+      if (failure != null) {
+        // Every queued caller fails; the next call tries again.
+        while (true) {
+          const env = slot.queue.shift();
+          if (env == null) {
+            break;
+          }
+          env.reply(failure);
+        }
+        break;
+      }
+    }
+    const env = slot.queue.shift();
+    if (env == null) {
+      break;
+    }
+    const r = await turn(shard, slot, id, env);
+    slot.lastActivity = performance.now();
+    shard.turns += 1;
+    env.reply(r);
+    if (slot.act == null) {
+      shard.deactivations += 1;
+    }
+  }
+  slot.running = false;
+  if (slot.act == null) {
+    shard.directory.delete(id);
+  }
+}
+
+function activateSlot(shard: Shard, slot: Slot, stored: string | null): Reply | null {
+  try {
+    slot.act = activate(shard, slot, stored);
+    shard.activations += 1;
+    return null;
+  } catch (e) {
+    return fromError(e);
+  }
+}
+
+// One turn. The activation is reached through `slot.act` rather than a local copy, so clearing
+// the field (deactivation, a conflict) leaves no other reference behind.
+async function turn(shard: Shard, slot: Slot, id: string, env: Envelope): Promise<Reply> {
+  if (env.deadline > 0.0 && performance.now() > env.deadline) {
+    return errorReply(504, "call-timeout", `${id}.${env.method}: deadline passed while queued`);
+  }
+  if (slot.act == null) {
+    return errorReply(500, "activation", `${id} is not active`);
+  }
+  const chain = env.chain.clone();
+  chain.push(id);
+  const r = await slot.act.invoke(env.method, env.args, chain, env.deadline);
+  if (slot.act == null) {
+    return r;
+  }
+  if (slot.act.takeSave()) {
+    const saved = await shard.storage.save(slot.type, slot.key, slot.act.snapshot(), slot.etag);
+    if (saved.conflict) {
+      slot.act = null;
+      return errorReply(409, "state-conflict", `${id}: stored state changed under this activation`);
+    }
+    slot.etag = saved.etag;
+    shard.saves += 1;
+  }
+  if (slot.act != null && slot.act.takeDeactivate()) {
+    slot.act = null;
+  }
+  return r;
+}
+
+// Deactivates actors idle for `idleAfterMs`.
+function sweep(shard: Shard) {
+  const now = performance.now();
+  const idle: string[] = [];
+  shard.directory.forEach((slot, id) => {
+    if (!slot.running && slot.act != null && now - slot.lastActivity >= shard.opts.idleAfterMs) {
+      idle.push(id);
+    }
+  });
+  for (const id of idle) {
+    shard.directory.delete(id);
+    shard.deactivations += 1;
+  }
+}
+
+// Sweeps every `sweepIntervalMs`.
+async function sweepLoop(shard: Shard, ticker: Ticker): Promise<void> {
+  while (await ticker.tick()) {
+    if (shard.opts.sweepIntervalMs > 0) {
+      sweep(shard);
+    }
+  }
+}
+
+// Control messages a shard answers besides calls.
+export struct Control {
+  op: string;
+  reply: (s: ShardStats) => void;
+}
+
+async function runShard<C extends HostConfig>(
+  id: i64,
+  opts: HostOptions,
+  inbox: Channel<Envelope>,
+  control: Channel<Control>,
+  router: Router,
+  config: C,
+  done: Channel<i64>,
+): Promise<void> {
+  const shard = new Shard(id, opts, config.types(), config.storage(), router);
+  // With the sweep disabled the ticker still runs, once an hour; `stop()` ends it at once.
+  const ticker = new Ticker(opts.sweepIntervalMs > 0 ? opts.sweepIntervalMs : 3600000);
+  const sweeper = sweepLoop(shard, ticker);
+  const controller = controlLoop(shard, control);
+  while (true) {
+    const env = await inbox.receive();
+    if (env == null) {
+      break;
+    }
+    const refused = accept(shard, env);
+    if (refused != null) {
+      env.reply(refused);
+    }
+  }
+  ticker.stop();
+  await sweeper;
+  await controller;
+  try {
+    await done.send(id);
+  } catch (e) {}
+}
+
+async function controlLoop(shard: Shard, control: Channel<Control>): Promise<void> {
+  while (true) {
+    const c = await control.receive();
+    if (c == null) {
+      return;
+    }
+    if (c.op == "sweep") {
+      sweep(shard);
+    }
+    if (c.op == "clear") {
+      shard.deactivations += shard.directory.size as i64;
+      shard.directory.clear();
+    }
+    c.reply({
+      activations: shard.activations,
+      deactivations: shard.deactivations,
+      turns: shard.turns,
+      saves: shard.saves,
+      live: shard.directory.size as i64,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Routing: which shard owns an actor, and a call from any task.
+
+// FNV-1a over `type/key` (velt:hash).
+function shardOf(type: string, key: string, n: i64): i64 {
+  return (fnv1a64(`${type}/${key}`) % (n as u64)) as i64;
+}
+
+export function parseOrNull(text: string): Value | null {
+  try {
+    return JSON.parseValue(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Copies freely: every copy refers to the same shard channels.
+export struct Router {
+  inboxes: Channel<Envelope>[];
+
+  // Calls `type/key`.`method` with `args`, the JSON array of the arguments after the key.
+  async call(
+    type: string,
+    key: string,
+    method: string,
+    args: Value,
+    chain: string[],
+    deadline: f64,
+  ): Promise<Reply> {
+    const all = JsonValue.array();
+    all.push(JsonValue.of(key));
+    for (let i: i64 = 0; i < args.len(); i++) {
+      const a = args.at(i);
+      if (a != null) {
+        all.push(a);
+      }
+    }
+    return await this.send(type, key, method, all, chain, deadline);
+  }
+
+  // Like `call`, with the wire's whole `[key, ...args]` array.
+  async send(
+    type: string,
+    key: string,
+    method: string,
+    args: Value,
+    chain: string[],
+    deadline: f64,
+  ): Promise<Reply> {
+    const { promise, resolve } = Promise.withResolvers<Reply>();
+    const shard = shardOf(type, key, this.inboxes.length as i64) as usize;
+    // The inboxes are unbounded, so `trySend` fails only once the host is stopping.
+    const queued = this.inboxes[shard].trySend({
+      type: type,
+      key: key,
+      method: method,
+      args: args,
+      deadline: deadline,
+      chain: chain,
+      reply: resolve,
+    });
+    if (!queued) {
+      return errorReply(503, "shutdown", "the host is stopping");
+    }
+    return await promise;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The host
+
+// Copies freely: every copy refers to the same shards. (A class holding the shards' join
+// handles could not be shared: a promise has one owner, #212.)
+export struct Host {
+  router: Router;
+  controls: Channel<Control>[];
+  done: Channel<i64>;
+
+  get shards(): i64 {
+    return this.controls.length as i64;
+  }
+
+  // Sums the shards' counters; `op` "sweep" runs an idle sweep first, "clear" drops every
+  // activation (a benchmark reset).
+  async stats(op: string = "stats"): Promise<ShardStats> {
+    const total: ShardStats = { activations: 0, deactivations: 0, turns: 0, saves: 0, live: 0 };
+    for (let i: usize = 0; i < this.controls.length; i++) {
+      const { promise, resolve } = Promise.withResolvers<ShardStats>();
+      try {
+        await this.controls[i].send({ op: op, reply: resolve });
+      } catch (e) {
+        continue;
+      }
+      const s = await promise;
+      total.activations += s.activations;
+      total.deactivations += s.deactivations;
+      total.turns += s.turns;
+      total.saves += s.saves;
+      total.live += s.live;
+    }
+    return total;
+  }
+
+  // Stops accepting calls, lets queued turns finish and waits for the shards to end.
+  async stop(): Promise<void> {
+    for (const i of this.router.inboxes) {
+      i.close();
+    }
+    for (const c of this.controls) {
+      c.close();
+    }
+    for (let i: usize = 0; i < this.controls.length; i++) {
+      await this.done.receive();
+    }
+  }
+}
+
+// What a host is made of. Both methods are called once per shard, on the shard's own task:
+// actor definitions hold closures and storage holds state, and neither may cross threads.
+export interface HostConfig {
+  types(): Map<string, ActorType>;
+  storage(): ActorStorage;
+}
+
+// Starts a host.
+export function startHost<C extends HostConfig>(opts: HostOptions, cores: i64, config: C): Host {
+  const n = opts.shards > 0 ? opts.shards : cores;
+  const inboxes: Channel<Envelope>[] = [];
+  const controls: Channel<Control>[] = [];
+  for (let i = 0; i < n; i++) {
+    inboxes.push(channel<Envelope>());
+    controls.push(channel<Control>());
+  }
+  const router: Router = { inboxes: inboxes };
+  const done = channel<i64>();
+  for (let i = 0; i < n; i++) {
+    spawn(runShard<C>(i, opts, inboxes[i], controls[i], router, config, done));
+  }
+  return { router: router, controls: controls, done: done };
+}

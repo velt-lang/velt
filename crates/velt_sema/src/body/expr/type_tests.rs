@@ -6,8 +6,8 @@
 //! `typeof` follows JS: every number type is `"number"`, `string`, `boolean`, closures
 //! `"function"`, everything else (classes, structs, arrays, maps, `null`) `"object"`.
 //! `instanceof` compares classes (type arguments are not written): a member matches when its
-//! class is `C` or a subclass of `C`; testing for a subclass of a member's class would need a
-//! runtime downcast and is rejected.
+//! class is `C` or a subclass of `C`; a member of a base class of `C`, or an interface value,
+//! is tested at run time (`expr::downcast`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -15,7 +15,7 @@ use velt_syntax::ast;
 use crate::body::places::is_place;
 use crate::body::{FnCx, Want};
 use crate::ctx::{Ctx, Item};
-use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId};
+use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::unions::TYPEOF_TAGS;
 
 /// Result of checking `a == b` where one side is a literal.
@@ -104,6 +104,68 @@ impl FnCx<'_, '_> {
         self.negated(test.expr, negate, span)
     }
 
+    /// `#x in o` (an ES brand check): `o instanceof C`, `C` the class whose body declares `#x`
+    /// (and this code is in). In JavaScript the two differ only through prototype changes and
+    /// constructors returning another object, which Velt has neither of.
+    pub(crate) fn private_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        let class = self.brand_class(lhs, true);
+        let s = self.expr(rhs, None, Want::Borrow);
+        let Some(class) = class.filter(|_| !self.cx.ty.is_bottom(s.ty)) else {
+            return self.error_expr(span);
+        };
+        if !self.testable_instance(s.ty) {
+            let tn = self.cx.display(s.ty);
+            self.cx.err(
+                format!("the right operand of `in` must be an object: a class instance, an interface value or a union with class members, found `{tn}`"),
+                rhs.span,
+            );
+            return self.error_expr(span);
+        }
+        self.class_test(s, class, span)
+            .unwrap_or_else(|| self.error_expr(span))
+    }
+
+    /// The class `#x in …` tests for: the class whose body this is, which must declare `#x`
+    /// (a field, method or accessor). `report`: errors for anything else.
+    pub(crate) fn brand_class(&mut self, lhs: &ast::Expr, report: bool) -> Option<DefId> {
+        let ast::ExprKind::Ident(id) = &lhs.kind else {
+            return None;
+        };
+        let Some(owner) = self.owner.filter(|_| id.is_private_name()) else {
+            if report {
+                self.cx
+                    .err("private names are only allowed in class bodies", id.span);
+            }
+            return None;
+        };
+        let a = self.cx.adt(owner)?;
+        let declared = a
+            .fields
+            .iter()
+            .any(|f| f.name == id.name && f.private_to == Some(owner))
+            || a.methods.contains_key(&id.name)
+            || a.methods
+                .contains_key(&crate::defs::member_key(&id.name, true));
+        if !declared && report {
+            let cn = a.name.clone();
+            self.cx.err(
+                format!("property `{}` does not exist on class `{cn}`", id.name),
+                id.span,
+            );
+        }
+        declared.then_some(owner)
+    }
+
+    /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
+    /// union with class members)?
+    fn testable_instance(&mut self, t: TyId) -> bool {
+        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
+        candidates.iter().any(|t| {
+            self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
+        })
+    }
+
     /// `e instanceof C`.
     pub(crate) fn instanceof(
         &mut self,
@@ -121,55 +183,22 @@ impl FnCx<'_, '_> {
         }
         let inner = self.cx.ty.opt_payload(sty).unwrap_or(sty);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
-        if !candidates.iter().any(|t| self.cx.class_of(*t).is_some()) {
+        let testable = |t: &TyId| {
+            self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
+        };
+        if !candidates.iter().any(testable) {
             let tn = self.cx.display(sty);
             self.cx.err(
-                format!("`instanceof` needs a class instance or a union with class members, found `{tn}`"),
+                format!("`instanceof` needs a class instance, an interface value or a union with class members, found `{tn}`"),
                 e.span,
             );
             return self.error_expr(span);
         }
-        if let Some(base) = candidates
-            .iter()
-            .find(|t| self.is_downcast(**t, class))
-            .copied()
-        {
-            self.downcast_error(base, class, span);
-            return self.error_expr(span);
-        }
-        let pred = |cx: &Ctx, t: TyId| cx.is_instance_of(t, class);
-        let test = self.type_test(s, &pred, false, span);
-        if let Some(what) = test.never_msg {
-            let cn = self.class_def_name(class);
-            self.cx.err(
-                format!("this `instanceof` test is always false: no member of {what} is a `{cn}`"),
-                span,
-            );
-        }
-        test.expr
+        self.class_test(s, class, span)
+            .unwrap_or_else(|| self.error_expr(span))
     }
 
-    /// Would testing a `t` for class `class` need a runtime downcast (`class` extends `t`'s)?
-    fn is_downcast(&self, t: TyId, class: DefId) -> bool {
-        let Some((d, _)) = self.cx.class_of(t) else {
-            return false;
-        };
-        d != class && !self.cx.is_instance_of(t, class) && self.cx.class_extends(class, d)
-    }
-
-    fn downcast_error(&mut self, base: TyId, class: DefId, span: Span) {
-        let (bn, cn) = (self.cx.display(base), self.class_def_name(class));
-        self.cx.error(
-            Diagnostic::error(
-                format!("`instanceof {cn}` would need a downcast from `{bn}`"),
-                span,
-            )
-            .with_note("downcasts are not supported; use a union of the subclasses (e.g. `Dog | Cat`) and narrow it")
-            .with_note("or dispatch through an overridden method"),
-        );
-    }
-
-    fn class_def_name(&self, d: DefId) -> String {
+    pub(super) fn class_def_name(&self, d: DefId) -> String {
         self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default()
     }
 

@@ -26,6 +26,8 @@ fn place_path(e: &Expr) -> Option<(LocalId, Path)> {
             p.push(VARIANT);
             Some((l, p))
         }
+        // The same object, seen as its subclass.
+        ExprKind::Downcast(base) => place_path(base),
         _ => None,
     }
 }
@@ -58,6 +60,7 @@ fn outer_mode(e: &Expr) -> UseMode {
         | ExprKind::Field { mode: m, .. }
         | ExprKind::UnwrapSome(_, m)
         | ExprKind::UnwrapVariant { mode: m, .. } => m,
+        ExprKind::Downcast(ref x) => outer_mode(x),
         _ => UseMode::Borrow,
     }
 }
@@ -91,7 +94,8 @@ impl Moves<'_> {
             ExprKind::Local(..)
             | ExprKind::Field { .. }
             | ExprKind::UnwrapSome(..)
-            | ExprKind::UnwrapVariant { .. } => self.projection(e, st),
+            | ExprKind::UnwrapVariant { .. }
+            | ExprKind::Downcast(_) => self.projection(e, st),
             ExprKind::Index { base, index, .. } => {
                 if !self.place(base, UseMode::Borrow, st) {
                     self.expr(base, st);
@@ -141,6 +145,9 @@ impl Moves<'_> {
                     self.expr(c, st);
                 }
                 self.operands(args, st);
+                if let Callee::Indirect(c) = callee {
+                    self.held_call(c, e.span, st);
+                }
                 // The call may throw: a handler (and `finally`) can start from here.
                 self.record_throw(st);
             }
@@ -195,7 +202,8 @@ impl Moves<'_> {
         }
         if let ExprKind::Field { base, .. }
         | ExprKind::UnwrapSome(base, _)
-        | ExprKind::UnwrapVariant { expr: base, .. } = &e.kind
+        | ExprKind::UnwrapVariant { expr: base, .. }
+        | ExprKind::Downcast(base) = &e.kind
         {
             self.expr(base, st);
         }
@@ -234,6 +242,26 @@ impl Moves<'_> {
         }
     }
 
+    /// A call through `callee`, a local holding a non-escaping closure, uses the variables the
+    /// closure borrows (a variable moved before the call is used again there).
+    fn held_call(&mut self, callee: &Expr, span: Span, st: &mut Flow) {
+        let ExprKind::Local(l, _) = callee.kind else {
+            return;
+        };
+        let Some(caps) = self.held.get(&l).and_then(|d| self.captures.get(d)) else {
+            return;
+        };
+        for c in caps.clone() {
+            if !matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut) {
+                continue;
+            }
+            if c.mode == PassMode::BorrowMut {
+                self.assigned(c.outer, span, st);
+            }
+            self.use_path(c.outer, &[], UseMode::Borrow, span, st, false);
+        }
+    }
+
     /// Creating a closure uses its captures: by-value captures move the variable (softly for
     /// shared values: a variable used again is shared with the closure instead).
     fn closure(&mut self, d: DefId, span: Span, holder: Option<LocalId>, st: &mut Flow) {
@@ -252,11 +280,14 @@ impl Moves<'_> {
                     self.boxed.insert(c.outer);
                 }
             }
-            // Each generator of a generator closure has its own state: a variable it assigns
-            // lives in a cell so that the closure's generators and this function see one value.
+            // Each generator of a generator closure, and each call of a local async closure,
+            // has its own state: a variable it assigns lives in a cell so that the closure's
+            // generators (or calls) and this function see one value.
             let by_value = matches!(c.mode, PassMode::Owned | PassMode::Copy);
-            if escaping && by_value && self.generators.contains(&d) && writes(&c) {
-                self.generator_writes(c.outer, span);
+            if let (true, true, Some(&generator)) = (escaping, by_value, self.generators.get(&d)) {
+                if writes(&c) {
+                    self.generator_writes(c.outer, span, generator);
+                }
             }
             let soft_share = self.soft.contains(&span) && self.shared[c.outer.0 as usize];
             let (mode, by_closure) = match c.mode {

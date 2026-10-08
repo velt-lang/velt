@@ -1,0 +1,10 @@
+2 20
+7 7 get,rhs,set 7,get
+true false false false
+3! 30
+4 5 pick,rhs,only 4
+abc n10 10
+n9
+t t
+3 pick,rhs,only 4,name abc,only 0,only 1,only 2
+15

@@ -46,12 +46,33 @@ pub struct ReqObj {
     upgrade: u64,
 }
 
+/// HTTP/2 may split `cookie` into one field per crumb (RFC 9113 §8.2.3); join them back with
+/// `"; "` into one field, as Node does, so `headers.get("cookie")` reads as over HTTP/1.1
+/// (where the general `", "` join would corrupt the cookie list).
+fn join_cookies(headers: &mut hyper::HeaderMap) {
+    let crumbs: Vec<&[u8]> = headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .map(|v| v.as_bytes())
+        .collect();
+    if crumbs.len() < 2 {
+        return;
+    }
+    let joined = crumbs.join(&b"; "[..]);
+    if let Ok(v) = hyper::header::HeaderValue::from_bytes(&joined) {
+        headers.insert(hyper::header::COOKIE, v);
+    }
+}
+
 impl ReqObj {
     /// Read a hyper request including its whole body; `None` if the body could not be read.
     /// `upgrade` is the key of its parked upgrade, 0 if none. Boxed right away, so the (large)
     /// parts are not moved again on their way to the handler.
     pub async fn read(req: Request<Incoming>, upgrade: u64) -> Option<Box<ReqObj>> {
-        let (parts, body) = req.into_parts();
+        let (mut parts, body) = req.into_parts();
+        if parts.version == hyper::Version::HTTP_2 {
+            join_cookies(&mut parts.headers);
+        }
         // Most requests (GET) have no body: skip the collecting future.
         let body = if body.is_end_stream() {
             Bytes::new()
@@ -130,28 +151,17 @@ pub unsafe extern "C" fn velt_rt_http_req_header_at(
     value.write(owned_str(&String::from_utf8_lossy(v.as_bytes())));
 }
 
-/// Every header name (lowercase), in received order per name: `req.headers` in one call (std
-/// pairs it with [`velt_rt_http_req_header_values`]; `header_at` per index is O(n) each).
+/// Every header as the flat list `[name, value, …]` (lowercase names, received order; values
+/// that are not UTF-8 decoded lossily): `req.headers` (the global `Headers`) in one call.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_names(req: ReqHandle, out: *mut VeltStrArray) {
+pub unsafe extern "C" fn velt_rt_http_req_headers(req: ReqHandle, out: *mut VeltStrArray) {
     let r = obj(req);
-    let headers = r.parts.headers.iter();
-    out.write(VeltStrArray::from_vec(
-        headers.map(|(n, _)| owned_str(n.as_str())).collect(),
-    ));
-}
-
-/// Every header value, in the order of [`velt_rt_http_req_header_names`] (non-UTF-8 bytes
-/// decoded lossily).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_values(req: ReqHandle, out: *mut VeltStrArray) {
-    let r = obj(req);
-    let headers = r.parts.headers.iter();
-    out.write(VeltStrArray::from_vec(
-        headers
-            .map(|(_, v)| owned_str(&String::from_utf8_lossy(v.as_bytes())))
-            .collect(),
-    ));
+    let mut flat = Vec::with_capacity(r.parts.headers.len() * 2);
+    for (name, value) in r.parts.headers.iter() {
+        flat.push(owned_str(name.as_str()));
+        flat.push(owned_str(&String::from_utf8_lossy(value.as_bytes())));
+    }
+    out.write(VeltStrArray::from_vec(flat));
 }
 
 /// `req.body` as text (invalid UTF-8 decoded lossily to U+FFFD).
@@ -170,4 +180,24 @@ pub unsafe extern "C" fn velt_rt_http_req_body_bytes(req: ReqHandle, out: *mut V
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_drop(req: ReqHandle) {
     REQUESTS.remove(req);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_cookies;
+    use hyper::header::{HeaderMap, HeaderValue, COOKIE};
+
+    #[test]
+    fn http2_cookie_crumbs_are_joined_with_semicolons() {
+        let mut h = HeaderMap::new();
+        h.append(COOKIE, HeaderValue::from_static("a=1"));
+        h.append(COOKIE, HeaderValue::from_static("b=2"));
+        join_cookies(&mut h);
+        assert_eq!(h.get_all(COOKIE).iter().count(), 1);
+        assert_eq!(h.get(COOKIE).unwrap(), "a=1; b=2");
+        let mut one = HeaderMap::new();
+        one.insert(COOKIE, HeaderValue::from_static("a=1"));
+        join_cookies(&mut one);
+        assert_eq!(one.get(COOKIE).unwrap(), "a=1");
+    }
 }

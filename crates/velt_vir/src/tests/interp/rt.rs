@@ -126,8 +126,14 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &[0; 24]);
             }
             "velt_rt_str_cmp" => {
-                let (x, y) = (self.str_bytes(a[0]), self.str_bytes(a[1]));
-                return Ok(x.cmp(&y) as i32 as u32 as u64);
+                // Code-unit order, as the runtime's (#377 phase 2b).
+                let (x, y) = (self.str_text(a[0]), self.str_text(a[1]));
+                return Ok(x.encode_utf16().cmp(y.encode_utf16()) as i32 as u32 as u64);
+            }
+            "velt_rt_str_char_code_at" => {
+                let units: Vec<u16> = self.str_text(a[0]).encode_utf16().collect();
+                let unit = usize::try_from(a[1] as i64).ok().and_then(|i| units.get(i));
+                return Ok(unit.map_or(-1, |&u| u as i64) as u64);
             }
             "velt_rt_write_str" => {
                 let s = self.str_text(a[1]);
@@ -183,6 +189,9 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &n.to_le_bytes());
                 return Ok((n == 0) as u64);
             }
+            "velt_rt_drop_state" => return Ok(self.drop_state()),
+            "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
+            "velt_rt_drop_drain" => self.drop_drain()?,
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }

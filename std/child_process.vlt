@@ -201,8 +201,8 @@ function signalNumber(name: string): i32 {
 /**
  * A started program: a Copy handle like std/net's `TcpStream` (async methods take `this` by
  * copy, so `await p.readStdout()` can be called repeatedly), released by `close()` (after
- * which every copy throws `IoError` `EBADF`). Closing does not stop the program (it is reaped
- * in the background): `kill` it or `wait` for it.
+ * which the methods of every copy throw `IoError` `EBADF` and `exitCode` is null). Closing does
+ * not stop the program (it is reaped in the background): `kill` it or `wait` for it.
  */
 export struct ChildProcess {
   /** The OS process id. */

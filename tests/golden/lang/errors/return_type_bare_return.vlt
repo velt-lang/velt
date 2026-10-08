@@ -1,0 +1,14 @@
+// `return;` next to `return value;` would return `undefined` in TypeScript; Velt has none
+// (#75): return `null` with a `T | null` result instead.
+function find(xs: i64[], x: i64) {
+  for (const y of xs) {
+    if (y == x) {
+      return y;
+    }
+  }
+  return;
+}
+
+function main() {
+  console.log(find([1, 2], 2));
+}

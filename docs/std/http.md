@@ -1,26 +1,27 @@
 # velt:http
 
-`import { serve, fetch, Request, Response, ResponseWriter } from "velt:http"`. An HTTP server and client on
-hyper: HTTP/1.1 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls).
+`import { serve, Request, Response, ResponseWriter } from "velt:http"`. An HTTP server on hyper
+(the client is the global [`fetch`](fetch.md)): HTTP/1.1 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls).
 Handlers run concurrently on every core. A listening server keeps the process alive after
 `main` returns, like Node, until `server.close()`; dropping the `Server` value does not stop
-it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
+it. A `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once,
+servers or not. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
 
 - `serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
   Request) => Promise<Response, E>): Promise<Server>`. The default host is 127.0.0.1. With `tls`
   (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. Like spawned tasks,
-  handlers must not mutate captured variables (use `shared`). Requests run on several threads
+  handlers (and async closures they reach) must not mutate captured variables (use `shared`). Requests run on several threads
   at once and each gets its own copy of what the handler captured, so a captured resource
   (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
   ([Async](../reference/async.md#thread-safety)). A handler that throws gets a 500
   response (`Internal Server Error`) and its error is printed to stderr.
-- `Request` (a class) with getters `method`, `path`, `query`, `headers: Headers`, `body` and
-  `upgrade` (an internal key `velt:websocket` uses), plus `header(name): string | null`. Each read
-  copies that property out of the runtime request, so a handler pays only for what it reads;
-  `header(name)` looks up one header without copying the others (`headers` copies them all).
-  `path` excludes the query and `query` excludes the `?`. `Headers.get(name): string | null`,
-  `has(name)` and `header(name)` are case-insensitive. A `Request` is valid until its handler
-  settles: keep its properties, not the `Request`, in anything that outlives the handler (a
+- `Request` (a class) with getters `method`, `path`, `query`, `headers` (the global
+  [`Headers`](fetch.md#headers)), `body` and `upgrade` (an internal key `velt:websocket` uses),
+  plus `header(name): string | null`. Each read copies that property out of the runtime
+  request, so a handler pays only for what it reads; `header(name)` looks up one header without
+  copying the others (`headers` copies them all). `path` excludes the query and `query`
+  excludes the `?`. `headers.get(name)`, `headers.has(name)` and `header(name)` are
+  case-insensitive. A `Request` is valid until its handler settles: keep its properties, not the `Request`, in anything that outlives the handler (a
   `Response.stream` body, a spawned task). Reading a released `Request` stops the program with a
   clear error.
 - `Response.text(body, status = 200)`, `Response.json<T>(value, status = 200)`,
@@ -47,23 +48,20 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   `close()` may exit before the handler is dropped. Dropping the `Server` value does not stop
   it. A `serve` that fails (address in use, a TLS certificate or key that does not parse)
   drops the handler closure before it throws.
-- `fetch(url, opts: FetchOptions { method?; body?; headers?: Map<string, string>; ca? }):
-  Promise<FetchResponse>`. `http://` and `https://`; HTTPS trusts Mozilla's root certificates
-  (compiled in) plus the PEM CAs in `ca`; HTTP/2 is used when the server offers it.
-- `FetchResponse { status; headers: FetchHeaders }`: `text()`, `json<T>()`, `bytes()`. Reading
-  the body consumes the response. `json` throws `IoError` or `JsonError`, so catch `Error`.
-  `headers` is a view of the response: using it after the response was consumed or dropped stops
-  the program with a message saying so (exit code 101), so read the headers you need first.
-- Requests, responses, servers and fetch responses are built only by this module
-  (`Response.text` and the other constructors, `serve`, `fetch`); their runtime handles are
-  private and checked by the runtime, so a stale one never reaches freed memory. `new
-  Response()`, `new Request()`, `new Server()` and `new FetchResponse()` compile but hold no
-  runtime object: a handler that returns such a response answers 500, the request's and fetch
-  response's accessors stop the program (as for a released one), and the server's `port` is 0
-  and `close()` does nothing.
+- Requests, responses and servers are built only by this module (`Response.text` and the
+  other constructors, `serve`); their runtime handles are private and checked by the runtime,
+  so a stale one never reaches freed memory. `new Response()`, `new Request()` and `new
+  Server()` compile but hold no runtime object: a handler that returns such a response answers
+  500, the request's accessors stop the program (as for a released one), and the server's
+  `port` is 0 and `close()` does nothing.
+- This module's `Request` and `Response` are the server's and differ from the global ones of
+  [`fetch`](fetch.md); importing them hides the global names in that module, so a module that
+  also builds fetch requests imports them under other names (`import { Request as
+  ServerRequest } from "velt:http"`). **Planned**: one `Request` and `Response` for both, as
+  in Deno and Bun.
 
 ```ts
-import { serve, fetch, Request, Response } from "velt:http";
+import { serve, Request, Response } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -102,5 +100,5 @@ async function main() {
 }
 ```
 
-Notes: an untrusted certificate or a TLS failure throws `IoError`. A handler is an async
-arrow or a named async function (`serve({ port: 8080 }, handle)`).
+Notes: a handler is an async arrow or a named async function (`serve({ port: 8080 },
+handle)`).

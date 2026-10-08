@@ -10,6 +10,7 @@ use velt_sema::hir::{self, Callee, ExprKind as E, Lit, Program};
 
 const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
+const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
 
 fn load(src: &str) -> Loaded {
     load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src)
@@ -164,6 +165,84 @@ fn precompile_leaves_keyed_and_spread_elements_to_jsx() {
     assert_eq!(strings(&t[0][0]), ["<li>one</li>"]);
 }
 
+/// The string literals in `f`'s body.
+fn str_lits(p: &Program, f: &str) -> Vec<String> {
+    exprs(func(p, f))
+        .into_iter()
+        .filter_map(|e| match &e.kind {
+            E::Lit(Lit::Str(s)) => Some(s.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_separator_goes_between_adjacent_text_parts() {
+    let p = ok(&format!(
+        "{SEPARATOR}function main() {{ const n: i64 = 3; const s = \"ada\"; const a = <p>Count: {{n}}</p>; const b = <p>{{s}}{{n}}</p>; const c = <p>a<span>b</span>c</p>; }}"
+    ));
+    let lits = str_lits(&p, "main");
+    assert!(lits.iter().any(|s| s == "<p>Count: <!--t-->"), "{lits:?}");
+    assert!(lits.iter().any(|s| s == "<!--t-->"), "{lits:?}");
+    assert!(
+        lits.iter().any(|s| s == "<p>a<span>b</span>c</p>"),
+        "markup is a boundary: {lits:?}"
+    );
+    assert!(
+        !exprs(func(&p, "main"))
+            .iter()
+            .any(|e| matches!(e.kind, E::If { .. })),
+        "separators between text of known types are constant"
+    );
+}
+
+#[test]
+fn text_separator_after_a_nullable_or_boolean_value_is_decided_at_run_time() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(m: string | null, f: bool) {{ const a = <p>a{{m}}b</p>; const b = <p>{{f}}c</p>; }}
+        function main() {{ view(null, true); }}"
+    ));
+    let ifs = exprs(func(&p, "view"))
+        .into_iter()
+        .filter(|e| matches!(e.kind, E::If { .. }))
+        .count();
+    assert_eq!(ifs, 2, "one conditional on each side of `m`");
+    let lits = str_lits(&p, "view");
+    assert!(
+        lits.iter().any(|s| s == "c</p>") && !lits.iter().any(|s| s.contains("<!--t-->c")),
+        "a boolean is a boundary: {lits:?}"
+    );
+}
+
+/// Regression (#637 review): an empty string at a slot edge rendered no separator in the
+/// precompile lowering, as the provider only sees the template string's edge.
+#[test]
+fn text_separator_a_string_that_may_be_empty_next_to_a_slot_is_a_slot() {
+    let p = ok(&format!(
+        "{SEPARATOR}function view(s: string, n: i64) {{
+            const a = <p>a{{s}}<>{{n}}</>{{s}}</p>;
+            const b = <p>{{n}}<>{{n}}</>{{\"x\"}}</p>;
+        }}
+        function main() {{ view(\"\", 3); }}"
+    ));
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(strings(&t[0][0]), ["<p>a", "", "", "</p>"]);
+    // Each `s` is a `Fragment` slot; `n` and `"x"` (never empty) stay in the strings.
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 4);
+}
+
+#[test]
+fn no_text_separator_without_the_export() {
+    let p = ok(&format!(
+        "{PRECOMPILE}function view(n: i64, m: string | null) {{ const a = <p>Count: {{n}}{{m}}</p>; }}
+        function main() {{ view(3, null); }}"
+    ));
+    assert!(!str_lits(&p, "view").iter().any(|s| s.contains("<!--t-->")));
+    assert!(!exprs(func(&p, "view"))
+        .iter()
+        .any(|e| matches!(e.kind, E::If { .. })));
+}
+
 #[test]
 fn components_are_passed_uncalled_with_their_props() {
     let p = ok(&format!(
@@ -208,6 +287,41 @@ fn generic_components_infer_their_type_arguments_from_props() {
         1,
         "{r}"
     );
+}
+
+#[test]
+fn explicit_type_arguments_on_tags() {
+    let list = "function List<T>(props: { items: T[]; show: (x: T) => string }): JSX.Element { return <ul></ul>; }";
+    let p = ok(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string> items={{[]}} show={{(s) => s}} />; }}"
+    ));
+    assert_eq!(runtime_calls(&p, "main", "jsxComponent").len(), 1);
+    let r = err(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string, i64> items={{[]}} show={{(s) => s}} />; const d = <div<i64>></div>; }}"
+    ));
+    assert_eq!(
+        r.matches("expected 1 type argument(s), found 2").count(),
+        1,
+        "{r}"
+    );
+    assert!(r.contains("<div> is an intrinsic element"), "{r}");
+    let r = err(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string> items={{[1]}} show={{(s) => s}} />; }}"
+    ));
+    assert!(r.contains("mismatched types"), "{r}");
+}
+
+#[test]
+fn type_arguments_are_inferred_from_children() {
+    let p = ok(&format!(
+        "{GENERIC}function One<T>(props: {{ children: T; show: (x: T) => string }}): JSX.Element {{ return <ul></ul>; }}
+        function Many<T>(props: {{ children: T[] }}): JSX.Element {{ return <ul></ul>; }}
+        function main() {{ const a = <One show={{(x) => `${{x + 1}}`}}>{{1}}</One>; const b = <Many>{{1}}{{2}}</Many>; }}"
+    ));
+    assert_eq!(runtime_calls(&p, "main", "jsxComponent").len(), 2);
 }
 
 #[test]
@@ -297,11 +411,23 @@ fn module_level_generic_arrows_are_generic_functions() {
 }
 
 #[test]
+fn local_generic_arrows_are_nested_generic_functions() {
+    let p = ok("function main() { const id = <T,>(x: T): T => x; console.log(id(1), id(\"a\")); }");
+    assert_eq!(func(&p, "main::id").generics, 1);
+}
+
+#[test]
 fn other_generic_arrows_are_reported() {
-    let r = err("function main() { const id = <T,>(x: T): T => x; console.log(1); }");
+    let r = err("function main() { const f = [<T,>(x: T): T => x]; console.log(1); }");
     assert!(
-        r.contains("a generic arrow function must be a module-level constant"),
+        r.contains("a generic arrow function must be the value of a `const`"),
         "{r}"
     );
     assert!(!r.contains("unknown type"), "{r}");
+    let r =
+        err("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
+    assert!(
+        r.contains("`k` cannot be captured by a generic arrow function"),
+        "{r}"
+    );
 }

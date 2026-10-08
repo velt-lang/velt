@@ -1,7 +1,7 @@
 // JSON.parse<T> edge cases documented in docs/std/json.md: a repeated key keeps its last value
 // (in its first position) for every target type, but each occurrence must be valid for the
 // type, so a repeated discriminant or literal field with two values fails; lone `\u`
-// surrogates become U+FFFD; unsigned integers stop at i64::MAX.
+// surrogates are kept (printed as U+FFFD at the top level); unsigned integers stop at i64::MAX.
 type Join = { kind: "join"; user: string; room: string };
 type Leave = { kind: "leave"; user: string };
 type Msg = Join | Leave;

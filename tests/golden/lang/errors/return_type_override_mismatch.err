@@ -1,0 +1,2 @@
+return_type_override_mismatch.vlt:10:12
+error: method `m` does not have the same signature as the base class method it overrides

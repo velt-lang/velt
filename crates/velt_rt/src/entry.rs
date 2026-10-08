@@ -50,9 +50,22 @@ pub(crate) fn die_of_broken_pipe() -> ! {
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     init();
     let code = velt_main();
-    crate::task::runtime::wait_for_keep_alive();
+    // Servers and pending promises keep a program alive after `main` returns, but not after it
+    // failed (an uncaught error, or an exit code): like Node, which exits on an uncaught
+    // exception whatever is still listening.
+    if code == 0 {
+        crate::task::runtime::wait_for_keep_alive();
+        crate::str::stats::settle(|| crate::task::runtime::alive_tasks() > 0);
+        // Nothing receives any more: drop the values still queued in channels. Not on a failing
+        // exit: tasks may still be running then, and drop glue runs user code.
+        let left = crate::task::channel::drop_abandoned_items();
+        crate::str::stats::channel_leftovers(left);
+    }
     crate::io::flush_stdout();
     crate::str::stats::report();
+    crate::io::stats::report();
+    #[cfg(all(debug_assertions, not(velt_rt_host)))]
+    crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     code
 }
 

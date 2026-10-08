@@ -1,0 +1,3 @@
+bounded: 100 received, 100 intact
+queued: 20 closed: true
+unbounded: 20 intact, last: r19

@@ -39,9 +39,10 @@ version while the old one keeps running:
 - **Program exit**: `velt dev` prints the exit code and waits for the next change.
 
 Stopping `velt dev` (Ctrl-C, or SIGTERM/SIGHUP from a process manager or `docker stop`) stops
-the program the same way a reload does: it gets a stop request, can finish in-flight requests
-for up to a second, and `velt dev` waits for it before exiting. Press Ctrl-C twice to exit at
-once.
+the program the same way a reload does: it gets a stop request and can finish in-flight
+requests; a program still running 1.5 s after the request is killed (set
+`VELT_DEV_STOP_GRACE_MS` to change that limit, in milliseconds). `velt dev` waits for it before
+exiting. Press Ctrl-C twice to exit at once.
 
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
 connection is refused during a reload and a server on port 0 keeps its port. Hot swap needs no

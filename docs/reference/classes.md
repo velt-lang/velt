@@ -56,13 +56,17 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. Redefining a base method requires `override`; `super.m()` calls
-  the base version. There are no abstract classes.
-- **`super(…)`**: the constructor of a class whose base has a constructor calls `super(…)`, as
-  in TypeScript. Statements may come before it as long as they don't use `this` or `super.x`
+  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  There are no abstract classes.
+- **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
+  the base class has no constructor (`super();`). Statements may come before it as long as they
+  don't use `this` or `super.x`
   (``'super' must be called before accessing 'this' in the constructor of a derived class``) or
   `return`; they run first, then the call's arguments, the base constructor, this class's field
-  initializers and parameter properties, and the rest of the body:
+  initializers and parameter properties, and the rest of the body. This holds also when the
+  class has initialized fields or parameter properties, which are set right after `super(…)`
+  returns, as in JavaScript (TypeScript 4.6+):
 
   ```ts
   class Shape {
@@ -82,15 +86,37 @@ hidden classes and no runtime shape checks.
   new Square(2);
   ```
 
-  The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
-  `try`, `switch`, loop or closure, and not part of an expression. TypeScript requires this too
-  once a class has initialized fields, parameter properties or private fields (TS2401), and
-  otherwise allows a nested call. Velt requires it always: the field initializers run right
-  after the call and every field must be initialized, so the call has to run exactly once on
-  every path. This is the one place Velt is stricter than TypeScript here. When a constructor
-  throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the
-  object it allocated, dropping the fields that were set, without running the class's
-  `[Symbol.dispose]()`: like JavaScript, nothing disposes an object `new` never returned.
+  The call runs exactly once on every path: a statement of the constructor's body, or one in
+  each branch of an `if` / `else` (nested `if`s too), as TypeScript accepts it; not in an `if`
+  without `else`, a `try`, `switch`, loop or closure, and not part of an expression. The field
+  initializers run right after the call, in either branch, and every field must be initialized,
+  so a path that skips the call or makes it twice is an error, where TypeScript only fails at
+  run time. A class with parameter properties, or with field initializers when no base class has
+  a constructor, needs the call as a statement of the body itself (choose its arguments with a
+  conditional: `super(c ? a : b)`).
+
+  ```ts
+  class Named {
+    constructor(public name: string) {}
+  }
+  class Tagged extends Named {
+    tag: string = "t";
+    constructor(short: boolean) {
+      if (short) {
+        super("s");
+      } else {
+        super("long");
+      }
+      console.log(this.name, this.tag); // s t
+    }
+  }
+  new Tagged(true);
+  ```
+
+  When a constructor throws (before `super(…)`, in the base constructor or in a field
+  initializer), `new` frees the object it allocated, dropping the fields that were set,
+  without running the class's `[Symbol.dispose]()`: like JavaScript, nothing disposes an
+  object `new` never returned.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
@@ -101,14 +127,61 @@ hidden classes and no runtime shape checks.
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
-  and `protected` members don't exist (only a constructor can be `protected`).
+  and `protected` members don't exist (only a constructor can be `protected`). Static and
+  instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
+  hide an inherited instance method `m()`, and a class below it can still `override` that method.
+- **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
+  (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
+  (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
+  names the member that the class whose body the code is in declares, on any instance of that
+  class or a subclass, not only `this`; elsewhere, also in a subclass, it is an error (``
+  property `#x` is not accessible outside class `A` because it has a private name ``). A
+  subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
+  method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides
+  nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
+  the class declaring `#x`, and narrows like `instanceof`. Private names exist only in class
+  bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
+  with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
+  slot, a direct call); they differ where Node differs:
+
+  | | `#x` | `private x` |
+  |---|---|---|
+  | `console.log`, template literals | hidden: `A { y: 2 }` | shown |
+  | `JSON.stringify` | skipped | written |
+  | `JSON.parse<C>` | error: decoding cannot set it | error, the same |
+  | `Object.keys` | skipped | listed |
+  | `{ ...o }` | skipped | copied, unless private to another type |
+  | `x.clone()` | copied | copied |
+  | name space | `#x` and `x` coexist; a subclass may reuse `#x` | one name per class chain |
+
+  ```ts
+  class Counter {
+    #count = 0;
+    label: string = "clicks";
+    inc(): number {
+      this.#count++;
+      return this.#count;
+    }
+    static isCounter(o: Counter | string): boolean {
+      return typeof o !== "string" && #count in o;
+    }
+  }
+  const c = new Counter();
+  c.inc();
+  const n = c.inc();
+  console.log(c, n, JSON.stringify(c)); // Counter { label: 'clicks' } 2 {"label":"clicks"}
+  ```
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
   `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). A getter may change its object (a signal recording who
-  read it). `x.size ??= v` cannot be used as a value. Implementations and overrides of a
-  getter or setter must be accessors too. Getters cannot be `static` or `async`.
+  read it). As a value, `x.size = v` is `v` (converted to the setter's parameter type, but
+  non-null when `v` is; the getter is not read again; an object is shared, not copied) and `x.size ??= v` is the old value where it decides, else `v` (so
+  non-null when `v` is). Implementations and overrides of a
+  getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
+  type may be inferred from its `return` like a method's
+  ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
@@ -200,6 +273,65 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### `instanceof` downcasts
+
+`x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
+for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
+same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
+until `x` is reassigned; a variable that a closure assigns is not narrowed, as
+[for `null`](types.md#null)). The same works on an interface value (a `Shape` holding a `Circle`),
+on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
+`catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
+(`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
+copy it into a local first. The test reads the class id in the object's vtable: one load and
+one comparison, whatever the depth of the hierarchy.
+
+- The narrowed type keeps the type arguments: a `Box<i64>` tested for
+  `class Labeled<T> extends Box<T>` is a `Labeled<i64>`. A generic class whose type arguments
+  do not follow from the tested type is an error.
+- A test that can never be true is an error, as in a union: `a instanceof Rock` on an
+  `Animal` when `Rock` does not extend `Animal`, or on an interface value when neither the
+  class nor its subclasses implement the interface. (TypeScript accepts these; in Velt classes
+  are nominal, so the answer is known.)
+
+```ts
+class AppError extends Error {}
+
+class NotFound extends AppError {
+  constructor(readonly id: string) {
+    super(`no item ${id}`);
+  }
+}
+
+class Timeout extends AppError {
+  constructor(readonly ms: i64) {
+    super(`timed out after ${ms}ms`);
+  }
+}
+
+function fetchItem(id: string): string throws AppError {
+  if (id == "") {
+    throw new Timeout(30);
+  }
+  throw new NotFound(id);
+}
+
+function describe(id: string): string {
+  try {
+    return fetchItem(id);
+  } catch (e) {                   // e: AppError
+    if (e instanceof NotFound) {
+      return `missing ${e.id}`;
+    } else if (e instanceof Timeout) {
+      return `timeout after ${e.ms}ms`;
+    }
+    return e.message;
+  }
+}
+
+console.log(describe("a"), "/", describe("")); // missing a / timeout after 30ms
+```
+
 ## Structs
 
 `struct` declares an object type with the same members as a class (methods, getters,
@@ -254,8 +386,10 @@ console.log(p.len(), q.len());  // 4 4
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
-  them on a concrete class or on a `T extends I` generic, not on an interface value. Generic
-  interface methods cannot have default bodies yet.
+  them on a concrete class or on a `T extends I` generic, not on an interface value
+  (``generic method `apply` cannot be called on an interface value``): make the calling
+  function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
+  call a method that is not generic. Generic interface methods cannot have default bodies yet.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.
@@ -430,7 +564,7 @@ console.log(s.area(), "velt".initial, [1, 2, 3].count(), Point.at(1.0, 2.0).y);
 ## Comparable
 
 The prelude declares `interface Comparable<T> { compareTo(other: T): i64; }` and implements it
-for every number type, `string` (bytewise) and `bool`. With `T extends Comparable<T>`, the
+for every number type, `string` (UTF-16 code-unit order, as `<`) and `bool`. With `T extends Comparable<T>`, the
 operators `<`, `<=`, `>` and `>=` work on `T` (static dispatch after monomorphization), and
 `sort()` orders Comparable elements (floats put `NaN` last). User types implement it with
 `implements Comparable<X>` or an `extend` block, and then `<`, `<=`, `>` and `>=` work on their

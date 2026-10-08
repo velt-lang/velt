@@ -9,8 +9,8 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 ```
 
 - `function name(p: T, q: U = default): R { … }`, optionally with a `throws E` clause after the
-  return type ([Errors](errors.md)). Parameter types are required; a missing return type
-  means `void`.
+  return type ([Errors](errors.md)). Parameter types are required; a missing return type is
+  inferred from the body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
@@ -23,6 +23,88 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
 
+## Return types
+
+As in TypeScript, a function or method without a return type returns the type of its `return`
+expressions (exported ones too):
+
+- one type when they agree, or the one the others convert to: `return 1` and `return 0.5` give
+  `f64`, a class and its base class give the base;
+- otherwise their union (`return "positive"` and `return n` give `string | i64`), made
+  nullable by a `return null`;
+- `void` when no `return` has a value, `never` when every returned value never completes
+  (`return fail()`);
+- `Promise<T>` for an `async` function, `T` from its returns.
+
+Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
+a narrowed `T | null` result divide like `number`s, and a method returning integers that a
+subclass overrides returns `number` (`f64`), so an override may return `2.5`.
+
+```ts
+function describe(n: i64) {
+  if (n > 0) {
+    return "positive";
+  }
+  return n; // describe returns string | i64
+}
+
+async function double(n: i64) {
+  return n * 2; // Promise<i64>
+}
+
+function main() {
+  console.log(describe(3), describe(-1)); // positive -1
+}
+```
+
+An unannotated method that overrides a base class method or implements an interface method
+returns that method's type, and its `return`s are checked against it. Arrow functions follow
+the same rules when no function type is expected; where one is, its result type applies.
+Generic arrow functions (`const id = <T>(x: T) => x`) follow them too.
+
+A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
+Velt doesn't have. Return `null` and give the function a `T | null` type instead.
+
+A function may use itself (or other functions whose return types are being inferred) anywhere
+outside its `return` expressions, as in TypeScript: `count` below returns `i64`. Only when its
+`return` expressions depend on the function itself, directly, through a local (`const m = f(x);
+return m;`) or through other functions whose `return` expressions use it in turn (`isEven`
+returning `isOdd(n - 1)`, which returns `isEven(n - 1)`), it needs an annotation, as
+TypeScript's "implicitly has return type 'any'" does:
+
+```ts
+class TreeNode {
+  kids: TreeNode[] = [];
+}
+
+function count(n: TreeNode) {
+  let total = 1;
+  for (const c of n.kids) {
+    total += count(c); // fine: not in a `return` expression
+  }
+  return total;
+}
+
+function main() {
+  console.log(count(new TreeNode())); // 1
+}
+```
+
+```ts error
+function fib(n: i64) {
+  // error: function `fib` needs a return type annotation
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+```
+
+Write the type: `function fib(n: i64): i64`. A function without a `return` value is `void`
+before its body is checked, so it may call itself freely (a recursive `walk(child);`). A body
+that uses itself outside its `return`s is checked twice: once to find the return type, then
+against it.
+
 ## Generic functions
 
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
@@ -33,7 +115,11 @@ inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
 expected type types the arguments of type parameters it fixes, before an untyped number
-literal falls back to `i64`; where an argument's own type disagrees, the argument decides:
+literal falls back to `i64`; where an argument's own type disagrees, the argument decides,
+unless the result would then not convert to the expected type: a type parameter the arguments
+fixed to a type that converts to the expected one takes the expected one, and the arguments
+convert to it (`const ns: Named[] = wrap(new C())` calls `wrap<Named>`;
+`const ps: (i64 | null)[] = pair(1, 2)` calls `pair<i64 | null>`):
 
 ```ts
 import { Set } from "velt:collections/set";
@@ -48,6 +134,21 @@ function main() {
   const s: Set<u8> = new Set([1, 2]); // T = u8
   const c: Map<string, u16> = new Map([["a", 1]]);
   console.log(y, z, s.size, c.get("a"));
+}
+```
+
+An arrow function argument is checked against its parameter type with the type parameters the
+expected type fixed, so its parameters need no annotations there either:
+
+```ts
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const inc: (x: i32) => i32 = id((x) => x + 1); // x: i32
+  const lengths: ((s: string) => usize)[] = id([(s) => s.length]);
+  console.log(inc(1), lengths[0]("abc")); // 2 3
 }
 ```
 
@@ -306,14 +407,26 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
   `double`. An arrow may also take more, when the extra ones have defaults.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
-  spelling `<T,>` works too, and JSX is allowed alongside). One must be a module-level `const`
-  with typed parameters and a return type; it is then a generic function:
+  spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
+  with typed parameters; it is then a generic function. Without a return type it returns the
+  type of its body or its `return`s, by the rules of [Return types](#return-types)
+  (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
+  level it is an ordinary generic function; in a function body it is a generic function nested
+  there, so each call instantiates it, and like any [nested function](#declarations) it cannot
+  use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
+  a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
+  anywhere else (an argument, a `let`) is an error:
 
   ```ts
   const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
 
   function main() {
     console.log(firstOr([3, 4], 0), firstOr([], "none"));
+    const pair = <A, B>(a: A, b: B) => `${a}:${b}`; // returns string
+    console.log(pair(1, true), pair("x", 2.5)); // 1:true x:2.5
+    const id = <T>(x: T) => x;
+    const n: i64 = id(41) + 1;
+    console.log(n); // 42
   }
   ```
 
@@ -351,20 +464,49 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   and that parameter of the enclosing function becomes owned. Where that parameter cannot become
   owned (in a closure, or an overridden or interface method), this is the error
   ``cannot keep a copy of `next`, a borrowed function parameter``.
+- A closure held in a `const` that is only ever called (`const add = (n: number) => {
+  this.total += n; }; add(1); add(2);`) is non-escaping too: it captures by reference, sees
+  every later change of what it captures, and lives in the frame, so capturing `this` does not
+  make the class reference-counted. The compiler proves it: the closure's variable is used only
+  as `f(...)` (never copied, stored, returned, passed on or captured by another closure), the
+  enclosing function is not `async` or a generator, and no call runs while a reference into a
+  captured object is held (the call's own arguments do not use what it captures, and it is not
+  inside a `for...of` over such an object, a `match` on one, or next to an argument borrowing
+  one). Otherwise it is escaping, as below; the results are the same, only the cost differs.
+  Borrowing never makes a program an error: where a closure borrowing `this` (or `const me =
+  this`) would conflict with a caller's borrow, such as a `for...of` over `c.items` around a
+  `c.clear()` that replaces `items`, the closure and `me` share instead. The fallback is for
+  the whole program: one such conflict makes every held closure and every `const me = this` in
+  it share, as if none of them borrowed.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
   into the closure, so it is released (and disposed) when the closure is, even if other captures
   are still used afterwards. A variable that the closure or the enclosing code assigns
-  while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
+  while the other still uses it (`let count = 0; const incs = [() => { count++; }]; incs[0]();
   console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps
   a plain copy. A `for (let …)` loop's step runs on a fresh binding per iteration, as in JS. A
   closure passed to `push` is stored, so it is escaping too.
-- Async closures never modify captured variables, because they may run on another thread
-  ([Async](async.md#thread-safety)), and the enclosing code may not assign a variable an async
-  closure captured (``cannot assign to `k` after a stored closure captured it``): the closure
-  keeps its own copy.
+- An async closure that stays on the task that created it captures like any other escaping
+  closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
+  variables it captured, and every call sees the same objects and variables. Each call shares
+  the captured objects with the closure (a count increment, no copy), and a variable that the
+  closure assigns, or that the enclosing code assigns after creating it, lives in a cell. Every
+  call runs as a started promise on the caller's task, so it interleaves with the rest of the
+  task only at `await`s, never in parallel ([Async](async.md#promises)).
+- An async closure that may run on another thread copies what it captured for each call, and
+  may not modify a captured variable or object (``this async closure modifies captured `n`, so
+  it must stay on the task that created it``, with where it leaves its task); nor may the
+  enclosing code assign one it captured (``cannot assign to `k` after a stored closure captured
+  it``). The compiler proves which closures stay: one may leave when it is spawned
+  (`spawn(async () => …)`, `spawn(f())`, an argument of a spawned call), is an HTTP handler, goes
+  into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
+  is passed to (a generic one included), a variable holding it, a closure capturing it or a
+  task returning it does; when it is stored in an
+  object, array or map whose type reaches one of those places; and when it is passed directly to
+  a function value or an interface or overridden method, which may keep it. A timer callback
+  (`setTimeout`) runs as a spawned task, so it is one too.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {
@@ -390,4 +532,27 @@ let total = 0;
 const next = makeCounter();
 next();
 console.log(total, next(), apply((x) => x * 10, 5), scale([1.5]));   // 6 2 50 [ 3 ]
+```
+
+```ts
+class Ctx {
+  count: number = 0;
+}
+
+// The closure outlives `methods`, changes `ctx` and keeps `calls` in a cell.
+function methods(ctx: Ctx): (by: number) => Promise<number> {
+  let calls: number = 0;
+  return async (by: number): Promise<number> => {
+    calls += 1;
+    ctx.count += by;
+    await sleep(1);
+    return ctx.count * 100 + calls;
+  };
+}
+
+async function main() {
+  const ctx = new Ctx();
+  const inc = methods(ctx);
+  console.log(await Promise.all([inc(1), inc(2)]), ctx.count);   // [ 302, 302 ] 3
+}
 ```

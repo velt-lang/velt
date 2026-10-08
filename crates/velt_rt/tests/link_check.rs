@@ -501,112 +501,56 @@ fn parse_stress_line(line: &str) -> (usize, usize) {
     (id, no)
 }
 
-/// Lines from 64 tasks on 8 workers arrive whole and in order per task, and piped output is
-/// written in large blocks: each run must stay under 250 ms of CPU time. It takes about 20 ms
-/// (debug runtime, also with every core busy); one write per line takes about 500 ms. CPU time,
-/// not wall-clock time, which on a loaded machine mostly measures waiting for a core (and on
-/// macOS includes the first launch's code-signature check, over a second).
+/// Lines from 64 tasks on 8 workers arrive whole and in order per task, and piped output goes out
+/// in large blocks: the debug runtime counts its writes to stdout (`VELT_STDOUT_STATS=1`), which
+/// must be far fewer than the lines (one write per line is the regression this guards against). A
+/// count, not a duration: a small write to a pipe costs 25 times more on macOS than on Linux, so a
+/// time limit set for one platform misses the regression on the other.
 #[test]
 fn concurrent_tasks_never_interleave_within_a_line() {
-    use std::io::Read;
     let Some(exe) = build("stdout_stress", STDOUT_STRESS) else {
         eprintln!("NOTE: no C toolchain found; stdout stress check skipped");
         return;
     };
     for _ in 0..3 {
-        let start = std::time::Instant::now();
-        let mut child = command(&exe)
+        let out = command(&exe)
             .env("VELT_THREADS", "8")
-            .stdout(std::process::Stdio::piped())
-            .spawn()
+            .env("VELT_STDOUT_STATS", "1")
+            .output()
             .unwrap();
-        let mut stdout = Vec::new();
-        child
-            .stdout
-            .take()
-            .unwrap()
-            .read_to_end(&mut stdout)
-            .unwrap();
-        let (status, cpu) = wait_with_cpu_time(child);
-        let elapsed = start.elapsed();
-        assert!(status.success(), "{status}");
-        let text = text(&stdout);
+        assert!(out.status.success(), "{}", out.status);
+        let stdout = text(&out.stdout);
         let mut next = vec![0usize; 64];
         let mut count = 0;
-        for line in text.lines() {
+        for line in stdout.lines() {
             let (id, no) = parse_stress_line(line);
             assert_eq!(no, next[id], "task {id} lines out of order");
             next[id] += 1;
             count += 1;
         }
         assert_eq!(count, 64_000);
-        eprintln!(
-            "stdout stress: 64000 lines, {} bytes in {elapsed:?} ({cpu:?} CPU)",
-            text.len()
-        );
-        assert!(
-            cpu < Duration::from_millis(250),
-            "stdout stress too slow: {cpu:?} CPU"
-        );
+        // The counter exists in the debug runtime, which this profile links.
+        if cfg!(debug_assertions) {
+            let writes = stdout_writes(&text(&out.stderr));
+            eprintln!(
+                "stdout stress: 64000 lines, {} bytes in {writes} writes",
+                stdout.len()
+            );
+            assert!(
+                writes <= count / 100,
+                "stdout stress: {writes} writes for {count} lines (piped output must be block-buffered)"
+            );
+        }
     }
 }
 
-/// Waits for `child` and returns its exit status and the CPU time it used (user + system).
-#[cfg(unix)]
-fn wait_with_cpu_time(child: std::process::Child) -> (std::process::ExitStatus, Duration) {
-    use std::os::unix::process::ExitStatusExt;
-    let pid = child.id() as libc::pid_t;
-    let mut status = 0;
-    // SAFETY: a zeroed `rusage` is valid; `wait4` writes the status and usage of our child.
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    while unsafe { libc::wait4(pid, &mut status, 0, &mut usage) } != pid {
-        let e = std::io::Error::last_os_error();
-        assert_eq!(e.kind(), std::io::ErrorKind::Interrupted, "wait4: {e}");
-    }
-    let time = |t: libc::timeval| Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
-    (
-        std::process::ExitStatus::from_raw(status),
-        time(usage.ru_utime) + time(usage.ru_stime),
-    )
-}
-
-/// Waits for `child` and returns its exit status and the CPU time it used (user + kernel).
-#[cfg(windows)]
-fn wait_with_cpu_time(mut child: std::process::Child) -> (std::process::ExitStatus, Duration) {
-    use std::os::windows::io::AsRawHandle;
-    /// `FILETIME`: 100 ns ticks.
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct FileTime {
-        low: u32,
-        high: u32,
-    }
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetProcessTimes(
-            process: *mut std::ffi::c_void,
-            creation: *mut FileTime,
-            exit: *mut FileTime,
-            kernel: *mut FileTime,
-            user: *mut FileTime,
-        ) -> i32;
-    }
-    let status = child.wait().unwrap();
-    let mut t = [FileTime::default(); 4];
-    let [c, e, k, u] = &mut t;
-    // SAFETY: the handle stays open until `child` drops; the four outputs are writable.
-    let ok = unsafe { GetProcessTimes(child.as_raw_handle(), c, e, k, u) };
-    assert_ne!(
-        ok,
-        0,
-        "GetProcessTimes: {}",
-        std::io::Error::last_os_error()
-    );
-    let ticks = |t: FileTime| (t.high as u64) << 32 | t.low as u64;
-    (
-        status,
-        Duration::from_nanos((ticks(t[2]) + ticks(t[3])) * 100),
-    )
+/// The `writes=` count of the `stdout stats:` line a debug runtime prints at exit.
+fn stdout_writes(stderr: &str) -> usize {
+    stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("stdout stats: writes="))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no `stdout stats` line in stderr:\n{stderr}"))
 }
 
 #[path = "../../../tests/common/command.rs"]

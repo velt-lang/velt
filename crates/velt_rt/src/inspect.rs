@@ -4,8 +4,29 @@
 //! (`\n`, `\t`, `\b`, `\f`, `\r`, else `\xHH` for C0, DEL and C1 controls), and a lone surrogate
 //! as `\udxxx` (#377; a top-level string prints it as U+FFFD instead, like every output).
 //! velt_vir's format glue quotes compile-time strings (literal types, string enums) the same way.
+//! Node's default limits ([`DEPTH`], [`MAX_ARRAY_LENGTH`]) are shared with the format glue.
 
 use crate::str::wtf8;
+
+/// Node's `util.inspect` default `depth`: a container nested deeper than this prints as
+/// `[Object]`, `[Array]`, `[Name]` (the format glue applies the same limit).
+pub const DEPTH: u32 = 2;
+
+/// Node's default `maxArrayLength`: an array, `Map` or `Set` prints this many entries, then
+/// `... n more items`.
+pub const MAX_ARRAY_LENGTH: usize = 100;
+
+/// Append node's `, ... n more items` (`... 1 more item`) after the shown entries of a
+/// container with `remaining` more.
+pub fn push_more_items(out: &mut Vec<u8>, remaining: u64) {
+    out.extend_from_slice(b", ... ");
+    out.extend_from_slice(itoa::Buffer::new().format(remaining).as_bytes());
+    out.extend_from_slice(if remaining == 1 {
+        b" more item"
+    } else {
+        b" more items"
+    });
+}
 
 /// An object key as `util.inspect` prints it: bare when it is an identifier of ASCII letters,
 /// digits and `_` not starting with a digit (`a`, `_x1`), else quoted like a string (`'a b'`,

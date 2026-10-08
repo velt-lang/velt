@@ -78,8 +78,9 @@ impl Cx<'_> {
     /// Does `t` have a JSON form? The lowering-side mirror of sema's stringify check
     /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like
     /// enums, unions of writable members, `json.Value`, `Map<string, V>`, and structs, classes
-    /// and object literals without private fields whose fields are writable. `stack` holds the
-    /// ADTs being visited (recursive types).
+    /// and object literals whose written fields are writable: `#x` fields are skipped, `private`
+    /// ones are written, and a type holding std's private state (`AdtDef::opaque`) has no JSON
+    /// form. `stack` holds the ADTs being visited (recursive types).
     fn json_writable(&mut self, t: TyId, stack: &mut Vec<TyId>) -> bool {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
@@ -104,7 +105,7 @@ impl Cx<'_> {
 
     /// The parts of ADT `d<args>` that must be writable: fields, union members' payloads, or
     /// the value type of a `Map<string, V>`, or nothing for C-like enums. `None`: no JSON form
-    /// (other maps, payload enums, types with private fields).
+    /// (other maps, payload enums, types holding std's private state).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
             // `Record<K, V>` is an object (sema checked its keys).
@@ -117,9 +118,15 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
-            // Private fields (runtime handles in std) are never written.
-            hir::Def::Adt(a) if a.private_fields => return None,
-            hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+            // std's private state (runtime handles) has no JSON form.
+            hir::Def::Adt(a) if a.opaque => return None,
+            // ES private fields (`#x`) are never written; `private x` is, as in Node.
+            hir::Def::Adt(a) => a
+                .fields
+                .iter()
+                .filter(|f| !f.name.starts_with('#'))
+                .map(|f| f.ty)
+                .collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],
             hir::Def::Enum(e) if e.is_union => e
                 .variants

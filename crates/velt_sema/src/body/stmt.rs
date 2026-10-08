@@ -49,13 +49,11 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
-        // `super(args)` only as a statement of the constructor's body itself, once: never
-        // inside a block, `if`, `try` or loop, where a path could skip it (and the field
-        // initializers that run right after it) or run it twice.
-        self.f.super_ok = self.f.kind == FnKind::Ctor
-            && self.f.stmt_depth == 0
-            && !self.f.super_called
-            && is_super_call(s);
+        // `super(args)` only where it runs exactly once on every path (`ctor::super_sites`): a
+        // statement of the constructor's body itself, or one per branch of an `if` / `else`;
+        // never in a loop, `try` or a branch the other path skips.
+        let site = self.f.kind == FnKind::Ctor && self.f.super_sites.contains(&s.span);
+        self.f.super_ok = site && !self.f.super_called && is_super_call(s);
         self.f.stmt_depth += 1;
         self.stmt_inner(s, out);
         self.f.stmt_depth -= 1;
@@ -191,10 +189,16 @@ impl FnCx<'_, '_> {
         let c = self.cond(cond);
         let exhausted_before = self.exhausted_union_local();
         let before = self.narrow_state();
+        let super_before = (self.f.super_called, self.f.before_super);
         let t = self.block_narrowed(then, &when_true);
         let after_then = self.narrow_state();
         self.restore_narrowing(&before);
+        // Each branch starts from the state before the `if`: `super(...)` once in each.
+        let super_then = (self.f.super_called, self.f.before_super);
+        (self.f.super_called, self.f.before_super) = super_before;
         let e = els.map(|s| self.stmt_as_block(s, &when_false));
+        self.f.super_called |= super_then.0;
+        self.f.before_super &= super_then.1;
         let then_div = crate::flow::block_diverges(&t, &self.cx.ty);
         let els_div = e
             .as_ref()
@@ -379,12 +383,13 @@ impl FnCx<'_, '_> {
             Self::push(out, S::Return(None), span);
             return;
         }
-        match (e, self.f.ret) {
-            (None, ret) => {
-                let ret = ret.unwrap_or(self.cx.ty.unit);
-                if self.f.ret.is_none() {
-                    self.f.ret = Some(ret);
-                }
+        let Some(ret) = self.f.ret else {
+            let h = self.infer_return(e, span);
+            Self::push(out, S::Return(h), span);
+            return;
+        };
+        match e {
+            None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
                     self.cx.error(
@@ -394,15 +399,8 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
-            (Some(e), Some(ret)) => {
+            Some(e) => {
                 let h = self.expr_coerce(e, ret, Want::Move);
-                Self::push(out, S::Return(Some(h)), span);
-            }
-            (Some(e), None) => {
-                let h = self.expr(e, None, Want::Move);
-                if h.ty != self.cx.ty.never {
-                    self.f.ret = Some(h.ty);
-                }
                 Self::push(out, S::Return(Some(h)), span);
             }
         }

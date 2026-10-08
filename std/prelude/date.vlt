@@ -375,7 +375,10 @@ export class Date implements Comparable<Date> {
     return isoString(this.t as i64, 0, true);
   }
 
-  /** What `JSON.stringify` writes for a date: its ISO string, or null when invalid. */
+  /**
+   * The ISO string, or null for an invalid date: what JS's `JSON.stringify` writes for a date.
+   * Velt's `JSON.stringify` does not take a `Date` (it has no JSON form): call this first.
+   */
   toJSON(): string | null {
     return this.t != this.t ? null : isoString(this.t as i64, 0, true);
   }

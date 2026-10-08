@@ -1,12 +1,12 @@
 // Prelude: JS string methods, `String.fromCharCode`, `parseInt`, `parseFloat`, `Number(s)`
 // (runtime string functions, rt_abi_async.md §12.2).
 //
-// POC indexing model: positions and lengths are byte offsets (they agree with `s.length`); a
-// position inside a multi-byte character moves back to its first byte, so results are always
-// valid UTF-8. For ASCII text every method matches JS exactly. Positions are `i64` so negative
-// arguments keep their JS meaning; "absent" is -1 (`indexOf`) where JS would say -1 or NaN.
-// Inputs are borrowed; every returned string is owned by the caller (a substring of a static
-// string may itself be static, which is free to drop).
+// Positions and lengths count UTF-16 code units, as in JavaScript (`"😀".length` is 2): a
+// position may fall between the two halves of a surrogate pair, and slicing there keeps the
+// half as a lone surrogate (docs/reference/types.md "Strings"). Positions are `i64` so negative
+// arguments keep their JS meaning; "absent" is -1 (`indexOf`, `charCodeAt`) where JS would say
+// -1 or NaN. Inputs are borrowed; every returned string is owned by the caller (a substring of a
+// static string may itself be static, which is free to drop).
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -17,6 +17,7 @@ declare function velt_rt_str_includes(s: string, needle: string): bool;
 declare function velt_rt_str_starts_with(s: string, affix: string): bool;
 declare function velt_rt_str_ends_with(s: string, affix: string): bool;
 declare function velt_rt_str_split(s: string, sep: string): string[];
+declare function velt_rt_str_code_points(s: string): string[];
 declare function velt_rt_str_trim(s: string): string;
 declare function velt_rt_str_trim_start(s: string): string;
 declare function velt_rt_str_trim_end(s: string): string;
@@ -84,9 +85,20 @@ extend string {
     return velt_rt_str_ends_with(this, suffix);
   }
 
-  /** JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the characters. */
+  /**
+   * JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the code units (a
+   * surrogate pair splits into its two halves).
+   */
   split(sep: string): string[] {
     return velt_rt_str_split(this, sep);
+  }
+
+  /**
+   * The characters (code points, a surrogate pair as one string), as JS's string iterator:
+   * what `for (const c of s)` and `[...s]` iterate. Internal to the compiler.
+   */
+  __codePoints(): string[] {
+    return velt_rt_str_code_points(this);
   }
 
   /** Strips JS whitespace and line terminators. */
@@ -139,7 +151,10 @@ extend string {
     return out;
   }
 
-  /** Pads to `target` bytes with `fill` (the last partial fill is cut at a character boundary). */
+  /**
+   * Pads to `target` code units with `fill` (the last partial fill is cut to the units missing,
+   * between the halves of a pair if need be, as in JS).
+   */
   padStart(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_start(this, target, fill);
   }
@@ -173,17 +188,16 @@ extend string {
   }
 
   /**
-   * The character that starts at position `i` (positions count bytes, as in `slice`; for ASCII
-   * text that is JS's `charAt`), or "" past the end or inside a multi-byte character. `s[i]` is
-   * the same.
+   * The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
+   * out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
+   * (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
    */
   charAt(i: i64 = 0): string {
-    const b = __intrinsic_str_char_code_at(this, i);
-    if (b < 0 || (b >= 128 && b < 192)) {
+    // Past the end, the slice is empty (its bounds are clamped): no length to compute first.
+    if (i < 0 || i == END) {
       return "";
     }
-    const n = b < 128 ? 1 : b < 224 ? 2 : b < 240 ? 3 : 4;
-    return velt_rt_str_slice(this, i, i + n);
+    return velt_rt_str_slice(this, i, i + 1);
   }
 
   /**
@@ -199,7 +213,10 @@ extend string {
     return this.charAt(k);
   }
 
-  /** The byte at `i` (POC: bytes, not UTF-16 units), or -1 if out of range (JS: NaN). */
+  /**
+   * The UTF-16 code unit at `i` (the high or low surrogate of a pair), or -1 if out of range
+   * (JS: NaN). Reads an ASCII string inline.
+   */
   charCodeAt(i: i64 = 0): i64 {
     return __intrinsic_str_char_code_at(this, i);
   }
@@ -210,7 +227,10 @@ extend string {
  * `string` itself; `String(x)` converts a value to its string.
  */
 export class String {
-  /** JS `String.fromCharCode(code)` for one code unit, UTF-8 encoded (lone surrogates: U+FFFD). */
+  /**
+   * JS `String.fromCharCode(code)` for one code unit (`ToUint16`); a surrogate gives a string
+   * holding that lone surrogate, as in JS.
+   */
   static fromCharCode(code: i64): string {
     return velt_rt_str_from_char_code(code);
   }

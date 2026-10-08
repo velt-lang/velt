@@ -8,6 +8,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::accessor_rmw::Rmw;
+use super::method::Resolved;
 use crate::body::FnCx;
 use crate::defs::member_key;
 use crate::hir::{self, TyId};
@@ -54,6 +55,24 @@ impl FnCx<'_, '_> {
             && self.resolve_method(t, &member_key(name, true)).is_some()
     }
 
+    /// The parameter type of setter `name` of type `t` (`None` when it is not known here).
+    pub(super) fn setter_param_ty(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        let (ty, slots) = match self.resolve_method(t, &member_key(name, true))? {
+            Resolved::Def { def, slots, .. } | Resolved::Virtual { def, slots, .. } => {
+                (self.cx.fn_info(def).params.first()?.ty, slots)
+            }
+            Resolved::Iface {
+                method, iface_args, ..
+            } => {
+                let slots = iface_args.into_iter().map(Some).collect();
+                (method.params.first()?.ty, slots)
+            }
+            Resolved::Builtin(_) => return None,
+        };
+        let ty = self.cx.ty.subst_known(ty, &slots);
+        (!self.cx.ty.has_error(ty)).then_some(ty)
+    }
+
     /// `obj.prop = arg` through the setter (`obj` is the checked receiver).
     pub(super) fn setter_call(
         &mut self,
@@ -88,6 +107,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
         let Some(op) = op else {
+            if as_value {
+                return self.accessor_assign_value(obj, object, prop, value, span);
+            }
             return self.setter_call(obj, prop, value, span);
         };
         if !self.readable(obj.ty, prop) {

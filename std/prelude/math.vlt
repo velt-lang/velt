@@ -145,6 +145,19 @@ export class Math {
   }
 
   /**
+   * JS `Math.imul`: the low 32 bits of the product of ToInt32 of both operands. A call on
+   * numbers compiles to one 32-bit multiply (sema `int32.rs`); this body serves function values.
+   */
+  static imul(a: f64, b: f64): i64 {
+    return (velt_rt_math_to_int32(a) * velt_rt_math_to_int32(b)) as i64;
+  }
+
+  /** JS `Math.clz32`: leading zero bits of ToUint32 of `x` (32 for 0). */
+  static clz32(x: f64): i64 {
+    return velt_rt_math_clz32(velt_rt_math_to_int32(x)) as i64;
+  }
+
+  /**
    * High 64 bits of the 128-bit product `a * b`, for 64-bit limb arithmetic (the low bits are
    * `a * b`, which wraps). Not in JS; like C#'s `Math.BigMul` / Rust's widening multiply.
    */
@@ -218,24 +231,37 @@ function hypotScaled(x: f64, y: f64, z: f64, w: f64, scale: f64): f64 {
   return __intrinsic_sqrt(sx * sx + sy * sy + sz * sz + sw * sw);
 }
 
+// JS's ToInt32 (`x | 0`): truncated, modulo 2^32, in the signed 32-bit range; NaN and ±Infinity
+// give 0. Bitwise operators on numbers call it (sema `int32.rs`), and the backends emit it inline.
+declare function velt_rt_math_to_int32(x: f64): i32;
+// Leading zero bits of a 32-bit value (`Math.clz32`), one instruction.
+declare function velt_rt_math_clz32(x: i32): i32;
+// JS's `(a * b) | 0` and `(a + x) | 0` for int32 numbers `a`, `b` (backends emit them inline).
+declare function velt_rt_math_mul_int32(a: i32, b: i32): i32;
+declare function velt_rt_math_add_int32(a: i32, x: f64): i32;
+
 /**
- * JS `ToInt32`: what a bitwise operator does to a float operand (`x | 0`, `f >> 1`; the compiler
- * inserts the call, `sema` `numbers.rs`). Truncates, wraps modulo 2^32 into the signed 32-bit
- * range; NaN and ±Infinity give 0.
+ * ToInt32 of the product `a * b` of two JS numbers (`(y * k) | 0`; sema `int32.rs` inserts the
+ * call). JS multiplies doubles, so a product past 2^53 is rounded before its low 32 bits are
+ * taken. For 32-bit operands that is `velt_rt_math_mul_int32`; other values multiply as doubles.
  */
-export function __toInt32(x: f64): i64 {
-  // `x - x` is 0 for every finite `x`, NaN for NaN and ±Infinity.
-  if (x - x != 0.0) {
-    return 0;
+export function __mulToInt32(a: i64, b: i64): i32 {
+  if ((a as i32) as i64 == a && (b as i32) as i64 == b) {
+    return velt_rt_math_mul_int32(a as i32, b as i32);
   }
-  let m = __intrinsic_trunc(x) % 4294967296.0;
-  if (m < 0.0) {
-    m += 4294967296.0;
+  return velt_rt_math_to_int32((a as f64) * (b as f64));
+}
+
+/**
+ * ToInt32 of `a + x` for a JS number `a` held as an integer and a float `x` (`(y + i) | 0` with
+ * `i: number`; sema `int32.rs`): `velt_rt_math_add_int32` when `a` is an int32, which adds as
+ * integers when `x` is a whole number of at most 2^52 (the double sum is exact then).
+ */
+export function __intAddToInt32(a: i64, x: f64): i32 {
+  if ((a as i32) as i64 == a) {
+    return velt_rt_math_add_int32(a as i32, x);
   }
-  if (m >= 2147483648.0) {
-    m -= 4294967296.0;
-  }
-  return m as i64;
+  return velt_rt_math_to_int32((a as f64) + x);
 }
 
 /**

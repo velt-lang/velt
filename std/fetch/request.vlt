@@ -1,0 +1,171 @@
+// std/fetch/request: the WHATWG `Request` and `RequestInit` (docs/std/fetch.md): a request
+// `fetch` can send, made from a URL and the same options `fetch` takes.
+
+import { IoError } from "velt:io";
+import { AbortSignal } from "velt:task";
+import { URL } from "velt:url";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { BodyInit, BodyParts, bodyParts } from "velt:fetch/body";
+import { Headers, HeadersInit } from "velt:fetch/headers";
+
+/** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
+export type RequestRedirect = "follow" | "error" | "manual";
+
+/** The options of `fetch(input, init)` and `new Request(input, init)`. */
+export struct RequestInit {
+  /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
+  method?: string;
+  headers?: HeadersInit;
+  body?: BodyInit;
+  redirect?: RequestRedirect;
+  /**
+   * Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
+   * (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+   */
+  signal?: AbortSignal;
+  /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
+  ca?: string;
+}
+
+/** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
+export function normalizeMethod(m: string): string {
+  const up = m.toUpperCase();
+  if (
+    up == "DELETE" || up == "GET" || up == "HEAD" || up == "OPTIONS" || up == "POST" || up == "PUT"
+  ) {
+    return up;
+  }
+  return m;
+}
+
+export class Request {
+  headers: Headers = new Headers();
+  #target: string = "";
+  #verb: string = "GET";
+  #follow: RequestRedirect = "follow";
+  #abort: AbortSignal | null = null;
+  #trust: string = "";
+  #body: BodyParts = { kind: 0, text: "", bytes: [], contentType: null };
+  #used: bool = false;
+
+  /**
+   * Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
+   * for a `Request` input whose body was already used.
+   */
+  constructor(input: string | URL | Request, init: RequestInit = {}) throws IoError {
+    if (typeof input == "string") {
+      this.#target = input;
+    } else if (input instanceof URL) {
+      this.#target = input.href;
+    } else {
+      this.#target = input.#target;
+      this.#verb = input.#verb;
+      this.#follow = input.#follow;
+      this.#abort = input.#abort;
+      this.#trust = input.#trust;
+      this.headers = new Headers(input.headers);
+      if (input.#body.kind != 0) {
+        if (input.#used) {
+          throw new IoError(
+            "EINVAL",
+            "Cannot construct a Request with a Request object that has already been used.",
+          );
+        }
+        this.#body = input.#body;
+        input.#used = true;
+      }
+    }
+    const method = init.method;
+    if (method != null) {
+      this.#verb = normalizeMethod(method);
+    }
+    const headers = init.headers;
+    if (headers != null) {
+      this.headers = new Headers(headers);
+    }
+    if (init.body != null) {
+      this.#body = bodyParts(init.body);
+    }
+    this.#follow = init.redirect ?? this.#follow;
+    const signal = init.signal;
+    if (signal != null) {
+      this.#abort = signal;
+    }
+    this.#trust = init.ca ?? this.#trust;
+    if (this.#body.kind != 0 && (this.#verb == "GET" || this.#verb == "HEAD")) {
+      throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
+    }
+    const ct = this.#body.contentType;
+    if (ct != null && !this.headers.has("content-type")) {
+      this.headers.set("content-type", ct);
+    }
+  }
+
+  get url(): string {
+    return this.#target;
+  }
+
+  get method(): string {
+    return this.#verb;
+  }
+
+  get redirect(): RequestRedirect {
+    return this.#follow;
+  }
+
+  /** The signal passed in `init` (JS gives every request a signal; Velt's is null without one). */
+  get signal(): AbortSignal | null {
+    return this.#abort;
+  }
+
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  /** The body as text. */
+  async text(): Promise<string, IoError> {
+    this.claim();
+    if (this.#body.kind == 2) {
+      return utf8DecodeLossy(this.#body.bytes);
+    }
+    return this.#body.text;
+  }
+
+  /** `JSON.parse<T>` of the body (see `Response.json`). */
+  async json<T>(): Promise<T, IoError | JsonError> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  async bytes(): Promise<u8[], IoError> {
+    this.claim();
+    if (this.#body.kind == 1) {
+      return utf8Encode(this.#body.text);
+    }
+    return this.#body.bytes;
+  }
+
+  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
+  async arrayBuffer(): Promise<u8[], IoError> {
+    return await this.bytes();
+  }
+
+  // What `fetch` sends (std only): marks the body used, as sending it does in JS.
+  private parts(): BodyParts throws IoError {
+    this.claim();
+    return this.#body;
+  }
+
+  private ca(): string {
+    return this.#trust;
+  }
+
+  private claim() throws IoError {
+    if (this.#body.kind == 0) {
+      return;
+    }
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+}

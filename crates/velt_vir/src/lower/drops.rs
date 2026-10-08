@@ -87,6 +87,15 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Register a temporary at `place` that owns a value only when `flag` is true.
+    pub(super) fn own_flagged(&mut self, place: Place, ty: TyId, flag: crate::vir::Local) {
+        if !self.dead() && self.cx.needs_drop(ty) {
+            self.innermost()
+                .drops
+                .push(DropEntry::Flagged(place, ty, flag));
+        }
+    }
+
     /// Register the class object `new` is constructing at `place` (`DropEntry::HalfBuilt`).
     pub(super) fn own_half_built(&mut self, place: Place, ty: TyId) {
         if !self.dead() && self.cx.needs_drop(ty) {
@@ -158,6 +167,15 @@ impl FnLower<'_, '_> {
         }
         match d {
             DropEntry::Temp(p, ty) => self.drop_glue(p.clone(), *ty),
+            DropEntry::Flagged(p, ty, flag) => {
+                let drop_bb = self.new_block();
+                let join = self.new_block();
+                self.branch(Operand::Copy(Place::local(*flag)), drop_bb, join);
+                self.switch_to(drop_bb);
+                self.drop_glue(p.clone(), *ty);
+                self.goto(join);
+                self.switch_to(join);
+            }
             DropEntry::HalfBuilt(p, ty) => self.drop_half_built(p, *ty),
             DropEntry::Local(id) => self.drop_local(*id),
             DropEntry::Rest(p, ty, pat) => self.drop_rest(p.clone(), *ty, pat),

@@ -266,8 +266,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Math",
         &[
-            "E", "PI", "abs", "ceil", "floor", "hypot", "max", "min", "pow", "random", "round",
-            "sign", "sqrt", "trunc",
+            "E", "PI", "abs", "ceil", "clz32", "floor", "hypot", "imul", "max", "min", "pow",
+            "random", "round", "sign", "sqrt", "trunc",
         ],
     ),
     (
@@ -335,7 +335,16 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
         ],
     ),
-    ("Buffer", &[("alloc", "pass bytes in instead")]),
+    (
+        "Buffer",
+        &[
+            ("alloc", "pass bytes in instead"),
+            (
+                "byteLength",
+                "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
+            ),
+        ],
+    ),
     (
         "Comparable",
         &[("compareTo", "pass a comparator function instead")],
@@ -414,6 +423,9 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("clear", "call `clearTimeout(t)` or `clearInterval(t)`"),
             ("cleared", "keep track of it yourself"),
+            ("hasRef", TIMER_REF),
+            ("ref", TIMER_REF),
+            ("unref", TIMER_REF),
             ("started", "keep track of it yourself"),
         ],
     ),
@@ -436,6 +448,8 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
 
 const JSON_VALUE: &str = "keep dynamic JSON out of code shared with TypeScript";
 const COMPARE: &str = "compare with `<` and `>`, or subtract: `a - b`";
+const TIMER_REF: &str =
+    "keep it out of shared code: it is Node's, and in the browser `setTimeout` returns a number";
 
 /// What to write instead of the Velt-only global `name`, if it is one.
 pub(crate) fn velt_global(name: &str) -> Option<&'static str> {

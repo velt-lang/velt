@@ -25,7 +25,10 @@ export function slugify(text: string): string {
   return words.join("-");
 }
 
-/** `text` cut to at most `max` characters, ending in `…` when it was cut. */
+/**
+ * `text` cut to a `length` of at most `max` (UTF-16 code units, as `length` counts), ending in
+ * `…` when it was cut.
+ */
 export function truncate(text: string, max: usize): string {
   if (text.length <= max) {
     return text;

@@ -1,0 +1,63 @@
+// Integers in inferred return types are JS numbers wherever they flow, as in TypeScript (#75,
+// #268): through `await`, a `T | null` result narrowed later, a method a subclass overrides with
+// a fraction (the result is a `number`), and a generic call whose `T` the expected
+// `(number | null)[]` fixes. Output as in Node.
+function wrap<T>(x: T): T[] {
+  return [x];
+}
+
+function pair<T>(a: T, b: T): T[] {
+  return [a, b];
+}
+
+async function later() {
+  return 5;
+}
+
+function opt(b: boolean) {
+  if (b) {
+    return 5;
+  }
+  return null;
+}
+
+class Q {
+  async m() {
+    return 7;
+  }
+  n() {
+    return 9;
+  }
+}
+
+class Animal {
+  legs() {
+    return 4;
+  }
+}
+
+class Bird extends Animal {
+  override legs() {
+    return 2.5;
+  }
+}
+
+class Dog extends Animal {
+  override legs() {
+    return 4;
+  }
+}
+
+async function main() {
+  const d: (number | null)[] = wrap(1);
+  const e: (number | null)[] = pair(1, 2);
+  d.push(null);
+  console.log(d, e);
+  console.log((await later()) / 2, (await new Q().m()) / 2, new Q().n() / 2);
+  const v = opt(true);
+  if (v !== null) {
+    console.log(v / 2);
+  }
+  const animals: Animal[] = [new Animal(), new Bird(), new Dog()];
+  console.log(animals.map((a) => a.legs() / 2));
+}

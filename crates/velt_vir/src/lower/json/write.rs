@@ -117,9 +117,9 @@ impl FnLower<'_, '_> {
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
-                // Sema rejects these; writing one would leak private data (runtime handles).
-                if self.cx.adt_def(d).private_fields {
-                    ice("JSON of a type with private fields");
+                // Sema rejects these; writing one would leak std's runtime handles.
+                if self.cx.adt_def(d).opaque {
+                    ice("JSON of a type holding std's private state");
                 }
                 self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
             }
@@ -192,7 +192,8 @@ impl FnLower<'_, '_> {
         self.push_text(buf, "]");
     }
 
-    /// `{"a":…,"b":…}` in field order; optional fields that are null are omitted.
+    /// `{"a":…,"b":…}` in field order; optional fields (`a?: T`) that are null are omitted, as
+    /// JavaScript omits absent ones.
     fn json_write_object(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("object of a non-ADT type")
@@ -202,7 +203,7 @@ impl FnLower<'_, '_> {
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| (f.name.clone(), is_optional(f)))
+            .map(|f| (f.name.clone(), f.optional))
             .collect();
         let tys = self.cx.adt_field_tys(ty);
         // A recursive object type can contain itself (`n.next = n`): report the cycle as
@@ -214,6 +215,10 @@ impl FnLower<'_, '_> {
         self.push_text(buf, "{");
         let mut sep = Sep::First;
         for (i, ((name, optional), fty)) in names.into_iter().zip(tys).enumerate() {
+            // ES private fields (`#x`) are not written, as in JavaScript.
+            if name.starts_with('#') {
+                continue;
+            }
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
             match (optional, self.cx.kind(fty)) {
@@ -292,17 +297,6 @@ impl FnLower<'_, '_> {
             }
         }
     }
-}
-
-/// `x?: T` fields: an option-typed field whose default is `null`.
-pub(super) fn is_optional(f: &hir::FieldDef) -> bool {
-    matches!(
-        f.default,
-        Some(hir::Expr {
-            kind: hir::ExprKind::Lit(hir::Lit::Null),
-            ..
-        })
-    )
 }
 
 /// `"name":` with the name escaped like `JSON.stringify` does.

@@ -61,11 +61,16 @@ export class Map<K, V> {
   private slots: u64[] = [];
   // 64 - log2(slots.length): home slot = p >> shift.
   private shift: u64 = 64;
+  // Counts insertions, deletions and clears: a lookup's result (a slot or an entry position)
+  // stays valid while it is unchanged, which a callback changing the map through another
+  // reference (`upsert`, `getOrInsert`) does not guarantee.
+  private edits: u64 = 0;
 
   /**
    * A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
    * key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
-   * the map shares their keys and values, like JS.
+   * the map shares their keys and values, like JS. `new Map(iterable)` also takes any iterable
+   * of pairs (a generator, another map), which the compiler collects into an array first.
    */
   constructor(entries: [K, V][] = []) {
     for (const [k, v] of entries) {
@@ -92,7 +97,10 @@ export class Map<K, V> {
     this.append(key, value, p, e);
   }
 
-  /** The value stored for `key` (see header), or null. */
+  /**
+   * The value stored for `key`, or null. Like JS it is the stored value itself: an object is
+   * shared (another reference to it), a number or string is copied.
+   */
   get(key: K): V | null {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
@@ -116,8 +124,19 @@ export class Map<K, V> {
     const found = this.lookup(key, p);
     if (found >= 0) {
       const e = found as usize;
+      const edits = this.edits;
       const next = applyTo(this.entryValues[e], f);
-      this.entryValues[e] = next;
+      if (this.edits == edits) {
+        this.entryValues[e] = next;
+        return;
+      }
+      // `f` changed the map through another reference: find the key again.
+      const again = this.lookup(key, p);
+      if (again >= 0) {
+        this.entryValues[again as usize] = next;
+      } else if (next != null) {
+        this.append(key, next, p, again);
+      }
       return;
     }
     this.append(key, init, p, found);
@@ -125,8 +144,8 @@ export class Map<K, V> {
 
   /**
    * Calls `f` with the value stored for `key` (not a copy), so an object value can be changed
-   * in place: `m.update(k, (xs) => { xs.push(x); })`. Copy values (numbers, bool, Copy
-   * structs) arrive by value like any Copy argument: replace them with `upsert` or `set`.
+   * in place: `m.update(k, (xs) => { xs.push(x); })`. Values that copy (numbers, `bool`,
+   * strings) arrive as copies, like any such argument: replace them with `upsert` or `set`.
    * Returns whether `key` was present.
    */
   update<E>(key: K, f: (value: V) => void throws E): bool throws E {
@@ -141,9 +160,19 @@ export class Map<K, V> {
   /** The value stored for `key`, inserting `make()` first if `key` is absent. */
   getOrInsert<E>(key: K, make: () => V throws E): V throws E {
     const p = __intrinsic_hash(key) * FIB;
-    const e = this.lookup(key, p);
+    let e = this.lookup(key, p);
     if (e < 0) {
-      this.append(key, make(), p, e);
+      const edits = this.edits;
+      const v = make();
+      if (this.edits != edits) {
+        // `make` changed the map through another reference: find the key again.
+        e = this.lookup(key, p);
+        if (e >= 0) {
+          this.entryValues[e as usize] = v;
+          return sharedValue(this.entryValues[e as usize]);
+        }
+      }
+      this.append(key, v, p, e);
       return sharedValue(this.entryValues[this.entryValues.length - 1]);
     }
     return sharedValue(this.entryValues[e as usize]);
@@ -157,6 +186,7 @@ export class Map<K, V> {
       return false;
     }
     const e = found as usize;
+    this.edits++;
     this.removeSlot(this.slotOf(p, e));
     this._size--;
     if (this._size == 0) {
@@ -190,6 +220,7 @@ export class Map<K, V> {
 
   /** Removes all entries. */
   clear() {
+    this.edits++;
     this.dropEntries();
     this.slots = [];
     this.shift = 64;
@@ -315,6 +346,7 @@ export class Map<K, V> {
 
   // Appends a new entry; `s` is `lookup`'s miss result for `key`.
   private append(key: K, value: V, p: u64, s: i64) {
+    this.edits++;
     if ((this._size + 1) * 4 > this.slots.length * 3) {
       this.resize(this.slots.length == 0 ? INITIAL_SLOTS : this.slots.length * 2);
       s = this.lookup(key, p);

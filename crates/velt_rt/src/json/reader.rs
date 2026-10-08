@@ -10,7 +10,7 @@ use super::error::{mismatch_message, syntax_message, unknown_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
-use crate::str::VeltStr;
+use crate::str::{VeltStr, STRIDE};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -406,20 +406,34 @@ impl Reader {
         }
     }
 
-    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes. `tok` must
-    /// be the string the scanner read last, whose UTF-16 length is the scanner's `units` (so for
-    /// [`Self::owned_str`]).
+    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes, unless it
+    /// is a non-ASCII string of more than `STRIDE` units. `tok` must be the string the scanner
+    /// read last, whose UTF-16 length is the scanner's `units` (so for [`Self::owned_str`]).
+    ///
+    /// Such a long non-ASCII key is copied because threads remember positions in long static
+    /// strings (`str/recent.rs`), which is sound only for bytes that are never freed: literals.
+    /// A borrowed key short enough, or ASCII, is never remembered, nor is any sub-range of one.
     pub(crate) fn borrowed_str(&self, tok: StrTok) -> VeltStr {
+        let units = self.sc.units;
         match tok {
-            // SAFETY: the source outlives the reader (reader_new's contract); the static form
-            // is never freed.
-            // A static string keeps no lone count, so the source's lone surrogates (if any) need
-            // no bookkeeping here; a range between two quotes of canonical WTF-8 is canonical.
-            StrTok::Borrowed(start, end) => unsafe {
-                VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
+            StrTok::Borrowed(start, end) if units <= STRIDE || units == end - start => unsafe {
+                // SAFETY: the source outlives the reader (reader_new's contract); the static
+                // form is never freed.
+                // A static string keeps no lone count, so the source's lone surrogates (if any)
+                // need no bookkeeping here; a range between two quotes of canonical WTF-8 is
+                // canonical.
+                VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, units)
             },
+            StrTok::Borrowed(start, end) => self.decoded_long(&self.sc.src[start..end]),
             StrTok::Owned(v) => self.decoded_escaped(&v),
         }
+    }
+
+    /// [`Self::decoded`] of a long non-ASCII key without escapes, out of line: rare.
+    #[cold]
+    #[inline(never)]
+    fn decoded_long(&self, v: &[u8]) -> VeltStr {
+        self.decoded(v)
     }
 
     /// [`Self::decoded`] of a string that had escapes, out of line: it is the rarer case, and
@@ -429,13 +443,13 @@ impl Reader {
         self.decoded(v)
     }
 
-    /// [`Self::decoded`] of a source with lone surrogates (out of line: rare): its raw lone
-    /// surrogates are counted (escapes decode to code points, a lone surrogate escape still to
-    /// U+FFFD before #377 phase 2b, so nothing joins).
+    /// [`Self::decoded`] of a string that may hold lone surrogates (out of line: rare): the
+    /// source had some, or the token decoded a lone surrogate escape. They are counted.
     #[cold]
     #[inline(never)]
     fn decoded_wtf8(&self, v: &[u8]) -> VeltStr {
-        VeltStr::from_wtf8_units(v, self.sc.units)
+        // SAFETY: the scanner counted the units of the token it read last, which `v` is.
+        unsafe { VeltStr::from_wtf8_units(v, self.sc.units) }
     }
 
     /// A string token as an owned `VeltStr`.
@@ -451,13 +465,14 @@ impl Reader {
     /// `VeltStr`.
     #[inline]
     fn decoded(&self, v: &[u8]) -> VeltStr {
-        if !self.lone_free {
+        if !self.lone_free || self.sc.lone {
             return self.decoded_wtf8(v);
         }
         // SAFETY: the source has no lone surrogates, so it is UTF-8 (`scan.rs`): raw contents
-        // are a slice of it between two quotes, and decoding turns every escape into a scalar
-        // value (a lone surrogate escape becomes U+FFFD), so the text is UTF-8.
+        // are a slice of it between two quotes, and the token decoded no lone surrogate escape,
+        // so the text is UTF-8.
         let text = unsafe { std::str::from_utf8_unchecked(v) };
-        VeltStr::from_text_counted(text, self.sc.units)
+        // SAFETY: the scanner counted the units of the token it read last, which `v` is.
+        unsafe { VeltStr::from_text_counted(text, self.sc.units) }
     }
 }

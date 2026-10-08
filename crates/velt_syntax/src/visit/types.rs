@@ -10,7 +10,13 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
     match &t.kind {
         T::Named { args, .. } => args.iter().for_each(|a| walk_type(a, v)),
         T::Array(elem) => walk_type(elem, v),
-        T::Tuple(items) | T::Union(items) => items.iter().for_each(|i| walk_type(i, v)),
+        T::Tuple(items) | T::Union(items) | T::Intersection(items) => {
+            items.iter().for_each(|i| walk_type(i, v))
+        }
+        T::Indexed { object, key } => {
+            walk_type(object, v);
+            walk_type(key, v);
+        }
         T::Function {
             params,
             ret,

@@ -47,6 +47,9 @@ enum Mode {
     JsxTag { closing: bool },
     /// Between an opening tag's `>` and the matching `</`.
     JsxChildren,
+    /// The type arguments of an opening tag, `<List<number> …>`: code tokens, one mode per open
+    /// `<`, whose `>` returns to the tag.
+    JsxTypeArgs,
 }
 
 /// Lexes a whole file. Never fails: problems become diagnostics and lexing continues.
@@ -255,6 +258,7 @@ impl<'a> Lexer<'a> {
             let kind = match mode {
                 Some(Mode::JsxChildren) => Some(self.jsx_children_token()),
                 Some(Mode::JsxTag { .. }) => self.jsx_tag_token(),
+                Some(Mode::JsxTypeArgs) => self.jsx_type_args_token(),
                 _ => self.next_token(),
             };
             if let Some(kind) = kind {
@@ -280,6 +284,11 @@ impl<'a> Lexer<'a> {
         let c = self.src[start];
         let tok = if is_ident_start(c) {
             self.ident()
+        } else if c == b'#' && is_ident_start(self.at(1)) {
+            // `#x`: an ES private name, one token.
+            self.pos += 1;
+            self.ident();
+            Tok::PrivateName
         } else if c.is_ascii_digit() || (c == b'.' && self.at(1).is_ascii_digit()) {
             self.number()
         } else if c == b'"' || c == b'\'' {

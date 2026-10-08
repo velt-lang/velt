@@ -53,14 +53,8 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    pub(super) fn drop_body(&mut self, p: vir::Local, ty: TyId) {
-        let place = self.deref_param(p, ty);
-        self.drop_expand(&place, ty);
-        self.terminate(Terminator::Return(unit()));
-    }
-
     /// Release the parts of the value at `place` (the structural step behind `Glue::Drop`).
-    fn drop_expand(&mut self, place: &Place, ty: TyId) {
+    pub(super) fn drop_expand(&mut self, place: &Place, ty: TyId) {
         if self.cx.boxed(ty) {
             return self.drop_boxed(place, ty, |lw, v| lw.drop_inline(v, ty));
         }
@@ -152,7 +146,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the inline value of a boxed array / object type (`dispose()` first).
-    fn drop_inline(&mut self, v: &Place, ty: TyId) {
+    pub(super) fn drop_inline(&mut self, v: &Place, ty: TyId) {
         if let TyKind::Array(e) = self.cx.kind(ty) {
             return self.drop_array(v, e);
         }
@@ -255,7 +249,7 @@ impl FnLower<'_, '_> {
 
     /// Run the type's `[Symbol.dispose]()` hook (if it has one) on the value `this` points to (the
     /// object pointer for classes), before its fields are dropped.
-    fn call_dispose(&mut self, this: Operand, ty: TyId) {
+    pub(super) fn call_dispose(&mut self, this: Operand, ty: TyId) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return;
         };
@@ -267,16 +261,39 @@ impl FnLower<'_, '_> {
         self.call(vir::Callee::Func(f), vec![this], None, false);
     }
 
+    /// The object drop of class `ty`: a loop over its self fields (drop_chain.rs) or one
+    /// field after the other, each bracketed for the runtime when it can nest (drop_depth.rs).
     pub(super) fn obj_drop_body(&mut self, obj: vir::Local, ty: TyId) {
-        let p = Place::local(obj);
-        self.call_dispose(Operand::Copy(p.clone()), ty);
-        let tys = self.cx.adt_field_tys(ty);
-        for (i, t) in tys.into_iter().enumerate() {
-            let fp = self.field_place(&p, ty, i as u32);
+        if let Some(chain) = self.cx.drop_chain(ty) {
+            self.obj_drop_chain_body(obj, ty, chain);
+        } else {
+            let p = Place::local(obj);
+            self.call_dispose(Operand::Copy(p.clone()), ty);
+            let tys = self.cx.adt_field_tys(ty);
+            for (i, t) in tys.into_iter().enumerate() {
+                self.drop_field(&p, ty, i as u32, t, None);
+            }
+            self.object_free(Operand::Copy(p), ty);
+        }
+        self.terminate(Terminator::Return(unit()));
+    }
+
+    /// Drop field `f` (of type `t`) of the class `ty` object at `obj`, bracketed when it can
+    /// lead back to a `ty` object other than through the self fields `chain` loops over.
+    pub(super) fn drop_field(
+        &mut self,
+        obj: &Place,
+        ty: TyId,
+        f: u32,
+        t: TyId,
+        chain: Option<&super::drop_chain::Chain>,
+    ) {
+        let fp = self.field_place(obj, ty, f);
+        if self.cx.field_drop_reenters(ty, f, t, chain) {
+            self.drop_field_bracketed(fp, t);
+        } else {
             self.drop_glue(fp, t);
         }
-        self.object_free(Operand::Copy(p), ty);
-        self.terminate(Terminator::Return(unit()));
     }
 
     /// Interface value data: class objects and boxed values are their own data pointer; others

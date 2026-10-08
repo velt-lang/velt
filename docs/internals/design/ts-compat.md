@@ -84,8 +84,9 @@ cannot have both top-level statements and `function main()`.
 
 ## 5. Built-ins
 
-- `s[i]` is `s.charAt(i)`; `charAt` and `at` are new; `for...of` over a string iterates
-  `s.split("")`. Positions stay byte offsets (UTF-16 semantics is a separate decision, #326).
+- `s[i]` is `s.charAt(i)`; `charAt` and `at` are new; `for...of` over a string iterates its code
+  points. Positions count UTF-16 code units since #377 phase 2b
+  ([design/strings.md](strings.md)).
 - `Math.random()`.
 - `Date` (prelude, `std/prelude/date.vlt`): JavaScript's, on velt:datetime, with months 0-11 and
   local-time getters. `console.log` prints a `Date` through its `__inspect()` (the ISO string, as

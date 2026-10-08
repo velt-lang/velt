@@ -76,5 +76,5 @@ such as `3.0` as `3`, so it is bound as INTEGER. A `REAL` column converts it bac
 with no declared type keeps it as an integer. A connection is one SQLite connection with a lock
 around each call: tasks can share a `Database`, but their statements run one at a time and
 inside any transaction that is open. For parallel readers, open one connection per task with
-`wal: true`. A copy of a `Database` that was closed through another copy must not be used
-(like velt:net sockets). WebAssembly isn't supported.
+`wal: true`. After `close()` through one copy of a `Database`, every copy throws
+`SQLITE_MISUSE` (closing again does nothing). WebAssembly isn't supported.

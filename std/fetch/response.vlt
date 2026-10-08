@@ -1,0 +1,322 @@
+// std/fetch/response: the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to, or a
+// response built with `new Response(body, init)` / `Response.json(data)`.
+//
+// A fetched response holds a runtime response (`VeltFetchResp`, a registry key) whose head has
+// arrived; its body is received by the first `text()`, `json()`, `bytes()` or `arrayBuffer()`,
+// or chunk by chunk through `res.body` (a second read throws, as in JS). A compressed body
+// (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. The handle is released when the
+// response is dropped, which closes the connection of a body nobody read. The status text, URL,
+// `redirected` and headers are copied out of the runtime the first time they are read (most
+// programs read none of them), and stay readable after the body was read.
+
+import { IoError, IoResult, unwrapIo } from "velt:io";
+import { AbortError, AbortSignal } from "velt:task";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { BodyInit, bodyParts } from "velt:fetch/body";
+import { Headers, HeadersInit } from "velt:fetch/headers";
+
+declare function velt_rt_http_fetch_resp_status(r: u64): u32;
+declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
+declare function velt_rt_http_fetch_resp_url(r: u64): string;
+declare function velt_rt_http_fetch_resp_redirected(r: u64): bool;
+declare function velt_rt_http_fetch_resp_headers(r: u64): string[];
+declare async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<string>>;
+declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>>;
+declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
+declare function velt_rt_http_fetch_resp_drop(r: u64);
+
+/** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
+export struct ResponseInit {
+  status?: i64;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+
+// Where a response's body is (`Response.source`).
+const NONE: i64 = 0;
+const TEXT: i64 = 1;
+const BYTES: i64 = 2;
+const RUNTIME: i64 = 3;
+
+export class Response {
+  #code: i64 = 200;
+  // Null until `headers` is first read.
+  #fields: Headers | null = null;
+  // A fetched response's status text and URL: null until first read.
+  #reason: string | null = "";
+  #where: string | null = "";
+  // Null for a fetched response until first read.
+  #hops: bool | null = false;
+  #kind: string = "default";
+  #used: bool = false;
+  #source: i64 = 0;
+  #str: string = "";
+  #data: u8[] = [];
+  #handle: u64 = 0;
+  #signal: AbortSignal | null = null;
+
+  constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
+    const status = init.status ?? 200;
+    if (status < 200 || status > 599) {
+      panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
+    }
+    this.#code = status;
+    this.#reason = init.statusText ?? "";
+    const given = init.headers;
+    if (given != null) {
+      this.#fields = new Headers(given);
+    }
+    if (body == null) {
+      // `Response.adopt` too: no body parts to make.
+      return;
+    }
+    const parts = bodyParts(body);
+    this.#source = parts.kind as i64;
+    this.#str = parts.text;
+    this.#data = parts.bytes;
+    const ct = parts.contentType;
+    if (ct != null && !this.headers.has("content-type")) {
+      this.headers.set("content-type", ct);
+    }
+  }
+
+  // The response behind runtime key `handle`, whose body aborts with `signal` (std only). The
+  // response to a HEAD request has no body, whatever its headers say: `body` is null and
+  // `text()` is "".
+  private static adopt(handle: u64, signal: AbortSignal | null, head: bool): Response {
+    const r = new Response();
+    r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
+    r.#reason = null;
+    r.#where = null;
+    r.#hops = null;
+    r.#kind = "basic";
+    r.#source = head ? NONE : RUNTIME;
+    r.#handle = handle;
+    r.#signal = signal;
+    return r;
+  }
+
+  /** A response whose body is `JSON.stringify(data)`, with `content-type: application/json`. */
+  static json<T>(data: T, init: ResponseInit = {}): Response {
+    // The caller's own `content-type` wins; the string body's default does not.
+    const own = init.headers;
+    const typed = own != null && new Headers(own).has("content-type");
+    const r = new Response(JSON.stringify(data), init);
+    if (!typed) {
+      r.headers.set("content-type", "application/json");
+    }
+    return r;
+  }
+
+  /** A network error: status 0, type "error". */
+  static error(): Response {
+    const r = new Response();
+    r.#code = 0;
+    r.#kind = "error";
+    return r;
+  }
+
+  /** A redirect to `url` (`status` 301, 302, 303, 307 or 308). */
+  static redirect(url: string, status: i64 = 302): Response {
+    if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
+      panic(`RangeError: Invalid status code ${status}`);
+    }
+    const r = new Response(null, { status: status });
+    r.headers.set("location", url);
+    return r;
+  }
+
+  /** The headers; a fetched response's are immutable. */
+  get headers(): Headers {
+    const known = this.#fields;
+    if (known != null) {
+      return known;
+    }
+    let h = new Headers();
+    if (this.#handle != 0) {
+      h = Headers.adopt(velt_rt_http_fetch_resp_headers(this.#handle));
+      h.frozen = true;
+    }
+    this.#fields = h;
+    return h;
+  }
+
+  get status(): i64 {
+    return this.#code;
+  }
+
+  /** Whether the status is 200–299. */
+  get ok(): bool {
+    return this.#code >= 200 && this.#code <= 299;
+  }
+
+  /**
+   * The status message (`OK`, `Not Found`): the server's reason phrase, else the standard one for
+   * the status ("" for a status without one, and for a constructed response by default).
+   */
+  get statusText(): string {
+    const known = this.#reason;
+    if (known != null) {
+      return known;
+    }
+    const s = velt_rt_http_fetch_resp_status_text(this.#handle);
+    this.#reason = s;
+    return s;
+  }
+
+  /** The URL the response came from, after redirects ("" for a constructed response). */
+  get url(): string {
+    const known = this.#where;
+    if (known != null) {
+      return known;
+    }
+    const s = velt_rt_http_fetch_resp_url(this.#handle);
+    this.#where = s;
+    return s;
+  }
+
+  /** Whether `fetch` followed a redirect to get it. */
+  get redirected(): bool {
+    const known = this.#hops;
+    if (known != null) {
+      return known;
+    }
+    const hops = velt_rt_http_fetch_resp_redirected(this.#handle);
+    this.#hops = hops;
+    return hops;
+  }
+
+  /** "basic" (fetched), "default" (constructed) or "error" (`Response.error()`). */
+  get type(): string {
+    return this.#kind;
+  }
+
+  /**
+   * The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
+   * `ReadableStream` of `Uint8Array`s). Null for a status that has no body (101, 103, 204, 205,
+   * 304), for a `HEAD` request's response and for a response made without one.
+   */
+  get body(): BodyStream | null {
+    const code = this.#code;
+    const none = code == 101 || code == 103 || code == 204 || code == 205;
+    if (none || code == 304 || this.#source == NONE) {
+      return null;
+    }
+    return new BodyStream(this);
+  }
+
+  /** Whether the body has been read. */
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
+  async text(): Promise<string, IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_text(this.#handle);
+      this.check(r.code);
+      return unwrapIo(r);
+    }
+    if (this.#source == BYTES) {
+      const d = this.#data;
+      // A leading byte order mark is not text, as in JS.
+      const bom = d.length >= 3 && d[0] == 239 && d[1] == 187 && d[2] == 191;
+      return utf8DecodeLossy(bom ? d.slice(3) : d);
+    }
+    return this.#str;
+  }
+
+  /**
+   * `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
+   * match). Velt has no `any`: name the type, `await res.json<User[]>()`, or annotate the
+   * variable that receives it.
+   */
+  async json<T>(): Promise<T, IoError | AbortError | JsonError> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  async bytes(): Promise<u8[], IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_bytes(this.#handle);
+      this.check(r.code);
+      return unwrapIo(r);
+    }
+    if (this.#source == TEXT) {
+      return utf8Encode(this.#str);
+    }
+    return this.#data;
+  }
+
+  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
+  async arrayBuffer(): Promise<u8[], IoError | AbortError> {
+    return await this.bytes();
+  }
+
+  // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
+  private async *chunks(): AsyncIterator<u8[], IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      while (true) {
+        const r = await velt_rt_http_fetch_resp_chunk(this.#handle);
+        this.check(r.code);
+        const chunk = unwrapIo(r);
+        if (chunk.length == 0) {
+          return;
+        }
+        yield chunk;
+      }
+    }
+    if (this.#source == TEXT) {
+      yield utf8Encode(this.#str);
+    } else if (this.#data.length > 0) {
+      yield this.#data;
+    }
+  }
+
+  // Marks the body read; throws if it was already. A response without a body can be read any
+  // number of times, as in JS.
+  private claim() throws IoError {
+    if (this.#source == NONE) {
+      return;
+    }
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+
+  // After a failed body read: the signal's `AbortError` if it was aborted.
+  private check(code: i32) throws AbortError {
+    const s = this.#signal;
+    if (code != 0 && s != null) {
+      s.throwIfAborted();
+    }
+  }
+
+  /** Drop hook: releases the runtime response. */
+  [Symbol.dispose]() {
+    if (this.#handle != 0) {
+      velt_rt_http_fetch_resp_drop(this.#handle);
+      this.#handle = 0;
+    }
+  }
+}
+
+/**
+ * `res.body`: the body as a stream of byte chunks, read with `for await`. Reading it uses the
+ * body up, as `text()` does. It keeps its response alive while it is read.
+ */
+export class BodyStream {
+  private res: Response;
+
+  /** The body of `res` (std only: `res.body` makes it). */
+  constructor(res: Response) {
+    this.res = res;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
+    return this.res.chunks();
+  }
+}

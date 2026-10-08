@@ -33,7 +33,10 @@ export struct ResponseWriter {
     return velt_rt_http_resp_stream_write_bytes(this.handle, data);
   }
 
-  /** Sends what was written so far as one chunk; false once the client has gone away. */
+  /**
+   * Sends what was written so far as one chunk; false once the client has gone away or the
+   * stream ended.
+   */
   async flush(): Promise<bool> {
     return await velt_rt_http_resp_stream_flush(this.handle);
   }

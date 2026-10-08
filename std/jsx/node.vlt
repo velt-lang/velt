@@ -12,10 +12,16 @@
 // before a pending component can be sent while it still loads.
 
 /**
- * What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
- * the attribute, numbers render like `${n}`.
+ * An inline style object: CSS properties in camelCase (`fontSize`) or custom ones (`--accent`)
+ * with their values (std/jsx/style.vlt renders it as React does).
  */
-export type AttrValue = string | i64 | f64 | bool | null;
+export type Style = Record<string, string | f64>;
+
+/**
+ * What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
+ * the attribute, numbers render like `${n}`, a `Style` renders its declarations.
+ */
+export type AttrValue = string | i64 | f64 | bool | Style | null;
 
 /** A dynamic text child that a precompiled template folds into its strings (`jsxEscape`). */
 export type Text = string | i64 | f64 | bool | null;

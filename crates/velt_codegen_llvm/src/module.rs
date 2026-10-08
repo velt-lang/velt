@@ -28,6 +28,8 @@ const NORETURN_ATTRS: &str = "#2";
 const PURE_ATTRS: &str = "#3";
 /// Attribute group of runtime functions that only read memory.
 const READONLY_ATTRS: &str = "#4";
+/// Attribute group of runtime functions that read memory and update private caches.
+const READ_CACHING_ATTRS: &str = "#8";
 /// Attribute groups of the allocator functions (`runtime::Allocator`).
 const ALLOCATOR_ATTRS: [(Allocator, &str); 3] = [
     (Allocator::Alloc, "#5"),
@@ -119,7 +121,6 @@ pub(crate) fn emit_unit(
     let mut intrinsics = Intrinsics::default();
     let mut debug = DebugInfo::new(program, optimized);
     let mut bodies = String::new();
-    let wide = target.wide_pointer_slots();
     let own = unit.defines.iter().map(|&i| {
         let other_units = shared.funcs.get(i).copied().unwrap_or(false);
         let how = if other_units {
@@ -135,7 +136,7 @@ pub(crate) fn emit_unit(
             .funcs
             .get(i)
             .ok_or_else(|| format!("ICE: unit defines unknown function #{i}"))?;
-        let text = emit_function(program, func, how, &mut intrinsics, debug.as_mut(), wide)
+        let text = emit_function(program, func, how, &mut intrinsics, debug.as_mut(), target)
             .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
         bodies.push('\n');
         bodies.push_str(&text);
@@ -158,6 +159,11 @@ pub(crate) fn emit_unit(
     let _ = writeln!(
         out,
         "attributes {READONLY_ATTRS} = {{ nounwind willreturn memory(read) }}"
+    );
+    // The caches live in runtime allocations compiled code never touches: inaccessible memory.
+    let _ = writeln!(
+        out,
+        "attributes {READ_CACHING_ATTRS} = {{ nounwind willreturn memory(read, inaccessiblemem: readwrite) }}"
     );
     for (kind, group) in ALLOCATOR_ATTRS {
         let _ = writeln!(out, "attributes {group} = {{ {} }}", kind.function_attrs());
@@ -220,6 +226,7 @@ fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
         (true, _) => NORETURN_ATTRS,
         (false, Effects::None) => PURE_ATTRS,
         (false, Effects::ReadOnly) => READONLY_ATTRS,
+        (false, Effects::ReadCaching) => READ_CACHING_ATTRS,
         (false, Effects::Any) => EXTERN_ATTRS,
     };
     Ok(format!(

@@ -1,7 +1,9 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
-//! lives at byte offset `8 * (k + 6)`: the six negative slots are the transfer to another
-//! thread, the class name (a static string, class tables only) and share / format / clone /
-//! drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables), then the class's virtual methods
+//! lives at byte offset `8 * (k + 7)`: the seven negative slots are the class id of the concrete
+//! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), the transfer
+//! to another thread, the class name (a static string, class tables only) and share / format /
+//! clone / drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables),
+//! then the class's virtual methods
 //! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
@@ -12,7 +14,10 @@ use crate::lower::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// Number of negative slots in front of slot 0.
-const HIDDEN: i128 = 6;
+const HIDDEN: i128 = 7;
+
+/// The class id of the concrete type, at byte 0 (an integer, so not a relocation).
+const SLOT_CLASS_ID: i128 = -7;
 
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -49,17 +54,26 @@ impl Cx<'_> {
         if let Some(&s) = self.lay.vtables.get(&key) {
             return s;
         }
-        let entries = match key {
-            VtableKey::Class(cls) => self.class_entries(cls),
-            VtableKey::Impl(index, ty) => self.impl_entries(index, ty),
+        let (entries, id) = match key {
+            VtableKey::Class(cls) => {
+                self.note_vtable_type(cls);
+                (self.class_entries(cls), self.class_id_word(cls, false))
+            }
+            VtableKey::Impl(index, ty) => {
+                self.note_vtable_type(ty);
+                (self.impl_entries(index, ty), self.class_id_word(ty, true))
+            }
         };
         let n = entries.iter().map(|e| e.0 + HIDDEN + 1).max().unwrap_or(0);
         let relocs = entries
             .into_iter()
             .map(|(slot, c)| ((8 * (slot + HIDDEN)) as u32, c))
             .collect();
+        let mut bytes = vec![0; 8 * n as usize];
+        let at = (8 * (SLOT_CLASS_ID + HIDDEN)) as usize;
+        bytes[at..at + 8].copy_from_slice(&id.to_le_bytes());
         self.statics.push(StaticData {
-            bytes: vec![0; 8 * n as usize],
+            bytes,
             align: 8,
             relocs,
         });

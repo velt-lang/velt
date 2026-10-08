@@ -1,7 +1,7 @@
 // check: no leaks
 // `Promise.all` over spawned tasks that rejects early drops the join handles of the tasks still
 // running; their results (objects that own memory) are freed when they finish, and no task
-// result leaks.
+// result leaks. The last ones may finish after `main` returned: the leak check waits for them.
 class Failed extends Error {}
 
 class Report {
@@ -30,6 +30,5 @@ async function main() {
       rejected++;
     }
   }
-  await sleep(50);
   console.log("rejected", rejected);
 }

@@ -4,7 +4,8 @@
 //! annotation, a parameter, field or return type, a literal suffix, a cast, an API result such
 //! as `.length`, or a literal typed by such a context) or *inferred* (an integer literal with no
 //! context, a local declared without a type from such a value — `const a = 7`, `let i = 0` —
-//! and arithmetic involving one). Both are stored as integers, so counters and indexes keep
+//! a call of a function whose inferred return type comes from such values, and arithmetic
+//! involving one). Both are stored as integers, so counters and indexes keep
 //! integer speed; inferred ones behave like JS numbers where that is observable:
 //! - `/` is float division unless both operands are declared integers (`a / 2` is `3.5`);
 //! - mixed with a float, or used where a float is expected, they convert to it;
@@ -55,6 +56,9 @@ impl FnCx<'_, '_> {
         match &h.kind {
             H::Lit(hir::Lit::Int(_)) => IntOrigin::Literal,
             H::Local(l, _) if self.f.inferred_ints.contains(l) => IntOrigin::Inferred,
+            // A narrowed `T | null` local, a user function's awaited result: as the value.
+            H::UnwrapSome(inner, _) if matches!(inner.kind, H::Local(..)) => self.int_origin(inner),
+            H::Await(inner) if !self.is_std_api_value(inner) => self.int_origin(inner),
             H::Unary {
                 op: UnOp::Neg | UnOp::BitNot,
                 expr,
@@ -62,11 +66,18 @@ impl FnCx<'_, '_> {
             H::Binary { op, lhs, rhs } if arithmetic(*op) => {
                 self.int_origin(lhs).join(self.int_origin(rhs))
             }
-            // A float converted for a bitwise operator is still a JS number (`bitwise_int32`).
+            // A number converted for a bitwise operator is still a JS number (`int32.rs`).
             H::Call {
                 callee: hir::Callee::Def(d, _),
                 ..
-            } if self.cx.fn_info(*d).name == "__toInt32" => IntOrigin::Inferred,
+            } if super::int32::INT32_HELPERS.contains(&self.cx.fn_info(*d).name.as_str()) => {
+                IntOrigin::Inferred
+            }
+            // A call of a function whose result type is inferred from such integers.
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } if self.cx.fn_info(*d).ret_inferred_int => IntOrigin::Inferred,
             // A conversion the compiler inserted spans exactly its operand and keeps its origin;
             // a written `x as T` also spans `as T`, and declares.
             H::Cast(inner) if inner.span == h.span && self.cx.ty.is_int(inner.ty) => {
@@ -174,9 +185,14 @@ impl FnCx<'_, '_> {
         init
     }
 
-    /// `let x = init` without a type: `x` is an inferred integer when `init` is one.
+    /// `let x = init` without a type: `x` is an inferred integer when `init` is one (or a
+    /// `T | null` of one: its narrowed reads are).
     pub(crate) fn note_inferred_local(&mut self, local: hir::LocalId, init: &hir::Expr) {
-        if self.is_inferred_int(init) {
+        let core = self.cx.ty.opt_payload(init.ty);
+        let nullable_std = core.is_some() && self.is_std_api_value(init);
+        let core = core.unwrap_or(init.ty);
+        if self.cx.ty.is_int(core) && !nullable_std && self.int_origin(init) != IntOrigin::Declared
+        {
             self.f.inferred_ints.insert(local);
         }
     }
@@ -202,11 +218,27 @@ impl FnCx<'_, '_> {
     }
 
     /// The inferred integer `h` as a value of float type `t` (a literal becomes a float literal).
+    /// A negated literal stays a negated float literal, so `-0` keeps its sign (#562): casting
+    /// the integer `-0`, which is `0`, would give `+0`.
     pub(crate) fn int_to_float(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
         let span = h.span;
         match h.kind {
             H::Lit(hir::Lit::Int(n)) => self.mk(H::Lit(hir::Lit::Float(n as f64)), t, span),
-            _ => self.mk(H::Cast(Box::new(h)), t, span),
+            H::Unary {
+                op: hir::UnOp::Neg,
+                expr,
+            } if matches!(expr.kind, H::Lit(hir::Lit::Int(_))) => {
+                let inner = self.int_to_float(*expr, t);
+                let kind = H::Unary {
+                    op: hir::UnOp::Neg,
+                    expr: Box::new(inner),
+                };
+                self.mk(kind, t, span)
+            }
+            kind => {
+                let h = hir::Expr { kind, ..h };
+                self.mk(H::Cast(Box::new(h)), t, span)
+            }
         }
     }
 
@@ -228,9 +260,9 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// Operands of a bitwise operator: a float one is converted like JS's `ToInt32`
-    /// (`(a / 13) | 0`, the JS truncation idiom), through the prelude's `__toInt32`, and is then an
-    /// inferred `i64`. Integer operands are left alone.
+    /// Operands of a bitwise operator next to a declared integer: a float one is converted
+    /// like JS's `ToInt32` (`n & (a / 13)`) and is then an inferred `i64`. Integer operands are
+    /// left alone. Operators on two numbers are `int32.rs`.
     pub(super) fn bitwise_int32(
         &mut self,
         op: ast::BinaryOp,
@@ -277,23 +309,7 @@ impl FnCx<'_, '_> {
         if !self.cx.ty.is_float(h.ty) {
             return h;
         }
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__toInt32").copied() else {
-            return h;
-        };
-        let span = h.span;
-        let (f64_, i64_) = (self.cx.ty.f64, self.cx.ty.i64);
-        let arg = if h.ty == f64_ {
-            h
-        } else {
-            self.mk(H::Cast(Box::new(h)), f64_, span)
-        };
-        self.mk(
-            H::Call {
-                callee: hir::Callee::Def(d, vec![]),
-                args: vec![arg],
-            },
-            i64_,
-            span,
-        )
+        let v = self.int32_of(h);
+        self.widen32(v)
     }
 }

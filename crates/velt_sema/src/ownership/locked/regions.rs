@@ -263,6 +263,7 @@ fn children<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
         | E::UnwrapSome(x, _)
         | E::UnwrapVariant { expr: x, .. }
         | E::Upcast(x)
+        | E::Downcast(x)
         | E::ToDyn { expr: x, .. }
         | E::Field { base: x, .. }
         | E::Index { base: x, .. } => out.push(x),
@@ -298,6 +299,6 @@ pub(super) fn pat_locals(p: &Pat, out: &mut Vec<LocalId>) {
         }
         PatKind::Adt { fields } => fields.iter().for_each(|(_, x)| pat_locals(x, out)),
         PatKind::Some(x) => pat_locals(x, out),
-        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => {}
+        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
     }
 }

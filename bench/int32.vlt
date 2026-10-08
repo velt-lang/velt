@@ -1,0 +1,47 @@
+// 32-bit integer mixing on numbers (issue #521): the hash loop of the issue as written, where
+// `(y * k) | 0` multiplies doubles (JS rounds the product past 2^53 before ToInt32 takes its low
+// 32 bits), and the same loop with `Math.imul(y, k)`, the 32-bit wrapping multiply (what the
+// issue's Rust version computes). Both print Node's checksums.
+function mix32(x: number, i: number): number {
+  let y = (x ^ (x >>> 15)) | 0;
+  y = (y * 0x2c1b3c6d) | 0;
+  y = (y + i) | 0;
+  y = (y ^ (y >>> 12)) | 0;
+  y = (y * 0x297a2d39) | 0;
+  y = (y ^ (y >>> 15)) | 0;
+  return y;
+}
+
+function mix32imul(x: number, i: number): number {
+  let y = (x ^ (x >>> 15)) | 0;
+  y = Math.imul(y, 0x2c1b3c6d);
+  y = (y + i) | 0;
+  y = (y ^ (y >>> 12)) | 0;
+  y = Math.imul(y, 0x297a2d39);
+  y = (y ^ (y >>> 15)) | 0;
+  return y;
+}
+
+function run(iterations: number, imul: boolean): number {
+  let checksum: number = 0;
+  for (let sample = 0; sample < 2; sample++) {
+    let state: number = (0x12345678 + sample) | 0;
+    let acc: number = 0;
+    if (imul) {
+      for (let i = 0; i < iterations; i++) {
+        state = mix32imul(state, i);
+        acc = (acc + state) | 0;
+      }
+    } else {
+      for (let i = 0; i < iterations; i++) {
+        state = mix32(state, i);
+        acc = (acc + state) | 0;
+      }
+    }
+    checksum = (checksum + acc) | 0;
+  }
+  return checksum;
+}
+
+console.log(run(50000000, false));
+console.log(run(50000000, true));
