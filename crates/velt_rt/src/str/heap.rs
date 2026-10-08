@@ -4,8 +4,9 @@
 //! - ASCII strings: `[count: AtomicU64][cap bytes]`.
 //! - Non-ASCII strings: `[crumbs: AtomicPtr<u8>][lone: u64][count: AtomicU64][cap bytes]`.
 //!   `crumbs` points at the breadcrumb table (`crumbs.rs`; null until a position in a long
-//!   string is first translated) and `lone` counts the lone surrogates. Which layout a buffer has follows from the string value
-//!   (`units != bytes`), so release, grow and free take it as `header`.
+//!   string is first translated, or [`REMEMBERED`]) and `lone` counts the lone surrogates.
+//!   Which layout a buffer has follows from the string value (`units != bytes`, or a slice's
+//!   own bit), so release, grow and free take it as `header`.
 //!
 //! Counting is atomic because any string may be shared with another thread. The common case
 //! costs no atomic read-modify-write: dropping a buffer whose count is 1 (the only reference —
@@ -72,6 +73,41 @@ unsafe fn lone_field<'a>(data: *mut u8) -> &'a AtomicU64 {
 /// `data` must be a live buffer from [`alloc`] with a header.
 pub(super) unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
     &*(data.sub(HEADER) as *const AtomicPtr<u8>)
+}
+
+/// The `crumbs` field of a buffer that has no breadcrumb table but whose slices' positions a
+/// thread remembers (`recent.rs`): like a table, it makes freeing the buffer bump the epoch.
+pub(super) const REMEMBERED: *mut u8 = std::ptr::without_provenance_mut(1);
+
+/// The breadcrumb table in a `crumbs` field value: null for none (or [`REMEMBERED`]).
+#[inline]
+pub(super) fn table_of(field: *mut u8) -> *mut u8 {
+    if field == REMEMBERED {
+        std::ptr::null_mut()
+    } else {
+        field
+    }
+}
+
+/// Note that a thread remembers a position in a slice of the non-ASCII buffer at `data`, so
+/// freeing it must bump the epoch (`recent.rs`): sets the `crumbs` field to [`REMEMBERED`]
+/// unless it has a table.
+///
+/// # Safety
+/// `data` must be a live buffer from [`alloc`] with a header that the caller holds a reference
+/// to.
+#[inline]
+pub(super) unsafe fn mark_remembered(data: *mut u8) {
+    let field = crumbs(data);
+    if field.load(Ordering::Relaxed).is_null() {
+        // Losing the race to a table is fine: a table bumps the epoch too.
+        let _ = field.compare_exchange(
+            std::ptr::null_mut(),
+            REMEMBERED,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
+    }
 }
 
 /// A new buffer of `cap` bytes (count 1, and for a `header` buffer no crumbs and no lone
@@ -212,6 +248,6 @@ unsafe fn free_with_header(data: *mut u8, cap: usize) {
         // Positions remembered for this string must not apply to a new one at this address.
         super::recent::buffer_gone();
     }
-    super::crumbs::free(table);
+    super::crumbs::free(table_of(table));
     alloc::dealloc(data.sub(HEADER), layout(cap, true));
 }
