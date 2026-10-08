@@ -1,4 +1,4 @@
-// std/jsx rendering through the factory calls compiled JSX makes (docs/contracts/jsx.md):
+// std/jsx rendering through the factory calls compiled JSX makes (docs/internals/contracts/jsx.md):
 // elements and attributes, text and attribute escaping (XSS payloads stay inert), void
 // elements, fragments, arrays, numbers, `true`/`false`/`null` children and attributes, keys,
 // components (nested, throwing) and `raw`.
@@ -7,8 +7,8 @@ import { Element, raw, renderToStringSync } from "velt:jsx";
 
 type CardProps = { title: string; lines: string[] };
 
-// Compiled JSX passes components uncalled; a component passed as a value borrows its props
-// (until objects are shared references, docs/contracts/jsx.md), so it reads them and copies.
+// Compiled JSX passes components uncalled; a component passed as a value borrows its props (until
+// objects are shared references, docs/internals/contracts/jsx.md), so it reads them and copies.
 // Props holding an Element (`children`) cannot be copied for an adapter yet.
 function Card(props: CardProps): Element {
   const body = props.lines.map((l) => jsx("p", [], [], [l], null));

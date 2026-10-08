@@ -8,6 +8,11 @@
 #   bench/jsx/run.sh [runs]
 #   BASE=origin/main bench/jsx/run.sh   also builds the programs against that ref's std/ (same
 #                                       compiler and runtime), for an A/B of std/jsx changes
+#   BASE=origin/main BASE_FULL=1 bench/jsx/run.sh
+#                                       also builds that ref's compiler and runtime (in a
+#                                       temporary worktree and $OUT/base-target), for an A/B of
+#                                       compiler, runtime and std changes together; the base
+#                                       must have what main.vlt uses (std/jsx as of #676)
 # Knobs (environment):
 #   VELT=<path>     use this (release) compiler instead of building this checkout's; with
 #                   VELT_STD, another checkout's compiler and std build this checkout's programs
@@ -67,27 +72,42 @@ print(round(best * 1000), instr)
 PY
 }
 
-# build <name> [std dir]: the benchmark against this checkout's std, or another one.
+# build <name> [std dir] [velt]: the benchmark against this checkout's std and compiler, or
+# others. Fails (and leaves no program to measure) if the build or the page check fails: `set -e`
+# does not reach into `$(...)`, so callers write `x=$(build …) || exit 1`.
 build() {
-  local exe="$OUT/fortunes-$1"
+  local exe="$OUT/fortunes-$1" velt="${3:-$VELT}"
+  rm -f "$exe"
   if [[ -n "${2:-}" ]]; then
-    VELT_STD="$2" "$VELT" build --release "$HERE/main.vlt" -o "$exe" >&2
+    VELT_STD="$2" "$velt" build --release "$HERE/main.vlt" -o "$exe" >&2 || return 1
   else
-    "$VELT" build --release "$HERE/main.vlt" -o "$exe" >&2
+    "$velt" build --release "$HERE/main.vlt" -o "$exe" >&2 || return 1
   fi
-  "$exe" check >&2
+  "$exe" check >&2 || return 1
   echo "$exe"
 }
 
-builds=("${LABEL:-this checkout}|$(build head)")
-if [[ -n "${BASE:-}" ]]; then
+head_exe=$(build head) || exit 1
+builds=("${LABEL:-this checkout}|$head_exe")
+if [[ -n "${BASE:-}" && -n "${BASE_FULL:-}" ]]; then
+  src="$OUT/base-src"
+  git -C "$ROOT" worktree remove --force "$src" 2>/dev/null || rm -rf "$src"
+  git -C "$ROOT" worktree add --detach -q "$src" "$BASE"
+  trap 'git -C "$ROOT" worktree remove --force "$src" 2>/dev/null || true' EXIT
+  echo "building $BASE's velt (release) and runtime..." >&2
+  CARGO_TARGET_DIR="$OUT/base-target" cargo build --release -q -p veltc -p velt_rt \
+    --manifest-path "$src/Cargo.toml"
+  base_exe=$(build base-full "$src/std" "$OUT/base-target/release/velt") || exit 1
+  builds=("$BASE (compiler, runtime, std)|$base_exe" "${builds[@]}")
+elif [[ -n "${BASE:-}" ]]; then
   base_dir="$OUT/std-base"
   rm -rf "$base_dir" && mkdir -p "$base_dir"
   git -C "$ROOT" archive "$BASE" std | tar -x -C "$base_dir"
-  builds=("std of $BASE|$(build base "$base_dir/std")" "${builds[@]}")
+  base_exe=$(build base "$base_dir/std") || exit 1
+  builds=("std of $BASE|$base_exe" "${builds[@]}")
 fi
 
-echo "| std | variant | best ms | instructions |"
+echo "| build | variant | best ms | instructions |"
 echo "|---|---|---:|---:|"
 for b in "${builds[@]}"; do
   label=${b%%|*}

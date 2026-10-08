@@ -1,14 +1,14 @@
-//! The provider's `jsxTextSeparator` in precompiled templates (docs/contracts/jsx.md "Text
-//! separator"). Adjacent text children of one element are collected as a run and written out
-//! when markup or a slot ends it. A separator between two parts that are text whatever their
-//! values is part of the constant string. A part that may be `null` or a boolean (a boundary,
-//! not text) decides at run time: the run's values are bound to temporaries in source order,
-//! so each is read once, and the separator next to it is a conditional.
+//! The provider's `jsxTextSeparator` in precompiled templates (docs/internals/contracts/jsx.md
+//! "Text separator"). Adjacent text children of one element are collected as a run and written out
+//! when markup or a slot ends it. A separator between two parts that are text whatever their values
+//! is part of the constant string. A part that may be `null` or a boolean (a boundary, not text)
+//! decides at run time: the run's values are bound to temporaries in source order, so each is read
+//! once, and the separator next to it is a conditional.
 //!
 //! Only the provider sees what a slot renders, so it decides the separator between a template
-//! string and a slot from the string's edge, where an empty text would be invisible to it. A
-//! value that may be the empty string at a slot edge is therefore a slot itself
-//! (`Fragment([v], null)`), which the provider renders as in the generic lowering.
+//! string and a slot from the string's edge, where an empty text would be invisible to it. A value
+//! that may be the empty string at a slot edge is therefore a slot itself (`Fragment([v], null)`),
+//! which the provider renders as in the generic lowering.
 
 use velt_common::Span;
 

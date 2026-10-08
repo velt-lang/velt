@@ -1,9 +1,9 @@
 // std/jsx/attrs/global: the global HTML attributes, which every element accepts
 // (std/jsx/intrinsic.vlt maps tags to attribute types; every attribute type in std/jsx/attrs is
-// `HtmlAttrs & { … }`, and all are public as `velt:jsx/attrs`). Event handlers (`onclick`, …) are not attributes here: std/jsx renders on the
-// server, so a handler would be a compile error anyway; client providers add their own.
-// Names are HTML's (`class`, `for`, `tabindex`); `data-*`, `aria-*` and other hyphenated
-// names are not checked against these types (docs/contracts/jsx.md).
+// `HtmlAttrs & { … }`, and all are public as `velt:jsx/attrs`). Event handlers (`onclick`, …) are
+// not attributes here: std/jsx renders on the server, so a handler would be a compile error anyway;
+// client providers add their own. Names are HTML's (`class`, `for`, `tabindex`); `data-*`, `aria-*`
+// and other hyphenated names are not checked against these types (docs/internals/contracts/jsx.md).
 
 import type { Style } from "velt:jsx/node";
 

@@ -1,4 +1,4 @@
-//! JSX lowering (docs/contracts/jsx.md) through the golden test runtimes
+//! JSX lowering (docs/internals/contracts/jsx.md) through the golden test runtimes
 //! (`tests/golden/lang/_jsx_test_provider`: generic; `_jsx_test_precompile`: precompile), and
 //! generic arrow functions.
 
@@ -14,6 +14,7 @@ const LIST: &str = "// @jsxImportSource ./_jsx_test_list\n";
 const TEMPLATE_STRING: &str = "// @jsxImportSource ./_jsx_test_template_string\n";
 const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
 const VOID: &str = "// @jsxImportSource ./_jsx_test_void\n";
+const SOLE_PLAIN: &str = "// @jsxImportSource ./_jsx_sole_plain\n";
 const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
 fn load(src: &str) -> Loaded {
@@ -387,10 +388,10 @@ fn sole_empty_replaces_a_sole_boolean_or_null_child() {
         "{SOLE}function view(f: bool, m: string | null) {{ const a = <p>{{false}}</p>; const b = <p>{{f}}a</p>; const c = <p>{{m}}</p>; const d = <p>{{f}}</p>; }}
         function main() {{ view(true, null); }}"
     ));
-    let t = runtime_calls(&p, "view", "jsxTemplate");
-    assert_eq!(
-        strings(&t[0][0]),
-        ["<p></p>"],
+    // No slots: each element is one `jsxTemplateString`.
+    let t = runtime_calls(&p, "view", "jsxTemplateString");
+    assert!(
+        matches!(&t[0][0].kind, E::Lit(Lit::Str(s)) if s == "<p></p>"),
         "a sole `false` is the export's string"
     );
     assert_eq!(t.len(), 4);
@@ -410,10 +411,29 @@ fn sole_empty_a_sole_nullable_element_is_a_conditional_slot() {
         "{SOLE}function view(e: JSX.Element | null, s: string) {{ const a = <p>{{e}}</p>; const b = <p>{{s}}</p>; }}
         function main() {{ view(null, \"x\"); }}"
     ));
-    // `e`: `Fragment([e], null)` or `jsxTemplate([""], [])`; `s` is always text.
+    // `e`: `Fragment([e], null)` or `jsxTemplateString("")`; `s` is always text.
     assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
-    assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 3);
+    assert_eq!(
+        runtime_calls(&p, "view", "jsxTemplate").len(),
+        1,
+        "`<p>{{e}}</p>`"
+    );
+    assert_eq!(runtime_calls(&p, "view", "jsxTemplateString").len(), 2);
     assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 1);
+}
+
+/// Without `jsxTemplateString`, a sole `null`/boolean slot is `jsxTemplate([sole], [])`.
+#[test]
+fn sole_empty_falls_back_to_jsx_template() {
+    let p = ok(&format!(
+        "{SOLE_PLAIN}function view(e: JSX.Element | null) {{ const a = <p>{{e}}</p>; }}
+        function main() {{ view(null); }}"
+    ));
+    // `<p>{e}</p>` and the `null` branch's `jsxTemplate([""], [])`.
+    let t = runtime_calls(&p, "view", "jsxTemplate");
+    assert_eq!(t.len(), 2);
+    assert!(t.iter().any(|args| strings(&args[0]) == [""]));
+    assert!(runtime_calls(&p, "view", "jsxTemplateString").is_empty());
 }
 
 /// Regression (#634 review): a sole boolean local was not read, so a possibly uninitialized

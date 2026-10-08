@@ -1,13 +1,13 @@
-//! JSX (docs/contracts/jsx.md): elements and fragments desugar into calls of the module's JSX
-//! runtime (`<jsxImportSource>/jsx-runtime`, bound as the namespace `JSX`), built from already
-//! checked HIR, so no HIR construct is JSX-specific. Generated nodes keep the spans of the JSX
-//! they come from (editor queries on tags, attributes and children work as on calls).
+//! JSX (docs/internals/contracts/jsx.md): elements and fragments desugar into calls of the module's
+//! JSX runtime (`<jsxImportSource>/jsx-runtime`, bound as the namespace `JSX`), built from already
+//! checked HIR, so no HIR construct is JSX-specific. Generated nodes keep the spans of the JSX they
+//! come from (editor queries on tags, attributes and children work as on calls).
 //!
 //! - fragment `<>…</>` → `Fragment(children, null)`;
 //! - intrinsic `<div a={x}>…</div>` → `jsx("div", ["a"], [x], children, key)` ([`attrs`]), or a
 //!   `jsxTemplate` call when the runtime supports precompilation ([`precompile`]);
-//! - component `<Card a={x}>…</Card>` → `jsxComponent(Card, { a: x, children }, key, "m#Card")`
-//!   or `jsxAsyncComponent` ([`component`], [`props`]);
+//! - component `<Card a={x}>…</Card>` → `jsxComponent(Card, { a: x, children }, key, "m#Card")` or
+//!   `jsxAsyncComponent` ([`component`], [`props`]);
 //! - children → [`children`]; `key` → [`key`].
 
 mod attrs;
