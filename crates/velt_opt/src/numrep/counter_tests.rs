@@ -274,7 +274,7 @@ fn integer_counters_read_through_a_copy_are_capped_within_their_type() {
             Place::local(cmp),
             bin(BinOp::Lt, copy_local(n), copy_local(t)),
         ));
-        let expected = capped.then(|| Fact::int(start as i128, start as i128 + 11));
+        let expected = capped.then(|| Fact::int(start, start + 11));
         assert_eq!(cap_of(&p, n), expected, "{ty:?}");
     }
 }
