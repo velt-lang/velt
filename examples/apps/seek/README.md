@@ -16,9 +16,9 @@ velt run demo.vlt                # the whole pipeline on a generated tree (golde
 ./bench.sh                       # seek vs ripgrep vs git grep on this repository (hyperfine)
 ```
 
-Output is `path:line:text` (or grouped with `--heading`), with matches highlighted. Velt can't
-tell yet whether stdout is a terminal, so colour is on unless `NO_COLOR` is set or you pass
-`--color never` (do that when piping). Exit code: 0 found, 1 nothing found, 2 usage error.
+Output is `path:line:text` (or grouped with `--heading`), with matches highlighted when stdout
+is a terminal (`stdout.isTTY`) and `NO_COLOR` is not set; `--color always` / `never` override
+that. Exit code: 0 found, 1 nothing found, 2 usage error.
 
 It respects `.gitignore` files (nested ones too, with `!` negation), skips hidden files and
 `.git`, and skips binary files. `--hidden`, `--no-ignore`, `--max-depth`, `--max-filesize` and
@@ -79,4 +79,3 @@ entry needed a `stat`; the walk now takes the types from the listing (`readDirEn
 
 - Symlinks are always followed, and a symlink loop stops only at `--max-depth` (default 64).
   `lstat` and `Dirent.isSymbolicLink()` now make skipping them possible (#691).
-- No `isatty` (#693), so colour can't turn itself off when piped.
