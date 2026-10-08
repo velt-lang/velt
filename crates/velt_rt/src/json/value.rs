@@ -72,7 +72,8 @@ impl Drop for Value {
 }
 
 /// A string token's text: a range of the source (a Velt string, canonical WTF-8) or decoded
-/// bytes (escapes decode to code points, never to a half of a pair), so canonical WTF-8.
+/// bytes (escapes decode to code units, joined where a high half meets a low one), so canonical
+/// WTF-8.
 fn owned_text(src: &[u8], tok: StrTok) -> Text {
     match tok {
         StrTok::Borrowed(start, end) => src[start..end].into(),

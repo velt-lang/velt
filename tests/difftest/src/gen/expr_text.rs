@@ -1,9 +1,10 @@
-//! String expressions (ASCII only: Velt `length` is in bytes, JS's in UTF-16 units).
+//! String expressions, over ASCII and non-ASCII text alike: lengths and positions count UTF-16
+//! code units in both languages (#377 phase 2b), so slicing may split a surrogate pair.
 
 use super::scope::Ty;
 use super::Gen;
 
-const WORDS: [&str; 12] = [
+const WORDS: [&str; 18] = [
     "",
     "a",
     "ab",
@@ -16,7 +17,16 @@ const WORDS: [&str; 12] = [
     "Q",
     "one two",
     "42",
+    "héllo",
+    "Zoë",
+    "日本語",
+    "😀",
+    "a😀b,c",
+    "～ é 🎉",
 ];
+
+/// Fills for `padStart` / `padEnd`; a supplementary character can be cut between its halves.
+const FILLS: [&str; 4] = ["*", "-=", "é", "😀"];
 
 /// A generated expression plus whether it names a *place* (variable, field, element). Moving out
 /// of a place is a Velt compile error (or a move), so moving positions copy places first.
@@ -79,12 +89,13 @@ impl Gen {
                 Expr::fresh(format!("{s}.repeat({})", self.rng.range(0, 3)))
             }
             6 => {
-                let (s, m, n) = (
+                let (s, m, n, f) = (
                     self.string(d).text,
                     self.rng.pick(&["padStart", "padEnd"]),
                     self.rng.range(0, 12),
+                    self.rng.pick(&FILLS),
                 );
-                Expr::fresh(format!("{s}.{m}({n}, \"*\")"))
+                Expr::fresh(format!("{s}.{m}({n}, \"{f}\")"))
             }
             7 => {
                 let (s, m) = (

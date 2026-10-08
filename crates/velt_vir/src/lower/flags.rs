@@ -108,7 +108,7 @@ impl<'h> FlagScan<'h> {
                 }
             }
             P::Some(q) => self.pat(q),
-            P::Wildcard | P::Lit(_) | P::None => {}
+            P::Wildcard | P::Lit(_) | P::None | P::InstanceOf(_) => {}
         }
     }
 
@@ -240,6 +240,7 @@ impl<'h> FlagScan<'h> {
             | K::UnwrapSome(expr, _)
             | K::UnwrapVariant { expr, .. }
             | K::Upcast(expr)
+            | K::Downcast(expr)
             | K::ToDyn { expr, .. }
             | K::Throw(expr)
             | K::Field { base: expr, .. } => self.expr(expr),

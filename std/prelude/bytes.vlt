@@ -12,12 +12,48 @@ declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
+declare function velt_rt_str_byte_length(s: string): u64;
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
 export class Buffer {
   /** `n` zero bytes. */
   static alloc(n: usize): u8[] {
     return velt_rt_bytes_zeroed(n as u64);
+  }
+
+  /**
+   * The number of bytes `s` takes in `encoding`, as Node's `Buffer.byteLength(s, encoding)`:
+   * UTF-8 by default (O(1), a lone surrogate counting as the 3 bytes of U+FFFD), `utf16le` /
+   * `ucs2` two per code unit, `latin1` / `binary` / `ascii` one, `hex` one per two digits,
+   * `base64` / `base64url` the decoded size. Names ignore case; an unknown one counts UTF-8, as
+   * Node does. `s.length` counts UTF-16 code units, not bytes.
+   */
+  static byteLength(s: string, encoding: string = "utf8"): usize {
+    if (encoding == "utf8") {
+      return velt_rt_str_byte_length(s) as usize;
+    }
+    const e = encoding.toLowerCase();
+    if (e == "utf16le" || e == "utf-16le" || e == "ucs2" || e == "ucs-2") {
+      return s.length * 2;
+    }
+    if (e == "latin1" || e == "binary" || e == "ascii") {
+      return s.length;
+    }
+    if (e == "hex") {
+      return s.length / 2;
+    }
+    if (e == "base64" || e == "base64url") {
+      // Node: up to two trailing `=` are padding; 3 bytes per 4 characters.
+      let n = s.length;
+      if (n > 0 && s.charCodeAt((n - 1) as i64) == 61) {
+        n--;
+      }
+      if (n > 1 && s.charCodeAt((n - 1) as i64) == 61) {
+        n--;
+      }
+      return n * 3 / 4;
+    }
+    return velt_rt_str_byte_length(s) as usize;
   }
 }
 

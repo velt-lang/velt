@@ -5,10 +5,11 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
-use super::expr::may_write;
 use super::operand::proj;
+use super::sequence::may_write;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 
@@ -41,7 +42,7 @@ impl FnLower<'_, '_> {
         if mode == UseMode::Move && self.counted_part(base) {
             // Other owners still see the field (semantics stage 2): share it instead.
             let v = self.field_expr(base, index, UseMode::Borrow);
-            let fty = self.cx.adt_field_tys(bty)[index as usize];
+            let fty = self.cx.member_ty(bty, index);
             let s = self.share_value(v, fty);
             return self.own_value(s, fty);
         }
@@ -66,7 +67,7 @@ impl FnLower<'_, '_> {
                 let v = self.expr(base);
                 let bp = self.place_of(v, bty);
                 let fp = self.field_place(&bp, bty, index);
-                let fty = self.cx.adt_field_tys(bty)[index as usize];
+                let fty = self.cx.member_ty(bty, index);
                 return self.take_part(fp, fty);
             }
         }
@@ -75,7 +76,7 @@ impl FnLower<'_, '_> {
         let p = self.field_place(&bp, bty, index);
         if mode == UseMode::Move && self.take_temp(&bp) {
             // Moving a field out of an owned temporary: the rest of it is dropped later.
-            let fty = self.cx.adt_field_tys(bty)[index as usize];
+            let fty = self.cx.member_ty(bty, index);
             self.own_rest(bp, bty, Rc::new(moved_field_pat(index, bty)));
             self.own_place(p.clone(), fty);
         }
@@ -94,7 +95,7 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let v = self.expr(base);
         let bp = self.place_of(v, bty);
-        let fty = self.cx.adt_field_tys(bty)[index as usize];
+        let fty = self.cx.member_ty(bty, index);
         let fp = self.field_place(&bp, bty, index);
         let vt = self.cx.ty(fty);
         let out = self.copy_to_temp(Operand::Copy(fp), vt);
@@ -264,7 +265,8 @@ impl FnLower<'_, '_> {
         match &e.kind {
             K::Field { base, .. }
             | K::UnwrapSome(base, _)
-            | K::UnwrapVariant { expr: base, .. } => self.place_indices(base, out),
+            | K::UnwrapVariant { expr: base, .. }
+            | K::Downcast(base) => self.place_indices(base, out),
             K::Index { base, index, .. } => {
                 self.place_indices(base, out);
                 let i = self.expr(index);
@@ -310,6 +312,10 @@ impl FnLower<'_, '_> {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
                 self.variant_part(&p, ety, *variant, 0).0
+            }
+            K::Downcast(inner) => {
+                let p = self.place_expr_with(inner, pre);
+                self.downcast_place(p, inner.ty)
             }
             _ => {
                 let v = self.expr(e);
@@ -407,7 +413,10 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         let pty = self.sub(place.ty);
-        if local.is_none() && self.through_counted(place, pty) {
+        // Through a counted object, or with a right-hand side that may change the container
+        // (`xs[0] += grow(xs)` reallocates `xs`): read the element, evaluate the right-hand
+        // side, then form the element's address again for the write (#580).
+        if local.is_none() && (self.through_counted(place, pty) || may_change_memory(value)) {
             return self.compound_assign_shared(op, place, value, pty);
         }
         let p = match local {
@@ -509,7 +518,7 @@ fn moved_field_pat(index: u32, ty: TyId) -> Pat {
 pub(super) fn member_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         hir::ExprKind::UnwrapVariant { expr, .. } => unwrap_root(expr),
-        hir::ExprKind::UnwrapSome(base, _) => member_root(base),
+        hir::ExprKind::UnwrapSome(base, _) | hir::ExprKind::Downcast(base) => member_root(base),
         _ => None,
     }
 }
@@ -519,9 +528,9 @@ pub(super) fn member_root(e: &hir::Expr) -> Option<LocalId> {
 pub(super) fn unwrap_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         hir::ExprKind::Local(id, _) => Some(*id),
-        hir::ExprKind::UnwrapSome(base, _) | hir::ExprKind::UnwrapVariant { expr: base, .. } => {
-            unwrap_root(base)
-        }
+        hir::ExprKind::UnwrapSome(base, _)
+        | hir::ExprKind::UnwrapVariant { expr: base, .. }
+        | hir::ExprKind::Downcast(base) => unwrap_root(base),
         _ => None,
     }
 }
@@ -532,7 +541,8 @@ pub(super) fn part_root(e: &hir::Expr) -> Option<LocalId> {
         hir::ExprKind::Local(id, _) => Some(*id),
         hir::ExprKind::Field { base, .. }
         | hir::ExprKind::UnwrapSome(base, _)
-        | hir::ExprKind::UnwrapVariant { expr: base, .. } => part_root(base),
+        | hir::ExprKind::UnwrapVariant { expr: base, .. }
+        | hir::ExprKind::Downcast(base) => part_root(base),
         _ => None,
     }
 }

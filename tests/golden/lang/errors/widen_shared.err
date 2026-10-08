@@ -1,0 +1,14 @@
+widen_shared.vlt:30:23: error: cannot use `cs` (`C[]`) as `Named[]`
+  = note: TypeScript allows this, but other code still sees `cs` as `C[]`: storing a `Named` that is not a `C` into it through the `Named[]` would break that
+  = note: convert a copy instead: `[...cs]` or `cs.map((x): Named => x)` (a new `Named[]`)
+widen_shared.vlt:32:26: error: cannot use `b` (`Box<C>`) as `Box<Named>`
+  = note: TypeScript allows this, but other code still sees `b` as `Box<C>`: storing a `Named` that is not a `C` into it through the `Box<Named>` would break that
+  = note: create a new `Box<Named>` from its fields instead
+widen_shared.vlt:34:30: error: cannot use `xs` (`i64[]`) as `(i64 | null)[]`
+  = note: TypeScript allows this, but other code still sees `xs` as `i64[]`: storing a `i64 | null` that is not a `i64` into it through the `(i64 | null)[]` would break that
+  = note: convert a copy instead: `[...xs]` or `xs.map((x): i64 | null => x)` (a new `(i64 | null)[]`)
+widen_shared.vlt:36:9: error: cannot use `h.items` (`C[]`) as `Named[]`
+  = note: TypeScript allows this, but other code still sees `h.items` as `C[]`: storing a `Named` that is not a `C` into it through the `Named[]` would break that
+  = note: convert a copy instead: `[...h.items]` or `h.items.map((x): Named => x)` (a new `Named[]`)
+widen_shared.vlt:37:27: error: cannot use this value (`C[]`) as `Named[]`
+  = note: convert a copy instead: `(…).map((x): Named => x)` (a new `Named[]`)

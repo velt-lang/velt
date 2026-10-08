@@ -16,6 +16,8 @@ object types and tuples (by content).
 - Set algebra, each returning a new set: `union`, `intersection`, `difference`,
   `symmetricDifference`.
 - Tests: `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`.
+- `console.log(s)` prints a set like Node: `Set(2) { 'a', 'b' }` (empty: `Set(0) {}`), the
+  first 100 elements followed by `... n more items`.
 
 ```ts
 import { Set } from "velt:collections/set";

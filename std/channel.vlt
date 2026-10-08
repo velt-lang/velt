@@ -8,8 +8,8 @@
 //
 // `Channel<T>` is a handle struct, like `TcpStream` (docs/std/README.md "Handles"): copies share
 // one channel, so pass it to producers and consumers (also `spawn`ed tasks) freely. Close it
-// when done: a closed channel is freed once it is drained (values left in it are not dropped),
-// and an unclosed one lives until the process exits.
+// when done: a closed channel is freed once it is drained, and an unclosed one lives until the
+// program ends. Values nobody receives are dropped when the program ends.
 
 declare function velt_rt_chan_new(capacity: u64): u64;
 declare function velt_rt_chan_close(ch: u64);

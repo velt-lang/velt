@@ -8,12 +8,14 @@ Maintainer-owned, like hir.rs.
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
-  `Call` of the base constructor with `Upcast(this)`. Field defaults (`FieldDef::default`) run
+  root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
+  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
   in JavaScript's order: a constructor evaluates those of its class's fields that its base
-  constructor's class does not have, right after the `super(args)` call (on entry when no
-  ancestor has a constructor); `new` evaluates the rest (those of the classes below the one
-  declaring the constructor, or all of them without one) after the constructor returns.
-  Sema's throw sets follow the same split.
+  constructor's class does not have, right after the `super(args)` call (when no ancestor has
+  a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
+  class); `new` evaluates the rest (those of the classes below the one declaring the
+  constructor, or all of them without one) after the constructor returns. Sema's throw sets
+  follow the same split.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -28,6 +30,10 @@ Maintainer-owned, like hir.rs.
 - Function values (`TyKind::FnPtr`) are closures: `{ code: Ptr, env: Ptr }`; `env` is null for
   named functions. `ExprKind::Closure(def)` captures per `FnDef::captures`: Borrow/BorrowMut
   captures store pointers (non-escaping closures), Copy/Owned captures store values (escaping).
+  A non-escaping closure is a direct call argument, called immediately, or the initializer of a
+  `StmtKind::Let` whose local is used only as the callee of `Callee::Indirect` calls in the same
+  (non-async, non-generator) function (`const f = () => this.n; f()`): its env may live in the
+  frame, and a call through the local borrows the captured variables.
   An Owned capture with `Capture::share` stores a share (`Intrinsic::Share` semantics) and
   leaves the enclosing local initialized (a shared value still used after the closure is created;
   see "Sharing"). A capture whose local is `LocalDef::boxed` stores the cell pointer instead.
@@ -108,7 +114,10 @@ Maintainer-owned, like hir.rs.
 - `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are `T | null`
   fields with a `null` default.
 - An async closure clones its owned captures into each promise it creates (it may be called many
-  times, e.g. as an HTTP handler); borrowed captures are read from its env.
+  times, e.g. as an HTTP handler); borrowed captures are read from its env. A local async
+  closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
+  instead gives each promise another reference to its owned captures (a share, as a generator
+  closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
   (init, poll, drop, state_size, state_align, env).
 - Sema rejects: JSON of maps without `string` keys / functions / interface values, and
@@ -214,6 +223,18 @@ Maintainer-owned, like hir.rs.
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
   Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+- `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
+  such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
+  `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
+  subclass of `C` (type arguments are not compared). Lowering numbers all classes in a
+  pre-order walk of the hierarchy, so `C` and its subclasses have the ids `lo..=hi`, and every
+  vtable's first word (slot -7) holds the class id of its concrete type: 0 for non-classes;
+  in an interface table of a class whose objects carry a vtable pointer, `u64::MAX` (read
+  the object's own table, which may be a subclass's).
+- A local (or a path of `readonly` fields) narrowed by such a test reads as
+  `ExprKind::Downcast(read)` typed as `C<args>`. It is a place like its operand (same use
+  mode, no projection of its own); on a class it is the same pointer, on an interface value
+  the data pointer. Nothing is checked at run time.
 - Generic class methods never get a vtable slot (an `override` of one is recorded by sema only);
   calls are `Callee::Def` on the static class. Sema rejects calls through a class that has a
   subclass overriding the generic method.
@@ -375,6 +396,29 @@ Maintainer-owned, like hir.rs.
   velt_sema ownership/locked).
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
+- `Intrinsic::ArrayMove(dst, d, src, s, n)` and `Intrinsic::ArraySetLen(xs, len)` (std only,
+  std/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
+  array (both ranges bounds-checked; nothing dropped, nothing shared), and a length change that
+  neither drops nor initializes (growing the capacity when it is smaller). They bypass
+  ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
+  before an array is dropped, and keeps the elements out of any array a callback could reach
+  through an alias while it runs.
+  `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
+  copy of a type that needs no drop is an independent value, so the stable sort copies such
+  elements instead of moving them.
+  `Intrinsic::MayAlias(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type borrowed by a call can be reached through another reference while
+  the call runs (lowering counts the type or borrows values of it inside counted objects, so
+  params of it are never `noalias`). The array callback methods re-check the length after a
+  callback only then.
+  `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
+  to `f.env == null`. Only closures without captures and named functions have a null env (a
+  program that compares function values gives every closure one), so true means `f` reaches no
+  variable of its caller. velt_opt folds it where the function value is known (const_fields
+  propagates the env constant into specialized callees); elsewhere it is tested at run time.
+  The stable sort sorts a short array of elements that need no drop in place when its
+  comparator captures nothing, and through a copy otherwise.
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.
@@ -387,9 +431,19 @@ Maintainer-owned, like hir.rs.
 - `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
   that declares it; interface fields never are). `console.log` / `inspect` leave out private
   fields of zero size (std's `runtime` markers); other private fields show, as in Node.
-- `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
-  no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
-  value of it dynamically (a subclass with private fields is written as its static class).
+- `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
+  `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
+  is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
+  is written as `null`.
+- `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
+  `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
+  internal error).
+- `AdtDef::opaque` (additive): some private field, own or inherited, is declared by a std type
+  (a runtime handle or other internal state: `BigInt`, `RegExp`, sockets, database clients).
+  Such a type has no JSON form at all: sema rejects writing it, lowering's writer treats one as
+  an internal error, and a base class value whose dynamic class is opaque (or holds an opaque
+  value) is written as its static class (`json/dynamic.rs`). Other `private` fields are
+  written, as in Node.
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
@@ -397,3 +451,19 @@ Maintainer-owned, like hir.rs.
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
   (`__intrinsic_eq`, `deepEqual`, `assertEq`, `Map` keys). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
+
+## ES private names
+
+A class member declared `#x` keeps the `#` in its name: `FieldDef::name` is `"#x"` (and
+`FieldDef::private` is set), a method's name ends in `.#m`. No identifier starts with `#`, so
+`#x` and `x` are different members, and a class and its subclass may each have a field `#x`
+(two slots with the same name; sema picks the one the code's class declares). Readers act on
+the prefix: `console.log` (`glue/format_object.rs`), `JSON.stringify` (`json/write.rs`,
+`json/dynamic.rs`), `Object.keys` and spread leave `#` fields out. `#m` methods never get a
+vtable slot. `#x in o` reaches HIR as the class test of `o instanceof C` (`PatKind::InstanceOf`).
+`AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type. std's
+exported handle classes (`BigInt`, `RegExp`, `JsonValue`, `Request`, `Response`, `Server`,
+`Statement`, generators, `AbortSignal`, `AbortController`, `TaskScope`, `RedisPipeline`) keep
+their state in `#` fields. Handle types that are structs (sockets, files, database clients,
+`Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
+every std type with private state, `private` or `#`, out of JSON.

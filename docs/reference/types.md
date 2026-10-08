@@ -13,12 +13,14 @@
 | `{ a: T; b: U }` | anonymous object type |
 | classes, structs, interfaces | [Classes](classes.md) |
 | `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null) |
+| `A & B`, `T["k"]` | [intersections of object types](#intersection-types), [branded types](#branded-types), [indexed access](#indexed-access-types) |
 | `"up"`, `42`, `true` | [literal types](#literal-types) |
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
 | `Promise<T>`, `shared<T>`, `Mutex<T>` | async results and thread-safe shared values ([Async](async.md)) |
 
-Types are required on function parameters, and on return types other than `void` (a missing
-return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
+Types are required on function parameters. A missing return type is inferred from the
+function's `return`s ([Return types](functions.md#return-types)), and everything else is
+inferred too. `type Name = …` declares an alias; an
 alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
@@ -62,6 +64,9 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
   `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
   `const h: i64 = 7 / 2` is `3`.
+- **`-0` is a float** unless an integer type is expected (an integer has no negative zero), so
+  it keeps its sign as in JS: `let z = -0; 1 / z` is `-Infinity`, and so is a field declared
+  `a: number = -0`.
 - **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
   division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
 - Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,
@@ -81,13 +86,24 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
   an error (it would store a float).
 - `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
-- A float operand of a bitwise operator converts like JS's ToInt32 (`(a / 13) | 0` truncates;
-  `NaN` and ±Infinity give 0); the result is an inferred integer.
+- **Bitwise operators on numbers are JS's 32-bit operators.** When no operand is a declared
+  integer, `| & ^ << >> ~` take ToInt32 of their operands (truncate, then wrap modulo 2^32 into
+  the signed 32-bit range; `NaN` and ±Infinity give 0) and `>>>` takes ToUint32; shift counts
+  are taken modulo 32, and the result is an inferred integer: `(a / 13) | 0` truncates,
+  `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product inside such an operand rounds like
+  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value, and
+  a sum rounds like JS's double add (`(x + 1) | 0` with `x = 2 ** 53` is `0`);
+  `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
+  32-bit integer instructions. Operands of a declared integer type keep their own width
+  (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
+  integer type is written (`const m: u64 = 1 << 40`; but `let a = 0; a = 1 << 31` stores
+  `-2147483648`, as in JS).
 - `as` converts between number types with Rust semantics: floats truncate and saturate
   (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
 - Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53; integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS);
-  `**` on integers is integer power.
+  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands); integer
+  `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
+  integers is integer power.
 - Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
   prints `0`.
 
@@ -99,6 +115,8 @@ console.log(n / 2, Math.trunc(a / 2));    // 3 3
 let small: u8 = 250;
 small += 10;                              // wraps: 4
 console.log(small, n as f64 / 2.0, 300 as u8);   // 4 3.5 44
+const h = 0x12345678;
+console.log((h * 0x2c1b3c6d) | 0, Math.imul(h, 0x2c1b3c6d), -1 >>> 0); // -1019940576 -1019940584 4294967295
 ```
 
 ## Strings
@@ -114,20 +132,34 @@ usable and no copy method is needed.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
-- `s.length` is the **byte** length; positions (`slice`, `indexOf`, regex offsets, `s[i]`) are
-  byte offsets. For ASCII text that is JS's answer; for other text it differs
-  (`"Zoë".length` is 4, where JS says 3).
-- `s[i]` is `s.charAt(i)`: the character starting at position `i`, or `""` past the end (JS:
-  `undefined`). `for (const c of s)` iterates the characters (`s.split("")`), emoji included.
+- A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
+  every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
+  code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
+  units (a surrogate pair): `"Zoë".length` is 3 and `"😀".length` is 2. A position may fall
+  between the two halves of a pair; slicing there keeps the half as a lone surrogate
+  (`"😀".slice(0, 1)` is `"\uD83D"`), and gluing the halves back together gives the pair again.
+  Output writes a lone surrogate as U+FFFD. The byte size of a string in UTF-8 is
+  `Buffer.byteLength(s)`.
+- `s[i]` is `s.charAt(i)`: the code unit at `i` as a one-unit string, or `""` past the end (JS:
+  `undefined`). `for (const c of s)` and `[...s]` iterate the characters (code points: a pair is
+  one element), as JS's string iterator does; `s.split("")` gives code units.
 - Methods: `slice substring indexOf lastIndexOf includes startsWith endsWith split trim
   trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd charAt at
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
-- `<` and `>` compare bytewise; `==` compares content.
+- `<`, `>` and `sort()` without a comparator compare by code units, as JS (`"～" < "😀"` is
+  `false`); `==` compares content.
 - Cost model: strings of up to 23 bytes (22 when they are not ASCII) are stored inline (no heap
   allocation); longer ones live in a reference-counted immutable buffer. A copy is 24 bytes
   plus, for a heap string, one count increment, and the compiler moves instead of copying at a
-  last use. `s.clone()` compiles and is just a copy.
+  last use. `s.clone()` compiles and is just a copy. Text is stored as UTF-8 (files, sockets and
+  HTTP bodies need no conversion), with the code-unit count kept in the value: `length` is a
+  load, and indexing ASCII text reads a byte. Indexing other text translates the position: a
+  step from the last position of the same string, so a sequential loop over one or two strings
+  at a time stays linear (each thread remembers its last two long non-ASCII strings), or a
+  lookup in a table built for long strings plus a scan of at most 63 units (random access to
+  long non-ASCII text is several times slower than in JS engines; in a long non-ASCII literal,
+  which has no table, it scans from the closer end).
 - A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
   the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 
@@ -135,22 +167,46 @@ usable and no copy method is needed.
 function label(name: string, count: i64): string {
   let s = name;                   // a copy: `name` stays usable
   s += ":";
-  return `${s} ${count} (${name.length} bytes)`;
+  return `${s} ${count} (${name.length} units, ${Buffer.byteLength(name)} bytes)`;
 }
 
 console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
+// tea: 3 (3 units, 3 bytes) [ 'a', 'b' ] **x
+console.log(label("Zoë", 1), label("😀", 2));
+// Zoë: 1 (3 units, 4 bytes) 😀: 2 (2 units, 4 bytes)
 ```
 
 ## Equality and comparison
 
-- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and both
-  operands must have the same type (`1 == "1"` is a compile error; an `i64` compared with an
-  `i32` needs a cast).
+- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
+  operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
+  compared with an `i32` needs a cast). An interface value compares with a value of a class or
+  struct that implements it, and a base class value with a subclass value.
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way. A `T | null` compares with a
   `T` (in either order) as if both were `T | null`: `null` equals no value.
+- An interface value compares the object behind it: two `Shape` values of one class instance
+  are equal. A function value is equal to its copies, and a named function to itself; each
+  evaluation of an arrow or function expression is a new function, as in JS, also when it
+  captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
+  made by one loop differ). `indexOf`, `includes` and `Map` keys agree with `==`. Comparing
+  costs only the programs that do it: there, an arrow without captures gets an empty
+  environment of its own when it is created, and a struct converted to an interface value
+  that is compared is counted, so the interface value refers to it rather than to a copy.
+
+  ```ts
+  function main() {
+    const h = () => console.log("h");
+    const handlers = [h];
+    const fresh: (() => void)[] = [];
+    for (let i = 0; i < 2; i++) {
+      fresh.push(() => console.log("h"));
+    }
+    console.log(handlers.indexOf(h), h === h, fresh[0] === fresh[1]); // 0 true false
+  }
+  ```
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
   and values, in any key order; other class instances by identity. `assertEq` uses it.
@@ -173,10 +229,12 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional class
-  or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
-  object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+  (callers may leave it out or pass `null`; it cannot also have a default), an optional field
+  of a class, interface or object type starts as `null` (and `JSON.stringify` leaves it out
+  while it is `null`, as JavaScript leaves out an absent property, but writes a `b: T | null`
+  field), and an object literal may leave out any `T | null` field of an object type
+  (`{ port: i64; host?: string }` accepts `{ port: 80 }`). As in TypeScript, `{ a?: T }` and
+  `{ a: T | null }` are different object types: a value of one is not a value of the other.
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
   missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
@@ -184,8 +242,25 @@ has type `T | null`, stored without an extra allocation where possible.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
   TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
   so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed (the closure may not
-  assign it).
+  closure, a variable narrowed where the closure is created stays narrowed.
+- A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
+  `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
+  may run the closure, and then the variable no longer holds what was checked. Test a `const`
+  copy instead, which nothing can reassign; the error at such a use says so:
+
+  ```ts
+  class Conn {
+    send(msg: string): string { return `sent ${msg}`; }
+  }
+
+  let conn: Conn | null = new Conn();
+  const close = () => { conn = null; };
+  const c = conn;                 // `if (conn !== null) { conn.send(…) }` is an error here
+  if (c !== null) {
+    close();
+    console.log(c.send("bye"));   // sent bye
+  }
+  ```
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
   element (objects are references, [Memory model](memory.md#values-and-references)); when the
   rest of the block replaces `node.left`, `x` keeps referring to the old object, as in JS.
@@ -250,11 +325,13 @@ the nullable type; `void` cannot be a member.
   - `typeof x === "string" | "number" | "boolean" | "object" | "function"` (and `!==`): all
     number types are `"number"`; classes, structs, arrays, maps and `null` are `"object"`;
     closures are `"function"`. An impossible tag is an error.
-  - `x instanceof C` matches members whose class is `C` or a subclass. A downcast (testing a
-    base-class value for a subclass) is an error: use a union of the subclasses.
+  - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
+    class of `C`, or an interface value, is tested at run time and narrows to `C`
+    ([downcasts](classes.md#instanceof-downcasts)).
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    A local that a closure assigns is not narrowed ([Null](#null)).
 - Printing and template literals show the active member's value. `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
@@ -335,6 +412,104 @@ for (const s of shapes) {
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
+## Intersection types
+
+`A & B` is the object type with the fields of both `A` and `B`, as in TypeScript. The parts are
+object types: anonymous ones, aliases of them, interfaces with only fields, results of utility
+types, other intersections, and unions of these. `&` binds tighter than `|`
+(`A & B | C` is `(A & B) | C`), and a leading `&` is allowed like a leading `|`.
+
+```ts
+type Named = { name: string };
+type Aged = { age: number };
+type Person = Named & Aged; // { name: string; age: number }
+
+interface HasId {
+  id: string;
+}
+type Entity = HasId & { createdAt: number };
+type WithMeta<T> = T & { meta: string };
+
+const ada: Person = { name: "Ada", age: 36 };
+console.log(JSON.stringify(ada)); // {"name":"Ada","age":36}
+const e: Entity = { id: "e1", createdAt: 1700 };
+const n: Named = { name: "Grace" };
+const grace: Named & Aged = { ...n, age: 45 }; // spread builds one from the parts
+const w: WithMeta<{ x: number }> = { x: 3, meta: "m" };
+console.log(e.id, grace.age, w.meta); // e1 45 m
+```
+
+- **Fields** are the first part's, then the next part's new ones: the key order of
+  `{ ...a, ...b }`, so printing and `JSON.stringify` match Node.
+- **A field in several parts** gets the intersection of its types: the same type stays, object
+  types merge (`{ p: { x } } & { p: { y } }` has `p: { x; y }`), a literal type and its base
+  type give the literal, and union members that have no value in common drop out. The field is
+  optional only when it is optional in every part, and `readonly` only when it is `readonly` in
+  every part that has it (both as in TypeScript).
+- **Unions distribute**: `(Circle | Square) & { id: string }` is
+  `(Circle & { id: string }) | (Square & { id: string })`, a
+  [discriminated union](#discriminated-unions) that narrows as usual; `Shape & { kind: "circle" }`
+  keeps only the circle member, and `(A | null) & B` is `A & B`.
+- The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
+  type as the object type with those fields written out *in the same order*. Object types are
+  told apart by their field order for now, so `B & A` (or `{ b; a }`) is a different type from
+  `A & B`, and converting between them takes a copy, `{ ...ba }` (#651).
+- `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
+  the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
+  function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.
+- An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
+  give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
+
+Differences from TypeScript, each a compile error with a note on what to write instead:
+
+- When the parts have no value in common (`{ k: string } & { k: number }`, or two different
+  discriminants), TypeScript makes the type, or the field, `never`; Velt reports
+  ``no value has type `…`: field `k` is `string` in one part and `f64` in another``.
+- Classes and structs are not parts (Velt classes are nominal, not structural): use
+  `Pick<C, …>` or a field-only interface. Interfaces with methods, arrays and function types
+  (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
+- A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
+  yet (#350). A generic alias works, since each use has concrete type arguments.
+- Interface declarations are not merged (#652): declare an interface once, or name the
+  combination with `&`.
+
+```ts error
+type Conflict = { k: string } & { k: number }; // error: no value has type ...
+```
+
+### Branded types
+
+A primitive `&` an object type (`string & { __brand: "UserId" }`) is a **branded type**: a
+nominal alias of the primitive, with no cost at run time. `x as UserId` brands a value; a
+branded value works wherever its primitive does (members, operators, `${}`, arguments, map
+keys); a plain `string`, or another brand of it, does not convert to the brand.
+
+```ts
+type UserId = string & { __brand: "UserId" };
+type Cents = number & { readonly __unit: "cents" };
+
+function greet(id: UserId): string {
+  return `user ${id}`;
+}
+
+const id = "u-42" as UserId;
+console.log(greet(id), id.length, id.toUpperCase()); // user u-42 4 U-42
+const price = 449 as Cents;
+console.log(price / 100); // 4.49
+```
+
+```ts error
+type UserId = string & { __brand: "UserId" };
+const id: UserId = "u-1"; // error: a plain `string` does not convert to it; brand a value with `x as UserId`
+```
+
+### Indexed access types
+
+`T["k"]` is the type of field `k` of a concrete object type `T`, and `T["a" | "b"]` the union
+of the fields' types, as in TypeScript: `Person["name"]` is `string`. A key that is not a field
+is an error. The key is a string literal type or a union of them; on a type parameter it is not
+supported yet (#350).
+
 ## Enums
 
 TypeScript-style enums only:
@@ -389,11 +564,49 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 ```
 
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
-  `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
+  `[x, ...xs]` builds a new array, converting each element to the expected element type
+  (integer elements spread into a `number[]`, `const ns: Named[] = [...cs]`). Spread
   arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
   takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
   `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
   ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
+- **Wider element types**: an array, object type or generic class converts to the same type
+  with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
+  `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a
+  `new` expression, or the result of a call of a function that returns a new value on every
+  path (a literal, `new`, such a call, or a local it builds and returns without storing or
+  passing it anywhere, as `map` and `filter` do). The conversion builds a new value with each
+  element converted. A call that may return a value something else still holds (a getter
+  returning a field) is an error with the same fix as below, and so is a conversion in a field
+  initializer or a default value for now. TypeScript also converts an existing array, which
+  is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
+  `C[]`. Velt reports that and
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
+  old one's field values.
+
+  ```ts
+  interface Named {
+    name(): string;
+  }
+
+  class C implements Named {
+    name(): string {
+      return "c";
+    }
+  }
+
+  function make(): C[] {
+    return [new C()];
+  }
+
+  function main() {
+    const ns: Named[] = make(); // a fresh C[]: converted
+    const cs = make();
+    const copy: Named[] = [...cs]; // `const ns2: Named[] = cs;` is an error
+    console.log(ns.length, copy.length); // 1 1
+  }
+  ```
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
   length like indexing: a shorter array panics with the same `index out of bounds` message.
@@ -428,7 +641,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
-  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
+  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances, interface and
+  function values (by identity, as `==` compares them),
   and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
   two equal object literals are two different keys). Float keys compare like JS's
   (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
@@ -456,8 +670,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
-  listed only when it is not `null`. A class with subclasses is an error, because the value may
-  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
+  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
+  interface value those of the class it holds (an interface also implemented by a struct is an
+  error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

@@ -223,7 +223,7 @@ pub fn runtime_lib_candidates(dir: &Path, flavor: WasmFlavor) -> Vec<PathBuf> {
 fn explain_missing_symbols(msg: String) -> String {
     if msg.contains("undefined symbol: velt_rt_") {
         format!(
-            "{msg}\nnote: WebAssembly programs cannot use TCP, HTTP or child processes (the \
+            "{msg}\nnote: WebAssembly programs cannot use TCP, an HTTP server or child processes (the \
              wasm runtime has no sockets or processes)"
         )
     } else if msg.contains("signature mismatch") {

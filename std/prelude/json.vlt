@@ -3,7 +3,7 @@
 // `JSON.stringify<T>` / `JSON.parse<T>` are compile-time generated per type by the compiler
 // intrinsics (a string builder for stringify, a pull-reader decoder for parse); parse failures
 // throw `JsonError { message }` like "expected string at $.name". The stringify glue writes a
-// `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.handle)`.
+// `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.#handle)`.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
 // runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is the null handle,
@@ -120,16 +120,16 @@ export class JSON {
 /**
  * A JSON value of any shape (see header; std/json calls it `Value`). Accessors on the wrong kind
  * return null / 0. The compiler recognizes this prelude class: JSON glue reads and writes the
- * value's tree, never its `handle` field. The handle and the constructor are private and only
+ * value's tree, never its `#handle` field. The handle and the constructor are private and only
  * runtime results become one, so safe code cannot forge a runtime pointer; the private
  * constructor also keeps classes from extending `JsonValue`.
  */
 export class JsonValue {
-  private handle: u64;
+  #handle: u64;
 
   // A `JsonValue` owning the runtime handle `h`.
   private constructor(h: u64) {
-    this.handle = h;
+    this.#handle = h;
   }
 
   /** Parses any JSON document, like `JSON.parseValue` (throws `JsonError`). */
@@ -193,25 +193,25 @@ export class JsonValue {
 
   /** Sets object member `key` (an existing key keeps its position); false if not an object. */
   set(key: string, value: JsonValue): bool {
-    let slot = JsonHandleSlot { handle: this.handle };
-    const ok = velt_rt_json_value_set(slot, key, value.handle);
-    this.handle = slot.handle;
+    let slot = JsonHandleSlot { handle: this.#handle };
+    const ok = velt_rt_json_value_set(slot, key, value.#handle);
+    this.#handle = slot.handle;
     return ok;
   }
 
   /** Removes object member `key`; false if absent or not an object. */
   delete(key: string): bool {
-    let slot = JsonHandleSlot { handle: this.handle };
+    let slot = JsonHandleSlot { handle: this.#handle };
     const ok = velt_rt_json_value_delete(slot, key);
-    this.handle = slot.handle;
+    this.#handle = slot.handle;
     return ok;
   }
 
   /** Appends to an array; false if not an array. */
   push(value: JsonValue): bool {
-    let slot = JsonHandleSlot { handle: this.handle };
-    const ok = velt_rt_json_value_push(slot, value.handle);
-    this.handle = slot.handle;
+    let slot = JsonHandleSlot { handle: this.#handle };
+    const ok = velt_rt_json_value_push(slot, value.#handle);
+    this.#handle = slot.handle;
     return ok;
   }
 
@@ -220,15 +220,15 @@ export class JsonValue {
     if (i < 0) {
       return false;
     }
-    let slot = JsonHandleSlot { handle: this.handle };
-    const ok = velt_rt_json_value_set_at(slot, i as u64, value.handle);
-    this.handle = slot.handle;
+    let slot = JsonHandleSlot { handle: this.#handle };
+    const ok = velt_rt_json_value_set_at(slot, i as u64, value.#handle);
+    this.#handle = slot.handle;
     return ok;
   }
 
   /** Object member `key`, or null (not an object, or no such key). */
   get(key: string): JsonValue | null {
-    return JsonValue.wrap(velt_rt_json_value_get(this.handle, key));
+    return JsonValue.wrap(velt_rt_json_value_get(this.#handle, key));
   }
 
   /**
@@ -244,56 +244,56 @@ export class JsonValue {
     if (i < 0) {
       return null;
     }
-    return JsonValue.wrap(velt_rt_json_value_at(this.handle, i as u64));
+    return JsonValue.wrap(velt_rt_json_value_at(this.#handle, i as u64));
   }
 
-  /** Array length, object member count, string byte length; 0 otherwise. */
+  /** Array length, object member count, string length (UTF-16 code units); 0 otherwise. */
   len(): i64 {
-    return velt_rt_json_value_len(this.handle) as i64;
+    return velt_rt_json_value_len(this.#handle) as i64;
   }
 
   isNull(): bool {
     // The null handle (from the runtime) is JSON null too.
-    return velt_rt_json_value_kind(this.handle) <= KIND_NULL;
+    return velt_rt_json_value_kind(this.#handle) <= KIND_NULL;
   }
 
   isBool(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_BOOL;
+    return velt_rt_json_value_kind(this.#handle) == KIND_BOOL;
   }
 
   isNumber(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_NUMBER;
+    return velt_rt_json_value_kind(this.#handle) == KIND_NUMBER;
   }
 
   isString(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_STRING;
+    return velt_rt_json_value_kind(this.#handle) == KIND_STRING;
   }
 
   isArray(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_ARRAY;
+    return velt_rt_json_value_kind(this.#handle) == KIND_ARRAY;
   }
 
   isObject(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_OBJECT;
+    return velt_rt_json_value_kind(this.#handle) == KIND_OBJECT;
   }
 
   asNumber(): f64 | null {
     if (!this.isNumber()) {
       return null;
     }
-    return velt_rt_json_value_as_f64(this.handle);
+    return velt_rt_json_value_as_f64(this.#handle);
   }
 
   asBool(): bool | null {
     if (!this.isBool()) {
       return null;
     }
-    return velt_rt_json_value_as_bool(this.handle);
+    return velt_rt_json_value_as_bool(this.#handle);
   }
 
   asString(): string | null {
     let out = "";
-    if (velt_rt_json_value_as_str(this.handle, out)) {
+    if (velt_rt_json_value_as_str(this.#handle, out)) {
       return out;
     }
     return null;
@@ -305,10 +305,10 @@ export class JsonValue {
     if (!this.isObject()) {
       return out;
     }
-    const n = velt_rt_json_value_len(this.handle);
+    const n = velt_rt_json_value_len(this.#handle);
     for (let i: u64 = 0; i < n; i++) {
       let key = "";
-      velt_rt_json_value_key_at(this.handle, i, key);
+      velt_rt_json_value_key_at(this.#handle, i, key);
       out.push(key);
     }
     return out;
@@ -316,17 +316,17 @@ export class JsonValue {
 
   /** Same as `JSON.stringify(this)`. */
   stringify(): string {
-    return velt_rt_json_value_stringify(this.handle);
+    return velt_rt_json_value_stringify(this.#handle);
   }
 
   /** Another reference to the same value: O(1) (edits copy on write, so they stay apart). */
   clone(): JsonValue {
-    return new JsonValue(velt_rt_json_value_clone(this.handle));
+    return new JsonValue(velt_rt_json_value_clone(this.#handle));
   }
 
   /** Drop hook: releases this reference (see header). */
   [Symbol.dispose]() {
-    velt_rt_json_value_free(this.handle);
-    this.handle = 0;
+    velt_rt_json_value_free(this.#handle);
+    this.#handle = 0;
   }
 }

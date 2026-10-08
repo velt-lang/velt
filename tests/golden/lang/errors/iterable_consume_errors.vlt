@@ -33,7 +33,7 @@ function main() {
     yield* xs;
   };
   let total = 0;
-  const report = async (): Promise<i64> => total;
+  const report = spawn((async (): Promise<i64> => total)());
   const counting = function* (): Generator<i64> {
     total += 1;
     yield total;

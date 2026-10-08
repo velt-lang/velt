@@ -1,0 +1,17 @@
+random ok
+dups ok
+sorted ok
+reversed ok
+reversed-dups ok
+sawtooth ok
+pipe ok
+equal ok
+tail ok
+inconsistent 5 true
+inconsistent 20 true
+inconsistent 100 true
+inconsistent 1000 true
+always 0 keeps the order true
+NaN elements 200 40 8287
+NaN results keep the order 3,1,2,5,4
+100000 items, stable and sorted: true 0 993

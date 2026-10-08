@@ -5,7 +5,8 @@
 //!   state from its arguments and boxes it (`velt_rt_fut_box`) — a promise *value*. For async
 //!   closures it is the closure's `code`, called with the borrow ABI: every call's state gets
 //!   its own clone of the owned captures (an async closure may be called many times — e.g. a
-//!   request handler — and its promises may outlive the closure); an owned argument is another
+//!   request handler — and its promises may outlive the closure), or, for a local async
+//!   closure (`FnDef::shares_captures`), another reference to them; an owned argument is another
 //!   reference to the caller's value (a share, as for a direct async call: the callee sees the
 //!   caller's object, #196);
 //! - `f$drop` ([`Work::AsyncDrop`]): set `DROP_BIT` in the tag and run the poll function.
@@ -148,9 +149,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             PassMode::Owned if self.cx.uncopyable(ty) => self.share_value(Operand::Copy(slot), ty),
             // A generator sees the objects the closure captured, as in JS: its state never
             // leaves this thread (glue/transfer.rs), so the generators of one closure may share
-            // them.
-            PassMode::Owned if f.is_generator => self.share_value(Operand::Copy(slot), ty),
-            PassMode::Owned => self.clone_value(Operand::Copy(slot), ty),
+            // them. So do the calls of a local async closure, which never leaves its task
+            // (sema ownership/local_async).
+            PassMode::Owned if f.is_generator || f.shares_captures => {
+                self.share_value(Operand::Copy(slot), ty)
+            }
+            PassMode::Owned => self.clone_keeping_identity(Operand::Copy(slot), ty),
         })
     }
 

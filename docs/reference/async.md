@@ -24,12 +24,20 @@ Promises behave like JavaScript's, at Rust's cost:
   matches Node. Only `spawn` puts work on another core.
 - Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
   So the started promises (and the task itself) waiting for timers that are due together resume
-  in the order their timers were created, like `setTimeout` callbacks in Node. Timers of
-  different tasks have no order between them, since the tasks run in parallel.
+  in the order their timers were created, like `setTimeout` callbacks in Node. A timer that is
+  already due when it is first waited for (`sleep(0)`, or a `sleep` awaited after its delay
+  passed) also waits for its turn: the code after it never runs before the synchronous code
+  that started it, nor before timers due earlier. Timers of different tasks have no order
+  between them, since the tasks run in parallel.
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
+- After `main` returns, the process also waits for *handles*, as in Node: a listening
+  [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
+  `setInterval`) unless it is `unref()`ed. A spawned task is not a handle: tasks still running
+  when nothing else keeps the process alive end with it. `process.exit()` and an uncaught error
+  end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
@@ -49,7 +57,9 @@ Promises behave like JavaScript's, at Rust's cost:
 - Values handed to `spawn` (and captured by an HTTP handler, sent over a channel, or settled on
   a promise from another task) go to another thread. What the program no longer references
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
-  structured clone), so threads never share reference counts. That includes the receiver of
+  structured clone), so threads never share reference counts. As with a structured clone, an
+  object the value reaches more than once is copied once (`p.x === p.y` still holds in the
+  task) and a cycle is copied as a cycle. That includes the receiver of
   `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
   closure or interface value passed to the task reaches. A closure the caller still uses
   afterwards is copied too, with what it captures (also a variable it assigns), so the task and
@@ -57,9 +67,11 @@ Promises behave like JavaScript's, at Rust's cost:
   values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
   the task as it is. `spawn(async () => …)` and `spawn((async () => …)())` hand the captured
   values themselves to the task, so a captured resource the program no longer uses moves and
-  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure otherwise gets
-  its own copy of what the closure captured, except a resource without `clone()`, which the
-  call shares with the closure (it is released once, after both). So `spawn(f())` through an
+  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure that may run
+  on another thread otherwise gets its own copy of what the closure captured, except a resource
+  without `clone()`, which the call shares with the closure (it is released once, after both).
+  An async closure that stays on its task shares what it captured with every call instead, as
+  in JavaScript ([Functions](functions.md#captures)). So `spawn(f())` through an
   async closure value `f` gives the task a copy of `f`, and stops the program
   (``panic: cannot copy …``) when `f` captured such a resource.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
@@ -93,7 +105,11 @@ combinator is *handled*: one that loses (or is left behind) and rejects later ha
 dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
 `Promise.race` is fine once the work won (`Promise.allSettled` awaits every promise itself).
 Losing promises that already started, such as calls of async functions, run to completion;
-a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled. A combinator
+a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled. As in JS, a
+loser that can go on when the combinator settles (a sibling resolved what it awaits) takes that
+step before the code after the `await`, while one waiting for a timer, I/O or `yieldNow()` goes
+on later, when that happens. So a loop of combinators that settle at once finishes such losers
+as it goes, like Node. A combinator
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
 
@@ -232,8 +248,19 @@ A task the runtime drops is cancelled at its current suspension point: the value
 
 ## Thread safety
 
-Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
-captured variables; the error mentions "spawned task" and `shared`. Share state with:
+Thread safety is checked at compile time: an async closure that may run on another thread (it
+is spawned, handles HTTP requests, goes into `shared(...)` or a `Mutex`, is sent on a channel or
+settles a promise, directly or through a variable, parameter, capture or object holding it)
+must not modify what it captured. The error names both places:
+
+```text
+error: this async closure modifies captured `count`, so it must stay on the task that created it
+  --> main.vlt:9:9: but it reaches `spawn` here
+```
+
+An async closure that never leaves its task may: its calls run as started promises on that
+task, one at a time between `await`s, so they share what it captured as in JavaScript
+([Functions](functions.md#captures)). Share state between tasks with:
 
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
@@ -437,7 +464,8 @@ type.
   it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
   JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
-  keeps the process alive (#147).
+  keeps the process alive (#147) after `main` returns, but not after it fails (an uncaught
+  error or a nonzero exit code ends the process at once, like an uncaught exception in Node).
 
 A one-shot reply to a request handled on another task, without a channel per request:
 

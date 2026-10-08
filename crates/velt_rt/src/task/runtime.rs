@@ -3,9 +3,10 @@
 //! One multi-thread runtime is created lazily on first use and lives until the process exits
 //! (there is no shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the
 //! process alive after `main` returns while something holds a keep-alive reference (a listening
-//! HTTP server); otherwise `main` returning ends the process and outstanding tasks are dropped. Worker count = `VELT_THREADS` if set to a positive integer, else the number
-//! of available cores. Workers flush buffered stdout whenever they go idle, so a server logging to
-//! a pipe shows its output promptly.
+//! HTTP server, a ref'd timer, started promises that outlived their task); otherwise `main`
+//! returning ends the process and outstanding tasks are dropped. Worker count = `VELT_THREADS`
+//! if set to a positive integer, else the number of available cores. Workers flush buffered
+//! stdout whenever they go idle, so a server logging to a pipe shows its output promptly.
 
 use super::compiled::{Borrowed, Compiled};
 use super::{PollFn, SendPtr};
@@ -33,7 +34,22 @@ pub fn keep_alive_release() {
     }
 }
 
-/// Program exit (after `main` returns): like Node, block while servers are still listening.
+/// `velt_rt_keep_alive_acquire()`: take a keep-alive reference for a ref'd timer
+/// (std/prelude/timers.vlt), released with [`velt_rt_keep_alive_release`].
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_acquire() {
+    keep_alive_acquire();
+}
+
+/// `velt_rt_keep_alive_release()`: release a reference taken with
+/// [`velt_rt_keep_alive_acquire`].
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_release() {
+    keep_alive_release();
+}
+
+/// Program exit (after `main` returns): like Node, block while servers are still listening or
+/// ref'd timers are pending.
 /// Does nothing — and never starts the runtime — when no keep-alive reference exists.
 pub fn wait_for_keep_alive() {
     if KEEP_ALIVE.load(Ordering::SeqCst) == 0 {
@@ -79,6 +95,13 @@ fn build() -> Runtime {
 /// The global runtime (created on first use).
 pub fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(build)
+}
+
+/// How many tasks are alive (spawned and not finished); 0 if the runtime never started.
+pub(crate) fn alive_tasks() -> usize {
+    RUNTIME
+        .get()
+        .map_or(0, |rt| rt.handle().metrics().num_alive_tasks())
 }
 
 /// Handle of the global runtime.

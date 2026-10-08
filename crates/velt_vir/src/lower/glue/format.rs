@@ -11,6 +11,13 @@
 //! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
 //! A top-level value is written on one line and then broken across lines like node's when it
 //! is too long (velt_rt's `inspect_layout`).
+//!
+//! Node's default limits apply as the value is written, so a huge value costs only what is
+//! shown: a container nested deeper than [`DEPTH`] prints as `[Object]`, `[Array]`, `[Name]`,
+//! `[Map]`, `[Set]` or `[Promise]` (an empty one as `{}`, `[]`, `Name {}`, `Map(0) {}`), and an
+//! array, `Map` or `Set` shows its first 100 entries, then `... n more items`
+//! (format_array.rs, format_map.rs, format_object.rs). Every format glue takes node's depth of
+//! its value (0 for a `console.log` argument) as its last parameter.
 
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
@@ -19,6 +26,15 @@ use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// Node's `util.inspect` default `depth` (velt_rt's `inspect::DEPTH`): a container at a greater
+/// depth prints as `[Name]`.
+const DEPTH: i128 = 2;
+
+/// Node's depth of a `console.log` argument.
+fn top_depth() -> Operand {
+    cint(0, Ty::U32)
+}
 
 impl FnLower<'_, '_> {
     /// Append the top-level (`console.log` argument) text of the value at `place`.
@@ -52,7 +68,7 @@ impl FnLower<'_, '_> {
                 self.format_top(buf, &inner, e);
             }
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
-                self.format_json_value(buf, place, ty, true)
+                self.format_json_value(buf, place, ty, true, &top_depth())
             }
             TyKind::Adt(..) if self.cx.is_union(ty) => {
                 self.for_each_variant(place, ty, |lw, v, parts| {
@@ -64,7 +80,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty),
+            _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             _ => {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
@@ -72,7 +88,7 @@ impl FnLower<'_, '_> {
                 let start = self.temp(Ty::U64);
                 let len = Some(Place::local(start));
                 self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
-                self.format_nested(buf, place, ty);
+                self.format_nested(buf, place, ty, &top_depth());
                 let start = Operand::Copy(Place::local(start));
                 self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
             }
@@ -98,8 +114,15 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Append the value at `place` in nested (container element) style.
-    pub(in crate::lower) fn format_nested(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// Append the value at `place` in nested (container element) style, at node's depth `depth`
+    /// (a `u32` operand).
+    pub(in crate::lower) fn format_nested(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        depth: &Operand,
+    ) {
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
@@ -120,69 +143,71 @@ impl FnLower<'_, '_> {
                 }
             }
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
-                self.format_json_value(buf, place, ty, false)
+                self.format_json_value(buf, place, ty, false, depth)
             }
             _ => {
                 let a = self.addr(place.clone());
-                self.call_glue(Glue::Format, ty, vec![buf.clone(), a]);
+                self.call_glue(Glue::Format, ty, vec![buf.clone(), a, depth.clone()]);
             }
         }
     }
 
     /// A `JsonValue` prints its tree the way node prints the parsed value (never its handle);
     /// `top`: a string value prints raw, as a `console.log` argument.
-    fn format_json_value(&mut self, buf: &Operand, place: &Place, ty: TyId, top: bool) {
+    fn format_json_value(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        top: bool,
+        depth: &Operand,
+    ) {
         // The handle field is a `u64` in Velt, a `const VeltJson*` for the runtime.
         let h = self.field_place(place, ty, 0);
         let hty = self.cx.adt_field_tys(ty)[0];
         let ht = self.cx.ty(hty);
         let h = self.cast_to(Operand::Copy(h), ht, Ty::Ptr);
         let top = cint(top as i128, Ty::U8);
-        self.call_rt(Rt::StrbufPushInspectJson, vec![buf.clone(), h, top], None);
+        let depth = depth.clone();
+        self.call_rt(
+            Rt::StrbufPushInspectJson,
+            vec![buf.clone(), h, top, depth],
+            None,
+        );
     }
 
-    pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, ty: TyId) {
+    pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, depth: Operand, ty: TyId) {
         let place = self.deref_param(p, ty);
-        self.format_expand(&buf, &place, ty);
+        self.format_expand(&buf, &place, ty, &depth);
         self.terminate(Terminator::Return(unit()));
     }
 
-    fn format_expand(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    fn format_expand(&mut self, buf: &Operand, place: &Place, ty: TyId, depth: &Operand) {
         match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_class(ty) => {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+                let args = vec![buf.clone(), obj.clone(), depth.clone()];
                 if self.cx.has_header(d) {
-                    let vt = self.obj_vtable(obj.clone(), ty);
+                    let vt = self.obj_vtable(obj, ty);
                     let f = self.dispatch(vt, SLOT_FORMAT);
-                    self.call_entry(f, vec![buf.clone(), obj], vec![Ty::Ptr, Ty::Ptr], Ty::Unit);
+                    self.call_entry(f, args, vec![Ty::Ptr, Ty::Ptr, Ty::U32], Ty::Unit);
                 } else {
-                    self.call_glue(Glue::ObjFormat, ty, vec![buf.clone(), obj]);
+                    self.call_glue(Glue::ObjFormat, ty, args);
                 }
             }
-            TyKind::Adt(..) if self.is_enum(ty) => self.format_variant(buf, place, ty),
+            TyKind::Adt(..) if self.is_enum(ty) => self.format_variant(buf, place, ty, depth),
             TyKind::Adt(d, _) => {
                 let anon = self.cx.adt_def(d).kind == AdtKind::Anon;
                 let name = (!anon).then(|| self.cx.type_name(ty));
-                if self.cx.recursive_object(d) {
-                    // A recursive object is a box (its pointer is the value) and may be part
-                    // of a cycle.
-                    let p = Operand::Copy(place.clone());
-                    self.format_once(buf, p, |lw| lw.format_fields(buf, name, place, ty));
-                } else {
-                    self.format_fields(buf, name, place, ty);
-                }
+                // A recursive object is a box (its pointer is the value) and may be part of a
+                // cycle.
+                let p = self
+                    .cx
+                    .recursive_object(d)
+                    .then(|| Operand::Copy(place.clone()));
+                self.format_object(buf, name, place, ty, p, depth);
             }
-            TyKind::Tuple(tys) => {
-                self.push_text(buf, "[ ");
-                for (i, t) in tys.into_iter().enumerate() {
-                    if i > 0 {
-                        self.push_text(buf, ", ");
-                    }
-                    let fp = self.field_place(place, ty, i as u32);
-                    self.format_nested(buf, &fp, t);
-                }
-                self.push_text(buf, " ]");
-            }
+            TyKind::Tuple(tys) => self.format_tuple(buf, place, ty, &tys, depth),
             TyKind::Option(e) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
@@ -193,41 +218,81 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
-                self.format_nested(buf, &payload, e);
+                self.format_nested(buf, &payload, e, depth);
                 self.goto(done);
                 self.switch_to(done);
             }
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
-                self.format_array(buf, &arr, e)
+                self.format_array(buf, &arr, e, depth)
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
-                self.format_nested(buf, &inner, e);
+                self.format_nested(buf, &inner, e, depth);
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
             }
-            TyKind::Promise(..) => self.format_promise(buf, place, ty),
+            TyKind::Promise(..) => self.within_depth(buf, depth, "[Promise]", None, |lw, child| {
+                lw.format_promise(buf, place, ty, &child)
+            }),
             TyKind::Dyn(..) => {
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 let f = self.dispatch(vt, SLOT_FORMAT);
                 let data = Operand::Copy(proj(place, Proj::Field(0)));
-                self.call_entry(f, vec![buf.clone(), data], vec![Ty::Ptr, Ty::Ptr], Ty::Unit);
+                let args = vec![buf.clone(), data, depth.clone()];
+                self.call_entry(f, args, vec![Ty::Ptr, Ty::Ptr, Ty::U32], Ty::Unit);
             }
-            _ => self.format_nested(buf, place, ty),
+            _ => self.format_nested(buf, place, ty, depth),
         }
     }
 
-    fn format_variant(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// Node's `depth` limit for a container at depth `depth`: deeper than [`DEPTH`], `cut`
+    /// (`[Object]`) instead of `body`, which is given its entries' depth. `obj`: the address
+    /// of an object that may be part of a cycle, which prints `[Circular *N]` there instead
+    /// when it is being printed, as node checks for cycles first.
+    pub(super) fn within_depth(
+        &mut self,
+        buf: &Operand,
+        depth: &Operand,
+        cut: &str,
+        obj: Option<Operand>,
+        body: impl FnOnce(&mut Self, Operand),
+    ) {
+        let deep = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, depth.clone(), cint(DEPTH, Ty::U32)),
+        );
+        let (deep_bb, shallow_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(deep, deep_bb, shallow_bb);
+        self.switch_to(deep_bb);
+        if let Some(p) = obj {
+            let circular = self.rt_u8(Rt::StrbufInspectCircular, vec![buf.clone(), p]);
+            let cut_bb = self.new_block();
+            self.branch(circular, done, cut_bb);
+            self.switch_to(cut_bb);
+        }
+        self.push_text(buf, cut);
+        self.goto(done);
+        self.switch_to(shallow_bb);
+        let child = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::Add, depth.clone(), cint(1, Ty::U32)),
+        );
+        body(self, child);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    fn format_variant(&mut self, buf: &Operand, place: &Place, ty: TyId, depth: &Operand) {
         if self.cx.is_union(ty) {
             return self.for_each_variant(place, ty, |lw, v, parts| {
                 if let Some(l) = lw.variant_literal(ty, v) {
                     lw.push_literal(buf, &l, true);
                 }
                 for (pp, pt) in parts {
-                    lw.format_nested(buf, &pp, pt);
+                    lw.format_nested(buf, &pp, pt, depth);
                 }
             });
         }
@@ -250,105 +315,20 @@ impl FnLower<'_, '_> {
                     if i > 0 {
                         lw.push_text(buf, ", ");
                     }
-                    lw.format_nested(buf, &pp, pt);
+                    lw.format_nested(buf, &pp, pt, depth);
                 }
                 lw.push_text(buf, ")");
             }
         });
     }
 
-    /// `Name { a: 1, b: 'x' }` (or `{ … }` without a name, `Name {}` when empty); `place`
-    /// holds the struct value or, for classes, the object pointer.
-    fn format_fields(&mut self, buf: &Operand, name: Option<String>, place: &Place, ty: TyId) {
-        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
-            crate::lower::ice("field format of a non-struct type")
-        };
-        let all: Vec<(u32, String, TyId, bool)> = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .map(|f| (f.name.clone(), f.private))
-            .zip(self.cx.adt_field_tys(ty))
-            .enumerate()
-            .map(|(i, ((n, private), t))| (i as u32, n, t, private))
-            .collect();
-        // Private zero-sized fields are hidden (std's `runtime: RuntimeHandle` marker, which
-        // only makes a handle type opaque to JSON). Other private fields show, as Node shows a
-        // TypeScript `private` field.
-        let shown: Vec<(u32, String, TyId)> = all
-            .into_iter()
-            .filter(|(_, _, t, private)| !(*private && self.is_empty_struct(*t)))
-            .map(|(i, n, t, _)| (i, n, t))
-            .collect();
-        let names: Vec<&String> = shown.iter().map(|(_, n, _)| n).collect();
-        let open = match &name {
-            Some(n) if names.is_empty() => format!("{n} {{}}"),
-            None if names.is_empty() => "{}".into(),
-            Some(n) => format!("{n} {{ "),
-            None => "{ ".into(),
-        };
-        // The opening text and the first field's name form one static chunk.
-        let mut pending = open;
-        if names.is_empty() {
-            return self.push_text(buf, &pending);
-        }
-        for (i, (index, n, t)) in shown.iter().enumerate() {
-            let sep = if i > 0 { ", " } else { "" };
-            pending.push_str(&format!("{sep}{n}: "));
-            self.push_text(buf, &pending);
-            pending.clear();
-            let fp = self.field_place(place, ty, *index);
-            self.format_nested(buf, &fp, *t);
-        }
-        self.push_text(buf, " }");
-    }
-
-    /// A struct without fields (zero-sized).
-    fn is_empty_struct(&self, t: TyId) -> bool {
-        matches!(self.cx.kind(t), TyKind::Adt(d, _)
-            if matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(a)
-                if a.kind == AdtKind::Struct && a.fields.is_empty()))
-    }
-
-    fn format_array(&mut self, buf: &Operand, arr: &Place, e: TyId) {
-        let len = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Use(Operand::Copy(proj(arr, Proj::Field(1)))),
-        );
-        let empty = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, len.clone(), cint(0, Ty::U64)),
-        );
-        let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(empty, empty_bb, full_bb);
-        self.switch_to(empty_bb);
-        self.push_text(buf, "[]");
-        self.goto(done);
-        self.switch_to(full_bb);
-        self.push_text(buf, "[ ");
-        let k = self.temp(Ty::U64);
-        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        self.count_loop(k, len, |lw, k| {
-            let first = lw.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::Eq, k.clone(), cint(0, Ty::U64)),
-            );
-            let (sep_bb, elem_bb) = (lw.new_block(), lw.new_block());
-            lw.branch(first, elem_bb, sep_bb);
-            lw.switch_to(sep_bb);
-            lw.push_text(buf, ", ");
-            lw.goto(elem_bb);
-            lw.switch_to(elem_bb);
-            let p = lw.elem_place(arr, k, e);
-            lw.format_nested(buf, &p, e);
-        });
-        self.push_text(buf, " ]");
-        self.goto(done);
-        self.switch_to(done);
-    }
-
-    pub(super) fn obj_format_body(&mut self, buf: Operand, obj: vir::Local, ty: TyId) {
+    pub(super) fn obj_format_body(
+        &mut self,
+        buf: Operand,
+        obj: vir::Local,
+        depth: Operand,
+        ty: TyId,
+    ) {
         if let Some(is_async) = self.cx.generator_obj_kind(ty) {
             // As Node prints a generator object.
             let text = match is_async {
@@ -359,22 +339,18 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(unit()));
             return;
         }
-        let p = Operand::Copy(Place::local(obj));
-        self.format_once(&buf, p, |lw| {
-            if !lw.format_map(&buf, &Place::local(obj), ty)
-                && !lw.format_record(&buf, &Place::local(obj), ty)
-            {
-                let name = Some(lw.cx.type_name(ty));
-                lw.format_fields(&buf, name, &Place::local(obj), ty);
-            }
-        });
+        let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
+        if !self.format_collection(&buf, &place, ty, &depth) {
+            let name = Some(self.cx.type_name(ty));
+            self.format_object(&buf, name, &place, ty, Some(p), &depth);
+        }
         self.terminate(Terminator::Return(unit()));
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an
     /// object graph with a cycle prints `[Circular *1]` there, and the object it refers back to
     /// gets a `<ref *1>` prefix, as node prints it.
-    fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
+    pub(super) fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
         let fresh = self.rt_u8(Rt::StrbufInspectEnter, vec![buf.clone(), p]);
         let (print, done) = (self.new_block(), self.new_block());
         self.branch(fresh, print, done);
@@ -385,12 +361,18 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    pub(super) fn dyn_format_body(&mut self, buf: Operand, data: vir::Local, ty: TyId) {
+    pub(super) fn dyn_format_body(
+        &mut self,
+        buf: Operand,
+        data: vir::Local,
+        depth: Operand,
+        ty: TyId,
+    ) {
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
-            self.format_nested(&buf, &Place::local(data), ty);
+            self.format_nested(&buf, &Place::local(data), ty, &depth);
         } else {
             let p = self.deref_param(data, ty);
-            self.format_nested(&buf, &p, ty);
+            self.format_nested(&buf, &p, ty, &depth);
         }
         self.terminate(Terminator::Return(unit()));
     }

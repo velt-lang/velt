@@ -20,13 +20,13 @@ impl FnLower<'_, '_> {
             }
             return Operand::Copy(obj);
         }
-        let ops: Vec<Operand> = fields.iter().map(|f| self.consume(f)).collect();
+        let ops = self.consume_each(fields);
         self.build_agg(ty, ops)
     }
 
     pub(super) fn tuple(&mut self, es: &[hir::Expr], ty: TyId) -> Operand {
         let ty = self.sub(ty);
-        let ops: Vec<Operand> = es.iter().map(|e| self.consume(e)).collect();
+        let ops = self.consume_each(es);
         self.build_agg(ty, ops)
     }
 
@@ -169,6 +169,8 @@ impl FnLower<'_, '_> {
     /// their own data pointer; other values are moved into a heap box.
     pub(super) fn make_dyn(&mut self, e: &hir::Expr, impl_index: u32, ty: TyId) -> Operand {
         let cty = self.sub(e.ty);
+        let ty = self.sub(ty);
+        self.cx.note_dyn_identity(ty, cty);
         let v = self.consume(e);
         if self.dead() {
             return unit();
@@ -183,7 +185,6 @@ impl FnLower<'_, '_> {
             b
         };
         let vtable = self.vtable_addr(VtableKey::Impl(impl_index, cty));
-        let ty = self.sub(ty);
         self.build_agg(ty, vec![data, vtable])
     }
 

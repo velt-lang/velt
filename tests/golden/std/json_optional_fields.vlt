@@ -1,0 +1,44 @@
+// JSON.stringify leaves out an optional field (`a?: T`) while it is null, as JavaScript leaves
+// out an absent property, in object types, interfaces, classes and `Partial<T>`; a `T | null`
+// field holding null is written, and so is a null array element (#463).
+type User = { name: string; email?: string };
+
+interface Team {
+  title: string;
+  lead?: User;
+  members: User[];
+}
+
+type Row = { id: number; deletedAt: string | null; note?: string };
+
+class Account {
+  id: number = 1;
+  nickname?: string;
+  closed: string | null = null;
+}
+
+function main(): void {
+  const a: User = { name: "a" };
+  const b: User = { name: "b", email: "b@x" };
+  console.log(JSON.stringify(a), JSON.stringify(b));
+  console.log(JSON.stringify([a, b]));
+  const t: Team = { title: "t", members: [a, b] };
+  console.log(JSON.stringify(t));
+  const led: Team = { title: "u", lead: b, members: [] };
+  console.log(JSON.stringify(led));
+  const r: Row = { id: 1, deletedAt: null };
+  console.log(JSON.stringify(r));
+  const acc = new Account();
+  console.log(JSON.stringify(acc));
+  acc.nickname = "n";
+  console.log(JSON.stringify(acc));
+  const p: Partial<User> = {};
+  console.log(JSON.stringify(p));
+  const names: (string | null)[] = ["x", null];
+  console.log(JSON.stringify(names));
+  // Round trip: an absent key decodes to null and is left out again.
+  const back = JSON.parse<User>(JSON.stringify(a));
+  console.log(back.email == null, JSON.stringify(back));
+  const team = JSON.parse<Team>(`{"title":"v","members":[{"name":"c"}]}`);
+  console.log(team.lead == null, JSON.stringify(team));
+}

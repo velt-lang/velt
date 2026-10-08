@@ -1,14 +1,12 @@
-super_not_first.vlt:11:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_not_first.vlt:11:7: error: `super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_not_first.vlt:19:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_not_first.vlt:19:7: error: `super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_not_first.vlt:28:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_not_first.vlt:28:7: error: `super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_not_first.vlt:35:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_not_first.vlt:43:9: error: `super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_not_first.vlt:43:9: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
-  = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_not_first.vlt:50:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_not_first.vlt:50:7: error: `super(...)` must run exactly once on every path: a statement of the constructor's body itself, or one in each branch of an `if` / `else`, not in a loop, `try`, `switch` or a branch the other path skips
   = note: the base constructor and this class's field initializers run there, exactly once on every path
 super_not_first.vlt:59:7: error: `super(...)` cannot be called inside a closure; call it as a statement of the constructor's body
 super_not_first.vlt:66:5: error: `super(...)` is called once, as a statement of the constructor's body

@@ -29,6 +29,8 @@ pub(super) struct Layouts {
     objs: HashMap<TyId, AggId>,
     /// Roots of the class hierarchies whose objects start with a vtable pointer (built once).
     headers: Option<HashSet<DefId>>,
+    /// Class id ranges for `instanceof` (class_test.rs, built once).
+    pub(super) class_ids: Option<HashMap<DefId, (u64, u64)>>,
     boxes: HashMap<TyId, AggId>,
     envs: HashMap<(DefId, Vec<TyId>), AggId>,
     in_progress: HashSet<TyId>,
@@ -336,6 +338,7 @@ impl Cx<'_> {
         let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::Ptr];
         for (mode, t) in caps {
             let t = self.subst(t, targs);
+            self.note_capture(t);
             tys.push(match mode {
                 PassMode::Borrow | PassMode::BorrowMut => Ty::Ptr,
                 _ => self.ty(t),

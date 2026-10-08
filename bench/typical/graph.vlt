@@ -1,0 +1,43 @@
+// Objects referenced from several places (a graph: nodes in an array and in each other's
+// neighbor lists), BFS over it repeatedly.
+class GNode {
+  id: number;
+  dist: number;
+  neighbors: GNode[];
+  constructor(id: number) {
+    this.id = id;
+    this.dist = -1;
+    this.neighbors = [];
+  }
+}
+
+function main() {
+  const n = 100000;
+  const nodes: GNode[] = [];
+  for (let i = 0; i < n; i++) nodes.push(new GNode(i));
+  for (let i = 0; i < n; i++) {
+    nodes[i].neighbors.push(nodes[(i + 1) % n]);
+    nodes[i].neighbors.push(nodes[(i * 7 + 3) % n]);
+    nodes[i].neighbors.push(nodes[(i * 13 + 5) % n]);
+  }
+  let total = 0.0;
+  for (let round = 0; round < 20; round++) {
+    for (const nd of nodes) nd.dist = -1;
+    const start = nodes[(round * 977) % n];
+    start.dist = 0;
+    const queue: GNode[] = [start];
+    let head = 0;
+    while (head < queue.length) {
+      const cur = queue[head];
+      head++;
+      for (const nb of cur.neighbors) {
+        if (nb.dist < 0) {
+          nb.dist = cur.dist + 1;
+          queue.push(nb);
+        }
+      }
+    }
+    for (const nd of nodes) total += nd.dist;
+  }
+  console.log(total);
+}

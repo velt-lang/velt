@@ -11,8 +11,15 @@ use crate::lower::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
-    /// Append the text of the promise at `place` (a `VeltFut*`) of type `ty`.
-    pub(super) fn format_promise(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// Append the text of the promise at `place` (a `VeltFut*`) of type `ty`, whose result is
+    /// at node's depth `child`.
+    pub(super) fn format_promise(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        child: &Operand,
+    ) {
         let f = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
         let settled = self.rt_u8(Rt::FutPeek, vec![f.clone()]);
         let (done_bb, pending_bb, end) = (self.new_block(), self.new_block(), self.new_block());
@@ -30,7 +37,7 @@ impl FnLower<'_, '_> {
             let slot =
                 self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, f, cint(16, Ty::U64)));
             let slot = proj(&self.operand_place(slot, Ty::Ptr), Proj::Deref(vt));
-            self.format_settled(buf, &slot, slot_ty, ty);
+            self.format_settled(buf, &slot, slot_ty, ty, child);
         }
         self.push_text(buf, " }");
         self.goto(end);
@@ -38,9 +45,16 @@ impl FnLower<'_, '_> {
     }
 
     /// The result in the slot: the value, or `<rejected> reason` for a promise that can reject.
-    fn format_settled(&mut self, buf: &Operand, slot: &Place, slot_ty: TyId, ty: TyId) {
+    fn format_settled(
+        &mut self,
+        buf: &Operand,
+        slot: &Place,
+        slot_ty: TyId,
+        ty: TyId,
+        child: &Operand,
+    ) {
         if self.cx.promise_error(ty).is_none() {
-            return self.format_nested(buf, slot, slot_ty);
+            return self.format_nested(buf, slot, slot_ty, child);
         }
         if !matches!(self.cx.kind(slot_ty), TyKind::Result(..)) {
             crate::lower::ice("the result slot of a promise that can reject is not a Result");
@@ -54,7 +68,7 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, "undefined");
             }
             for (pp, pt) in parts {
-                lw.format_nested(buf, &pp, pt);
+                lw.format_nested(buf, &pp, pt, child);
             }
         });
     }

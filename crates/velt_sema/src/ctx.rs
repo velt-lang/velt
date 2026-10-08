@@ -51,12 +51,16 @@ pub(crate) struct Ctx<'m> {
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
     /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
-    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    pub anon: HashMap<Vec<crate::anon::ShapeField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
     /// `readonly` fields → their twin without, and field-only interfaces' object types → the
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Branded type definitions → their primitive (`crate::brands`).
+    pub brands: HashMap<DefId, TyId>,
+    /// (primitive, object part) → the brand's definition.
+    pub brand_keys: HashMap<(TyId, TyId), DefId>,
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: HashMap<DefId, DefId>,
     /// The reverse of `field_only`.
@@ -108,6 +112,11 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
+    pub generic_arrow_fns: HashSet<Span>,
+    /// Name spans of every function made from a generic arrow, module-level ones included
+    /// (diagnostics show them as arrows).
+    pub generic_arrow_all: HashSet<Span>,
     /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
     /// errors were reported).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
@@ -117,6 +126,32 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Set while [`Ctx::match_context`] runs (`crate::infer`).
+    pub matching_context: bool,
+    /// Function bodies being checked, outermost first (a return type inferred from a body that
+    /// is on this stack refers to itself: `body::returns`).
+    pub checking: Vec<DefId>,
+    /// Signature comparisons waiting for inferred result types (`body::returns`).
+    pub ret_checks: Vec<crate::defs::RetCheck>,
+    /// Uses of functions whose return types are being inferred (`body::recursion`).
+    pub rec: crate::body::recursion::RecState,
+    /// Methods some subclass overrides (`collect::ret_infer`): a result inferred from JS-number
+    /// integers is a `number` (`f64`) there, which an override may return a fraction in.
+    pub overridden: HashSet<DefId>,
+    /// The address of a local near the bottom of the checking thread's stack, and how much of
+    /// the stack inferring return types may use above it (`body::returns::ret_of`).
+    pub stack_base: usize,
+    pub stack_budget: usize,
+    /// Closures held in a `const` and only called, and `const me = this`, may borrow instead of
+    /// sharing (`crate::ownership::demote_local_closures`, `body::const_borrow`). Off for the
+    /// second check of a program the borrowing version rejects (`crate::check_with`).
+    pub held_borrows: bool,
+    /// Some closure or `const me = this` was made to borrow.
+    pub held_borrows_used: bool,
+    /// The passes from `demote_local_closures` on reported an error (`crate::retry_sharing`).
+    pub borrow_pass_errors: bool,
+    /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
+    pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -148,6 +183,8 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
+            brands: HashMap::new(),
+            brand_keys: HashMap::new(),
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
@@ -169,10 +206,23 @@ impl<'m> Ctx<'m> {
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            generic_arrow_fns: HashSet::new(),
+            generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            matching_context: false,
+            checking: vec![],
+            ret_checks: vec![],
+            rec: Default::default(),
+            overridden: HashSet::new(),
+            stack_base: crate::stack_address(),
+            stack_budget: crate::SEMA_STACK_BUDGET,
+            held_borrows: true,
+            held_borrows_used: false,
+            borrow_pass_errors: false,
+            fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
@@ -247,7 +297,10 @@ impl<'m> Ctx<'m> {
             .filter(|(_, m)| {
                 matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
             })
-            .map(|(name, _)| format!("`{}.{name}(...)`", a.name))
+            .map(|(name, _)| {
+                let name = name.strip_prefix("static ").unwrap_or(name);
+                format!("`{}.{name}(...)`", a.name)
+            })
             .collect();
         names.sort();
         let last = names.pop()?;
@@ -445,6 +498,9 @@ impl<'m> Ctx<'m> {
     fn is_copy_depth(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 32 {
             return false;
+        }
+        if let Some(base) = self.brand_base(t) {
+            return self.is_copy_depth(base, depth + 1);
         }
         match self.ty.kind(t).clone() {
             TyKind::Int(_)

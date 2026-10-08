@@ -195,7 +195,7 @@ fn narrowed_members_move_from_places_when_moved() {
 #[test]
 fn escaping_closures_move_or_share_captures() {
     let p = ok_src(
-        "function main() { const s = [1]; const f = () => s; console.log(s); console.log(f()); }",
+        "function main() { const s = [1]; const fs = [() => s]; console.log(s); console.log(fs[0]()); }",
     );
     let shared = p
         .defs

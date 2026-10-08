@@ -1,0 +1,34 @@
+[
+  'id:let',     'id:x1',
+  'op:=',       'op:(',
+  'id:foo_bar', 'op:+',
+  'num:42',     'op:)',
+  'op:*',       'num:7',
+  'op:;'
+]
+[ 'id:a', 'op:=', 'op:=', 'id:b' ]
+12 h d ||,h|h|h,e|e|e,l|l|l,l|l|l,o|o|o,,|,|,, | | ,w|w|w,o|o|o,r|r|r,l|l|l,d|d|d,||
+5 x l ||,x|x|x,h|h|h,e|e|e,l|l|l,l|l|l,||
+36 h d ||,h|h|h,e|e|e,l|l|l,l|l|l,o|o|o,,|,|,, | | ,w|w|w,o|o|o,r|r|r,l|l|l,d|d|d,h|h|h,e|e|e,l|l|l,l|l|l,o|o|o,,|,|,, | | ,w|w|w,o|o|o,r|r|r,l|l|l,d|d|d,h|h|h,e|e|e,l|l|l,l|l|l,o|o|o,,|,|,, | | ,w|w|w,o|o|o,r|r|r,l|l|l,d|d|d,||
+a b € € a
+x x false true true true
+other e-acute alpha
+empty ='' <='' >='' <a <=a a>= <ab <é
+static =a >'' >='' <=a >=a a>= <ab <é
+inline >'' >='' >a >=a a< >ab <é
+seven =7 >'' >='' >a >=a a< >ab <é
+eight =8 8= >'' >='' >a >=a a< >ab <é
+nine =9 >'' >='' >a >=a a< >ab <é
+sixteen =16 >'' >='' >a >=a a< >ab <é
+seventeen =17 >'' >='' >a >=a a< >ab <é
+long =26 >'' >='' >a >=a a< >ab <é
+last-differs >'' >='' >a >=a a< >ab <é
+first-differs >'' >='' <a <=a a>= <ab <é
+upper >'' >='' <a <=a a>= <ab <é
+space >'' >='' <a <=a a>= <ab <é
+accent >'' >='' >a >=a a< >ab =é
+accent-tail >'' >='' >a >=a a< >ab >é
+emoji >'' >='' >a >=a a< >ab >é
+lone >'' >='' >a >=a a< >ab <é
+empty space paren paren eq other digit alpha alpha e-acute long other
+79346

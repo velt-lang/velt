@@ -1,0 +1,34 @@
+// std/fetch/body: what a request or response body can be made from (`BodyInit`), and the parts
+// the runtime takes: text or bytes (moved, not copied) and the `content-type` it implies.
+
+import { URLSearchParams } from "velt:url";
+
+/** A body: text, bytes, or form fields (sent as `application/x-www-form-urlencoded`). */
+export type BodyInit = string | u8[] | URLSearchParams;
+
+/** How `velt_rt_http_fetch_send` receives a body (`kind`: 0 none, 1 text, 2 bytes). */
+export struct BodyParts {
+  kind: u32;
+  text: string;
+  bytes: u8[];
+  /** The `content-type` the body implies when none was set (null: none). */
+  contentType: string | null;
+}
+
+export function bodyParts(body: BodyInit | null): BodyParts {
+  if (body == null) {
+    return { kind: 0, text: "", bytes: [], contentType: null };
+  }
+  if (typeof body == "string") {
+    return { kind: 1, text: body, bytes: [], contentType: "text/plain;charset=UTF-8" };
+  }
+  if (body instanceof URLSearchParams) {
+    return {
+      kind: 1,
+      text: body.toString(),
+      bytes: [],
+      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+    };
+  }
+  return { kind: 2, text: "", bytes: body, contentType: null };
+}

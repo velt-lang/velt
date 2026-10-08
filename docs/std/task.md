@@ -1,8 +1,8 @@
 # velt:task
 
-`import { AbortController, AbortSignal, timeout, taskScope } from "velt:task"`. Cancellation
-with TypeScript's `AbortController` / `AbortSignal`, timeouts, and task scopes (structured
-concurrency).
+`import { AbortError, TimeoutError, timeout, taskScope } from "velt:task"`. Cancellation with
+TypeScript's `AbortController` / `AbortSignal` (global, as in Node; this module exports them
+too), timeouts, and task scopes (structured concurrency). [`fetch`](fetch.md) takes a signal.
 
 Cancellation is cooperative. `abort()` marks the signal and wakes the tasks waiting for it;
 code that takes a signal checks it with `throwIfAborted()`, or races its work against
@@ -24,7 +24,8 @@ disposal run as usual.
     `whenAborted()` would instead keep waiting, and keep the program running, until the signal
     is aborted.
   - `AbortSignal.timeout(ms)` makes a signal that aborts by itself after `ms` milliseconds
-    (reason `"timed out after <ms> ms"`).
+    (reason `"timed out after <ms> ms"`). Its timer goes away with the signal: one made per
+    request and dropped when the request is done costs nothing afterwards, however long `ms`.
   - `AbortSignal.any(signals)` makes a signal that aborts as soon as any of `signals` does, with
     its reason. It keeps `signals` alive until then.
 - `timeout(p, ms): Promise<T> throws E | TimeoutError` returns `p`'s result, unless `p` doesn't

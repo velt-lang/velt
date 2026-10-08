@@ -5,28 +5,9 @@
 use velt_sema::hir::{self, LocalId, TyId, UseMode};
 
 use super::rt::Rt;
+use super::sequence::{later_each, Later};
 use super::{cint, ice, unit, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{self, Const, Operand, Place, Rvalue, Ty};
-
-/// Can evaluating `e` write to a local of the enclosing function? Earlier operands that are plain
-/// local reads get snapshotted when a later sibling may write (`f(i, i++)`).
-pub(super) fn may_write(e: &hir::Expr) -> bool {
-    use hir::ExprKind as K;
-    match &e.kind {
-        K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) => may_write(expr),
-        K::Field { base, .. } => may_write(base),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            may_write(lhs) || may_write(rhs)
-        }
-        K::Call { callee, args } => {
-            !matches!(callee, hir::Callee::Intrinsic(_) | hir::Callee::Def(..))
-                || args.iter().any(may_write)
-        }
-        K::If { cond, then, els } => may_write(cond) || may_write(then) || may_write(els),
-        _ => true,
-    }
-}
 
 impl FnLower<'_, '_> {
     /// Evaluate an expression whose value will be *owned* by the consumer (not registered for
@@ -35,6 +16,10 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
             return self.consume(inner);
+        }
+        if let K::Downcast(inner) = &e.kind {
+            let v = self.consume(inner);
+            return self.downcast_value(v, inner.ty);
         }
         let v = self.expr(e);
         if self.dead() || !self.needs_drop(e.ty) {
@@ -90,6 +75,18 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
+    /// `consume` each of `es` in order, snapshotting a value that a later one may change
+    /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
+    pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
+        let later = later_each(es);
+        let mut vals = Vec::with_capacity(es.len());
+        for (e, later) in es.iter().zip(later) {
+            let v = self.consume(e);
+            vals.push(self.hold_owned(v, e.ty, later));
+        }
+        vals
+    }
+
     pub(super) fn expr(&mut self, e: &hir::Expr) -> Operand {
         if self.dead() {
             return unit();
@@ -111,10 +108,7 @@ impl FnLower<'_, '_> {
                 if let Some(v) = self.float_param_ordering(*op, lhs, rhs, e.ty) {
                     return v;
                 }
-                let mut l = self.expr(lhs);
-                if may_write(rhs) {
-                    l = self.freeze(l, lhs.ty);
-                }
+                let l = self.expr_held(lhs, Later::of(rhs));
                 let r = self.expr(rhs);
                 self.binop(*op, l, r, lhs.ty, e.ty)
             }
@@ -160,6 +154,10 @@ impl FnLower<'_, '_> {
             } => self.unwrap_variant(expr, *variant, *mode),
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => self.expr(inner),
+            K::Downcast(inner) => {
+                let v = self.expr(inner);
+                self.downcast_value(v, inner.ty)
+            }
             K::ToDyn { expr, impl_index } => self.make_dyn(expr, *impl_index, e.ty),
             K::Throw(inner) => self.throw(inner),
             K::Await(inner) => self.await_expr(inner),

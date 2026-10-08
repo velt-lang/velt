@@ -1,6 +1,9 @@
 //! Byte-level JSON lexing (RFC 8259) shared by the pull reader, `skip_value` and the `json.Value`
 //! parser. Strings without escapes are returned as ranges of the source (no allocation); only
-//! strings with escapes are decoded into a new buffer.
+//! strings with escapes are decoded into a new buffer: escapes decode to UTF-16 code units, so a
+//! lone surrogate escape stays a lone surrogate (canonical WTF-8, joined with a half next to it).
+
+use crate::str::wtf8::push_joining;
 
 /// A syntax error: what went wrong and the byte offset where it was detected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +90,9 @@ pub struct Scanner<'a> {
     pub pos: usize,
     /// The UTF-16 length of the last string token's (decoded) contents.
     pub units: usize,
+    /// The last string token decoded a lone surrogate escape (`"\ud800"`), so its contents may
+    /// hold lone surrogates even when the source has none.
+    pub lone: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -95,6 +101,7 @@ impl<'a> Scanner<'a> {
             src,
             pos: 0,
             units: 0,
+            lone: false,
         }
     }
 
@@ -187,6 +194,7 @@ impl<'a> Scanner<'a> {
         let mut out: Option<Vec<u8>> = None;
         // The contents' UTF-16 length: one unit per byte scanned, adjusted at non-ASCII bytes.
         let mut units = 0isize;
+        self.lone = false;
         loop {
             let run = self.pos;
             loop {
@@ -222,7 +230,7 @@ impl<'a> Scanner<'a> {
                         None => StrTok::Borrowed(start, end),
                         Some(mut v) => {
                             if decode {
-                                v.extend_from_slice(&self.src[run..end]);
+                                push_joining(&mut v, &self.src[run..end]);
                             }
                             StrTok::Owned(v)
                         }
@@ -234,7 +242,10 @@ impl<'a> Scanner<'a> {
                         Vec::with_capacity(cap)
                     });
                     if decode {
-                        buf.extend_from_slice(&self.src[run..self.pos]);
+                        // Raw text after an escape may start with a low surrogate that joins a
+                        // high one escaped just before (only when the source has lone
+                        // surrogates).
+                        push_joining(buf, &self.src[run..self.pos]);
                     }
                     self.pos += 1;
                     units += self.escape(if decode { Some(buf) } else { None })? as isize;
@@ -259,11 +270,12 @@ impl<'a> Scanner<'a> {
             b't' => '\t',
             b'u' => {
                 self.pos += 1;
-                let ch = self.unicode_escape()?;
+                let cp = self.unicode_escape()?;
+                self.lone |= (0xD800..0xE000).contains(&cp);
                 if let Some(out) = out {
-                    out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+                    push_joining(out, crate::str::wtf8::encode(cp, &mut [0; 4]));
                 }
-                return Ok(ch.len_utf16());
+                return Ok(1 + (cp >= 0x10000) as usize);
             }
             _ => return Err(self.error("invalid escape")),
         };
@@ -274,25 +286,25 @@ impl<'a> Scanner<'a> {
         Ok(1)
     }
 
-    /// `XXXX` after `\u`, combining a following `\uXXXX` low surrogate. Lone surrogates, which
-    /// UTF-8 cannot represent, become U+FFFD.
-    fn unicode_escape(&mut self) -> Result<char, SyntaxError> {
+    /// `XXXX` after `\u`, combining a following `\uXXXX` low surrogate into the pair's code
+    /// point. A lone surrogate is kept (#377 phase 2b, as `JSON.parse`); the caller joins it with
+    /// a raw half next to it.
+    fn unicode_escape(&mut self) -> Result<u32, SyntaxError> {
         let unit = self.hex4()?;
         if !(0xD800..0xDC00).contains(&unit) {
-            return Ok(char::from_u32(unit).unwrap_or('\u{FFFD}'));
+            return Ok(unit);
         }
         if self.src[self.pos..].starts_with(b"\\u") {
             let save = self.pos;
             self.pos += 2;
             let low = self.hex4()?;
             if (0xDC00..0xE000).contains(&low) {
-                let cp = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
-                return Ok(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                return Ok(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00));
             }
             // Not a pair: the second escape is decoded on its own.
             self.pos = save;
         }
-        Ok('\u{FFFD}')
+        Ok(unit)
     }
 
     fn hex4(&mut self) -> Result<u32, SyntaxError> {

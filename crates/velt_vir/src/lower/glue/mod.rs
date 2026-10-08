@@ -6,17 +6,19 @@
 //! | Drop      | `(p: ptr)`                         | release the value at `p`                 |
 //! | Clone     | `(src: ptr, dst: ptr)`             | deep copy `*src` into uninit `*dst`      |
 //! | Share     | `(src: ptr, dst: ptr)`             | copy of a value type sharing its parts (share.rs) |
-//! | Format    | `(buf: ptr, p: ptr)`               | append console.log text (nested style)   |
+//! | Format    | `(buf: ptr, p: ptr, depth: u32)`   | append console.log text (nested style) at node's depth `depth` |
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
 //! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
+//! | QueuedDrop | `(b: ptr)`                        | drop the value in heap box `b` and free it, or the boxed value `b` (drop_depth.rs) |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
-//! | ObjFormat | `(buf: ptr, obj: ptr)`             | append `Name { field: value, … }`        |
+//! | ObjFormat | `(buf: ptr, obj: ptr, depth: u32)` | append `Name { field: value, … }`        |
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
 //! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | Transfer  | `(p: ptr)`                         | make `*p` safe for another thread, in place (transfer.rs) |
+//! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
@@ -29,9 +31,13 @@
 
 mod clone;
 mod drop;
+mod drop_chain;
+mod drop_depth;
 mod eq;
 mod format;
+mod format_array;
 mod format_map;
+mod format_object;
 mod format_promise;
 mod literals;
 mod many;
@@ -62,6 +68,7 @@ pub(crate) enum Glue {
     KeyEq,
     Hash,
     ObjDrop,
+    QueuedDrop,
     ObjClone,
     ObjFormat,
     DynDrop,
@@ -69,6 +76,7 @@ pub(crate) enum Glue {
     DynFormat,
     DynShare,
     Transfer,
+    TransferRoot,
     ObjTransfer,
     DynTransfer,
     ManyCheck,
@@ -100,6 +108,7 @@ impl Glue {
             Glue::KeyEq => "keyeq",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
+            Glue::QueuedDrop => "queueddrop",
             Glue::ObjClone => "objclone",
             Glue::ObjFormat => "objformat",
             Glue::DynDrop => "dyndrop",
@@ -107,6 +116,7 @@ impl Glue {
             Glue::DynFormat => "dynformat",
             Glue::DynShare => "dynshare",
             Glue::Transfer => "transfer",
+            Glue::TransferRoot => "transferroot",
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
@@ -120,16 +130,20 @@ impl Glue {
     fn sig(self) -> (Vec<Ty>, Ty) {
         use Ty::*;
         match self {
-            Glue::Drop | Glue::ObjDrop | Glue::DynDrop | Glue::Transfer | Glue::ManyCheck => {
-                (vec![Ptr], Unit)
-            }
+            Glue::Drop
+            | Glue::ObjDrop
+            | Glue::QueuedDrop
+            | Glue::DynDrop
+            | Glue::Transfer
+            | Glue::TransferRoot
+            | Glue::ManyCheck => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
             | Glue::DynShare
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
-            Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr], Unit),
+            Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
             Glue::Eq | Glue::Same | Glue::KeyEq => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
@@ -149,19 +163,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Drop => lw.drop_body(args[0], ty),
             Glue::Clone => lw.clone_body(args[0], args[1], ty),
             Glue::Share => lw.share_body(args[0], args[1], ty),
-            Glue::Format => lw.format_body(a(0), args[1], ty),
+            Glue::Format => lw.format_body(a(0), args[1], a(2), ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
             Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
+            Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
             Glue::ObjClone => lw.obj_clone_body(args[0], ty),
-            Glue::ObjFormat => lw.obj_format_body(a(0), args[1], ty),
+            Glue::ObjFormat => lw.obj_format_body(a(0), args[1], a(2), ty),
             Glue::DynDrop => lw.dyn_drop_body(args[0], ty),
             Glue::DynClone => lw.dyn_clone_body(args[0], ty),
-            Glue::DynFormat => lw.dyn_format_body(a(0), args[1], ty),
+            Glue::DynFormat => lw.dyn_format_body(a(0), args[1], a(2), ty),
             Glue::DynShare => lw.dyn_share_body(args[0], ty),
             Glue::Transfer => lw.transfer_body(args[0], ty),
+            Glue::TransferRoot => lw.transfer_root_body(args[0], ty),
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),

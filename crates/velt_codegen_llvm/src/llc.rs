@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use crate::clang::TempDir;
+use crate::clang::run_piped;
 use crate::target::Target;
 use crate::CodegenResult;
 
@@ -105,46 +105,23 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
              bin directory"
         )
     };
-    let dir = TempDir::new()?;
-    let ll = dir.path.join("module.ll");
-    let obj = dir.path.join("module.o");
-    std::fs::write(&ll, ir)
-        .map_err(|e| format!("codegen: cannot write `{}`: {e}", ll.display()))?;
-    let mut input = ll;
+    let mut input = std::borrow::Cow::Borrowed(ir.as_bytes());
     if optimize {
-        let bc = dir.path.join("module.bc");
         let mut cmd = Command::new(&tools.opt);
         cmd.args([
             crate::clang::opt_flag(),
             &format!("-mtriple={}", target.triple),
-        ])
-        .arg(&input)
-        .arg("-o")
-        .arg(&bc);
-        run(cmd, "opt")?;
-        input = bc;
+            "-",
+            "-o",
+            "-",
+        ]);
+        input = run_piped(cmd, &input, "opt")?.into();
     }
     let mut cmd = Command::new(&tools.llc);
     cmd.arg(if optimize { "-O3" } else { "-O0" })
         .args(["-filetype=obj", &format!("-mtriple={}", target.triple)])
-        .arg(&input)
-        .arg("-o")
-        .arg(&obj);
-    run(cmd, "llc")?;
-    std::fs::read(&obj).map_err(|e| format!("codegen: cannot read `{}`: {e}", obj.display()))
-}
-
-fn run(mut cmd: Command, name: &str) -> CodegenResult<()> {
-    let out = cmd
-        .output()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", cmd.get_program().display()))?;
-    if !out.status.success() {
-        bail!(
-            "codegen: {name} failed on the generated IR (this is a compiler bug):\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    Ok(())
+        .args(["-", "-o", "-"]);
+    run_piped(cmd, &input, "llc")
 }
 
 #[cfg(test)]

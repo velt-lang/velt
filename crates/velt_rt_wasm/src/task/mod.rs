@@ -97,6 +97,7 @@ pub unsafe extern "C" fn velt_rt_fut_drop(f: *mut VeltFut) {
 /// ready tasks.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
+    executor::note_yield();
     context(cx).waker().wake_by_ref();
 }
 
@@ -109,6 +110,7 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
             return std::task::Poll::Ready(());
         }
         yielded = true;
+        executor::note_yield();
         cx.waker().wake_by_ref();
         std::task::Poll::Pending
     })
@@ -117,7 +119,6 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
 /// `sleep(ms)`: a timer whose deadline is fixed now (negative = 0). Result: none.
 #[no_mangle]
 pub extern "C" fn velt_rt_sleep(ms: i64) -> *mut VeltFut {
-    let deadline = crate::platform::monotonic_ms() + ms.max(0) as f64;
-    let seq = executor::timer_seq();
-    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_timer(deadline, seq, cx))
+    let timer = executor::new_timer(crate::platform::monotonic_ms() + ms.max(0) as f64);
+    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_timer(&timer, cx))
 }

@@ -1,0 +1,73 @@
+// An async closure that modifies what it captured, reached through generic code: values of a
+// type parameter (`Channel<T>.send`, a generic `shared` wrapper, `resolve`) take the closure
+// with them under the caller's concrete type (#208).
+import { channel } from "velt:channel";
+
+class Sent {
+  run: () => Promise<void>;
+  constructor(run: () => Promise<void>) {
+    this.run = run;
+  }
+}
+
+class Field {
+  run: (n: i64) => Promise<void>;
+  constructor(run: (n: i64) => Promise<void>) {
+    this.run = run;
+  }
+}
+
+class Holder {
+  jobs: Field;
+  constructor(jobs: Field) {
+    this.jobs = jobs;
+  }
+  async send(): Promise<void> {
+    const ch = channel<Field>();
+    await ch.send(this.jobs);
+  }
+}
+
+class Wrapped {
+  run: (s: string) => Promise<void>;
+  constructor(run: (s: string) => Promise<void>) {
+    this.run = run;
+  }
+}
+
+class Settled {
+  run: (a: i64, b: i64) => Promise<void>;
+  constructor(run: (a: i64, b: i64) => Promise<void>) {
+    this.run = run;
+  }
+}
+
+function wrap<T>(x: T): shared<Mutex<T>> {
+  return shared(new Mutex<T>(x));
+}
+
+async function main() {
+  let d = 0;
+  const ch = channel<Sent>();
+  await ch.send(new Sent(async (): Promise<void> => {
+    d += 1;
+  }));
+
+  let e = 0;
+  const h = new Holder(new Field(async (n: i64): Promise<void> => {
+    e += n;
+  }));
+  await h.send();
+
+  let f = 0;
+  const w = wrap<Wrapped>(new Wrapped(async (s: string): Promise<void> => {
+    f += 1;
+  }));
+
+  let g = 0;
+  const { promise, resolve } = Promise.withResolvers<Settled>();
+  resolve(new Settled(async (a: i64, b: i64): Promise<void> => {
+    g += a;
+  }));
+  await promise;
+}

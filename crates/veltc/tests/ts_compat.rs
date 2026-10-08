@@ -9,6 +9,7 @@ use std::process::Output;
 use serde_json::Value;
 
 mod no_window;
+mod runtime_support;
 mod test_dir;
 mod ts_compat_node;
 
@@ -166,7 +167,7 @@ fn typed_findings_and_warnings() {
     write(
         dir,
         "b.ts",
-        "export function size(s: string): number {\n  return s.length;\n}\n",
+        "export function label(m: Map<string, number>): string {\n  return `${m.get(\"a\")}`;\n}\n",
     );
     let o = velt(dir, &["check", "--ts-compat", "a.ts", "--json"]);
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
@@ -176,7 +177,7 @@ fn typed_findings_and_warnings() {
     let o = velt(dir, &["check", "--ts-compat", "b.ts", "--json"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let report = json(&o);
-    assert_eq!(codes(&report), ["string-offsets"]);
+    assert_eq!(codes(&report), ["nullable-in-template"]);
     assert_eq!(report["diagnostics"][0]["severity"], "warning");
     assert_eq!(
         (report["errors"].as_u64(), report["warnings"].as_u64()),
@@ -185,7 +186,9 @@ fn typed_findings_and_warnings() {
     let o = velt(dir, &["check", "--ts-compat", "b.ts"]);
     assert!(o.status.success());
     assert!(
-        stderr(&o).contains("b.ts:2:10: warning: `length` on a string counts UTF-8 bytes"),
+        stderr(&o).contains(
+            "b.ts:2:13: warning: `${…}` of a value that may be `undefined` in JavaScript"
+        ),
         "{}",
         stderr(&o)
     );

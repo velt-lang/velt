@@ -69,25 +69,47 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
         let spawned = std::thread::Builder::new()
             .name("velt-sema-ide".into())
             .stack_size(crate::SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root));
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, crate::SEMA_STACK_BUDGET)
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root),
+            Err(_) => check_on_current_thread(modules, root, crate::FALLBACK_STACK_BUDGET),
         }
     })
 }
 
-fn check_on_current_thread(modules: &[SourceModule], root: usize) -> Analysis {
+fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: usize) -> Analysis {
+    analyze(modules, root, stack_budget).0
+}
+
+/// The analysis, and whether the program was checked again with held closures sharing.
+fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analysis, bool) {
     let lifted = crate::generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
-    let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
-    cx.ide = Some(Box::default());
-    if !modules.is_empty() {
-        crate::analyze(&mut cx);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
+    let new_cx = |held_borrows: bool| {
+        let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+        cx.stack_budget = stack_budget;
+        cx.held_borrows = held_borrows;
+        if let Some(l) = &lifted {
+            cx.generic_arrow_fns = l.local_fns.clone();
+            cx.generic_arrow_all = l.all_fns.clone();
+        }
+        cx.ide = Some(Box::default());
+        if !modules.is_empty() {
+            crate::analyze_bodies(&mut cx);
+        }
+        cx
+    };
+    let mut cx = new_cx(true);
+    // As in `crate::check_with`: borrowing in held closures never rejects a program.
+    let retried = crate::retry_sharing(&cx);
+    if retried {
+        cx = new_cx(false);
     }
-    snapshot::build(cx)
+    (snapshot::build(cx), retried)
 }
 
 /// A span contains an offset when the offset is inside it or right after its end (a cursor
@@ -265,5 +287,58 @@ impl Analysis {
         spans.sort_by_key(|s| (s.file, s.lo, s.hi));
         spans.dedup();
         spans
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use velt_common::FileId;
+
+    use super::*;
+
+    /// IDE analysis of a one-file program: its error count, and whether it was checked twice.
+    fn check(src: &str) -> (usize, bool) {
+        let (ast, d) = velt_syntax::parse_file(FileId(0), src);
+        assert!(d.is_empty(), "{d:?}");
+        let m = SourceModule {
+            path: "main".into(),
+            is_std: false,
+            file: FileId(0),
+            ast,
+            imports: vec![],
+            jsx_runtime: None,
+        };
+        let (a, retried) = analyze(&[m], 0, crate::SEMA_STACK_BUDGET);
+        let errors = a.diagnostics().iter().filter(|d| d.is_error()).count();
+        (errors, retried)
+    }
+
+    /// `clear` names `this` by reference, which conflicts with the loop over `c.items`.
+    const CONFLICT: &str = "class Bag { items: number[] = [10, 30];
+           clear(): void { const me = this; me.items = [1]; } }
+         function main() { const c = new Bag(); let s: number = 0;
+           for (const it of c.items) { c.clear(); s += it; } }";
+
+    #[test]
+    fn a_borrow_conflict_is_checked_again_with_sharing() {
+        assert_eq!(check(CONFLICT), (0, true));
+    }
+
+    #[test]
+    fn a_type_error_is_not_checked_again() {
+        let src = "class Bag { items: number[] = [10, 30];
+               clear(): void { const me = this; me.items = [1]; } }
+             function main() { const c = new Bag(); c.clear(); const s: string = 1; }";
+        let (errors, retried) = check(src);
+        assert!(errors > 0);
+        assert!(!retried);
+        // The type error doesn't hide a conflict: that one still triggers the second check.
+        let both = CONFLICT.replace(
+            "let s: number = 0;",
+            "let s: number = 0; const t: string = 1;",
+        );
+        let (errors, retried) = check(&both);
+        assert!(errors > 0);
+        assert!(retried);
     }
 }

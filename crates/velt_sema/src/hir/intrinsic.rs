@@ -35,6 +35,17 @@ pub enum Intrinsic {
     ArrayRemove,
     /// `(xs (modified), len: usize)` drop elements past `len`
     ArrayTruncate,
+    /// std only: `(dst (modified), d: usize, src: borrow T[], s: usize, n: usize)` — the
+    /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
+    /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
+    /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
+    /// owned exactly once themselves (the stable sort's scratch buffer, std/sort/stable.vlt).
+    ArrayMove,
+    /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
+    /// when it is smaller) without dropping or initializing any element: slots past the old
+    /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
+    /// any more must be cut off with it before the array is dropped.
+    ArraySetLen,
     /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
     Hash,
     /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`
@@ -61,6 +72,23 @@ pub enum Intrinsic {
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
     /// (the value itself is not read)?
     NeedsTransfer,
+    /// std only (std/sort/stable.vlt): `__intrinsic_needs_drop<T>(value: borrow T) -> bool`,
+    /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
+    /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
+    /// independent value. The value itself is not evaluated.
+    NeedsDrop,
+    /// std only (std/prelude/array.vlt): `__intrinsic_may_alias<T>(value: borrow T) -> bool`, a
+    /// constant: can a value of type `T` that a call borrows be reached through another
+    /// reference while the call runs (lowering counts the type, or borrows values of it inside
+    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    MayAlias,
+    /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
+    /// bool` for a function value: true when its environment is null, which only closures
+    /// without captures and named functions have (a program that compares function values
+    /// gives every closure an environment, so it is false there). Such a function reaches no
+    /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
+    /// where the function value is known (const_fields after specialization).
+    FnCapturesNothing,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

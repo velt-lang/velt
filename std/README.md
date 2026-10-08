@@ -6,9 +6,11 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | Path | Role |
 |---|---|
 | `prelude/*.vlt` | Implicitly imported into every module. |
+| `prelude/global/*.vlt` | Globals loaded on demand: only re-exports, loaded (and then part of the prelude) when a non-std module mentions one of the names without importing or declaring it itself (`fetch.vlt`: `fetch Headers Request Response AbortController AbortSignal`; `url.vlt`: `URL URLSearchParams`). std modules import what they use. |
 | `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
 | `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
 | `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
+| `sort/stable.vlt`, `sort/merge.vlt` | Internal: the stable sort behind `sort(cmp)` and `toSorted(cmp)` (natural runs, stable quicksort, merges through a scratch buffer). |
 | `prelude/map.vlt` | `Map<K, V>`: insertion-ordered hash map (dense entries + linear-probing index). |
 | `prelude/math.vlt` | `Math` static methods (f64). |
 | `prelude/nullable.vlt` | `isNull unwrap unwrapOr map` on `T \| null`. |
@@ -23,7 +25,8 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
 | `net.vlt` | `std/net`: `listen`/`connect`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `fetch` (http/https), `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`, `FetchResponse`. |
+| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), the server's `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`. |
+| `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
 | `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`. |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
@@ -63,7 +66,7 @@ ordinary param that std always passes as a fresh local (`let out = "";` / a zero
 the runtime overwrites): sema cannot see foreign writes, so an out-parameter must never be a
 param, field or element of the calling function. Opaque runtime
 handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]()` drop hook (http
-`Server`/`Response`/`FetchResponse`, `JsonValue`); the Copy handle structs of std/net
+`Server`/`Response`, fetch's `Response`, `JsonValue`); the Copy handle structs of std/net
 (`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
 
 ## Rules for std code
@@ -80,7 +83,17 @@ handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]
 ## Performance notes
 Std code is monomorphized and inlined like user code, so write plain index loops.
 - Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
-- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow).
+- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
+  other references may reach the array, lowering passes a share of the element instead, so a
+  callback that pushes onto the array or pops it cannot leave its argument dangling).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
-  element out of an index is not allowed, and a swap avoids clones.
-- Keep algorithms allocation-free where possible (both sorts are in place).
+  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
+  buffer (the stable sort, std/sort/stable.vlt) move raw elements with
+  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
+  element owned exactly once themselves, and set its length back to 0 before it is dropped.
+  A callback may reach the caller's array through an alias, so while it runs that array must
+  hold only elements it owns: the stable sort copies elements that need no drop
+  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
+  and moves the others out at any length, leaving the array empty.
+- Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
+  two buffers as long as the array).

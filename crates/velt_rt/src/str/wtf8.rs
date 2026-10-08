@@ -44,6 +44,7 @@ impl Summary {
 /// of a code point pushed separately still add up to its length.
 #[inline]
 pub fn count_units(bytes: &[u8]) -> usize {
+    super::work::scanned(bytes.len());
     if bytes.len() < SHORT {
         return count_units_short(bytes);
     }

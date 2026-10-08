@@ -20,6 +20,10 @@ M1 kernels:
 - **fib**: recursive `fib(35)`.
 - **loops**: the longest Collatz chain for starts below 1M, plus a 4000×4000 multiply/modulo loop.
 - **floats**: a 600×400 Mandelbrot (200 iterations max) plus 20M-step midpoint integration of 4/(1+x²).
+- **int32**: the 32-bit hash loop of issue #521 on numbers, 2×50M steps as written (`(y * k) | 0`,
+  which JS rounds through a double) and 2×50M with `Math.imul(y, k)`. Rust computes the same
+  values (`bench/rust/int32.rs`: the rounding by an `i64`→`f64`→`i64` round trip, then
+  `wrapping_mul`). See "JS int32 operators" below.
 
 M2 programs (the Rust and Node versions are the same algorithm, written idiomatically):
 - **nbody**: the Benchmarks Game n-body, 5M steps; Copy structs `Vec3` / `Body` in an array,
@@ -1036,3 +1040,178 @@ release, interleaved, best of 21, Apple M4 shared with other builds, `VELT_THREA
   ~2 ns per value is the generator step (section "Async generators" above).
 - Every bench/async and bench/iter program compiles to a byte-identical object file before and
   after this phase (it changes std sources and sema only), so their timings are unchanged.
+
+## JS int32 operators (#521, 2026-10-04)
+
+Bitwise operators on numbers now follow JS: ToInt32 and ToUint32 of their operands, and products
+inside them rounded like doubles. Before, `(y * k) | 0` computed `Math.imul`'s value and `x >>> 15`
+shifted 64 bits. ToInt32 of a float was a `trunc` call plus an `fmod` call (`__toInt32`); it is now
+one guarded `cvttsd2si`. `numrep` (velt_opt) keeps `number` locals that only hold int32 values in
+`i32` registers.
+
+The issue's repro, `velt_perf_repro`, ran 20M iterations × 1 sample per run. Each cell is the
+best of 8–12 interleaved runs in ms (Windows, i9-12900HK, with other builds running, so ±30%):
+
+| | Velt release before | Velt release after | `velt run` before → after | Rust -O | Node |
+|---|---|---|---|---|---|
+| as written: `(y * k) \| 0` | 2122–2331 | 279–370 | 3800 → 946 | 95–114 | 228–372 |
+| with `Math.imul(y, k)` | n/a (no `Math.imul`) | 115–133 | | 95–114 (same instructions) | |
+
+- **Checksums.** For 100M × 5, Velt now prints Node's `-566856265`; before, it printed
+  `-420279296`. With `Math.imul`, Velt prints Rust's `2105069163`, as Node does for that program.
+- **The loop as written.** It is about 3× Rust, and in the noise of Node's time.
+  - The rest of the gap is the rounding JS requires: an `i64` product, `cvtsi2sd` and `cvttsd2si`
+    on the dependency chain of each multiply, about 16 cycles. V8 emits `vcvtlsi2sd`, `vmulsd` and
+    `vcvttsd2siq` for it, which has the same latency.
+  - Node was 6.5× Rust in the issue author's measurement but 2.4× Rust on this machine. On a
+    machine where Node is slower, Velt is faster.
+- **The `Math.imul` loop** compiles to the instructions Rust emits: LLVM even unrolls it by two.
+
+`bench/int32` (both variants, whole process, best of 5 interleaved, busy machine): Rust 2763 ms,
+Velt LLVM 3732, Velt Cranelift release 6395, Node 7360.
+
+## Typical TypeScript workloads (`bench/typical`, 2026-10-04)
+
+`bench/typical/run.sh 7`: 15 programs written the way TypeScript code is written (`number`
+parameters, classes, closures, `Map<string, number>`, comparator sorts, string building). Each
+`.vlt` file is also the TypeScript program Node runs (the harness appends the `main();` call),
+and `rust/<name>.rs` is an idiomatic Rust port that allocates where JavaScript does (`Box` per
+class instance, `Box<dyn Fn>` for stored closures); `vec2.rs` uses a `Copy` struct, what a Rust
+programmer writes there. All three print the same output. Best of 7 interleaved runs, wall ms;
+Windows 11, i9-12900HK shared with other builds, clang 22.1.8, rustc 1.99 `-O`, Node 22.22.
+
+| benchmark | Velt (LLVM release) | Rust -O | Node | Velt / Rust | Velt / Node |
+|---|---:|---:|---:|---:|---:|
+| grid | 499 | 131 | 856 | 3.81 | 0.58 |
+| vec2 | 382 | 104 | 950 | 3.67 | 0.40 |
+| tokenize | 848 | 328 | 477 | 2.59 | 1.78 |
+| sortcmp | 1097 | 473 | 2807 | 2.32 | 0.39 |
+| record | 322 | 198 | 622 | 1.63 | 0.52 |
+| errors | 217 | 175 | 851 | 1.24 | 0.25 |
+| graph | 340 | 302 | 903 | 1.13 | 0.38 |
+| fib | 120 | 107 | 377 | 1.12 | 0.32 |
+| numloop | 267 | 249 | 893 | 1.07 | 0.30 |
+| wordcount | 542 | 514 | 1386 | 1.05 | 0.39 |
+| chains | 333 | 329 | 2732 | 1.01 | 0.12 |
+| callbacks | 168 | 203 | 1108 | 0.83 | 0.15 |
+| strings | 1583 | 2072 | 9439 | 0.76 | 0.17 |
+| objects | 307 | 545 | 1738 | 0.56 | 0.18 |
+| keys | 262 | 611 | 833 | 0.43 | 0.31 |
+
+The four large gaps have one cause each (survey #529 has the evidence and the proposed fixes;
+the table is from `main` at 8949f2c7):
+- **grid**: `%` on `number` is a libm `fmod` call, about 10 ns (`n: number` in the Game of Life;
+  with `n: i64` it is 5.7× faster). #532.
+- **vec2**: every `new Vec2(…)` of the loop-carried value is a heap allocation and a free. #533.
+- **tokenize**: `src[i]`, `c >= "0"` and `c === " "` are runtime calls on one-character
+  strings (the same loop with `charCodeAt` is 5× faster); `record`'s `includes` / `indexOf` on
+  `string[]` pay a `velt_rt_str_eq` call per element. #531.
+- **sortcmp**: `sort(cmp)` merges in place with SymMerge, O(n log² n) swaps. #530.
+
+## Stable sort with a comparator (#530, 2026-10-05)
+
+`sort(cmp)` / `toSorted(cmp)` moved from an in-place SymMerge (O(n log² n) swaps) to a stable
+sort shaped like Rust's driftsort through a scratch buffer (std/sort/stable.vlt), and velt_opt
+now inlines the comparator through `cmp: F | null` and through every closure argument of a
+recursive helper. Instructions and branch mispredictions of the sort alone (a run with the sort
+minus a run with only the setup), valgrind cachegrind on Linux (WSL2), clang 18; before is
+`main` at d7ca61d4 (compiler and std), Rust is `sort_by` (`rustc -O`):
+
+| workload | Velt before | Velt after | Rust `sort_by` | after / Rust |
+|---|---:|---:|---:|---:|
+| 1M `number`s, `(a, b) => a - b` | 2537M, 38.9M mispred | 619M, 1.5M | 328M, 1.2M | 1.89 |
+| 1M `i64`, `(a, b) => a - b` | 2376M, 39.3M | 507M, 1.5M | 259M, 1.1M | 1.96 |
+| 300k objects by `age`, then `name` | 800M, 12.1M | 398M, 1.1M | 252M, 3.0M | 1.58 |
+| 100k objects by a float field | 526M, 10.0M | 146M, 0.1M | 82M, 0.0M | 1.78 |
+| 1M `number`s, `sort()` (pdqsort, unchanged) | 427M, 1.5M | 427M, 1.5M | 264M, 0.7M (`sort_unstable`) | 1.62 |
+
+Wall clock, Windows 11, i9-12900HK shared with other builds, clang 22.1.8, best of 9
+interleaved runs; before is this compiler with `main`'s std. The sort alone (timed inside the
+program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64 → 7 ms. The whole
+`bench/typical` sortcmp program (setup included, same output everywhere):
+
+| program | Velt before | Velt after | Rust -O | Node |
+|---|---:|---:|---:|---:|
+| sortcmp | 766 | 257 | 289 | 1427 |
+
+- The quicksort's partitions are branch-free (each element is written to both ends of the
+  buffer and one cursor moves), which is where the mispredictions went; merges of runs that are
+  already in order are skipped, so sorted and reversed inputs are O(n).
+- The comparator is inlined in every recursive helper only since the specialization passes all
+  closure arguments down the recursion: before, `quicksort(…, cmp, neg)` recursed into a clone
+  that knew `neg` but called `cmp` indirectly. Same std without that fix: objects by name 447M
+  (2.2M mispredictions), by score 185M; the number rows are the same either way.
+- The sort works on a buffer of its own while the comparator runs (a comparator can reach the
+  array through an alias): elements that need no drop are copied into it and written back, the
+  others moved out and back. At most 1M instructions on any row above. A short array (at most
+  20 elements) of elements that need no drop is insertion sorted in place when the comparator
+  captures nothing (`__intrinsic_fn_captures_nothing`, folded by velt_opt): 100k sorts of 10
+  numbers by `(a, b) => a - b` take 20.8M instructions (32.6M when they were copied), and of
+  8–12 numbers 40.4M (57.2M copied).
+- Short arrays of elements that need a drop are moved out like long ones (#548 review: sorted
+  in place, a comparator that pushes onto the array through an alias, or through an element
+  that holds it, left its arguments pointing into the freed buffer). Wall clock of 1M sorts of
+  a 10-element copy (`slice()` included, best of 15, LLVM release): strings by `<` 323 → 360
+  ms, objects by a number field 53 → 78 ms, so about 35 and 25 ns per sort. The 1M-number sort
+  of the table measured in the same session: Velt 93 ms, Rust `sort_by` 69 ms, Node 1216 ms
+  (the machine was busier than for the numbers above).
+
+## Callbacks that change their array through an alias (#564, 2026-10-07)
+
+Array callback methods now pass the callback a share of the element when the array may be
+reached through another reference (an alias, an object holding it), and their loops re-check
+the length after each callback in that case; `__intrinsic_may_alias(this)` folds to false when
+no other reference to an array of that type can exist, and then the plain loop of `main` is
+all that is compiled. Instructions (valgrind cachegrind, Linux in WSL2) of programs compiled
+on Windows with LLVM `--release --target x86_64-unknown-linux-gnu` and linked against one
+Linux runtime (the change does not touch `velt_rt`); before is `main` at 8d8ea5bf (compiler
+and std). Sharing right away when a later argument runs code (`f(xs[0], wrapAndPop(xs))`)
+changed none of these: the callback methods' later arguments are an index and a cast.
+
+Each micro program has 2000 elements and runs 1000 rounds of `xs.forEach((x, i) => …)` plus
+`xs.map((x, i) => …)`: 4M callback calls. "Alias" means `const ys = xs` exists; "field" is a
+`string[]` field of an object that two variables hold. The type decides, so each row is its
+own program.
+
+| elements | main | branch | change | per call |
+|---|---:|---:|---:|---:|
+| `string[]`, no alias | 89.63M | 89.63M | 0 (same machine code) | 0 |
+| `string[]`, alias | 125.64M | 315.65M | **2.5×** | +47.5 |
+| `string[]` in a field of a shared object | 125.66M | 305.67M | **2.4×** | +45.0 |
+| `number[]`, no alias | 36.85M | 36.85M | 0 (same machine code) | 0 |
+| `number[]`, alias | 42.97M | 56.97M | +32.6% | +3.5 |
+| `[string, number][]`, no alias | 89.64M | 89.64M | 0 (same machine code) | 0 |
+| `[string, number][]`, alias (tuples now counted) | 125.66M | 147.77M | +17.6% | +5.5 |
+| objects, no alias | 89.73M | 89.73M | 0 (same machine code) | 0 |
+| objects, alias | 127.77M | 147.78M | +15.7% | +5.0 |
+
+- **Callbacks over an aliased `string[]` cost about 2.5× the instructions.** Each call shares
+  the string for the callback and drops the share afterwards (two count updates, plus the
+  fallback when the count check fails), about 45 instructions per call. That is the price of
+  the argument staying valid when the callback pushes or pops through the alias; on `main`
+  the same program reads freed memory. #592 is the follow-up: pin the buffer once per method
+  call instead of sharing per callback call.
+- Elements that are not shared (numbers, objects, whose count already keeps them alive) pay
+  only for the loop that re-reads the length after each callback: 3.5 to 5 instructions per
+  call. Counted tuples add about 0.5.
+- **Without an alias the code is unchanged**: the four unaliased programs compile to identical
+  machine code (disassembly with addresses stripped), and so do 21 of the 26 `bench/` and
+  `bench/typical` programs.
+
+The suite (same method):
+
+| program | main | branch | change |
+|---|---:|---:|---:|
+| hashmap | 551.6M | 541.7M | −1.80% |
+| typical/chains | 2111.9M | 2113.9M | +0.10% |
+| typical/keys | 589.5M | 590.0M | +0.09% |
+| typical/graph | 333.9M | 333.9M | −0.01% |
+| the other 22 | | | within ±0.005% |
+
+`hashmap` and `keys` change through Map's `edits` counter (`upsert` and `getOrInsert` look the
+key up again after a callback that changed the map); `chains` has no alias, and the
+difference is an inlining decision (`map` is now inlined into `main`), not the aliased loop,
+which is folded away. `hashmap` is faster although `upsert` does more: its longer body made
+LLVM stop inlining the string map's `append` into `main`, so the 50,000 new words pay for a
+call (+8.9M in `append`), and the word count's loop, without `append`'s code in it, runs about
+19 fewer instructions on each of its 1M `upsert`s (−18.8M in `main`; cg_annotate per function).

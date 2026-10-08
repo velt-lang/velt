@@ -1,0 +1,85 @@
+// check: no leaks
+// Local async closures (#208): an async closure that stays on the task that created it captures
+// like a sync closure and may change what it captured, as in JavaScript. A counter changed across
+// awaits by two interleaving calls and assigned by the enclosing code, a closure capturing `this`,
+// closures run by `Promise.all`, closures created in a loop, and the issue's `methods(ctx)`. The
+// output is Node's (with `sleep` as a `setTimeout` promise).
+
+async function pause(): Promise<void> {
+  await sleep(1);
+}
+
+class Counter {
+  hits: number = 0;
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  // An async closure capturing `this`, stored and called later.
+  bumper(): (by: number) => Promise<number> {
+    return async (by: number): Promise<number> => {
+      this.hits += by;
+      await pause();
+      return this.hits;
+    };
+  }
+}
+
+class State {
+  count: number = 0;
+}
+
+class Ctx {
+  state: State = new State();
+}
+
+// The issue's example: the closure outlives the call that made it and changes `ctx`.
+function methods(ctx: Ctx): (by: number) => Promise<number> {
+  return async (by: number): Promise<number> => {
+    ctx.state.count += by;
+    return ctx.state.count;
+  };
+}
+
+async function main() {
+  const ctx = new Ctx();
+  const inc = methods(ctx);
+  console.log("ctx", await inc(1), await inc(2), ctx.state.count);
+
+  let count: number = 0;
+  const bump = async (label: string): Promise<number> => {
+    for (let i = 0; i < 3; i++) {
+      count++;
+      await pause();
+      console.log(label, count);
+    }
+    return count;
+  };
+  const a = bump("a");
+  const b = bump("b");
+  console.log("both", await a, await b, count);
+  count = 100;
+  console.log("after", await bump("c"), count);
+
+  const c = new Counter("c");
+  const up = c.bumper();
+  console.log("this", await up(2), await up(3), c.hits);
+
+  const all = await Promise.all([bump("x"), bump("y")]);
+  console.log("all", all.join(","), count);
+
+  const fs: (() => Promise<number>)[] = [];
+  for (let i = 0; i < 3; i++) {
+    let mine: number = i * 10;
+    fs.push(async (): Promise<number> => {
+      mine += 1;
+      count += 1;
+      await pause();
+      return mine;
+    });
+  }
+  for (const f of fs) {
+    console.log("loop", await f(), await f());
+  }
+  console.log("count", count);
+}

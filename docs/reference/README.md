@@ -11,8 +11,9 @@ decision:
 - adopt TypeScript's best parts, never JavaScript's bug sources (implicit coercions,
   `undefined`, loose truthiness, floating promises, …);
 - one way of doing things;
-- something that is not TypeScript exists only where TypeScript can't express it at native
-  speed (integer types, `shared`, `extend`).
+- valid TypeScript runs as it does in Node, but TypeScript is the starting point, not the
+  limit: Velt is a native backend language and adds its own opt-in features wherever they make
+  programs faster (integer types, `shared`, `extend`).
 
 ## Conventions
 

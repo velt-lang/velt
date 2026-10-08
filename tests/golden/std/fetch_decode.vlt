@@ -1,0 +1,211 @@
+// check: no leaks
+// `fetch` decodes gzip, deflate (zlib and raw) and brotli bodies, asks for them as Node does, and
+// streams a body chunk by chunk (`for await (const chunk of res.body)`). The client half is
+// valid TypeScript and prints what Node 22 prints for it (against an equivalent `node:http`
+// server).
+import {
+  serve,
+  Request as ServerRequest,
+  Response as ServerResponse,
+  ResponseWriter,
+} from "velt:http";
+
+async function client(base: string) {
+  for (const enc of ["gzip", "br", "deflate", "raw"]) {
+    const res = await fetch(`${base}/${enc}`);
+    console.log(enc, res.headers.get("content-encoding"), await res.text());
+  }
+  // Several codings, undone last first.
+  const twice = await fetch(`${base}/twice`);
+  console.log(twice.headers.get("content-encoding"), await twice.text());
+  // No body to decode: a HEAD request, a 304.
+  const head = await fetch(`${base}/gzip`, { method: "HEAD" });
+  console.log("head", head.status, JSON.stringify(await head.text()), head.body == null);
+  const same = await fetch(`${base}/not-modified`);
+  console.log("not modified", same.status, JSON.stringify(await same.text()));
+  // An empty body is empty in any coding.
+  for (const enc of ["gzip", "br"]) {
+    const none = await fetch(`${base}/nothing-${enc}`);
+    console.log(
+      "empty",
+      enc,
+      none.headers.get("content-encoding"),
+      JSON.stringify(await none.text()),
+    );
+  }
+  // A leading byte order mark is not text.
+  console.log(JSON.stringify(await (await fetch(`${base}/bom`)).text()));
+  // What `fetch` asks for, unless the request names something.
+  console.log(await (await fetch(`${base}/accept`)).text());
+  const own = await fetch(`${base}/accept`, { headers: { "Accept-Encoding": "identity" } });
+  console.log(await own.text());
+
+  // The body as it arrives.
+  const streamed = await fetch(`${base}/stream`);
+  const body = streamed.body;
+  let bytes = 0;
+  let chunks = 0;
+  if (body != null) {
+    for await (const chunk of body) {
+      bytes += chunk.length;
+      chunks += 1;
+    }
+  }
+  console.log("streamed", bytes, chunks >= 1, streamed.bodyUsed);
+  try {
+    await streamed.text();
+  } catch (e) {
+    console.log("read again:", e.message);
+  }
+  const empty = await fetch(`${base}/empty`);
+  console.log("no body", empty.status, empty.body == null);
+
+  // A body that does not decode.
+  try {
+    await (await fetch(`${base}/bad`)).text();
+    console.log("unexpected");
+  } catch (e) {
+    console.log("bad body: rejected");
+  }
+}
+
+function encoded(name: string): u8[] {
+  if (name == "gzip") {
+    return [
+      31,
+      139,
+      8,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      10,
+      203,
+      72,
+      205,
+      201,
+      201,
+      87,
+      72,
+      175,
+      202,
+      44,
+      0,
+      0,
+      25,
+      106,
+      210,
+      223,
+      10,
+      0,
+      0,
+      0,
+    ];
+  }
+  if (name == "br") {
+    return [139, 3, 128, 104, 101, 108, 108, 111, 32, 98, 114, 3];
+  }
+  if (name == "deflate") {
+    return [120, 156, 203, 72, 205, 201, 201, 87, 72, 73, 77, 203, 73, 44, 73, 5, 0, 35, 12, 5, 10];
+  }
+  return [203, 72, 205, 201, 201, 87, 40, 74, 44, 7, 0];
+}
+
+// "hello twice", deflated, then gzipped (Node's `zlib`).
+function twice(): u8[] {
+  return [
+    31,
+    139,
+    8,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    10,
+    171,
+    152,
+    115,
+    218,
+    227,
+    236,
+    201,
+    147,
+    225,
+    26,
+    154,
+    231,
+    125,
+    252,
+    88,
+    25,
+    36,
+    63,
+    176,
+    4,
+    2,
+    0,
+    53,
+    123,
+    115,
+    204,
+    19,
+    0,
+    0,
+    0,
+  ];
+}
+
+async function handle(req: ServerRequest): Promise<ServerResponse> {
+  const p = req.path.slice(1);
+  if (p == "gzip" || p == "br" || p == "deflate" || p == "raw") {
+    const r = ServerResponse.bytes(encoded(p));
+    r.setHeader("content-encoding", p == "raw" ? "deflate" : p);
+    return r;
+  }
+  if (p == "twice") {
+    const r = ServerResponse.bytes(twice());
+    r.setHeader("content-encoding", "deflate, gzip");
+    return r;
+  }
+  if (p == "not-modified") {
+    const r = ServerResponse.text("", 304);
+    r.setHeader("content-encoding", "gzip");
+    return r;
+  }
+  if (p == "nothing-gzip" || p == "nothing-br") {
+    const r = ServerResponse.text("");
+    r.setHeader("content-encoding", p.slice(8));
+    return r;
+  }
+  if (p == "bom") {
+    return ServerResponse.bytes([239, 187, 191, 104, 105]);
+  }
+  if (p == "accept") {
+    return ServerResponse.text(req.header("accept-encoding") ?? "-");
+  }
+  if (p == "stream") {
+    return ServerResponse.stream(async (w: ResponseWriter) => {
+      for (let i = 0; i < 3; i++) {
+        w.write("x".repeat(1000));
+        await w.flush();
+        await sleep(20);
+      }
+    });
+  }
+  if (p == "empty") {
+    return ServerResponse.text("", 204);
+  }
+  const bad = ServerResponse.text("this is not gzip");
+  bad.setHeader("content-encoding", "gzip");
+  return bad;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, handle);
+  await client(`http://127.0.0.1:${server.port}`);
+  await server.shutdown();
+}

@@ -1,0 +1,11 @@
+{"name":"a"} {"name":"b","email":"b@x"}
+[{"name":"a"},{"name":"b","email":"b@x"}]
+{"title":"t","members":[{"name":"a"},{"name":"b","email":"b@x"}]}
+{"title":"u","lead":{"name":"b","email":"b@x"},"members":[]}
+{"id":1,"deletedAt":null}
+{"id":1,"closed":null}
+{"id":1,"nickname":"n","closed":null}
+{}
+["x",null]
+true {"name":"a"}
+true {"title":"v","members":[{"name":"c"}]}

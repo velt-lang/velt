@@ -1,0 +1,80 @@
+// `instanceof` tests that can never be true, generic subclasses whose type arguments do not
+// follow from the tested type, and mutable field paths (not narrowed).
+class Animal {}
+class Dog extends Animal {
+  bark(): string {
+    return "woof";
+  }
+}
+class Rock {}
+
+interface Named {
+  name(): string;
+}
+class Pet implements Named {
+  name(): string {
+    return "pet";
+  }
+}
+
+class Box<T> {}
+class Pair<A, B> extends Box<A> {}
+
+class Kennel {
+  resident: Animal = new Dog();
+}
+
+function unrelated(a: Animal): bool {
+  return a instanceof Rock;
+}
+
+function notImplemented(n: Named): bool {
+  return n instanceof Dog;
+}
+
+function undetermined(b: Box<i64>): bool {
+  return b instanceof Pair;
+}
+
+function number(x: i64): bool {
+  return x instanceof Dog;
+}
+
+function mutableField(k: Kennel): string {
+  if (k.resident instanceof Dog) {
+    return k.resident.bark();
+  }
+  return "";
+}
+
+// A generic class under an interface or a non-generic base: nothing determines its `T`.
+class Tagged<T> implements Named {
+  name(): string {
+    return "tagged";
+  }
+}
+class Litter<T> extends Animal {}
+
+function genericUnderInterface(n: Named): bool {
+  return n instanceof Tagged;
+}
+
+function genericUnderPlainBase(a: Animal): bool {
+  return a instanceof Litter;
+}
+
+interface Holder<T> {
+  get(): T;
+}
+class Cell<T, U> implements Holder<T> {
+  constructor(public v: T) {}
+  get(): T {
+    return this.v;
+  }
+}
+
+function genericUnderGenericInterface(h: Holder<i64>): bool {
+  return h instanceof Cell;
+}
+
+function main() {}

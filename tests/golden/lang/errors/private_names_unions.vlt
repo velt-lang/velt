@@ -1,0 +1,16 @@
+// A union receiver: each member must have the field this class declares (`#x` of another class
+// is another member, TS2339), and every member's field must be accessible here (`private` too).
+class A { #x: number = 1; }
+class C { #x: number = 2; }
+class P { private s: string = "secret"; }
+class Q { private s: string = "q"; }
+function peek(o: A | C): number { return o.#x; }
+function peek2(o: P | Q): string { return o.s; }
+
+class A6 { #x: number = 1; }
+class B6 extends A6 {
+  #x: number = 2;
+  read(o: B6 | Other): number { return o.#x; }
+}
+class Other { #x: number = 3; }
+function main() {}

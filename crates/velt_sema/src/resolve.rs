@@ -8,6 +8,7 @@
 
 use velt_syntax::ast;
 
+use crate::anon::ShapeField;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{TyId, TyKind};
@@ -54,6 +55,8 @@ impl Ctx<'_> {
                 throws,
             } => self.resolve_fn_type(params, ret, throws.as_deref(), env),
             ast::TypeExprKind::Union(parts) => self.resolve_union(t, parts, env),
+            ast::TypeExprKind::Intersection(parts) => self.resolve_intersection(t, parts, env),
+            ast::TypeExprKind::Indexed { object, key } => self.resolve_indexed(object, key, env),
             ast::TypeExprKind::Literal(l) => match self.lit_value_of(l, t.span) {
                 Some(v) => self.lit_type(v),
                 None => self.ty.error,
@@ -101,21 +104,26 @@ impl Ctx<'_> {
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
     fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
-        let mut out: Vec<(String, TyId, bool)> = vec![];
+        let mut out: Vec<ShapeField> = vec![];
         let mut spans = vec![];
         for f in fields {
             let t = self.resolve_type(&f.ty, env);
-            if out.iter().any(|(n, ..)| *n == f.name.name) {
+            if out.iter().any(|o| o.name == f.name.name) {
                 self.err(
                     format!("duplicate field `{}` in object type", f.name.name),
                     f.name.span,
                 );
                 continue;
             }
-            out.push((f.name.name.clone(), t, f.readonly));
+            out.push(ShapeField {
+                name: f.name.name.clone(),
+                ty: t,
+                readonly: f.readonly,
+                optional: f.optional,
+            });
             spans.push(f.name.span);
         }
-        if out.iter().any(|(_, t, _)| *t == self.ty.error) {
+        if out.iter().any(|f| f.ty == self.ty.error) {
             return self.ty.error;
         }
         let t = self.anon_type_with(&out, env.module);
@@ -398,6 +406,7 @@ impl Ctx<'_> {
     /// A type without a name of its own (a union or an anonymous object type).
     fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
+            || self.brand_base(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }

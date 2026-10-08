@@ -34,6 +34,17 @@ pub struct Ident {
     pub span: Span,
 }
 
+/// The first character of an ES private name (`#x`), kept in [`Ident::name`]: no identifier
+/// can start with it, so `#x` and `x` are different members.
+pub const PRIVATE_NAME_PREFIX: char = '#';
+
+impl Ident {
+    /// Is this an ES private name (`#x`)?
+    pub fn is_private_name(&self) -> bool {
+        self.name.starts_with(PRIVATE_NAME_PREFIX)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Module {
     pub items: Vec<Item>,
@@ -278,6 +289,14 @@ pub enum TypeExprKind {
     },
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
+    /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)
+    /// are [`GenericParam::bounds`] instead.
+    Intersection(Vec<TypeExpr>),
+    /// `T["k"]` (an indexed access type; the key is a string literal type or a union of them).
+    Indexed {
+        object: Box<TypeExpr>,
+        key: Box<TypeExpr>,
+    },
     /// Literal type: `"circle"`, `42`, `-1`, `1.5`, `true`.
     Literal(SignedLit),
     /// Object type `{ kind: "circle"; r: f64 }` (an anonymous object type).
@@ -294,8 +313,9 @@ pub struct ObjectTypeField {
     pub name: Ident,
     /// For an optional field, the written type plus `| null`.
     pub ty: TypeExpr,
-    /// `name?: T` — parsed as `name: T | null` (the flag only keeps the spelling); an object
-    /// literal may leave out any `T | null` field of an object type.
+    /// `name?: T` — parsed as `name: T | null`; the flag makes it an optional field of the object
+    /// type (left out by `JSON.stringify` while `null`). An object literal may leave out any
+    /// `T | null` field of an object type.
     pub optional: bool,
     /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
     pub readonly: bool,
@@ -470,6 +490,9 @@ pub enum BinaryOp {
     Shl,
     Shr,
     UShr,
+    /// `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the parser
+    /// builds one, only here).
+    In,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

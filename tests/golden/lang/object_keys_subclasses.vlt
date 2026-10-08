@@ -1,0 +1,64 @@
+// check: no leaks
+// `Object.keys` on a value of a class with subclasses lists the fields of the object's actual
+// class: base class fields first, then each subclass's, in declaration order (private fields
+// too; methods and static fields never). Uninitialized fields are declared after initialized
+// ones, as a TS class without define semantics creates them.
+
+class Shape {
+  static readonly COUNT: i64 = 3;
+  name: string = "shape";
+  private id: i64 = 0;
+  readonly sides: i64;
+
+  constructor(sides: i64) {
+    this.sides = sides;
+  }
+
+  label(): string {
+    return `${this.name}#${this.id}`;
+  }
+}
+
+class Rect extends Shape {
+  width: f64 = 1.0;
+  height: f64 = 2.0;
+
+  constructor() {
+    super(4);
+  }
+}
+
+class Square extends Rect {
+  private locked: bool = true;
+}
+
+class Tri extends Shape {
+  constructor(readonly base: f64) {
+    super(3);
+  }
+}
+
+class Holder<T> {
+  constructor(readonly value: T) {}
+}
+
+class Tagged<T> extends Holder<T> {
+  tag: string = "t";
+}
+
+function keysOf(s: Shape): string[] {
+  return Object.keys(s);
+}
+
+function main() {
+  const shapes: Shape[] = [new Shape(0), new Rect(), new Square(), new Tri(2.0)];
+  for (const s of shapes) {
+    console.log(Object.keys(s).join(","), Object.keys(s).length);
+  }
+  console.log(keysOf(new Square()));
+  const r: Rect = new Square();
+  console.log(Object.keys(r));
+  const h: Holder<string> = new Tagged("v");
+  console.log(Object.keys(h), Object.keys(new Holder(1)));
+  console.log(Object.keys(new Tri(1.0)));
+}

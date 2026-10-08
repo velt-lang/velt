@@ -1,0 +1,176 @@
+// Bitwise operators and `*` on numbers give Node's results (issue #521): `|`, `&`, `^`, `~`,
+// `<<` and `>>` apply ToInt32 to their operands, `>>>` applies ToUint32, shift counts are taken
+// modulo 32, and a product inside such an operand rounds like a double once it is past 2^53, so
+// `(y * k) | 0` is JS's value. Floats, integers inferred from literals and results of earlier
+// bitwise operators all behave the same. The expected output is Node's. (Products printed
+// without a bitwise operator are still exact `i64` values past 2^53: types.md "Numbers".)
+
+function mix32(x: number, i: number): number {
+  let y = (x ^ (x >>> 15)) | 0;
+  y = (y * 0x2c1b3c6d) | 0;
+  y = (y + i) | 0;
+  y = (y ^ (y >>> 12)) | 0;
+  y = (y * 0x297a2d39) | 0;
+  y = (y ^ (y >>> 15)) | 0;
+  return y;
+}
+
+function floats() {
+  const values = [
+    0, -0, 0.9, -0.9, 1.5, -1.5, 2147483647, 2147483648, -2147483648, -2147483649,
+    4294967295, 4294967296, 4294967297, 3000000000.7, -3000000000.7, 1e10, -1e10,
+    9007199254740992, 9007199254740994, 9223372036854775808.0, -9223372036854775808.0,
+    18446744073709551616.0, 1e21, -1e21, 1.7976931348623157e308, 5e-324, NaN, Infinity, -Infinity,
+  ];
+  for (const v of values) {
+    console.log(v | 0, v >>> 0, v >> 0, v << 1, ~v, v ^ 1, v & -1, v >>> 31, v >> 31);
+  }
+}
+
+function integers() {
+  let a = 2147483647;
+  a = a + 1;
+  console.log(a, a | 0, a >>> 0, a >> 1, a << 1, ~a, a ^ 0, a & 0xffff, a >>> 31);
+  let b = -1;
+  console.log(b >>> 0, b >>> 28, b >> 28, b << 31, b >>> 32, b >> 33, b << -1);
+  let one = 1;
+  console.log(one << 31, one << 32, one << 33, (one << 31) >>> 0, one << 40);
+  const big = 4294967296 * 3 + 5;
+  console.log(big, big | 0, big >>> 0, big ^ big, ~big);
+  const s = [1, 2, 3];
+  console.log(s.length << 30, s.length << 31, s.length >>> 1);
+  let h = 0;
+  const hello = "Hello!";
+  for (let i = 0; i < hello.length; i++) {
+    h = (h << 5) - h + hello.charCodeAt(i);
+    h |= 0;
+  }
+  console.log(h, h >>> 0);
+  let k = 2166136261;
+  const world = "world";
+  for (let i = 0; i < world.length; i++) {
+    k ^= world.charCodeAt(i);
+    k = (k * 16777619) >>> 0;
+  }
+  console.log(k);
+  let u = 0xdeadbeef;
+  u <<= 4;
+  console.log(u);
+  u >>>= 0;
+  console.log(u);
+  u ^= 0x12345678;
+  console.log(u);
+}
+
+function products() {
+  const y = 0x12345678;
+  console.log((y * 0x2c1b3c6d) | 0, (y * 0x2c1b3c6d) >>> 0);
+  const m = 123456789;
+  console.log((m * m) | 0, (m * m) >>> 0, (m * m) >> 3);
+  const n = -987654321;
+  console.log((n * 0x297a2d39) | 0, (n * 0x297a2d39) ^ 0, n * 3);
+  const p = 94906267;
+  console.log((p * p) | 0, 94906265 * 94906265, (94906265 * 94906265) | 0);
+  console.log((p * p + 1) | 0, (p * p - 3) | 0, (-p * p) | 0, (p * p * 3) | 0);
+  console.log(Math.imul(p, p), Math.imul(0x7fffffff, 0x2c1b3c6d), (0x7fffffff * 0x2c1b3c6d) | 0);
+  console.log(Math.imul(-1, 8), Math.imul(3.7, 2), Math.imul(4294967297, 5), Math.clz32(0), Math.clz32(1));
+  console.log(Math.clz32(-1), Math.clz32(0.5), Math.clz32(NaN), Math.clz32(2 ** 32 + 8));
+  let small = 46341;
+  small = small * small;
+  console.log(small, small * 2);
+}
+
+function hashes() {
+  let state = 0.0 + ((0x12345678 + 1) | 0);
+  let acc = 0.0;
+  for (let i = 0; i < 100000; i++) {
+    state = mix32(state, i);
+    acc = 0.0 + ((acc + state) | 0);
+  }
+  console.log(state, acc);
+  let s2: number = 0x12345678;
+  let acc2 = 0;
+  for (let i = 0; i < 100000; i++) {
+    s2 = mix32(s2, i);
+    acc2 = (acc2 + s2) | 0;
+  }
+  console.log(s2, acc2);
+}
+
+// `place op= v` evaluates the place (and its index) once, before `v`.
+function placesOnce() {
+  const xs: number[] = [4.5, 8, 16];
+  let i = 0;
+  const next = () => {
+    i++;
+    return i - 1;
+  };
+  xs[next()] |= 1;
+  console.log(i, xs[0], xs[1]);
+  xs[next()] ^= 3;
+  console.log(i, xs[1]);
+  const ys: number[] = [1, 2, 3];
+  let j = 0;
+  ys[j++] <<= 4;
+  ys[j++] += 1 << 31;
+  console.log(j, ys[0], ys[1]);
+}
+
+class Bits {
+  n = 0;
+}
+
+// Two literals assigned to a number held as an integer still take the 32-bit operators.
+function literalAssignments() {
+  let a = 0;
+  a = 1 << 31;
+  console.log(a);
+  a = 1 << 40;
+  console.log(a);
+  let u = 0;
+  u = 0xffffffff | 0;
+  console.log(u);
+  u = ~0xffffffff;
+  console.log(u);
+  u = 0xffffffff >>> 0;
+  console.log(u);
+  u += 1 << 31;
+  console.log(u);
+  const b = new Bits();
+  b.n = 1 << 31;
+  console.log(b.n);
+  b.n = ~0xffffffff;
+  console.log(b.n);
+}
+
+// Products of factors past 32 bits among other operations round like doubles (no saturation).
+function nestedProducts() {
+  const c = 3037000500;
+  console.log((c * c - 1) | 0, (c * c) | 0);
+  console.log((c * c + c) | 0, -(c * c) | 0, (c * 3 * c) | 0);
+  const d = 123456789;
+  console.log((d * d + 7) | 0, (d * 2 * d) | 0, (d * d - 0.5) | 0);
+}
+
+// Sums of inferred integers inside a bitwise operand add like doubles: past 2^53 the sum is
+// rounded before ToInt32 takes its low 32 bits (#561).
+function roundedSums() {
+  let x = 9007199254740992;
+  console.log((x + 1) | 0, (x + 3) | 0, (x - 1) | 0, (1 + x) >>> 0);
+  let y = 9007199254740991;
+  console.log((y + 2) | 0, (y + y + 1) | 0, (-y - 2) | 0, ~(x + 1));
+  let h = 0;
+  for (let i = 0; i < 100; i++) {
+    h = (h + i * 7 + x) | 0;
+  }
+  console.log(h);
+}
+
+floats();
+integers();
+products();
+hashes();
+placesOnce();
+literalAssignments();
+nestedProducts();
+roundedSums();

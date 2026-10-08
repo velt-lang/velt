@@ -28,6 +28,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_swap" => I::ArraySwap,
         "array_remove" => I::ArrayRemove,
         "array_truncate" => I::ArrayTruncate,
+        "array_move" => I::ArrayMove,
+        "array_set_len" => I::ArraySetLen,
         "hash" => I::Hash,
         "eq" => I::Eq,
         "same" => I::Same,
@@ -35,6 +37,9 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "share" => I::Share,
         "transfer" => I::Transfer,
         "needs_transfer" => I::NeedsTransfer,
+        "needs_drop" => I::NeedsDrop,
+        "may_alias" => I::MayAlias,
+        "fn_captures_nothing" => I::FnCapturesNothing,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
         "ceil" => I::Ceil,
@@ -130,12 +135,19 @@ impl FnCx<'_, '_> {
             I::ArrayPop => (vec![(arr, M)], ty.option(t), true),
             I::ArraySwap => (vec![(arr, M), (usize_, C), (usize_, C)], unit, true),
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
-            I::ArrayTruncate => (vec![(arr, M), (usize_, C)], unit, true),
+            I::ArrayTruncate | I::ArraySetLen => (vec![(arr, M), (usize_, C)], unit, true),
+            I::ArrayMove => (
+                vec![(arr, M), (usize_, C), (arr, B), (usize_, C), (usize_, C)],
+                unit,
+                true,
+            ),
             I::Hash => (vec![(t, B)], ty.u64, true),
             I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer => (vec![(t, B)], bool_, true),
+            I::NeedsTransfer | I::NeedsDrop | I::MayAlias | I::FnCapturesNothing => {
+                (vec![(t, B)], bool_, true)
+            }
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));

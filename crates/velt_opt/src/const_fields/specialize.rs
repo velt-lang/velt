@@ -31,13 +31,6 @@ pub(crate) struct Specializations {
     applied: Vec<(FuncId, usize, Known)>,
 }
 
-/// A clone waiting for its calls to be redirected.
-struct Pending {
-    func: FuncId,
-    param: usize,
-    known: Known,
-}
-
 impl Specializations {
     /// Redirect calls in `caller` that pass a pointer with known code to read-only params;
     /// returns whether any call changed.
@@ -50,12 +43,19 @@ impl Specializations {
     ) -> bool {
         let mut pending = Vec::new();
         let changed = self.redirect_in(program, ro, caller, facts, &mut pending);
-        while let Some(p) = pending.pop() {
+        while let Some(clone) = pending.pop() {
+            // Every substitution the clone has, not only its newest one: a clone of a clone
+            // (`sort(cmp, neg)`) passes both closures on to its recursive calls.
             let facts = Facts {
-                pointers: [(Local(p.param as u32), p.known)].into_iter().collect(),
+                pointers: self
+                    .applied
+                    .iter()
+                    .filter(|(f, ..)| *f == clone)
+                    .map(|(_, p, k)| (Local(*p as u32), k.clone()))
+                    .collect(),
                 ..Facts::default()
             };
-            self.redirect_in(program, ro, p.func, &facts, &mut pending);
+            self.redirect_in(program, ro, clone, &facts, &mut pending);
         }
         changed
     }
@@ -66,23 +66,27 @@ impl Specializations {
         ro: &ReadOnly,
         caller: FuncId,
         facts: &Facts,
-        pending: &mut Vec<Pending>,
+        pending: &mut Vec<FuncId>,
     ) -> bool {
         let mut changed = false;
         for bi in 0..program.funcs[caller.0 as usize].blocks.len() {
-            let Some((callee, param, known)) =
-                specializable(&program.funcs[caller.0 as usize].blocks[bi].term, ro, facts)
-            else {
+            let term = &program.funcs[caller.0 as usize].blocks[bi].term;
+            let Some((mut callee, candidates)) = specializable(term, ro, facts) else {
                 continue;
             };
-            let Some(clone) = self.clone_for(program, callee, param, known, pending) else {
-                continue;
-            };
-            if clone != callee {
-                let term = &mut program.funcs[caller.0 as usize].blocks[bi].term;
-                if let Terminator::Call { callee, .. } = term {
-                    *callee = Callee::Func(clone);
-                    changed = true;
+            // Every known closure argument in turn (`sort(cmp, neg)` passes two): each clone
+            // specializes one more param of the previous one.
+            for (param, known) in candidates {
+                let Some(clone) = self.clone_for(program, callee, param, known, pending) else {
+                    continue;
+                };
+                if clone != callee {
+                    callee = clone;
+                    let term = &mut program.funcs[caller.0 as usize].blocks[bi].term;
+                    if let Terminator::Call { callee, .. } = term {
+                        *callee = Callee::Func(clone);
+                        changed = true;
+                    }
                 }
             }
         }
@@ -96,7 +100,7 @@ impl Specializations {
         func: FuncId,
         param: usize,
         known: Known,
-        pending: &mut Vec<Pending>,
+        pending: &mut Vec<FuncId>,
     ) -> Option<FuncId> {
         if self
             .applied
@@ -136,22 +140,19 @@ impl Specializations {
             self.applied.push((clone, p, k));
         }
         self.applied.push((clone, param, known.clone()));
-        self.made.push((func, param, known.clone(), clone));
-        pending.push(Pending {
-            func: clone,
-            param,
-            known,
-        });
+        self.made.push((func, param, known, clone));
+        pending.push(clone);
         Some(clone)
     }
 }
 
-/// A direct call passing a known-code pointer to a read-only param: (callee, param, fields).
+/// A direct call's callee and its arguments that pass a known-code pointer to a read-only
+/// param: (param, fields), in argument order.
 fn specializable(
     term: &Terminator,
     ro: &ReadOnly,
     facts: &Facts,
-) -> Option<(FuncId, usize, Known)> {
+) -> Option<(FuncId, Vec<(usize, Known)>)> {
     let Terminator::Call {
         callee: Callee::Func(id),
         args,
@@ -160,14 +161,19 @@ fn specializable(
     else {
         return None;
     };
-    args.iter().enumerate().find_map(|(i, a)| {
-        let Operand::Copy(place) = a else {
-            return None;
-        };
-        let known = facts
-            .pointers
-            .get(&place.local)
-            .filter(|_| is_bare(a, place.local))?;
-        (known.has_code() && ro.get(id.0 as usize, i)).then(|| (*id, i, known.clone()))
-    })
+    let candidates = args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| {
+            let Operand::Copy(place) = a else {
+                return None;
+            };
+            let known = facts
+                .pointers
+                .get(&place.local)
+                .filter(|_| is_bare(a, place.local))?;
+            (known.has_code() && ro.get(id.0 as usize, i)).then(|| (i, known.clone()))
+        })
+        .collect();
+    Some((*id, candidates))
 }

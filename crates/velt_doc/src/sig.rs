@@ -156,6 +156,13 @@ impl Printer<'_> {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")
             }
+            TypeExprKind::Intersection(members) => {
+                let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
+                members.join(" & ")
+            }
+            TypeExprKind::Indexed { object, key } => {
+                format!("{}[{}]", self.ty_operand(object), self.ty(key))
+            }
             TypeExprKind::Literal(_) => self.flat(t.span),
             TypeExprKind::Object(fields) => {
                 if fields.is_empty() {
@@ -195,15 +202,17 @@ impl Printer<'_> {
     /// A type where a bare union would not parse (bounds, `extends`, `implements`, targets).
     pub(crate) fn ty_no_union(&self, t: &TypeExpr) -> String {
         match t.kind {
-            TypeExprKind::Union(_) => format!("({})", self.ty(t)),
+            TypeExprKind::Union(_) | TypeExprKind::Intersection(_) => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }
     }
 
-    /// Operand of `[]` or `|`: unions and function types need parentheses.
+    /// Operand of `[]`, `|` or `&`: unions, intersections and function types get parentheses.
     fn ty_operand(&self, t: &TypeExpr) -> String {
         match t.kind {
-            TypeExprKind::Union(_) | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
+            TypeExprKind::Union(_)
+            | TypeExprKind::Intersection(_)
+            | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }
     }

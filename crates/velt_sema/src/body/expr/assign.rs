@@ -323,9 +323,8 @@ impl FnCx<'_, '_> {
         let e = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => self.place_assign(place, op, target, value, span),
             Some(AssignTarget::Setter(obj)) => {
-                let valued = as_value && op.is_some();
-                let e = self.setter_assign(obj, op, target, value, valued, span);
-                return (e, valued);
+                let e = self.setter_assign(obj, op, target, value, as_value, span);
+                return (e, as_value);
             }
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
@@ -351,7 +350,13 @@ impl FnCx<'_, '_> {
         let unit = self.cx.ty.unit;
         let lty = place.ty;
         let Some(op) = op else {
-            let v = self.expr_coerce(value, lty, Want::Move);
+            let v = match self.value_hint(&place, value) {
+                Some(t) => self.expr_coerce(value, t, Want::Move),
+                None => {
+                    let v = self.expr(value, None, Want::Move);
+                    self.coerce(v, lty)
+                }
+            };
             self.unnarrow_fields(target);
             if let H::Local(l, _) = place.kind {
                 self.check_capture_assign(l, target.span);
@@ -374,16 +379,49 @@ impl FnCx<'_, '_> {
             return self.mk(kind, unit, span);
         };
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
+            // `rows[f()].out += x` / `g().out += x`: the object and indices are evaluated once,
+            // before `x`, as in JS (`ns[f()] += 1` on numbers is one `CompoundAssign`).
+            let mut place = place;
+            let mut stmts = Vec::new();
+            self.hoist_indices(&mut place, &mut stmts);
             let v = self.expr_coerce(value, lty, Want::Borrow);
-            let cur = self.place_read(&place, Want::Borrow);
+            let mut cur = self.place_read(&place, Want::Borrow);
+            if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
+                // The right-hand side may change or move what holds the string (`rows[0].out +=
+                // grow(rows)`): take the current value first, as JS reads it before `v` (#580).
+                // A variable or field path is appended in place by lowering, which keeps its old
+                // value alive itself.
+                cur = self.hoist_value(cur, &mut stmts);
+            }
             let cat = self.concat(cur, v, span);
             let kind = H::Assign {
                 place: Box::new(place),
                 value: Box::new(cat),
             };
-            return self.mk(kind, unit, span);
+            let assign = self.mk(kind, unit, span);
+            return self.with_temps(stmts, assign);
         }
-        let v = self.expr(value, Some(lty), Want::Borrow);
+        let hint = self.value_hint(&place, value);
+        let v = self.expr(value, hint, Want::Borrow);
+        let v = self.unbrand(v);
+        // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
+        let v = match self.js_bitwise_operands(op, &place, v) {
+            Ok(v) => {
+                // The index of `xs[next()] |= 1` is evaluated once, before the value.
+                let mut place = place;
+                let mut stmts = Vec::new();
+                self.hoist_indices(&mut place, &mut stmts);
+                let cur = self.place_read(&place, Want::Borrow);
+                let value = self.js_bitwise_assign(op, &place, cur, v, span);
+                let kind = H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(value),
+                };
+                let assign = self.mk(kind, unit, span);
+                return self.with_temps(stmts, assign);
+            }
+            Err(v) => v,
+        };
         let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);
@@ -392,12 +430,18 @@ impl FnCx<'_, '_> {
             self.check_int_div_assign(&place, &v, span);
         }
         let bop = hir_binop(op).expect("ICE: logical compound op");
+        let mut place = place;
+        let mut stmts = Vec::new();
+        if Self::has_value_object(&place) {
+            self.hoist_indices(&mut place, &mut stmts);
+        }
         let kind = H::CompoundAssign {
             op: bop,
             place: Box::new(place),
             value: Box::new(v),
         };
-        self.mk(kind, unit, span)
+        let assign = self.mk(kind, unit, span);
+        self.with_temps(stmts, assign)
     }
 
     /// `++x` / `x--`. `as_value`: the result is used (needs the Block encoding).
@@ -441,6 +485,12 @@ impl FnCx<'_, '_> {
             BinOp::Sub
         };
         let unit = self.cx.ty.unit;
+        // `f().n++`, and `xs[f()]++` as a value (read, then updated): evaluated once.
+        let mut place = place;
+        let mut stmts = Vec::new();
+        if as_value || Self::has_value_object(&place) {
+            self.hoist_indices(&mut place, &mut stmts);
+        }
         let read = self.place_read(&place, Want::Borrow);
         let ca = self.mk(
             H::CompoundAssign {
@@ -452,9 +502,10 @@ impl FnCx<'_, '_> {
             span,
         );
         if !as_value {
-            return ca;
+            return self.with_temps(stmts, ca);
         }
-        self.update_value(ca, read, prefix, span)
+        let value = self.update_value(ca, read, prefix, span);
+        self.with_temps_value(stmts, value)
     }
 
     /// `++x` as a value: `{ x += 1; x }`; `x++`: `{ let tmp = x; x += 1; tmp }`.

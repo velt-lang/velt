@@ -4,7 +4,7 @@
 //! time. When the client reports file changes (`workspace/didChangeWatchedFiles`, registered at
 //! startup when the client supports it), the index follows the events and a query reads nothing
 //! from disk; otherwise each query lists the folders again and reparses only the files whose
-//! modification time changed.
+//! modification time changed. The files' exports are kept too, for auto-import.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -12,13 +12,20 @@ use std::time::SystemTime;
 
 use lsp_types::WorkspaceSymbol;
 
+use crate::imports::exports::{self, Export};
 use crate::manifest::is_manifest;
-use crate::workspace_symbols::{collect_files, disk_file_symbols, indexes, Search, SKIPPED_DIRS};
+use crate::workspace_symbols::{
+    collect_files, file_symbols, indexes, Search, SourceFile, SKIPPED_DIRS,
+};
 
 /// One indexed file.
 struct Indexed {
     modified: Option<SystemTime>,
     symbols: Vec<WorkspaceSymbol>,
+    /// What it exports (for auto-import).
+    exports: Vec<Export>,
+    /// The root of the package it belongs to.
+    package: Option<PathBuf>,
 }
 
 /// The index of the workspace folders' files.
@@ -44,6 +51,26 @@ impl DiskIndex {
             }
             search.add_symbols(path, &file.symbols);
         }
+    }
+
+    /// The exports of the indexed files the document at `doc` may import by a relative path:
+    /// those of its package (not of a package nested in it), or, outside a package, those of its
+    /// workspace folder outside packages.
+    pub fn exports(&mut self, roots: &[PathBuf], doc: &Path) -> Vec<(&Path, &[Export])> {
+        if !self.scanned || !self.watched {
+            self.rescan(roots);
+        }
+        let package = doc.parent().and_then(vpm::manifest::find_package_root);
+        let root = roots.iter().find(|r| doc.starts_with(r));
+        self.files
+            .iter()
+            .filter(|(path, file)| {
+                !file.exports.is_empty()
+                    && file.package == package
+                    && (package.is_some() || root.is_some_and(|r| path.starts_with(r)))
+            })
+            .map(|(path, file)| (path.as_path(), file.exports.as_slice()))
+            .collect()
     }
 
     /// List the folders: forget files that are gone, (re)parse new and modified ones.
@@ -117,9 +144,26 @@ fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Parse the file at `path` (nothing if it cannot be read) for its symbols and exports.
 fn index_file(path: &Path, modified: Option<SystemTime>) -> Indexed {
+    let package = path.parent().and_then(vpm::manifest::find_package_root);
+    let Some((sm, file, ast)) = exports::parse_file(path) else {
+        return Indexed {
+            modified,
+            symbols: vec![],
+            exports: vec![],
+            package,
+        };
+    };
+    let symbols = file_symbols(&SourceFile {
+        path,
+        text: &sm.get(file).src,
+        ast: &ast,
+    });
     Indexed {
         modified,
-        symbols: disk_file_symbols(path),
+        symbols,
+        exports: exports::of_parsed(sm, file, ast).own,
+        package,
     }
 }

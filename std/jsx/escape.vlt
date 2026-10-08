@@ -8,6 +8,7 @@
 
 import { escapeHtml } from "velt:html";
 import type { AttrValue } from "velt:jsx/node";
+import { renderStyle } from "velt:jsx/style";
 
 /** `s` with `&`, `<` and `>` replaced by `&amp;`, `&lt;` and `&gt;` (quotes are kept). */
 export function escapeText(s: string): string {
@@ -36,6 +37,9 @@ export function renderAttr(name: string, value: AttrValue): string {
   }
   if (typeof value === "boolean") {
     return value ? ` ${name}` : "";
+  }
+  if (typeof value === "object") {
+    return ` ${name}="${escapeHtml(renderStyle(value))}"`;
   }
   return ` ${name}="${value}"`;
 }

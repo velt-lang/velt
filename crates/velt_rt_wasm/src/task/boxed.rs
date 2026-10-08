@@ -15,7 +15,9 @@ use super::{DropFn, PollFn, VeltFut, READY};
 pub(super) struct Trailer {
     pub poll: PollFn,
     pub drop: DropFn,
-    pub state_size: u64,
+    pub state_size: u32,
+    /// The executor turn that created it ([`super::executor::turn`]).
+    pub turn: u32,
     pub live: u64,
     /// A started promise's state shared with its driver (`Rc::into_raw`), null while lazy.
     pub started: *const std::cell::RefCell<super::local::Started>,
@@ -27,7 +29,7 @@ pub(super) struct Trailer {
 const TRAILER: usize = std::mem::size_of::<Trailer>().next_multiple_of(16);
 const HEADER: usize = TRAILER + std::mem::size_of::<VeltFut>();
 
-fn layout(state_size: u64) -> Layout {
+fn layout(state_size: u32) -> Layout {
     Layout::from_size_align(HEADER + state_size as usize, 16)
         .unwrap_or_else(|_| crate::panic::fatal("invalid boxed future size"))
 }
@@ -100,6 +102,9 @@ pub unsafe extern "C" fn velt_rt_fut_box(
     if state_align > 16 {
         crate::panic::fatal("velt_rt_fut_box: state alignment above 16");
     }
+    let Ok(state_size) = u32::try_from(state_size) else {
+        crate::panic::fatal("async state larger than 4 GiB");
+    };
     let l = layout(state_size);
     let base = std::alloc::alloc(l);
     if base.is_null() {
@@ -109,6 +114,7 @@ pub unsafe extern "C" fn velt_rt_fut_box(
         poll,
         drop,
         state_size,
+        turn: super::executor::turn(),
         live: 1,
         started: std::ptr::null(),
         transfer: None,

@@ -113,6 +113,9 @@ enum E { A, B = 2, }
 enum Dir { Up = \"UP\", Down = 'DOWN' }
 type Lit = \"a\" | 'b' | -1 | 2.5 | true | 1u8;
 type Obj = { kind: \"a\"; x: i64, y: { z: string } } | {};
+type Both = & A & { b: i64 } | (C | D) & E;
+type Id = string & { __brand: \"Id\" };
+type K = Both[\"b\"] | Obj[\"kind\" | \"x\"][];
 extend Foo { static make(): Foo { return new Foo(); } }
 class P { private a: i64; static readonly PI: f64 = 3.14; private static h(): i64 { return 1; } get n(): i64 { return 1; } set n(v: i64) { this.a = v; } set(k: i64) {} }
 interface Q { get area(): f64; get x(): i64 { return 1; } set area(v: f64); }",
@@ -224,4 +227,18 @@ fn readonly_fields_in_object_types() {
     holds("type User = { readonly id: number; readonly email?: string; readonly: bool };\n");
     let out = velt_fmt::format_source("type U = {readonly   id : i64};\n").unwrap();
     assert_eq!(out, "type U = { readonly id: i64 };\n");
+}
+
+#[test]
+fn private_names() {
+    holds(
+        "class A {
+  #x = 1;
+  static readonly #K: i64 = 2;
+  #m(): i64 { return this.#x + A.#K; }
+  get #v(): i64 { return this.#x; }
+  set #v(n: i64) { this.#x = n; }
+  has(o: A | null): boolean { return o != null && #x in o && o.#x > 0; }
+}",
+    );
 }

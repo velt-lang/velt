@@ -2,7 +2,11 @@
 // A spawned task's result reaches the joining task transferred (rt_abi_async.md
 // `velt_rt_spawn_transfer`): moved when nothing on the task references it any more, copied
 // when a promise the task started still uses it. The task's promise keeps counting on its own
-// object, and the joining task's copy stays as delivered.
+// object, and the joining task's copy stays as delivered. The task reports over a channel once
+// it is done with its object, which orders its output before the next line of `main`; it prints
+// only once `main` printed what it got (`go`).
+import { channel, Channel } from "velt:channel";
+
 class Obj {
   n: i64 = 0;
 }
@@ -36,14 +40,15 @@ async function producer(): Promise<Obj> {
   return o;
 }
 
-async function hold(r: Res): Promise<void> {
-  await sleep(20);
+async function hold(r: Res, go: Channel<bool>, done: Channel<bool>): Promise<void> {
+  await go.receive();
   console.log("task still holds", r.id);
+  await done.send(true);
 }
 
-async function kept(): Promise<Res> {
+async function kept(go: Channel<bool>, done: Channel<bool>): Promise<Res> {
   const r = new Res(1);
-  const p = hold(r);
+  const p = hold(r, go, done);
   return r;
 }
 
@@ -61,9 +66,12 @@ async function main() {
   }
   console.log("own count", o.n == a + 1000);
 
-  const s = await spawn(kept());
+  const go = channel<bool>(1);
+  const done = channel<bool>(1);
+  const s = await spawn(kept(go, done));
   console.log("got", s.id);
-  await sleep(50);
+  await go.send(true);
+  await done.receive();
   const u = await spawn(unique());
   console.log("got", u.id);
 }

@@ -6,7 +6,8 @@
 //! result into the race's own result slot, and the others are dropped right away. Like JS, that
 //! does not stop the losers: a started promise keeps running to completion (its task drives it
 //! and disposes of its result), a spawned task keeps running; only lazy runtime leaves (a timer
-//! nobody else waits for) are cancelled, which nothing can observe.
+//! nobody else waits for) are cancelled, which nothing can observe. A loser that is ready to go
+//! on runs once before the race's awaiter continues (`local::give_up`).
 //!
 //! `race` takes the first child to settle. `race_ok` (`Promise.any`) takes the first to
 //! *fulfill*: its children's results are `Result<T, E>` slots (byte 0 is the tag, 0 = `Ok`), a
@@ -23,7 +24,7 @@ use std::task::Poll;
 
 use futures_util::stream::{FuturesUnordered, Stream};
 
-use super::all::{Child, ResultDropFn};
+use super::all::{give_up_in_order, Child, ResultDropFn};
 use super::{context, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 #[repr(C, align(16))]
@@ -72,7 +73,9 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             }
             continue;
         }
-        drop_in_order(t.children.take());
+        if let Some(losers) = t.children.take() {
+            give_up_in_order(losers);
+        }
         return READY;
     }
 }
@@ -85,9 +88,8 @@ unsafe extern "C" fn race_drop(f: *mut VeltFut) {
     std::alloc::dealloc((f as *mut u8).sub(TAIL), l);
 }
 
-/// Drop the losers in array order: a started promise among them is handed back to its task,
-/// which resumes it in that order (`FuturesUnordered` would drop them newest first). With timers
-/// due in the same tick, they resume in timer order, like in JS (#157).
+/// Drop the children of a race dropped before it settled, in array order (see
+/// [`give_up_in_order`]; nothing runs now).
 fn drop_in_order(children: Option<FuturesUnordered<Child>>) {
     let Some(children) = children else {
         return;

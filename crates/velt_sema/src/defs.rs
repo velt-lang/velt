@@ -72,6 +72,37 @@ pub(crate) enum BodyState {
     Done,
 }
 
+/// Where a function's result type comes from (docs/reference/functions.md "Return types").
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RetSource {
+    /// Written, implied (`void` without a `return` that has a value), or already inferred.
+    Known,
+    /// The `return` expressions of the body (`ret` is `Error` until the body is checked).
+    Body,
+    /// An unannotated `override`: the result of the method it overrides, with these type args.
+    Base(DefId, Vec<TyId>),
+}
+
+/// A signature comparison that waits for an inferred result type: after the bodies are
+/// checked, the result of `def` (substituted with `args`) must be `want` (`body::returns`).
+#[derive(Clone)]
+pub(crate) struct RetCheck {
+    pub def: DefId,
+    pub args: Vec<TyId>,
+    pub want: RetWant,
+    pub span: Span,
+    pub message: String,
+}
+
+/// What a [`RetCheck`] compares with.
+#[derive(Clone)]
+pub(crate) enum RetWant {
+    /// A known type (an interface method's result).
+    Ty(TyId),
+    /// The result of another function, substituted (the base method an override overrides).
+    Of(DefId, Vec<TyId>),
+}
+
 /// Where a function's body comes from.
 #[derive(Clone, Copy)]
 pub(crate) enum FnSource<'m> {
@@ -159,6 +190,9 @@ pub(crate) struct FnInfo<'m> {
     pub params: Vec<ParamSig>,
     pub ret: TyId,
     pub ret_span: Option<Span>,
+    pub ret_source: RetSource,
+    /// The result is inferred from integers that behave like JS numbers (`expr::numbers`).
+    pub ret_inferred_int: bool,
     /// Pass modes are part of a dynamically dispatched ABI (vtable / interface / closure /
     /// extern): no ownership inference, moving out of params is an error.
     pub fixed_modes: bool,
@@ -200,6 +234,10 @@ pub(crate) struct FnInfo<'m> {
     /// Indices of params that are `Owned` only because the body reassigns them: a caller that
     /// uses the argument again passes a clone (`crate::ownership::mutation`).
     pub soft_params: Vec<usize>,
+    /// Async closures: the captured variables the body modifies (name, first place). Allowed
+    /// when the closure stays on its task, an error when it may reach a thread boundary
+    /// (`crate::ownership::local_async`).
+    pub mutated_captures: Vec<(String, Span)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -355,6 +393,16 @@ pub(crate) struct Extension {
     pub methods: HashMap<String, MethodRef>,
 }
 
+/// The member name of method-table key `key` (`set #v` names `#v`).
+pub(crate) fn key_member_name(key: &str) -> &str {
+    key.strip_prefix("set ").unwrap_or(key)
+}
+
+/// Does method-table key `key` name an ES private member (`#m`, `get #v`, `set #v`)?
+pub(crate) fn is_private_key(key: &str) -> bool {
+    key_member_name(key).starts_with(velt_syntax::ast::PRIVATE_NAME_PREFIX)
+}
+
 /// Method-table key of a class / interface / `extend` member: its name, or `set <name>` for a
 /// setter (`set name(v)`), which may share its name with a getter. The key is also the last
 /// segment of the setter's def name (`Box.set size`) and how diagnostics name it.
@@ -364,6 +412,12 @@ pub(crate) fn member_key(name: &str, is_setter: bool) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// Method-table key of a static method that shares its name with an instance method of the
+/// same class (`Response.json(data)` and `res.json()`): the instance method keeps the plain key.
+pub(crate) fn static_key(name: &str) -> String {
+    format!("static {name}")
 }
 
 /// Is this method-table key a setter's (see [`member_key`])?
