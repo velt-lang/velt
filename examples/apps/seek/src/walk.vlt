@@ -22,7 +22,7 @@ type Pending = {
   dir: string; // path to read
   rel: string; // relative to the root ("" for the root)
   depth: i64;
-  rules: Rule[]; // .gitignore rules in effect here
+  rules: Rule[]; // .gitignore rules in effect here (regex sources, not RegExps: #690)
 };
 
 function joinPath(a: string, b: string): string {
@@ -55,7 +55,7 @@ export async function walk(opts: Options, out: Channel<FileJob>): Promise<WalkSt
   const dirs = channel<Pending>();
   const pending = shared(0); // directories queued or being read
   for (const root of opts.roots) {
-    let st: Stats;
+    let st: Stats; // annotated: `let st;` assigned in `try` needs a type (#695)
     try {
       st = statSync(root);
     } catch (e) {

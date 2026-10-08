@@ -3,7 +3,7 @@
 import { RegExp } from "velt:regex";
 
 /// One rule. Plain data, so it can travel between walker tasks; each task compiles the regex
-/// itself (see `RuleCache`).
+/// itself (see `RuleCache`). A rule holding its `RegExp` panics when sent down a channel (#690).
 export type Rule = {
   base: string; // directory of the .gitignore, relative to the search root ("" for the root)
   negate: bool;
@@ -77,12 +77,21 @@ export function globToRegex(glob: string): string {
   return out;
 }
 
+/// `line` without trailing spaces, except one escaped as `\ `, which globToRegex keeps.
+function trimTrailingSpaces(line: string): string {
+  let end = line.length;
+  while (end > 0 && line[end - 1] === " " && !(end > 1 && line[end - 2] === "\\")) {
+    end--;
+  }
+  return line.slice(0, end);
+}
+
 /// The rules of one .gitignore file whose directory is `base` (relative to the search root).
 export function parseIgnore(base: string, text: string): Rule[] {
   const rules: Rule[] = [];
   for (const raw of text.split("\n")) {
     let line = raw.endsWith("\r") ? raw.slice(0, raw.length - 1) : raw;
-    line = line.trimEnd();
+    line = trimTrailingSpaces(line);
     if (line === "" || line.startsWith("#")) {
       continue;
     }

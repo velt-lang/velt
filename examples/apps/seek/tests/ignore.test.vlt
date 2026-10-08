@@ -31,6 +31,12 @@ export function test_directory_only_rules_and_negation() {
   assert(ignored("# comment\n\n*.tmp", "x.tmp"));
 }
 
+export function test_trailing_spaces() {
+  assert(ignored("*.tmp   ", "x.tmp"));
+  assert(ignored("name\\ ", "name ")); // `\ ` keeps an escaped trailing space
+  assert(!ignored("name\\ ", "name"));
+}
+
 export function test_nested_gitignore_applies_below_its_directory() {
   const rules = parseIgnore("pkg", "dist");
   const cache = new RuleCache();

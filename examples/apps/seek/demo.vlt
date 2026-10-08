@@ -1,8 +1,9 @@
 // Builds a small tree and runs seek's whole pipeline (parallel walk, search tasks, printer) on it
 // (golden: demo.out). Output lines are sorted: files are searched in parallel, so their order
 // varies from run to run.
-import { existsSync, mkdirSync, removeSync, writeFileSync } from "velt:fs";
+import { mkdirSync, removeSync, writeFileSync } from "velt:fs";
 import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
 import { chdir, cwd } from "velt:process";
 import { RegExp } from "velt:regex";
 import { execute } from "./src/app";
@@ -64,10 +65,8 @@ async function seek(argv: string[], sorted: bool = true) {
 
 async function main() {
   const home = cwd();
-  const root = `${tmpdir()}/seek-demo`;
-  if (existsSync(root)) {
-    removeSync(root, { recursive: true });
-  }
+  // Unique, so concurrent runs (worktrees, sharded goldens) don't remove each other's tree.
+  const root = `${tmpdir()}/seek-demo-${uuidv4()}`;
   mkdirSync(root, { recursive: true });
   for (const [path, text] of files()) {
     const slash = path.lastIndexOf("/");

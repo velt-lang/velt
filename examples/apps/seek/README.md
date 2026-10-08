@@ -13,15 +13,28 @@ seek -f '\.test\.'               # list files (like fd), filtered by a regex
 seek -s unsafe > /dev/null       # stats: files, MiB, time, threads
 velt test                        # unit tests: matcher, .gitignore rules, options
 velt run demo.vlt                # the whole pipeline on a generated tree (golden: demo.out)
+./bench.sh                       # seek vs ripgrep vs git grep on this repository (hyperfine)
 ```
 
 Output is `path:line:text` (or grouped with `--heading`), with matches highlighted. Velt can't
 tell yet whether stdout is a terminal, so colour is on unless `NO_COLOR` is set or you pass
 `--color never` (do that when piping). Exit code: 0 found, 1 nothing found, 2 usage error.
 
-Like ripgrep it respects `.gitignore` files (nested ones too, with `!` negation), skips hidden
-files and `.git`, and skips binary files (NUL bytes or not UTF-8).
-`--hidden`, `--no-ignore`, `--max-depth`, `--max-filesize` and `-j` change that.
+It respects `.gitignore` files (nested ones too, with `!` negation), skips hidden files and
+`.git`, and skips binary files. `--hidden`, `--no-ignore`, `--max-depth`, `--max-filesize` and
+`-j` change that.
+
+**Where it differs from ripgrep:**
+- **Which ignore files it reads.** It reads `.gitignore` files even outside a git repository.
+  It doesn't read `.gitignore` files in parent directories, `.git/info/exclude`, the global
+  gitignore, `.ignore` or `.rgignore`.
+- **Which files it skips.** Files over 50 MiB are skipped by default (`--max-filesize`). A file
+  that isn't valid UTF-8 or that contains a NUL byte is skipped entirely; ripgrep prints the
+  matches it finds before the NUL.
+- **Symlinks** are always followed (there's no `lstat` yet, #691). ripgrep needs `-L` for that.
+- **`-w`** wraps the pattern in `\b…\b`. For a pattern that starts or ends with a non-word
+  character, that matches differently from ripgrep's `-w`.
+- **Exit code** is 0 (found) or 1 (nothing found) even after an I/O error; ripgrep exits 2.
 
 ## How it works
 
@@ -43,23 +56,28 @@ roots ─▶ walk tasks (N) ─▶ channel<FileJob> ─▶ search tasks (N) ─�
 | `tests/*.test.vlt` | `velt test` |
 | `demo.vlt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test -p veltc --test golden` |
 
-## Performance (Apple M-series, 10 cores, macOS, warm cache, hyperfine)
+## Performance
 
-| Corpus | seek | ripgrep 14.1 | git grep |
+`./bench.sh` builds seek, checks that it and ripgrep print the same lines, then times both and
+`git grep` on this repository with hyperfine (20 runs, warm cache). Apple M-series (4
+performance + 6 efficiency cores), macOS, ripgrep 14.1.1 built with `cargo install`:
+
+| Search (3.9k files, 14 MiB) | seek | ripgrep | git grep |
 |---|---|---|---|
-| velt repo, 3.9k files / 14 MiB, literal | 54 ms | 53 ms | 76 ms |
-| velt repo, regex | 54 ms | 62 ms | |
-| 36k files / 521 MiB (a pnpm monorepo), literal | 662 ms | 828 ms (`-L`) | |
-| same, regex `-i` | 792 ms | 615 ms (`-L`) | |
-| same, list files | 221 ms | 107 ms (`-L`) | |
+| literal `unsafe` | 41.5 ± 0.4 ms | 41.0 ± 0.8 ms | 45.4 ± 0.3 ms |
+| regex `fn \w+_(index\|slice)` | 41.8 ± 0.3 ms | 43.9 ± 9.3 ms | |
+| `-i` regex | 49.3 ± 14.0 ms | 46.4 ± 19.6 ms | |
+| list files (`--files`) | 13.8 ± 0.6 ms | 11.6 ± 0.9 ms | |
 
-The output is identical to ripgrep's (`rg -n --no-heading`) on every pattern tried, except for
-files with NUL bytes: ripgrep prints a match found before the NUL, seek skips the file.
+So content search on a tree this size is level with ripgrep, and listing files is about 20%
+slower. On a larger tree (36k files, 521 MiB, not in the repository, so indicative only),
+`-i` regex was about 29% slower than ripgrep (#699), and listing files 2× slower: there every
+entry needs a `stat` (#692).
 
-## Known gaps (tracked in #688)
+## Known gaps (from #688)
 
-- No `lstat`, so symlinks are always followed (ripgrep doesn't by default; compare with `rg -L`).
-  A symlink loop stops at `--max-depth` (default 64).
-- `readDir` returns names only, so every entry costs a `stat`; that is most of the gap in
-  listing files.
-- No `isatty`, so colour can't turn itself off when piped.
+- No `lstat` (#691), so symlinks are always followed, and a symlink loop stops only at
+  `--max-depth` (default 64).
+- `readDir` returns names only (#692), so every entry costs a `stat`. That is most of the gap
+  in listing files.
+- No `isatty` (#693), so colour can't turn itself off when piped.

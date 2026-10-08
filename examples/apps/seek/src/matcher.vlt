@@ -49,6 +49,7 @@ export class Matcher {
     }
     const re = this.re;
     if (re != null) {
+      // RegExp offsets are `usize`, string positions `i64` (#214).
       const m = re.exec(s, from as usize);
       if (m != null) {
         return { start: m.index as i64, end: m.end as i64 };
