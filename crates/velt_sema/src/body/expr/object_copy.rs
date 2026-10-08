@@ -11,8 +11,8 @@
 //! (`a?: T | null`) are not converted. A copy that a later field assignment could tell from the
 //! original is reported once every body is checked (`crate::object_copies`).
 
-use crate::body::FnCx;
 use crate::body::places::set_place_mode;
+use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 use crate::object_copies::Copy;
 

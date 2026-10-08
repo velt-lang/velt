@@ -173,11 +173,14 @@ impl FnCx<'_, '_> {
             _ if self.cx.is_object_type(ty) => Some(ty),
             _ => return,
         };
-        self.cx.object_copies.writes.push(crate::object_copies::Write {
-            ty,
-            name: prop.name.clone(),
-            span: prop.span,
-        });
+        self.cx
+            .object_copies
+            .writes
+            .push(crate::object_copies::Write {
+                ty,
+                name: prop.name.clone(),
+                span: prop.span,
+            });
     }
 
     fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {

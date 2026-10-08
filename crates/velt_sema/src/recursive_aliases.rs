@@ -111,7 +111,11 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
         }
         K::Array(e) => names(e, name),
         K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().any(|x| names(x, name)),
-        K::Function { params, ret, throws } => {
+        K::Function {
+            params,
+            ret,
+            throws,
+        } => {
             params.iter().any(|x| names(x, name))
                 || names(ret, name)
                 || throws.as_deref().is_some_and(|x| names(x, name))
