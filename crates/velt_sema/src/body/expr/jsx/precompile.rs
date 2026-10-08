@@ -1,4 +1,4 @@
-//! SSR precompile (docs/contracts/jsx.md "SSR precompile"): when the runtime exports
+//! SSR precompile (docs/internals/contracts/jsx.md "SSR precompile"): when the runtime exports
 //! `jsxTemplate`, `jsxEscape`, `jsxAttr` and `Text`, every maximal tree of intrinsic elements
 //! becomes one `jsxTemplate(strings, slots)` call. Static tags, attributes and text are escaped
 //! at compile time; a dynamic child assignable to `JSX.Text` and every dynamic attribute are
