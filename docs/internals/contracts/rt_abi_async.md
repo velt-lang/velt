@@ -76,9 +76,8 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
 | `velt_rt_all` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results) -> VeltFut*` | `Promise.all(array)`: takes ownership of the `n` futures (not of the pointer array); child `i`'s result is moved to `results + i*result_size` (must stay valid until completion/drop); concurrent, only woken children are re-polled. Result: none. |
-| `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs � all results belong to the awaiter. Use it whenever `T` needs dropping. |
+| `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs — all results belong to the awaiter. Use it whenever `T` needs dropping. |
 | `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
-
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
 | `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
@@ -165,9 +164,9 @@ sender still shares is deep-copied). No code pointers are stored except drop glu
 `item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
 `item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
 Values still queued in a channel nobody drains, closed or not, are not dropped while the program
-runs (any copy of the handle may still receive them); when it ends (`main` returned and the
-remaining tasks settled) the runtime drops every item still
-queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
+runs (any copy of the handle may still receive them); when it ends (`main` returned 0 and no
+keep-alive reference remains, §7; with `VELT_RC_STATS=1` a debug runtime also waits up to a
+minute for running tasks) the runtime drops every item still queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
 counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
 it.
 
@@ -402,13 +401,15 @@ body setters and `resp_json` drop the body and add no `content-type`.
 arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are followed as the Fetch
 standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
 are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
-received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
+received, as soon as it is aborted; the operation then fails with `UNKNOWN` (99) and std throws the
 signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
 with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
 five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
 per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
 with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
-fails with `INVALID_DATA`.
+fails with `EILSEQ` (5). velt_rt_wasm implements the same symbols without a network:
+`velt_rt_http_fetch_send` fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no
+network access`), and the accessors of a fetched response are unreachable (fatal if reached).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -418,7 +419,7 @@ fails with `INVALID_DATA`.
 | `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
 | `velt_rt_http_fetch_resp_redirected` | `(VeltFetchResp r) -> bool` | |
 | `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
-| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
+| `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD, a leading UTF-8 byte order mark dropped (as JS decodes); a second body read fails `EINVAL` |
 | `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
 | `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
 | `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
@@ -564,6 +565,8 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 | `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
+| `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
+| `velt_rt_json_leave` | `()` | done with the innermost object entered |
 
 ### 12.2 String methods
 

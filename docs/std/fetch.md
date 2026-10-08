@@ -4,7 +4,8 @@
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
 connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
 HTTPS, and redirects followed as the standard says. `velt:fetch` exports the same names and
-the option types (`RequestInit`, `ResponseInit`, `HeadersInit`, `BodyInit`).
+the option types (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`)
+and `BodyStream`, the type of `res.body`.
 
 ```ts
 type User = { id: number; name: string };
@@ -57,14 +58,16 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 
 ## `Response`
 
-- `status: number`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
+- `status: i64`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
   standard one), `headers: Headers`, `url` (the final URL, after redirects), `redirected`,
   `type` (`"basic"` for a fetched response, `"default"` for one you made, `"error"`),
   `bodyUsed`.
-- Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD, as in JS),
+- Reading the body: `await res.text()` (invalid UTF-8 becomes U+FFFD and a leading byte order
+  mark is dropped, as in JS),
   `await res.json<T>()`, `await res.bytes(): u8[]` and `await res.arrayBuffer(): u8[]` (JS
   returns an `ArrayBuffer`). A body is read once: a second read throws `IoError`
-  (`Body is unusable: Body has already been read`). A large body is received into one buffer
+  (`Body is unusable: Body has already been read`); a response without a body can be read any
+  number of times, as in JS. A large body is received into one buffer
   sized from `content-length`, so `bytes()` copies it once.
 - `json<T>()` decodes the body as `T` and checks it (`JsonError` names what doesn't match),
   so there is no separate schema step. Velt has no `any`: name the type (`res.json<User[]>()`)
@@ -108,7 +111,7 @@ Record<string, string>)`, `append(name, value)`, `set`, `delete`, `get(name): st
 (repeated values joined with `", "`), `has`, `getSetCookie(): string[]`, `forEach((value,
 name) => …)`, and `entries()`, `keys()`, `values()` and `for...of`, which yield the names
 lowercased and sorted, with repeats joined (each `set-cookie` separately), as in JS. Values have
-surrounding whitespace removed. Unlike JS, an invalid name or value is not rejected when it is
+surrounding HTTP whitespace (tab, LF, CR, space) removed. Unlike JS, an invalid name or value is not rejected when it is
 added: `fetch` rejects it with `IoError` `"EINVAL"`.
 
 ```ts

@@ -4,6 +4,10 @@ The prelude is the part of the standard library that every module sees without a
 lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone`, `spawn`,
 `shared`) is implemented by the compiler.
 
+Node's web globals ([`fetch`](fetch.md), `Request`, `Response`, `Headers`, `AbortController`,
+`AbortSignal`, `URL`, `URLSearchParams`) need no import either; they are loaded when a module
+names one and doesn't bind that name itself.
+
 ## Strings
 
 `string` is an immutable sequence of UTF-16 code units, as in JS

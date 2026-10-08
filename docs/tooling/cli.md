@@ -15,7 +15,7 @@ prints every command's options and examples.
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
-| `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
+| `velt add`, `install`, `update`, `publish`, `native build` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
@@ -44,7 +44,7 @@ Every build command works on a single file or on a package:
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
            [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--locked] [-v] [-- <program args>...]
+           [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
@@ -275,9 +275,12 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
-| `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_LLVM_OPT` | optimization level for release builds (clang, or `opt` for WebAssembly): `3` (default), `2`, `1`, `s` or `z` |
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
+| `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
+| `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
+| `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
 | `VELT_LINKER` | linker override |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
@@ -285,3 +288,5 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
+| `CLICOLOR_FORCE` | force colored output |
+| `COLUMNS` | terminal width for `velt search` results (default: asked from the terminal) |

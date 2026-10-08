@@ -397,7 +397,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 ## Arrow functions and function types
 
 - **Arrow functions** `(x: T) => expr` and `(x) => { … }` are closures. Parameter types are
-  inferred where a function type is expected. There are no `function` expressions and no
+  inferred where a function type is expected. There are no `function` expressions other than
+  [generator function expressions](#generator-function-expressions), and no
   `this` rebinding: `this` inside an arrow is the enclosing method's `this`.
 - Arrow parameters take defaults and may be optional, like a function's: with
   `const fmt = (n: number, digits = 2) => n.toFixed(digits);`, `fmt(3.14159)` is `"3.14"`. A
@@ -469,7 +470,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   every later change of what it captures, and lives in the frame, so capturing `this` does not
   make the class reference-counted. The compiler proves it: the closure's variable is used only
   as `f(...)` (never copied, stored, returned, passed on or captured by another closure), the
-  enclosing function is not `async` or a generator, and no call runs while a reference into a
+  enclosing function and the closure are not `async` or generators, it captures no `using`
+  value and nothing holding a promise, no closure created inside it captures a variable the
+  enclosing function assigns, and no call runs while a reference into a
   captured object is held (the call's own arguments do not use what it captures, and it is not
   inside a `for...of` over such an object, a `match` on one, or next to an argument borrowing
   one). Otherwise it is escaping, as below; the results are the same, only the cost differs.
@@ -478,7 +481,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   `c.clear()` that replaces `items`, the closure and `me` share instead. The fallback is for
   the whole program: one such conflict makes every held closure and every `const me = this` in
   it share, as if none of them borrowed.
-- A closure stored in a variable, field or array, or returned, is **escaping** and captures by
+- A closure stored in a `let`, a field or an array, held in a `const` that is used other than
+  by calling it (or one that does not meet the conditions above), or returned, is **escaping**
+  and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
   into the closure, so it is released (and disposed) when the closure is, even if other captures
