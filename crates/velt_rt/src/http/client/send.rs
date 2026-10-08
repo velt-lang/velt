@@ -74,15 +74,22 @@ pub(super) fn invalid(what: &str) -> VeltErr {
 pub(super) struct Outgoing {
     pub method: Method,
     pub url: Target,
+    /// The caller's headers: each request adds the defaults to them ([`with_defaults`]), so a
+    /// request without headers of its own has nothing to copy for a redirect.
     pub headers: HeaderMap,
+    /// The `accept-encoding` sent unless the caller set one: the codings the first URL's scheme
+    /// can decode.
+    pub codings: &'static str,
     pub body: Bytes,
 }
 
-/// The header list `[name, value, …]` as a header map; what Node adds when it is missing
-/// (`accept`, `user-agent`, and `accept-encoding` with the codings `https` can decode). The map
-/// has room for all three defaults, so adding them never grows it.
-pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltErr> {
-    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 3);
+/// The caller's header list `[name, value, …]` as a header map (empty, which allocates
+/// nothing, when there are none).
+pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
+    if flat.is_empty() {
+        return Ok(HeaderMap::new());
+    }
+    let mut map = HeaderMap::with_capacity(flat.len() / 2 + ADDED);
     for [name, value] in flat.as_chunks::<2>().0 {
         let name = HeaderName::from_bytes(name)
             .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(name))))?;
@@ -90,17 +97,37 @@ pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltE
             .map_err(|_| invalid(&format!("invalid value of header {name}")))?;
         map.append(name, value);
     }
-    if !map.contains_key(header::ACCEPT) {
-        map.insert(header::ACCEPT, HeaderValue::from_static("*/*"));
-    }
-    if !map.contains_key(header::USER_AGENT) {
-        map.insert(header::USER_AGENT, HeaderValue::from_static("velt"));
-    }
-    if !map.contains_key(header::ACCEPT_ENCODING) {
-        let codings = HeaderValue::from_static(super::decode::accept_encoding(https));
-        map.insert(header::ACCEPT_ENCODING, codings);
-    }
     Ok(map)
+}
+
+/// The headers added to the caller's: the three defaults and the `host` hyper adds.
+const ADDED: usize = 4;
+
+/// `own` (the caller's headers) with what Node adds when it is missing: `accept`, `user-agent`
+/// and `accept-encoding` (`codings`). The map has room for them and for the `host` hyper adds,
+/// so neither grows it.
+pub(super) fn with_defaults(own: HeaderMap, codings: &'static str) -> HeaderMap {
+    let defaults = [
+        (header::ACCEPT, "*/*"),
+        (header::USER_AGENT, "velt"),
+        (header::ACCEPT_ENCODING, codings),
+    ];
+    if own.is_empty() {
+        // Most requests: nothing to look up.
+        let mut map = HeaderMap::with_capacity(ADDED);
+        for (name, value) in defaults {
+            map.insert(name, HeaderValue::from_static(value));
+        }
+        return map;
+    }
+    let mut map = own;
+    map.reserve(ADDED);
+    for (name, value) in defaults {
+        if !map.contains_key(&name) {
+            map.insert(name, HeaderValue::from_static(value));
+        }
+    }
+    map
 }
 
 fn lossy(b: &[u8]) -> String {
@@ -112,13 +139,14 @@ fn lossy(b: &[u8]) -> String {
 fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     let mut req = Request::new(Full::new(o.body.clone()));
     *req.method_mut() = o.method.clone();
-    if keep {
+    let own = if keep {
         *req.uri_mut() = o.url.uri.clone();
-        *req.headers_mut() = o.headers.clone();
+        o.headers.clone()
     } else {
         *req.uri_mut() = std::mem::take(&mut o.url.uri);
-        *req.headers_mut() = std::mem::take(&mut o.headers);
-    }
+        std::mem::take(&mut o.headers)
+    };
+    *req.headers_mut() = with_defaults(own, o.codings);
     req
 }
 

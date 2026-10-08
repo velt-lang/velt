@@ -113,12 +113,12 @@ async fn abortable<T>(
 }
 
 /// Copy the flat header list `[name, value, …]` out of a Velt `string[]`.
-unsafe fn header_list(headers: *const VeltStrArray, https: bool) -> Result<HeaderMap, VeltErr> {
+unsafe fn header_list(headers: *const VeltStrArray) -> Result<HeaderMap, VeltErr> {
     let a = &*headers;
     let items: Vec<&[u8]> = (0..a.len as usize)
         .map(|i| (*a.ptr.add(i)).as_bytes())
         .collect();
-    send::header_map(&items, https)
+    send::header_map(&items)
 }
 
 async fn run(
@@ -199,9 +199,10 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
         let method = Method::from_bytes((*method).as_bytes())
             .map_err(|_| send::invalid("invalid HTTP method"))?;
         let url = target::Target::parse(&(*url).text_lossy())?;
-        let headers = header_list(headers, url.is_https())?;
+        let headers = header_list(headers)?;
         Ok(Outgoing {
             method,
+            codings: decode::accept_encoding(url.is_https()),
             url,
             headers,
             body,
