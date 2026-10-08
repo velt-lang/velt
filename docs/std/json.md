@@ -3,7 +3,7 @@
 `import { Value } from "velt:json"`. `JSON` itself is in the prelude. This module only exports
 `Value`, the dynamic JSON value (an alias of the prelude's `JsonValue`).
 
-- `JSON.stringify<T>(x)`, `JSON.parse<T>(text): T` (throws `JsonError`, e.g.
+- `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array

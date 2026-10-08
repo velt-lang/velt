@@ -88,5 +88,6 @@ and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is
 ## WebAssembly
 
 On the WebAssembly targets the language and the pure modules work as on native targets, and
-`velt:fs` uses the WASI file system. TCP, HTTP, child processes and the database drivers are not
-available ([WebAssembly](../tooling/webassembly.md)).
+`velt:fs` uses the WASI file system. TCP, the HTTP server, child processes and the database
+drivers are not available; `fetch` links but rejects with `IoError` `ENOTSUP` (no network)
+([WebAssembly](../tooling/webassembly.md)).
