@@ -148,19 +148,29 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
 }
 
 #[test]
-fn a_wider_object_does_not_convert_and_the_note_offers_the_copy() {
-    let e = err_src(
-        "type A = { a: f64 }; type AB = A & { b: f64 };
+fn a_wider_object_converts_by_copying_its_fields() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64; c?: string };
+         type AC = { a: f64; c?: string };
          function g(a: A): f64 { return a.a; }
-         function main() { const ab: AB = { a: 1, b: 2 }; g(ab); }",
-    );
-    assert!(e.contains("`AB` has fields `A` does not (`b`)"), "{e}");
-    assert!(e.contains("{ ...ab }"), "{e}");
-    ok_src(
-        "type A = { a: f64 }; type AB = A & { b: f64 };
-         function g(a: A): f64 { return a.a; }
-         function main() { const ab: AB = { a: 1, b: 2 }; console.log(g({ ...ab })); }",
-    );
+         function h(a: AC): f64 { return a.a; }";
+    ok_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; console.log(g(ab), h(ab), ab.b); }}"
+    ));
+    // An optional field of the expected type may be missing; a required one may not.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; console.log(h(a)); }}"
+    ));
+    let e = err_src(&format!(
+        "{src} function main() {{ const ac: AC = {{ a: 1 }}; const ab: AB = ac; }}"
+    ));
+    assert!(e.contains("mismatched types"), "{e}");
+    // An assignment to a copied field would tell the copy from the original.
+    let e = err_src(&format!(
+        "{src} function bump(a: A) {{ a.a += 1; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; bump(ab); }}"
+    ));
+    assert!(e.contains("assigns field `a`"), "{e}");
+    assert!(e.contains("`{ a: ab.a }`"), "{e}");
 }
 
 #[test]
@@ -216,19 +226,23 @@ fn interfaces_do_not_merge_and_the_note_says_so() {
 }
 
 #[test]
-fn reordered_parts_are_another_type_and_the_note_says_so() {
-    let src = "type Named = { name: string }; type Aged = { age: f64 };
-         function show(p: Named & Aged): string { return p.name; }";
-    let e = err_src(&format!(
-        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
-    ));
-    assert!(e.contains("has the same fields as"), "{e}");
-    assert!(e.contains("{ ...an }") && e.contains("#651"), "{e}");
-    assert!(!e.contains("does not ()"), "{e}");
+fn reordered_parts_convert_by_copying_unless_printed() {
+    let src = "type Named = { name: string }; type Aged = { age: f64 };";
+    let show = "function show(p: Named & Aged): string { return p.name; }";
     ok_src(&format!(
-        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
-           console.log(show({{ ...an }})); }}"
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; console.log(show(an)); }}"
     ));
+    // Node prints the original object's keys in its order: printing the copy's type is an error.
+    let e = err_src(&format!(
+        "{src} function show(p: Named & Aged) {{ console.log(p); }}
+           function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
+    ));
+    assert!(e.contains("prints a `{ name: string; age: f64 }`"), "{e}");
+    let e = err_src(&format!(
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
+           const xs: (Named & Aged)[] = [an]; console.log(JSON.stringify(xs)); }}"
+    ));
+    assert!(e.contains("serializes a"), "{e}");
 }
 
 #[test]

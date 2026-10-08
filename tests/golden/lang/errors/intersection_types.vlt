@@ -1,6 +1,5 @@
 // Intersections Velt rejects, each with its fix: parts with no value in common, classes,
-// arrays, function types and type parameters as parts, extra or missing fields in a literal,
-// and an `A & B` where an `A` is expected (object types don't convert by dropping fields).
+// arrays, function types and type parameters as parts, and extra or missing fields in a literal.
 type Conflict = { k: string } & { k: number };
 type Kinds = { kind: "a"; x: number } & { kind: "b" };
 
@@ -18,15 +17,9 @@ function merge<T, U>(t: T, u: U): T & U {
 type A = { a: number };
 type AB = A & { b: number };
 
-function takesA(a: A): number {
-  return a.a;
-}
-
 function main() {
   const missing: AB = { a: 1 };
   const extra: AB = { a: 1, b: 2, c: 3 };
-  const ab: AB = { a: 1, b: 2 };
-  console.log(takesA(ab));
 }
 
 // TypeScript merges interface declarations; Velt asks for one, or an intersection.

@@ -1,0 +1,46 @@
+// Object types convert to one with some of their fields, or the same ones in another order, by
+// copying the fields (#650, #651). Where the program could tell the copy from the original, the
+// conversion is an error: a copied field is assigned, the converted-to type is compared with
+// `===`, or a value holding it is printed, serialized or has its keys listed.
+type A = { a: number };
+type AB = A & { b: string };
+
+function bump(a: A) {
+  a.a += 1;
+}
+
+type P = { x: number; y: number };
+type Q = { y: number; x: number };
+
+function same(p: P, q: P): boolean {
+  return p === q;
+}
+
+type Named = { name: string };
+type Aged = { age: number };
+
+function show(n: Named) {
+  console.log(n);
+}
+
+function keys(n: Aged): string[] {
+  return Object.keys(n);
+}
+
+type Id = { id: number };
+type Row = Id & { label: string };
+
+function main() {
+  const ab: AB = { a: 1, b: "x" };
+  bump(ab);
+  const q: Q = { y: 1, x: 2 };
+  console.log(same(q, q));
+  const both: Named & Aged = { name: "n", age: 1 };
+  show(both);
+  console.log(keys(both).length);
+  const list: Named[] = [both];
+  console.log(JSON.stringify(list));
+  const row: Row = { id: 1, label: "r" };
+  const ids: Id[] = [row];
+  console.log(JSON.stringify(ids));
+}

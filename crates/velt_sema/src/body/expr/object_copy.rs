@@ -163,9 +163,6 @@ impl FnCx<'_, '_> {
                 to: gty,
             });
         }
-        if src.len() != dst.len() || slots.iter().any(|s| matches!(s, Slot::Absent(_))) {
-            return None;
-        }
         Some(slots)
     }
 

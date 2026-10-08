@@ -1,0 +1,52 @@
+// `A & B` where `A` (or `B`) is expected converts without a spread (#650): the value is a new
+// `A` with the same field values (object types have fixed layouts), so the program never assigns
+// the copied fields or prints the converted-to types (`crate::object_copies`). An optional field
+// of the expected type may be missing from the value.
+
+type Named = { name: string };
+type Scored = { score: number; tags: string[] };
+type Player = Named & Scored;
+type Card = { name: string; note?: string };
+
+function greet(n: Named): string {
+  return `hi ${n.name}`;
+}
+
+function best(s: Scored): number {
+  return s.score * 10 + s.tags.length;
+}
+
+function card(c: Card): string {
+  return `${c.name}: ${c.note ?? "-"}`;
+}
+
+function roster(): Player[] {
+  return [
+    { name: "Ada", score: 3, tags: ["a"] },
+    { name: "Grace", score: 5, tags: [] },
+  ];
+}
+
+type Team = { lead: Player; size: number };
+type Header = { lead: Named };
+
+function leadName(h: Header): string {
+  return h.lead.name;
+}
+
+function main() {
+  const p: Player = { name: "Ken", score: 7, tags: ["unix", "c"] };
+  console.log(greet(p), best(p), card(p));
+  // The original stays usable, and a nested array is shared with the copy.
+  const named: Named[] = [];
+  for (const r of roster()) {
+    named.push(r);
+  }
+  const s: Scored = p;
+  p.tags.push("go");
+  console.log(named.map((n) => n.name).join(", "), s.tags.length, p.name);
+  const team: Team = { lead: p, size: 3 };
+  console.log(leadName(team));
+  const maybe: Named | null = p;
+  console.log(maybe?.name ?? "none");
+}

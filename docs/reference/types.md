@@ -485,20 +485,36 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   keeps only the circle member, and `(A | null) & B` is `A & B`.
 - The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
   type as the object type with those fields written out in the same order.
-- **Field order**: `B & A` (or `{ b; a }`) converts to `A & B`, as in TypeScript. Object types
-  have fixed layouts, so the conversion builds a new object of the expected type holding the
-  same field values: one allocation and a copy of each field, paid where a program converts
+- **Conversions**: a value converts to an object type whose fields it has, by name, as in
+  TypeScript: `A & B` where an `A` or a `B` is expected, `B & A` (or `{ b; a }`) where `A & B`
+  is expected, and to a type with an optional field the value lacks (it is absent). Object
+  types have fixed layouts, so the conversion builds a new object of the expected type holding
+  the same field values: one allocation and a copy of each field, paid where a program converts
   (nested objects and arrays are shared, not copied). TypeScript passes the same object, so
   where the program could tell the difference, the conversion is an error with the fix (build
-  the object from its fields, `{ a: ba.a, b: ba.b }`, or take the other type): when the program
-  assigns a copied field of either type, compares values of the expected type with `===`, or
-  prints, serializes or lists the keys of a value holding the expected type (Node would show
-  the original's keys, in its order).
-- `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
-  the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
-  function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.
+  the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
+  a copied field of either type (`a.a += 1` on an `A` anywhere), compares values of the
+  expected type with `===`, or prints, serializes or lists the keys of a value holding the
+  expected type (Node would show the original's fields, in its order). Arrays and other
+  containers convert only when fresh, like [wider element types](#objects-arrays-tuples-and-maps).
 - An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
   give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
+
+```ts
+type Named = { name: string };
+type Scored = { score: number };
+
+function greet(n: Named): string {
+  return `hi ${n.name}`;
+}
+
+function rank(p: Scored & Named): string {
+  return `${p.name}: ${p.score}`;
+}
+
+const ken: Named & Scored = { name: "Ken", score: 7 };
+console.log(greet(ken), rank(ken)); // hi Ken Ken: 7
+```
 
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
