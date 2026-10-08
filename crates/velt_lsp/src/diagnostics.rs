@@ -3,13 +3,20 @@
 //! Only diagnostics whose primary label lies in the document are shown on it (errors in an imported
 //! file appear when that file is open). Location-less diagnostics (`Span::DUMMY`, e.g. an unreadable
 //! prelude) are shown at the top of the document so they are not lost. The TypeScript-compatibility
-//! findings follow the compiler's ([`crate::ts_compat`]).
+//! findings follow the compiler's ([`crate::ts_compat`]), then a hint tagged
+//! [`DiagnosticTag::DEPRECATED`] on each use of a definition documented `@deprecated` (editors
+//! strike it through).
 
-use lsp_types::{DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Url};
+use std::collections::HashMap;
+
+use lsp_types::{
+    DiagnosticRelatedInformation, DiagnosticSeverity, DiagnosticTag, Location, NumberOrString, Url,
+};
 use velt_common::{Diagnostic, Severity, Span};
 
 use crate::analysis::Analysis;
 use crate::line_index::LineIndex;
+use crate::text_scan::{self, TokenKind};
 
 /// The LSP diagnostics of `analysis` that belong to its document.
 pub fn for_document(
@@ -38,7 +45,52 @@ pub fn for_document(
                 .iter()
                 .map(|f| crate::ts_compat::diagnostic(&index, f)),
         )
+        .chain(deprecated_uses(analysis, &index))
         .collect()
+}
+
+/// A hint on every name in the document that refers to (not declares) a definition documented
+/// `@deprecated`.
+fn deprecated_uses(analysis: &Analysis, index: &LineIndex) -> Vec<lsp_types::Diagnostic> {
+    let Some(ide) = analysis.ide.as_ref() else {
+        return vec![];
+    };
+    let text = analysis.text();
+    let file = analysis.file();
+    // Definition (by its name) → its deprecation text, looked up once.
+    let mut seen: HashMap<Span, Option<String>> = HashMap::new();
+    let mut out = vec![];
+    for t in text_scan::scan(text, text.len()) {
+        if t.kind != TokenKind::Ident {
+            continue;
+        }
+        let span = Span::new(file, t.lo, t.hi);
+        let Some(def) = ide.def_of(span) else {
+            continue;
+        };
+        if def.span == span || def.span == Span::DUMMY {
+            continue;
+        }
+        let deprecated = seen
+            .entry(def.span)
+            .or_insert_with(|| crate::docs::doc_for(analysis, &def).and_then(|d| d.deprecated));
+        let Some(reason) = deprecated else {
+            continue;
+        };
+        let message = match reason.is_empty() {
+            true => format!("`{}` is deprecated", def.name),
+            false => format!("`{}` is deprecated: {reason}", def.name),
+        };
+        out.push(lsp_types::Diagnostic {
+            range: index.range(t.lo, t.hi),
+            severity: Some(DiagnosticSeverity::HINT),
+            source: Some("velt".into()),
+            message,
+            tags: Some(vec![DiagnosticTag::DEPRECATED]),
+            ..Default::default()
+        });
+    }
+    out
 }
 
 fn convert(

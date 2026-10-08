@@ -2137,6 +2137,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "velt_common",
+ "velt_doc",
  "velt_fmt",
  "velt_http",
  "velt_registry",

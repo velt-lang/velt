@@ -4,7 +4,8 @@
 //! Features: diagnostics (parse + imports + sema, debounced, per open document), formatting
 //! (`velt_fmt`), document symbols, go to definition, hover, completion (JSX tags and attributes
 //! included), find references, rename, quick fixes (code actions), inlay hints, signature help,
-//! semantic tokens, document highlight and workspace symbols. Imports get their own help
+//! doc comments in hover, completion and signature help ([`docs`]), semantic tokens, document
+//! highlight and workspace symbols. Imports get their own help
 //! ([`imports`]): the exports of the module inside `import { … }`, module specifiers after
 //! `from "`, and auto-import of exported names that are not imported yet. Documents in a package's
 //! `tsCompat` folders also get the TypeScript-compatibility lint's findings and fixes
@@ -23,6 +24,7 @@ mod completion;
 mod definition;
 mod diagnostics;
 mod disk_index;
+mod docs;
 mod documents;
 mod highlight;
 mod hover;
