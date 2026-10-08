@@ -134,16 +134,16 @@ fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-/// The request to send for `o`. Its URI and headers are moved into it unless a redirect may need
-/// them again (`keep`), so a request that is not followed copies neither.
+/// The request to send for `o`. Its headers are moved into it unless a redirect may need them
+/// again (`keep`), so a request that is not followed copies none.
 fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     let mut req = Request::new(Full::new(o.body.clone()));
     *req.method_mut() = o.method.clone();
+    // A redirect makes a new URI from `o.url.href`: the request can have this one.
+    *req.uri_mut() = std::mem::take(&mut o.url.uri);
     let own = if keep {
-        *req.uri_mut() = o.url.uri.clone();
         o.headers.clone()
     } else {
-        *req.uri_mut() = std::mem::take(&mut o.url.uri);
         std::mem::take(&mut o.headers)
     };
     *req.headers_mut() = with_defaults(own, o.codings);
@@ -154,7 +154,7 @@ fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
 pub(super) struct Received {
     pub response: Response<Incoming>,
     /// The WHATWG serialization.
-    pub url: String,
+    pub url: Bytes,
     pub redirected: bool,
 }
 
@@ -169,8 +169,11 @@ pub(super) async fn send(
         let req = request(&mut o, mode == Redirect::Follow);
         let response = client.request(req).await.map_err(|e| failed(&e))?;
         let status = response.status();
-        let location = response.headers().get(header::LOCATION);
-        if !status.is_redirection() || mode == Redirect::Manual || location.is_none() {
+        // Only a redirect's `location` is looked up.
+        let location = (status.is_redirection() && mode != Redirect::Manual)
+            .then(|| response.headers().get(header::LOCATION))
+            .flatten();
+        if location.is_none() {
             return Ok(Received {
                 response,
                 url: o.url.href,

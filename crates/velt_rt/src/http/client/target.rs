@@ -10,13 +10,14 @@
 
 use super::send::invalid;
 use crate::result::{code, VeltErr};
+use bytes::Bytes;
 use hyper::Uri;
 use url::Url;
 
 /// A request URL: `http:` or `https:`, without a fragment.
 pub(super) struct Target {
-    /// The WHATWG serialization.
-    pub href: String,
+    /// The WHATWG serialization (UTF-8; ASCII in fact). The URI's parts share its buffer.
+    pub href: Bytes,
     /// The same URL for hyper.
     pub uri: Uri,
 }
@@ -44,21 +45,31 @@ impl Target {
     }
 
     fn with_href(href: String) -> Result<Target, VeltErr> {
-        let uri = href
-            .parse()
-            .map_err(|_| invalid(&format!("Invalid URL {href:?}")))?;
+        let href = Bytes::from(href);
+        let uri = Uri::from_maybe_shared(href.clone())
+            .map_err(|_| invalid(&format!("Invalid URL {:?}", String::from_utf8_lossy(&href))))?;
         Ok(Target { href, uri })
+    }
+
+    /// The WHATWG serialization.
+    pub fn href(&self) -> &str {
+        as_text(&self.href)
     }
 
     /// The URL parsed, for resolving a redirect's `location` against it and comparing origins
     /// (only a redirect needs it).
     pub fn url(&self) -> Result<Url, VeltErr> {
-        Url::parse(&self.href).map_err(|_| invalid(&format!("Invalid URL {:?}", self.href)))
+        Url::parse(self.href()).map_err(|_| invalid(&format!("Invalid URL {:?}", self.href())))
     }
 
     pub fn is_https(&self) -> bool {
         self.uri.scheme_str() == Some("https")
     }
+}
+
+/// A URL's text: [`Target::href`] and the `url` of a response, both made from a `String`.
+pub(super) fn as_text(href: &Bytes) -> &str {
+    std::str::from_utf8(href).expect("ICE: a URL is made from a String")
 }
 
 /// Whether `url` is an `http:` or `https:` URL that WHATWG URL parsing serializes to exactly
@@ -322,11 +333,11 @@ mod tests {
     #[test]
     fn parses_into_href_and_uri() {
         let t = Target::parse("http://127.0.0.1:9/x?y").unwrap();
-        assert_eq!(t.href, "http://127.0.0.1:9/x?y");
+        assert_eq!(t.href(), "http://127.0.0.1:9/x?y");
         assert_eq!(t.uri.path_and_query().map(|p| p.as_str()), Some("/x?y"));
         assert!(!t.is_https());
         let t = Target::parse("HTTPS://Example.COM:443/a/../b#f").unwrap();
-        assert_eq!(t.href, "https://example.com/b");
+        assert_eq!(t.href(), "https://example.com/b");
         assert!(t.is_https());
         assert!(Target::parse("ftp://x/").is_err());
         assert!(Target::parse("http://").is_err());

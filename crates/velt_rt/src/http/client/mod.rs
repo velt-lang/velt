@@ -28,7 +28,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use futures_util::future::Either;
-use hyper::header::{HeaderMap, CONTENT_ENCODING, CONTENT_LENGTH};
+use hyper::header::{HeaderMap, CONTENT_ENCODING};
 use hyper::Method;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -61,10 +61,9 @@ pub struct FetchResp {
     status: u16,
     /// Usually the standard phrase, which needs no allocation.
     status_text: std::borrow::Cow<'static, str>,
-    url: String,
+    /// The WHATWG serialization.
+    url: Bytes,
     redirected: bool,
-    /// The `content-length`, if the server sent one.
-    len: Option<u64>,
     /// Taken by the first `velt_rt_http_fetch_resp_headers`.
     headers: Mutex<HeaderMap>,
     /// Taken by a body read (`text()`, `bytes()` until the end; a chunk read until it returns).
@@ -139,11 +138,6 @@ async fn run(
         .map(|p| lossy(p.as_bytes()).into_owned().into())
         .or_else(|| parts.status.canonical_reason().map(Into::into))
         .unwrap_or_default();
-    let len = parts
-        .headers
-        .get(CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok());
     // A response without a body has nothing to decode, whatever it says (undici too).
     let bodiless = head || matches!(parts.status.as_u16(), 101 | 204 | 205 | 304);
     let encoding = (!bodiless)
@@ -157,7 +151,6 @@ async fn run(
         rest: Bytes::new(),
     };
     Ok(FetchResp {
-        len,
         status: parts.status.as_u16(),
         status_text,
         url: r.url,
@@ -243,7 +236,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_status_text(
 /// `out` receives an owned string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_fetch_resp_url(r: FetchRespHandle, out: *mut VeltStr) {
-    out.write(VeltStr::from_text(&obj(r).url));
+    out.write(VeltStr::from_text(target::as_text(&obj(r).url)));
 }
 
 /// Whether a redirect led to the response.
@@ -300,7 +293,7 @@ async fn receive(r: Arc<FetchResp>) -> Result<body::Whole, VeltErr> {
             "Body is unusable: Body has already been read",
         ));
     };
-    abortable(r.signal.as_deref(), reader.read_all(r.len)).await
+    abortable(r.signal.as_deref(), reader.read_all()).await
 }
 
 /// `await res.text()` → result slot `IoResult<VeltStr>`: the body as UTF-8, invalid bytes
