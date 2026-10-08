@@ -1,5 +1,3 @@
-js_array_and_promise_idioms.vlt:17:3: error: the length of an array cannot be assigned
-  = note: to shorten it, write `xs.truncate(n)`
 js_array_and_promise_idioms.vlt:18:9: error: variable `sorted` cannot have type `void`
   = note: `sort` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.sort();` on its own line, then use `xs`; for a sorted copy that leaves the array unchanged, call `toSorted`; a chained call such as `.sort().join()` works as in TypeScript
 js_array_and_promise_idioms.vlt:19:9: error: variable `copy` cannot have type `void`
