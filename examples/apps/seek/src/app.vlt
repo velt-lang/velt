@@ -92,8 +92,9 @@ async function search(
 }
 
 /// Runs seek with `argv` (without the program name): output goes to `write`, messages to
-/// `writeErr` (one line each). `noColor` is whether `--color auto` means no colour (NO_COLOR set, or stdout not a terminal). Returns the exit code: 0 found,
-/// 1 nothing found, 2 usage error.
+/// `writeErr` (one line each). `noColor` is whether `--color auto` means no colour (NO_COLOR
+/// set, or stdout not a terminal). Returns the exit code: 0 found, 1 nothing found, 2 usage
+/// error.
 export async function execute(
   argv: string[],
   noColor: bool,

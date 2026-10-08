@@ -23,20 +23,6 @@ fn with_stdout<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
 /// Write buffered stdout to the host.
 pub fn flush_stdout() {
-    /// `isatty(fd)` (std/process): 1 if a standard stream is a terminal (WASI hosts may say so; in
-    /// the browser nothing is), 0 for any other descriptor.
-    #[no_mangle]
-    pub extern "C" fn velt_rt_isatty(fd: i32) -> u8 {
-        use std::io::IsTerminal;
-        let tty = match fd {
-            0 => std::io::stdin().is_terminal(),
-            1 => std::io::stdout().is_terminal(),
-            2 => std::io::stderr().is_terminal(),
-            _ => false,
-        };
-        tty as u8
-    }
-
     #[cfg(test)]
     if capture::active() {
         return;
@@ -153,6 +139,20 @@ pub(crate) mod capture {
         let out = CAP.with(|c| c.borrow_mut().take()).unwrap();
         String::from_utf8(out).unwrap()
     }
+}
+
+/// `isatty(fd)` (std/process): 1 if a standard stream is a terminal (WASI hosts may say so; in
+/// the browser nothing is), 0 for any other descriptor.
+#[no_mangle]
+pub extern "C" fn velt_rt_isatty(fd: i32) -> u8 {
+    use std::io::IsTerminal;
+    let tty = match fd {
+        0 => std::io::stdin().is_terminal(),
+        1 => std::io::stdout().is_terminal(),
+        2 => std::io::stderr().is_terminal(),
+        _ => false,
+    };
+    tty as u8
 }
 
 #[cfg(test)]
