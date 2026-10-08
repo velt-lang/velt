@@ -20,6 +20,12 @@ import, as in Node:
   first (`const argv = process.argv`).
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
 
+`process` is a global, and `velt:process` exports it too: `import { process } from
+"velt:process"` names the same builtin, for code that imports it explicitly as Node code does
+(`import process from "node:process"`; Velt has named exports only, so the import takes braces).
+The builtin is known by its name, so it can't be imported under another one
+(`import { process as p }` is an error).
+
 `import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and
 changing variables, the working directory and byte writes.
 
