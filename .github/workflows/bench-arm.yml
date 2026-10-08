@@ -16,6 +16,9 @@
 name: bench-arm
 
 on:
+  # TEMPORARY: a test run on the pull request (removed before merging).
+  pull_request:
+    paths: [.github/workflows/bench-arm.yml]
   workflow_dispatch:
     inputs:
       suite:
@@ -38,13 +41,13 @@ permissions:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
-  SUITE: ${{ inputs.suite || 'jsx' }}
-  REF: ${{ inputs.ref || 'main' }}
-  BASE_REF: ${{ inputs.base || '' }}
+  SUITE: ${{ inputs.suite || 'both' }}
+  REF: ${{ inputs.ref || 'bench-web-tsx' }}
+  BASE_REF: ${{ inputs.base || 'main' }}
 
 jobs:
   jsx:
-    if: (inputs.suite || 'jsx') != 'web'
+    if: (inputs.suite || 'both') != 'web'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -164,7 +167,7 @@ jobs:
           if-no-files-found: ignore
 
   web:
-    if: (inputs.suite || 'jsx') != 'jsx'
+    if: (inputs.suite || 'both') != 'jsx'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     # The bench/web/db settings (db.sh) are applied after seeding, with a restart: a service
