@@ -90,7 +90,7 @@ pub(crate) fn lookup_method(cx: &mut Ctx, d: DefId, args: &[TyId], name: &str) -
             let Some(def) = im.default else {
                 continue;
             };
-            let iface_args = b.args.iter().map(|t| cx.ty.subst(*t, &args)).collect();
+            let iface_args = b.args.iter().map(|t| cx.subst(*t, &args)).collect();
             let implementor = cx.ty.intern(TyKind::Adt(d, args.clone()));
             return Some(Found::Default {
                 def,
@@ -100,7 +100,7 @@ pub(crate) fn lookup_method(cx: &mut Ctx, d: DefId, args: &[TyId], name: &str) -
             });
         }
         let Some(base) = base else { break };
-        let base = cx.ty.subst(base, &args);
+        let base = cx.subst(base, &args);
         let Some(next) = cx.class_of(base) else { break };
         (d, args) = next;
     }

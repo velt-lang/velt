@@ -416,7 +416,7 @@ impl FnCx<'_, '_> {
             }
             let parents = self.cx.iface(d)?.parents.clone();
             let p = parents.into_iter().find(|p| p.iface == iterator)?;
-            return Some(p.args.iter().map(|a| self.cx.ty.subst(*a, &args)).collect());
+            return Some(p.args.iter().map(|a| self.cx.subst(*a, &args)).collect());
         }
         self.cx.impl_args(t, iterator)
     }

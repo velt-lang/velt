@@ -1,4 +1,15 @@
-// Global (loaded when a module names one of these): Node's `fetch` API and the cancellation it
-// takes (docs/std/fetch.md, docs/std/task.md).
-export { fetch, Headers, Request, Response } from "velt:fetch";
+// Global (loaded when a module names one of these): Node's `fetch` API, the types its signatures
+// use (TypeScript's DOM lib has them as globals too), and the cancellation it takes
+// (docs/std/fetch.md, docs/std/task.md).
+export {
+  fetch,
+  Headers,
+  Request,
+  Response,
+  RequestInit,
+  ResponseInit,
+  HeadersInit,
+  BodyInit,
+  RequestRedirect,
+} from "velt:fetch";
 export { AbortController, AbortSignal } from "velt:task";

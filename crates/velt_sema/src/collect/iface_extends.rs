@@ -71,7 +71,7 @@ fn iface_mut<'a, 'm>(cx: &'a mut Ctx<'m>, d: DefId) -> &'a mut crate::defs::Ifac
 fn subst_bound(cx: &mut Ctx, b: &Bound, args: &[TyId]) -> Bound {
     Bound {
         iface: b.iface,
-        args: b.args.iter().map(|t| cx.ty.subst(*t, args)).collect(),
+        args: b.args.iter().map(|t| cx.subst(*t, args)).collect(),
     }
 }
 
@@ -84,7 +84,7 @@ fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound) {
         parent.name.clone(),
     );
     for mut f in pfields {
-        f.ty = cx.ty.subst(f.ty, &p.args);
+        f.ty = cx.subst(f.ty, &p.args);
         inherit_field(cx, d, f, &pname);
     }
     let n = cx.iface(d).expect("ICE: iface").generics.len() as u32;
@@ -128,11 +128,11 @@ fn inherit_method(cx: &mut Ctx, d: DefId, m: IfaceMethod, args: &[TyId], pname: 
         .iter()
         .map(|q| {
             let mut q = q.clone();
-            q.ty = cx.ty.subst(q.ty, args);
+            q.ty = cx.subst(q.ty, args);
             q
         })
         .collect();
-    let ret = cx.ty.subst(m.ret, args);
+    let ret = cx.subst(m.ret, args);
     let existing = cx
         .iface(d)
         .expect("ICE: iface")
@@ -167,7 +167,7 @@ fn inherit_method(cx: &mut Ctx, d: DefId, m: IfaceMethod, args: &[TyId], pname: 
         .map(|def| forwarder(cx, d, &m, def, args, &params, ret));
     // A `throws` clause mentioning the parent's parameters, in `d`'s terms.
     let throws = m.throws.map(|t| crate::defs::DeclaredThrows {
-        ty: t.ty.map(|e| cx.ty.subst(e, args)),
+        ty: t.ty.map(|e| cx.subst(e, args)),
         ..t
     });
     iface_mut(cx, d).methods.push(IfaceMethod {

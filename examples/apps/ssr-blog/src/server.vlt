@@ -1,0 +1,32 @@
+// The HTTP side: every page is streamed (`renderToStream`), so the browser gets the layout and
+// the post before the comments have loaded.
+
+import { serve, Server } from "velt:http";
+import { BodyStream } from "velt:fetch";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { utf8Encode } from "velt:encoding";
+import { renderToStream } from "velt:jsx";
+import { render, route, Route } from "./pages";
+
+// The doctype, then the page as it renders.
+async function* page(r: Route): AsyncGenerator<u8[], IoError | AbortError> {
+  yield utf8Encode("<!DOCTYPE html>");
+  for await (const chunk of renderToStream(render(r))) {
+    yield chunk;
+  }
+}
+
+async function handle(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const r = route(url.pathname, url.search.slice(1));
+  return new Response(BodyStream.from(page(r)), {
+    status: r.status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/** Serves the blog on `port` (0 = any free port). */
+export async function startServer(port: i64): Promise<Server> {
+  return await serve({ port }, handle);
+}

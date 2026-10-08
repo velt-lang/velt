@@ -93,6 +93,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 default: None,
                 optional: f.optional,
                 private: false,
+                presence: false,
             })
             .collect(),
         methods: i
@@ -160,7 +161,7 @@ fn field_defaults(
     if let Some((bd, bargs)) = base.and_then(|b| cx.class_of(b)) {
         for mut e in field_defaults(cx, bd, memo).into_iter().take(start) {
             if let Some(e) = &mut e {
-                crate::visit::map_expr_types(e, &mut |t| cx.ty.subst(t, &bargs));
+                crate::visit::map_expr_types(e, &mut |t| cx.subst(t, &bargs));
             }
             out.push(e);
         }
@@ -195,6 +196,7 @@ fn adt_def(
             default,
             optional: f.optional,
             private: f.private_to.is_some(),
+            presence: crate::anon::has_presence(&cx.ty, a.kind, f),
         })
         .collect();
     let (name, kind, base, ctor, vtable, span) = (

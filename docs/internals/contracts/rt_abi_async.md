@@ -301,8 +301,14 @@ Arguments are copied at the call (the caller keeps ownership). Paths are UTF-8 s
 arguments are strings (`VeltStr`).
 
 ```c
-typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir; } VeltStat; // 24 bytes
+typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir;
+                 uint8_t is_symlink; } VeltStat;                 // 24 bytes; is_symlink: lstat only
+typedef struct { VeltStrArray names; VeltBytes kinds; } VeltDirents;  // 48 bytes [additive, #692]
 ```
+
+`VeltDirents` holds the sorted names and, at the same index, each entry's kind: 0 other (FIFO,
+socket, device), 1 file, 2 directory, 3 symlink (not followed). The kind comes with the listing
+(`d_type`, or Windows' find data); only an entry of unknown type costs an `lstat`.
 
 | Async (`-> VeltFut*`) | Sync (`..., out)`, returns nothing) | Result type |
 |---|---|---|
@@ -311,16 +317,20 @@ typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir
 | `velt_rt_fs_write_file(path, data)` | `velt_rt_fs_write_file_sync(path, data, out)` | `IoResult<()>` (= `VeltErr`) |
 | `velt_rt_fs_append_file(path, data)` | `velt_rt_fs_append_file_sync(path, data, out)` | `IoResult<()>`; creates the file |
 | `velt_rt_fs_read_dir(path)` | `velt_rt_fs_read_dir_sync(path, out)` | `IoResult<VeltStrArray>` names, sorted |
+| `velt_rt_fs_read_dir_typed(path)` | `velt_rt_fs_read_dir_typed_sync(path, out)` | `IoResult<VeltDirents>` [additive, #692] |
 | `velt_rt_fs_stat(path)` | `velt_rt_fs_stat_sync(path, out)` | `IoResult<VeltStat>` (follows symlinks) |
+| `velt_rt_fs_lstat(path)` | `velt_rt_fs_lstat_sync(path, out)` | `IoResult<VeltStat>` (a symlink itself) [additive, #691] |
+| `velt_rt_fs_readlink(path)` | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink [additive, #691] |
+| `velt_rt_fs_symlink(target, path)` | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) [additive, #691] |
 | `velt_rt_fs_mkdir(path, u8 recursive)` | `velt_rt_fs_mkdir_sync(path, recursive, out)` | `IoResult<()>` |
-| `velt_rt_fs_remove(path, u8 recursive)` | `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink, empty dir, or tree if recursive |
+| `velt_rt_fs_remove(path, u8 recursive)` | `velt_rt_fs_remove_sync(path, recursive, out)` | `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename(from, to)` | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file(from, to)` | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_exists(path)` | `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
 blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
-` -> '<to>'` for `rename`/`copyfile`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
+` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
 `fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form. A failed
 read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
 read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
@@ -450,6 +460,7 @@ network access`), and the accessors of a fetched response are unreachable (fatal
 | `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
 | `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
 | `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
+| `velt_rt_isatty` | `(i32 fd) -> u8` | 1 if `fd` is a terminal (Node's `tty.isatty`); cached for 0, 1, 2; on Windows other numbers are 0 [additive, #693] |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
@@ -1002,7 +1013,8 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned copy of `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged |
+| `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged. Without any of them, `s` itself (as `velt_rt_str_own`: shared, no copy) |
+| `velt_rt_jsx_escape` | `(const VeltStr* s, VeltStr* out)` | as `velt_rt_html_escape`, but `'` → `&#x27;` (react-dom's; `std/jsx`) |
 
 Stable hash (`velt:hash`, additive):
 

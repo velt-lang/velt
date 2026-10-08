@@ -49,7 +49,9 @@ compiler cannot match is a compile error, never a silent difference. Known gaps 
 the end.
 
 ## Required exports of `<source>/jsx-runtime`
-Types (any declaration kind that `import * as JSX` can name):
+Types (any declaration kind that `import * as JSX` can name). `number` in the unions below is
+TypeScript's; a Velt provider spells it with Velt's number types, usually `i64 | f64` (std/jsx's
+`Child` is `Element | Element[] | string | i64 | f64 | bool | null`).
 
 | Export | Meaning |
 |---|---|
@@ -117,6 +119,17 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   one of them is an arrow function). Children go into the
   children field: one child → the child itself, several → an array, each checked against the
   field's type; children with no children field in `P` are an error.
+- **Void elements:** a provider that writes some tags without an end tag declares them, as a
+  string constant of space-separated tags (an error otherwise):
+
+  ```ts
+  export const jsxVoidElements = "area base br col embed hr img input link meta source track wbr";
+  ```
+  Children of those tags are then a compile error ("<br> is a void element and cannot have
+  children"); `{}` and `{/* */}` are no children, and an explicit end tag (`<br></br>`) is
+  allowed. Precompiled templates write these tags without an end tag. `std/jsx` and
+  `std/jsx/generic` export HTML's list. Without the export, any tag may have children (an XML or
+  terminal provider's `<link>`), and templates leave out the end tag of HTML's void elements.
 - **Children:** text (after JSX whitespace rules and entity decoding) becomes a `string` child;
   `{expr}` is coerced to `Child`; `{...xs}` passes `xs` as one child; `{/* */}` and `{}` vanish.
   What `true`, `false` and `null` children render is the provider's choice: nothing (`std/jsx`,
@@ -142,17 +155,39 @@ shape of Deno's precompile transform, with text folded into the strings):
 - a dynamic child whose type is assignable to `Text` and every dynamic attribute are folded into
   the surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` ``
   (template literals build in place, rt_abi_async.md §12.1, so a row costs what a hand-written
-  template costs);
+  template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}` without
+  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings;
 - every other dynamic part becomes an `Element` slot: components (`jsxComponent(C, props, …)`/
   `jsxAsyncComponent`), fragments, `Element`-typed expressions as they are, and any other
   `Child` (arrays, unions containing `Element`) as `Fragment([v], null)`;
-- a subtree with no `Element` slot is `jsxTemplate([html], [])`.
+- a subtree with no `Element` slot is `jsxTemplate([html], [])`, or `jsxTemplateString(html)`
+  when the runtime also exports
+
+  ```ts
+  function jsxTemplateString(html: string): Element;                 // optional: no slots, no arrays
+  ```
+  which saves the two arrays per call.
+- **Lists:** when the runtime also exports
+
+  ```ts
+  function jsxList(items: string[]): string;                         // optional: a list's rows
+  ```
+  and no `jsxTextSeparator`, a child `{xs.map((x) => <tr>…</tr>)}` (an array's `map` with an
+  arrow whose body is one intrinsic element, with no declared return type, spread or `key`) whose
+  row is a subtree without slots is written into the surrounding string as
+  `` ${jsxList(xs.map((x) => `<tr>…</tr>`))} ``: the rows are strings, not elements. `std/jsx`
+  joins them; a provider may add its own list markup. Any other list is a slot as before. The
+  source does not change, and nor does its type: the arrow is the compiler's.
 - Output is HTML: void elements (`area base br col embed hr img input link meta source track
-  wbr`) have no closing tag; any other self-closing element is written `<x></x>`.
+  wbr`, or the provider's `jsxVoidElements` when it exports them) have no closing tag; any
+  other self-closing element is written `<x></x>`.
 - An element with an attribute spread or a `key` is not precompiled (it goes through `jsx`);
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
   `lang/jsx_precompile_equals_generic` checks `std/jsx`).
+- The optional exports below (`jsxTextSeparator`, `jsxSoleEmpty`) are read only for the
+  precompile lowering: a provider without the four exports above may export them, and they are
+  ignored (not even checked).
 
 ### Text separator (optional export)
 The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
@@ -198,13 +233,40 @@ and dynamic `Text` children, in any combination (`<p>Count: {n}</p>` →
 The golden `lang/jsx_text_separator` renders the cases above through a provider in both
 lowerings.
 
+### Sole child (optional export)
+A runtime that receives one child as itself and several as an array may render a `true`,
+`false` or `null` child differently when it is its element's only child. sigx renders
+`<p>{x}</p>` with `x = null` as `<p></p>`, but `<p>{x}a</p>` as `<p><!---->a</p>`. The generic
+lowering passes every child, so the provider sees how many there are. `jsxEscape` and
+`Fragment` see only the value, so a precompiling provider declares what such a sole child
+renders as instead:
+
+```ts
+export const jsxSoleEmpty = "";   // a string constant (an error otherwise)
+```
+The compiler then writes it in place of a `{expr}` or `{...expr}` child that is the only child
+of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `false` or `null`:
+- A child whose type is only `boolean` or `null` is the export's string at compile time
+  (`<p>{false}</p>` → `"<p></p>"`); any other expression is still evaluated.
+- A text child whose type mixes them with text (`string | null`) is tested at run time, with the
+  value read once: `jsxEscape(v)` when it is text, the export's string otherwise.
+- A slot child whose type has a `null` or boolean member (`JSX.Element | null`) is the slot
+  `Fragment([v], null)` when it is something else, and `jsxTemplate([sole], [])` when it is not.
+- Static text, elements, components and arrays are rendered as without the export, and so is a
+  child that has siblings.
+
+Without the export nothing changes, and the generic lowering ignores it. The golden
+`lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
+
 ## Escaping (all providers that render HTML)
-- Text: `&` `<` `>` → `&amp;` `&lt;` `&gt;`; attribute values additionally `"` → `&quot;` and
-  `'` → `&#39;`. `std/html` `escapeHtml` implements this set.
+- Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
+  provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
+  `escapeHtml`.
 - `true` attributes render as the bare name, `false`/`null` attributes are omitted.
-- The precompile lowering escapes static text and attribute values at compile time with exactly
-  `escapeHtml`'s five replacements (also `"` and `'` in text), so a runtime that escapes with
-  `escapeHtml` renders byte-identically.
+- The precompile lowering escapes static text and attribute values at compile time with the four
+  replacements every provider shares; static text or an attribute value that contains a `'` is
+  passed to `jsxEscape`/`jsxAttr` at run time instead (as one text part: no separator inside
+  it), so the provider's own apostrophe appears in both lowerings.
 - Raw HTML only through an explicit provider API (`std/jsx` `raw(html)`), never by default.
 
 ## `std/jsx` specifics

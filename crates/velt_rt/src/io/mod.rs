@@ -7,6 +7,7 @@
 
 pub mod stats;
 mod stdout;
+pub mod tty;
 
 use crate::bytes::VeltBytes;
 use crate::fmt;

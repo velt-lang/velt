@@ -1,0 +1,46 @@
+// `?` in an object type is part of the type (#350, review #395 P2): an absent optional field is
+// left out by JSON.stringify and console.log, a spread doesn't copy it over an earlier value,
+// `Partial` sets it and `Required` clears only it (a written `| null` stays), as in TypeScript.
+type U = { a: string; b?: string; c: string | null; d?: string | null };
+type User = { id: i64; name: string; email?: string };
+
+class K {
+  a: string = "k";
+  b?: string;
+}
+
+function update(u: User, patch: Partial<User>): User {
+  return { ...u, ...patch };
+}
+
+function main() {
+  const u: U = { a: "x", c: null };
+  console.log(JSON.stringify(u), u);
+  // A class shows its optional field (Node: `b: undefined`); JSON leaves it out.
+  console.log(JSON.stringify(new K()));
+
+  const r: Required<U> = { a: "a", b: "b", c: null, d: null };
+  console.log(r);
+  const p: Partial<U> = { a: "z" };
+  console.log(p, JSON.stringify(p));
+  const pk: Pick<U, "b" | "c"> = { c: "c" };
+  const o: Omit<U, "a" | "c"> = {};
+  console.log(pk, o, Object.keys(pk));
+
+  const user: User = { id: 1, name: "a", email: "e@x" };
+  console.log(JSON.stringify(update(user, {})));
+  console.log(JSON.stringify(update(user, { name: "b" })));
+  console.log(JSON.stringify(update(user, { email: "f@x" })));
+  const q: Partial<User> = { name: "c" };
+  const copied = { ...q };
+  console.log(JSON.stringify(copied), copied);
+  const over = { name: "dflt", ...q };
+  const empty: Partial<User> = {};
+  const kept = { name: "dflt", ...empty };
+  console.log(over.name, kept.name);
+
+  // `{ a?: string }` is not `{ a: string | null }`: a copy converts.
+  const v: { a?: string } = { a: "s" };
+  const w: { a: string | null } = { ...v };
+  console.log(w.a);
+}

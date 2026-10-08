@@ -1,0 +1,166 @@
+// The directory walk: several tasks read directories in parallel, skipping hidden entries and
+// .gitignore'd paths, and send every file to search down a channel.
+import { channel, Channel, ChannelClosed } from "velt:channel";
+import { Dirent, existsSync, readDirEntriesSync, readFileSync, Stats, statSync } from "velt:fs";
+import { isIgnored, parseIgnore, Rule, RuleCache } from "./ignore";
+import { Options } from "./options";
+
+/// A file to search.
+export type FileJob = {
+  path: string; // as printed: the root joined with the relative path
+  size: i64;
+};
+
+/// What the walk saw.
+export type WalkStats = {
+  files: i64;
+  dirs: i64;
+  skipped: i64; // too large, or unreadable
+};
+
+type Pending = {
+  dir: string; // path to read
+  rel: string; // relative to the root ("" for the root)
+  depth: i64;
+  rules: Rule[]; // .gitignore rules in effect here (regex sources, not RegExps: #690)
+};
+
+function joinPath(a: string, b: string): string {
+  if (a === "" || a === ".") {
+    return b;
+  }
+  return a.endsWith("/") ? `${a}${b}` : `${a}/${b}`;
+}
+
+function extensionOk(name: string, types: string[]): bool {
+  if (types.length === 0) {
+    return true;
+  }
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) {
+    return false;
+  }
+  const ext = name.slice(dot + 1);
+  return types.includes(ext);
+}
+
+function alwaysSkip(name: string): bool {
+  return name === ".git" || name === ".hg" || name === ".svn";
+}
+
+/// Walks every root with `opts.threads` tasks sharing one queue of directories, sending files to
+/// `out`; closes `out` at the end.
+export async function walk(opts: Options, out: Channel<FileJob>): Promise<WalkStats> {
+  const stats: WalkStats = { files: 0, dirs: 0, skipped: 0 };
+  const dirs = channel<Pending>();
+  const pending = shared(0); // directories queued or being read
+  for (const root of opts.roots) {
+    let st: Stats; // annotated: `let st;` assigned in `try` needs a type (#695)
+    try {
+      st = statSync(root);
+    } catch (e) {
+      console.error(`seek: ${root}: ${e.message}`);
+      stats.skipped++;
+      continue;
+    }
+    if (st.isFile()) {
+      stats.files++;
+      await out.send({ path: root, size: st.size as i64 });
+    } else if (st.isDirectory()) {
+      pending.add(1);
+      await dirs.send({ dir: root, rel: "", depth: 0, rules: [] });
+    }
+  }
+  if (pending.get() === 0) {
+    dirs.close();
+  }
+  const walkers: Promise<WalkStats, ChannelClosed>[] = [];
+  for (let i = 0; i < opts.threads; i++) {
+    walkers.push(spawn(walkDirs(opts, dirs, pending, out)));
+  }
+  for (const w of await Promise.all(walkers)) {
+    stats.files += w.files;
+    stats.dirs += w.dirs;
+    stats.skipped += w.skipped;
+  }
+  out.close();
+  return stats;
+}
+
+/// One walker: reads directories from `dirs`, queues their subdirectories, sends their files.
+/// The walker that finishes the last pending directory closes `dirs`, which ends the others.
+async function walkDirs(
+  opts: Options,
+  dirs: Channel<Pending>,
+  pending: shared<i64>,
+  out: Channel<FileJob>,
+): Promise<WalkStats> {
+  const stats: WalkStats = { files: 0, dirs: 0, skipped: 0 };
+  const cache = new RuleCache();
+  for await (const p of dirs) {
+    stats.dirs++;
+    let rules = p.rules;
+    if (!opts.noIgnore) {
+      const gi = joinPath(p.dir, ".gitignore");
+      if (existsSync(gi)) {
+        try {
+          rules = [...p.rules, ...parseIgnore(p.rel, readFileSync(gi))];
+        } catch (e) {
+          // An unreadable .gitignore is ignored.
+        }
+      }
+    }
+    let entries: Dirent[] = [];
+    try {
+      entries = readDirEntriesSync(p.dir);
+    } catch (e) {
+      console.error(`seek: ${p.dir}: ${e.message}`);
+      stats.skipped++;
+    }
+    for (const e of entries) {
+      const name = e.name;
+      if (alwaysSkip(name) || (!opts.hidden && name.startsWith("."))) {
+        continue;
+      }
+      const path = joinPath(p.dir, name);
+      const rel = p.rel === "" ? name : `${p.rel}/${name}`;
+      // The listing has the type (#692): a stat only to follow a symlink, or for a file's size
+      // when searching (the size limit; --files needs none).
+      let isDir = e.isDirectory();
+      let isFile = e.isFile();
+      let size = 0;
+      if (e.isSymbolicLink() || (isFile && !opts.filesMode)) {
+        let entry: Stats;
+        try {
+          entry = statSync(path);
+        } catch (err) {
+          stats.skipped++; // a dangling symlink, or removed while walking
+          continue;
+        }
+        isDir = entry.isDirectory();
+        isFile = entry.isFile();
+        size = entry.size as i64;
+      }
+      if (isDir) {
+        if (p.depth < opts.maxDepth && !isIgnored(rules, cache, rel, true)) {
+          pending.add(1);
+          await dirs.send({ dir: path, rel, depth: p.depth + 1, rules });
+        }
+      } else if (isFile) {
+        if (!extensionOk(name, opts.types) || isIgnored(rules, cache, rel, false)) {
+          continue;
+        }
+        if (size > opts.maxFileSize) {
+          stats.skipped++;
+          continue;
+        }
+        stats.files++;
+        await out.send({ path, size });
+      }
+    }
+    if (pending.add(-1) === 0) {
+      dirs.close();
+    }
+  }
+  return stats;
+}

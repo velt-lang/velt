@@ -1,0 +1,58 @@
+// The fortunes page rendered N times (default 100 000) by one variant, named by the first
+// argument; prints the total length, so every variant's work is used. `check` fails unless the
+// variants render the same page. bench/jsx/run.sh runs each variant in its own process.
+//
+//   hand          template literals (bench/web's Velt server)
+//   precompiled   TSX through std/jsx's precompiled templates, rendered to a string
+//   generic       the same TSX through the generic lowering
+//   rows-strings  only the rows, as strings (hand)
+//   rows          only the rows, as TSX elements
+//   rows-render   the rows in a fragment, rendered to a string
+
+import { renderToStringSync } from "velt:jsx";
+import { args } from "velt:process";
+import { Fortune, fortunes, hand, handRows } from "./_data";
+import * as precompiled from "./_page";
+import * as generic from "./_page_generic";
+
+function once(variant: string, fs: Fortune[]): i64 {
+  switch (variant) {
+    case "hand":
+      return hand(fs).length;
+    case "precompiled":
+      return `<!DOCTYPE html>${renderToStringSync(precompiled.page(fs))}`.length;
+    case "generic":
+      return `<!DOCTYPE html>${renderToStringSync(generic.page(fs))}`.length;
+    case "rows-strings":
+      return handRows(fs).length;
+    case "rows":
+      return precompiled.rows(fs).length;
+    case "rows-render":
+      return renderToStringSync(precompiled.rowsFragment(fs)).length;
+  }
+  throw new Error(`unknown variant ${variant}`);
+}
+
+function main() {
+  const argv = args();
+  const variant = argv.length > 0 ? argv[0] : "check";
+  const n = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 100000;
+  const fs = fortunes();
+  if (variant == "check") {
+    const a = hand(fs);
+    const b = `<!DOCTYPE html>${renderToStringSync(precompiled.page(fs))}`;
+    const c = `<!DOCTYPE html>${renderToStringSync(generic.page(fs))}`;
+    // std/jsx writes `'` as react-dom does (`&#x27;`), `escapeHtml` as `&#39;`.
+    const same = a.replaceAll("&#39;", "&#x27;") == b;
+    console.log(`precompiled == generic: ${b == c}, == hand (apostrophes aside): ${same}`);
+    if (b != c || !same) {
+      throw new Error("the variants render different pages");
+    }
+    return;
+  }
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    total += once(variant, fs);
+  }
+  console.log(total);
+}

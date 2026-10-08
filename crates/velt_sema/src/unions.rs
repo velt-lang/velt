@@ -92,12 +92,7 @@ impl Ctx<'_> {
             .iter()
             .map(|v| v.payload[0])
             .collect();
-        Some(
-            payloads
-                .into_iter()
-                .map(|p| self.ty.subst(p, &args))
-                .collect(),
-        )
+        Some(payloads.into_iter().map(|p| self.subst(p, &args)).collect())
     }
 
     /// What JS `typeof` answers for a (non-null) value of type `t`: every number type is

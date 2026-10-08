@@ -1,0 +1,8 @@
+// `PORT=8080 velt run`, then open http://127.0.0.1:8080/.
+import { startServer } from "./server";
+
+async function main() {
+  const port = parseInt(process.env.PORT ?? "8080", 10) as i64;
+  const server = await startServer(port);
+  console.log(`listening on http://127.0.0.1:${server.port}/`);
+}

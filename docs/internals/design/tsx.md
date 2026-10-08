@@ -1,6 +1,10 @@
 # Design: TSX for server-side rendering
 
-Status: proposal; planned after semantics stage 2.
+Status: implemented, as described in [the reference](../../reference/tsx.md) and
+[the provider contract](../contracts/jsx.md); open: elements in the props of a component that
+takes ownership of them (after semantics stage 2), class components and `ref`. This note keeps
+the original design and its reasons; where it differs from the reference, the reference is
+right.
 
 TSX in Velt is for **server-side rendering** first: Velt renders HTML on the server and a client
 framework takes over (resumable SSR, streaming, islands). The first intended consumer is
@@ -66,7 +70,9 @@ Two lowerings, chosen by what the provider exports:
    SSR output (and emit its resumability and island markers from `jsx` at component
    boundaries). A provider whose client hydrates text nodes one by one exports
    `jsxTextSeparator` (sigx: `<!--t-->`), and the compiler writes it between adjacent text
-   parts of the template strings (contracts/jsx.md, "Text separator").
+   parts of the template strings (contracts/jsx.md, "Text separator"). One that renders a
+   `null` or boolean child differently when it is its element's only child exports
+   `jsxSoleEmpty` (sigx: `""`) for the compiler to write there (contracts/jsx.md, "Sole child").
 
 Types:
 

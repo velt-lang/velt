@@ -2,14 +2,18 @@
 // std/jsx/jsx-runtime export it).
 //
 // std/jsx renders eagerly: building an element renders it, so a tree without async components
-// is one string (`html`) by the time it is complete, and rendering it is a copy. Text and
-// attributes are escaped as they arrive, an intrinsic element or template appends its children's
-// markup to its own, and a fragment or `raw` node is its markup. Only an async component cannot
-// be rendered up front: its node holds the component's started promise, and every node above it
-// keeps its finished markup in `html` plus the rest, in order, in `rest.parts` (a component
-// that threw is kept the same way, as a node that fails when rendered). The renderer
-// (render.vlt) writes `html`, then awaits `rest.pending`, then renders `rest.parts`, so markup
-// before a pending component can be sent while it still loads.
+// is its markup by the time it is complete. Text and attributes are escaped as they arrive. A
+// complete node is either one string (`html`), or the strings and child nodes of a template
+// (`tree`: `strings[0] slots[0] strings[1] … strings[n]`): a template, fragment or element keeps the
+// arrays its children came in, as JSX moves them there, instead of copying their markup. The
+// markup is copied once, when the tree is rendered into one string or written into a response
+// (`markupOf`, `writeMarkup`).
+//
+// Only an async component cannot be rendered up front: its node holds the component's started
+// promise, and every node above it keeps its finished markup in `html` plus the rest, in order,
+// in `rest.parts` (a component that threw is kept the same way, as a node that fails when
+// rendered). The renderer (render.vlt) writes `html`, then awaits `rest.pending`, then renders
+// `rest.parts`, so markup before a pending component can be sent while it still loads.
 
 /**
  * An inline style object: CSS properties in camelCase (`fontSize`) or custom ones (`--accent`)
@@ -48,10 +52,16 @@ export class RenderError extends Error {
   }
 }
 
-/** A rendered or partly rendered JSX node (see the module comment). */
+/**
+ * A rendered or partly rendered JSX node (see the module comment). Its fields are std/jsx's
+ * internals (render.vlt and factory.vlt use them): read the markup with `renderToString`, as a
+ * template node keeps it in `tree` and its `html` is "".
+ */
 export class Element {
-  /** Markup rendered so far: everything when `rest` is null. */
+  /** Markup rendered so far: everything when `rest` is null. Unused ("") in a template node. */
   html: string;
+  /** A template node's strings and child nodes (null for a node of one string, almost all). */
+  tree: Tree | null = null;
   /** What follows `html` when the node contains an async component or a component that threw. */
   rest: Deferred | null = null;
 
@@ -59,7 +69,10 @@ export class Element {
     this.html = html;
   }
 
-  /** True when `html` is the whole node (no async or failed component inside). */
+  /**
+   * True when the node is rendered completely (no async or failed component inside): its
+   * markup is `html`, or `tree` in a template node.
+   */
   get isComplete(): bool {
     return this.rest == null;
   }
@@ -80,4 +93,84 @@ export class Deferred {
   parts: Element[] = [];
   /** Set instead when a sync component threw: rendering the node throws it. */
   failure: RenderError | null = null;
+}
+
+/**
+ * The strings and child nodes of a template node: `strings[0] slots[0] strings[1] …
+ * strings[n]` (internal: not re-exported). A separate object so that nodes of one string stay
+ * small.
+ */
+export class Tree {
+  /** The child nodes, all complete. */
+  slots: Element[];
+  /** The strings around `slots`, one more than them; null when all are "". */
+  strings: string[] | null;
+  /**
+   * Template nodes from here to the deepest leaf (1: the slots are strings): rendering recurses
+   * this deep, so `treeNode` flattens a node beyond `MAX_TREE_DEPTH`.
+   */
+  depth: i64;
+
+  constructor(slots: Element[], strings: string[] | null, depth: i64) {
+    this.slots = slots;
+    this.strings = strings;
+    this.depth = depth;
+  }
+}
+
+// Rendering recurses once per template node level, so deeper trees (an element wrapped in a
+// loop, thousands of times) are flattened as they are built instead of overflowing the stack.
+const MAX_TREE_DEPTH = 256;
+
+/**
+ * The complete node `strings[0] slots[0] strings[1] … strings[n]` (`strings` null: all ""),
+ * keeping both arrays; one string when it would be deeper than `MAX_TREE_DEPTH`.
+ */
+export function treeNode(slots: Element[], strings: string[] | null): Element {
+  let depth: i64 = 1;
+  for (const slot of slots) {
+    if (slot.tree != null && slot.tree.depth >= depth) {
+      depth = slot.tree.depth + 1;
+    }
+  }
+  const node = new Element("");
+  node.tree = new Tree(slots, strings, depth);
+  if (depth > MAX_TREE_DEPTH) {
+    return new Element(markupOf(node));
+  }
+  return node;
+}
+
+/** The markup of a complete node. */
+export function markupOf(node: Element): string {
+  if (node.tree == null) {
+    return node.html;
+  }
+  const pieces: string[] = [];
+  pushMarkup(node, pieces);
+  return pieces.join("");
+}
+
+/**
+ * Appends the markup of `node` (its `html`, or its template expanded; not `rest`) to `out`, as
+ * the strings it is made of. Recursive: a tree is no deeper than the calls that built it.
+ */
+export function pushMarkup(node: Element, out: string[]) {
+  if (node.tree == null) {
+    if (node.html != "") {
+      out.push(node.html);
+    }
+    return;
+  }
+  pushString(node.tree, 0, out);
+  for (let i: usize = 0; i < node.tree.slots.length; i++) {
+    pushMarkup(node.tree.slots[i], out);
+    pushString(node.tree, i + 1, out);
+  }
+}
+
+function pushString(tree: Tree, i: usize, out: string[]) {
+  if (tree.strings != null && tree.strings[i] != "") {
+    out.push(tree.strings[i]);
+  }
 }

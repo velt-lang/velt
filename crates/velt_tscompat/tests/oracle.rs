@@ -249,6 +249,27 @@ fn tsc_agrees_with_the_lint() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// The shared components of `examples/apps/ssr-blog` (#79) type-check with `tsc` against the
+/// app's own TypeScript JSX provider (its tsconfig.json), as its README claims.
+#[test]
+fn ssr_blog_example_type_checks_with_tsc() {
+    let oracle = oracle_dir();
+    let required = std::env::var_os("VELT_TSC_ORACLE").is_some_and(|v| v == "1");
+    if let Err(why) = node_ready(&oracle) {
+        assert!(!required, "VELT_TSC_ORACLE=1 but {why}");
+        eprintln!("skipped: {why} (tests/tscompat-oracle: `npm ci`)");
+        return;
+    }
+    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/apps/ssr-blog");
+    let diags = run_tsc(&oracle, &app);
+    let shown: Vec<String> = diags.iter().map(|d| d.to_string()).collect();
+    assert!(
+        shown.is_empty(),
+        "tsc rejects ssr-blog:\n{}",
+        shown.join("\n")
+    );
+}
+
 /// `Err(why)` when Node or the pinned `typescript` is missing.
 fn node_ready(oracle: &Path) -> Result<(), String> {
     match command("node").arg("--version").output() {

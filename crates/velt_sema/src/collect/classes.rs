@@ -261,11 +261,11 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
         .iter()
         .map(|p| {
             let mut p = p.clone();
-            p.ty = cx.ty.subst(p.ty, &iface_args);
+            p.ty = cx.subst(p.ty, &iface_args);
             p
         })
         .collect();
-    let ret = cx.ty.subst(m.ret, &iface_args);
+    let ret = cx.subst(m.ret, &iface_args);
     let mut targs = iface_args;
     targs.push(implementor);
     let qual = cx.adt(d)?.qual_name.clone();
@@ -316,8 +316,8 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     }
     let nd = cx.fn_info(m.def).generics.len() - own_m;
     args.extend((0..own_m as u32).map(|k| cx.ty.param(nd as u32 + k)));
-    let bp: Vec<TyId> = bp.into_iter().map(|t| cx.ty.subst(t, &args)).collect();
-    let br = cx.ty.subst(br, &args);
+    let bp: Vec<TyId> = bp.into_iter().map(|t| cx.subst(t, &args)).collect();
+    let br = cx.subst(br, &args);
     let message = format!(
         "method `{}` does not have the same signature as the base class method it overrides",
         name.name

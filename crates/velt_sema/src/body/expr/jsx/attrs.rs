@@ -173,7 +173,7 @@ impl FnCx<'_, '_> {
             .collect();
         let fields = fields
             .into_iter()
-            .map(|(n, t)| (n, self.cx.ty.subst(t, &args)))
+            .map(|(n, t)| (n, self.cx.subst(t, &args)))
             .collect();
         Some((d, fields))
     }

@@ -1,0 +1,12 @@
+// `isTTY` and `isatty(fd)` (std/process): the goldens capture stdout and stderr through pipes,
+// so neither is a terminal; descriptors that aren't open aren't either.
+import { stdout, stderr, isatty } from "velt:process";
+
+function main() {
+  console.log("stdout.isTTY:", stdout.isTTY, isatty(1));
+  console.log("stderr.isTTY:", stderr.isTTY, isatty(2));
+  console.log("asked again:", stdout.isTTY);
+  console.log("closed and negative:", isatty(9999), isatty(-1));
+  const color = stdout.isTTY && process.env.NO_COLOR == null;
+  console.log(color ? "\u001b[32mok\u001b[0m" : "ok");
+}

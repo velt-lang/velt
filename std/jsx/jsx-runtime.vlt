@@ -11,6 +11,9 @@ export {
   jsxComponent,
   jsxAsyncComponent,
   jsxTemplate,
+  jsxTemplateString,
+  jsxList,
   jsxEscape,
   jsxAttr,
 } from "velt:jsx/factory";
+export { jsxVoidElements } from "velt:jsx/void_elements";

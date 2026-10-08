@@ -126,12 +126,15 @@ console.log(text, m.cents); // {"cents":250} 250
   In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
   (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
   the byte offset still points at the exact place.
-- `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
-  (including `a?: T`) may be missing and is then `null`; every other field is required.
-  `JSON.stringify` omits an optional field (`a?: T`) of a class, object type or interface while
-  it is `null`, as JavaScript omits an absent property, and writes other `null`s (a
-  `b: T | null` field, a `null` array element). Velt has no `undefined`, so an optional field
-  assigned `null` is left out too, where JavaScript writes `"a":null`.
+- `JSON.parse<T>` lets a `T | null` field (including `a?: T`) be missing, and then it is `null`;
+  every other field is required. `JSON.stringify` omits an optional field (`a?: T`) of a class,
+  object type or interface while it is absent, as JavaScript omits a missing property, and
+  writes other `null`s (a `b: T | null` field, a `null` array element). An `a?: T` field
+  without `null` in its type is absent exactly when it is `null` (TypeScript doesn't let it hold
+  `null`). A field of an object type declared `a?: T | null` keeps the two apart, as JavaScript
+  does: `JSON.parse` records whether the key was there, and `JSON.stringify` writes a present
+  `null` (`"a":null`) and leaves out an absent field. In a class, such a field is still left out
+  while it is `null`.
 - `Value`:
   - navigation: `get(key)`, `at(i)`, both returning `Value | null`; `has(key)` (the key is
     present, even with a `null` value: absent vs explicit `null` is only visible here, as

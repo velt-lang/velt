@@ -1,5 +1,12 @@
-// std/jsx/void_elements: the HTML elements that have no end tag (docs/contracts/jsx.md: the
-// compiler writes precompiled templates with the same list, so both lowerings agree).
+// std/jsx/void_elements: the HTML elements that have no end tag
+// (docs/internals/contracts/jsx.md: the compiler writes precompiled templates with the same
+// list, so both lowerings agree).
+
+/**
+ * The provider export `jsxVoidElements` (docs/internals/contracts/jsx.md "Void elements"): the
+ * compiler rejects children of these tags and writes them without an end tag in templates.
+ */
+export const jsxVoidElements = "area base br col embed hr img input link meta source track wbr";
 
 /**
  * True for `area base br col embed hr img input link meta source track wbr`: written `<br>`,

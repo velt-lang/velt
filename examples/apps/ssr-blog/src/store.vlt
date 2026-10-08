@@ -1,0 +1,86 @@
+// The posts and their comments: an in-memory stand-in for a database, with a small delay on
+// every load so that the pages show async loading and streaming (comments are the slow query).
+
+import type { Comment, Post } from "./shared/model";
+
+function posts(): Post[] {
+  return [
+    {
+      slug: "hello-tsx",
+      title: "Hello, TSX on the server",
+      author: "Ada",
+      date: "2026-09-30",
+      tags: ["tsx", "velt"],
+      paragraphs: [
+        "This blog is rendered by Velt from TSX components: the same syntax a browser app uses, compiled to native code with the markup folded into constant strings.",
+        "Components are plain functions of their props. The server streams each page, so the top of it reaches the browser while the comments still load.",
+      ],
+    },
+    {
+      slug: "streaming",
+      title: "Streaming pages",
+      author: "Grace",
+      date: "2026-10-02",
+      tags: ["http", "tsx"],
+      paragraphs: [
+        "renderToStream writes the markup above a pending async component and flushes it, then waits for the component and writes the rest.",
+      ],
+    },
+    {
+      slug: "escaping",
+      title: "Escaping <script> tags",
+      author: "Linus",
+      date: "2026-10-05",
+      tags: ["security"],
+      paragraphs: [
+        "Text and attributes are escaped as they are rendered, so a title like <script>alert(1)</script> & co shows up as text.",
+      ],
+    },
+  ];
+}
+
+function comments(slug: string): Comment[] {
+  if (slug == "hello-tsx") {
+    return [
+      { author: "Grace", text: "Nice and fast." },
+      { author: "Linus", text: "Does it stream?" },
+      {
+        author: "Ada",
+        text: "It does: the comments you're reading came last, after a \"slow\" query.",
+      },
+    ];
+  }
+  if (slug == "escaping") {
+    return [{ author: "Mallory", text: "<img src=x onerror=alert(1)>" }];
+  }
+  return [];
+}
+
+/** The post with `slug`, or null (no delay: the status code depends on it). */
+export function findPost(slug: string): Post | null {
+  for (const p of posts()) {
+    if (p.slug == slug) {
+      return p;
+    }
+  }
+  return null;
+}
+
+/** The posts, newest first, only those tagged `tag` unless it is null. */
+export async function loadPosts(tag: string | null): Promise<Post[]> {
+  await sleep(5);
+  const out: Post[] = [];
+  for (const p of posts()) {
+    if (tag == null || p.tags.includes(tag)) {
+      out.push(p);
+    }
+  }
+  out.reverse();
+  return out;
+}
+
+/** The comments on the post `slug`, oldest first: the slow query. */
+export async function loadComments(slug: string): Promise<Comment[]> {
+  await sleep(30);
+  return comments(slug);
+}

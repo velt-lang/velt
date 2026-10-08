@@ -148,7 +148,8 @@ impl Cx<'_> {
             }
             TyKind::Result(..) => self.tagged_base(t, Ty::U8),
             TyKind::Adt(..) => {
-                let tys = self.adt_field_tys(t);
+                // Fields, then presence flags (`Cx::presence_slot`).
+                let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
                 self.new_agg(name, &tys)
             }

@@ -24,6 +24,8 @@ pub(super) enum TextPart {
     /// A value converted to `JSX.Text`, written with `jsxEscape`, and whether it may be the
     /// empty string.
     Value(hir::Expr, Textness, bool),
+    /// An `i64` or `f64`, written `${n}` (text, never empty).
+    Number(hir::Expr),
 }
 
 /// Is a child value text (rather than `true`, `false` or `null`, which are boundaries)?
@@ -38,7 +40,7 @@ pub(super) enum Textness {
 impl TextPart {
     fn textness(&self) -> Textness {
         match self {
-            TextPart::Static(_) => Textness::Always,
+            TextPart::Static(_) | TextPart::Number(_) => Textness::Always,
             TextPart::Value(_, x, _) => *x,
         }
     }
@@ -187,6 +189,10 @@ impl FnCx<'_, '_> {
                     let s = self.escape_call(p, pc, h, span);
                     self.add_part(t, s);
                 }
+                TextPart::Number(h) => {
+                    let s = self.number_text(h);
+                    self.add_part(t, s);
+                }
             }
         }
     }
@@ -218,18 +224,26 @@ impl FnCx<'_, '_> {
                         Textness::Never => None,
                         Textness::Maybe => Some(Some(self.is_text_test(&v, span))),
                     };
-                    (cur, Ok(v))
+                    (cur, Ok((v, false)))
+                }
+                TextPart::Number(h) => {
+                    let v = self.temp("text", h, &mut r.lets);
+                    (Some(None), Ok((v, true)))
                 }
             };
             self.separator_between(&mut r, prev.take(), &cur, sep, span);
             prev = cur;
             match value {
                 Err(s) => r.text.push_str(&s),
-                Ok(v) => {
+                Ok((v, number)) => {
                     self.flush_run_text(&mut r, span);
                     let vspan = v.span;
-                    let escaped = self.escape_call(p, pc, v, vspan);
-                    r.parts.push(escaped);
+                    let text = if number {
+                        self.number_text(v)
+                    } else {
+                        self.escape_call(p, pc, v, vspan)
+                    };
+                    r.parts.push(text);
                 }
             }
         }
@@ -283,7 +297,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `v` (a `JSX.Text` temporary) text: not `null` and not a boolean?
-    fn is_text_test(&mut self, v: &hir::Expr, span: Span) -> hir::Expr {
+    pub(super) fn is_text_test(&mut self, v: &hir::Expr, span: Span) -> hir::Expr {
         let mut alts = vec![];
         for (pat, ty) in self.member_patterns(v.ty, span) {
             if ty.is_some_and(|ty| self.cx.typeof_tag(ty) != "boolean") {

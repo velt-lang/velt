@@ -1,0 +1,53 @@
+import { Matcher } from "../src/matcher";
+
+const PLAIN = { fixed: false, ignoreCase: false, word: false };
+
+function lines(pattern: string, text: string): string[] {
+  const out: string[] = [];
+  for (const m of new Matcher(pattern, PLAIN).lines(text, 0)) {
+    out.push(`${m.line}:${m.text}`);
+  }
+  return out;
+}
+
+export function test_literal_lines_and_numbers() {
+  assertEq(lines("cat", "a cat\nno\nconcat\r\n\ncat"), ["1:a cat", "3:concat", "5:cat"]);
+  assertEq(lines("zzz", "a cat\n"), []);
+}
+
+export function test_several_matches_on_one_line_report_the_line_once() {
+  const found = new Matcher("ab", PLAIN).lines("ab ab ab\nx", 0);
+  assertEq(found.length, 1);
+  assertEq(found[0].spans.length, 3);
+  assertEq(found[0].spans[2].start, 6);
+}
+
+export function test_regex_and_flags() {
+  assertEq(lines("^fn \\w+", "fn main\n  fn nested\nfn x"), ["1:fn main", "3:fn x"]);
+  const ci = new Matcher("HELLO", { fixed: false, ignoreCase: true, word: false });
+  assertEq(ci.lines("hello\nHeLLo there\nbye", 0).length, 2);
+  const word = new Matcher("ok", { fixed: false, ignoreCase: false, word: true });
+  assertEq(word.lines("ok\nbroken\nis ok.", 0).length, 2);
+  const fixed = new Matcher("a.b(", { fixed: true, ignoreCase: false, word: false });
+  assertEq(fixed.lines("a.b(1)\naxb(", 0).length, 1);
+}
+
+export function test_matches_never_span_lines() {
+  assertEq(lines("x\\s+y", "x\ny\nx  y"), ["3:x  y"]);
+}
+
+export function test_empty_matches_and_the_final_newline() {
+  assertEq(lines("^", "a\nb\n"), ["1:a", "2:b"]);
+  assertEq(lines("^$", "a\n\nb\n"), ["2:"]);
+  assertEq(lines("^", ""), []);
+}
+
+export function test_unicode_positions() {
+  const found = new Matcher("é", PLAIN).lines("😀 café é\n", 0);
+  assertEq(found[0].spans.length, 2);
+  assertEq(found[0].text.slice(found[0].spans[0].start, found[0].spans[0].end), "é");
+}
+
+export function test_max_count() {
+  assertEq(new Matcher("a", PLAIN).lines("a\na\na\n", 2).length, 2);
+}

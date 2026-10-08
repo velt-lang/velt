@@ -19,7 +19,7 @@ use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId};
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Returns {
     values: Vec<Value>,
     /// `return null` (typed once the result is known).
@@ -28,6 +28,7 @@ pub(crate) struct Returns {
     bare: Vec<Span>,
 }
 
+#[derive(Clone)]
 struct Value {
     /// Widened type of the returned value (`"a"` → `string`).
     ty: TyId,
@@ -62,7 +63,7 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
         }
         RetSource::Base(base, args) => {
             let r = ret_of(cx, base, at);
-            let r = cx.ty.subst(r, &args);
+            let r = cx.subst(r, &args);
             let f = cx.fn_info_mut(d);
             f.ret = r;
             f.ret_source = RetSource::Known;
@@ -92,12 +93,12 @@ fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
 pub(crate) fn check_deferred(cx: &mut Ctx) {
     for c in std::mem::take(&mut cx.ret_checks) {
         let have = ret_of(cx, c.def, c.span);
-        let have = cx.ty.subst(have, &c.args);
+        let have = cx.subst(have, &c.args);
         let want = match c.want {
             RetWant::Ty(t) => t,
             RetWant::Of(base, args) => {
                 let r = ret_of(cx, base, c.span);
-                cx.ty.subst(r, &args)
+                cx.subst(r, &args)
             }
         };
         if have != want && !cx.ty.has_error(have) && !cx.ty.has_error(want) {

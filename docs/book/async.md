@@ -154,7 +154,8 @@ never leaves its task (it is only called, stored or returned, never spawned or s
 what it captured, as in JavaScript. Share state between tasks explicitly:
 
 - `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
-  same value. On 64-bit integers, `add`, `get` and `set` are atomic.
+  same value. On 64-bit integers, `add`, `get` and `set` are atomic, and `add(n)` returns the new
+  value, so `if (pending.add(-1) === 0)` tells the task that took the count to zero.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
   gets the value itself and may return a result (a copy of anything that is part of the value).
   `shared` takes `x` itself: after `shared(new Mutex(o))`, use `o` only through the `shared`

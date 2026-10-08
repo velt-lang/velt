@@ -108,12 +108,12 @@ pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -
         .flat_map(|f| f.default_throws.iter().cloned())
         .collect();
     own.iter()
-        .map(|s| s.used_at(span, |t| cx.ty.subst(t, args)))
+        .map(|s| s.used_at(span, |t| cx.subst(t, args)))
         .collect()
 }
 
 fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {
-    let t = t.map(|t| cx.ty.subst(t, targs));
+    let t = t.map(|t| cx.subst(t, targs));
     cx.canon_error(t)
 }
 

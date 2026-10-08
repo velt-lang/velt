@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind, FnSource, RetSource};
+use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::DefId;
 use crate::written_types::written_param;
 
@@ -64,6 +64,7 @@ pub(crate) struct Mark {
     jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
+    defs: usize,
     reported: usize,
     completed: usize,
     ide: Option<[usize; 4]>,
@@ -79,6 +80,7 @@ impl Mark {
             jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
+            defs: cx.defs.len(),
             reported: cx.rec.reported.len(),
             completed: cx.rec.completed.len(),
             ide: cx
@@ -92,7 +94,7 @@ impl Mark {
     /// meanwhile are left unreferenced), and the bodies checked meanwhile are checked again
     /// when next needed (keeping the return types they inferred unless those depended on a
     /// placeholder).
-    fn rollback(&self, cx: &mut Ctx) {
+    pub(crate) fn rollback(&self, cx: &mut Ctx) {
         cx.diags.truncate(self.diags);
         cx.throw_checks.truncate(self.throw_checks);
         cx.fresh_checks.truncate(self.fresh_checks);
@@ -113,6 +115,19 @@ impl Mark {
             f.state = BodyState::Unchecked;
             if inferred && error {
                 f.ret_source = RetSource::Body;
+            }
+        }
+    }
+
+    /// After `rollback`: keeps the closures created since the mark as functions, unreferenced.
+    /// Their bodies stay in `cx.defs`, where later passes (the move check) walk them, so they go
+    /// through ownership inference like any function. For a check that is undone and then done
+    /// again (`expr/jsx/list_fold.rs`).
+    pub(crate) fn keep_closures(&self, cx: &mut Ctx) {
+        for d in self.defs..cx.defs.len() {
+            let closure = matches!(&cx.info[d], DefInfo::Fn(f) if f.kind == FnKind::Closure);
+            if closure && cx.defs[d].is_some() {
+                cx.fn_defs.push(DefId(d as u32));
             }
         }
     }

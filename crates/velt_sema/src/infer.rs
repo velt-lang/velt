@@ -47,6 +47,15 @@ impl Ctx<'_> {
             (TyKind::Adt(..), _) if self.union_def(pat).is_some() => {
                 self.match_union_member(pat, actual, slots)
             }
+            (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) if self.same_anon_shape(d, d2) => {
+                // Two anonymous defs of one shape (`{ v: T0; n: i64 }` and `{ v: string; n: i64 }`,
+                // crate::anon): match field by field.
+                let pf: Vec<TyId> = self.anon_field_tys(d);
+                let af: Vec<TyId> = self.anon_field_tys(d2);
+                let pf: Vec<TyId> = pf.iter().map(|t| self.subst(*t, &ps)).collect();
+                let af: Vec<TyId> = af.iter().map(|t| self.subst(*t, &as_)).collect();
+                self.match_all(&pf, &af, slots)
+            }
             (TyKind::Adt(..), TyKind::Adt(..)) => match self.base_of(actual) {
                 Some(b) => self.match_ty(pat, b, slots),
                 None => false,
@@ -117,6 +126,25 @@ impl Ctx<'_> {
         }
         let mut members = self.union_members(pat).unwrap_or_default();
         members.sort_by_key(|m| matches!(self.ty.kind(*m), TyKind::Param(_)));
+        // A union against a union (`{ ok: true; v: T } | { ok: false; e: string }` against the
+        // same union at `T = i64`): every member of `actual` matches some member of `pat`.
+        if let Some(actual_members) = self.union_members(actual) {
+            let mut trial = slots.to_vec();
+            let all = actual_members.iter().all(|a| {
+                members.iter().any(|m| {
+                    let mut t = trial.clone();
+                    let ok = self.match_ty(*m, *a, &mut t);
+                    if ok {
+                        trial = t;
+                    }
+                    ok
+                })
+            });
+            if all {
+                slots.copy_from_slice(&trial);
+                return true;
+            }
+        }
         for m in members {
             let mut trial = slots.to_vec();
             if self.match_ty(m, actual, &mut trial) {
@@ -240,14 +268,14 @@ impl Ctx<'_> {
                 }
             }
         }
-        if !(self.match_ty(pat, t, &mut slots) && self.ty.subst_known(pat, &slots) == t) {
+        if !(self.match_ty(pat, t, &mut slots) && self.subst_known(pat, &slots) == t) {
             return None;
         }
         let args = slots
             .iter()
             .map(|s| s.unwrap_or(self.ty.error))
             .collect::<Vec<_>>();
-        let iargs = iargs.iter().map(|a| self.ty.subst(*a, &args)).collect();
+        let iargs = iargs.iter().map(|a| self.subst(*a, &args)).collect();
         Some((i, iargs, t))
     }
 
@@ -261,7 +289,7 @@ impl Ctx<'_> {
             .into_iter()
             .map(|p| Bound {
                 iface: p.iface,
-                args: p.args.iter().map(|t| self.ty.subst(*t, &b.args)).collect(),
+                args: p.args.iter().map(|t| self.subst(*t, &b.args)).collect(),
             })
             .collect()
     }
