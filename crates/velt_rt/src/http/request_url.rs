@@ -4,20 +4,28 @@
 //! Building it allocates (a URL is usually longer than an inline string), and a handler reads it
 //! on nearly every request. Clients repeat themselves: a keep-alive connection, or a load
 //! balancer's health check, asks for the same few URLs over and over. So each worker thread
-//! remembers the last [`RECENT`] URLs it built (shared heap strings), and a request whose scheme,
-//! host and target match one of them gets another reference to it: a comparison and a count
-//! increment instead of an allocation and a copy.
+//! remembers the last [`RECENT`] URLs it built, and a request whose scheme, host and target
+//! match one of them gets it again: a comparison instead of an allocation and a copy. As the
+//! runtime interns header values (`interned.rs`), the first URLs a process builds are kept for
+//! good as static strings, up to [`LEAK_BUDGET`] bytes in all: copying, slicing and dropping a
+//! static string touches no reference count, and a slice of it (`url.slice(start)`) borrows its
+//! bytes instead of copying them. Later URLs are shared heap strings.
 
 use super::client::text_of;
 use super::request::Conn;
-use crate::str::VeltStr;
+use crate::str::{VeltStr, INLINE_MAX};
 use hyper::header::HOST;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// URLs remembered per worker thread.
-const RECENT: usize = 4;
+const RECENT: usize = 8;
 /// Longest URL worth remembering (and built on the stack).
 const MAX_LEN: usize = 256;
+/// Bytes all threads may keep for good as static URLs (`build`).
+const LEAK_BUDGET: usize = 16 * 1024;
+
+static LEAKED: AtomicUsize = AtomicUsize::new(0);
 
 /// A worker's recent URLs, replaced round-robin; released when the thread ends.
 struct Recent {
@@ -79,7 +87,7 @@ fn joined(parts: &[&[u8]]) -> VeltStr {
             return unsafe { url.share() };
         }
         let url = build(parts, len);
-        if url.is_heap() && url.is_ascii() {
+        if url.is_ascii() && !url.is_inline() {
             let at = urls.next;
             urls.next = (at + 1) % RECENT;
             // SAFETY: the old entry is a valid string the cache holds; the new one is shared.
@@ -115,8 +123,13 @@ fn same(url: &VeltStr, parts: &[&[u8]], len: usize) -> bool {
 fn equal(a: &[u8], b: &[u8]) -> bool {
     let n = a.len();
     let word = |s: &[u8], at: usize| u64::from_ne_bytes(s[at..at + 8].try_into().unwrap_or([0; 8]));
+    let half = |s: &[u8], at: usize| u32::from_ne_bytes(s[at..at + 4].try_into().unwrap_or([0; 4]));
+    if n < 4 {
+        return a == b;
+    }
     if n < 8 {
-        return a.iter().zip(b).all(|(x, y)| x == y);
+        // Two overlapping halves (the scheme, `http://`, is 7 bytes).
+        return half(a, 0) == half(b, 0) && half(a, n - 4) == half(b, n - 4);
     }
     let mut at = 0;
     while at + 8 < n {
@@ -129,9 +142,11 @@ fn equal(a: &[u8], b: &[u8]) -> bool {
     word(a, n - 8) == word(b, n - 8)
 }
 
-/// A new string of `parts` (`len` ≤ [`MAX_LEN`] bytes), built on the stack, so the string's own
-/// buffer is the only allocation. ASCII (the scheme, path and query always are, a host nearly
-/// always) is taken as it is; anything else is decoded lossily.
+/// A new string of `parts` (`len` ≤ [`MAX_LEN`] bytes), built on the stack. ASCII (the scheme,
+/// path and query always are, a host nearly always) is taken as it is: longer than an inline
+/// string, it is kept for good as a static string while the leak budget lasts (copying, sharing
+/// and slicing a static string count nothing), else it is a heap string; anything else is
+/// decoded lossily.
 fn build(parts: &[&[u8]], len: usize) -> VeltStr {
     let mut buf = [0u8; MAX_LEN];
     let mut at = 0;
@@ -140,11 +155,25 @@ fn build(parts: &[&[u8]], len: usize) -> VeltStr {
         at += p.len();
     }
     let buf = &buf[..len];
-    if buf.is_ascii() {
-        // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
-        return unsafe { VeltStr::from_text_counted(std::str::from_utf8_unchecked(buf), len) };
+    if !buf.is_ascii() {
+        return text_of(buf);
     }
-    text_of(buf)
+    if len > INLINE_MAX && reserve(len) {
+        let kept: &'static [u8] = Box::leak(buf.to_vec().into_boxed_slice());
+        // SAFETY: ASCII (one UTF-16 unit per byte) that is never freed or changed.
+        return unsafe { VeltStr::borrowed_text(kept.as_ptr(), len, len) };
+    }
+    // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
+    unsafe { VeltStr::from_text_counted(std::str::from_utf8_unchecked(buf), len) }
+}
+
+/// Takes `len` bytes from the leak budget; false if it is used up.
+fn reserve(len: usize) -> bool {
+    LEAKED
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            (used + len <= LEAK_BUDGET).then_some(used + len)
+        })
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -214,7 +243,8 @@ mod tests {
         let c = parts("/a/long/enough/path?to=be&on=the&heap", "example.org");
         let mut host = url_of(&c, &conn);
         unsafe {
-            assert!(first.is_heap());
+            // Kept for good (the leak budget is not used up in these tests): static.
+            assert!(first.is_static());
             assert_eq!(first.as_bytes().as_ptr(), again.as_bytes().as_ptr());
             assert_eq!(
                 tls.as_bytes(),
