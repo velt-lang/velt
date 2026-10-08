@@ -86,15 +86,22 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 
   For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
   plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
-- **Which pieces share.** Every runtime function that returns a piece of a heap string
-  (`slice`, `substring`, `trim`/`trimStart`/`trimEnd`, the pieces of `split`) returns a slice
+- **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`),
+  `velt_rt_str_trim`, `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and
+  `velt_rt_str_split` when its separator is not empty and cannot match half of a surrogate pair.
+  Every other function copies the pieces it returns: `split("")`, a split by a lone surrogate,
+  `velt_rt_str_code_points`, and the regex functions (the pieces of `match`, `exec` and `split`
+  are new strings, `VeltStr::from_vec`). Those four return a slice
   when the piece is too long to be inline, at least a quarter of the buffer's capacity, and the
   buffer is below 1 GiB (2^30 bytes); otherwise it copies (inline when short).
   The whole string is shared as it is (count +1, same value), a piece of a static string
   borrows it, and a piece that ends between the halves of a surrogate pair is a copy (the half
   is re-encoded). So live slices pin at most four times their own size (a short piece of a huge
   string never keeps it alive), and a parser that consumes its input from the front
-  (`rest = rest.slice(n)`) copies at most a third of it in all.
+  (`rest = rest.slice(n)`) copies at most a third of its buffer's capacity in all: a third of
+  the input when the capacity is its length, up to about two thirds when appends grew the
+  buffer (capacity up to twice the length). Linear either way.
 - **Counts and threads.** A buffer's count counts every string that references it, slices
   included: a slice retains the buffer when made and releases it when dropped, and the last
   reference, plain or slice, frees it with the buffer's layout (bit 61 says which for a

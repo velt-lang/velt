@@ -24,8 +24,10 @@
 //! **Retention.** A slice keeps the whole buffer alive. A piece is shared only when it is at
 //! least a quarter of the buffer's capacity ([`SHARE_DIVISOR`]), so live slices pin at most four
 //! times their own size; a smaller piece is copied. A parser that consumes its input from the
-//! front shares while the rest is large and copies once the rest falls below a quarter, so it
-//! copies at most a third of its input in all (n/4 + n/16 + …): linear. Short pieces are inline
+//! front shares while the rest is large and copies once the rest falls below a quarter of the
+//! capacity, so it copies at most a third of the capacity in all (c/4 + c/16 + …, each copy's
+//! capacity being its length): a third of the input when the capacity is its length, up to about
+//! two thirds when appends grew it (capacity up to twice the length). Linear either way. Short pieces are inline
 //! as before, and buffers of [`SLICE_MAX_CAP`] or more are never sliced (the offset and capacity
 //! have 30 bits each).
 
