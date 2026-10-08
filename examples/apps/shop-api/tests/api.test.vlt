@@ -82,6 +82,18 @@ export function test_bulk_keeps_the_valid_ones() {
   );
 }
 
+export function test_a_failed_bulk_product_claims_no_skus() {
+  const s = shop();
+  // The first product fails on its second variant; its first SKU must stay free for the next.
+  const failing = `{"name":"A","category":"toys","brand":"Acme","variants":[{"sku":"X-1","color":"r","size":"M","stock":1,"price":{"amount":100,"currency":"EUR"}},{"sku":"bad sku","color":"r","size":"M","stock":1,"price":{"amount":100,"currency":"EUR"}}]}`;
+  const dupe = `{"name":"C","category":"toys","brand":"Acme","variants":[{"sku":"Y-1","color":"r","size":"M","stock":1,"price":{"amount":100,"currency":"EUR"}},{"sku":"Y-1","color":"b","size":"M","stock":1,"price":{"amount":100,"currency":"EUR"}}]}`;
+  const body = `[${failing},${product("X-1", 1, 100)},${product("X-1", 1, 100)},${dupe}]`;
+  assertEq(
+    route(s, "POST", "/products/bulk", "", body).body,
+    "{\"created\":1,\"ids\":[41],\"errors\":[{\"index\":0,\"code\":\"invalid\",\"message\":\"sku 'bad sku' must be 3 to 32 of A-Z, 0-9 and -\"},{\"index\":2,\"code\":\"conflict\",\"message\":\"sku 'X-1' already exists\"},{\"index\":3,\"code\":\"conflict\",\"message\":\"sku 'Y-1' already exists\"}]}",
+  );
+}
+
 export function test_patch_is_all_or_nothing() {
   const s = shop();
   const before = route(s, "GET", "/products/5", "", "").body;

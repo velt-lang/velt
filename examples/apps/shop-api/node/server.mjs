@@ -4,6 +4,7 @@
 //
 //   PORT=8081 node node/server.mjs
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 
 const CURRENCY = "EUR";
 const CATEGORIES = ["audio", "books", "camping", "coffee", "garden", "kitchen", "running", "toys"];
@@ -293,19 +294,21 @@ export class Store {
     return pageOf(hits, q.page, q.limit);
   }
 
-  variantsOf(input, taken) {
+  // A SKU must be new to the store and to this product (see store.vlt).
+  variantsOf(input) {
     if (input.length === 0 || input.length > 20) throw invalid("a product has 1 to 20 variants");
+    const seen = [];
     return input.map((v) => {
       if (!isSku(v.sku)) throw invalid(`sku '${v.sku}' must be 3 to 32 of A-Z, 0-9 and -`);
-      if (this.bySku.has(v.sku) || taken.includes(v.sku)) throw new ApiError(409, "conflict", `sku '${v.sku}' already exists`);
+      if (this.bySku.has(v.sku) || seen.includes(v.sku)) throw new ApiError(409, "conflict", `sku '${v.sku}' already exists`);
       if (v.stock < 0 || v.stock > 1000000) throw invalid("stock must be 0 to 1000000");
-      if (v.price.amount <= 0 || v.price.currency !== CURRENCY) throw invalid(`price must be a positive amount in ${CURRENCY}`);
-      taken.push(v.sku);
+      if (v.price.amount <= 0 || v.price.amount > 100000000 || v.price.currency !== CURRENCY) throw invalid(`price must be 1 to 100000000 cents in ${CURRENCY}`);
+      seen.push(v.sku);
       return { sku: v.sku, color: v.color, size: v.size, stock: v.stock, price: { amount: v.price.amount, currency: CURRENCY } };
     });
   }
 
-  create(input, taken) {
+  create(input) {
     const name = cleanName(input.name);
     if (!CATEGORIES.includes(input.category)) throw invalid(`category must be one of ${CATEGORIES.join(", ")}`);
     const brand = input.brand.trim();
@@ -313,7 +316,7 @@ export class Store {
     const description = input.description ?? "";
     if (description.length > 2000) throw invalid("description is at most 2000 characters");
     const tags = cleanTags(input.tags);
-    const variants = this.variantsOf(input.variants, taken);
+    const variants = this.variantsOf(input.variants);
     const p = {
       id: this.nextProductId,
       slug: slugify(name),
@@ -333,17 +336,16 @@ export class Store {
   }
 
   createProduct(input) {
-    return this.create(input, []);
+    return this.create(input);
   }
 
   bulkCreate(inputs) {
     if (inputs.length > 1000) throw invalid("at most 1000 products per request");
     const ids = [];
     const errors = [];
-    const taken = [];
     inputs.forEach((input, index) => {
       try {
-        ids.push(this.create(input, taken).id);
+        ids.push(this.create(input).id);
       } catch (e) {
         errors.push({ index, code: e.code, message: e.message });
       }
@@ -369,6 +371,7 @@ export class Store {
 
   createOrder(input) {
     if (input.items.length === 0 || input.items.length > 50) throw invalid("an order has 1 to 50 items");
+    if (input.customer.id < 1 || input.customer.id > 1000000000) throw invalid("customer.id must be 1 to 1000000000");
     if (!input.customer.email.includes("@")) throw invalid("customer.email is not an email address");
     const items = [];
     const refs = [];
@@ -582,7 +585,7 @@ const envInt = (name, fallback) => {
 };
 
 // Serve only when run directly (`node node/server.mjs`), so the module can be imported.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const started = Date.now();
   const store = Store.seeded(42, envInt("SHOP_PRODUCTS", 5000), envInt("SHOP_ORDERS", 20000));
   const server = http.createServer((req, res) => {

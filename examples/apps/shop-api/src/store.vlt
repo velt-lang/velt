@@ -249,25 +249,30 @@ export class Store {
     return pageOf(hits, q.page, q.limit);
   }
 
-  private variantsOf(input: NewVariant[], taken: string[]): Variant[] {
+  /// Validates a product's variants. A SKU must be new to the store and to this product; products
+  /// created earlier in the same bulk request are already in the store's index, and a product
+  /// that fails claims nothing.
+  private variantsOf(input: NewVariant[]): Variant[] {
     if (input.length === 0 || input.length > 20) {
       throw invalid("a product has 1 to 20 variants");
     }
     const out: Variant[] = [];
+    const seen: string[] = [];
     for (const v of input) {
       if (!isSku(v.sku)) {
         throw invalid(`sku '${v.sku}' must be 3 to 32 of A-Z, 0-9 and -`);
       }
-      if (this.bySku.has(v.sku) || taken.includes(v.sku)) {
+      if (this.bySku.has(v.sku) || seen.includes(v.sku)) {
         throw new ApiError(409, "conflict", `sku '${v.sku}' already exists`);
       }
       if (v.stock < 0 || v.stock > 1000000) {
         throw invalid("stock must be 0 to 1000000");
       }
-      if (v.price.amount <= 0 || v.price.currency !== CURRENCY) {
-        throw invalid(`price must be a positive amount in ${CURRENCY}`);
+      // Bounded well below 2^53, where Node's numbers stop being exact (node/server.mjs).
+      if (v.price.amount <= 0 || v.price.amount > 100000000 || v.price.currency !== CURRENCY) {
+        throw invalid(`price must be 1 to 100000000 cents in ${CURRENCY}`);
       }
-      taken.push(v.sku);
+      seen.push(v.sku);
       out.push({
         sku: v.sku,
         color: v.color,
@@ -279,8 +284,8 @@ export class Store {
     return out;
   }
 
-  /// Validates `input` and adds it; `taken` collects SKUs claimed earlier in the same batch.
-  private create(input: NewProduct, taken: string[]): Product {
+  /// Validates `input` and adds it.
+  private create(input: NewProduct): Product {
     const name = cleanName(input.name);
     if (!categories().includes(input.category)) {
       throw invalid(`category must be one of ${categories().join(", ")}`);
@@ -294,7 +299,7 @@ export class Store {
       throw invalid("description is at most 2000 characters");
     }
     const tags = cleanTags(input.tags);
-    const variants = this.variantsOf(input.variants, taken);
+    const variants = this.variantsOf(input.variants);
     const id = this.nextProductId;
     const p: Product = {
       id,
@@ -315,7 +320,7 @@ export class Store {
   }
 
   createProduct(input: NewProduct): Product {
-    return this.create(input, []);
+    return this.create(input);
   }
 
   /// Creates every valid product of `inputs`; invalid ones are reported by index.
@@ -325,10 +330,9 @@ export class Store {
     }
     const ids: i64[] = [];
     const errors: BulkError[] = [];
-    const taken: string[] = [];
     for (let i = 0; i < inputs.length; i++) {
       try {
-        ids.push(this.create(inputs[i], taken).id);
+        ids.push(this.create(inputs[i]).id);
       } catch (e) {
         errors.push({ index: i, code: e.code, message: e.message });
       }
@@ -371,6 +375,9 @@ export class Store {
   createOrder(input: NewOrder): Order {
     if (input.items.length === 0 || input.items.length > 50) {
       throw invalid("an order has 1 to 50 items");
+    }
+    if (input.customer.id < 1 || input.customer.id > 1000000000) {
+      throw invalid("customer.id must be 1 to 1000000000");
     }
     if (!input.customer.email.includes("@")) {
       throw invalid("customer.email is not an email address");

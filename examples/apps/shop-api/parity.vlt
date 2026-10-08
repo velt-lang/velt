@@ -127,6 +127,16 @@ function calls(): Call[] {
   out.push(send("POST", "/orders", order(9, "[{\"sku\":\"P2-1\",\"quantity\":1}]")));
   out.push(send("POST", "/orders", order(10, "[{\"sku\":\"P1-1\",\"quantity\":1.5}]")));
   out.push(send("POST", "/orders", order(11, "[]")));
+  // Above 2^53 Node's numbers round, so both sides bound these fields.
+  out.push(send("POST", "/orders", order(9007199254740993, "[{\"sku\":\"P3-1\",\"quantity\":1}]")));
+  out.push(
+    send(
+      "POST",
+      "/products",
+      newProduct(5, "HUGE-1", "toys").replace("\"amount\":1550", "\"amount\":9007199254740993"),
+    ),
+  );
+  out.push(send("POST", "/orders", order(12, "[{\"sku\":\"P3-1\",\"quantity\":2.0}]")));
   out.push(send("POST", "/orders/20001/status", "{\"status\":\"paid\"}"));
   out.push(send("POST", "/orders/20001/status", "{\"status\":\"shipped\"}"));
   out.push(send("POST", "/orders/20001/status", "{\"status\":\"cancelled\"}"));
