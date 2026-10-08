@@ -12,7 +12,8 @@
 //! directory nothing was watched in, or there since before the watcher looked) count as saved
 //! during the build when they were modified less than [`SLACK`] before it started: file times come
 //! from a coarser clock than the build's start time. Before the first build the watcher is seeded
-//! with the program's directories ([`Watcher::seed`]), so the usual case is covered exactly.
+//! with the program's directories ([`Watcher::seed`]) and its manifest and lockfile
+//! ([`Watcher::seed_files`]), so the usual case is covered exactly.
 
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
@@ -113,6 +114,20 @@ impl Watcher {
                     self.files.insert(file.clone(), stamp(file));
                 }
                 self.dirs.insert(dir, sources);
+            }
+        }
+    }
+
+    /// Before the first build: also cover `files` (the manifest and lockfile, which are not
+    /// source files). Without this, one saved shortly before `velt dev` started (by `velt add`,
+    /// `velt run` or `velt build`) looks as if it may have been saved during the first build,
+    /// and a second build follows right after it with no edit (a reload that is reported after
+    /// a later edit was saved, though it built the sources from before it).
+    pub fn seed_files(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        for file in files {
+            if let std::collections::btree_map::Entry::Vacant(e) = self.files.entry(file) {
+                let s = stamp(e.key());
+                e.insert(s);
             }
         }
     }

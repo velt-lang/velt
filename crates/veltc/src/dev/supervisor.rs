@@ -81,8 +81,7 @@ impl Supervisor {
             dev_socket.name().to_os_string(),
         )];
         interrupt::install();
-        let mut watcher = Watcher::default();
-        watcher.seed(program_dirs(args.build.input.as_deref()));
+        let watcher = first_watcher(Watcher::default(), args.build.input.as_deref());
         Ok(Supervisor {
             args,
             watcher,
@@ -431,7 +430,14 @@ fn host_args(args: &DevArgs) -> Vec<OsString> {
     out
 }
 
-/// The package manifest and lockfile, when the program is in a package.
+/// `watcher` before the first build of `input`: it covers the program's directories, manifest
+/// and lockfile, so the first build is compared with what they held when it started.
+fn first_watcher(mut watcher: Watcher, input: Option<&Path>) -> Watcher {
+    watcher.seed(program_dirs(input));
+    watcher.seed_files(manifest_files(input));
+    watcher
+}
+
 /// The directories the program's own sources are in, watched from the first build on: the
 /// entry file's directory, or the package root and its `src/`.
 fn program_dirs(input: Option<&Path>) -> Vec<PathBuf> {
@@ -449,6 +455,7 @@ fn program_dirs(input: Option<&Path>) -> Vec<PathBuf> {
     dirs
 }
 
+/// The package manifest and lockfile, when the program is in a package.
 fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
     let start = input
         .and_then(Path::parent)
@@ -460,5 +467,50 @@ fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
             root.join(vpm::lockfile::LOCK_FILE),
         ],
         None => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::watch::SETTLE;
+    use super::*;
+
+    /// A lockfile written just before `velt dev` started (`velt add`, `velt run`) was not saved
+    /// during the first build: no second build follows it (#733: that build reported
+    /// `hot-swapped 0 functions` after a later edit and left the old code running).
+    #[test]
+    fn a_recent_lockfile_needs_no_second_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join(vpm::manifest::MANIFEST_FILE),
+            "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };
+",
+        )
+        .unwrap();
+        let main = root.join("main.vlt");
+        std::fs::write(
+            &main,
+            "function main() {}
+",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(vpm::lockfile::LOCK_FILE),
+            "{}
+",
+        )
+        .unwrap();
+        let input = Some(main.as_path());
+        let mut watcher = first_watcher(Watcher::new(false), input);
+        let snapshot = watcher.snapshot();
+        // What the first build read.
+        let read = std::iter::once(main.clone()).chain(manifest_files(input));
+        watcher.set(read, &snapshot);
+        let deadline = std::time::Instant::now() + SETTLE * 3;
+        while std::time::Instant::now() < deadline {
+            assert!(watcher.poll().is_none(), "nothing changed");
+            std::thread::sleep(POLL);
+        }
     }
 }
