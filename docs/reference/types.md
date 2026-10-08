@@ -5,7 +5,7 @@
 | `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize` | fixed-width integers |
 | `f32 f64`; `number` | floats; `number` is `f64` |
 | `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
-| `string` | immutable UTF-8 text, a value ([Strings](#strings)) |
+| `string` | immutable text, indexed in UTF-16 code units (stored as UTF-8), a value ([Strings](#strings)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
@@ -669,7 +669,7 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
-  fields first, `private` ones too; not static fields or methods). A struct's optional field is
+  fields first, `private` ones too; not ES private `#x` fields, static fields or methods). A struct's optional field is
   listed only when it is not `null`. On a class with subclasses it lists the fields of the
   object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too), and on an
   interface value those of the class it holds (an interface also implemented by a struct is an
@@ -678,9 +678,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
-  `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)). A
-  struct or class with a `private` field has no JSON form (a compile error naming the field):
-  private fields stay private, and runtime handles can't be forged from JSON.
+  `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)).
+  `JSON.stringify` writes a class's or struct's `private` fields, as Node does, and skips ES
+  private fields (`#x`). `JSON.parse<T>` cannot build a type with a `private` or `#` field (a
+  compile error naming the field: decoding does not run the constructor). A type holding a std
+  type's private state (a runtime handle) has no JSON form in either direction, so handles
+  can't be forged from JSON.
 
 ```ts
 struct Point {

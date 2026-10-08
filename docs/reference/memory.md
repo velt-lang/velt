@@ -8,7 +8,9 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
 ## Values and references
 
 - **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), literal and
-  enum types, and unions, tuples and `T | null` of those.
+  enum types, and unions, tuples and `T | null` of those. A tuple is copied when it is
+  assigned or stored, but a function or callback that changes an element of a tuple it was
+  passed (`t[1] = 0`) changes the caller's tuple, as in JS.
 - **Objects are references**, as in JS: class instances, arrays, maps, structs, object types
   (`type P = { x: i64 }`, object literals) and closures. `const b = a;`, passing `a` to a
   function, storing it in a field, an array or a map, returning it and capturing it all refer
@@ -25,7 +27,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   for the whole program, since its iterator holds the array; nothing else about it changes.
   Naming an object again inside one function does not share it: `const me = this`, or a
   closure that captures `this` and is only called where it is created
-  ([Captures](functions.md#captures)), refers to the same object without a count.
+  ([Captures](functions.md#captures)), refers to the same object without a count (unless a
+  conflict elsewhere in the program makes them share; see [Captures](functions.md#captures)).
 - **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
   nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
@@ -35,9 +38,11 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   handing it on is ``use of moved value `p` ``.
 - Dropping a long chain of objects never overflows the stack, however it is linked: a
   linked list through a `next: Node | null` field or a tree through `left` and `right` is
-  freed in a loop, and a chain through arrays, `Map` values, closures, interface values,
-  subclasses or struct values is freed in nested steps up to a fixed depth (128), with the
-  objects past it freed when the outer drop is done
+  freed in a loop (when the class has no subclasses and no field declared after the link can
+  run a `[Symbol.dispose]()`), and any other chain (through arrays, `Map` values, closures,
+  interface values, subclasses, struct values or a recursive object type such as `interface
+  Node { next?: Node }`) is freed in nested steps up to a fixed depth (128 levels of such
+  nesting), with the objects past it freed when the outer drop is done
   ([order of cleanup](#order-of-cleanup-in-long-chains)).
 - Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
   holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
@@ -227,10 +232,13 @@ async function ping(addr: string): Promise<string> {
 When an object goes away, its `[Symbol.dispose]()` runs first, then its fields are released in
 declaration order, each completely (an object a field held is disposed with everything it
 holds) before the next. A chain through the class's own field (`next: Node | null`) keeps
-exactly this order at any length: each node is disposed before the rest of the chain. In a
-chain or tree that nests through other values (arrays, `Map` values, closures, interfaces), an
-object more than 128 levels below the one being released is set aside and released, in the
-order it was reached, once the outer release has finished everything else. Every hook still
+exactly this order at any length (each node is disposed before the rest of the chain) when that
+field is declared after every field whose drop can run a `[Symbol.dispose]()`, and the class
+has no subclasses; otherwise it is released in nested steps like the chains below. In a chain
+or tree that nests through other values (arrays, `Map` values, closures, interfaces, recursive
+object types), an object more than 128 such levels below the one being released is set aside
+and released, in the order it was reached, once the outer release has finished everything
+else. Every hook still
 runs exactly once, and a chain is still disposed from its head on; only a branch deeper than
 128 levels is disposed after the shallower objects that come after it.
 

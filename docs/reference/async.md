@@ -249,9 +249,10 @@ A task the runtime drops is cancelled at its current suspension point: the value
 ## Thread safety
 
 Thread safety is checked at compile time: an async closure that may run on another thread (it
-is spawned, handles HTTP requests, goes into `shared(...)` or a `Mutex`, is sent on a channel or
-settles a promise, directly or through a variable, parameter, capture or object holding it)
-must not modify what it captured. The error names both places:
+is spawned, handles HTTP requests, goes into `shared(...)` or a `Mutex`, is sent on a channel,
+settles a promise, or is passed directly to a function value, an interface method or an
+overridden method, which may keep it; directly or through a variable, parameter, capture or
+object holding it) must not modify what it captured. The error names both places:
 
 ```text
 error: this async closure modifies captured `count`, so it must stay on the task that created it
