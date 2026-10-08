@@ -60,7 +60,7 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
         }
         RetSource::Base(base, args) => {
             let r = ret_of(cx, base, at);
-            let r = cx.ty.subst(r, &args);
+            let r = cx.subst(r, &args);
             let f = cx.fn_info_mut(d);
             f.ret = r;
             f.ret_source = RetSource::Known;
@@ -90,12 +90,12 @@ fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
 pub(crate) fn check_deferred(cx: &mut Ctx) {
     for c in std::mem::take(&mut cx.ret_checks) {
         let have = ret_of(cx, c.def, c.span);
-        let have = cx.ty.subst(have, &c.args);
+        let have = cx.subst(have, &c.args);
         let want = match c.want {
             RetWant::Ty(t) => t,
             RetWant::Of(base, args) => {
                 let r = ret_of(cx, base, c.span);
-                cx.ty.subst(r, &args)
+                cx.subst(r, &args)
             }
         };
         if have != want && !cx.ty.has_error(have) && !cx.ty.has_error(want) {

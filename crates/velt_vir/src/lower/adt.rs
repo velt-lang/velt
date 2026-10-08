@@ -20,7 +20,21 @@ impl FnLower<'_, '_> {
             }
             return Operand::Copy(obj);
         }
-        let ops = self.consume_each(fields);
+        // A `presence` field given `FieldAbsent` is `null` with its flag clear; any other value
+        // sets the flag (the flags are stored after the fields, `Cx::presence_slot`).
+        let mut ops = self.consume_each(fields);
+        for (i, f) in fields.iter().enumerate() {
+            if self.cx.presence_slot(ty, i as u32).is_some() {
+                let absent = matches!(
+                    f.kind,
+                    hir::ExprKind::Call {
+                        callee: hir::Callee::Intrinsic(hir::Intrinsic::FieldAbsent),
+                        ..
+                    }
+                );
+                ops.push(Operand::Const(Const::Bool(!absent), Ty::Bool));
+            }
+        }
         self.build_agg(ty, ops)
     }
 
@@ -122,8 +136,13 @@ impl FnLower<'_, '_> {
         Operand::Copy(obj)
     }
 
-    pub(super) fn variant(&mut self, ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {
-        let ty = self.sub(ty);
+    pub(super) fn variant(&mut self, hir_ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {
+        let ty = self.sub(hir_ty);
+        let variant = match self.variant_at(hir_ty, variant, ty) {
+            super::types::VariantAt::Index(v) => v,
+            // The union collapsed to this member (`A | B` at `A = B`): the value itself.
+            super::types::VariantAt::Whole => return self.consume(&args[0]),
+        };
         let tag_ty = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
                 let disc = self.cx.enum_def(d).variants[variant as usize].discriminant;
@@ -158,6 +177,10 @@ impl FnLower<'_, '_> {
     pub(super) fn wrap_some(&mut self, inner: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let v = self.consume(inner);
+        // A generic `U` into `U | null` at a nullable `U`: the value already is the option.
+        if self.sub(inner.ty) == ty {
+            return v;
+        }
         match self.cx.ty(ty) {
             Ty::Ptr => self.own_value(v, ty),
             Ty::Bool => Operand::Const(Const::Bool(true), Ty::Bool),

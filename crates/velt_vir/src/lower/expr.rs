@@ -146,7 +146,7 @@ impl FnLower<'_, '_> {
             K::Closure(d) => self.closure(*d, e.ty),
             K::Match { scrutinee, arms } => self.match_expr(scrutinee, arms, e.ty),
             K::WrapSome(inner) => self.wrap_some(inner, e.ty),
-            K::UnwrapSome(inner, mode) => self.unwrap_some(inner, *mode),
+            K::UnwrapSome(inner, mode) => self.unwrap_some(inner, *mode, e.ty),
             K::UnwrapVariant {
                 expr,
                 variant,

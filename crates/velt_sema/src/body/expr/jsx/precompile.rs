@@ -7,7 +7,8 @@
 //! spread or a `key`), `Element`-typed expressions as they are, and any other child as
 //! `Fragment([v], null)`.
 //!
-//! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`).
+//! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`); with a
+//! `jsxSoleEmpty` export, an element's only `{expr}` child may render differently (`sole_child`).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -122,8 +123,18 @@ impl FnCx<'_, '_> {
         if is_void(tag) {
             return true;
         }
-        for c in &el.children {
-            self.template_child(p, pc, c, t);
+        match (&p.sole_empty, real_children(&el.children).as_slice()) {
+            (
+                Some(sole),
+                [c @ (ast::JsxChild::Expr { expr: Some(_), .. } | ast::JsxChild::Spread { .. })],
+            ) => {
+                self.sole_child(p, pc, c, sole, t);
+            }
+            _ => {
+                for c in &el.children {
+                    self.template_child(p, pc, c, t);
+                }
+            }
         }
         self.end_run(p, pc, t, el.span, false);
         t.text.push_str(&format!("</{tag}>"));
@@ -172,7 +183,7 @@ impl FnCx<'_, '_> {
 
     /// `{expr}`: escaped text when it is a `JSX.Text`, a slot when it is an `Element`, else a
     /// slot `Fragment([v], null)`.
-    fn dynamic_child(
+    pub(super) fn dynamic_child(
         &mut self,
         p: &Provider,
         pc: Precompile,

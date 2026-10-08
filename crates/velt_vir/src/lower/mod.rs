@@ -266,6 +266,8 @@ struct Cx<'h> {
     honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    /// One type per anonymous object shape (types.rs `canon`).
+    anon: types::AnonShapes,
 }
 
 /// Static ownership state of a droppable local without a drop flag.

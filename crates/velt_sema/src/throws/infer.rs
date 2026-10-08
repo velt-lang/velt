@@ -132,7 +132,7 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
             (t, args.clone())
         }
     };
-    let t = t.map(|t| cx.ty.subst(t, &args));
+    let t = t.map(|t| cx.subst(t, &args));
     cx.canon_error(t)
 }
 

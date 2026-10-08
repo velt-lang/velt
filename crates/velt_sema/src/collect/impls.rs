@@ -82,7 +82,7 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
         .unwrap_or_default();
     let mut getters = vec![];
     for f in ifields {
-        let want = cx.ty.subst(f.ty, &p.bound.args);
+        let want = cx.subst(f.ty, &p.bound.args);
         let have = cx
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
@@ -177,14 +177,14 @@ fn trampoline(
     let params = params
         .into_iter()
         .map(|mut p| {
-            p.ty = cx.ty.subst(p.ty, &owner_args);
+            p.ty = cx.subst(p.ty, &owner_args);
             p.default = None;
             p
         })
         .collect();
     let ret = match want.filter(|_| super::ret_infer::is_pending(cx, def)) {
         Some(want) => want,
-        None => cx.ty.subst(ret, &owner_args),
+        None => cx.subst(ret, &owner_args),
     };
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let host = Host::adt(cx, d);
@@ -221,13 +221,13 @@ fn check_method_sig(
     };
     let iface_args = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)?;
     let iface_args = &iface_args[..];
-    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.ty.subst(t, owner_args)).collect();
+    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.subst(t, owner_args)).collect();
     let want_ps: Vec<TyId> = m
         .params
         .iter()
-        .map(|p| cx.ty.subst(p.ty, iface_args))
+        .map(|p| cx.subst(p.ty, iface_args))
         .collect();
-    let want_ret = cx.ty.subst(m.ret, iface_args);
+    let want_ret = cx.subst(m.ret, iface_args);
     let name = &m.name;
     let message = format!("method `{name}` has a different signature than required by `{iname}`");
     let ret_ok = if is_generator {
@@ -242,7 +242,7 @@ fn check_method_sig(
         let e = declared.and_then(|t| t.ty);
         let ret = cx.fn_info(def).ret;
         let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
-        cx.ty.subst(ret, owner_args) == want_ret
+        cx.subst(ret, owner_args) == want_ret
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
@@ -314,7 +314,7 @@ fn own_generics_match(
             bs.iter()
                 .map(|b| Bound {
                     iface: b.iface,
-                    args: b.args.iter().map(|t| cx.ty.subst(*t, &args)).collect(),
+                    args: b.args.iter().map(|t| cx.subst(*t, &args)).collect(),
                 })
                 .collect()
         })

@@ -4,7 +4,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use lsp_types::{CompletionList, CompletionResponse, TextDocumentPositionParams, Url};
+use lsp_types::{
+    CompletionItem, CompletionList, CompletionResponse, TextDocumentPositionParams, Url,
+};
+use serde_json::Value;
 
 use super::Server;
 use crate::analysis::Analysis;
@@ -30,6 +33,20 @@ const DECLARING: &[&str] = &[
 impl Server<'_> {
     /// Completion at `pos`; `trigger` is the character that triggered it, if any.
     pub(super) fn completion(
+        &mut self,
+        pos: &TextDocumentPositionParams,
+        trigger: Option<&str>,
+    ) -> Option<CompletionResponse> {
+        let uri = &pos.text_document.uri;
+        let mut response = self.completion_items(pos, trigger)?;
+        match &mut response {
+            CompletionResponse::Array(items) => with_document(items, uri),
+            CompletionResponse::List(list) => with_document(&mut list.items, uri),
+        }
+        Some(response)
+    }
+
+    fn completion_items(
         &mut self,
         pos: &TextDocumentPositionParams,
         trigger: Option<&str>,
@@ -97,6 +114,17 @@ impl Server<'_> {
         package.extend(open.iter().map(|(p, e)| (p.as_path(), e.as_slice())));
         self.imports
             .fixes(analysis, self.loader, &doc, &package, (lo, hi))
+    }
+}
+
+/// Completion items whose definition is documented carry the document's URI too (next to the
+/// `data` that [`crate::docs::attach`] left), so that `completionItem/resolve` knows which
+/// analysis to ask.
+fn with_document(items: &mut [CompletionItem], uri: &Url) {
+    for item in items {
+        if let Some(Value::Object(data)) = item.data.as_mut() {
+            data.insert("uri".into(), Value::String(uri.to_string()));
+        }
     }
 }
 

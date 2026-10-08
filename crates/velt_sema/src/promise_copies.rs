@@ -197,7 +197,7 @@ fn requirements(
         fx.copies.iter().map(|c| (*c, None)).collect();
     for (d, targs, span) in &fx.calls {
         for (t, deep) in needs.get(d).into_iter().flatten() {
-            reqs.push(((cx.ty.subst(*t, targs), *deep), Some((*span, *d))));
+            reqs.push(((cx.subst(*t, targs), *deep), Some((*span, *d))));
         }
     }
     for (m, args, span) in &fx.dyn_calls {
@@ -288,7 +288,7 @@ fn copies_promise(cx: &mut Ctx, t: TyId, deep: bool, stack: &mut Vec<TyId>) -> b
                     DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| cx.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| cx.subst(f, &args)).collect()
             }
         }
         _ => cx.union_members(t).unwrap_or_default(),

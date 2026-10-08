@@ -433,9 +433,9 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`
   fields never do (ES private names).
 - `FieldDef::optional` (additive): the field is declared optional (`a?: T`; its type is then
-  `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
-  is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
-  is written as `null`.
+  `T | null`), in a class, an object type or an interface. `JSON.stringify` and `console.log`
+  leave it out while it is absent (`null`, or a clear presence flag, below), as JavaScript leaves
+  out a missing property; a `T | null` field that is not optional is written as `null`.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
   internal error).
@@ -476,3 +476,28 @@ an intersection of object types to one ordinary anonymous object type (`intersec
 an indexed access to the type of the field it names (a union for several keys,
 `utility_types.rs`). Branded types (`string & { __brand: "UserId" }`) are replaced by their
 primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
+
+## Canonical instances and optional fields (docs/internals/design/deferred-types.md, P1 and P2)
+- An instance of a generic object type is the object type it spells out: sema substitutes
+  through `Ctx::subst`, which re-interns anonymous object types and unions from their
+  substituted parts, so `{ a: T0 }<string>` is never left in a type where `{ a: string }` exists.
+  Lowering may still meet such instances (it substitutes on its own while monomorphizing); it maps
+  them onto `Program::anon_shapes` (the concrete anonymous def of each shape: field names, field
+  types, `optional` and `presence` flags, in order; never a def replaced by readonly erasure,
+  and `{ d?: string }` and `{ d?: string | null }`, whose field types are the same, are two
+  shapes) and
+  `Program::union_shapes` (the concrete union def of each sorted member list), so one shape is one
+  VIR type. A generic union whose members are not all plain types (a union or nullable member)
+  keeps its own variants.
+- `TyTable::intern` never makes `Option(Option(T))`: an option of an option is the inner option
+  (`T | null | null` is `T | null`). `WrapSome` and `UnwrapSome` of a value whose type is already
+  that option, and a `PatKind::Some` on it, are the identity in lowering.
+- `FieldDef::presence` (additive): an optional field whose declared type is nullable
+  (`a?: T | null`), in an object type or struct (not a class). It keeps an absent key apart from a
+  present `null`: lowering stores a `bool` flag after the aggregate's fields (in field order, one
+  per presence field). An `AdtLit` sets it, unless the field's value is
+  `Intrinsic::FieldAbsent` (`() -> T | null`; outside a literal it is `null`); any write to the
+  field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the argument a `Field` place of a
+  presence field) reads it. `JSON.stringify` and `console.log` write a present `null` and leave
+  out an absent field, and `JSON.parse` sets the flag when the key is there. Copy, clone and
+  equality glue include the flag.

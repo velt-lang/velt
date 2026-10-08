@@ -1,0 +1,5 @@
+// A precompiling JSX runtime whose `jsxSoleEmpty` is not a string constant.
+
+export * from "../../_jsx_test_precompile/jsx-runtime";
+
+export const jsxSoleEmpty = false;

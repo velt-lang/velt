@@ -140,15 +140,15 @@ impl FnCx<'_, '_> {
         let mut c = self.fn_callable(def, format!("method `{method}`"), span);
         let kp = c.params.remove(0);
         let vp = checked.as_ref().map(|_| c.params.remove(0));
-        let kty = self.cx.ty.subst_known(kp.ty, &slots);
+        let kty = self.cx.subst_known(kp.ty, &slots);
         let key = self.record_key_arg(kty, &key, want_of(kp.mode));
         let ck = self.check_call(&c, slots, rest, None, span);
-        let kty = self.cx.ty.subst(kp.ty, &ck.type_args);
+        let kty = self.cx.subst(kp.ty, &ck.type_args);
         let key = self.coerce(key, kty);
         let recv = self.receiver(obj, recv_ty, self.this_mode(def), false);
         let mut args = vec![recv, key];
         if let (Some(v), Some(vp)) = (checked, vp) {
-            let vty = self.cx.ty.subst(vp.ty, &ck.type_args);
+            let vty = self.cx.subst(vp.ty, &ck.type_args);
             args.push(self.coerce(v, vty));
         }
         args.extend(ck.args);

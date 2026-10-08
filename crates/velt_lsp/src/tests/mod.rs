@@ -3,6 +3,8 @@
 
 mod assists;
 mod client;
+mod doc_comments;
+mod doc_surfaces;
 mod effects;
 mod imports;
 mod jsx;

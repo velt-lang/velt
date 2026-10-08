@@ -168,7 +168,13 @@ fn definition_of_locals_items_members_and_imports() {
     client.shutdown();
 }
 
-fn hover_text(client: &mut Client, doc: &Url, text: &str, needle: &str, delta: usize) -> String {
+pub(super) fn hover_text(
+    client: &mut Client,
+    doc: &Url,
+    text: &str,
+    needle: &str,
+    delta: usize,
+) -> String {
     let (line, col) = pos_of(text, needle, delta);
     let hover = client.request("textDocument/hover", at(doc, line, col));
     let value = hover["contents"]["value"]

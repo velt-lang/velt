@@ -22,7 +22,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         let fields: Vec<(String, TyId)> = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
         let span = a.span;
         for (name, fty) in fields {
-            if cx.ty.subst(fty, &args) == cx.ty.unit {
+            if cx.subst(fty, &args) == cx.ty.unit {
                 let tn = cx.display(t);
                 cx.error(
                     Diagnostic::error(

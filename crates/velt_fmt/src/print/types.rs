@@ -90,21 +90,33 @@ impl<'a> Printer<'a> {
             f.name.name.clone()
         };
         if f.optional {
-            cat![name, "?: ", self.ty_optional(&f.ty)]
+            cat![name, "?: ", self.ty_optional_field(&f.ty)]
         } else {
             cat![name, ": ", self.ty(&f.ty)]
         }
     }
 
-    /// The type of `name?: T` as written: the parser added `| null` (a written `| null` is
-    /// redundant there and dropped too).
+    /// The type of a parameter `name?: T` as written: the parser added `| null` (a written
+    /// `| null` is redundant there and dropped too).
     pub(super) fn ty_optional(&mut self, t: &TypeExpr) -> Doc {
+        self.ty_without_nulls(t, |_| true)
+    }
+
+    /// The type of a field `name?: T` as written: without the `| null` the parser added (a
+    /// zero-width `null`). A written `| null` stays: `a?: T | null` keeps an absent key apart
+    /// from a present `null`, so it is not `a?: T`.
+    fn ty_optional_field(&mut self, t: &TypeExpr) -> Doc {
+        self.ty_without_nulls(t, |m| m.span.lo == m.span.hi)
+    }
+
+    /// Union `t` without its `null` members that `drop` selects.
+    fn ty_without_nulls(&mut self, t: &TypeExpr, drop: impl Fn(&TypeExpr) -> bool) -> Doc {
         let TypeExprKind::Union(members) = &t.kind else {
             return self.ty(t);
         };
         let docs: Vec<Doc> = members
             .iter()
-            .filter(|m| !matches!(m.kind, TypeExprKind::Null))
+            .filter(|m| !(matches!(m.kind, TypeExprKind::Null) && drop(m)))
             .map(|m| self.ty_operand(m))
             .collect();
         join(&text(" | "), docs)

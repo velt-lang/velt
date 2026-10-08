@@ -37,7 +37,7 @@ impl Ctx<'_> {
         let mut operands: Vec<(TyId, Span)> = vec![];
         for p in parts {
             let ty = self.resolve_type(p, env);
-            let ty = self.ty.subst(ty, &env.args);
+            let ty = self.subst(ty, &env.args);
             if ty == self.ty.error {
                 return ty;
             }
@@ -81,10 +81,42 @@ impl Ctx<'_> {
                 }
             }
         }
+        self.declare_intersection_fields(acc, &operands);
         match brand {
             Some(base) => self.brand_type(base, acc, env.module, t.span),
             None => acc,
         }
+    }
+
+    /// Record where each field of the intersection `t` is written (for editors: go to
+    /// definition, hover and its doc comment): in the first operand that has it.
+    fn declare_intersection_fields(&mut self, t: TyId, operands: &[(TyId, Span)]) {
+        let TyKind::Adt(d, _) = self.ty.kind(t).clone() else {
+            return;
+        };
+        let Some(a) = self.adt(d) else {
+            return;
+        };
+        let spans: Vec<Span> = a
+            .fields
+            .iter()
+            .map(|f| {
+                operands
+                    .iter()
+                    .find_map(|&(o, _)| self.written_field(o, &f.name))
+                    .unwrap_or(Span::DUMMY)
+            })
+            .collect();
+        self.declare_anon_fields(t, &spans);
+    }
+
+    /// Where the field `name` of the object type `t` is written, if it is.
+    fn written_field(&self, t: TyId, name: &str) -> Option<Span> {
+        let TyKind::Adt(d, _) = self.ty.kind(t) else {
+            return None;
+        };
+        let f = self.adt(*d)?.fields.iter().find(|f| f.name == name)?;
+        (f.span != Span::DUMMY).then_some(f.span)
     }
 
     /// Is `t` (written as the name `written`, if it is one) an operand `&` can combine
@@ -268,7 +300,7 @@ impl Ctx<'_> {
             .into_iter()
             .filter(|(_, public)| *public)
             .map(|(f, _)| ShapeField {
-                ty: self.ty.subst(f.ty, &args),
+                ty: self.subst(f.ty, &args),
                 ..f
             })
             .collect()

@@ -58,9 +58,9 @@ conversion is an `Upcast`. Two limits:
   field-only interfaces. `JSON.stringify` tracks the boxes being written and panics on a cycle
   ("converting circular structure to JSON", as JavaScript throws). Cycles are reference
   cycles, so they leak like cyclic class graphs do.
-- **A generic interface's instance** (`Pair<string, number>`) does not convert to the object
-  type it spells out (`{ first: string; second: number }`): after erasure they are different
-  definitions. The same holds for generic type aliases today; the error says so.
+- **A generic interface's instance** (`Pair<string, number>`) is the object type it spells out
+  (`{ first: string; second: number }`), as for generic type aliases: instances are
+  canonicalized (deferred-types.md, P1).
 
 - **Fields** come in declaration order, inherited ones first (`interface B extends A` puts `A`'s
   fields first). Generic field-only interfaces are generic object types

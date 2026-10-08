@@ -69,7 +69,7 @@ impl FnCx<'_, '_> {
             }
             Resolved::Builtin(_) => return None,
         };
-        let ty = self.cx.ty.subst_known(ty, &slots);
+        let ty = self.cx.subst_known(ty, &slots);
         (!self.cx.ty.has_error(ty)).then_some(ty)
     }
 

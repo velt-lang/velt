@@ -100,6 +100,9 @@ throw ends with ` throws E`, its declared or inferred error type), `(method) Use
 `(parameter) p: string`. Two `DefRef`s for the same definition may differ in `detail` (inherited
 members spelled with different type arguments): compare with `same_def`.
 
+A field of an intersection's object type (`A & { b: T }`) is declared where the first operand
+that has it writes it: its `DefRef.span` is that field's name.
+
 ## Known limits (POC)
 - Locals of a closure are scoped like any block; `this` is a local named `this` whose declaring
   span is the method name.

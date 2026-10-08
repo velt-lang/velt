@@ -153,6 +153,9 @@ shape of Deno's precompile transform, with text folded into the strings):
   its children may still be templates.
 - Precompiled output must be byte-identical to rendering the generic lowering (the golden
   `lang/jsx_precompile_equals_generic` checks `std/jsx`).
+- The optional exports below (`jsxTextSeparator`, `jsxSoleEmpty`) are read only for the
+  precompile lowering: a provider without the four exports above may export them, and they are
+  ignored (not even checked).
 
 ### Text separator (optional export)
 The HTML parser merges adjacent text nodes, so a provider whose client hydrates text nodes one
@@ -197,6 +200,31 @@ and dynamic `Text` children, in any combination (`<p>Count: {n}</p>` →
 
 The golden `lang/jsx_text_separator` renders the cases above through a provider in both
 lowerings.
+
+### Sole child (optional export)
+A runtime that receives one child as itself and several as an array may render a `true`,
+`false` or `null` child differently when it is its element's only child. sigx renders
+`<p>{x}</p>` with `x = null` as `<p></p>`, but `<p>{x}a</p>` as `<p><!---->a</p>`. The generic
+lowering passes every child, so the provider sees how many there are. `jsxEscape` and
+`Fragment` see only the value, so a precompiling provider declares what such a sole child
+renders as instead:
+
+```ts
+export const jsxSoleEmpty = "";   // a string constant (an error otherwise)
+```
+The compiler then writes it in place of a `{expr}` or `{...expr}` child that is the only child
+of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `false` or `null`:
+- A child whose type is only `boolean` or `null` is the export's string at compile time
+  (`<p>{false}</p>` → `"<p></p>"`); any other expression is still evaluated.
+- A text child whose type mixes them with text (`string | null`) is tested at run time, with the
+  value read once: `jsxEscape(v)` when it is text, the export's string otherwise.
+- A slot child whose type has a `null` or boolean member (`JSX.Element | null`) is the slot
+  `Fragment([v], null)` when it is something else, and `jsxTemplate([sole], [])` when it is not.
+- Static text, elements, components and arrays are rendered as without the export, and so is a
+  child that has siblings.
+
+Without the export nothing changes, and the generic lowering ignores it. The golden
+`lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
 
 ## Escaping (all providers that render HTML)
 - Text: `&` `<` `>` → `&amp;` `&lt;` `&gt;`; attribute values additionally `"` → `&quot;` and

@@ -1,0 +1,27 @@
+// A generic JSX runtime like sigx's (docs/contracts/jsx.md "Sole child"): the text separator
+// test runtime, except that an element whose only child is `true`, `false` or `null` renders it
+// as nothing. sigx receives one child as itself and renders those as nothing; among siblings
+// they are the `<!---->` placeholder that hydration aligns on.
+
+import { Child, AttrValue, Element, element } from "../_jsx_sep_provider/render";
+
+export { Child, AttrValue, Element } from "../_jsx_sep_provider/render";
+export { IntrinsicElements, ElementChildrenAttribute } from "../_jsx_test_provider/types";
+export { Fragment, jsxComponent } from "../_jsx_sep_provider/jsx-runtime";
+
+function boundary(c: Child): bool {
+  return c === null || typeof c === "boolean";
+}
+
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  if (children.length == 1 && boundary(children[0])) {
+    return element(tag, names, values, []);
+  }
+  return element(tag, names, values, children);
+}

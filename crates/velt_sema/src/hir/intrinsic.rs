@@ -62,6 +62,12 @@ pub enum Intrinsic {
     /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
+    /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
+    /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
+    FieldAbsent,
+    /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
+    /// it is present (written, or given in the literal that made the object)
+    FieldPresent,
     /// std only (std/prelude/promise.vlt): `__intrinsic_transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted

@@ -65,7 +65,7 @@ impl FnCx<'_, '_> {
         if slots.iter().any(Option::is_none) {
             return Err(());
         }
-        Ok(Instance::Maybe(self.cx.ty.subst_known(own, &slots)))
+        Ok(Instance::Maybe(self.cx.subst_known(own, &slots)))
     }
 
     /// The type of the class `ancestor` in the base chain of class type `t`.

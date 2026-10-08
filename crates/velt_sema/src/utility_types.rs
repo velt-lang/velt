@@ -6,9 +6,8 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::anon::ShapeField;
+use crate::anon::{shape_field, ShapeField};
 use crate::ctx::Ctx;
-use crate::defs::FieldInfo;
 use crate::hir::{DefId, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
@@ -33,7 +32,7 @@ impl Ctx<'_> {
             .iter()
             .map(|a| {
                 let t = self.resolve_type(a, env);
-                self.ty.subst(t, &env.args)
+                self.subst(t, &env.args)
             })
             .collect();
         if tys.len() != want {
@@ -57,20 +56,11 @@ impl Ctx<'_> {
             return self.ty.error;
         };
         match name {
-            "Partial" => {
-                for f in &mut fields {
-                    if self.ty.opt_payload(f.ty).is_none() {
-                        f.ty = self.ty.option(f.ty);
-                    }
-                    f.optional = true;
-                }
-            }
-            "Required" => {
-                for f in &mut fields {
-                    f.ty = self.ty.opt_payload(f.ty).unwrap_or(f.ty);
-                    f.optional = false;
-                }
-            }
+            // `?` is a flag over the declared type: `Partial` sets it and `Required` clears it,
+            // keeping a written `| null`, as in TypeScript (`Required<{ a?: string | null }>` is
+            // `{ a: string | null }`).
+            "Partial" => fields.iter_mut().for_each(|f| f.optional = true),
+            "Required" => fields.iter_mut().for_each(|f| f.optional = false),
             "Readonly" => fields.iter_mut().for_each(|f| f.readonly = true),
             _ => {
                 let Some(keys) = self.utility_keys(name, tys[0], &fields, tys[1], args[1].span)
@@ -93,7 +83,7 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> TyId {
         let t = self.resolve_type(object, env);
-        let t = self.ty.subst(t, &env.args);
+        let t = self.subst(t, &env.args);
         let k = self.resolve_type(key, env);
         if t == self.ty.error || k == self.ty.error {
             return self.ty.error;
@@ -111,7 +101,11 @@ impl Ctx<'_> {
         };
         let tys: Vec<TyId> = keys
             .iter()
-            .filter_map(|k| fields.iter().find(|f| &f.name == k).map(|f| f.ty))
+            .filter_map(|k| fields.iter().find(|f| &f.name == k))
+            .map(|f| match f.optional {
+                true => self.ty.option(f.ty),
+                false => f.ty,
+            })
             .collect();
         match tys.as_slice() {
             [one] => *one,
@@ -156,7 +150,7 @@ impl Ctx<'_> {
                         .into_iter()
                         .filter(|(_, public)| *public)
                         .map(|(f, _)| ShapeField {
-                            ty: self.ty.subst(f.ty, &args),
+                            ty: self.subst(f.ty, &args),
                             ..f
                         })
                         .collect(),
@@ -223,7 +217,7 @@ impl Ctx<'_> {
         stack.push(iface);
         let mut out = vec![];
         for p in parents {
-            let pargs: Vec<TyId> = p.args.iter().map(|t| self.ty.subst(*t, args)).collect();
+            let pargs: Vec<TyId> = p.args.iter().map(|t| self.subst(*t, args)).collect();
             for f in self.iface_fields_now(p.iface, &pargs, stack) {
                 if !out
                     .iter()
@@ -235,7 +229,7 @@ impl Ctx<'_> {
         }
         stack.pop();
         for f in own {
-            let ty = self.ty.subst(f.ty, args);
+            let ty = self.subst(f.ty, args);
             out.retain(|g| g.0.name != f.name);
             out.push((ShapeField { ty, ..f }, true));
         }
@@ -305,15 +299,5 @@ fn in_op(op: &str) -> String {
     match op.starts_with(char::is_uppercase) {
         true => format!("in `{op}`"),
         false => format!("in {op}"),
-    }
-}
-
-/// The shape of field `f` (its name, type and flags).
-fn shape_field(f: &FieldInfo) -> ShapeField {
-    ShapeField {
-        name: f.name.clone(),
-        ty: f.ty,
-        readonly: f.readonly,
-        optional: f.optional,
     }
 }

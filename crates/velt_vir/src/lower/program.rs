@@ -50,6 +50,7 @@ impl<'h> Cx<'h> {
             own_clones: None,
             honoured_clones: HashMap::new(),
             dyn_modes_memo: HashMap::new(),
+            anon: Default::default(),
         }
     }
 

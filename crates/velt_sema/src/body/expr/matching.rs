@@ -155,6 +155,39 @@ impl FnCx<'_, '_> {
             _ => payload,
         };
         let d = self.expr(rhs, Some(hint), Want::Move);
+        self.nullish_match(s, l, mode, payload, d, span)
+    }
+
+    /// `s ?? d` for checked HIR operands (an optional field over an earlier one in an object
+    /// spread, `spread.rs`).
+    pub(crate) fn nullish_exprs(
+        &mut self,
+        mut s: hir::Expr,
+        d: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let payload = self
+            .cx
+            .ty
+            .opt_payload(s.ty)
+            .expect("ICE: `??` of a non-option");
+        let (l, mode) = self.option_binding(&s, payload, "<spread>", true);
+        if mode == UseMode::Move {
+            self.force_move(&mut s);
+        }
+        self.nullish_match(s, l, mode, payload, d, span)
+    }
+
+    /// The match `s ?? d` lowers to, with `l` bound to the payload.
+    fn nullish_match(
+        &mut self,
+        s: hir::Expr,
+        l: hir::LocalId,
+        mode: UseMode,
+        payload: TyId,
+        d: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
         let (ty, d) = if d.ty == opt {
             (opt, d)

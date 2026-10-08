@@ -104,7 +104,7 @@ impl FnCx<'_, '_> {
                 .iter()
                 .map(|s| s.unwrap_or(self.cx.ty.error))
                 .collect();
-            let ret = self.cx.ty.subst(c.ret, &type_args);
+            let ret = self.cx.subst(c.ret, &type_args);
             return Checked {
                 args: vec![],
                 ret,
@@ -132,7 +132,7 @@ impl FnCx<'_, '_> {
         let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
-            let target = self.cx.ty.subst(p.ty, &type_args);
+            let target = self.cx.subst(p.ty, &type_args);
             // Only a parameter the library declares an integer (`slice(start: i64)`), not a
             // type argument the program chose (`push` on an `i64[]`).
             let declared_int = self.cx.ty.is_int(p.ty);
@@ -152,11 +152,11 @@ impl FnCx<'_, '_> {
         }
         for p in &c.params[args.len()..] {
             let mut d = p.default.clone().expect("ICE: default checked by arity");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.ty.subst(t, &type_args));
+            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
             d.span = span;
             hargs.push(d);
         }
-        let ret = self.cx.ty.subst(c.ret, &type_args);
+        let ret = self.cx.subst(c.ret, &type_args);
         Checked {
             args: hargs,
             ret,
@@ -241,7 +241,7 @@ impl FnCx<'_, '_> {
                 .default
                 .clone()
                 .expect("ICE: skipped parameters have defaults");
-            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.ty.subst(t, &ck.type_args));
+            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &ck.type_args));
             d.span = span;
             ck.args.insert(skip.start + k, d);
         }
@@ -276,7 +276,7 @@ impl FnCx<'_, '_> {
             }
             let known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
-            let expected = self.cx.ty.subst_known(p.ty, &known);
+            let expected = self.cx.subst_known(p.ty, &known);
             let adapter = self.fewer_params_adapter(&args[i], expected);
             let arrow = adapter.as_ref().or(as_arrow(&args[i]));
             // An arrow passed to the JS API (also where `cmp | null` is expected): what its
@@ -318,7 +318,7 @@ impl FnCx<'_, '_> {
         args: &[hir::Expr],
         exp: TyId,
     ) {
-        let ret = self.cx.ty.subst_known(c.ret, slots);
+        let ret = self.cx.subst_known(c.ret, slots);
         if self.converts_to(ret, exp) {
             return;
         }
@@ -339,7 +339,7 @@ impl FnCx<'_, '_> {
             return;
         }
         for (h, p) in args.iter().zip(&c.params) {
-            let target = self.cx.ty.subst_known(p.ty, &wider);
+            let target = self.cx.subst_known(p.ty, &wider);
             let number = self.exact_in_number(h.ty) && self.float_core(target);
             if !self.converts_to(h.ty, target)
                 && !number
@@ -391,7 +391,7 @@ impl FnCx<'_, '_> {
                 .collect();
             let known: Vec<TyId> = params
                 .iter()
-                .map(|t| self.cx.ty.subst_known(*t, slots))
+                .map(|t| self.cx.subst_known(*t, slots))
                 .collect();
             let known = known.into_iter().find(|t| {
                 *t != pty && self.cx.ty.is_numeric(*t) && (!float || self.cx.ty.is_float(*t))
@@ -453,7 +453,7 @@ impl FnCx<'_, '_> {
                     args: b
                         .args
                         .iter()
-                        .map(|a| self.cx.ty.subst_known(*a, slots))
+                        .map(|a| self.cx.subst_known(*a, slots))
                         .collect(),
                 };
                 let in_scope = self.bounds.clone();
@@ -504,7 +504,7 @@ impl FnCx<'_, '_> {
             let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
                 break;
             };
-            slots[k] = Some(self.cx.ty.subst(*d, &before));
+            slots[k] = Some(self.cx.subst(*d, &before));
         }
     }
 

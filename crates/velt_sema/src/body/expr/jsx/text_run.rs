@@ -283,7 +283,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `v` (a `JSX.Text` temporary) text: not `null` and not a boolean?
-    fn is_text_test(&mut self, v: &hir::Expr, span: Span) -> hir::Expr {
+    pub(super) fn is_text_test(&mut self, v: &hir::Expr, span: Span) -> hir::Expr {
         let mut alts = vec![];
         for (pat, ty) in self.member_patterns(v.ty, span) {
             if ty.is_some_and(|ty| self.cx.typeof_tag(ty) != "boolean") {
