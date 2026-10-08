@@ -17,6 +17,7 @@ mod component_call;
 mod escape;
 mod invoke;
 mod key;
+mod list_fold;
 mod messages;
 mod precompile;
 mod props;

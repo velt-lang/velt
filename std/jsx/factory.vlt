@@ -139,6 +139,14 @@ export function jsxTemplate(strings: string[], slots: Element[]): Element {
 }
 
 /**
+ * The markup of a list whose rows the compiler wrote as strings (`{xs.map((x) => <tr>…</tr>)}`
+ * with rows without slots): the rows in order.
+ */
+export function jsxList(items: string[]): string {
+  return items.join("");
+}
+
+/**
  * A precompiled subtree without slots (no components, fragments or element children): its
  * markup, with text and attributes folded in.
  */

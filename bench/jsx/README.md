@@ -55,5 +55,20 @@ compiler and runtime with `origin/main`'s std (`563bbc34`) against #676's.
 | rows | 154 | 3 406 964 402 | 123 | 2 594 315 143 | −23.9% |
 | rows-render | 171 | 3 734 117 053 | 149 | 3 139 664 603 | −15.9% |
 
-The precompiled page still runs 35% more instructions than `hand`. Most of the difference is one
-`Element` per row: `rows` costs about 300 instructions more per row than `rows-strings`.
+With #77's list fold (`jsxList`: rows without slots are built as strings) and numbers written as
+`${n}` instead of through `jsxEscape`, the same compiler and std (macOS arm64, 7 runs):
+
+"vs #676" compares with #676's own row in the table above (same machine, same day, the same
+`run.sh`); "vs hand" with this run's `hand` row.
+
+| variant | ms | instructions | vs #676 | vs hand |
+|---|---:|---:|---:|---:|
+| hand | 122 | 2 476 116 056 | | |
+| precompiled | 131 | 2 674 196 739 | −19.9% | +8.0% |
+| generic | 458 | 9 873 708 012 | −0.5% | |
+| rows | 115 | 2 364 231 467 | −8.9% | |
+| rows-render | 143 | 2 949 490 870 | −6.1% | |
+
+What is left of the 8% is copying: the folded rows are joined, the page string is built around
+them, and the benchmark adds the doctype with another template literal, where `hand` joins
+once. (`rows` and `rows-render` are lists outside a template, so they are not folded.)
