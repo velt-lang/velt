@@ -14,9 +14,12 @@
 //! - **as a number**: next to another number (a float literal, `xs.length`, a `number`
 //!   parameter), converted to a float type, an operand of `/` or `**`, or the receiver of a
 //!   method;
+//! - **as an index** (`xs[k]`): a candidate used only as an index (and neutrally) is an `i64`,
+//!   so `let k = 0; … dPos[k] … k++` counts in an integer, not a number converted at every
+//!   access; with a use as `T` it is a `T`, with a use as a number a number;
 //! - neutral otherwise: next to another candidate (they get the same type), a literal, an
-//!   integer type that converts to a number exactly (`i32`), as an index, printed, in a
-//!   template literal, converted with `as`.
+//!   integer type that converts to a number exactly (`i32`), printed, in a template literal,
+//!   converted with `as`.
 //!
 //! Uses need checked types (the parameter of `m.set` on a `Map<i64, i64>`, a closure's
 //! parameter), so the body is checked with every candidate a number, recording the uses; when a
@@ -58,6 +61,8 @@ struct Uses {
     number: Option<Span>,
     /// A negative literal is stored in it: it cannot be unsigned.
     negative: bool,
+    /// It is used as an array index.
+    index: bool,
 }
 
 impl LiteralLocals {
@@ -78,9 +83,11 @@ impl LiteralLocals {
         let ints = std::mem::take(&mut self.uses[b].ints);
         let number = self.uses[b].number.take();
         let negative = std::mem::take(&mut self.uses[b].negative);
+        let index = std::mem::take(&mut self.uses[b].index);
         let root = &mut self.uses[a];
         root.ints.extend(ints);
         root.negative |= negative;
+        root.index |= index;
         root.number = match (root.number, number) {
             (Some(x), Some(y)) => Some(if (y.file, y.lo) < (x.file, x.lo) {
                 y
@@ -106,6 +113,13 @@ impl LiteralLocals {
         }
     }
 
+    fn use_index(&mut self, cands: &[usize]) {
+        for &c in cands {
+            let r = self.find(c);
+            self.uses[r].index = true;
+        }
+    }
+
     fn join(&mut self, cands: &[usize]) {
         for w in cands.windows(2) {
             self.union(w[0], w[1]);
@@ -120,7 +134,8 @@ impl LiteralLocals {
     }
 
     /// The type each class resolves to: `T` when every use as an integer is `T`, none is as a
-    /// number, and `T` holds its literals (a negative one is never unsigned).
+    /// number, and `T` holds its literals (a negative one is never unsigned); `i64` when it is
+    /// used only as an index.
     fn resolved(&mut self, ty: &crate::types::Types) -> Vec<(Span, Option<TyId>, Uses)> {
         let mut out = vec![];
         for i in 0..self.parent.len() {
@@ -133,6 +148,7 @@ impl LiteralLocals {
                 {
                     Some(t)
                 }
+                None if u.number.is_none() && u.index => Some(ty.i64),
                 _ => None,
             };
             let decl = self.uses[i].decl;
@@ -327,6 +343,13 @@ impl FnCx<'_, '_> {
             self.literal.use_int(&cands, core, h.span);
         } else if self.cx.ty.is_float(core) {
             self.literal.use_number(&cands, h.span);
+        }
+    }
+
+    /// `h` is an array index.
+    pub(crate) fn literal_use_index(&mut self, h: &hir::Expr) {
+        if let Some(cands) = self.scan(h) {
+            self.literal.use_index(&cands);
         }
     }
 
