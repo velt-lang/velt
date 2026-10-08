@@ -6,8 +6,10 @@
 // not start another record, and a leading byte order mark (U+FEFF) is skipped. Quoted fields may
 // contain delimiters and line breaks. Fields are strings; no type inference.
 
-// A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
-// (0 for option errors).
+/**
+ * A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
+ * (0 for option errors).
+ */
 export class CsvError extends Error {
   line: i64;
 
@@ -17,21 +19,21 @@ export class CsvError extends Error {
   }
 }
 
-// Options for `parseCsv` / `parseCsvRecords`.
+/** Options for `parseCsv` / `parseCsvRecords`. */
 export struct CsvOptions {
-  // One ASCII character (default `,`; e.g. `;` or `\t`).
+  /** One ASCII character (default `,`; e.g. `;` or `\t`). */
   delimiter?: string;
-  // Strip spaces and tabs around every field, quoted or not (default false).
+  /** Strip spaces and tabs around every field, quoted or not (default false). */
   trim?: bool;
-  // Drop records that are one empty field, i.e. blank lines (default false).
+  /** Drop records that are one empty field, i.e. blank lines (default false). */
   skipEmptyLines?: bool;
 }
 
-// Options for `stringifyCsv`.
+/** Options for `stringifyCsv`. */
 export struct CsvWriteOptions {
-  // One ASCII character (default `,`).
+  /** One ASCII character (default `,`). */
   delimiter?: string;
-  // End records with `\r\n` as RFC 4180 says (default false: `\n`).
+  /** End records with `\r\n` as RFC 4180 says (default false: `\n`). */
   crlf?: bool;
 }
 
@@ -166,8 +168,10 @@ class CsvScanner {
   }
 }
 
-// Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field or
-// text after a closing quote.
+/**
+ * Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field,
+ * text after a closing quote, or an invalid `delimiter`.
+ */
 export function parseCsv(text: string, opts: CsvOptions = {}): string[][] {
   const s = new CsvScanner(text, delimiterUnit(opts.delimiter ?? ","), opts.trim ?? false);
   const skipEmpty = opts.skipEmptyLines ?? false;
@@ -185,9 +189,11 @@ export function parseCsv(text: string, opts: CsvOptions = {}): string[][] {
   return rows;
 }
 
-// Parses CSV whose first record is a header: one map per following record, keyed by header
-// names in header order. Missing trailing fields are "", extra fields are ignored, and a
-// repeated header name keeps its last value.
+/**
+ * Parses CSV whose first record is a header: one map per following record, keyed by header
+ * names in header order. Missing trailing fields are "", extra fields are ignored, and a
+ * repeated header name keeps its last value.
+ */
 export function parseCsvRecords(text: string, opts: CsvOptions = {}): Map<string, string>[] {
   const rows = parseCsv(text, opts);
   const out: Map<string, string>[] = [];
@@ -212,7 +218,10 @@ function needsQuotes(field: string, delim: string): bool {
     field.includes("\r");
 }
 
-// Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+/**
+ * Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+ * Throws `CsvError` on an invalid `delimiter`.
+ */
 export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): string {
   const delim = opts.delimiter ?? ",";
   delimiterUnit(delim);

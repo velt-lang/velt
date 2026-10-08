@@ -46,7 +46,7 @@ function isHttpSpace(c: i64): bool {
 declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
 declare function velt_rt_http_req_headers(r: u64): string[];
 
-// `Headers` or an object literal (`{ "content-type": "text/plain" }`).
+/** `Headers` or an object literal (`{ "content-type": "text/plain" }`). */
 export type HeadersInit = Headers | Record<string, string>;
 
 export class Headers {
@@ -127,7 +127,7 @@ export class Headers {
     }
   }
 
-  // Adds a value; a header that already has one gets another.
+  /** Adds a value; a header that already has one gets another. */
   append(name: string, value: string) {
     this.change();
     const key = name.toLowerCase();
@@ -138,7 +138,7 @@ export class Headers {
     this.list.push(trimHttp(value));
   }
 
-  // Replaces every value of `name` with `value`.
+  /** Replaces every value of `name` with `value`. */
   set(name: string, value: string) {
     this.change();
     const key = name.toLowerCase();
@@ -150,7 +150,7 @@ export class Headers {
     this.list.push(trimHttp(value));
   }
 
-  // Removes every value of `name`.
+  /** Removes every value of `name`. */
   delete(name: string) {
     this.change();
     const key = name.toLowerCase();
@@ -160,7 +160,7 @@ export class Headers {
     this.remove(key);
   }
 
-  // The values of `name` joined with ", ", or null when there is none.
+  /** The values of `name` joined with ", ", or null when there is none. */
   get(name: string): string | null {
     if (this.req != 0) {
       let out = "";
@@ -180,7 +180,7 @@ export class Headers {
     return out;
   }
 
-  // Every `set-cookie` value, in order (they can't be joined with commas).
+  /** Every `set-cookie` value, in order (they can't be joined with commas). */
   getSetCookie(): string[] {
     this.load();
     const out: string[] = [];
@@ -234,7 +234,7 @@ export class Headers {
     return out;
   }
 
-  // Calls `f(value, name)` for each entry, in iteration order.
+  /** Calls `f(value, name)` for each entry, in iteration order. */
   forEach(f: (value: string, name: string) => void) {
     for (const [name, value] of this.sorted()) {
       f(value, name);

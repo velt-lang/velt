@@ -15,7 +15,7 @@ prints every command's options and examples.
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
-| `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
+| `velt add`, `install`, `update`, `publish`, `native build` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
@@ -44,7 +44,7 @@ Every build command works on a single file or on a package:
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
            [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--locked] [-v] [-- <program args>...]
+           [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
@@ -186,7 +186,7 @@ velt init [--template <t>] [--name <name>] [--force]
 | `cli` | a command-line tool: `velt:cli` argument parsing, subcommands, `--help`, exit codes, tests |
 | `api` | a JSON HTTP API: routes, validation, typed errors as status codes, tests with `fetch` against a live server |
 | `websocket` | a WebSocket chat server and terminal client, with an end-to-end test |
-| `lib` | a library: exports with `///` docs for `velt doc`, tests, ready for `velt publish` |
+| `lib` | a library: exports with `/** */` doc comments for `velt doc`, tests, ready for `velt publish` |
 
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
@@ -198,9 +198,11 @@ existing `README.md`, and names the package after the directory unless `--name` 
 velt doc [<file|dir>...] [--std] [-o <dir>]
 ```
 
-Generates HTML documentation for exported items: their signatures and the `///` comment block
-right above each declaration (a comment block at the top of a file documents the module).
-Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
+Generates HTML documentation for exported items: their signatures and the doc comment right
+above each declaration, a JSDoc `/** … */` comment or a block of `///` lines (a comment block at
+the top of a file, followed by a blank line, documents the module). Plain `//` comments are not
+documentation; on the lines between a doc comment and its declaration
+(`// eslint-disable-next-line`) they are skipped. Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
 `<package>/target/doc`; `--std` documents
 the standard library. The output has one page per module and a client-side search.
 
@@ -217,6 +219,11 @@ the standard library. The output has one page per module and a client-side searc
   declare or list itself, each with a link to where it is declared. A re-export from a module
   that isn't documented alongside (another package; std when documenting a package) is listed
   as one line. Names in a local `export { a, b as c };` list are documented too.
+- **Tags** in doc comments are rendered as sections: `@param name - text` as a parameter list
+  (a `{type}` is ignored, as the signature shows the type), `@returns` (`@return`), `@throws`,
+  `@example` (code, shown in a code block), `@deprecated [text]` (the item is also marked
+  deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
+  the text; a URL target becomes a link. Other tags stay in the text as written.
 
 ## `velt doctor`
 
@@ -268,9 +275,12 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
-| `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_LLVM_OPT` | optimization level for release builds (clang, or `opt` for WebAssembly): `3` (default), `2`, `1`, `s` or `z` |
 | `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
+| `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
+| `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
+| `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
 | `VELT_LINKER` | linker override |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
@@ -278,3 +288,5 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
+| `CLICOLOR_FORCE` | force colored output |
+| `COLUMNS` | terminal width for `velt search` results (default: asked from the terminal) |

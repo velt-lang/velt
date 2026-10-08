@@ -49,15 +49,19 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   rustup's `wasm32-wasip1` target). `run` executes WASI modules with `$VELT_WASM_RUNNER <module>
   <args>` or `wasmtime run --dir=. <module> <args>`; browser builds also write the JS glue
   `velt_web.mjs` next to the module, and `run` executes them with `node velt_web.mjs <module>`.
-  No TCP/HTTP/child processes on WebAssembly (link error with a note).
+  No TCP, HTTP server or child processes on WebAssembly (link error with a note); `fetch` links
+  but rejects with `IoError` `ENOTSUP` (no network), so code that only builds `Response`s runs.
 - `playground` (additive): serves a page where programs are edited, compiled
   on the server to `wasm32-unknown-unknown` (`POST /api/compile[?release=1]`, body = source →
   `200 application/wasm` or `422` diagnostics text with paths as `main.vlt`) and run in the
   browser (Web Worker + `velt_web.mjs`). Only `std/…` imports are accepted. Needs the browser
   runtime (`cargo build -p velt_rt_wasm --target wasm32-unknown-unknown`).
 - `doc` (additive): HTML API docs from exported items, their public members,
-  their signatures as written and the `///`/`//` comment block right above each declaration (a
-  comment block at the top of a file documents the module). No paths: the package's `src/`
+  their signatures as written and the doc comment right above each declaration: a JSDoc
+  `/** … */` comment or a block of `///` lines, with JSDoc tags (`@param`, `@returns`,
+  `@throws`, `@example`, `@deprecated`, `@see`, `{@link}`); plain `//` is not a doc comment
+  (`docs/internals/design/doc-comments.md`). A comment block at the top of a file, followed by a
+  blank line, documents the module. No paths: the package's `src/`
   (its `.vlt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
@@ -222,7 +226,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   parsing, subcommands, `--help`, usage errors → exit 2. `api`: JSON HTTP API (routes,
   validation, `ApiError` subclasses → status codes, `shared<Mutex<…>>` state), tests with `fetch`
   against a server on port 0. `websocket`: chat server + terminal client (`serve`/`connect`).
-  `lib`: `src/lib.vlt` exports with `///` docs for `velt doc`. Templates are embedded in the
+  `lib`: `src/lib.vlt` exports with `/** */` doc comments for `velt doc`. Templates are embedded in the
   binary (`crates/veltc/templates/`); `{{name}}` in them becomes the package name.
 - `init` (additive): the same files in the current directory; the package is named after the
   directory (lower-cased, other characters → `-`) unless `--name`. Files the template would
@@ -279,6 +283,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   disk and the corrected specifier); a file module that hides a folder module whose `index` has
   another extension gets a warning. Root files may be `.ts` or `.tsx` too; a package without
   `entry` uses `src/main.vlt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.vlt` is loaded implicitly before everything else.
+  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, …) join the prelude
+  only when a non-std module mentions one of their names as a whole word, unless that module
+  binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a

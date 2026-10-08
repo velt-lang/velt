@@ -6,22 +6,26 @@ import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
 import { URLSearchParams } from "velt:url";
 
-// A body: text, bytes, form fields (sent as `application/x-www-form-urlencoded`), or a stream.
+/** A body: text, bytes, form fields (sent as `application/x-www-form-urlencoded`), or a stream. */
 export type BodyInit = string | u8[] | URLSearchParams | BodyStream;
 
-// How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; `velt_rt_http_fetch_send`
-// takes the first three).
+/**
+ * How a body is held (`kind`: 0 none, 1 text, 2 bytes, 3 a stream; `velt_rt_http_fetch_send`
+ * takes the first three).
+ */
 export struct BodyParts {
   kind: u32;
   text: string;
   bytes: u8[];
   stream: BodyStream | null;
-  // The `content-type` the body implies when none was set, as `impliedType` numbers it.
+  /** The `content-type` the body implies when none was set, as `impliedType` numbers it. */
   implied: u32;
 }
 
-// The `content-type`s a body implies, by number (0: none); the server runtime numbers them the
-// same (`velt_rt_http_resp_build`).
+/**
+ * The `content-type`s a body implies, by number (0: none); the server runtime numbers them the
+ * same (`velt_rt_http_resp_build`).
+ */
 export const TEXT_TYPE: u32 = 1;
 export const JSON_TYPE: u32 = 2;
 export const FORM_TYPE: u32 = 3;
@@ -55,7 +59,7 @@ export function bodyParts(body: BodyInit | null): BodyParts {
   return { kind: 2, text: "", bytes: body, stream: null, implied: 0 };
 }
 
-// The bytes of a stream, in one array.
+/** The bytes of a stream, in one array. */
 export async function collect(stream: BodyStream): Promise<u8[], IoError | AbortError> {
   let out: u8[] = [];
   for await (const chunk of stream) {
@@ -70,9 +74,11 @@ export async function collect(stream: BodyStream): Promise<u8[], IoError | Abort
   return out;
 }
 
-// A body as a stream of byte chunks, read with `for await` (JS: a `ReadableStream` of
-// `Uint8Array`s): `res.body` and `req.body`, or `BodyStream.from(chunks)` for a body made
-// while it is sent. It is read once: reading it uses its body up.
+/**
+ * A body as a stream of byte chunks, read with `for await` (JS: a `ReadableStream` of
+ * `Uint8Array`s): `res.body` and `req.body`, or `BodyStream.from(chunks)` for a body made
+ * while it is sent. It is read once: reading it uses its body up.
+ */
 export class BodyStream {
   #chunks: AsyncIterator<u8[], IoError | AbortError> | null = null;
 
@@ -83,10 +89,12 @@ export class BodyStream {
     return s;
   }
 
-  // A stream of the chunks `chunks` yields (JS: `ReadableStream.from`), e.g. an async
-  // generator's: `new Response(BodyStream.from(rows()))` sends each chunk as it is made. The
-  // stream reads `chunks` as it is read; an error `chunks` throws reaches the reader as an
-  // `IoError` ("EIO") with its text.
+  /**
+   * A stream of the chunks `chunks` yields (JS: `ReadableStream.from`), e.g. an async
+   * generator's: `new Response(BodyStream.from(rows()))` sends each chunk as it is made. The
+   * stream reads `chunks` as it is read; an error `chunks` throws reaches the reader as an
+   * `IoError` ("EIO") with its text.
+   */
   static from<E>(chunks: AsyncIterable<u8[], E>): BodyStream {
     return BodyStream.adopt(relay(chunks));
   }

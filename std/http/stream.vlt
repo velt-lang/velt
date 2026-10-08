@@ -40,7 +40,7 @@ async function produce(body: BodyStream, w: u64): Promise<void> {
   await velt_rt_http_resp_stream_close(w);
 }
 
-// Makes runtime response `r`'s body a stream and starts copying `body` into it.
+/** Makes runtime response `r`'s body a stream and starts copying `body` into it. */
 export function pump(r: u64, body: BodyStream) {
   const running = produce(body, velt_rt_http_resp_stream_open(r));
 }

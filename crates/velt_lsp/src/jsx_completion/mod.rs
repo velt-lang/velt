@@ -15,7 +15,8 @@ use crate::index::pattern_idents;
 use crate::index::scope::is_component;
 use crate::line_index::LineIndex;
 
-use crate::sema_query::{item, kind};
+use crate::docs;
+use crate::sema_query::{def_item, item};
 
 mod context;
 
@@ -37,12 +38,16 @@ pub fn items(
         Context::Tag { closing } => {
             let tags = ide.jsx_intrinsics(file).iter();
             let mut out: Vec<CompletionItem> = tags
-                .map(|(tag, _, ty)| item(tag, CompletionItemKind::PROPERTY, ty))
+                .map(|(tag, def, ty)| {
+                    let mut out = item(tag, CompletionItemKind::PROPERTY, ty);
+                    docs::attach(analysis, &mut out, def);
+                    out
+                })
                 .collect();
             let components = ide.scope_at(file, offset).into_iter().filter(|(name, d)| {
                 is_component(name) && (d.kind == DefKind::Function || has_function_type(d))
             });
-            out.extend(components.map(|(name, d)| item(&name, kind(d.kind), &d.detail)));
+            out.extend(components.map(|(name, d)| def_item(analysis, &name, &d)));
             if let Some(open) = closing {
                 closing_first(&mut out, open);
             }
@@ -59,7 +64,11 @@ pub fn items(
             attrs
                 .into_iter()
                 .filter(|(name, _, _)| !written.contains(&name.as_str()))
-                .map(|(name, _, ty)| item(&name, CompletionItemKind::FIELD, &ty))
+                .map(|(name, def, ty)| {
+                    let mut out = item(&name, CompletionItemKind::FIELD, &ty);
+                    docs::attach(analysis, &mut out, &def);
+                    out
+                })
                 .collect()
         }
     };

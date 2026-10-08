@@ -2,8 +2,9 @@
 
 ## Programs
 
-A program is a set of `.vlt` files. The root file defines `function main()` or
-`async function main()`. `main` returns `void` (exit code 0) or `i32` (the exit code).
+A program is a set of `.vlt` files. The program starts at `function main()` or `async function
+main()` in the root file, or at the root file's top-level statements
+([Scripts](modules.md#scripts-top-level-statements)). `main` returns `void` (exit code 0) or `i32` (the exit code).
 Declarations are hoisted: a function can be called above its definition.
 
 ```ts
@@ -21,8 +22,30 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 
 ## Comments and semicolons
 
-- Comments: `// line` and `/* block */`. A `///` comment right above an exported declaration is
-  its documentation (`velt doc`).
+- Comments: `// line` and `/* block */`.
+- Doc comments: a JSDoc `/** … */` comment, or a block of `///` lines, that ends on the line
+  right above a declaration documents it. The text is Markdown, with JSDoc tags (`@param`,
+  `@returns`, `@throws`, `@example`, `@deprecated`, `@see`, `{@link name}`). A plain `//` or
+  `/* */` comment is not documentation. Plain comments on the lines between a doc comment and
+  its declaration (`// eslint-disable-next-line`, `// @ts-expect-error`) are skipped, as in
+  TypeScript, but a blank line between them ends the association (TypeScript allows blank
+  lines). The comment block at the very top of a file, followed by a blank line, documents the
+  module (any comment style). `velt doc` and [the editor](../tooling/editors.md#features) show
+  doc comments.
+
+```ts
+/**
+ * The larger of `a` and `b`.
+ *
+ * @param a - the first number
+ * @param b - the second number
+ * @returns `a` when the two are equal
+ */
+export function larger(a: i64, b: i64): i64 {
+  return a >= b ? a : b;
+}
+```
+
 - Semicolons are required after statements. There is no automatic semicolon insertion.
 
 ## Identifiers
@@ -32,12 +55,15 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 Velt code is strict-mode code, as in TypeScript modules: no function, class, enum, variable,
 parameter or import may be named `arguments` or `eval` (properties and methods may).
 
+`#name` (a `#` directly followed by an identifier) is an ES private name, used only for class
+members and in `#name in o` ([Classes](classes.md#classes)).
+
 ## Literals
 
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an
   optional type suffix: `10u8`, `5i32`, `1.0f32`. There are no `BigInt` literals (`10n`); use
   [`velt:bigint`](../std/bigint.md).
-- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \u{HHHH}`.
+- **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \uHHHH \u{H…}`.
 - **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`.
   `${expr}` formats any value the way `console.log` does.
 - **Regular expressions**: `/ab+c/gi` is `new RegExp("ab+c", "gi")` from
@@ -50,7 +76,7 @@ parameter or import may be named `arguments` or `eval` (properties and methods m
 as async await break case catch class const constructor continue declare default do else
 enum export extends false finally for from function if implements import in instanceof
 interface let new null of readonly return shared static struct switch this throw true try
-type typeof void while
+type typeof void while yield
 ```
 
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
@@ -58,7 +84,8 @@ Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `t
 Not part of the language: `var`, `undefined`, `any`, `unknown`, `abstract`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)), `for...in`,
-`export default`, `function` expressions (use arrow functions), `mut`, `match`. Writing most of
+`export default`, `function` expressions other than generators (`function* (…) { … }` is
+supported; otherwise use arrow functions), `mut`, `match`. Writing most of
 these is an error that names the Velt replacement.
 
 ## Operators
@@ -74,7 +101,7 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `*` `/` `%` | |
 | `+` `-` | |
 | `<<` `>>` `>>>` | |
-| `<` `<=` `>` `>=` `as` `instanceof` | |
+| `<` `<=` `>` `>=` `as` `instanceof` `in` | `in` only as `#x in o` (a brand check) |
 | `==` `!=` `===` `!==` | `==` is `===` ([Types](types.md#equality-and-comparison)) |
 | `&` | |
 | `^` | |

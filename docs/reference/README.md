@@ -28,7 +28,7 @@ decision:
 
 1. [Lexical structure](lexical.md) — programs, comments, literals, keywords, operators
 2. [Types](types.md) — numbers, strings, equality, `null`, literal types, unions, discriminated
-   unions, enums, objects, arrays, tuples, maps
+   unions, intersection, branded and indexed access types, enums, objects, arrays, tuples, maps
 3. [Variables and conditions](variables.md) — `const`/`let`, safe truthiness, module state
 4. [Functions and closures](functions.md) — parameters, generics, arrows, captures
 5. [Classes, structs, interfaces and generics](classes.md) — members, inheritance, dispatch,
@@ -54,4 +54,3 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 | The `struct` keyword removed (structs already behave as objects) | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
 | TSX: `children` and other element-typed props, faster templates (syntax, providers, `velt:jsx` and streaming already work) | [TSX](../internals/design/tsx.md) |
-| `new Promise((resolve, reject) => …)` | [semantics — promises](../internals/design/semantics.md#promises) |

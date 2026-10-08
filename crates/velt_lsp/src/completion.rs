@@ -236,7 +236,9 @@ fn scope_items(analysis: &Analysis, info: &scope::CursorInfo) -> Vec<CompletionI
 }
 
 fn decl_item(analysis: &Analysis, d: &Decl) -> CompletionItem {
-    item(&d.name, kind(d), &signature::decl(analysis, d))
+    let mut out = item(&d.name, kind(d), &signature::decl(analysis, d));
+    crate::docs::attach_at(analysis, &mut out, d.name_span);
+    out
 }
 
 /// The completion kind of a declaration.

@@ -4,17 +4,17 @@
 
 import type { HtmlAttrs } from "velt:jsx/attrs/global";
 
-// `<col>` and `<colgroup>`.
+/** `<col>` and `<colgroup>`. */
 export type ColAttrs = HtmlAttrs & { span?: string | i64 | f64 };
 
-// `<td>`.
+/** `<td>`. */
 export type TdAttrs = HtmlAttrs & {
   colspan?: string | i64 | f64;
   rowspan?: string | i64 | f64;
   headers?: string;
 };
 
-// `<th>`.
+/** `<th>`. */
 export type ThAttrs = HtmlAttrs & {
   colspan?: string | i64 | f64;
   rowspan?: string | i64 | f64;

@@ -1,8 +1,8 @@
 # velt:jsx
 `import { renderToString, renderToStream, raw, Element } from "velt:jsx"`. Server-side rendering
-of TSX to HTML: the default JSX provider ([provider contract](../internals/contracts/jsx.md)). A module containing JSX
-compiles to calls into `velt:jsx/jsx-runtime` and sees its types as `JSX.Element`,
-`JSX.IntrinsicElements`, …; this module renders the result.
+of TSX to HTML: the default JSX provider ([provider contract](../internals/contracts/jsx.md)).
+A module containing JSX compiles to calls into `velt:jsx/jsx-runtime` and sees its types as
+`JSX.Element`, `JSX.IntrinsicElements`, …; this module renders the result.
 
 - `renderToString(el: Element): Promise<string>` (throws `RenderError`): the HTML, after
   awaiting the async components. `renderToStringSync(el): string` for a tree without async
@@ -32,9 +32,10 @@ Rendering rules:
   React's rules (react-dom 19's `style` serialization, checked on the cases in the
   `std/jsx_style` golden): camelCase names in kebab-case
   (`font-size`; `WebkitX` and `msX` get their `-webkit-` / `-ms-` prefix; custom properties
-  such as `"--accent"` stay as written), `px` after numbers except 0 and unitless properties
-  (`lineHeight`, `opacity`, `zIndex`, `flexGrow`, `WebkitLineClamp`, …), values trimmed, empty strings left out,
-  declarations joined by `;`: `style="font-size:14px;color:teal"`.
+  such as `"--accent"` stay as written), `px` after numbers except 0, custom properties and
+  unitless properties (`lineHeight`, `opacity`, `zIndex`, `flexGrow`, `WebkitLineClamp`, …),
+  values trimmed, empty strings left out, declarations joined by `;`:
+  `style="font-size:14px;color:teal"`.
 - Void elements (`area base br col embed hr img input link meta source track wbr`) have no end
   tag (and no children); any other empty element is written `<x></x>`. `key` is not rendered.
 - `IntrinsicElements` lists every HTML element with its attributes and the global ones, under

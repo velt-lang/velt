@@ -7,7 +7,7 @@
 
 import type { Style } from "velt:jsx/node";
 
-// The attributes of elements that have no others (`<div>`, `<span>`, `<p>`, …).
+/** The attributes of elements that have no others (`<div>`, `<span>`, `<p>`, …). */
 export type HtmlAttrs = {
   accesskey?: string;
   autocapitalize?: string;

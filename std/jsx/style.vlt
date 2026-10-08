@@ -88,7 +88,7 @@ function unitless(name: string): boolean {
   }
 }
 
-// The declarations of `style`, in insertion order, separated by `;` (no spaces).
+/** The declarations of `style`, in insertion order, separated by `;` (no spaces). */
 export function renderStyle(style: Style): string {
   let out = "";
   for (const [name, value] of Object.entries(style)) {

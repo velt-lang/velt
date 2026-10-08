@@ -16,7 +16,7 @@ declare function velt_rt_random_u64(): u64;
 // Bytes per compression block of both hashes (and the HMAC key block).
 const BLOCK: usize = 64;
 
-// Thrown by `randomInt` for an empty range.
+/** Thrown by `randomInt` for an empty or too large range, or a bound that is not a safe integer. */
 export class CryptoError extends Error {
   constructor(message: string) {
     super(message);
@@ -25,7 +25,7 @@ export class CryptoError extends Error {
 
 // ───────────────────────────── SHA-256 ─────────────────────────────
 
-// SHA-256 digest (32 bytes) of `data`.
+/** SHA-256 digest (32 bytes) of `data`. */
 export function sha256(data: u8[]): u8[] {
   const k = roundConstants256();
   const h: u32[] = [
@@ -50,7 +50,7 @@ export function sha256(data: u8[]): u8[] {
   return wordsToBytes(h);
 }
 
-// Lowercase hex SHA-256 of the UTF-8 bytes of `s`.
+/** Lowercase hex SHA-256 of the UTF-8 bytes of `s`. */
 export function sha256Hex(s: string): string {
   return hexEncode(sha256(utf8Encode(s)));
 }
@@ -170,7 +170,7 @@ function sha256Block(h: u32[], w: u32[], k: u32[], data: u8[], off: usize) {
 
 // ───────────────────────────── SHA-1 ─────────────────────────────
 
-// SHA-1 digest (20 bytes) of `data`. Not collision resistant; see the module comment.
+/** SHA-1 digest (20 bytes) of `data`. Not collision resistant; see the module comment. */
 export function sha1(data: u8[]): u8[] {
   const h: u32[] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
   const w = zeroWords(80);
@@ -185,7 +185,7 @@ export function sha1(data: u8[]): u8[] {
   return wordsToBytes(h);
 }
 
-// Lowercase hex SHA-1 of the UTF-8 bytes of `s`.
+/** Lowercase hex SHA-1 of the UTF-8 bytes of `s`. */
 export function sha1Hex(s: string): string {
   return hexEncode(sha1(utf8Encode(s)));
 }
@@ -287,12 +287,12 @@ function wordsToBytes(h: u32[]): u8[] {
 
 // ───────────────────────────── HMAC ─────────────────────────────
 
-// HMAC-SHA256 (RFC 2104 / RFC 4231) of `data` under `key`.
+/** HMAC-SHA256 (RFC 2104 / RFC 4231) of `data` under `key`. */
 export function hmacSha256(key: u8[], data: u8[]): u8[] {
   return hmac(key, data, sha256);
 }
 
-// HMAC-SHA1 (RFC 2104 / RFC 2202) of `data` under `key`.
+/** HMAC-SHA1 (RFC 2104 / RFC 2202) of `data` under `key`. */
 export function hmacSha1(key: u8[], data: u8[]): u8[] {
   return hmac(key, data, sha1);
 }
@@ -319,7 +319,7 @@ function hmac(key: u8[], data: u8[], hash: (bytes: u8[]) => u8[]): u8[] {
 
 // ───────────────────────── randomness, comparison ─────────────────────────
 
-// `n` cryptographically secure random bytes (OS generator).
+/** `n` cryptographically secure random bytes (OS generator). */
 export function randomBytes(n: usize): u8[] {
   return velt_rt_random_bytes(n as u64);
 }
@@ -329,9 +329,11 @@ const MAX_SAFE_INTEGER: i64 = 9007199254740991;
 // The largest `max - min` Node's `randomInt` accepts (2^48 - 1).
 const RANDOM_INT_RANGE: i64 = 281474976710655;
 
-// A uniformly distributed secure random integer in [min, max) (Node's `crypto.randomInt`);
-// rejection sampling avoids modulo bias. Throws `CryptoError`, with Node's messages, when `min`
-// or `max` is not a safe integer, `max <= min`, or `max - min` is 2^48 or more.
+/**
+ * A uniformly distributed secure random integer in [min, max) (Node's `crypto.randomInt`);
+ * rejection sampling avoids modulo bias. Throws `CryptoError`, with Node's messages, when `min`
+ * or `max` is not a safe integer, `max <= min`, or `max - min` is 2^48 or more.
+ */
 export function randomInt(min: i64, max: i64): i64 {
   checkSafeInteger("min", min);
   checkSafeInteger("max", max);
@@ -382,8 +384,10 @@ function received(n: i64): string {
   return `${s.slice(0, i)}${out}`;
 }
 
-// Whether `a` and `b` are equal, in time that depends only on their lengths (not on where they
-// differ), for comparing MACs and tokens. Different lengths return false at once.
+/**
+ * Whether `a` and `b` are equal, in time that depends only on their lengths (not on where they
+ * differ), for comparing MACs and tokens. Different lengths return false at once.
+ */
 export function timingSafeEqual(a: u8[], b: u8[]): bool {
   if (a.length != b.length) {
     return false;

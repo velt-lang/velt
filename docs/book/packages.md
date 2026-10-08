@@ -60,7 +60,7 @@ packages import.
 velt new textkit --template lib     # a library: src/lib.vlt, tests, doc comments
 cd textkit
 velt test
-velt doc                            # HTML docs in target/doc from the /// comments
+velt doc                            # HTML docs in target/doc from the doc comments
 velt publish                        # to the local registry, or the one in package.vlt
 ```
 
@@ -83,16 +83,27 @@ the lockfile, for reproducible builds. Commit `velt.lock.json` for applications.
 
 ## Documenting a library
 
-`velt doc` documents exported items from the `///` comments right above them:
+`velt doc` documents exported items from the doc comments right above them: JSDoc `/** … */`
+comments, as in TypeScript, or `///` lines. The text is Markdown; tags describe the parameters,
+the result, errors and examples. Plain `//` comments are not documentation.
 
-```ts ignore
-/// A URL-friendly form of `text`: lower case, ASCII letters and digits, words joined by `-`.
-///
-/// `slugify("Hello, World!")` is `"hello-world"`.
+```ts
+/**
+ * A URL-friendly form of `text`: lower case, words joined by `-`.
+ *
+ * @param text - the text to turn into a slug
+ * @returns `""` when `text` has no words
+ * @example
+ * slugify("Hello World"); // "hello-world"
+ */
 export function slugify(text: string): string {
-  // …
+  return text.toLowerCase().split(" ").filter((w) => w !== "").join("-");
 }
 ```
+
+The comment block at the top of a file, followed by a blank line, documents the module. The
+tags are `@param`, `@returns`, `@throws`, `@example`, `@deprecated`, `@see` and `{@link name}`
+([`velt doc`](../tooling/cli.md#velt-doc)).
 
 ## Registries
 

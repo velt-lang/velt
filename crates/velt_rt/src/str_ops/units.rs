@@ -116,7 +116,7 @@ pub(super) fn prefix_to(bytes: &[u8], pos: BytePos) -> Vec<u8> {
 pub(super) unsafe fn slice(s: &VeltStr, a: usize, b: usize) -> VeltStr {
     let (pa, pb) = s.unit_range_to_bytes(a, b);
     if !pa.low_half && !pb.low_half {
-        return s.substring(pa.byte, pb.byte);
+        return s.substring_units(pa.byte, pb.byte, b - a);
     }
     let bytes = s.as_bytes();
     let mut v = Vec::with_capacity(pb.byte - pa.byte + 6);

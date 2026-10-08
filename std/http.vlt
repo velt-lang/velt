@@ -46,7 +46,7 @@ declare function velt_rt_http_req_drop(r: u64);
 // Loopback unless the caller asks for more (pass `host: "0.0.0.0"` to listen on all interfaces).
 const DEFAULT_HOST = "127.0.0.1";
 
-// A certificate chain and its private key, both PEM text (e.g. read with `readFile`).
+/** A certificate chain and its private key, both PEM text (e.g. read with `readFile`). */
 export struct TlsOptions {
   cert: string;
   key: string;
@@ -55,25 +55,27 @@ export struct TlsOptions {
 export struct ServeOptions {
   port: i64;
   host?: string;
-  // Serve HTTPS (HTTP/2 and HTTP/1.1, negotiated with ALPN) instead of plain HTTP.
+  /** Serve HTTPS (HTTP/2 and HTTP/1.1, negotiated with ALPN) instead of plain HTTP. */
   tls?: TlsOptions;
 }
 
-// An address a connection came from (Deno's `NetAddr`).
+/** An address a connection came from (Deno's `NetAddr`). */
 export struct NetAddr {
-  // "tcp"
+  /** "tcp" */
   transport: string;
-  // The IP address, e.g. "127.0.0.1" or "::1".
+  /** The IP address, e.g. "127.0.0.1" or "::1". */
   hostname: string;
   port: i64;
 }
 
-// What the server knows about a request beyond the `Request` itself: a handler's second
-// argument (Deno's `ServeHandlerInfo`). Valid while the handler runs, like its request.
+/**
+ * What the server knows about a request beyond the `Request` itself: a handler's second
+ * argument (Deno's `ServeHandlerInfo`). Valid while the handler runs, like its request.
+ */
 export struct ServeInfo {
   private raw: u64;
 
-  // The client's address.
+  /** The client's address. */
   get remoteAddr(): NetAddr {
     return {
       transport: "tcp",
@@ -83,9 +85,9 @@ export struct ServeInfo {
   }
 }
 
-// A running server; requests are handled concurrently on the runtime's workers.
+/** A running server; requests are handled concurrently on the runtime's workers. */
 export class Server {
-  // The real port (useful after `port: 0`).
+  /** The real port (useful after `port: 0`). */
   port: i64 = 0;
   #handle: u64 = 0;
 
@@ -97,8 +99,10 @@ export class Server {
     return s;
   }
 
-  // Stops accepting, lets in-flight requests finish, closes idle connections. Idempotent. The
-  // handler (and whatever it captured) is dropped once the last request finished.
+  /**
+   * Stops accepting, lets in-flight requests finish, closes idle connections. Idempotent. The
+   * handler (and whatever it captured) is dropped once the last request finished.
+   */
   close() {
     if (this.#handle != 0) {
       velt_rt_http_server_close(this.#handle);
@@ -106,8 +110,10 @@ export class Server {
     }
   }
 
-  // `close()`, then waits until every in-flight request has finished and the handler (with
-  // everything it captured) was dropped. Consumes the server (an async method takes `this`).
+  /**
+   * `close()`, then waits until every in-flight request has finished and the handler (with
+   * everything it captured) was dropped. Consumes the server (an async method takes `this`).
+   */
   async shutdown() {
     if (this.#handle != 0) {
       const handle = this.#handle;
@@ -116,8 +122,10 @@ export class Server {
     }
   }
 
-  // Drop hook: releasing the handle does NOT stop the server (like Node: it keeps serving, and
-  // keeps the process alive, until `close()` or process exit).
+  /**
+   * Drop hook: releasing the handle does NOT stop the server (like Node: it keeps serving, and
+   * keeps the process alive, until `close()` or process exit).
+   */
   [Symbol.dispose]() {
     if (this.#handle != 0) {
       velt_rt_http_server_detach(this.#handle);
@@ -142,10 +150,12 @@ function failure(): u64 {
   return new Response("Internal Server Error", { status: 500 }).toServer();
 }
 
-// Binds `host:port` (default host 127.0.0.1; port 0 = any free port) and serves `handler` in the
-// background. Handlers run concurrently, so like spawned tasks they must not mutate captured
-// variables (use `shared`). A handler that throws (rejects with `E`) gets a 500 response, and
-// the error is printed to stderr (like Deno's and Bun's `serve`).
+/**
+ * Binds `host:port` (default host 127.0.0.1; port 0 = any free port) and serves `handler` in the
+ * background. Handlers run concurrently, so like spawned tasks they must not mutate captured
+ * variables (use `shared`). A handler that throws (rejects with `E`) gets a 500 response, and
+ * the error is printed to stderr (like Deno's and Bun's `serve`).
+ */
 export async function serve<E>(
   opts: ServeOptions,
   handler: (req: Request, info: ServeInfo) => Promise<Response, E>,

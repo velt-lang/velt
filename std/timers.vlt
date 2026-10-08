@@ -9,48 +9,50 @@ import { AbortController, AbortSignal } from "velt:task";
 // prelude's), also importable from here.
 export { Timer, setTimeout, clearTimeout, setInterval, clearInterval } from "velt:prelude/timers";
 
-// Calls `task` as soon as possible on its own task (after the current task yields).
+/** Calls `task` as soon as possible on its own task (after the current task yields). */
 export function setImmediate(task: () => Promise<void>): Timer {
   return setTimeout(task, 0);
 }
 
-// Resolves after `ms` milliseconds (same as the built-in `sleep`).
+/** Resolves after `ms` milliseconds (same as the built-in `sleep`). */
 export async function delay(ms: i64): Promise<void> {
   await sleep(ms);
 }
 
-// Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`.
+/** Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`. */
 export class TickerStop {
   private control: AbortController;
 
-  // Wraps a ticker's stop controller (use `Ticker.stopper()`).
+  /** Wraps a ticker's stop controller (use `Ticker.stopper()`). */
   constructor(control: AbortController) {
     this.control = control;
   }
 
-  // Makes the ticker's pending and future `tick()`s resolve to false, the pending one at once.
+  /** Makes the ticker's pending and future `tick()`s resolve to false, the pending one at once. */
   stop() {
     this.control.abort("ticker stopped");
   }
 }
 
-// A drift-free periodic schedule: tick `k` is due `k * periodMs` after construction (measured
-// with `performance.now()`), independent of how long the loop body takes. Missed ticks are
-// skipped, not burst: a `tick()` that is already late resolves at once, and the next one is
-// the first schedule point after that. A stop wakes a pending tick at once: its sleep races the
-// stop signal (velt:task), and the losing sleep is cancelled.
+/**
+ * A drift-free periodic schedule: tick `k` is due `k * periodMs` after construction (measured
+ * with `performance.now()`), independent of how long the loop body takes. Missed ticks are
+ * skipped, not burst: a `tick()` that is already late resolves at once, and the next one is
+ * the first schedule point after that. A stop wakes a pending tick at once: its sleep races the
+ * stop signal (velt:task), and the losing sleep is cancelled.
+ */
 export class Ticker implements AsyncIterable<i64> {
   private periodMs: f64;
   private nextDue: f64;
   private control: AbortController = new AbortController();
 
-  // A ticker whose first tick is due `periodMs` (>= 1) from now.
+  /** A ticker whose first tick is due `periodMs` (>= 1) from now. */
   constructor(periodMs: i64) {
     this.periodMs = (periodMs < 1 ? 1 : periodMs) as f64;
     this.nextDue = performance.now() + this.periodMs;
   }
 
-  // Resolves when the next tick is due: true, or false once the ticker is stopped.
+  /** Resolves when the next tick is due: true, or false once the ticker is stopped. */
   tick(): Promise<bool> {
     const now = performance.now();
     const due = this.nextDue;
@@ -66,8 +68,10 @@ export class Ticker implements AsyncIterable<i64> {
     return waitTick(waitMs, this.control.signal);
   }
 
-  // `for await (const n of ticker)`: each tick as `tick()` waits for it, numbered from 1,
-  // until the ticker is stopped. Leaving the loop early does not stop the ticker.
+  /**
+   * `for await (const n of ticker)`: each tick as `tick()` waits for it, numbered from 1,
+   * until the ticker is stopped. Leaving the loop early does not stop the ticker.
+   */
   async *[Symbol.asyncIterator](): AsyncIterator<i64> {
     let n = 0;
     while (await this.tick()) {
@@ -76,12 +80,12 @@ export class Ticker implements AsyncIterable<i64> {
     }
   }
 
-  // Stops the ticker (see `TickerStop.stop`).
+  /** Stops the ticker (see `TickerStop.stop`). */
   stop() {
     this.control.abort("ticker stopped");
   }
 
-  // A handle that stops this ticker from another task.
+  /** A handle that stops this ticker from another task. */
   stopper(): TickerStop {
     return new TickerStop(this.control);
   }

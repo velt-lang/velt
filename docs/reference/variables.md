@@ -31,7 +31,9 @@ accept `bool` and nullable values.
 ## No mutable module state
 
 Module scope holds only constants, functions and types. A module-level `let` is an error
-("mutable module-level state is not allowed"), and module `const` initializers must be literals
+("mutable module-level state is not allowed"; in a root file with top-level statements, a `let`
+that only those statements use is a local of the generated `main`, see
+[Scripts](modules.md#scripts-top-level-statements)), and module `const` initializers must be literals
 or struct literals of constants. State that changes lives in values created by `main` (for
 example `shared(...)` or class instances) and is passed where it is needed. This keeps request
 handlers free of data races, and it is what lets `velt dev` swap code in a running program

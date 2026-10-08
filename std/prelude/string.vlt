@@ -8,6 +8,8 @@
 // -1 or NaN. Inputs are borrowed; every returned string is owned by the caller (a substring of a
 // static string may itself be static, which is free to drop).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
 declare function velt_rt_str_last_index_of(s: string, needle: string, from: i64): i64;
@@ -36,84 +38,114 @@ declare function velt_rt_str_locale_compare(s: string, t: string): i64;
 const END: i64 = 9223372036854775807;
 
 extend string {
-  // [start, end); negative positions count from the end; clamped; "" if start >= end.
+  /** [start, end); negative positions count from the end; clamped; "" if start >= end. */
   slice(start: i64 = 0, end: i64 = END): string {
     return velt_rt_str_slice(this, start, end);
   }
 
-  // Like `slice`, but negative positions are 0 and swapped bounds are reordered (JS rules).
+  /** Like `slice`, but negative positions are 0 and swapped bounds are reordered (JS rules). */
   substring(start: i64, end: i64 = END): string {
     const lo = start < 0 ? 0 : start;
     const hi = end < 0 ? 0 : end;
     return lo <= hi ? velt_rt_str_slice(this, lo, hi) : velt_rt_str_slice(this, hi, lo);
   }
 
-  // First match at or after `from`, or -1.
+  /** First match at or after `from`, or -1. */
   indexOf(needle: string, from: i64 = 0): i64 {
     return velt_rt_str_index_of(this, needle, from);
   }
 
-  // Last match starting at or before `from`, or -1.
+  /** Last match starting at or before `from`, or -1. */
   lastIndexOf(needle: string, from: i64 = END): i64 {
     return velt_rt_str_last_index_of(this, needle, from);
   }
 
+  /**
+   * Returns true if `needle` appears as a substring of this string; otherwise, returns false.
+   * Unlike JS, there is no `position` argument.
+   * @param needle - search string
+   */
   includes(needle: string): bool {
     return velt_rt_str_includes(this, needle);
   }
 
+  /**
+   * Returns true if this string starts with `prefix`. Otherwise returns false. Unlike JS, there
+   * is no `position` argument.
+   */
   startsWith(prefix: string): bool {
     return velt_rt_str_starts_with(this, prefix);
   }
 
+  /**
+   * Returns true if this string ends with `suffix`. Otherwise returns false. Unlike JS, there is
+   * no `endPosition` argument.
+   */
   endsWith(suffix: string): bool {
     return velt_rt_str_ends_with(this, suffix);
   }
 
-  // JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the code units (a
-  // surrogate pair splits into its two halves).
+  /**
+   * JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the code units (a
+   * surrogate pair splits into its two halves).
+   */
   split(sep: string): string[] {
     return velt_rt_str_split(this, sep);
   }
 
-  // The characters (code points, a surrogate pair as one string), as JS's string iterator:
-  // what `for (const c of s)` and `[...s]` iterate. Internal to the compiler.
+  /**
+   * The characters (code points, a surrogate pair as one string), as JS's string iterator:
+   * what `for (const c of s)` and `[...s]` iterate. Internal to the compiler.
+   */
   __codePoints(): string[] {
     return velt_rt_str_code_points(this);
   }
 
-  // Strips JS whitespace and line terminators.
+  /** Strips JS whitespace and line terminators. */
   trim(): string {
     return velt_rt_str_trim(this);
   }
 
+  /** Removes the leading white space and line terminator characters from a string. */
   trimStart(): string {
     return velt_rt_str_trim_start(this);
   }
 
+  /** Removes the trailing white space and line terminator characters from a string. */
   trimEnd(): string {
     return velt_rt_str_trim_end(this);
   }
 
-  // Full Unicode case mapping, like JS ("ß".toUpperCase() is "SS").
+  /** Full Unicode case mapping, like JS ("ß".toUpperCase() is "SS"). */
   toUpperCase(): string {
     return velt_rt_str_to_upper(this);
   }
 
+  /**
+   * Converts all the alphabetic characters in a string to lowercase: full Unicode case mapping,
+   * like JS (a final `Σ` becomes `ς`).
+   */
   toLowerCase(): string {
     return velt_rt_str_to_lower(this);
   }
 
-  // First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS.
+  /** First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS. */
   replace(from: string, to: string): string {
     return velt_rt_str_replace(this, from, to);
   }
 
+  /**
+   * Replace all instances of a substring in a string. `from` is plain text; for patterns use
+   * `velt:regex`.
+   * @param from - A string to search for.
+   * @param to - A string containing the text to replace for every successful match of `from` in
+   * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.
+   */
   replaceAll(from: string, to: string): string {
     return velt_rt_str_replace_all(this, from, to);
   }
 
-  // Panics like JS's RangeError if `n` is negative or the result would be too large.
+  /** Panics like JS's RangeError if `n` is negative or the result would be too large. */
   repeat(n: i64): string {
     let out = "";
     if (!velt_rt_str_repeat(this, n, out)) {
@@ -122,30 +154,48 @@ extend string {
     return out;
   }
 
-  // Pads to `target` code units with `fill` (the last partial fill is cut to the units missing,
-  // between the halves of a pair if need be, as in JS).
+  /**
+   * Pads to `target` code units with `fill` (the last partial fill is cut to the units missing,
+   * between the halves of a pair if need be, as in JS).
+   */
   padStart(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_start(this, target, fill);
   }
 
+  /**
+   * Pads the current string with a given string (possibly repeated) so that the resulting string
+   * reaches a given length in UTF-16 code units, as in JS.
+   * The padding is applied from the end (right) of the current string.
+   * @param target - The length of the resulting string once the current string has been padded.
+   * If this parameter is smaller than the current string's length, the current string will be
+   * returned as it is.
+   * @param fill - The string to pad the current string with.
+   * If this string is too long, it will be truncated and the left-most part will be applied; the
+   * cut may fall between the halves of a surrogate pair, as in JS. The default value for this
+   * parameter is " " (U+0020).
+   */
   padEnd(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_end(this, target, fill);
   }
 
-  // -1, 0 or 1: the order of `this` and `that` in the CLDR root collation, like
-  // `new Intl.Collator("und").compare` ("a" < "A" < "b", "e" < "é" < "f"). Node's own
-  // `localeCompare` follows the host's locale instead. Exact for strings made of U+0020..U+024F,
-  // U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese,
-  // Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand
-  // for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or
-  // options arguments.
+  /**
+   * -1, 0 or 1: the order of `this` and `that` in the CLDR root collation, like
+   * `new Intl.Collator("und").compare` ("a" < "A" < "b", "e" < "é" < "f"). Node's own
+   * `localeCompare` follows the host's locale instead. Exact for strings made of U+0020..U+024F,
+   * U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese,
+   * Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand
+   * for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or
+   * options arguments.
+   */
   localeCompare(that: string): i64 {
     return velt_rt_str_locale_compare(this, that);
   }
 
-  // The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
-  // out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
-  // (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
+  /**
+   * The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
+   * out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
+   * (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
+   */
   charAt(i: i64 = 0): string {
     // Past the end, the slice is empty (its bounds are clamped): no length to compute first.
     if (i < 0 || i == END) {
@@ -154,8 +204,10 @@ extend string {
     return velt_rt_str_slice(this, i, i + 1);
   }
 
-  // Like `charAt`, but a negative `i` counts from the end, and past the end is null (JS:
-  // `undefined`).
+  /**
+   * Like `charAt`, but a negative `i` counts from the end, and past the end is null (JS:
+   * `undefined`).
+   */
   at(i: i64): string | null {
     const n = this.length as i64;
     const k = i < 0 ? i + n : i;
@@ -165,32 +217,40 @@ extend string {
     return this.charAt(k);
   }
 
-  // The UTF-16 code unit at `i` (the high or low surrogate of a pair), or -1 if out of range
-  // (JS: NaN). Reads an ASCII string inline.
+  /**
+   * The UTF-16 code unit at `i` (the high or low surrogate of a pair), or -1 if out of range
+   * (JS: NaN). Reads an ASCII string inline.
+   */
   charCodeAt(i: i64 = 0): i64 {
     return __intrinsic_str_char_code_at(this, i);
   }
 }
 
+/**
+ * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
+ * `string` itself. Unlike JS, `String(x)` is not a conversion: write `x.toString()` or `${x}`.
+ */
 export class String {
-  // JS `String.fromCharCode(code)` for one code unit (`ToUint16`); a surrogate gives a string
-  // holding that lone surrogate, as in JS.
+  /**
+   * JS `String.fromCharCode(code)` for one code unit (`ToUint16`); a surrogate gives a string
+   * holding that lone surrogate, as in JS.
+   */
   static fromCharCode(code: i64): string {
     return velt_rt_str_from_char_code(code);
   }
 }
 
-// Exact JS `parseInt`: `radix` 0 means "omitted" (base 10, or 16 after "0x"); NaN if no digits.
+/** Exact JS `parseInt`: `radix` 0 means "omitted" (base 10, or 16 after "0x"); NaN if no digits. */
 export function parseInt(s: string, radix: i64 = 0): f64 {
   return velt_rt_parse_int(s, radix);
 }
 
-// Exact JS `parseFloat`: the longest decimal prefix (incl. "Infinity"), else NaN.
+/** Exact JS `parseFloat`: the longest decimal prefix (incl. "Infinity"), else NaN. */
 export function parseFloat(s: string): f64 {
   return velt_rt_parse_float(s);
 }
 
-// Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN.
+/** Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN. */
 export function Number(s: string): f64 {
   return velt_rt_str_to_number(s);
 }

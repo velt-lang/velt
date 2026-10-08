@@ -7,14 +7,16 @@ every string position, so `s.slice(m.index, m.end)` is the match. There is no hi
 by `.` or a negated class yet (#377 phase 5), and an empty match steps over a whole surrogate
 pair (JavaScript without the `u` flag stops between its halves; #401).
 
-- `new RegExp(pattern, flags = "")`: flags `g i m s y`. Throws `RegExpError`.
+- `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d u v` are accepted and change
+  nothing). Throws `RegExpError` for an invalid pattern, or an unknown or repeated flag.
   Fields: `source`, `flags`, `global`, `sticky`, `groupCount`.
 - `test(s, from = 0)`, `exec(s, from = 0): RegExpMatch | null`.
 - `matchAll(s): RegExpMatch[]`, `matches(s): string[]`.
 - `replace(s, repl)`: every match with `g`, otherwise the first. `replaceAll(s, repl)`.
   `repl` expands `` $& $1 $<name> $` $' $$ ``.
 - `replaceWith(s, f: (m) => string)`.
-- `split(s, limit = 0)`: captured groups are included in the result.
+- `split(s, limit = 0)`: captured groups are included in the result (`""` for a group that did
+  not take part, where JS gives `undefined`); `limit` 0 means no limit.
 - `RegExp.escape(s)`, `clone()`.
 - `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)` and
   `named(name)`.

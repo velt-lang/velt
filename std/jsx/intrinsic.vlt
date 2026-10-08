@@ -54,8 +54,10 @@ import type {
 } from "velt:jsx/attrs/text";
 import type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
 
-// Tag name → attribute type, for every element of the HTML standard (SVG and MathML are not
-// included).
+/**
+ * Tag name → attribute type, for every element of the HTML standard (SVG and MathML are not
+ * included).
+ */
 export type IntrinsicElements = {
   a: AnchorAttrs;
   abbr: HtmlAttrs;
@@ -171,5 +173,5 @@ export type IntrinsicElements = {
   wbr: HtmlAttrs;
 };
 
-// Components receive their JSX children in the `children` field of their props.
+/** Components receive their JSX children in the `children` field of their props. */
 export type ElementChildrenAttribute = { children: Child };

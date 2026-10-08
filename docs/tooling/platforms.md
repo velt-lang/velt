@@ -46,7 +46,7 @@ globally: put `<prefix>/bin` on `PATH` and run `velt doctor`.
                           runtime shared library (Linux / macOS)
   lib/NATIVE_LIBS.md      the system libraries programs link against
   std/**                  standard library sources
-  README.md, LICENSE
+  README.md, LICENSE-MIT, LICENSE-APACHE, NOTICE
 ```
 
 How `velt` finds its parts (first match wins):

@@ -9,8 +9,10 @@ import { Element, RenderError } from "velt:jsx/node";
 import { utf8Encode } from "velt:encoding";
 import { BodyStream } from "velt:fetch/body";
 
-// The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
-// first (in document order) component that threw or rejected.
+/**
+ * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
+ * first (in document order) component that threw or rejected.
+ */
 export async function renderToString(el: Element): Promise<string> throws RenderError {
   if (el.isComplete) {
     return el.html;
@@ -31,8 +33,10 @@ export async function renderToString(el: Element): Promise<string> throws Render
   return out;
 }
 
-// The HTML of `el` when it has no async component (no await needed). Throws the `RenderError`
-// of the first component that threw, or one saying the tree has an async component.
+/**
+ * The HTML of `el` when it has no async component (no await needed). Throws the `RenderError`
+ * of the first component that threw, or one saying the tree has an async component.
+ */
 export function renderToStringSync(el: Element): string throws RenderError {
   if (el.isComplete) {
     return el.html;
@@ -59,11 +63,13 @@ function collect(node: Element, pieces: string[]) throws RenderError {
   }
 }
 
-// The HTML of `el` as a streamed `Response` body (like React's `renderToReadableStream`):
-// `new Response(renderToStream(el), ...)`. The markup above each pending async component is sent
-// before the component is awaited, so it reaches the client while the component loads. Once
-// the client has gone away, rendering stops. A component that throws cuts the response off (its
-// `RenderError` is printed to stderr).
+/**
+ * The HTML of `el` as a streamed `Response` body (like React's `renderToReadableStream`):
+ * `new Response(renderToStream(el), ...)`. The markup above each pending async component is sent
+ * before the component is awaited, so it reaches the client while the component loads. Once
+ * the client has gone away, rendering stops. A component that throws cuts the response off (its
+ * `RenderError` is printed to stderr).
+ */
 export function renderToStream(el: Element): BodyStream {
   return BodyStream.from(chunks(el));
 }

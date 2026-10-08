@@ -17,13 +17,14 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `deepEqual(a, b)` | content comparison (`==` compares objects by identity) |
 | `attempt(() => f())` | a throwing call as a value: `T \| E` ([Errors](errors.md#errors-as-values)) |
 | `Math` | `PI`, `E`, `sqrt floor ceil round trunc abs sign max min pow hypot random`, … |
-| `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `String.fromCharCode(c)`, `NaN`, `Infinity` | conversions |
+| `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `isNaN(x)`, `isFinite(x)`, `String.fromCharCode(c)`, `NaN`, `Infinity` | conversions and checks |
+| `Buffer.alloc(n)`, `Buffer.byteLength(s)` | byte arrays (`u8[]`) ([prelude](../std/prelude.md)) |
 | `Number.isInteger(x)`, `Number.isNaN`, `isFinite`, `isSafeInteger`, `parseInt`, `parseFloat`, `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` | JS's `Number` members, on `f64` |
 | `JSON.stringify`, `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt:json`](../std/json.md)) |
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
-| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers` | async ([Async](async.md)) |
+| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers`, `new Promise((resolve, reject) => …)` | async ([Async](async.md)) |
 | `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback returns the promise to run (`() => save(doc)`, `async () => { … }`) ([velt:timers](../std/timers.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |

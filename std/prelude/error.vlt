@@ -5,9 +5,15 @@
 // `catch (e) { e.message }` works either way (every member has `message`). User error classes
 // extend it too.
 
+/**
+ * The base class of errors: what std throws (`IoError`, `JsonError`, …) and what error classes
+ * of your own extend. Catch them with `try { … } catch (e) { e.message }`.
+ */
 export class Error {
+  /** What went wrong, for people. */
   message: string;
 
+  /** An error with the given `message`. */
   constructor(message: string) {
     this.message = message;
   }

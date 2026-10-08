@@ -7,9 +7,11 @@
 // `(const VeltStr* s, VeltStr* out)`: a new string with `& < > " '` replaced by entities.
 declare function velt_rt_html_escape(s: string): string;
 
-// `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`:
-// safe inside element content and in single- or double-quoted attribute values. Other
-// characters (including non-ASCII) are kept as they are.
+/**
+ * `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`:
+ * safe inside element content and in single- or double-quoted attribute values. Other
+ * characters (including non-ASCII) are kept as they are.
+ */
 export function escapeHtml(s: string): string {
   return velt_rt_html_escape(s);
 }

@@ -6,6 +6,8 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
 declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
@@ -14,18 +16,20 @@ declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_str_byte_length(s: string): u64;
 
-// Node's `Buffer` constructors (static only; buffers are `u8[]`).
+/** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
 export class Buffer {
-  // `n` zero bytes.
+  /** `n` zero bytes. */
   static alloc(n: usize): u8[] {
     return velt_rt_bytes_zeroed(n as u64);
   }
 
-  // The number of bytes `s` takes in `encoding`, as Node's `Buffer.byteLength(s, encoding)`:
-  // UTF-8 by default (O(1), a lone surrogate counting as the 3 bytes of U+FFFD), `utf16le` /
-  // `ucs2` two per code unit, `latin1` / `binary` / `ascii` one, `hex` one per two digits,
-  // `base64` / `base64url` the decoded size. Names ignore case; an unknown one counts UTF-8, as
-  // Node does. `s.length` counts UTF-16 code units, not bytes.
+  /**
+   * The number of bytes `s` takes in `encoding`, as Node's `Buffer.byteLength(s, encoding)`:
+   * UTF-8 by default (O(1), a lone surrogate counting as the 3 bytes of U+FFFD), `utf16le` /
+   * `ucs2` two per code unit, `latin1` / `binary` / `ascii` one, `hex` one per two digits,
+   * `base64` / `base64url` the decoded size. Names ignore case; an unknown one counts UTF-8, as
+   * Node does. `s.length` counts UTF-16 code units, not bytes.
+   */
   static byteLength(s: string, encoding: string = "utf8"): usize {
     if (encoding == "utf8") {
       return velt_rt_str_byte_length(s) as usize;
@@ -56,34 +60,41 @@ export class Buffer {
 }
 
 extend Array<u8> {
-  // Position of the first `byte` at or after `from`, or -1 (memchr).
+  /** Position of the first `byte` at or after `from`, or -1 (memchr). */
   indexOf(byte: u8, from: i64 = 0): i64 {
     return velt_rt_bytes_index_of(this, byte, from);
   }
 
-  // Position of the last `byte` at or before `from`, or -1.
+  /** Position of the last `byte` at or before `from`, or -1. */
   lastIndexOf(byte: u8, from: i64 = 9223372036854775807): i64 {
     return velt_rt_bytes_last_index_of(this, byte, from);
   }
 
+  /**
+   * Determines whether an array includes a certain byte, returning true or false as appropriate
+   * (memchr).
+   * @param byte - The byte to search for.
+   */
   includes(byte: u8): bool {
     return velt_rt_bytes_index_of(this, byte, 0) >= 0;
   }
 
-  // Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`); the
-  // array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
+  /**
+   * Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`); the
+   * array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
+   */
   set(src: u8[], offset: usize = 0) {
     if (!velt_rt_bytes_set(this, src, offset as u64)) {
       panic("RangeError: offset is out of bounds");
     }
   }
 
-  // Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine).
+  /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
   copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_copy_within(this, target, start, end);
   }
 
-  // Sets the bytes in [start, end) to `byte` (memset).
+  /** Sets the bytes in [start, end) to `byte` (memset). */
   fill(byte: u8, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_fill(this, byte, start, end);
   }

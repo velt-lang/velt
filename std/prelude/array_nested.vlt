@@ -4,7 +4,7 @@
 // These targets are more specific than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
 extend<T> Array<T[]> {
-  // The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported).
+  /** The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported). */
   flat(): T[] {
     let total: usize = 0;
     for (let i: usize = 0; i < this.length; i++) {
@@ -20,8 +20,10 @@ extend<T> Array<T[]> {
     return out;
   }
 
-  // Each inner array joined with "," and the results with `sep`, like JS when the inner
-  // elements are strings, numbers or booleans.
+  /**
+   * Each inner array joined with "," and the results with `sep`, like JS when the inner
+   * elements are strings, numbers or booleans.
+   */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
@@ -35,7 +37,7 @@ extend<T> Array<T[]> {
 }
 
 extend<T> Array<T | null> {
-  // `null` elements join as empty text, like JS; the others as `${x}`.
+  /** `null` elements join as empty text, like JS; the others as `${x}`. */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {

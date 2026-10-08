@@ -20,9 +20,20 @@
 // There is no generic ordering bound yet, so `sort()` is provided per element type. The
 // comparator returns `i64` (like `compareTo`), except on `f64[]`, where it returns `f64`.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 import { stableSort } from "velt:sort/stable";
 
 extend Array<i64> {
+  /**
+   * Sorts an array in place. Unlike JS, it returns nothing.
+   * @param cmp - Function used to determine the order of the elements. It is expected to return
+   * a negative value if the first argument is less than the second argument, zero if they're
+   * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
+   * sorted in ascending numeric order (JS would compare them as strings).
+   * @example
+   * xs.sort((a, b) => b - a); // descending
+   */
   sort(cmp: ((x: i64, y: i64) => i64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
@@ -31,7 +42,7 @@ extend Array<i64> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: i64, y: i64) => i64) | null = null): i64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -40,6 +51,15 @@ extend Array<i64> {
 }
 
 extend Array<i32> {
+  /**
+   * Sorts an array in place. Unlike JS, it returns nothing.
+   * @param cmp - Function used to determine the order of the elements. It is expected to return
+   * a negative value if the first argument is less than the second argument, zero if they're
+   * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
+   * sorted in ascending numeric order (JS would compare them as strings).
+   * @example
+   * xs.sort((a, b) => b.compareTo(a)); // descending
+   */
   sort(cmp: ((x: i32, y: i32) => i64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
@@ -48,7 +68,7 @@ extend Array<i32> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: i32, y: i32) => i64) | null = null): i32[] {
     const out = this.slice();
     out.sort(cmp);
@@ -57,6 +77,15 @@ extend Array<i32> {
 }
 
 extend Array<u64> {
+  /**
+   * Sorts an array in place. Unlike JS, it returns nothing.
+   * @param cmp - Function used to determine the order of the elements. It is expected to return
+   * a negative value if the first argument is less than the second argument, zero if they're
+   * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
+   * sorted in ascending numeric order (JS would compare them as strings).
+   * @example
+   * xs.sort((a, b) => b.compareTo(a)); // descending
+   */
   sort(cmp: ((x: u64, y: u64) => i64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
@@ -65,7 +94,7 @@ extend Array<u64> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: u64, y: u64) => i64) | null = null): u64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -74,6 +103,15 @@ extend Array<u64> {
 }
 
 extend Array<usize> {
+  /**
+   * Sorts an array in place. Unlike JS, it returns nothing.
+   * @param cmp - Function used to determine the order of the elements. It is expected to return
+   * a negative value if the first argument is less than the second argument, zero if they're
+   * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
+   * sorted in ascending numeric order (JS would compare them as strings).
+   * @example
+   * xs.sort((a, b) => b.compareTo(a)); // descending
+   */
   sort(cmp: ((x: usize, y: usize) => i64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
@@ -82,7 +120,7 @@ extend Array<usize> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: usize, y: usize) => i64) | null = null): usize[] {
     const out = this.slice();
     out.sort(cmp);
@@ -91,7 +129,7 @@ extend Array<usize> {
 }
 
 extend Array<f64> {
-  // The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0.
+  /** The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0. */
   sort(cmp: ((x: f64, y: f64) => f64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
@@ -100,7 +138,7 @@ extend Array<f64> {
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: f64, y: f64) => f64) | null = null): f64[] {
     const out = this.slice();
     out.sort(cmp);
@@ -109,6 +147,16 @@ extend Array<f64> {
 }
 
 extend Array<string> {
+  /**
+   * Sorts an array in place. Unlike JS, it returns nothing.
+   * @param cmp - Function used to determine the order of the elements. It is expected to return
+   * a negative value if the first argument is less than the second argument, zero if they're
+   * equal, and a positive value otherwise; the sort is then stable. If omitted, the strings are
+   * sorted in ascending UTF-16 code unit order, as in JS (not locale-aware; pass
+   * `(a, b) => a.localeCompare(b)` for that).
+   * @example
+   * names.sort((a, b) => a.localeCompare(b));
+   */
   sort(cmp: ((x: string, y: string) => i64) | null = null) {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
@@ -117,7 +165,7 @@ extend Array<string> {
     pdqsort(this, (a, b) => a < b);
   }
 
-  // A sorted copy (ES2023); the receiver is unchanged.
+  /** A sorted copy (ES2023); the receiver is unchanged. */
   toSorted(cmp: ((x: string, y: string) => i64) | null = null): string[] {
     const out = this.slice();
     out.sort(cmp);
@@ -126,12 +174,12 @@ extend Array<string> {
 }
 
 extend<T> Array<T> {
-  // Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`).
+  /** Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`). */
   sort(cmp: (x: T, y: T) => i64) {
     stableSort(this, cmp, (c) => c < 0);
   }
 
-  // A copy sorted by `cmp` (ES2023); the receiver is unchanged.
+  /** A copy sorted by `cmp` (ES2023); the receiver is unchanged. */
   toSorted(cmp: (x: T, y: T) => i64): T[] {
     const out = this.slice();
     out.sort(cmp);

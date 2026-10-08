@@ -11,7 +11,7 @@
 //
 // `RedisClient` is a Copy handle like std/net's `TcpStream` (async methods take `this` by copy,
 // so it can be used from many tasks at once), released by `close()`. Commands that take several
-// keys or values take a `string[]` (Velt has no rest parameters): `del(["a", "b"])`.
+// keys or values take a `string[]`: `del(["a", "b"])`.
 //
 // Every failure throws `RedisError` with a `code`: the server's error code for error replies
 // ("WRONGTYPE", "ERR", "NOAUTH", …) or an I/O code ("ECONNREFUSED", "ECONNRESET", "EINVAL").
@@ -51,9 +51,11 @@ export type RedisPipeline = Pipeline_;
 export type RedisSubscriber = Subscriber_;
 export type RedisMessage = Message_;
 
-// A failed Redis operation. `code` is the server's error code for error replies ("ERR",
-// "WRONGTYPE", "NOAUTH", "WRONGPASS", "EXECABORT", …) or a Node-style I/O code for connection
-// failures ("ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EINVAL" for a bad URL or argument).
+/**
+ * A failed Redis operation. `code` is the server's error code for error replies ("ERR",
+ * "WRONGTYPE", "NOAUTH", "WRONGPASS", "EXECABORT", …) or a Node-style I/O code for connection
+ * failures ("ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EINVAL" for a bad URL or argument).
+ */
 export class RedisError extends Error {
   code: string;
 
@@ -64,12 +66,14 @@ export class RedisError extends Error {
 }
 
 export struct RedisConnectOptions {
-  // Extra trusted CA certificates (PEM) for `rediss://`, e.g. a private or test CA.
+  /** Extra trusted CA certificates (PEM) for `rediss://`, e.g. a private or test CA. */
   ca?: string;
 }
 
-// `set` options: expiry in seconds (`ex`) or milliseconds (`px`); set only if the key does not
-// exist (`nx`) or only if it does (`xx`).
+/**
+ * `set` options: expiry in seconds (`ex`) or milliseconds (`px`); set only if the key does not
+ * exist (`nx`) or only if it does (`xx`).
+ */
 export struct SetOptions {
   ex?: i64;
   px?: i64;
@@ -77,7 +81,7 @@ export struct SetOptions {
   xx?: bool;
 }
 
-// A sorted-set member with its score.
+/** A sorted-set member with its score. */
 export struct ZMember {
   member: string;
   score: f64;
@@ -94,63 +98,63 @@ async function run(handle: u64, args: string[]): Promise<RawReply> {
   return checkReply(await velt_rt_redis_command(handle, args));
 }
 
-// A connection (a Copy handle; see the module header).
+/** A connection (a Copy handle; see the module header). */
 export struct RedisClient {
   private handle: u64;
 
-  // Runs any command (`args[0]` is its name) and returns the decoded reply.
+  /** Runs any command (`args[0]` is its name) and returns the decoded reply. */
   async call(args: string[]): Promise<RedisReply> {
     return replyTree(await run(this.handle, args));
   }
 
-  // "PONG".
+  /** "PONG". */
   async ping(): Promise<string> {
     return replyText(await run(this.handle, ["PING"])) ?? "";
   }
 
   // --- Strings and keys ---
 
-  // The value of `key`, or null if it does not exist.
+  /** The value of `key`, or null if it does not exist. */
   async get(key: string): Promise<string | null> {
     return replyText(await run(this.handle, ["GET", key]));
   }
 
-  // Sets `key`; false if `nx` / `xx` prevented it.
+  /** Sets `key`; false if `nx` / `xx` prevented it. */
   async set(key: string, value: string, opts: SetOptions = {}): Promise<bool> {
     return replyText(await run(this.handle, setArgs(key, value, opts))) != null;
   }
 
-  // Deletes keys; the number that existed.
+  /** Deletes keys; the number that existed. */
   async del(keys: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["DEL", ...keys]));
   }
 
-  // How many of `keys` exist (a key listed twice counts twice).
+  /** How many of `keys` exist (a key listed twice counts twice). */
   async exists(keys: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["EXISTS", ...keys]));
   }
 
-  // Sets a time to live in seconds; false if the key does not exist.
+  /** Sets a time to live in seconds; false if the key does not exist. */
   async expire(key: string, seconds: i64): Promise<bool> {
     return replyInt(await run(this.handle, ["EXPIRE", key, `${seconds}`])) == 1;
   }
 
-  // Sets a time to live in milliseconds; false if the key does not exist.
+  /** Sets a time to live in milliseconds; false if the key does not exist. */
   async pexpire(key: string, ms: i64): Promise<bool> {
     return replyInt(await run(this.handle, ["PEXPIRE", key, `${ms}`])) == 1;
   }
 
-  // Seconds to live; -1 without expiry, -2 if the key does not exist.
+  /** Seconds to live; -1 without expiry, -2 if the key does not exist. */
   async ttl(key: string): Promise<i64> {
     return replyInt(await run(this.handle, ["TTL", key]));
   }
 
-  // Milliseconds to live; -1 without expiry, -2 if the key does not exist.
+  /** Milliseconds to live; -1 without expiry, -2 if the key does not exist. */
   async pttl(key: string): Promise<i64> {
     return replyInt(await run(this.handle, ["PTTL", key]));
   }
 
-  // Removes the expiry; false if there was none or the key does not exist.
+  /** Removes the expiry; false if there was none or the key does not exist. */
   async persist(key: string): Promise<bool> {
     return replyInt(await run(this.handle, ["PERSIST", key])) == 1;
   }
@@ -171,17 +175,17 @@ export struct RedisClient {
     return replyInt(await run(this.handle, ["DECRBY", key, `${n}`]));
   }
 
-  // The values of `keys` (null for missing ones).
+  /** The values of `keys` (null for missing ones). */
   async mget(keys: string[]): Promise<(string | null)[]> {
     return replyNullableStrings(await run(this.handle, ["MGET", ...keys]));
   }
 
-  // Sets every key of `entries`.
+  /** Sets every key of `entries`. */
   async mset(entries: Map<string, string>): Promise<void> {
     await run(this.handle, withPairs(["MSET"], entries));
   }
 
-  // Keys matching a glob pattern (KEYS: fine for tests and small databases).
+  /** Keys matching a glob pattern (KEYS: fine for tests and small databases). */
   async keys(pattern: string): Promise<string[]> {
     return replyStrings(await run(this.handle, ["KEYS", pattern]));
   }
@@ -192,22 +196,22 @@ export struct RedisClient {
     return replyText(await run(this.handle, ["HGET", key, field]));
   }
 
-  // Sets one field; 1 if it is new, 0 if it was updated.
+  /** Sets one field; 1 if it is new, 0 if it was updated. */
   async hset(key: string, field: string, value: string): Promise<i64> {
     return replyInt(await run(this.handle, ["HSET", key, field, value]));
   }
 
-  // Sets every field of `fields`; the number of new fields.
+  /** Sets every field of `fields`; the number of new fields. */
   async hmset(key: string, fields: Map<string, string>): Promise<i64> {
     return replyInt(await run(this.handle, withPairs(["HSET", key], fields)));
   }
 
-  // Every field and value (an empty map if the key does not exist).
+  /** Every field and value (an empty map if the key does not exist). */
   async hgetall(key: string): Promise<Map<string, string>> {
     return replyMap(await run(this.handle, ["HGETALL", key]));
   }
 
-  // Deletes fields; the number removed.
+  /** Deletes fields; the number removed. */
   async hdel(key: string, fields: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["HDEL", key, ...fields]));
   }
@@ -222,12 +226,12 @@ export struct RedisClient {
 
   // --- Lists ---
 
-  // Prepends `values` (the last one ends up first); the new length.
+  /** Prepends `values` (the last one ends up first); the new length. */
   async lpush(key: string, values: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["LPUSH", key, ...values]));
   }
 
-  // Appends `values`; the new length.
+  /** Appends `values`; the new length. */
   async rpush(key: string, values: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["RPUSH", key, ...values]));
   }
@@ -240,7 +244,7 @@ export struct RedisClient {
     return replyText(await run(this.handle, ["RPOP", key]));
   }
 
-  // Elements `start..=stop` (negative indexes count from the end: `lrange(k, 0, -1)` is all).
+  /** Elements `start..=stop` (negative indexes count from the end: `lrange(k, 0, -1)` is all). */
   async lrange(key: string, start: i64, stop: i64): Promise<string[]> {
     return replyStrings(await run(this.handle, ["LRANGE", key, `${start}`, `${stop}`]));
   }
@@ -251,17 +255,17 @@ export struct RedisClient {
 
   // --- Sets ---
 
-  // Adds members; the number that were new.
+  /** Adds members; the number that were new. */
   async sadd(key: string, members: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["SADD", key, ...members]));
   }
 
-  // Removes members; the number that were there.
+  /** Removes members; the number that were there. */
   async srem(key: string, members: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["SREM", key, ...members]));
   }
 
-  // Every member (unordered).
+  /** Every member (unordered). */
   async smembers(key: string): Promise<string[]> {
     return replyStrings(await run(this.handle, ["SMEMBERS", key]));
   }
@@ -276,7 +280,7 @@ export struct RedisClient {
 
   // --- Sorted sets ---
 
-  // Adds members or updates their scores; the number of new members.
+  /** Adds members or updates their scores; the number of new members. */
   async zadd(key: string, members: ZMember[]): Promise<i64> {
     const args = ["ZADD", key];
     for (const m of members) {
@@ -286,12 +290,12 @@ export struct RedisClient {
     return replyInt(await run(this.handle, args));
   }
 
-  // Members by rank `start..=stop`, lowest score first (negative ranks count from the end).
+  /** Members by rank `start..=stop`, lowest score first (negative ranks count from the end). */
   async zrange(key: string, start: i64, stop: i64): Promise<string[]> {
     return replyStrings(await run(this.handle, ["ZRANGE", key, `${start}`, `${stop}`]));
   }
 
-  // Like `zrange`, with the scores.
+  /** Like `zrange`, with the scores. */
   async zrangeWithScores(key: string, start: i64, stop: i64): Promise<ZMember[]> {
     const xs = replyStrings(
       await run(this.handle, ["ZRANGE", key, `${start}`, `${stop}`, "WITHSCORES"]),
@@ -303,7 +307,7 @@ export struct RedisClient {
     return out;
   }
 
-  // The member's score, or null if it is not in the set.
+  /** The member's score, or null if it is not in the set. */
   async zscore(key: string, member: string): Promise<f64 | null> {
     const s = replyText(await run(this.handle, ["ZSCORE", key, member]));
     if (s == null) {
@@ -312,12 +316,12 @@ export struct RedisClient {
     return parseScore(s);
   }
 
-  // Removes members; the number that were there.
+  /** Removes members; the number that were there. */
   async zrem(key: string, members: string[]): Promise<i64> {
     return replyInt(await run(this.handle, ["ZREM", key, ...members]));
   }
 
-  // Adds `increment` to the member's score (adding the member if needed); the new score.
+  /** Adds `increment` to the member's score (adding the member if needed); the new score. */
   async zincrby(key: string, increment: f64, member: string): Promise<f64> {
     const s = replyText(await run(this.handle, ["ZINCRBY", key, scoreArg(increment), member]));
     return parseScore(s ?? "");
@@ -329,39 +333,44 @@ export struct RedisClient {
 
   // --- Pub/sub, pipelines, connections ---
 
-  // Publishes a message; the number of subscribers that received it.
+  /** Publishes a message; the number of subscribers that received it. */
   async publish(channel: string, message: string): Promise<i64> {
     return replyInt(await run(this.handle, ["PUBLISH", channel, message]));
   }
 
-  // A pipeline: queue commands, then `await p.exec()` sends them in one round trip.
+  /** A pipeline: queue commands, then `await p.exec()` sends them in one round trip. */
   pipeline(): RedisPipeline {
     return new Pipeline_(this.handle, false);
   }
 
-  // A transaction: like `pipeline()`, run atomically in `MULTI`/`EXEC`.
+  /** A transaction: like `pipeline()`, run atomically in `MULTI`/`EXEC`. */
   multi(): RedisPipeline {
     return new Pipeline_(this.handle, true);
   }
 
-  // A new, separate connection to the same server (for blocking commands).
+  /** A new, separate connection to the same server (for blocking commands). */
   async duplicate(): Promise<RedisClient> {
     return RedisClient { handle: unwrapHandle(await velt_rt_redis_duplicate(this.handle)) };
   }
 
-  // Releases the handle; the connection closes once no command is in flight (call it once).
+  /**
+   * Releases the handle; the connection closes once no command is in flight. Closing again does
+   * nothing.
+   */
   close() {
     velt_rt_redis_close(this.handle);
   }
 }
 
-// Connects to `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS).
+/** Connects to `redis://[[user]:password@]host[:port][/db]` or `rediss://…` (TLS). */
 export async function connect(url: string, opts: RedisConnectOptions = {}): Promise<RedisClient> {
   return RedisClient { handle: unwrapHandle(await velt_rt_redis_connect(url, opts.ca ?? "")) };
 }
 
-// Subscribes to `channels` on a new connection to `target` (a URL, or the server a client is
-// connected to); resolves once the server confirmed the subscriptions.
+/**
+ * Subscribes to `channels` on a new connection to `target` (a URL, or the server a client is
+ * connected to); resolves once the server confirmed the subscriptions.
+ */
 export async function subscribe(
   target: string | RedisClient,
   channels: string[],
@@ -373,7 +382,7 @@ export async function subscribe(
   return await openSubscriber(target.handle, "", "", channels, false);
 }
 
-// Like `subscribe`, for channels matching glob `patterns` (`news.*`).
+/** Like `subscribe`, for channels matching glob `patterns` (`news.*`). */
 export async function psubscribe(
   target: string | RedisClient,
   patterns: string[],

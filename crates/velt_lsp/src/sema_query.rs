@@ -28,7 +28,7 @@ pub fn scope_items(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
     };
     ide.scope_at(analysis.file(), offset)
         .into_iter()
-        .map(|(name, d)| item(&name, kind(d.kind), &d.detail))
+        .map(|(name, d)| def_item(analysis, &name, &d))
         .collect()
 }
 
@@ -55,7 +55,7 @@ pub fn member_items(
         members
             .into_iter()
             .filter(|(_, d, _)| d.kind != DefKind::Constructor)
-            .map(|(name, d, _)| item(&name, kind(d.kind), &d.detail))
+            .map(|(name, d, _)| def_item(analysis, &name, &d))
             .collect(),
     )
 }
@@ -70,7 +70,7 @@ fn namespace_items(
     (!members.is_empty()).then(|| {
         members
             .into_iter()
-            .map(|(name, d)| item(&name, kind(d.kind), &d.detail))
+            .map(|(name, d)| def_item(analysis, &name, &d))
             .collect()
     })
 }
@@ -99,6 +99,14 @@ pub fn item(label: &str, kind: CompletionItemKind, detail: &str) -> CompletionIt
         detail: (!detail.is_empty()).then(|| detail.to_string()),
         ..Default::default()
     }
+}
+
+/// The completion item for definition `d` named `label`, carrying what `completionItem/resolve`
+/// needs for its doc and tagged when it is deprecated ([`crate::docs::attach`]).
+pub fn def_item(analysis: &Analysis, label: &str, d: &DefRef) -> CompletionItem {
+    let mut out = item(label, kind(d.kind), &d.detail);
+    crate::docs::attach(analysis, &mut out, d);
+    out
 }
 
 /// The identifier around `offset` in `text` (the hover range).

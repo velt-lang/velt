@@ -1,5 +1,6 @@
 //! API documentation for Velt code, and the docs website.
 //!
+//! - [`comment`]: doc comments (`/** … */`, `///`) and their JSDoc tags;
 //! - [`extract`]: exported items, public members, signatures and doc comments of a module;
 //! - [`resolve`]: re-exports across modules (`export { x } from`, `export * from`);
 //! - `sig`: signatures in one canonical form, however the source is laid out;
@@ -11,6 +12,7 @@
 //!
 //! [`write_api_docs`] is what `velt doc` runs: one page per module, an index with a search box.
 
+pub mod comment;
 pub mod extract;
 pub mod html;
 pub mod markdown;

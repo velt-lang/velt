@@ -23,24 +23,26 @@ declare async function velt_rt_http_req_text(r: u64): Promise<IoResult<string>>;
 declare async function velt_rt_http_req_bytes(r: u64): Promise<IoResult<u8[]>>;
 declare async function velt_rt_http_req_chunk(r: u64): Promise<IoResult<u8[]>>;
 
-// What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it.
+/** What `fetch` does with a redirect: follow it (default, up to 20), fail, or return it. */
 export type RequestRedirect = "follow" | "error" | "manual";
 
-// The options of `fetch(input, init)` and `new Request(input, init)`.
+/** The options of `fetch(input, init)` and `new Request(input, init)`. */
 export struct RequestInit {
-  // Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased.
+  /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
   method?: string;
   headers?: HeadersInit;
   body?: BodyInit;
   redirect?: RequestRedirect;
-  // Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
-  // (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+  /**
+   * Aborting it rejects the `fetch` (and a body read in progress) with its `AbortError`
+   * (`TimeoutError` for `AbortSignal.timeout(ms)`), and cancels the request.
+   */
   signal?: AbortSignal;
-  // Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA.
+  /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
   ca?: string;
 }
 
-// The method as the Fetch standard normalizes it (std only: `fetch` uses it too).
+/** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
 export function normalizeMethod(m: string): string {
   const up = m.toUpperCase();
   if (
@@ -95,8 +97,10 @@ export class Request {
   // A received request: its runtime key (0 for one made with `new Request`).
   #raw: u64 = 0;
 
-  // Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
-  // for a `Request` input whose body was already used.
+  /**
+   * Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
+   * for a `Request` input whose body was already used.
+   */
   constructor(input: string | URL | Request, init?: RequestInit) throws IoError {
     if (typeof input == "string") {
       this.#target = input;
@@ -180,7 +184,7 @@ export class Request {
     input.#used = true;
   }
 
-  // The URL; a received request's is absolute (`http://host/path?query`), as in Deno and Bun.
+  /** The URL; a received request's is absolute (`http://host/path?query`), as in Deno and Bun. */
   get url(): string {
     const known = this.#target;
     if (known != null) {
@@ -204,7 +208,7 @@ export class Request {
     return s;
   }
 
-  // The headers; a received request's are immutable.
+  /** The headers; a received request's are immutable. */
   get headers(): Headers {
     const known = this.#fields;
     if (known != null) {
@@ -220,14 +224,16 @@ export class Request {
     return s == null ? "follow" : s.redirect;
   }
 
-  // The signal passed in `init` (JS gives every request a signal; Velt's is null without one).
+  /** The signal passed in `init` (JS gives every request a signal; Velt's is null without one). */
   get signal(): AbortSignal | null {
     const s = this.#sending;
     return s == null ? null : s.signal;
   }
 
-  // The body as a stream of `u8[]` chunks (JS: a `ReadableStream`); null without a body.
-  // Reading it uses the body up, as `text()` does.
+  /**
+   * The body as a stream of `u8[]` chunks (JS: a `ReadableStream`); null without a body.
+   * Reading it uses the body up, as `text()` does.
+   */
   get body(): BodyStream | null {
     if (!this.hasBody()) {
       return null;
@@ -239,7 +245,7 @@ export class Request {
     return this.#used;
   }
 
-  // The body as text (invalid UTF-8 becomes U+FFFD, as in JS).
+  /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
     if (this.#raw != 0) {
@@ -256,7 +262,7 @@ export class Request {
     return utf8DecodeLossy(s == null ? body.bytes : await collect(s));
   }
 
-  // `JSON.parse<T>` of the body (see `Response.json`).
+  /** `JSON.parse<T>` of the body (see `Response.json`). */
   async json<T>(): Promise<T, IoError | AbortError | JsonError> {
     return JSON.parse<T>(await this.text());
   }
@@ -277,7 +283,7 @@ export class Request {
     return s == null ? body.bytes : await collect(s);
   }
 
-  // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
+  /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
   async arrayBuffer(): Promise<u8[], IoError | AbortError> {
     return await this.bytes();
   }
