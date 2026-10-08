@@ -7,6 +7,8 @@
 //!   numeric local at every point, refined by branch conditions (and through copies of the
 //!   compared values) and widened at loop heads. An array's length is below 2^53, and a
 //!   parameter every call sets to a constant starts with that constant's facts (`params`).
+//!   A counter (`n++` from a whole constant) is bounded by the trip counts of the loops
+//!   around its steps (`counter`).
 //! - **Simplification** (`simplify`): comparisons and branches the facts decide become
 //!   constants and jumps; `trunc`/`floor`/`ceil`/`round` of whole values, `abs` of
 //!   non-negative ones, ToInt32 of constants and int32 values and `__floatIndex` of whole
@@ -22,6 +24,7 @@
 //! Without the pass the program computes the same values with doubles; the reference
 //! interpreter checks that (`tests.rs`, `tests/random.rs`).
 
+mod counter;
 mod fact;
 mod flow;
 mod int32;
@@ -257,22 +260,34 @@ fn tracked(env: &Env, func: &Function) -> Vec<Local> {
     }
     let mut in_slice = vec![false; n];
     let mut work: Vec<Local> = seeds.into_iter().filter(|&l| reg(l)).collect();
-    while let Some(l) = work.pop() {
-        if std::mem::replace(&mut in_slice[l.0 as usize], true) {
-            continue;
-        }
-        work.extend(inputs[l.0 as usize].iter().copied().filter(|&x| reg(x)));
-        for &(_, a, b) in &compared {
-            let other = if a == l {
-                b
-            } else if b == l {
-                a
-            } else {
+    let mut counters_seen = false;
+    loop {
+        while let Some(l) = work.pop() {
+            if std::mem::replace(&mut in_slice[l.0 as usize], true) {
                 continue;
-            };
-            if reg(other) {
-                work.push(other);
             }
+            work.extend(inputs[l.0 as usize].iter().copied().filter(|&x| reg(x)));
+            for &(_, a, b) in &compared {
+                let other = if a == l {
+                    b
+                } else if b == l {
+                    a
+                } else {
+                    continue;
+                };
+                if reg(other) {
+                    work.push(other);
+                }
+            }
+        }
+        // A counter's cap needs the trip counts of the loops around it: track what their exit
+        // tests compare too (`i < s.length` with an `i64` `i`).
+        if counters_seen || !(0..n).any(|i| in_slice[i] && counter::maybe(func, Local(i as u32))) {
+            break;
+        }
+        counters_seen = true;
+        for &(_, a, b) in &compared {
+            work.extend([a, b].into_iter().filter(|&x| reg(x)));
         }
     }
     // Booleans from comparisons of tracked values, so branches on them can be decided.

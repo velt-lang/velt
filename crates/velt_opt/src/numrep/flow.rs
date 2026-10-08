@@ -56,6 +56,9 @@ pub(super) struct Flow {
     entry: Vec<Option<State>>,
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
+    /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
+    /// facts wherever it changes.
+    caps: Vec<Option<Fact>>,
 }
 
 impl Flow {
@@ -77,9 +80,44 @@ impl Flow {
             tys,
             entry: vec![None; func.blocks.len()],
             array: env.array,
+            caps: vec![None; tracked.len()],
         };
         flow.solve(func, env);
+        // Counters are bounded by the trip counts the first solution proves.
+        let caps = super::counter::caps(func, &flow);
+        if caps.iter().any(Option::is_some) {
+            flow.caps = caps;
+            flow.entry = vec![None; func.blocks.len()];
+            flow.solve(func, env);
+        }
         Some(flow)
+    }
+
+    /// The number of tracked locals.
+    pub fn slots(&self) -> usize {
+        self.tys.len()
+    }
+
+    /// The index of `l` in a state, if tracked.
+    pub fn slot(&self, l: Local) -> Option<usize> {
+        self.slot.get(l.0 as usize).copied().flatten()
+    }
+
+    /// Facts about `l` before statement `si` of block `b` (`None` if unreachable or untracked).
+    pub fn fact_before(&self, func: &Function, b: usize, si: usize, l: Local) -> Option<Fact> {
+        let mut st = self.entry(b)?.clone();
+        for s in &func.blocks[b].stmts[..si] {
+            self.transfer(&mut st, func, s);
+        }
+        Some(st[self.slot(l)?])
+    }
+
+    /// `f` met with the cap of tracked local `i`.
+    fn capped(&self, i: usize, f: Fact) -> Fact {
+        match self.caps[i] {
+            Some(c) if !f.is_empty() => meet(f, c),
+            _ => f,
+        }
     }
 
     /// Entry state of block `b` (`None` if unreachable).
@@ -155,7 +193,7 @@ impl Flow {
         let Some(i) = self.slot[dst.local.0 as usize] else {
             return;
         };
-        st[i] = self.rvalue(st, func, rv, self.tys[i]);
+        st[i] = self.capped(i, self.rvalue(st, func, rv, self.tys[i]));
     }
 
     /// Facts about the result of a call ending a block in state `st`.
@@ -182,16 +220,9 @@ impl Flow {
 
     fn solve(&mut self, func: &Function, env: &Env) {
         let n = func.blocks.len();
-        let mut start: State = self.tys.iter().map(|t| Fact::top(*t)).collect();
-        if let Some(params) = env.params.get(&func.symbol) {
-            for (i, f) in params.iter().enumerate() {
-                if let (Some(f), Some(Some(s))) = (f, self.slot.get(i)) {
-                    start[*s] = *f;
-                }
-            }
-        }
-        self.entry[0] = Some(start);
+        self.entry[0] = Some(self.start(func, env));
         let cfg = Cfg::of(func);
+        let assigned = cfg.assigned(func, &self.slot, self.tys.len());
         let mut visits = vec![0u32; n];
         // Blocks in reverse postorder, so a loop's body settles before what follows it.
         let mut queued = vec![false; n];
@@ -209,6 +240,7 @@ impl Flow {
             for (succ, out) in self.edges(func, env, b, st) {
                 visits[succ] += 1;
                 let widen = cfg.head[succ] && visits[succ] > WIDEN_AFTER;
+                let widen = widen.then_some(assigned[succ].as_slice());
                 if self.merge(succ, out, widen) && !queued[succ] {
                     queued[succ] = true;
                     work.push(Reverse(cfg.rank[succ]));
@@ -217,8 +249,28 @@ impl Flow {
         }
     }
 
-    /// Join `out` into the entry state of `b`; returns whether it changed.
-    fn merge(&mut self, b: usize, out: State, widen: bool) -> bool {
+    /// The state at the function's entry: parameters every call sets to a constant have its
+    /// facts.
+    fn start(&self, func: &Function, env: &Env) -> State {
+        let mut start: State = self.tys.iter().map(|t| Fact::top(*t)).collect();
+        if let Some(params) = env.params.get(&func.symbol) {
+            for (i, f) in params.iter().enumerate() {
+                if let (Some(f), Some(Some(s))) = (f, self.slot.get(i)) {
+                    start[*s] = *f;
+                }
+            }
+        }
+        for (i, f) in start.iter_mut().enumerate() {
+            *f = self.capped(i, *f);
+        }
+        start
+    }
+
+    /// Join `out` into the entry state of `b`, widening the locals `widen` says the loop at `b`
+    /// assigns; returns whether it changed. A local the loop does not assign keeps the value it
+    /// enters with, so it needs no widening there: an outer loop's `k < 30` stays `[0, 29]` at
+    /// an inner loop's head.
+    fn merge(&mut self, b: usize, out: State, widen: Option<&[bool]>) -> bool {
         let Some(old) = &mut self.entry[b] else {
             self.entry[b] = Some(out);
             return true;
@@ -226,13 +278,16 @@ impl Flow {
         let mut changed = false;
         for (i, (o, n)) in old.iter_mut().zip(out).enumerate() {
             let mut j = o.join(n);
-            if widen && j != *o {
+            if widen.is_some_and(|w| w[i]) && j != *o {
                 j = widened(*o, j);
                 if self.tys[i].is_int() {
                     let top = Fact::top(self.tys[i]);
                     j.lo = j.lo.max(top.lo);
                     j.hi = j.hi.min(top.hi);
                 }
+            }
+            if let Some(c) = self.caps[i] {
+                j = meet(j, c);
             }
             changed |= j != *o;
             *o = j;
@@ -340,6 +395,9 @@ struct Cfg {
     /// Per block: the target of a retreating edge, i.e. a loop head. Every cycle has one, so
     /// widening there bounds the iterations.
     head: Vec<bool>,
+    /// Per loop head: the sources of its retreating edges.
+    latches: Vec<Vec<usize>>,
+    preds: Vec<Vec<usize>>,
 }
 
 impl Cfg {
@@ -358,6 +416,7 @@ impl Cfg {
         // Iterative depth-first search: 1 = on the stack, 2 = finished.
         let mut state = vec![0u8; n];
         let mut head = vec![false; n];
+        let mut latches = vec![vec![]; n];
         let mut post = Vec::with_capacity(n);
         let mut stack = vec![(0usize, 0usize)];
         state[0] = 1;
@@ -370,7 +429,10 @@ impl Cfg {
                         state[s] = 1;
                         stack.push((s, 0));
                     }
-                    1 => head[s] = true,
+                    1 => {
+                        head[s] = true;
+                        latches[s].push(b);
+                    }
                     _ => {}
                 }
             } else {
@@ -384,7 +446,63 @@ impl Cfg {
         for (i, &b) in rpo.iter().enumerate() {
             rank[b] = i as u32;
         }
-        Cfg { rpo, rank, head }
+        let mut preds = vec![vec![]; n];
+        for (b, ss) in succs.iter().enumerate() {
+            for &s in ss {
+                preds[s].push(b);
+            }
+        }
+        Cfg {
+            rpo,
+            rank,
+            head,
+            latches,
+            preds,
+        }
+    }
+
+    /// Per block: for a loop head, which locals some block of its cycles assigns (`slot` maps
+    /// locals to state indexes); empty for other blocks. The blocks are those that reach a
+    /// retreating edge into the head without passing it (more, when the CFG is irreducible).
+    fn assigned(&self, func: &Function, slot: &[Option<usize>], slots: usize) -> Vec<Vec<bool>> {
+        let n = func.blocks.len();
+        let mut out = vec![vec![]; n];
+        for h in (0..n).filter(|&h| self.head[h]) {
+            let mut defs = vec![false; slots];
+            let mut seen = vec![false; n];
+            seen[h] = true;
+            let mut work = vec![h];
+            for &u in &self.latches[h] {
+                if !std::mem::replace(&mut seen[u], true) {
+                    work.push(u);
+                }
+            }
+            while let Some(b) = work.pop() {
+                let mark = |l: Local, defs: &mut Vec<bool>| {
+                    if let Some(i) = slot[l.0 as usize] {
+                        defs[i] = true;
+                    }
+                };
+                for st in &func.blocks[b].stmts {
+                    if let Stmt::Assign(d, _) = st {
+                        mark(d.local, &mut defs);
+                    }
+                }
+                if let Terminator::Call { dest: Some(d), .. } = &func.blocks[b].term {
+                    mark(d.local, &mut defs);
+                }
+                if b == h {
+                    continue;
+                }
+                for &p in &self.preds[b] {
+                    if !std::mem::replace(&mut seen[p], true) {
+                        work.push(p);
+                    }
+                }
+            }
+            out[h] = defs;
+        }
+        out
     }
 }
 

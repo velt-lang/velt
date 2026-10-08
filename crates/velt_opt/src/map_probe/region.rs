@@ -50,7 +50,7 @@ impl Region {
 }
 
 /// Predecessor lists of every block.
-pub(super) fn predecessors(func: &Function) -> Vec<Vec<usize>> {
+pub(crate) fn predecessors(func: &Function) -> Vec<Vec<usize>> {
     let mut preds = vec![vec![]; func.blocks.len()];
     for (b, block) in func.blocks.iter().enumerate() {
         for s in successors(&block.term) {
@@ -66,7 +66,7 @@ pub(super) fn predecessors(func: &Function) -> Vec<Vec<usize>> {
 
 /// The immediate dominator of every block reachable from the entry (Cooper, Harvey and
 /// Kennedy's iterative algorithm over reverse postorder).
-pub(super) struct Dominators {
+pub(crate) struct Dominators {
     idom: Vec<Option<usize>>,
     /// Reverse-postorder number of each reachable block.
     order: Vec<usize>,
