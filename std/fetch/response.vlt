@@ -75,7 +75,6 @@ export class Response {
   #reason: string | null = "";
   // A fetched response's signal, URL and `redirected`: null for one made here.
   #remote: Remote | null = null;
-  #kind: string = "default";
   #used: bool = false;
   #source: i64 = 0;
   #str: string = "";
@@ -148,7 +147,6 @@ export class Response {
     r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
     r.#reason = null;
     r.#remote = new Remote(signal);
-    r.#kind = "basic";
     r.#source = head ? NONE : RUNTIME;
     r.#handle = handle;
     return r;
@@ -176,7 +174,6 @@ export class Response {
   static error(): Response {
     const r = new Response();
     r.#code = 0;
-    r.#kind = "error";
     return r;
   }
 
@@ -260,7 +257,10 @@ export class Response {
 
   // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
   get type(): string {
-    return this.#kind;
+    if (this.#code == 0) {
+      return "error";
+    }
+    return this.#remote != null ? "basic" : "default";
   }
 
   // The body as it arrives: `for await (const chunk of res.body)` yields `u8[]` chunks (JS: a
