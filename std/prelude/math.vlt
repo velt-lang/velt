@@ -7,8 +7,8 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 /**
- * Basic mathematics functionality and constants, on `f64` values. A number literal or an
- * inferred integer converts to `f64` here, but a declared integer does not: write `x as f64`.
+ * Basic mathematics functionality and constants, on numbers (`f64`). Integers up to 32 bits
+ * convert implicitly; a 64-bit integer does not: write `x as number`.
  */
 export class Math {
   /** Pi. This is the ratio of the circumference of a circle to its diameter. */
