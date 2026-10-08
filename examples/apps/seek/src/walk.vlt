@@ -1,7 +1,7 @@
 // The directory walk: several tasks read directories in parallel, skipping hidden entries and
 // .gitignore'd paths, and send every file to search down a channel.
 import { channel, Channel, ChannelClosed } from "velt:channel";
-import { existsSync, readDirSync, readFileSync, Stats, statSync } from "velt:fs";
+import { Dirent, existsSync, readDirEntriesSync, readFileSync, Stats, statSync } from "velt:fs";
 import { isIgnored, parseIgnore, Rule, RuleCache } from "./ignore";
 import { Options } from "./options";
 
@@ -63,10 +63,10 @@ export async function walk(opts: Options, out: Channel<FileJob>): Promise<WalkSt
       stats.skipped++;
       continue;
     }
-    if (st.isFile) {
+    if (st.isFile()) {
       stats.files++;
       await out.send({ path: root, size: st.size as i64 });
-    } else if (st.isDir) {
+    } else if (st.isDirectory()) {
       pending.add(1);
       await dirs.send({ dir: root, rel: "", depth: 0, rules: [] });
     }
@@ -110,41 +110,52 @@ async function walkDirs(
         }
       }
     }
-    let names: string[] = [];
+    let entries: Dirent[] = [];
     try {
-      names = readDirSync(p.dir);
+      entries = readDirEntriesSync(p.dir);
     } catch (e) {
       console.error(`seek: ${p.dir}: ${e.message}`);
       stats.skipped++;
     }
-    for (const name of names) {
+    for (const e of entries) {
+      const name = e.name;
       if (alwaysSkip(name) || (!opts.hidden && name.startsWith("."))) {
         continue;
       }
       const path = joinPath(p.dir, name);
       const rel = p.rel === "" ? name : `${p.rel}/${name}`;
-      let entry: Stats;
-      try {
-        entry = statSync(path);
-      } catch (e) {
-        stats.skipped++; // a dangling symlink, or removed while walking
-        continue;
+      // The listing has the type (#692): a stat only to follow a symlink, or for a file's size
+      // when searching (the size limit; --files needs none).
+      let isDir = e.isDirectory();
+      let isFile = e.isFile();
+      let size = 0;
+      if (e.isSymbolicLink() || (isFile && !opts.filesMode)) {
+        let entry: Stats;
+        try {
+          entry = statSync(path);
+        } catch (err) {
+          stats.skipped++; // a dangling symlink, or removed while walking
+          continue;
+        }
+        isDir = entry.isDirectory();
+        isFile = entry.isFile();
+        size = entry.size as i64;
       }
-      if (entry.isDir) {
+      if (isDir) {
         if (p.depth < opts.maxDepth && !isIgnored(rules, cache, rel, true)) {
           pending.add(1);
           await dirs.send({ dir: path, rel, depth: p.depth + 1, rules });
         }
-      } else if (entry.isFile) {
+      } else if (isFile) {
         if (!extensionOk(name, opts.types) || isIgnored(rules, cache, rel, false)) {
           continue;
         }
-        if ((entry.size as i64) > opts.maxFileSize) {
+        if (size > opts.maxFileSize) {
           stats.skipped++;
           continue;
         }
         stats.files++;
-        await out.send({ path, size: entry.size as i64 });
+        await out.send({ path, size });
       }
     }
     if (pending.add(-1) === 0) {
