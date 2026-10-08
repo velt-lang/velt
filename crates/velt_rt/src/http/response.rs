@@ -152,7 +152,8 @@ pub(super) fn build(
     implied: u32,
     add_headers: impl FnOnce(&mut HeaderMap) -> Option<()>,
 ) -> Option<RespObj> {
-    let mut r = empty();
+    // Made with its body (empty for a stream std opens next): most responses keep it.
+    let mut r = Response::new(RespBody::full(body));
     *r.status_mut() = u16::try_from(status)
         .ok()
         .and_then(|s| StatusCode::from_u16(s).ok())
@@ -164,12 +165,11 @@ pub(super) fn build(
         }
     }
     if bodiless(r.status()) {
+        *r.body_mut() = RespBody::full(Bytes::new());
         return Some(r);
     }
-    match kind {
-        kind::STREAM | kind::FETCHED => strip_for_stream(r.headers_mut(), kind == kind::FETCHED),
-        kind::NONE => {}
-        _ => *r.body_mut() = RespBody::full(body),
+    if kind == kind::STREAM || kind == kind::FETCHED {
+        strip_for_stream(r.headers_mut(), kind == kind::FETCHED);
     }
     if let Some(v) = implied_type(implied) {
         let headers = r.headers_mut();
