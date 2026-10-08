@@ -24,6 +24,8 @@
 // / `update` change a value in place. `keys()`, `values()` and `entries()` return the stored
 // keys and values the same way; `forEach` borrows. A map holds at most 2^31 entries.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 // First index capacity once a map receives its first entry.
 const INITIAL_SLOTS: usize = 8;
 
@@ -40,6 +42,14 @@ const POS_MASK: u64 = 0xffffffff;
 // at most 2^32 slots, so home slots (`shift` >= 32) come from the tag half of a slot word.
 const MAX_ENTRIES: usize = 0x80000000;
 
+/**
+ * A collection of key/value pairs that remembers insertion order, with JS `Map` semantics:
+ * re-setting a key keeps its position, and float keys compare like JS (`NaN` finds itself, `0`
+ * and `-0` are one key). Numbers, `bool` and strings compare by value; class instances,
+ * interface and function values by identity, as in JS; unlike JS, structs, object types,
+ * tuples, arrays, maps and records compare by content, like `deepEqual` (don't change such a key
+ * while it is in a map: it is hashed when inserted).
+ */
 export class Map<K, V> {
   // Number of live entries (read through the `size` getter; kept up to date by the mutating
   // methods).
@@ -100,6 +110,7 @@ export class Map<K, V> {
     return __intrinsic_share(this.entryValues[e as usize]);
   }
 
+  /** Whether the map has an entry for `key`, matched as `get` matches it. */
   has(key: K): bool {
     return this.lookup(key, __intrinsic_hash(key) * FIB) >= 0;
   }
@@ -208,6 +219,7 @@ export class Map<K, V> {
     return true;
   }
 
+  /** Removes all entries. */
   clear() {
     this.edits++;
     this.dropEntries();
@@ -215,6 +227,10 @@ export class Map<K, V> {
     this.shift = 64;
   }
 
+  /**
+   * Returns the keys in the map, in insertion order. JS returns an iterator; this is an array,
+   * which serves the same `for...of` loops.
+   */
   keys(): K[] {
     const out: K[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
@@ -225,6 +241,7 @@ export class Map<K, V> {
     return out;
   }
 
+  /** Returns the values in the map, in insertion order (an array; JS returns an iterator). */
   values(): V[] {
     const out: V[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryValues.length; e++) {
@@ -233,6 +250,10 @@ export class Map<K, V> {
     return out;
   }
 
+  /**
+   * Returns the `[key, value]` pairs for every entry in the map, in insertion order (an array;
+   * JS returns an iterator).
+   */
   entries(): [K, V][] {
     const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryKeys.length; e++) {

@@ -8,6 +8,8 @@
 // -1 or NaN. Inputs are borrowed; every returned string is owned by the caller (a substring of a
 // static string may itself be static, which is free to drop).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
 declare function velt_rt_str_last_index_of(s: string, needle: string, from: i64): i64;
@@ -58,14 +60,27 @@ extend string {
     return velt_rt_str_last_index_of(this, needle, from);
   }
 
+  /**
+   * Returns true if `needle` appears as a substring of this string; otherwise, returns false.
+   * Unlike JS, there is no `position` argument.
+   * @param needle - search string
+   */
   includes(needle: string): bool {
     return velt_rt_str_includes(this, needle);
   }
 
+  /**
+   * Returns true if this string starts with `prefix`. Otherwise returns false. Unlike JS, there
+   * is no `position` argument.
+   */
   startsWith(prefix: string): bool {
     return velt_rt_str_starts_with(this, prefix);
   }
 
+  /**
+   * Returns true if this string ends with `suffix`. Otherwise returns false. Unlike JS, there is
+   * no `endPosition` argument.
+   */
   endsWith(suffix: string): bool {
     return velt_rt_str_ends_with(this, suffix);
   }
@@ -91,10 +106,12 @@ extend string {
     return velt_rt_str_trim(this);
   }
 
+  /** Removes the leading white space and line terminator characters from a string. */
   trimStart(): string {
     return velt_rt_str_trim_start(this);
   }
 
+  /** Removes the trailing white space and line terminator characters from a string. */
   trimEnd(): string {
     return velt_rt_str_trim_end(this);
   }
@@ -104,6 +121,10 @@ extend string {
     return velt_rt_str_to_upper(this);
   }
 
+  /**
+   * Converts all the alphabetic characters in a string to lowercase: full Unicode case mapping,
+   * like JS (a final `Σ` becomes `ς`).
+   */
   toLowerCase(): string {
     return velt_rt_str_to_lower(this);
   }
@@ -113,6 +134,13 @@ extend string {
     return velt_rt_str_replace(this, from, to);
   }
 
+  /**
+   * Replace all instances of a substring in a string. `from` is plain text; for patterns use
+   * `velt:regex`.
+   * @param from - A string to search for.
+   * @param to - A string containing the text to replace for every successful match of `from` in
+   * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.
+   */
   replaceAll(from: string, to: string): string {
     return velt_rt_str_replace_all(this, from, to);
   }
@@ -134,6 +162,18 @@ extend string {
     return velt_rt_str_pad_start(this, target, fill);
   }
 
+  /**
+   * Pads the current string with a given string (possibly repeated) so that the resulting string
+   * reaches a given length in UTF-16 code units, as in JS.
+   * The padding is applied from the end (right) of the current string.
+   * @param target - The length of the resulting string once the current string has been padded.
+   * If this parameter is smaller than the current string's length, the current string will be
+   * returned as it is.
+   * @param fill - The string to pad the current string with.
+   * If this string is too long, it will be truncated and the left-most part will be applied; the
+   * cut may fall between the halves of a surrogate pair, as in JS. The default value for this
+   * parameter is " " (U+0020).
+   */
   padEnd(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_end(this, target, fill);
   }
@@ -186,6 +226,10 @@ extend string {
   }
 }
 
+/**
+ * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
+ * `string` itself. Unlike JS, `String(x)` is not a conversion: write `x.toString()` or `${x}`.
+ */
 export class String {
   /**
    * JS `String.fromCharCode(code)` for one code unit (`ToUint16`); a surrogate gives a string

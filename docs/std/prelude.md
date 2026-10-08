@@ -11,6 +11,11 @@ that name itself. The builtin `process` (`process.stdout.write(s)`, `process.env
 `process.argv`, `process.exit(code)`, `process.memoryUsage()`; [velt:process](process.md)) needs
 no import either.
 
+Every export and public member in `std/prelude` has a doc comment, which `velt doc --std` shows
+under its signature. Where TypeScript has the same function, the text is adapted from the JSDoc
+of TypeScript's `lib.*.d.ts` (Apache-2.0, see `NOTICE`) and edited for Velt's differences; this
+page lists those differences.
+
 ## Strings
 
 `string` is an immutable sequence of UTF-16 code units, as in JS

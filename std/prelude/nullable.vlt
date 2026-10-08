@@ -6,10 +6,12 @@
 // `isNull` only borrows.
 
 extend<T> (T | null) {
+  /** Whether the value is null (`x == null`); borrows it. */
   isNull(): bool {
     return this == null;
   }
 
+  /** The value, or `fallback` when it is null (`x ?? fallback`); consumes the receiver. */
   unwrapOr(fallback: T): T {
     return this ?? fallback;
   }
@@ -22,6 +24,11 @@ extend<T> (T | null) {
     panic("called unwrap() on a null value");
   }
 
+  /**
+   * `f` applied to the value, or null when it is null (`x == null ? null : f(x)`); consumes the
+   * receiver.
+   * @throws what `f` throws.
+   */
   map<U, E>(f: (x: T) => U throws E): U | null throws E {
     if (this != null) {
       return f(this);

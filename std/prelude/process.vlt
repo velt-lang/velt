@@ -33,6 +33,7 @@ declare function velt_rt_memory_heap(): i64;
  */
 export type MemoryUsage = { rss: i64; heapUsed: i64 };
 
+/** `process.memoryUsage()`: the process's memory use in bytes, now. */
 export function processMemoryUsage(): MemoryUsage {
   return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
 }

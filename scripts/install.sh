@@ -23,7 +23,7 @@ for d in bin lib std; do
     rm -rf "${prefix:?}/$d"
     if [ -d "$dist/$d" ]; then cp -R "$dist/$d" "$prefix/$d"; fi
 done
-for f in README.md LICENSE-MIT LICENSE-APACHE; do
+for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE; do
     if [ -f "$dist/$f" ]; then cp "$dist/$f" "$prefix/"; fi
 done
 chmod +x "$prefix/bin/velt"

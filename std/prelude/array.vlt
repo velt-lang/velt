@@ -23,7 +23,16 @@
 //   `i64` with -1 for "absent", like JS.
 // - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 extend<T> Array<T> {
+  /**
+   * Performs the specified action for each element in an array.
+   * @param f - A function that accepts up to two arguments, the element and its index. forEach
+   * calls `f` one time for each element in the array, in order. Elements pushed meanwhile are
+   * not visited, and elements removed meanwhile are skipped, as in JS.
+   * @throws what `f` throws.
+   */
   forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
     if (!__intrinsic_may_alias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
@@ -40,6 +49,14 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * Calls a defined callback function on each element of an array, and returns an array that
+   * contains the results.
+   * @param f - A function that accepts up to two arguments, the element and its index. The map
+   * method calls `f` one time for each element in the array. If `f` shortens the array (through
+   * another reference to it), `map` panics, where JS would return an array with holes.
+   * @throws what `f` throws.
+   */
   map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
     const out: U[] = __intrinsic_array_with_capacity(this.length);
     if (!__intrinsic_may_alias(this)) {
@@ -63,6 +80,13 @@ extend<T> Array<T> {
     return out;
   }
 
+  /**
+   * Returns the elements of an array that meet the condition specified in a callback function.
+   * The elements themselves are returned, like JS: objects are shared, not copied.
+   * @param keep - A function that accepts up to two arguments, the element and its index. The
+   * filter method calls `keep` one time for each element in the array.
+   * @throws what `keep` throws.
+   */
   filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
     if (!__intrinsic_may_alias(this)) {
@@ -85,6 +109,17 @@ extend<T> Array<T> {
     return out;
   }
 
+  /**
+   * Calls the specified callback function for all the elements in an array. The return value of
+   * the callback function is the accumulated result, and is provided as an argument in the next
+   * call to the callback function.
+   * @param f - A function that accepts up to three arguments: the accumulated value, the element
+   * and its index. The reduce method calls `f` one time for each element in the array.
+   * @param init - The initial value of the accumulation, passed to the first call of `f`.
+   * Unlike JS, it is required.
+   * @returns the accumulated value: `init` for an empty array.
+   * @throws what `f` throws.
+   */
   reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
     if (!__intrinsic_may_alias(this)) {
@@ -190,6 +225,13 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * Determines whether the specified callback function returns true for any element of an array.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * some method calls `pred` for each element in the array until it returns true, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
   some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     if (!__intrinsic_may_alias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
@@ -211,6 +253,13 @@ extend<T> Array<T> {
     return false;
   }
 
+  /**
+   * Determines whether all the members of an array satisfy the specified test.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * every method calls `pred` for each element in the array until it returns false, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
   every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     if (!__intrinsic_may_alias(this)) {
       for (let i: usize = 0; i < this.length; i++) {
@@ -245,6 +294,11 @@ extend<T> Array<T> {
     return -1;
   }
 
+  /**
+   * Returns the index of the last occurrence of a specified value in an array, or -1 if it is not
+   * present. Compares like `indexOf`.
+   * @param x - The value to locate in the array.
+   */
   lastIndexOf(x: T): i64 {
     let i = this.length;
     while (i > 0) {
@@ -256,6 +310,12 @@ extend<T> Array<T> {
     return -1;
   }
 
+  /**
+   * Determines whether an array includes a certain element, returning true or false as
+   * appropriate. Compares with `==` like `indexOf` (objects by identity), so unlike JS's
+   * `includes`, `NaN` is never found.
+   * @param x - The element to search for.
+   */
   includes(x: T): bool {
     return this.indexOf(x) >= 0;
   }
@@ -423,6 +483,7 @@ extend<T> Array<T> {
     return out;
   }
 
+  /** Whether the array has no elements (`xs.length == 0`). */
   isEmpty(): bool {
     return this.length == 0;
   }
@@ -475,78 +536,156 @@ extend Array<string> {
  * `T` has no `toString`.
  */
 extend Array<i8> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i16> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<i64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<isize> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u8> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u16> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<u64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<usize> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<f32> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<f64> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }
 }
 
 extend Array<bool> {
+  /**
+   * Adds all the elements of an array into a string, separated by the specified separator string.
+   * Each element is converted with `toString()`, which writes numbers and booleans as JS does.
+   * @param sep - A string used to separate one element of the array from the next in the
+   * resulting string. If omitted, the array elements are separated with a comma.
+   */
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
   }

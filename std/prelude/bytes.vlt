@@ -6,6 +6,8 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
 // memset). Positions follow JS: negative ones count from the end.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
 declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
@@ -68,6 +70,11 @@ extend Array<u8> {
     return velt_rt_bytes_last_index_of(this, byte, from);
   }
 
+  /**
+   * Determines whether an array includes a certain byte, returning true or false as appropriate
+   * (memchr).
+   * @param byte - The byte to search for.
+   */
   includes(byte: u8): bool {
     return velt_rt_bytes_index_of(this, byte, 0) >= 0;
   }
