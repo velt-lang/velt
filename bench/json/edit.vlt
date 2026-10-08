@@ -11,13 +11,13 @@ function main() {
     for (let i: i64 = 0; i < n; i++) {
       obj.set(keys[i], JsonValue.of(i as f64));
     }
-    sum += obj.len();
+    sum += obj.len() as i64;
     for (const k of keys) {
       if (obj.delete(k)) {
         sum += 1;
       }
     }
-    sum += obj.len();
+    sum += obj.len() as i64;
   }
   console.log(sum);
 }

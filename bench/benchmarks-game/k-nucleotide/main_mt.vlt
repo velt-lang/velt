@@ -38,7 +38,7 @@ function readSequence(): u8[] {
       break;
     }
     for (let i: usize = 0; i < line.length; i++) {
-      seq.push(code(line.charCodeAt(i as i64)) as u8);
+      seq.push(code(line.charCodeAt(i as i64) as i64) as u8);
     }
   }
   return seq;
@@ -71,7 +71,7 @@ function keyToString(key: i64, length: usize): string {
 function stringToKey(s: string): i64 {
   let key = 0;
   for (let i: usize = 0; i < s.length; i++) {
-    key = (key << 2) | code(s.charCodeAt(i as i64));
+    key = (key << 2) | code(s.charCodeAt(i as i64) as i64);
   }
   return key;
 }
