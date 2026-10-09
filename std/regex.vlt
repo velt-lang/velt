@@ -471,8 +471,10 @@ export class RegExp {
   }
 }
 
-// The string methods that take a regex, as in JS. The compiler calls these for
-// `s.replace(re, …)` & co. when the first argument is a `RegExp`; they are not called by name.
+/**
+ * The string methods that take a regex, as in JS. The compiler calls these for
+ * `s.replace(re, …)` & co. when the first argument is a `RegExp`; they are not called by name.
+ */
 extend string {
   /** `s.replace(re, replacement)` */
   __replaceRegExp(re: RegExp, replacement: string): string {
