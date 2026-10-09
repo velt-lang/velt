@@ -52,7 +52,8 @@ globally: put `<prefix>/bin` on `PATH` and run `velt doctor`.
   lib/libvelt_rt_shared.so / lib/libvelt_rt_shared.dylib
                           runtime shared library (Linux / macOS)
   lib/NATIVE_LIBS.md      the system libraries programs link against
-  lib/velt/lld[.exe]      the bundled linker (LLVM lld: COFF, ELF, Mach-O and WebAssembly)
+  lib/velt/lld[.exe]      the bundled linker (LLVM lld: COFF, ELF, Mach-O and WebAssembly),
+                          with its license (lib/velt/LICENSE.txt)
   lib/targets/<triple>/   link kit per target: import or stub libraries of the system and the
                           startup objects; Linux toolchains also have
                           <arch>-unknown-linux-musl/ with musl and the runtime built for it

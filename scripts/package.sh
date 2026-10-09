@@ -114,10 +114,12 @@ if [ "$bundled" = 1 ]; then
     fi
     mkdir -p "$out/lib/velt"
     cp "$lld" "$out/lib/velt/lld"
+    cp "$repo/crates/velt_link/kit/licenses/LLVM-LICENSE.txt" "$out/lib/velt/LICENSE.txt"
     "$release/velt-kit" build --target "$host" --lld "$out/lib/velt/lld" --out "$out/lib/targets/$host"
     if [ "$musl" = 1 ]; then
         "$release/velt-kit" build --target "$musl_target" --lld "$out/lib/velt/lld" \
             --runtime "$target_dir/$musl_target/release/libvelt_rt.a" --out "$out/lib/targets/$musl_target"
+        cp "$repo/crates/velt_link/kit/licenses/musl-COPYRIGHT.txt" "$out/lib/targets/$musl_target/COPYRIGHT"
     fi
     after=$(du -sk "$out" | cut -f1)
     echo "bundled linker: lld $(du -sk "$out/lib/velt" | cut -f1) KiB, kits $(du -sk "$out/lib/targets" | cut -f1) KiB; toolchain $before -> $after KiB"

@@ -62,6 +62,7 @@ if (-not $NoBundledLinker) {
     $LldDir = Join-Path $Out "lib\velt"
     New-Item -ItemType Directory -Force $LldDir | Out-Null
     Copy-Item $Lld (Join-Path $LldDir "lld.exe")
+    Copy-Item (Join-Path $Repo "crates/velt_link/kit/licenses/LLVM-LICENSE.txt") (Join-Path $LldDir "LICENSE.txt")
     $Kit = Join-Path $Out "lib\targets\$HostTriple"
     & (Join-Path $Release "velt-kit.exe") build --target $HostTriple --lld (Join-Path $LldDir "lld.exe") --out $Kit
     if ($LASTEXITCODE -ne 0) { throw "building the link kit failed" }
