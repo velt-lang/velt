@@ -1,0 +1,39 @@
+// `x instanceof A || x instanceof B` narrows `x` to the nearest class both tests imply (#747).
+class B { b = "b"; }
+class S extends B { s = "s"; }
+class S2 extends S { s2 = "s2"; }
+class T1 extends S { t = "t1"; }
+class T2 extends S { t = "t2"; }
+
+function g(b: B): string {
+  if (b instanceof S || b instanceof S2) { return b.s; }
+  return b.b;
+}
+
+function h(b: B): string {
+  if (b instanceof S2 || b instanceof S) { return "S:" + b.s; }
+  return "B:" + b.b;
+}
+
+function siblings(b: B): string {
+  if (b instanceof T1 || b instanceof T2) { return b.s; }
+  return "-";
+}
+
+function neither(b: B): string {
+  if (!(b instanceof S) && !(b instanceof S2)) { return "plain " + b.b; }
+  return "sub";
+}
+
+function fallback(x: string | B | null): string {
+  if (typeof x === "string" || x === null) { return "not a B"; }
+  return x.b;
+}
+
+function main() {
+  console.log(g(new S2()), g(new S()), g(new B()));
+  console.log(h(new S2()), h(new B()));
+  console.log(siblings(new T1()), siblings(new T2()), siblings(new S()));
+  console.log(neither(new B()), neither(new S2()));
+  console.log(fallback("x"), fallback(null), fallback(new S()));
+}
