@@ -67,8 +67,9 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
   console.log((123.456).toPrecision(4), (0.000123).toPrecision(2)); // 123.5 0.00012
   ```
 
-  A digit count out of range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100)
-  panics like JS's `RangeError`.
+  A digit count is truncated as in JS (`toExponential(2.7)` is `toExponential(2)`); one out of
+  range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100) panics like JS's
+  `RangeError`.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the

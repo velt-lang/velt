@@ -47,4 +47,9 @@ function main() {
   const digits = 3;
   console.log((2 / 3).toExponential(digits), (2 / 3).toPrecision(digits + 1));
   console.log(NaN.toExponential(101), Infinity.toPrecision(0));
+  // A `number` argument is truncated (ToIntegerOrInfinity): 2.7 is 2.
+  const d: number = 2.7;
+  const y: number = 123.456;
+  console.log(y.toExponential(d), y.toPrecision(d), y.toExponential(2.7), y.toPrecision(2.7));
+  console.log(y.toExponential(0.9), y.toPrecision(1.9), y.toFixed(d));
 }
