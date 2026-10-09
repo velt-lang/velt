@@ -67,7 +67,8 @@ async function aliased(): Promise<void> {
 async function throwing(): Promise<void> {
   const t = new Tally();
   const c: Counter = t;
-  for (const by of [1, -2, 3, -4]) {
+  const bys: i64[] = [1, -2, 3, -4];
+  for (const by of bys) {
     try {
       console.log(await c.check(by));
     } catch (e) {

@@ -1,100 +1,49 @@
-//! JS number semantics on fixed-width types (docs/reference/types.md "Numbers").
+//! JS numbers next to Velt's integer types (docs/reference/types.md "Numbers").
 //!
-//! Every integer value is either *declared* (its integer type is written somewhere: an
-//! annotation, a parameter, field or return type, a literal suffix, a cast, an API result such
-//! as `.length`, or a literal typed by such a context) or *inferred* (an integer literal with no
-//! context, a local declared without a type from such a value — `const a = 7`, `let i = 0` —
-//! a call of a function whose inferred return type comes from such values, and arithmetic
-//! involving one). Both are stored as integers, so counters and indexes keep
-//! integer speed; inferred ones behave like JS numbers where that is observable:
-//! - `/` is float division unless both operands are declared integers (`a / 2` is `3.5`);
-//! - mixed with a float, or used where a float is expected, they convert to it;
-//! - `Math.trunc(a / b)` on integers is integer division (one instruction);
-//! - next to an integer of another type, they adapt (`let i = 0; i < xs.length`).
+//! A `number` is an `f64`, always: an integer literal where no integer type is expected, a
+//! local declared from one (unless `literal_locals` types it from its uses), arithmetic on
+//! them, and every integer the standard library hands to user code (`xs.length`,
+//! `s.indexOf(t)`, `m.size`, `Date.now()`; inside `std/` they keep their declared types).
+//! `velt_opt`'s `numrep` stores a number as an integer where it proves that exact.
 //!
-//! Integers the standard library hands to user code (`xs.length`, `s.indexOf(t)`, `m.size`,
-//! the index of `entries()`) are inferred too: the user wrote no integer type, so they are JS
-//! numbers (`xs.length / 2` is `1.5`). Inside `std/` they stay declared. Division is in
-//! `division`.
+//! Declared integer types (`i8`..`u64`, `isize`, `usize`) keep Rust semantics. Next to a
+//! number, the types whose every value is exactly a double (`i8`..`i32`, `u8`..`u32` and
+//! `f32`) convert to it implicitly; the 64-bit ones need `as number`, and a number going into
+//! a declared integer needs `as T`. Comparing an integer with a number is exact (`compare`).
 
-use velt_syntax::ast;
+use velt_common::Span;
 
-use crate::body::FnCx;
-use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, UnOp};
-
-/// Where an integer value's type comes from (literals adapt to the other operand).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IntOrigin {
-    Literal,
-    Inferred,
-    Declared,
-}
-
-impl IntOrigin {
-    /// Origin of an arithmetic result: inferred if either side is, else declared if either is.
-    pub(super) fn join(self, other: IntOrigin) -> IntOrigin {
-        use IntOrigin::*;
-        match (self, other) {
-            (Inferred, _) | (_, Inferred) => Inferred,
-            (Declared, _) | (_, Declared) => Declared,
-            _ => Literal,
-        }
-    }
-}
-
-fn arithmetic(op: BinOp) -> bool {
-    use BinOp::*;
-    matches!(
-        op,
-        Add | Sub | Mul | Div | Rem | Pow | BitAnd | BitOr | BitXor | Shl | Shr | UShr
-    )
-}
+use crate::body::{FnCx, LocalKind};
+use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
-    /// Origin of the integer value `h` (see the module docs).
-    pub(crate) fn int_origin(&self, h: &hir::Expr) -> IntOrigin {
-        match &h.kind {
-            H::Lit(hir::Lit::Int(_)) => IntOrigin::Literal,
-            H::Local(l, _) if self.f.inferred_ints.contains(l) => IntOrigin::Inferred,
-            // A narrowed `T | null` local, a user function's awaited result: as the value.
-            H::UnwrapSome(inner, _) if matches!(inner.kind, H::Local(..)) => self.int_origin(inner),
-            H::Await(inner) if !self.is_std_api_value(inner) => self.int_origin(inner),
-            H::Unary {
-                op: UnOp::Neg | UnOp::BitNot,
-                expr,
-            } => self.int_origin(expr),
-            H::Binary { op, lhs, rhs } if arithmetic(*op) => {
-                self.int_origin(lhs).join(self.int_origin(rhs))
-            }
-            // A number converted for a bitwise operator is still a JS number (`int32.rs`).
-            H::Call {
-                callee: hir::Callee::Def(d, _),
-                ..
-            } if super::int32::INT32_HELPERS.contains(&self.cx.fn_info(*d).name.as_str()) => {
-                IntOrigin::Inferred
-            }
-            // A call of a function whose result type is inferred from such integers.
-            H::Call {
-                callee: hir::Callee::Def(d, _),
-                ..
-            } if self.cx.fn_info(*d).ret_inferred_int => IntOrigin::Inferred,
-            // A conversion the compiler inserted spans exactly its operand and keeps its origin;
-            // a written `x as T` also spans `as T`, and declares.
-            H::Cast(inner) if inner.span == h.span && self.cx.ty.is_int(inner.ty) => {
-                self.int_origin(inner)
-            }
-            _ if self.is_std_api_value(h) => IntOrigin::Inferred,
-            H::Field { base, index, .. } if self.is_inferred_field(base.ty, *index) => {
-                IntOrigin::Inferred
-            }
-            _ => IntOrigin::Declared,
+    /// Does every value of type `t` convert to a `number` exactly (`i8`..`i32`, `u8`..`u32`,
+    /// `f32`)? Those convert implicitly.
+    pub(crate) fn exact_in_number(&self, t: TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            TyKind::Int(i) => i.bits() <= 32,
+            TyKind::Float(f) => *f == hir::FloatTy::F32,
+            _ => false,
         }
     }
 
-    /// An integer the standard library hands to user code: a length, or the result of a `std/`
-    /// function or method (`indexOf`, a `size` getter).
+    /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
+    /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
+    /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …)
+    /// and its ordering protocol (`compareTo`) keep their declared integer types.
+    pub(crate) fn is_js_api(&self, d: DefId) -> bool {
+        let f = self.cx.fn_info(d);
+        !self.cx.scopes[self.module].is_std
+            && self.cx.is_js_api_module(f.module)
+            && f.name.rsplit(['.', ':']).next() != Some("compareTo")
+    }
+
+    /// An integer the standard library hands to user code: a length, or the result of a JS API
+    /// function or method (`is_js_api`) declared with an integer result type (`indexOf`, a
+    /// `size` getter, `Date.now()`); not a generic result (`m.get(k)` of a `Map<string, i64>`)
+    /// and not a `u64` (Velt-only APIs such as `Math.umulh`).
     pub(crate) fn is_std_api_value(&self, h: &hir::Expr) -> bool {
-        if self.cx.scopes[self.module].is_std {
+        if self.cx.scopes[self.module].is_std || !self.cx.ty.is_int(h.ty) {
             return false;
         }
         match &h.kind {
@@ -105,61 +54,122 @@ impl FnCx<'_, '_> {
             H::Call {
                 callee: hir::Callee::Def(d, _),
                 ..
-            } => self.cx.scopes[self.cx.fn_info(*d).module].is_std,
+            } => {
+                let ret = self.cx.fn_info(*d).ret;
+                self.is_js_api(*d) && self.cx.ty.is_int(ret) && ret != self.cx.ty.u64
+            }
             _ => false,
         }
     }
 
-    /// A field declared without a type from an integer literal (`count = 0;`): a JS number.
-    fn is_inferred_field(&self, owner: TyId, index: u32) -> bool {
-        let Some((d, _)) = self.adt_of(owner) else {
-            return false;
-        };
-        self.cx
-            .adt(d)
-            .and_then(|a| a.fields.get(index as usize))
-            .is_some_and(|f| f.inferred_int)
-    }
-
-    /// Operands of two different integer types, at least one of them inferred: the inferred
-    /// side adapts. A declared type other than `usize` wins; otherwise both become `i64`, so
-    /// `let i = -1; i < xs.length` is `true` as in JS (a length always fits).
-    pub(crate) fn mix_ints(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
-        let ty = &self.cx.ty;
-        if !(ty.is_int(l.ty) && ty.is_int(r.ty)) || l.ty == r.ty {
-            return (l, r);
+    /// `h` as user code sees it: an integer from the standard library is a `number`.
+    pub(crate) fn std_number(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.is_std_api_value(&h) {
+            return h;
         }
-        let (li, ri) = (self.is_inferred_int(&l), self.is_inferred_int(&r));
-        let usize_ = ty.usize;
-        let target = match (li, ri) {
-            (false, false) => return (l, r),
-            (true, false) if r.ty != usize_ => r.ty,
-            (false, true) if l.ty != usize_ => l.ty,
-            _ => ty.i64,
-        };
-        (self.int_as(l, target), self.int_as(r, target))
+        let (f64_, span) = (self.cx.ty.f64, h.span);
+        self.mk(H::Cast(Box::new(h)), f64_, span)
     }
 
-    /// The right operand `v` of `place op= v`, adapted like `place = place op v` would be (#421):
-    /// an inferred integer next to a float place converts to it, and two integer types adapt
-    /// when either side is inferred (`let total = 0; total += s.length`). The place keeps its
-    /// type, so the operand converts to it; a signed value never converts to an unsigned place
-    /// (`let k: usize = 0; k -= i` stays an error instead of wrapping a negative result).
+    /// The declared (uninstantiated) result type of the JS API function or method `h` calls
+    /// from user code (`is_js_api`).
+    fn std_result_ty(&self, h: &hir::Expr) -> Option<TyId> {
+        match &h.kind {
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } if self.is_js_api(*d) => Some(self.cx.fn_info(*d).ret),
+            _ => None,
+        }
+    }
+
+    /// The integer local `l` (a binding from the standard library) as user code sees it: a
+    /// number local of the same name, set from it by the returned statement.
+    pub(crate) fn number_shadow(&mut self, l: LocalId) -> hir::Stmt {
+        let def = &self.f.locals[l.0 as usize];
+        let (name, ty, mutable, span) = (def.name.clone(), def.ty, def.mutable, def.span);
+        let kind = if mutable {
+            LocalKind::Let
+        } else {
+            LocalKind::Const
+        };
+        let f64_ = self.cx.ty.f64;
+        let read = self.mk(H::Local(l, UseMode::Copy), ty, span);
+        let init = self.mk(H::Cast(Box::new(read)), f64_, span);
+        let shadow = self.new_local(&name, f64_, mutable, span, kind);
+        let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+        scope.names.insert(name, shadow);
+        hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: shadow,
+                init: Some(init),
+            },
+            span,
+        }
+    }
+
+    /// Integer bindings destructured from a standard library result whose signature declares
+    /// them integers (`for (const [i, x] of xs.entries())`, `i` from `[usize, T][]`) are
+    /// numbers, like the result itself: the statements rebinding them. `elem`: the bindings
+    /// take an element of the result apart (a `for … of`), not the result.
+    pub(crate) fn std_number_bindings(
+        &mut self,
+        p: &hir::Pat,
+        src: &hir::Expr,
+        elem: bool,
+    ) -> Vec<hir::Stmt> {
+        let Some(mut declared) = self.std_result_ty(src) else {
+            return vec![];
+        };
+        if elem {
+            match self.cx.ty.array_elem(declared) {
+                Some(e) => declared = e,
+                None => return vec![],
+            }
+        }
+        let mut ints = vec![];
+        let mut stack = vec![(p, declared)];
+        while let Some((p, t)) = stack.pop() {
+            match (&p.kind, self.cx.ty.kind(t).clone()) {
+                (hir::PatKind::Binding(l, _), _) if self.cx.ty.is_int(t) => ints.push(*l),
+                (
+                    hir::PatKind::Tuple(ps) | hir::PatKind::Array { elems: ps, .. },
+                    TyKind::Tuple(ts),
+                ) => {
+                    stack.extend(ps.iter().zip(ts));
+                }
+                (hir::PatKind::Array { elems: ps, .. }, TyKind::Array(e)) => {
+                    stack.extend(ps.iter().map(|p| (p, e)));
+                }
+                _ => {}
+            }
+        }
+        ints.into_iter().map(|l| self.number_shadow(l)).collect()
+    }
+
+    /// The one member of the union `t` that `pred` accepts (`None` for other types, or when
+    /// none or several do).
+    pub(crate) fn union_member(
+        &mut self,
+        t: TyId,
+        pred: impl Fn(&Self, TyId) -> bool,
+    ) -> Option<TyId> {
+        let ms = self.cx.union_members(t)?;
+        let found: Vec<TyId> = ms.into_iter().filter(|m| pred(self, *m)).collect();
+        (found.len() == 1).then(|| found[0])
+    }
+
+    /// The right operand `v` of `place op= v`: a value of a type that converts to a number
+    /// exactly converts to a number place (`total += b` with `b: u8`).
     pub(crate) fn compound_operand(&mut self, place: &hir::Expr, v: hir::Expr) -> hir::Expr {
-        let (ty, lty) = (&self.cx.ty, place.ty);
-        if ty.is_float(lty) && self.is_inferred_int(&v) {
-            return self.int_to_float(v, lty);
-        }
-        let ints = ty.is_int(lty) && ty.is_int(v.ty) && lty != v.ty;
-        let signed = |t: TyId| ty.int_ty(t).is_some_and(|i| i.is_signed());
-        let wraps = signed(v.ty) && !signed(lty);
-        if ints && !wraps && (self.is_inferred_int(&v) || self.is_inferred_int(place)) {
-            return self.int_as(v, lty);
+        if place.ty == self.cx.ty.f64 && self.exact_in_number(v.ty) {
+            let f64_ = self.cx.ty.f64;
+            return self.int_to_float(v, f64_);
         }
         v
     }
 
-    /// The integer `h` converted to integer type `t` (keeping its origin).
+    /// The integer `h` converted to integer type `t`.
     pub(crate) fn int_as(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
         if h.ty == t {
             return h;
@@ -168,58 +178,9 @@ impl FnCx<'_, '_> {
         self.mk(H::Cast(Box::new(h)), t, span)
     }
 
-    /// An integer that behaves like a JS number (not declared with an integer type).
-    pub(crate) fn is_inferred_int(&self, h: &hir::Expr) -> bool {
-        self.cx.ty.is_int(h.ty) && self.int_origin(h) != IntOrigin::Declared
-    }
-
-    /// The initializer of `let x = init` without a type: an inferred `usize` (`xs.length`,
-    /// `m.size`) becomes an `i64`, so the local is a JS number that can go negative
-    /// (`let n = xs.length; n -= 5` is `-2`). Other integer types were chosen by the program
-    /// (a suffix: `const a = 10u8; const b = 1 + a`) and stay.
-    pub(crate) fn inferred_local_init(&mut self, init: hir::Expr) -> hir::Expr {
-        let (i64_, usize_) = (self.cx.ty.i64, self.cx.ty.usize);
-        if init.ty == usize_ && self.int_origin(&init) == IntOrigin::Inferred {
-            return self.int_as(init, i64_);
-        }
-        init
-    }
-
-    /// `let x = init` without a type: `x` is an inferred integer when `init` is one (or a
-    /// `T | null` of one: its narrowed reads are).
-    pub(crate) fn note_inferred_local(&mut self, local: hir::LocalId, init: &hir::Expr) {
-        let core = self.cx.ty.opt_payload(init.ty);
-        let nullable_std = core.is_some() && self.is_std_api_value(init);
-        let core = core.unwrap_or(init.ty);
-        if self.cx.ty.is_int(core) && !nullable_std && self.int_origin(init) != IntOrigin::Declared
-        {
-            self.f.inferred_ints.insert(local);
-        }
-    }
-
-    /// Integer bindings destructured from a standard library result (`for (const [i, x] of
-    /// xs.entries())`) are JS numbers, like the result itself.
-    pub(crate) fn note_inferred_bindings(&mut self, p: &hir::Pat, src: &hir::Expr) {
-        if !self.is_std_api_value(src) {
-            return;
-        }
-        let mut stack = vec![p];
-        while let Some(p) = stack.pop() {
-            match &p.kind {
-                hir::PatKind::Binding(l, _) if self.cx.ty.is_int(p.ty) => {
-                    self.f.inferred_ints.insert(*l);
-                }
-                hir::PatKind::Tuple(xs) | hir::PatKind::Array { elems: xs, .. } => stack.extend(xs),
-                hir::PatKind::Adt { fields } => stack.extend(fields.iter().map(|(_, p)| p)),
-                hir::PatKind::Some(x) => stack.push(x),
-                _ => {}
-            }
-        }
-    }
-
-    /// The inferred integer `h` as a value of float type `t` (a literal becomes a float literal).
-    /// A negated literal stays a negated float literal, so `-0` keeps its sign (#562): casting
-    /// the integer `-0`, which is `0`, would give `+0`.
+    /// The number `h` (an integer or `f32` that converts exactly) as a value of float type `t`
+    /// (a literal becomes a float literal). A negated literal stays a negated float literal,
+    /// so `-0` keeps its sign (#562).
     pub(crate) fn int_to_float(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
         let span = h.span;
         match h.kind {
@@ -242,17 +203,15 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Operands of a binary operator: an inferred integer next to a float converts to it.
+    /// Operands of a binary operator: a value that converts to a number exactly, next to a
+    /// number, converts to it (`k * 0.5` with `k: i32`).
     pub(crate) fn mix_numbers(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
-        let ty = &self.cx.ty;
-        let (lf, rf) = (ty.is_float(l.ty), ty.is_float(r.ty));
-        if lf && !rf && self.is_inferred_int(&r) {
-            let t = l.ty;
-            let r = self.int_to_float(r, t);
+        let f64_ = self.cx.ty.f64;
+        if l.ty == f64_ && r.ty != f64_ && self.exact_in_number(r.ty) {
+            let r = self.int_to_float(r, f64_);
             (l, r)
-        } else if rf && !lf && self.is_inferred_int(&l) {
-            let t = r.ty;
-            (self.int_to_float(l, t), r)
+        } else if r.ty == f64_ && l.ty != f64_ && self.exact_in_number(l.ty) {
+            (self.int_to_float(l, f64_), r)
         } else {
             (l, r)
         }
@@ -260,24 +219,71 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// Operands of a bitwise operator next to a declared integer: a float one is converted
-    /// like JS's `ToInt32` (`n & (a / 13)`) and is then an inferred `i64`. Integer operands are
-    /// left alone. Operators on two numbers are `int32.rs`.
-    pub(super) fn bitwise_int32(
+    /// Operands of a comparison between a 64-bit integer and a number, compared exactly. A
+    /// number that is an integer from the standard library (`xs.length`) compares as that
+    /// integer (`i < xs.length` with `i: usize` compares integers); other numbers compare with
+    /// the integer converted (exact within ±2^53). Smaller integers convert exactly
+    /// (`mix_numbers`).
+    pub(crate) fn compared_numbers(
         &mut self,
-        op: ast::BinaryOp,
         l: hir::Expr,
         r: hir::Expr,
     ) -> (hir::Expr, hir::Expr) {
-        use ast::BinaryOp as B;
-        let bitwise = matches!(
-            op,
-            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr
-        );
-        if !bitwise || !(self.cx.ty.is_float(l.ty) || self.cx.ty.is_float(r.ty)) {
-            return (l, r);
+        let f64_ = self.cx.ty.f64;
+        let wide = |s: &Self, h: &hir::Expr| s.cx.ty.int_ty(h.ty).is_some_and(|i| i.bits() == 64);
+        if wide(self, &l) && r.ty == f64_ {
+            let (r, l) = self.int_beside_number(r, l);
+            (l, r)
+        } else if wide(self, &r) && l.ty == f64_ {
+            self.int_beside_number(l, r)
+        } else {
+            (l, r)
         }
-        (self.as_int32(l), self.as_int32(r))
+    }
+
+    /// The number `n` and the 64-bit integer `i` of a comparison, as two integers when `n` is
+    /// the standard library's integer converted, else as two numbers.
+    fn int_beside_number(&mut self, n: hir::Expr, i: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let t = i.ty;
+        match n.kind {
+            H::Cast(inner) if self.is_std_api_value(&inner) => (self.int_as(*inner, t), i),
+            kind => {
+                let n = hir::Expr { kind, ..n };
+                let (f64_, span) = (self.cx.ty.f64, i.span);
+                (n, self.mk(H::Cast(Box::new(i)), f64_, span))
+            }
+        }
+    }
+
+    /// The note for a number where a declared 64-bit integer is expected, or the other way
+    /// around: the conversion to write.
+    pub(crate) fn number_note(&self, expected: TyId, found: TyId) -> Option<String> {
+        let ty = &self.cx.ty;
+        let (e, f) = (self.cx.display(expected), self.cx.display(found));
+        if ty.is_int(expected) && found == ty.f64 {
+            return Some(format!("a `number` converts to `{e}` only with `as {e}`"));
+        }
+        if expected == ty.f64 && ty.is_int(found) && !self.exact_in_number(found) {
+            return Some(format!(
+                "`{f}` converts to `number` only with `as number` (not every value is exact)"
+            ));
+        }
+        None
+    }
+
+    /// The literal `h` (possibly negated) written at `span` (a module constant's value used
+    /// there), still a literal for `literal_locals`.
+    pub(crate) fn literal_at(&mut self, mut h: hir::Expr, span: Span) -> hir::Expr {
+        h.span = span;
+        match &mut h.kind {
+            H::Lit(hir::Lit::Float(_)) => self.literal_number_lit(span),
+            H::Unary { expr, .. } => {
+                let inner = std::mem::replace(expr.as_mut(), self.error_expr(span));
+                **expr = self.literal_at(inner, span);
+            }
+            _ => {}
+        }
+        h
     }
 
     /// A float index (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`) as a `usize`, through
@@ -302,14 +308,5 @@ impl FnCx<'_, '_> {
             self.cx.ty.usize,
             span,
         )
-    }
-
-    /// A float as JS's ToInt32 of it (an inferred `i64`); other values unchanged.
-    pub(super) fn as_int32(&mut self, h: hir::Expr) -> hir::Expr {
-        if !self.cx.ty.is_float(h.ty) {
-            return h;
-        }
-        let v = self.int32_of(h);
-        self.widen32(v)
     }
 }

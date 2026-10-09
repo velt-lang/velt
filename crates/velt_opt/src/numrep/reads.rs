@@ -27,6 +27,8 @@ pub(super) struct Read {
     /// ... or it cannot when this local is narrowed (the read is an operand of its definition).
     pub into: Option<Local>,
     pub int_use: IntUse,
+    /// The read converts the value to a 64-bit integer (an index).
+    pub to_wide: bool,
 }
 
 /// Collects the reads of candidates (`cand`) in a function.
@@ -52,6 +54,7 @@ impl Reads<'_> {
                     blind,
                     into,
                     int_use,
+                    to_wide: false,
                 });
             }
         }
@@ -76,7 +79,13 @@ impl Reads<'_> {
                 self.push(a, at, true, into, compared_with(b));
                 self.push(b, at, true, into, compared_with(a));
             }
-            Rvalue::Cast(a, to) if to.is_int() => self.push(a, at, true, into, IntUse::Yes),
+            Rvalue::Cast(a, to) if to.is_int() => {
+                let n = self.list.len();
+                self.push(a, at, true, into, IntUse::Yes);
+                if let Some(r) = self.list.get_mut(n) {
+                    r.to_wide = matches!(to, Ty::I64 | Ty::U64);
+                }
+            }
             Rvalue::Binary(BinOp::Rem, a, b) => {
                 self.push(a, at, false, into, def_use);
                 self.push(b, at, true, into, def_use);

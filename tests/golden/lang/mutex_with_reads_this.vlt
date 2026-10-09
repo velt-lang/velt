@@ -4,7 +4,7 @@
 // does not alias the lock.
 class Counter {
   m: shared<Mutex<{ n: i64 }>> = shared(new Mutex({ n: 0 }));
-  step = 1;
+  step: i64 = 1;
   label = "count";
 
   bump() {

@@ -48,7 +48,7 @@ function topRoutes(stats: Stats, n: usize): string[] {
   for (const [name, r] of stats.routes) {
     counts.push([name, r.count]);
   }
-  counts.sort(byCountDesc);
+  counts.sort((a, b) => byCountDesc(a, b));
   const out = [`top ${n} routes:`, "   count   err%     p50      p95      p99  route (ms)"];
   for (const [name, _count] of counts.slice(0, n as i64)) {
     const r = stats.routes.get(name);
@@ -61,7 +61,7 @@ function topRoutes(stats: Stats, n: usize): string[] {
 
 function topClients(stats: Stats, n: usize): string[] {
   const counts = stats.clients.entries();
-  counts.sort(byCountDesc);
+  counts.sort((a, b) => byCountDesc(a, b));
   const out = [`top ${n} clients:`];
   for (const [ip, count] of counts.slice(0, n as i64)) {
     out.push(`${`${count}`.padStart(8)}  ${ip}`);
@@ -74,7 +74,7 @@ function errorHours(stats: Stats, n: usize): string[] {
   for (const [hour, h] of stats.hours) {
     counts.push([hour, h.errors]);
   }
-  counts.sort(byCountDesc);
+  counts.sort((a, b) => byCountDesc(a, b));
   const out = [`top ${n} hours by 5xx:`];
   for (const [hour, errors] of counts.slice(0, n as i64)) {
     out.push(`${`${errors}`.padStart(8)}  ${hour}:00`);

@@ -100,6 +100,7 @@ impl FnCx<'_, '_> {
         let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
+        let js_api = self.is_js_api(d);
         let rest = f.source.is_some_and(|s| {
             crate::body::defaults::fn_sig_ast(s)
                 .params
@@ -113,6 +114,7 @@ impl FnCx<'_, '_> {
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
             js_numbers,
+            js_api,
             rest,
             defaults: vec![],
         };
@@ -227,6 +229,7 @@ impl FnCx<'_, '_> {
             slot_names: vec![],
             bounds: vec![],
             js_numbers: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };

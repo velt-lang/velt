@@ -7,7 +7,7 @@ function mk(): (() => i64)[] {
   const w = 42;
   const s = "hello world this is long enough";
   const fs: (() => i64)[] = [];
-  fs.push(() => w + s.indexOf("t"));
+  fs.push(() => w + (s.indexOf("t") as i64));
   return fs;
 }
 

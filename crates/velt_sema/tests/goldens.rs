@@ -332,7 +332,7 @@ fn golden_arith() {
         .iter()
         .map(|l| (l.name.as_str(), p.types.kind(l.ty).clone()))
         .collect();
-    assert!(tys.contains(&("a", TyKind::Int(hir::IntTy::I64))));
+    assert!(tys.contains(&("a", TyKind::Float(hir::FloatTy::F64))));
     assert!(tys.contains(&("x", TyKind::Float(hir::FloatTy::F64))));
     assert!(tys.contains(&("small", TyKind::Int(hir::IntTy::I32))));
     assert!(tys.contains(&("u", TyKind::Int(hir::IntTy::U8))));
