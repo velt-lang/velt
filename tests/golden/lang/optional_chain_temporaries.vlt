@@ -14,7 +14,7 @@ class Box {
     return `box ${this.name}`;
   }
   count(): usize {
-    return this.items.length;
+    return this.items.length as usize;
   }
 }
 
@@ -30,7 +30,7 @@ function mk(some: bool): Box | null {
 }
 
 function adder(some: bool): ((x: i64) => i64) | null {
-  const k = [10];
+  const k: i64[] = [10];
   return some ? (x: i64): i64 => x + k[0] : null;
 }
 

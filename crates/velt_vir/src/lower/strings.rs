@@ -57,16 +57,23 @@ impl FnLower<'_, '_> {
         (w1, w2, inline)
     }
 
-    /// The halves of `w1` as signed 32-bit numbers: `(units, bytes)` of a static or heap string.
+    /// The halves of `w1` as signed 32-bit numbers: `(units, bytes)` of a static or heap string
+    /// (the high half as [`Self::str_high`] computes it).
     fn str_halves(&mut self, w1: Operand) -> (Operand, Operand) {
-        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w1.clone(), Ty::I64));
-        let high = self.rvalue_temp(
-            Ty::I64,
-            Rvalue::Binary(BinOp::Shr, signed, cint(32, Ty::I64)),
-        );
+        let high = self.str_high(w1.clone());
+        let high = self.rvalue_temp(Ty::I64, Rvalue::Cast(high, Ty::I64));
         let low = self.rvalue_temp(Ty::I32, Rvalue::Cast(w1, Ty::I32));
         let low = self.rvalue_temp(Ty::I64, Rvalue::Cast(low, Ty::I64));
         (high, low)
+    }
+
+    /// The high half of `w1` (a static or heap string's UTF-16 length), below 2^31: a string is
+    /// shorter than 2 GiB (rt_abi.md), and the mask says so to the optimizers (`numrep` bounds
+    /// loops to `s.length` with it; LLVM sees that `str_units` and `str_halves` give the same
+    /// value, so a loop to `s.length` reading `s.charCodeAt(i)` needs no range test).
+    fn str_high(&mut self, w1: Operand) -> Operand {
+        let high = self.u64_op(BinOp::UShr, w1, cint(32, Ty::U64));
+        self.u64_op(BinOp::BitAnd, high, cint(0x7fff_ffff, Ty::U64))
     }
 
     /// Bits of byte 23 (`w2 >> 56`) masked with `mask`.
@@ -104,8 +111,8 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(units));
         self.goto(join);
         self.switch_to(outl);
-        let (high, _) = self.str_halves(w1);
-        self.assign(out.clone(), Rvalue::Cast(high, Ty::U64));
+        let high = self.str_high(w1);
+        self.assign(out.clone(), Rvalue::Use(high));
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(out)

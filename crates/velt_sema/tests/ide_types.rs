@@ -91,7 +91,10 @@ fn primitive_types() {
         t.view("const half", "seven / 2"),
         TypeView::Float(FloatTy::F64)
     ));
-    assert!(matches!(t.view("const len", "xs.length"), TypeView::Int(i) if !i.is_signed()));
+    assert!(matches!(
+        t.view("const len", "xs.length"),
+        TypeView::Float(FloatTy::F64)
+    ));
     assert!(matches!(t.view("lit, true", "true"), TypeView::Bool));
     assert!(matches!(t.view("const m", "\"k\""), TypeView::Str));
 }
@@ -294,4 +297,27 @@ fn def_of_takes_an_exact_span() {
     assert_eq!(Some(d), t.analysis.def_at(at.file, at.lo));
     let wider = Span::new(at.file, at.lo, at.hi + 1);
     assert!(t.analysis.def_of(wider).is_none());
+}
+
+#[test]
+fn a_local_declared_from_a_literal_takes_the_type_of_its_uses() {
+    // #525: `steps` is returned as an `i64`; `k` is only an index (neutral: a number),
+    // `half` is divided and `i` meets a length (numbers).
+    let t = Typed::new(
+        "function f(xs: f64[]): i64 {\n\
+           let k = 0; let s = 0.0; for (const x of xs) { s += xs[k] * x; k++; }\n\
+           let steps = 0; steps++;\n\
+           let half = 7; half = half / 2;\n\
+           for (let i = 0; i < xs.length; i++) { s += xs[i]; }\n\
+           console.log(s, k, half);\n\
+           return steps;\n\
+         }\n",
+    );
+    let int = |after: &str, text: &str| matches!(t.view(after, text), TypeView::Int(IntTy::I64));
+    let num =
+        |after: &str, text: &str| matches!(t.view(after, text), TypeView::Float(FloatTy::F64));
+    assert!(num("xs[k]", "k"));
+    assert!(int("return", "steps"));
+    assert!(num("half / 2", "half"));
+    assert!(num("xs[i]", "i"));
 }

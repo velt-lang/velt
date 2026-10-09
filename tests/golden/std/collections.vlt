@@ -111,7 +111,7 @@ function dequeModel() {
 function queues() {
   const q = new PriorityQueue<i64>((a, b) => a - b);
   console.log(q.pop(), q.peek(), q.isEmpty());
-  const xs = [5, 3, 9, 1, 7, 3, 8, -2];
+  const xs: i64[] = [5, 3, 9, 1, 7, 3, 8, -2];
   for (const x of xs) {
     q.push(x);
   }

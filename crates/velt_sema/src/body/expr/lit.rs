@@ -71,15 +71,20 @@ impl FnCx<'_, '_> {
         span: Span,
         negated: bool,
     ) -> hir::Expr {
+        // Without a suffix or an integer type expected, a literal is a number (`literal_locals`
+        // may make a local declared from it an integer).
         let ty = match suffix {
             Some(s) => match self.suffix_ty(s, false, span) {
                 Some(t) => t,
                 None => return self.error_expr(span),
             },
             None => exp
-                .filter(|e| self.cx.ty.is_int(*e))
-                .unwrap_or(self.cx.ty.i64),
+                .filter(|e| self.cx.ty.is_numeric(*e))
+                .unwrap_or(self.cx.ty.f64),
         };
+        if suffix.is_none() && ty == self.cx.ty.f64 {
+            self.literal_number_lit(span);
+        }
         if self.cx.ty.is_float(ty) {
             return self.mk(H::Lit(hir::Lit::Float(value as f64)), ty, span);
         }

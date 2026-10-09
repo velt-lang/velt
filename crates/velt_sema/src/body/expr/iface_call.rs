@@ -104,6 +104,7 @@ impl FnCx<'_, '_> {
             slot_names,
             bounds,
             js_numbers: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };
