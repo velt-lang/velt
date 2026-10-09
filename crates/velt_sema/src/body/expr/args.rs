@@ -292,7 +292,20 @@ impl FnCx<'_, '_> {
                 Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
                     self.arrow_arg(a, expected, p.mode == PassMode::Owned)
                 }
-                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+                // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
+                // a value of it, and wrapped.
+                _ => self.expr(
+                    adapter.as_ref().unwrap_or(&args[i]),
+                    Some(expected),
+                    want_of(p.mode),
+                ),
+            };
+            // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
+            let h = match self.cx.ty.array_elem(expected).is_some()
+                && self.in_place_misuse(&args[i], &h, expected)
+            {
+                true => self.error_expr(h.span),
+                false => h,
             };
             self.std_callback = None;
             let h = match collect {

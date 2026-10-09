@@ -128,6 +128,7 @@ impl FnCx<'_, '_> {
         frame.closure_assigned = closure_assigned_in(params, body);
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
+        frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
         frame.is_async = is_async;
         // A JS API callback returning a number (a comparator) may return any integer.
         frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);
@@ -262,14 +263,16 @@ impl FnCx<'_, '_> {
         match body {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
-                    Some(r) => self.returned(e, r),
+                    Some(_) if self.f.discards_value => self.expr_stmt(e),
+                    Some(r) if self.f.int_returns_number => self.returned(e, r),
+                    Some(r) => self.expr_coerce(e, r, Want::Move),
                     None => self.expr(e, None, Want::Move),
                 };
                 if self.f.ret.is_none() {
                     self.f.ret = Some(h.ty);
                 }
                 let hs = h.span;
-                let kind = if h.ty == self.cx.ty.unit {
+                let kind = if h.ty == self.cx.ty.unit || self.f.discards_value {
                     S::Expr(h)
                 } else {
                     S::Return(Some(h))

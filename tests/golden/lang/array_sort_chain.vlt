@@ -1,0 +1,40 @@
+// In TypeScript `sort`, `reverse` and `fill` return the array they changed, so calls chain
+// on it. Velt's return nothing, but a chained member access reads the changed array: on a
+// variable, a field or an element, and on a temporary (`split(",").sort()`). Same output as Node.
+class Box {
+  items: string[] = ["q", "p"];
+
+  first(): string {
+    return this.items.sort()[0];
+  }
+}
+
+function boxes(): Box[] {
+  const a = new Box();
+  a.items.push("a");
+  return [new Box(), a];
+}
+
+function main() {
+  const lines = ["b", "a", "c"];
+  console.log(lines.sort().join(","));
+  console.log(lines);
+  const nums = [3, 1, 2];
+  console.log(nums.sort((a, b) => b - a).map((x) => x * 2));
+  console.log(nums.reverse().length);
+  console.log(nums);
+  console.log("c,a,b".split(",").sort().join("-"));
+  const b = new Box();
+  console.log(b.items.sort().join(""));
+  console.log(b.items);
+  const rows = [
+    [2, 1],
+    [4, 3],
+  ];
+  const i = 1;
+  console.log(rows[i].sort().join());
+  console.log(rows);
+  console.log([1, 2, 3].fill(7, 1).join("|"));
+  console.log(new Box().first());
+  console.log(boxes().sort((x, y) => x.items.length - y.items.length).reverse()[0].items);
+}

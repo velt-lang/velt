@@ -287,7 +287,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
-        self.method_call_on(recv, prop, type_args, args, exp, span)
+        let r = self.in_place_receiver(object, recv);
+        let call = self.method_call_on(r.recv, prop, type_args, args, exp, span);
+        self.after_receiver(r.before, call)
     }
 
     /// Method `name` that an `extend` block of class/struct `d` adds (a static one is called as

@@ -202,8 +202,12 @@ impl FnCx<'_, '_> {
             let h = self.own_to_string(h, "__inspect");
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
-                self.cx
-                    .err(format!("cannot print a value of type `{tn}`"), h.span);
+                let mut d =
+                    Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
+                if let Some(note) = self.in_place_note(a, &h) {
+                    d = d.with_note(note);
+                }
+                self.cx.error(d);
             }
             out.push(h);
         }
