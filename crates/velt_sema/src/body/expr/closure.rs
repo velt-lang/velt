@@ -54,6 +54,44 @@ fn local_order(frame: &Frame, captures: &[hir::Capture], declared: &[LocalId]) -
     order
 }
 
+/// `async (params) => body` as `(params) => (async () => body)()`: a sync arrow whose value is
+/// the promise the inner async arrow returns (`FnCx::async_into_union`).
+fn async_in_sync_arrow(
+    e: &ast::Expr,
+    params: &[ast::ArrowParam],
+    ret: &Option<ast::TypeExpr>,
+    throws: &Option<ast::TypeExpr>,
+    body: &ast::ArrowBody,
+) -> ast::Expr {
+    let mk = |kind| ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span: e.span,
+    };
+    let inner = mk(ast::ExprKind::Arrow {
+        type_params: vec![],
+        params: vec![],
+        ret: ret.clone(),
+        throws: throws.clone(),
+        body: body.clone(),
+        is_async: true,
+    });
+    let call = mk(ast::ExprKind::Call {
+        callee: Box::new(inner),
+        type_args: vec![],
+        args: vec![],
+        optional: false,
+    });
+    mk(ast::ExprKind::Arrow {
+        type_params: vec![],
+        params: params.to_vec(),
+        ret: None,
+        throws: None,
+        body: ast::ArrowBody::Expr(Box::new(call)),
+        is_async: false,
+    })
+}
+
 impl FnCx<'_, '_> {
     /// An arrow function (`e` is an `ast::ExprKind::Arrow`) where a value of type `exp` is
     /// expected; `escaping` when it is stored or returned rather than passed to a call.
@@ -83,6 +121,10 @@ impl FnCx<'_, '_> {
                 .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
+        }
+        if *is_async && self.async_into_union(exp) {
+            let wrapped = async_in_sync_arrow(e, params, ret, throws, body);
+            return self.closure(&wrapped, exp, escaping);
         }
         let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);
         let Expected {

@@ -360,7 +360,8 @@ the nullable type; `void` cannot be a member.
     closures are `"function"`. An impossible tag is an error.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
-    ([downcasts](classes.md#instanceof-downcasts)).
+    ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
+    promise member (`View | Promise<View>`), when no class named `Promise` is in scope.
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).

@@ -7,6 +7,26 @@
 methods and async arrows work the same way. `async function main()` runs on the runtime, a
 multi-threaded tokio executor with one worker per core.
 
+An async arrow passed where the function type returns a union with one promise member
+(`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
+TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+([unions](types.md#union-types)):
+
+```ts
+type View = () => string;
+
+async function render(setup: (n: number) => View | Promise<View>): Promise<string> {
+  const r = setup(1);
+  const view = r instanceof Promise ? await r : r;
+  return view();
+}
+
+async function main() {
+  console.log(await render((n) => () => `sync ${n}`));
+  console.log(await render(async (n) => () => `async ${n}`));
+}
+```
+
 ## Promises
 
 Promises behave like JavaScript's, at Rust's cost:

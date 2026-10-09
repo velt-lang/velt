@@ -174,6 +174,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(e, None, Want::Borrow);
+        if self.is_promise_ctor(ty) {
+            return self.promise_test(s, span);
+        }
         let Some(class) = self.instanceof_class(ty) else {
             return self.error_expr(span);
         };
@@ -196,6 +199,38 @@ impl FnCx<'_, '_> {
         }
         self.class_test(s, class, span)
             .unwrap_or_else(|| self.error_expr(span))
+    }
+
+    /// `Promise` after `instanceof`, when no class of that name is in scope: the built-in
+    /// promise type, which is not a class in Velt.
+    pub(crate) fn is_promise_ctor(&self, ty: &ast::TypeExpr) -> bool {
+        let ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return false;
+        };
+        path.len() == 1
+            && path[0].name == "Promise"
+            && args.is_empty()
+            && !self.env.params.contains(&path[0].name)
+            && self.instanceof_class_quiet(ty).is_none()
+    }
+
+    /// `x instanceof Promise`: tests for the promise member of a union (a promise type is
+    /// always one, anything else never).
+    fn promise_test(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        if self.cx.ty.is_bottom(s.ty) {
+            return self.error_expr(span);
+        }
+        let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
+        let test = self.type_test(s, &pred, false, span);
+        if let Some(what) = test.never_msg {
+            self.cx.err(
+                format!(
+                    "this `instanceof` test is always false: no member of {what} is a `Promise`"
+                ),
+                span,
+            );
+        }
+        test.expr
     }
 
     pub(super) fn class_def_name(&self, d: DefId) -> String {

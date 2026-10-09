@@ -249,6 +249,13 @@ impl FnCx<'_, '_> {
     }
 
     fn instanceof_facts(&mut self, e: &ast::Expr, ty: &ast::TypeExpr) -> (Vec<Fact>, Vec<Fact>) {
+        if self.is_promise_ctor(ty) {
+            let Some((l, nullable, u)) = self.local_with_members(e) else {
+                return (vec![], vec![]);
+            };
+            let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
+            return self.split_facts(l, nullable, u, &pred, false);
+        }
         match self.instanceof_class_quiet(ty) {
             Some(class) => self.class_facts(e, class),
             None => (vec![], vec![]),

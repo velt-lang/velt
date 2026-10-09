@@ -44,6 +44,30 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Whether an async arrow is expected to return a type that is not a promise but includes
+    /// exactly one (`View | Promise<View>`, `Promise<T> | null`): TS types the arrow by that
+    /// member, so it is checked as `(params) => (async () => body)()` (`closure`), and the
+    /// promise it returns converts to the expected type like any other value.
+    pub(super) fn async_into_union(&mut self, exp: Option<TyId>) -> bool {
+        let Some(TyKind::FnPtr { ret, .. }) = self.hint(exp).map(|t| self.cx.ty.kind(t).clone())
+        else {
+            return false;
+        };
+        if self.cx.ty.promise_payload(ret).is_some() || self.cx.ty.has_error(ret) {
+            return false;
+        }
+        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        if self.cx.ty.promise_payload(inner).is_some() {
+            return true;
+        }
+        self.cx.union_members(inner).is_some_and(|ms| {
+            ms.iter()
+                .filter(|m| self.cx.ty.promise_payload(**m).is_some())
+                .count()
+                == 1
+        })
+    }
+
     /// The closure's error type: written or expected (`declared`), else what its body is known
     /// to throw now (re-checked once every error type is inferred, `crate::throws`).
     pub(super) fn closure_error(
