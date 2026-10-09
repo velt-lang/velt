@@ -1,0 +1,1 @@
+class_expression_named.vlt:3:17: error: a named class expression must have the name of the variable it initializes: declare `class Other { … }`, or write `const K = class { … }`

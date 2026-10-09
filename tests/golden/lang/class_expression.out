@@ -1,0 +1,3 @@
+5 0 Point { x: 3, y: 4 }
+named Named { label: 'named' }
+woof true 6

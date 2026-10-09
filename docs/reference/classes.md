@@ -5,6 +5,13 @@ hidden classes and no runtime shape checks.
 
 ## Classes
 
+- **Class expressions** bound to a variable, `const Point = class { … };` (also `let`, `export
+  const`, with `extends` / `implements`, at module level or in a function), declare the class
+  `Point`: an anonymous class takes the variable's name, as in JavaScript (`console.log` shows
+  `Point { … }`). A class expression may have its own name only when it is the variable's
+  (`const Point = class Point { … }`); another one is an error (``a named class expression must
+  have the name of the variable it initializes``). Class expressions elsewhere (an argument,
+  a return value, `new (class { … })()`) are not supported yet.
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
   in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
