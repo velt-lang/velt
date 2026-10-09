@@ -1,0 +1,2 @@
+Milestone in progress: a sync closure stored in an object an HTTP handler captured races
+(its captured-variable cells are shared by concurrent requests). See PR #813, step 1.
