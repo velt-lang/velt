@@ -4,6 +4,8 @@
 
 type T = { "#x": number };
 
+type P = { "__proto__": number };
+
 interface I {
   "go"(): void;
 }

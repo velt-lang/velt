@@ -57,10 +57,14 @@ impl<'a> Parser<'a> {
     /// Modifiers are only modifiers when another name follows, so a member may be named `static`.
     fn parse_modifiers(&mut self) -> Modifiers {
         let mut m = Modifiers::default();
-        // `async [Symbol.asyncDispose]()`: a symbol key also follows a modifier, and so does
-        // the `*` of a generator method (`static *items()`).
+        // `async [Symbol.asyncDispose]()`: a symbol key also follows a modifier, and so do the
+        // `*` of a generator method (`static *items()`) and a quoted name
+        // (`readonly "r-o": number` in an interface).
         while Self::is_name(self.nth(1))
-            || matches!(self.nth(1), Tok::LBracket | Tok::Star | Tok::PrivateName)
+            || matches!(
+                self.nth(1),
+                Tok::LBracket | Tok::Star | Tok::PrivateName | Tok::Str(_)
+            )
         {
             let flag = match self.cur_kw() {
                 Some(Kw::Readonly) => &mut m.readonly,

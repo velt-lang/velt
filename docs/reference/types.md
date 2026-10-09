@@ -603,7 +603,13 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   and `const { "a-b": n } = o`. `o["a-b"]` (or `` o[`a-b`] ``) reads the field; with any string
   literal, `o["name"]` is the same as `o.name`. `console.log` quotes the names that are not
   identifiers, as Node does (`{ 'a-b': 1 }`), and `JSON.stringify` writes them as given. Names
-  beginning with `#` or `[Symbol.` are not supported, and nor are quoted method names.
+  beginning with `#` or `[Symbol.`, `"__proto__"` (it sets the prototype in JavaScript) and
+  quoted method names are not supported. Parameter destructuring isn't supported yet, so quoted
+  names in it aren't either.
+- **Key order** of an object type is JavaScript's: field names that are array indices (`"0"`,
+  `"404"`: canonical, up to 2^32 - 2) come first, ascending, then the others in declaration
+  order. `console.log`, `JSON.stringify` and `Object.keys` all follow it. A `Record` and a
+  `JsonValue` keep insertion order for every key (#756).
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
   the instance of a generic interface with only fields.
@@ -756,7 +762,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
-  and `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
+  and `Object.entries(r)` return arrays in insertion order, also for array-index keys, which
+  JavaScript lists first (#756) (`for (const [k, v] of
   Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
   as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",

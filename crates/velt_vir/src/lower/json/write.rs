@@ -214,7 +214,13 @@ impl FnLower<'_, '_> {
         }
         self.push_text(buf, "{");
         let mut sep = Sep::First;
-        for (i, ((name, optional), fty)) in names.into_iter().zip(tys).enumerate() {
+        // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
+        let order = velt_sema::property_order::js_key_order(
+            &names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        );
+        for i in order {
+            let (name, optional) = names[i].clone();
+            let fty = tys[i];
             // ES private fields (`#x`) are not written, as in JavaScript.
             if name.starts_with('#') {
                 continue;

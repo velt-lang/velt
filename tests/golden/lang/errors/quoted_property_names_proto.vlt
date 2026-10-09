@@ -1,0 +1,11 @@
+// `__proto__` is not supported as a property name: in JavaScript `{ "__proto__": v }` (or
+// `__proto__: v`) sets the object's prototype and creates no property, in an object literal and
+// a `Record` literal alike; `o["__proto__"]` reads the prototype.
+
+function main() {
+  const p = { "__proto__": 5, y: 1 };
+  const q = { __proto__: 5, y: 1 };
+  const r: Record<string, number> = { "__proto__": 1 };
+  const o = { y: 1 };
+  const v = o["__proto__"];
+}

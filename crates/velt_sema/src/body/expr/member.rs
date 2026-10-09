@@ -397,14 +397,9 @@ impl FnCx<'_, '_> {
                     span: index.span,
                 };
                 if crate::reserved_key(&prop.name) {
-                    // Not the private field `#x` or a symbol-keyed member.
-                    self.cx.err(
-                        format!(
-                            "the property name {:?} is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys",
-                            prop.name
-                        ),
-                        index.span,
-                    );
+                    // Not the private field `#x`, a symbol-keyed member or the prototype.
+                    self.cx
+                        .err(crate::reserved_key_message(&prop.name), index.span);
                     return self.error_expr(span);
                 }
                 if matches!(want, Want::BorrowMut) {

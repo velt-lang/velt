@@ -84,11 +84,22 @@ impl FnLower<'_, '_> {
             .enumerate()
             .map(|(i, ((n, private), t))| (i as u32, n, t, private))
             .collect();
-        all.into_iter()
+        let shown: Vec<(u32, String, TyId)> = all
+            .into_iter()
             .filter(|(_, n, t, private)| {
                 !n.starts_with('#') && !(*private && self.is_empty_struct(*t))
             })
-            .map(|(i, n, t, _)| (i, inspect_key(&n), t))
+            .map(|(i, n, t, _)| (i, n, t))
+            .collect();
+        // JavaScript's order: array-index names (`'404'`) first, ascending (#756).
+        let names: Vec<&str> = shown.iter().map(|(_, n, _)| n.as_str()).collect();
+        let order = velt_sema::property_order::js_key_order(&names);
+        order
+            .into_iter()
+            .map(|i| {
+                let (index, n, t) = &shown[i];
+                (*index, inspect_key(n), *t)
+            })
             .collect()
     }
 
