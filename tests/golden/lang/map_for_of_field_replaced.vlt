@@ -1,0 +1,65 @@
+// A live loop over a map in a field keeps walking that map when the body replaces the field
+// through another reference to its object: the map stays alive until the loop ends.
+function mk(n: number): Map<number, number> {
+  const m = new Map<number, number>();
+  for (let i = 1; i <= n; i++) m.set(i, i * 10);
+  return m;
+}
+class Inner { m: Map<number, number> = mk(3); }
+class Outer { inner: Inner = new Inner(); }
+
+function keys(): void {
+  const o = new Outer();
+  const inn = o.inner;
+  const seen: number[] = [];
+  for (const k of o.inner.m.keys()) {
+    seen.push(k);
+    if (k === 1) inn.m = mk(4);
+  }
+  console.log("keys", seen.join(","), o.inner.m.size);
+}
+
+function entries(): void {
+  const o = new Outer();
+  const inn = o.inner;
+  const seen: string[] = [];
+  for (const [k, _v] of o.inner.m) {
+    seen.push(`${k}`);
+    if (k === 1) inn.m = mk(5);
+  }
+  console.log("entries", seen.join(","), o.inner.m.size);
+}
+
+function values(): void {
+  const o = new Outer();
+  const inn = o.inner;
+  const seen: number[] = [];
+  for (const v of o.inner.m.values()) {
+    seen.push(v);
+    if (v === 10) { inn.m.set(9, 90); inn.m = mk(2); }
+  }
+  console.log("values", seen.join(","), o.inner.m.size);
+}
+
+class Walker {
+  inner: Inner = new Inner();
+  alias: Inner;
+  constructor() { this.alias = this.inner; }
+  walk(): string {
+    const seen: number[] = [];
+    for (const k of this.inner.m.keys()) {
+      seen.push(k);
+      if (k === 2) this.alias.m = mk(1);
+    }
+    return `${seen.join(",")} ${this.inner.m.size}`;
+  }
+}
+
+function method(): void {
+  console.log("method", new Walker().walk());
+}
+
+keys();
+entries();
+values();
+method();

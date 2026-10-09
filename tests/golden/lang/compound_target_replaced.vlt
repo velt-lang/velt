@@ -1,0 +1,138 @@
+// A compound assignment reads and writes the object its target named before the right-hand
+// side ran (JS evaluates the reference first), even when the right-hand side replaces that
+// object: the new object keeps its value (#622).
+// A counted object above the target survives when the right-hand side detaches it from the
+// root (another root holds it): the write goes to the object below it, as in JS.
+class Leaf {
+  v: number = 1;
+  s: string = "c";
+}
+
+class Mid {
+  c: Leaf = new Leaf();
+}
+
+class Top {
+  b: Mid = new Mid();
+}
+
+class Root {
+  a: Top = new Top();
+}
+
+class P {
+  v: number = 1;
+  name: string = "p";
+}
+
+class Box2 {
+  inner: P = new P();
+
+  swapIn(): number {
+    this.inner = new P();
+    return 20;
+  }
+
+  addFromSwap() {
+    this.inner.v += this.swapIn();
+  }
+}
+
+function replaced() {
+  const b = new Box2();
+  const swap = (): number => {
+    b.inner = new P();
+    return 10;
+  };
+  b.inner.v += swap();
+  console.log(b.inner.v);
+  const rename = (): string => {
+    b.inner = new P();
+    return "renamed";
+  };
+  b.inner.name += rename();
+  console.log(b.inner.name);
+  b.inner.name += `${rename()}!`;
+  console.log(b.inner.name);
+  b.inner.v *= b.swapIn();
+  console.log(b.inner.v);
+  b.addFromSwap();
+  console.log(b.inner.v);
+}
+
+function kept() {
+  const b = new Box2();
+  const old = b.inner;
+  const swap = (): number => {
+    b.inner = new P();
+    b.inner.v = 100;
+    return 10;
+  };
+  b.inner.v += swap();
+  console.log(b.inner.v, old.v);
+  const before = b.inner;
+  const rename = (): string => {
+    b.inner = new P();
+    return "renamed";
+  };
+  b.inner.name += rename();
+  console.log(b.inner.name, before.name);
+}
+
+function elements() {
+  const ps = [new P(), new P()];
+  const swap = (): number => {
+    ps[0] = new P();
+    return 5;
+  };
+  ps[0].v += swap();
+  ps[1].v += swap();
+  console.log(ps[0].v, ps[1].v);
+}
+
+function unchanged() {
+  const b = new Box2();
+  const calls: number[] = [];
+  const next = (): number => {
+    calls.push(calls.length);
+    return calls.length;
+  };
+  b.inner.v += next();
+  b.inner.v -= next();
+  b.inner.name += `${next()}`;
+  console.log(b.inner.v, b.inner.name);
+}
+
+function survivingAncestor() {
+  const o = new Root();
+  const o2 = new Root();
+  o2.a = o.a;
+  const h = (): number => {
+    o.a = new Top();
+    return 5;
+  };
+  o.a.b.c.v += h();
+  console.log("ancestor", o2.a.b.c.v, o.a.b.c.v);
+  const r = (): string => {
+    o.a = new Top();
+    return "!";
+  };
+  o2.a = o.a;
+  o.a.b.c.s += r();
+  console.log("ancestor", o2.a.b.c.s, o.a.b.c.s);
+  const inner = (): number => {
+    o.a.b = new Mid();
+    return 7;
+  };
+  o2.a = o.a;
+  o.a.b.c.v *= inner();
+  console.log("below", o2.a.b.c.v, o.a.b.c.v);
+}
+
+function main() {
+  replaced();
+  kept();
+  elements();
+  unchanged();
+  survivingAncestor();
+}

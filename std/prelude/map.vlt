@@ -23,6 +23,16 @@
 // (an object is shared — another reference to it — and numbers or strings are copied); `upsert`
 // / `update` change a value in place. `keys()`, `values()` and `entries()` return the stored
 // keys and values the same way; `forEach` borrows. A map holds at most 2^31 entries.
+//
+// Live iteration (JS order: entries added while a loop runs are visited, deleted ones are not):
+// `forEach` and `for...of` over a map (or its `keys()`, `values()`, `entries()`, through a
+// `MapCursor`) walk the entry positions. A compaction, the pop of the newest entry and clearing
+// renumber positions; they alone bump `renumbers`, and a loop that sees it changed finds its
+// place again by *sequence number*: every entry has one, increasing in insertion order and never
+// reused. The sequence number of the entry at position `p` is `p + off`, with `off` from the
+// last breakpoint at or before `p` in (`seqPos`, `seqOff`); a map that never renumbered has no
+// breakpoints (`off` is 0). Renumbering rebuilds the breakpoints (at most one per run of
+// removed entries), so set, get and append never touch them.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -66,6 +76,12 @@ export class Map<K, V> {
   // stays valid while it is unchanged, which a callback changing the map through another
   // reference (`upsert`, `getOrInsert`) does not guarantee.
   private edits: u64 = 0;
+  // Counts renumberings: compactions, pops of the newest entry, clears (see the header).
+  private renumbers: u64 = 0;
+  // Sequence-number breakpoints, ascending: from position `seqPos[k]` on, an entry's sequence
+  // number is its position plus `seqOff[k]`. Empty, or starting at position 0.
+  private seqPos: usize[] = [];
+  private seqOff: usize[] = [];
 
   /**
    * A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
@@ -196,9 +212,13 @@ export class Map<K, V> {
       return true;
     }
     if (e + 1 == this.entryKeys.length) {
-      // Newest entry: pop it instead of leaving a tombstone.
+      // Newest entry: pop it instead of leaving a tombstone. The next entry takes its position
+      // with a new sequence number.
+      const next = this.nextSeq();
       this.entryKeys.pop();
       this.entryValues.pop();
+      this.seqTail(e, next);
+      this.renumbers++;
       return true;
     }
     this.entryValues[e] = null;
@@ -228,8 +248,9 @@ export class Map<K, V> {
   }
 
   /**
-   * Returns the keys in the map, in insertion order. JS returns an iterator; this is an array,
-   * which serves the same `for...of` loops.
+   * Returns the keys in the map, in insertion order. JS returns an iterator; this is an array of
+   * the keys there are now. `for (const k of m.keys())` iterates live instead, as in JS: it
+   * visits keys added while it runs and skips deleted ones.
    */
   keys(): K[] {
     const out: K[] = __intrinsic_array_with_capacity(this._size);
@@ -241,7 +262,10 @@ export class Map<K, V> {
     return out;
   }
 
-  /** Returns the values in the map, in insertion order (an array; JS returns an iterator). */
+  /**
+   * Returns the values in the map, in insertion order (an array; JS returns an iterator).
+   * `for (const v of m.values())` iterates live, as `keys()` does.
+   */
   values(): V[] {
     const out: V[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryValues.length; e++) {
@@ -252,7 +276,8 @@ export class Map<K, V> {
 
   /**
    * Returns the `[key, value]` pairs for every entry in the map, in insertion order (an array;
-   * JS returns an iterator).
+   * JS returns an iterator). `for (const [k, v] of m.entries())` and `for (const [k, v] of m)`
+   * iterate live, as `keys()` does.
    */
   entries(): [K, V][] {
     const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
@@ -262,11 +287,87 @@ export class Map<K, V> {
     return out;
   }
 
-  /** Visits live entries in insertion order, borrowing them (JS argument order: value, key). */
+  /**
+   * Visits the entries in insertion order, borrowing them (JS argument order: value, key). As in
+   * JS, entries `f` adds are visited too and entries it deletes are not.
+   */
   forEach<E>(f: (value: V, key: K) => void throws E) throws E {
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      visit(this.entryValues[e], this.entryKeys[e], f);
+    let renumbers = this.renumbers;
+    let off: usize = 0;
+    let segEnd: usize = 0;
+    let e: usize = 0;
+    while (e < this.entryKeys.length) {
+      if (this.entryValues[e] != null) {
+        if (e >= segEnd) {
+          const k = this.segmentOf(e);
+          off = this.segmentOff(k);
+          segEnd = this.segmentEnd(k);
+        }
+        const next = e + off + 1;
+        visit(this.entryValues[e], this.entryKeys[e], f);
+        if (this.renumbers != renumbers) {
+          // `f` renumbered the entries (through another reference): find the next one again.
+          renumbers = this.renumbers;
+          e = this.positionOfSeq(next);
+          segEnd = 0;
+          continue;
+        }
+      }
+      e++;
     }
+  }
+
+  // ─────────────── live `for...of` (the compiler's loop over a map calls these) ───────────────
+
+  /** A cursor before the first entry, for `__advance`. */
+  __cursor(): MapCursor {
+    return MapCursor { pos: 0, at: 0, next: 0, renumbers: this.renumbers, off: 0, segEnd: 0 };
+  }
+
+  /**
+   * Moves `c` to the next entry (in insertion order, including entries added since the loop
+   * started); false at the end.
+   */
+  __advance(c: MapCursor): bool {
+    if (c.renumbers != this.renumbers) {
+      c.renumbers = this.renumbers;
+      c.pos = this.positionOfSeq(c.next);
+      c.segEnd = 0;
+    }
+    let e = c.pos;
+    while (e < this.entryValues.length && this.entryValues[e] == null) {
+      e++;
+    }
+    if (e >= this.entryValues.length) {
+      c.pos = e;
+      return false;
+    }
+    if (e >= c.segEnd) {
+      const k = this.segmentOf(e);
+      c.off = this.segmentOff(k);
+      c.segEnd = this.segmentEnd(k);
+    }
+    c.at = e;
+    c.next = e + c.off + 1;
+    c.pos = e + 1;
+    return true;
+  }
+
+  /** The key of the entry `c` is at (after `__advance` returned true). */
+  __keyAt(c: MapCursor): K {
+    return __intrinsic_share(this.entryKeys[c.at]);
+  }
+
+  /** The value of the entry `c` is at. */
+  __valueAt(c: MapCursor): V {
+    return sharedValue(this.entryValues[c.at]);
+  }
+
+  /** The `[key, value]` pair of the entry `c` is at. */
+  __entryAt(c: MapCursor): [K, V] {
+    const key = __intrinsic_share(this.entryKeys[c.at]);
+    const pair: [K, V] = [key, sharedValue(this.entryValues[c.at])];
+    return pair;
   }
 
   // ─────────────── internals (not part of the JS surface) ───────────────
@@ -407,23 +508,48 @@ export class Map<K, V> {
 
   // Slides live entries to the front (preserving order) with swaps, truncates the dead tail
   // (dropping the dead keys), then renumbers the positions in the slot words in place.
+  // The sequence-number breakpoints are rebuilt on the way: one where a run of removed entries
+  // ends (or an old breakpoint starts), so each entry keeps its sequence number.
   private compact() {
+    const next = this.nextSeq();
     const moved: u64[] = __intrinsic_array_with_capacity(this.entryKeys.length);
+    const oldPos = this.seqPos;
+    const oldOff = this.seqOff;
+    this.seqPos = [];
+    this.seqOff = [];
+    let k: usize = 0;
+    let off: usize = 0;
+    let nextBp = oldPos.length > 0 ? oldPos[0] : MAX_ENTRIES;
+    let shifted = false;
     let w: usize = 0;
     for (let r: usize = 0; r < this.entryKeys.length; r++) {
+      if (r == nextBp) {
+        off = oldOff[k];
+        k++;
+        nextBp = k < oldPos.length ? oldPos[k] : MAX_ENTRIES;
+        shifted = true;
+      }
       if (this.entryValues[r] != null) {
         if (w != r) {
           __intrinsic_array_swap(this.entryKeys, w, r);
           __intrinsic_array_swap(this.entryValues, w, r);
         }
+        if (shifted) {
+          this.seqPos.push(w);
+          this.seqOff.push(r + off - w);
+          shifted = false;
+        }
         w++;
         moved.push(w as u64);
       } else {
         moved.push(0);
+        shifted = true;
       }
     }
     __intrinsic_array_truncate(this.entryKeys, w);
     __intrinsic_array_truncate(this.entryValues, w);
+    this.seqTail(w, next);
+    this.renumbers++;
     this.dead = 0;
     for (let s: usize = 0; s < this.slots.length; s++) {
       const word = this.slots[s];
@@ -434,11 +560,111 @@ export class Map<K, V> {
   }
 
   private dropEntries() {
+    const next = this.nextSeq();
     __intrinsic_array_truncate(this.entryKeys, 0);
     __intrinsic_array_truncate(this.entryValues, 0);
     this._size = 0;
     this.dead = 0;
+    this.seqTail(0, next);
+    this.renumbers++;
   }
+
+  // The sequence number the next appended entry gets.
+  private nextSeq(): usize {
+    const n = this.seqOff.length;
+    return this.entryKeys.length + (n == 0 ? 0 : this.seqOff[n - 1]);
+  }
+
+  // After renumbering left `len` entries: entries appended from position `len` on get sequence
+  // numbers from `next` on (none is reused).
+  private seqTail(len: usize, next: usize) {
+    let n = this.seqPos.length;
+    while (n > 0 && this.seqPos[n - 1] >= len) {
+      n--;
+    }
+    __intrinsic_array_truncate(this.seqPos, n);
+    __intrinsic_array_truncate(this.seqOff, n);
+    const off = next - len;
+    if (off == (n == 0 ? 0 : this.seqOff[n - 1])) {
+      return;
+    }
+    if (n == 0 && len > 0) {
+      this.seqPos.push(0);
+      this.seqOff.push(0);
+    }
+    this.seqPos.push(len);
+    this.seqOff.push(off);
+  }
+
+  // The breakpoint whose segment holds position `e` (the last one at or before it), or -1 when
+  // there are none.
+  private segmentOf(e: usize): i64 {
+    const n = this.seqPos.length;
+    if (n == 0) {
+      return -1;
+    }
+    let lo: usize = 0;
+    let hi = n;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) / 2;
+      if (this.seqPos[mid] <= e) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo as i64;
+  }
+
+  // Segment `k`'s offset (`segmentOf`'s result).
+  private segmentOff(k: i64): usize {
+    return k < 0 ? 0 : this.seqOff[k as usize];
+  }
+
+  // Where segment `k` ends: the next breakpoint, or past every position.
+  private segmentEnd(k: i64): usize {
+    const n = (k + 1) as usize;
+    return k >= 0 && n < this.seqPos.length ? this.seqPos[n] : MAX_ENTRIES;
+  }
+
+  // The first position whose entry's sequence number is at least `seq` (past the end if none).
+  private positionOfSeq(seq: usize): usize {
+    const n = this.seqPos.length;
+    if (n == 0) {
+      return seq;
+    }
+    if (this.seqOff[0] > seq) {
+      return 0;
+    }
+    // The last segment starting at a sequence number <= `seq`.
+    let lo: usize = 0;
+    let hi = n;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) / 2;
+      if (this.seqPos[mid] + this.seqOff[mid] <= seq) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    const p = seq - this.seqOff[lo];
+    return lo + 1 < n && p > this.seqPos[lo + 1] ? this.seqPos[lo + 1] : p;
+  }
+}
+
+/** A live `for...of` loop's place in a map (`Map.__advance`). */
+struct MapCursor {
+  // The next position to look at.
+  pos: usize;
+  // The position of the entry the loop is at.
+  at: usize;
+  // The sequence number after that entry's: where to go on after renumbering.
+  next: usize;
+  // The map's `renumbers` when `pos` was set.
+  renumbers: u64;
+  // The current segment's offset and end (`Map.segmentOf`).
+  off: usize;
+  segEnd: usize;
 }
 
 // Inserts slot word `w` into `slots` (home `w >> shift`) at its Robin Hood position.

@@ -1,0 +1,65 @@
+// The root of an assignment target that is not a place (a call, `!`) is evaluated once,
+// before the right-hand side, and the write goes to the object it returned.
+class C { v = 1; s = "a"; }
+class B { c = new C(); }
+class A { b = new B(); }
+class O { a = new A(); }
+
+let log = "";
+let n = 0;
+const os = [new O(), new O(), new O(), new O(), new O(), new O(), new O()];
+const get = (): O => { log += "t"; n++; return os[n - 1]; };
+const r = (): number => { log += "r"; return 10; };
+const str = (): string => { log += "r"; return "x"; };
+
+get().a.b.c.v = r();
+console.log(n, log, os[0].a.b.c.v, os[1].a.b.c.v);
+
+log = "";
+get().a.b.c.v += r();
+console.log(n, log, os[1].a.b.c.v, os[2].a.b.c.v);
+
+log = "";
+get().a.b.c.s += str();
+console.log(n, log, os[2].a.b.c.s, os[3].a.b.c.s);
+
+log = "";
+get().a.b.c.s = get().a.b.c.s + str();
+console.log(n, log, os[3].a.b.c.s, os[4].a.b.c.s, os[5].a.b.c.s);
+
+const m = new Map<string, C>();
+m.set("k", new C());
+let gets = 0;
+const key = (): string => { log += "k"; gets++; return "k"; };
+log = "";
+m.get(key())!.v = r();
+console.log(gets, log, m.get("k")!.v);
+log = "";
+m.get(key())!.v += r();
+console.log(gets, log, m.get("k")!.v);
+log = "";
+m.get(key())!.s += str();
+console.log(gets, log, m.get("k")!.s);
+
+const one = (): C => { log += "t"; return new C(); };
+log = "";
+one().v = r();
+console.log(log);
+
+class H { xs: number[] = [0, 0]; }
+const hs = [new H(), new H()];
+let hn = 0;
+const holder = (): H => { log += "t"; hn++; return hs[hn - 1]; };
+const idx = (): number => { log += "i"; return 1; };
+log = "";
+holder().xs[idx()] = r();
+holder().xs[idx()] += r();
+console.log(hn, log, hs[0].xs.join(","), hs[1].xs.join(","));
+
+// The entry replaced by the right-hand side gets the value (#876).
+const pm = new Map<string, C>();
+pm.set("k", new C());
+const old = pm.get("k")!;
+const swap = (): number => { pm.set("k", new C()); return 12; };
+pm.get("k")!.v = swap();
+console.log(old.v, pm.get("k")!.v);

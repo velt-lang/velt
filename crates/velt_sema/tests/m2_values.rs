@@ -59,17 +59,30 @@ fn for_of_borrows_or_copies_elements() {
 
 #[test]
 fn for_of_over_a_map_iterates_entries() {
+    // Over a map variable: the live cursor loop (`body/for_map.rs`); over a temporary map: the
+    // array of its entries.
     let p = ok_src(
-        "function main() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }",
+        "function make(): Map<string, i64> { return new Map<string, i64>(); }
+         function live() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }
+         function temp() { for (const [k, v] of make()) { console.log(k, v); } }
+         function main() { live(); temp(); }",
     );
-    let entries = p
-        .defs
-        .iter()
-        .position(|d| matches!(d, Def::Fn(f) if f.name.ends_with("Map.entries")))
-        .unwrap();
-    assert!(calls(func(&p, "main"))
-        .iter()
-        .any(|(c, _)| matches!(c, Callee::Def(d, _) if d.0 as usize == entries)));
+    let method = |name: &str| {
+        p.defs
+            .iter()
+            .position(|d| matches!(d, Def::Fn(f) if f.name.ends_with(name)))
+            .unwrap()
+    };
+    let calls_method = |f: &str, name: &str| {
+        let m = method(name);
+        calls(func(&p, f))
+            .iter()
+            .any(|(c, _)| matches!(c, Callee::Def(d, _) if d.0 as usize == m))
+    };
+    assert!(calls_method("live", "Map.__advance"));
+    assert!(calls_method("live", "Map.__entryAt"));
+    assert!(!calls_method("live", "Map.entries"));
+    assert!(calls_method("temp", "Map.entries"));
 }
 
 #[test]
