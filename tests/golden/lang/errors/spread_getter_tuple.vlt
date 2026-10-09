@@ -1,0 +1,27 @@
+// A tuple read through a getter, spread into fixed parameters: JS reads it once and takes each
+// element from that one value, so expanding it into one read per element would call the getter
+// again for each. Velt asks to store it in a variable first.
+class Cnt {
+  n: number = 0;
+}
+
+class G {
+  c: Cnt;
+  constructor(c: Cnt) {
+    this.c = c;
+  }
+  get pair(): [number, number] {
+    this.c.n += 1;
+    return [this.c.n, this.c.n * 10];
+  }
+}
+
+function f(a: number, b: number, c: number): string {
+  return `${a},${b},${c}`;
+}
+
+function main() {
+  const cnt = new Cnt();
+  const g = new G(cnt);
+  console.log(f(0, ...g.pair), cnt.n);
+}

@@ -50,6 +50,7 @@ mod record_compound;
 mod record_literal;
 mod setters;
 mod spread;
+mod spread_args;
 mod spread_array;
 mod std_glue;
 mod supers;

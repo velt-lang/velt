@@ -264,7 +264,10 @@ has type `T | null`, stored without an extra allocation where possible.
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`.
+  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
+  when `d` converts to it, else `d`'s type when `x`'s non-null type converts to that, else
+  their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
+  `number | string`.
 - `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
@@ -699,7 +702,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
   `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
-  (`const [[a, b], [c]] = [gen(), gen()]`).
+  (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
+  `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
+  is called (`const { area } = rect;`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
