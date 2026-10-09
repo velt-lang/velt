@@ -1,49 +1,110 @@
-//! Incoming HTTP request object (`VeltReq*`) and its accessors.
+//! Incoming HTTP request object (`VeltReq*`) and its accessors: what std/fetch's global `Request`
+//! reads, lazily, for a request a server received.
 //!
-//! The body is read completely before the handler runs, so every accessor is synchronous. A
-//! request is a key into a registry (`crate::registry`): the handler releases it with
-//! `velt_rt_http_req_drop`, and any later use (a `Request` captured by a streamed body or a
-//! spawned task that outlives its handler) is a clear runtime error instead of a read of freed
-//! memory. Accessors return owned copies, so their results never dangle.
+//! The head (method, URL, headers) is there when the handler starts, so its accessors are
+//! synchronous; the body is received while the handler reads it (`req_body.rs`), so its readers
+//! are async. A request is a key into a registry (`crate::registry`): the handler releases it
+//! with `velt_rt_http_req_drop`, and any later use (a `Request` captured by a streamed body or
+//! a spawned task that outlives its handler) is a clear runtime error instead of a read of freed
+//! memory. Accessors return owned copies, so their results never dangle. While the handler is
+//! polled, accessors find its request in the worker's frame (`context.rs`) without the registry.
 
+use super::client::text_of;
 use super::owned_str;
+use super::req_body::ReqBody;
 use crate::bytes::VeltBytes;
 use crate::registry::{Key, Registry};
+use crate::result::IoResult;
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
-use bytes::Bytes;
-use http_body_util::BodyExt;
-use hyper::body::Body;
+use crate::task::leaf::new_leaf;
+use crate::task::VeltFut;
 use hyper::body::Incoming;
 use hyper::Request;
-use std::sync::Arc;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 /// A request handle (a registry key), owned by the handler once it starts.
 pub type ReqHandle = Key<ReqObj>;
 
 static REQUESTS: Registry<ReqObj> = Registry::new();
 
-/// Register a request read by the server; the handler receives the returned key.
-pub fn register(req: Box<ReqObj>) -> ReqHandle {
-    REQUESTS.insert(*req)
+/// Register a request read by the server; the handler receives the returned key, and the
+/// server keeps `req` to put in the handler's frame (`context.rs`).
+pub fn register(req: Arc<ReqObj>) -> ReqHandle {
+    REQUESTS.insert_shared(req)
 }
 
-/// The request behind `req`, or a fatal error when it was already released.
-fn obj(req: ReqHandle) -> Arc<ReqObj> {
+/// A request an accessor reads: the one in this thread's frame, or a registry reference.
+enum ReqRef {
+    /// Kept alive by the handler's future while it is polled (`context.rs`).
+    Current(*const ReqObj),
+    Held(Arc<ReqObj>),
+}
+
+impl std::ops::Deref for ReqRef {
+    type Target = ReqObj;
+
+    fn deref(&self) -> &ReqObj {
+        match self {
+            // SAFETY: valid for the poll this accessor runs in (`context::request`).
+            ReqRef::Current(r) => unsafe { &**r },
+            ReqRef::Held(r) => r,
+        }
+    }
+}
+
+/// The request behind `req` for the duration of an accessor call, or a fatal error when it was
+/// already released.
+fn obj(req: ReqHandle) -> ReqRef {
+    match super::context::request(req.bits()) {
+        Some(r) => ReqRef::Current(r),
+        None => ReqRef::Held(held(req)),
+    }
+}
+
+/// A reference to the request behind `req` that a body read can keep.
+fn shared(req: ReqHandle) -> Arc<ReqObj> {
+    match super::context::request(req.bits()) {
+        // SAFETY: the frame's request is an `Arc` the handler's future holds.
+        Some(r) => unsafe {
+            Arc::increment_strong_count(r);
+            Arc::from_raw(r)
+        },
+        None => held(req),
+    }
+}
+
+fn held(req: ReqHandle) -> Arc<ReqObj> {
     REQUESTS.get(req).unwrap_or_else(|| {
         crate::panic::fatal(concat!(
             "a Request was used after its handler finished (e.g. in a streamed body or a ",
-            "spawned task): copy the properties you need first, as in `const path = req.path`"
+            "spawned task): read what you need first, as in `const url = req.url`"
         ))
     })
+}
+
+/// The connection a request came in on.
+#[derive(Clone, Copy, Debug)]
+pub struct Conn {
+    /// The client's address (`info.remoteAddr`).
+    pub remote: SocketAddr,
+    /// The server's address on this connection: the URL's host when the request names none.
+    pub local: SocketAddr,
+    /// Served over TLS (`https:` URLs).
+    pub tls: bool,
 }
 
 /// Opaque request (`VeltReq` in the ABI docs).
 pub struct ReqObj {
     parts: hyper::http::request::Parts,
-    body: Bytes,
+    /// `None` once a read took it for good, or when the request has none.
+    body: Mutex<Option<ReqBody>>,
+    /// Whether the request arrived with a body (`req.body` is null without one).
+    has_body: bool,
     /// Key of the parked HTTP upgrade (`upgrade.rs`); 0 = not an upgrade request.
     upgrade: u64,
+    conn: Conn,
 }
 
 /// HTTP/2 may split `cookie` into one field per crumb (RFC 9113 §8.2.3); join them back with
@@ -64,26 +125,35 @@ fn join_cookies(headers: &mut hyper::HeaderMap) {
     }
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl ReqObj {
-    /// Read a hyper request including its whole body; `None` if the body could not be read.
-    /// `upgrade` is the key of its parked upgrade, 0 if none. Boxed right away, so the (large)
-    /// parts are not moved again on their way to the handler.
-    pub async fn read(req: Request<Incoming>, upgrade: u64) -> Option<Box<ReqObj>> {
+    /// A request whose head has arrived, made in the shared allocation the handler's frame and
+    /// the registry hold (`register`); its body is received when the handler reads it. `upgrade`
+    /// is the key of its parked upgrade, 0 if none. The fields are written in place: the head
+    /// is a few hundred bytes, and building the object first would copy it twice more.
+    pub fn shared(req: Request<Incoming>, upgrade: u64, conn: Conn) -> Arc<ReqObj> {
         let (mut parts, body) = req.into_parts();
         if parts.version == hyper::Version::HTTP_2 {
             join_cookies(&mut parts.headers);
         }
-        // Most requests (GET) have no body: skip the collecting future.
-        let body = if body.is_end_stream() {
-            Bytes::new()
-        } else {
-            body.collect().await.ok()?.to_bytes()
-        };
-        Some(Box::new(ReqObj {
-            parts,
-            body,
-            upgrade,
-        }))
+        let body = ReqBody::new(body);
+        let mut obj = Arc::<ReqObj>::new_uninit();
+        let at = Arc::get_mut(&mut obj)
+            .expect("ICE: a new Arc is unique")
+            .as_mut_ptr();
+        // SAFETY: `at` points to the new allocation; every field is written once before
+        // `assume_init`.
+        unsafe {
+            std::ptr::addr_of_mut!((*at).parts).write(parts);
+            std::ptr::addr_of_mut!((*at).has_body).write(body.is_some());
+            std::ptr::addr_of_mut!((*at).body).write(Mutex::new(body));
+            std::ptr::addr_of_mut!((*at).upgrade).write(upgrade);
+            std::ptr::addr_of_mut!((*at).conn).write(conn);
+            obj.assume_init()
+        }
     }
 }
 
@@ -93,26 +163,33 @@ pub unsafe extern "C" fn velt_rt_http_req_upgrade(req: ReqHandle) -> u64 {
     obj(req).upgrade
 }
 
-/// `req.method` (`GET`, `POST`...).
+/// `req.method` (`GET`, `POST`...): the standard methods are static strings.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_method(req: ReqHandle, out: *mut VeltStr) {
-    out.write(owned_str(obj(req).parts.method.as_str()));
+    let r = obj(req);
+    let m = &r.parts.method;
+    let known: &'static [u8] = match m.as_str() {
+        "GET" => b"GET",
+        "POST" => b"POST",
+        "PUT" => b"PUT",
+        "DELETE" => b"DELETE",
+        "HEAD" => b"HEAD",
+        "OPTIONS" => b"OPTIONS",
+        "PATCH" => b"PATCH",
+        _ => return out.write(owned_str(m.as_str())),
+    };
+    out.write(VeltStr::from_static(known));
 }
 
-/// `req.path`: path without the query string (`/users/1`).
+/// `req.url`: the absolute URL (`http://host/path?query`).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_path(req: ReqHandle, out: *mut VeltStr) {
-    out.write(owned_str(obj(req).parts.uri.path()));
+pub unsafe extern "C" fn velt_rt_http_req_url(req: ReqHandle, out: *mut VeltStr) {
+    let r = obj(req);
+    out.write(super::request_url::url_of(&r.parts, &r.conn));
 }
 
-/// `req.query`: raw query string without `?` (empty if none).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_query(req: ReqHandle, out: *mut VeltStr) {
-    out.write(owned_str(obj(req).parts.uri.query().unwrap_or("")));
-}
-
-/// `req.headers.get(name)` (case-insensitive): returns 1 and writes `out`, or 0 if absent.
-/// Non-UTF-8 header bytes are decoded lossily.
+/// `req.headers.get(name)` (case-insensitive): writes `out` (repeated fields joined with
+/// `", "`) and returns 1, or returns 0 if absent. Non-UTF-8 header bytes are decoded lossily.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_header(
     req: ReqHandle,
@@ -120,35 +197,18 @@ pub unsafe extern "C" fn velt_rt_http_req_header(
     out: *mut VeltStr,
 ) -> u8 {
     let name = (*name).text_lossy();
-    match obj(req).parts.headers.get(name.as_ref()) {
-        Some(v) => {
-            out.write(owned_str(&String::from_utf8_lossy(v.as_bytes())));
-            1
-        }
-        None => 0,
-    }
-}
-
-/// Number of header fields (for iterating `req.headers`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_count(req: ReqHandle) -> u64 {
-    obj(req).parts.headers.len() as u64
-}
-
-/// Header field `i` (`0 <= i < count`, in received order per name): lowercase name and value.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_header_at(
-    req: ReqHandle,
-    i: u64,
-    name: *mut VeltStr,
-    value: *mut VeltStr,
-) {
     let r = obj(req);
-    let Some((n, v)) = r.parts.headers.iter().nth(i as usize) else {
-        crate::panic::fatal("request header index out of range")
+    let mut values = r.parts.headers.get_all(name.as_ref()).iter();
+    let Some(first) = values.next() else {
+        return 0;
     };
-    name.write(owned_str(n.as_str()));
-    value.write(owned_str(&String::from_utf8_lossy(v.as_bytes())));
+    let mut joined = first.as_bytes().to_vec();
+    for v in values {
+        joined.extend_from_slice(b", ");
+        joined.extend_from_slice(v.as_bytes());
+    }
+    out.write(text_of(&joined));
+    1
 }
 
 /// Every header as the flat list `[name, value, …]` (lowercase names, received order; values
@@ -159,26 +219,92 @@ pub unsafe extern "C" fn velt_rt_http_req_headers(req: ReqHandle, out: *mut Velt
     let mut flat = Vec::with_capacity(r.parts.headers.len() * 2);
     for (name, value) in r.parts.headers.iter() {
         flat.push(owned_str(name.as_str()));
-        flat.push(owned_str(&String::from_utf8_lossy(value.as_bytes())));
+        flat.push(text_of(value.as_bytes()));
     }
     out.write(VeltStrArray::from_vec(flat));
 }
 
-/// `req.body` as text (invalid UTF-8 decoded lossily to U+FFFD).
+/// Whether the request arrived with a body (a GET or an empty POST has none).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_body(req: ReqHandle, out: *mut VeltStr) {
-    out.write(owned_str(&String::from_utf8_lossy(&obj(req).body)));
+pub unsafe extern "C" fn velt_rt_http_req_has_body(req: ReqHandle) -> u8 {
+    obj(req).has_body as u8
 }
 
-/// `req.body` as bytes.
+/// `info.remoteAddr.hostname`: the client's IP address.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_req_body_bytes(req: ReqHandle, out: *mut VeltBytes) {
-    out.write(VeltBytes::from_vec(obj(req).body.to_vec()));
+pub unsafe extern "C" fn velt_rt_http_req_remote_host(req: ReqHandle, out: *mut VeltStr) {
+    out.write(owned_str(&obj(req).conn.remote.ip().to_string()));
+}
+
+/// `info.remoteAddr.port`: the client's port.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_remote_port(req: ReqHandle) -> u32 {
+    obj(req).conn.remote.port() as u32
+}
+
+/// The whole body (empty without one; std reads each body once).
+async fn receive(r: Arc<ReqObj>) -> Result<Vec<u8>, crate::result::VeltErr> {
+    let body = lock(&r.body).take();
+    match body {
+        Some(body) => body.read_all().await,
+        None => Ok(Vec::new()),
+    }
+}
+
+/// `await req.text()` → result slot `IoResult<VeltStr>`: the body as UTF-8, invalid bytes
+/// decoded to U+FFFD and a leading byte order mark dropped (as JS decodes).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_text(req: ReqHandle) -> *mut VeltFut {
+    let r = shared(req);
+    new_leaf(async move {
+        match receive(r).await {
+            Ok(bytes) => {
+                let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+                IoResult::ok(text_of(text))
+            }
+            Err(e) => IoResult::<VeltStr>::err(e),
+        }
+    })
+}
+
+/// `await req.bytes()` → result slot `IoResult<VeltBytes>` (the received buffer, not copied
+/// again).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_bytes(req: ReqHandle) -> *mut VeltFut {
+    let r = shared(req);
+    new_leaf(async move {
+        match receive(r).await {
+            Ok(bytes) => IoResult::ok(VeltBytes::from_vec(bytes)),
+            Err(e) => IoResult::<VeltBytes>::err(e),
+        }
+    })
+}
+
+/// `req.body`'s next chunk → result slot `IoResult<VeltBytes>`: the next bytes, never empty; an
+/// empty array once the body is complete (and on every read after that).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_chunk(req: ReqHandle) -> *mut VeltFut {
+    let r = shared(req);
+    new_leaf(async move {
+        let Some(mut body) = lock(&r.body).take() else {
+            return IoResult::ok(VeltBytes::from_vec(vec![]));
+        };
+        match body.next().await {
+            Ok(chunk) => {
+                if !body.is_done() {
+                    *lock(&r.body) = Some(body);
+                }
+                IoResult::ok(VeltBytes::from_vec(chunk.unwrap_or_default()))
+            }
+            Err(e) => IoResult::<VeltBytes>::err(e),
+        }
+    })
 }
 
 /// Free a request.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_drop(req: ReqHandle) {
+    super::context::forget(req.bits());
     REQUESTS.remove(req);
 }
 

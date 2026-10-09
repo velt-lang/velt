@@ -1,26 +1,24 @@
 // No std handle can be built, read or changed from user code: handle fields are private, and
-// the HTTP types are built only by std (`Response.text`, `serve`, `fetch`, ...).
-import { Request, Response, Server } from "velt:http";
-import { Response as Fetched } from "velt:fetch";
-import { ResponseWriter } from "velt:http/stream";
+// the HTTP types' runtime objects are made only by std (`serve`, `fetch`, ...).
+import { Server } from "velt:http";
 import { TcpStream } from "velt:net";
 import { FileReader } from "velt:fs_stream";
 import { WebSocket } from "velt:websocket";
 import { Client } from "velt:postgres";
 
-function forge(s: Server, f: Fetched, t: TcpStream) {
+function forge(s: Server, f: Response, t: TcpStream) {
   const a = new Response(4096);
-  const b = Response.adopt(4096);
+  const b = Response.adopt(4096, null, false);
   const c = new Request(4096);
-  const h = Fetched.adopt(4096, null);
-  const w = ResponseWriter { handle: 4096 };
+  const d = Request.adopt(4096);
+  const e = Response.built(4096, 101);
   const n = TcpStream { handle: 4096 };
   const r = FileReader { handle: 4096 };
   const ws = WebSocket { handle: 4096 };
   const pg = Client { handle: 4096 };
   s.handle = 4096;
   console.log(t.handle, f.handle);
-  const raw = Response.text("x").intoRaw();
+  const raw = new Response("x").toServer();
 }
 
 function main() {}

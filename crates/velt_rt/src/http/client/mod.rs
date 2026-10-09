@@ -267,7 +267,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_headers(
 /// `bytes` decoded as UTF-8, invalid sequences as U+FFFD (as JS decodes). Valid text, nearly
 /// all of it, is only validated (ASCII, the most common, only scanned) and copied once, where
 /// [`String::from_utf8_lossy`] would walk it chunk by chunk at several times the cost.
-fn text_of(bytes: &[u8]) -> VeltStr {
+pub(crate) fn text_of(bytes: &[u8]) -> VeltStr {
     if bytes.is_ascii() {
         // SAFETY: ASCII is UTF-8 with one UTF-16 unit per byte.
         return unsafe {
@@ -353,4 +353,10 @@ pub extern "C" fn velt_rt_http_fetch_resp_chunk(r: FetchRespHandle) -> *mut Velt
 #[no_mangle]
 pub extern "C" fn velt_rt_http_fetch_resp_drop(r: FetchRespHandle) {
     drop(RESPONSES.remove(r));
+}
+
+/// Whether `fetch` decodes a body sent with `content-encoding: <encoding>` (so the body it
+/// hands on is no longer in that coding).
+pub(crate) fn decodes(encoding: &str) -> bool {
+    !decode::Decoder::for_encoding(Some(encoding)).is_identity()
 }

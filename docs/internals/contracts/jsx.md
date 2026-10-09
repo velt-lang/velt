@@ -272,9 +272,9 @@ Without the export nothing changes, and the generic lowering ignores it. The gol
 ## `std/jsx` specifics
 `std/jsx` (default) implements the generic and precompile functions, has no event-handler
 attributes in `IntrinsicElements` (so `onClick` is a compile error with a note to use a client
-provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async components),
-`renderToStream(el, w: ResponseWriter)` (into a `std/http` `Response.stream` body, flushing at
-async component boundaries) and `raw(html)`.
+provider), and offers `renderToString(el)`, `renderToStringSync(el)` (an element without async
+components), `renderToStream(el)` (a `BodyStream` for a `Response` body, sent in chunks at async
+component boundaries) and `raw(html)`.
 `std/jsx/generic/jsx-runtime` is the same provider without the precompile exports.
 
 ## Extending `IntrinsicElements`

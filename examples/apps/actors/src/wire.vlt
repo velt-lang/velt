@@ -2,16 +2,17 @@
 // answered with `{"data":…}` or `{"error":{"status","message","data":{"kind"}}}` — the same
 // requests and bodies as `handleActorRequest` in @sigx/actors/server, so one client and one
 // load generator drive both.
-import { serve, Request, Response, Server } from "velt:http";
+import { serve, Server } from "velt:http";
 import { Value } from "velt:json";
 import { Router, Reply, errorReply } from "./runtime";
 
 export const BASE = "/_sigx/actor/";
 
 function respond(r: Reply): Response {
-  const res = Response.text(r.body, r.status);
-  res.setHeader("content-type", "application/json");
-  return res;
+  return new Response(r.body, {
+    status: r.status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 function parseBody(text: string): Value | null {
@@ -29,7 +30,7 @@ export async function handleActorRequest(
   req: Request,
   defaultTimeoutMs: f64,
 ): Promise<Response> {
-  const path = req.path;
+  const path = new URL(req.url).pathname;
   if (!path.startsWith(BASE)) {
     return respond(errorReply(404, "not-found", "not an actor route"));
   }
@@ -43,7 +44,13 @@ export async function handleActorRequest(
   }
   const type = rest.slice(0, slash);
   const method = rest.slice(slash + 1);
-  const body = parseBody(req.body);
+  let text = "";
+  try {
+    text = await req.text();
+  } catch (e) {
+    return respond(errorReply(400, "bad-request", "the body could not be read"));
+  }
+  const body = parseBody(text);
   const args = body?.get("args");
   if (args == null || !args.isArray()) {
     return respond(errorReply(400, "bad-request", "expected {\"args\":[key, ...]}"));
@@ -53,7 +60,7 @@ export async function handleActorRequest(
     return respond(errorReply(400, "bad-request", "the first argument must be the actor key"));
   }
   let budget = defaultTimeoutMs;
-  const header = req.header("x-sigx-deadline-ms");
+  const header = req.headers.get("x-sigx-deadline-ms");
   if (header != null) {
     budget = parseFloat(header);
   }

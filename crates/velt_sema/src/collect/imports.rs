@@ -19,6 +19,7 @@ use crate::ctx::Ctx;
 /// Resolve every import and export list of module `m`.
 pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
     let modules = cx.modules;
+    let mut process_imported = false;
     for item in &modules[m].ast.items {
         let ast::ItemKind::Import(imp) = &item.kind else {
             continue;
@@ -42,7 +43,11 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
             bind_namespace(cx, m, t, ns);
         } else {
             for n in &imp.names {
-                import_name(cx, m, t, imp, n);
+                if imp.from == "velt:process" && n.name.name == BUILTIN_PROCESS {
+                    import_builtin_process(cx, m, n, &mut process_imported);
+                } else {
+                    import_name(cx, m, t, imp, n);
+                }
             }
         }
     }
@@ -93,7 +98,17 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
         ),
         ("velt:http", "fetch" | "Headers") => Some(
             "`fetch`, `Request`, `Response` and `Headers` are global, as in Node: use them without \
-             an import (`velt:http`'s own `Request` and `Response` are the server's)",
+             an import",
+        ),
+        ("velt:http", "Request" | "Response") => Some(
+            "`velt:http` handlers take and return the global `Request` and `Response`, as in Deno \
+             and Bun: drop them from the import (`req.path` is `new URL(req.url).pathname`, \
+             `Response.text(body, status)` is `new Response(body, { status })`; the migration \
+             table is in docs/std/http.md)",
+        ),
+        ("velt:http", "ResponseWriter") => Some(
+            "a streamed body is a `BodyStream` from `velt:fetch`: `new \
+             Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`",
         ),
         ("velt:http", "FetchResponse" | "FetchHeaders" | "FetchOptions") => Some(
             "`fetch` is global now and returns the standard `Response` (`res.headers` is a \
@@ -115,6 +130,39 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     if n.type_only {
         cx.scopes[m].type_only.insert(local.name.clone());
     }
+}
+
+/// The builtin `process` namespace, which `velt:process` also exports (as `node:process` does).
+const BUILTIN_PROCESS: &str = "process";
+
+/// `import { process } from "velt:process"`: the builtin `process`, which every module already
+/// sees, so the import binds nothing and `process.argv` reads the builtin as without it. The
+/// builtin is resolved by its name, so it can't be renamed. `imported`: an earlier import of it
+/// in this module (a second one is a duplicate, as in TypeScript).
+fn import_builtin_process(cx: &mut Ctx, m: usize, n: &ast::ImportName, imported: &mut bool) {
+    let local = bound_name(n);
+    if local.name != BUILTIN_PROCESS {
+        cx.error(
+            Diagnostic::error(
+                format!("`process` cannot be imported as `{}`", local.name),
+                local.span,
+            )
+            .with_note(
+                "TypeScript allows renaming it, but Velt's `process` is a builtin namespace \
+                 that is only known by its name: write `import { process } from \
+                 \"velt:process\"` (or leave the import out) and use `process`",
+            ),
+        );
+        return;
+    }
+    if *imported {
+        cx.err(
+            format!("the name `{}` is defined multiple times", local.name),
+            local.span,
+        );
+        return;
+    }
+    *imported = define(cx, m, local);
 }
 
 /// `import * as ns from` module `t`: every export `x` becomes the item `ns.x`.

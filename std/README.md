@@ -25,7 +25,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
 | `net.vlt` | `std/net`: `listen`/`connect`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), the server's `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`. |
+| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
 | `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
 | `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`. |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |

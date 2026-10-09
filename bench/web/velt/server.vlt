@@ -3,7 +3,7 @@
 // Usage: server [port]; env PORT, HOST (127.0.0.1), DATABASE_URL, DB_POOL (default 2 × cores).
 
 import { escapeHtml } from "velt:html";
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { availableParallelism } from "velt:os";
 import { createPool, Client, Pool } from "velt:postgres";
 import { args } from "velt:process";
@@ -17,6 +17,7 @@ const UPDATE_WORLDS =
   "UPDATE world SET randomnumber = u.r FROM (SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS r) AS u WHERE world.id = u.id";
 // From this many rows on, a request's queries go as one batch (one Sync, like pgx's Batch).
 const BATCH_FROM = 5;
+const HTML = "text/html; charset=utf-8";
 const FORTUNES_HEAD =
   "<!DOCTYPE html><html><head><title>Fortunes</title></head><body><table><tr><th>id</th><th>message</th></tr>";
 
@@ -237,15 +238,24 @@ async function dbRoute(pool: Pool, path: string, query: string): Promise<Respons
     return Response.json(await updateWorlds(pool, queryCount(query)));
   }
   if (path == "/fortunes") {
-    return Response.html(await fortunesHtml(pool));
+    return new Response(await fortunesHtml(pool), { headers: { "content-type": HTML } });
   }
-  return Response.text("not found", 404);
+  return new Response("not found", { status: 404 });
 }
 
 // Every response carries `Server` (hyper adds `Date`).
 function named(res: Response): Response {
-  res.header("server", "velt");
+  res.headers.set("server", "velt");
   return res;
+}
+
+// The path and the query (without `?`) of `url`, an absolute URL as a server request has it
+// (`http://host/path?query`): the path starts at the first `/` after the scheme (`https://` is 8
+// characters).
+function splitUrl(url: string): [string, string] {
+  const start = url.indexOf("/", 8);
+  const q = url.indexOf("?", start);
+  return q < 0 ? [url.slice(start), ""] : [url.slice(start, q), url.slice(q + 1)];
 }
 
 function portArg(): i64 {
@@ -264,17 +274,18 @@ async function main() {
   const server = await serve({ port: portArg(), host: process.env.HOST ?? "127.0.0.1" }, async (
     req: Request,
   ): Promise<Response> => {
-    if (req.path == "/plaintext") {
-      return named(Response.text("Hello, World!"));
+    const [path, query] = splitUrl(req.url);
+    if (path == "/plaintext") {
+      return named(new Response("Hello, World!"));
     }
-    if (req.path == "/json") {
+    if (path == "/json") {
       return named(Response.json(new Message("Hello, World!")));
     }
     try {
-      return named(await dbRoute(pool, req.path, req.query));
+      return named(await dbRoute(pool, path, query));
     } catch (e) {
       console.log("request failed:", e.message);
-      return named(Response.text("internal error", 500));
+      return named(new Response("internal error", { status: 500 }));
     }
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);

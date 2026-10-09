@@ -1,14 +1,19 @@
 // A streamed body that reads the `Request` after its handler returned: the request is already
-// released, so this is a clear runtime error (exit 101), never a read of freed memory. Copy the
-// properties the body needs before returning (tests/golden/std/http_stream.vlt).
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+// released, so this is a clear runtime error (exit 101), never a read of freed memory. Read what
+// the body needs before returning (tests/golden/std/http_stream.vlt).
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
+
+// Reads `req` while the response is sent, after its handler returned.
+async function* late(req: Request): AsyncGenerator<u8[]> {
+  await sleep(20);
+  yield utf8Encode(req.url);
+}
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    return Response.stream(async (w: ResponseWriter) => {
-      await sleep(20);
-      w.write(req.path);
-    });
+    return new Response(BodyStream.from(late(req)));
   });
   console.log("requesting");
   try {

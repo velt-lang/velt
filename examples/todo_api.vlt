@@ -3,7 +3,7 @@
 //   curl -X POST localhost:8090/todos -d '{"title":"write docs"}'
 //   curl localhost:8090/todos
 // Stops after VELT_TODO_SECONDS seconds if that variable is set.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { writeFile, readFile, exists } from "velt:fs";
 
 struct Todo {
@@ -48,31 +48,32 @@ async function load(): Promise<Todo[]> {
 }
 
 async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Response> {
-  if (req.method == "GET" && req.path == "/todos") {
+  const path = new URL(req.url).pathname;
+  if (req.method == "GET" && path == "/todos") {
     const json = store.with((s) => JSON.stringify(s.todos));
-    return Response.text(json);
+    return new Response(json, { headers: { "content-type": "application/json" } });
   }
-  if (req.method == "POST" && req.path == "/todos") {
+  if (req.method == "POST" && path == "/todos") {
     try {
-      const input = JSON.parse<NewTodo>(req.body);
+      const input = await req.json<NewTodo>();
       const todo = store.with((s) => s.add(input.title));
       const snapshot = store.with((s) => JSON.stringify(s.todos));
       await writeFile(DB, snapshot);
-      return Response.json(todo, 201);
+      return Response.json(todo, { status: 201 });
     } catch (e) {
-      return Response.text(`bad request: ${e.message}`, 400);
+      return new Response(`bad request: ${e.message}`, { status: 400 });
     }
   }
-  if (req.method == "POST" && req.path.startsWith("/todos/") && req.path.endsWith("/done")) {
-    const id = parseInt(req.path.slice(7, -5), 10) as i64;
+  if (req.method == "POST" && path.startsWith("/todos/") && path.endsWith("/done")) {
+    const id = parseInt(path.slice(7, -5), 10) as i64;
     const ok = store.with((s) => s.complete(id));
     if (!ok) {
-      return Response.text("not found", 404);
+      return new Response("not found", { status: 404 });
     }
     await writeFile(DB, store.with((s) => JSON.stringify(s.todos)));
-    return Response.text("ok");
+    return new Response("ok");
   }
-  return Response.text("not found", 404);
+  return new Response("not found", { status: 404 });
 }
 
 async function main() {
