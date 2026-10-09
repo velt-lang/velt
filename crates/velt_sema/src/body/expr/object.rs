@@ -209,6 +209,9 @@ impl FnCx<'_, '_> {
             if let Some((k, v)) = self.hint(exp).and_then(|t| self.record_args(t)) {
                 return self.record_literal(d, k, v, props, span);
             }
+            if self.reserved_keys(props) {
+                return self.error_expr(span);
+            }
             if self.is_class_def(d) {
                 let cn = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
                 self.cx.error(
@@ -235,6 +238,9 @@ impl FnCx<'_, '_> {
             }
             return self.fill_struct(d, slots, &hints, props, None, span);
         }
+        if self.reserved_keys(props) {
+            return self.error_expr(span);
+        }
         if super::spread::has_spread(props) {
             return self.spread_object(props, None, None, span);
         }
@@ -254,6 +260,28 @@ impl FnCx<'_, '_> {
             fields: hs,
         };
         self.mk(kind, ty, span)
+    }
+
+    /// Reports the keys of an object literal that builds an object type (not a `Record`) whose
+    /// names Velt uses for private names and symbol keys (`"#x"`, `"[Symbol.foo]"`); true if any.
+    fn reserved_keys(&mut self, props: &[ast::ObjectProp]) -> bool {
+        let mut found = false;
+        for p in props {
+            let (ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k)) = p else {
+                continue;
+            };
+            if crate::reserved_key(&k.name) {
+                self.cx.err(
+                    format!(
+                        "the property name {:?} is not supported in an object type: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys (a `Record<string, V>` may hold it)",
+                        k.name
+                    ),
+                    k.span,
+                );
+                found = true;
+            }
+        }
+        found
     }
 
     /// The anonymous object def of this shape (generic over the type params it mentions).
