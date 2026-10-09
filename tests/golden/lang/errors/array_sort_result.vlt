@@ -1,0 +1,16 @@
+// The result of `sort`, `reverse` or `fill` used as a value (not as the receiver of a chained
+// call, which works as in TypeScript) is an error whose note says why and what to write.
+function sorted(xs: string[]): string[] {
+  return xs.sort();
+}
+
+function show(xs: number[]) {
+  console.log(xs);
+}
+
+function main() {
+  const xs = [3, 1, 2];
+  show(xs.reverse());
+  console.log(xs.sort());
+  console.log(sorted(["b"]), [1, 2].sort().reverse());
+}
