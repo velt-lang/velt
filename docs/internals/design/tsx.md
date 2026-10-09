@@ -111,7 +111,7 @@ in TSX at least as fast as the hand-written template (`bench/web`).
 ## Sharing components with the client
 
 Velt is TypeScript-shaped, so a component written in the common subset (typed props, no
-`undefined`, no truthiness on numbers or strings, template literals for text) compiles with both
+`undefined`, template literals for text) compiles with both
 `tsc` (for the client) and `velt` (for the server). That makes "write once, render on the server
 in Velt, hydrate in the browser" possible without a second implementation.
 `velt check --ts-compat` ([the CLI](../../tooling/cli.md#code-shared-with-typescript---ts-compat))
