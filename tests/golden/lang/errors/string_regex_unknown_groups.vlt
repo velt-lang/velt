@@ -1,0 +1,22 @@
+// A replacer taking more than the match, for a regex whose number of groups is not known while
+// compiling: which parameter is the offset cannot be told (never bound silently).
+class K {
+  readonly assigned = /(q)/g;
+  plain = /(z)/g;
+  constructor() {
+    this.assigned = /(q)(r)/g;
+  }
+}
+
+function viaParam(re: RegExp): string {
+  return "a1".replace(re, (m, off) => `${m}${off}`);
+}
+
+function main() {
+  const k = new K();
+  console.log("q".replace(k.assigned, (m, p1) => p1));
+  console.log("z".replace(k.plain, (m, p1) => p1));
+  let r = /a/g;
+  console.log("a".replace(r, (m, o) => `${o}`));
+  console.log(viaParam(/\d/));
+}

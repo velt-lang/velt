@@ -44,10 +44,13 @@ A string's `replace`, `replaceAll`, `match`, `matchAll`, `search` and `split` ta
 
 A replacer function gets the match, then each group, then the match's offset (a `number`) and
 the string, as in JS, and may take fewer parameters. A group that did not take part is `""`
-(JS: `undefined`), or `null` for a parameter declared optional (`(m, p1?: string) => …`). The
-offset and the string follow the groups, so for a regex that isn't a literal (where the
-number of groups isn't known when compiling) every parameter after the match is a group. For
-`matchAll` and `replaceAll`, a regex literal without `g` is a compile error, and another regex
+(JS: `undefined`), `null` for a parameter declared optional (`(m, p1?: string) => …`), or the
+parameter's default (`(m, p1 = "none") => …`); the parameters are variables the function may
+assign. The offset and the string follow the groups, so the number of groups must be known when
+compiling: the regex is a literal, or a `const` or `readonly` field initialized with one (or with
+`new RegExp` of string literals). For another regex (a parameter, a `let`), a replacer taking
+more than the match is a compile error; take the match only, or use the regex's `exec`. For
+`matchAll` and `replaceAll`, such a regex without `g` is a compile error, and another regex
 without it panics like JS's `TypeError`.
 
 ```ts

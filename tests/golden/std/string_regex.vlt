@@ -123,6 +123,7 @@ class Holder {
   }
 
   double(s: string): string {
-    return s.replace(this.re, (_m, n: string) => `${Number(n) * 2}`);
+    // The regex's groups are not known here: the function takes the match only.
+    return s.replace(this.re, (n: string) => `${Number(n) * 2}`);
   }
 }

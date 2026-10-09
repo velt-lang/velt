@@ -212,6 +212,20 @@ impl FnCx<'_, '_> {
         f.const_lits.get(&l).cloned()
     }
 
+    /// The groups and flags of the regex the visible local `name` holds (see
+    /// `Frame::regex_consts`), looking through captures, without recording a use.
+    pub(super) fn peek_regex_local(&self, name: &str) -> Option<(usize, String)> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        for f in frames {
+            if let Some(l) = frame_lookup(f, name) {
+                if f.kinds[l.0 as usize] != super::LocalKind::Capture {
+                    return f.regex_consts.get(&l).cloned();
+                }
+            }
+        }
+        None
+    }
+
     /// The frame declaring the visible local `name`, and the local's id there (no capture is
     /// made).
     pub(super) fn peek_local(&self, name: &str) -> Option<(&Frame, LocalId)> {
