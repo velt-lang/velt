@@ -55,6 +55,7 @@ mod std_glue;
 mod supers;
 mod sync;
 mod tasks;
+mod timer_task;
 mod truthiness;
 mod type_tests;
 mod union_coerce;

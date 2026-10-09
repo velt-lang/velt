@@ -1,0 +1,57 @@
+// Timer callbacks that return nothing are accepted, as in TypeScript: an arrow with a block
+// body or an expression body, and a function without parameters. Each step waits for the
+// previous callback to settle a promise, so the order does not depend on timing.
+async function save(name: string, done: () => void): Promise<void> {
+  await sleep(1);
+  console.log("saved", name);
+  done();
+}
+
+function tick() {
+  console.log("tick, after main returned");
+}
+
+async function main() {
+  const first = Promise.withResolvers<void>();
+  const resolveFirst = first.resolve;
+  setTimeout(
+    () => {
+      console.log("block body");
+      resolveFirst();
+    },
+    1,
+  );
+  await first.promise;
+
+  const second = Promise.withResolvers<void>();
+  const resolveSecond = second.resolve;
+  setTimeout(() => resolveSecond(), 1);
+  await second.promise;
+  console.log("expression body");
+
+  // An expression body that is a promise still runs to completion.
+  const third = Promise.withResolvers<void>();
+  const resolveThird = third.resolve;
+  setTimeout(() => save("doc", () => resolveThird()), 1);
+  await third.promise;
+
+  const runs = shared(0);
+  const fourth = Promise.withResolvers<void>();
+  const resolveFourth = fourth.resolve;
+  const t = setInterval(
+    () => {
+      const k = runs.add(1);
+      if (k <= 3) {
+        console.log("interval run", k);
+      }
+      if (k == 3) {
+        resolveFourth();
+      }
+    },
+    1,
+  );
+  await fourth.promise;
+  clearInterval(t);
+
+  setTimeout(tick, 1);
+}

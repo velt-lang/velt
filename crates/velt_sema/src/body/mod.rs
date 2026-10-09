@@ -299,6 +299,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
+    /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
+    pub void_task: Option<Span>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -333,6 +336,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: None,
+            void_task: None,
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],
