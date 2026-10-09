@@ -21,7 +21,7 @@ if [ ! -d "$src" ]; then
   tar -xJf "$WORK/src.tar.xz" -C "$WORK" \
     "llvm-project-$VERSION.src/llvm" "llvm-project-$VERSION.src/lld" \
     "llvm-project-$VERSION.src/cmake" "llvm-project-$VERSION.src/libunwind/include" \
-    "llvm-project-$VERSION.src/third-party"
+    "llvm-project-$VERSION.src/third-party" "llvm-project-$VERSION.src/libc"
   rm "$WORK/src.tar.xz"
 fi
 extra=()
