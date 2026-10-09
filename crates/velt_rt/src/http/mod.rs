@@ -1,16 +1,21 @@
 //! `std/http` on hyper 1.x: a server whose per-request handler is a compiled async function
-//! (`server.rs`, descriptor in `handler.rs`), request accessors (`request.rs`), a response builder
-//! (`response.rs`, constant header values interned by `interned.rs`) whose body is complete or
-//! streamed (`body.rs`, `stream.rs`) and the `fetch` client (`client/`).
+//! (`server.rs`, descriptor in `handler.rs`), request accessors (`request.rs`) and body
+//! (`req_body.rs`), a response builder (`response.rs`, constant header values interned by
+//! `interned.rs`) whose body is complete or streamed (`body.rs`, `stream.rs`) and the `fetch`
+//! client (`client/`).
 //!
 //! Connections are served with hyper-util's auto builder: HTTP/1.1 with keep-alive and upgrades
 //! (`upgrade.rs`), and HTTP/2 (prior knowledge, h2c, or ALPN when serving TLS) on the same port.
 
 pub mod body;
 pub mod client;
+pub mod context;
 pub mod handler;
 mod interned;
+pub mod req_body;
 pub mod request;
+mod request_url;
+pub mod respond;
 pub mod response;
 pub mod server;
 pub mod stream;

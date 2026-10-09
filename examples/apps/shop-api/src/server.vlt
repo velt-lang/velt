@@ -2,19 +2,21 @@
 // can't share the store without the lock yet (#36), so store work runs one request at a time;
 // HTTP parsing and writing run on every core. `route` turns errors into responses, so nothing
 // has to be thrown out of `with` (#703).
-import { serve, Request, Response, Server } from "velt:http";
+import { serve, Server } from "velt:http";
 import { route } from "./api";
 import { Store } from "./store";
 
 async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Response> {
   const method = req.method;
-  const path = req.path;
-  const query = req.query;
-  const body = method === "GET" ? "" : req.body;
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const query = url.search.slice(1);
+  const body = method === "GET" ? "" : await req.text();
   const out = store.with((s) => route(s, method, path, query, body));
-  const res = Response.text(out.body, out.status);
-  res.setHeader("content-type", "application/json");
-  return res;
+  return new Response(out.body, {
+    status: out.status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 /// Serves `store` on `port` (0 = any free port).

@@ -1,7 +1,7 @@
 # ssr-blog
 
 A server-rendered blog written in TSX: components in `src/`, data loaded by async components,
-and every page streamed to the browser with `renderToStream` and `Response.stream`, so the
+and every page streamed to the browser with `renderToStream`, so the
 layout and the post arrive before the comments have loaded.
 
 ```sh

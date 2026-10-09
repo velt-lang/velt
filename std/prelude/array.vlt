@@ -432,6 +432,34 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * The number of elements, for `xs.length -= k` and `xs.length--` (which set it through the
+   * setter below); a plain read of `xs.length` compiles to the length itself.
+   */
+  get length(): number {
+    return this.length as number;
+  }
+
+  /**
+   * `xs.length = n`, as in JS: drops the elements from `n` on (`xs.length = 0` empties the
+   * array). Like JS, a length that is not a whole number from 0 to 2^32 - 1 (negative,
+   * fractional, `NaN`) panics with `RangeError: Invalid array length`. A larger `n` panics too:
+   * JS would add empty slots, which Velt has no value for (push the elements, or build the
+   * array with `new Array<T>(n).fill(v)`).
+   */
+  set length(n: number) {
+    if (!(n >= 0 && __intrinsic_trunc(n) == n && n <= 4294967295)) {
+      panic("RangeError: Invalid array length");
+    }
+    const len = n as usize;
+    if (len > this.length) {
+      panic(
+        `cannot grow an array by setting its length (from ${this.length} to ${len}): JS would add empty slots, which Velt has no value for; push the elements instead`,
+      );
+    }
+    __intrinsic_array_truncate(this, len);
+  }
+
   // ES2023 copying forms (`toReversed`, `toSpliced`, `with`; `toSorted` is in sort.vlt): a new
   // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
   // are shared, as in JS); the arrays themselves are independent.

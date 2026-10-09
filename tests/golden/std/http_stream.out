@@ -1,13 +1,13 @@
-server: flushed 1
 server: response returned
-server: flushed 2
-server: flushed 3
+server: sent 1
+server: sent 2
+server: sent 3
 200
 text/html; charset=utf-8
 yes
 no content-length
 chunked
 <ul><li>1</li><li>2</li><li>3</li></ul>
-server: flushed 1
 server: response returned
+server: sent 1
 broken stream: cut off

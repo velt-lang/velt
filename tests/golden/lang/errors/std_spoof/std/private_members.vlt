@@ -1,8 +1,8 @@
 // A user module in a directory named `std` gets no access to std's private members either.
-import { Response } from "velt:http";
+// (`Response` is the global one.)
 import { TcpStream } from "velt:net";
 
 function main() {
-  const r = Response.adopt(4096);
+  const r = Response.adopt(4096, null, false);
   const s = TcpStream { handle: 4096 };
 }

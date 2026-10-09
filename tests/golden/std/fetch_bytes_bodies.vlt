@@ -1,19 +1,19 @@
 // check: no leaks
-// Byte bodies are copied by the runtime, both a server's `Response.bytes(b)` and a fetch's
+// Byte bodies are copied by the runtime, both a server's `new Response(b)` and a fetch's
 // `body: b`: the caller's array stays valid and is freed once, by its owner (the runtime used to
 // take a borrowed array's buffer, so its owner freed it a second time).
-import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const payload: u8[] = [104, 105, 33];
-  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
-    if (req.path == "/bytes") {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (new URL(req.url).pathname == "/bytes") {
       const b: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
-      const r = ServerResponse.bytes(b);
+      const r = new Response(b);
       console.log("server kept", b.length);
       return r;
     }
-    return ServerResponse.text(`got ${req.body}`);
+    return new Response(`got ${await req.text()}`);
   });
   const base = `http://127.0.0.1:${server.port}`;
   const got = await (await fetch(`${base}/bytes`)).bytes();
