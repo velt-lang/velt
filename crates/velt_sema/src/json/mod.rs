@@ -13,6 +13,10 @@
 //! no call with type arguments: its requirements are instantiated wherever its class type is
 //! mentioned ([`crate::dispatch`]). The fixed point revisits only the functions whose callees'
 //! requirements grew ([`crate::dispatch::Rounds`]).
+//!
+//! The same propagation carries how generic code looks at its values for
+//! [`crate::object_copies`]: `console.log` and `===` on a type parameter (std's `indexOf` and
+//! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with.
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,6 +27,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
 
@@ -30,11 +35,19 @@ mod union;
 
 use union::union_decode_problem;
 
+/// What a function needs of a type: a JSON form (`true`: decoded by `JSON.parse`), or a look
+/// at its values ([`crate::object_copies`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Need {
+    Json(bool),
+    Seen(Seen),
+}
+
 /// JSON-relevant facts of one function body.
 #[derive(Default)]
 struct Uses {
-    /// Types given to the JSON intrinsics directly (`true`: decoded by `JSON.parse`).
-    direct: Vec<(TyId, Span, bool)>,
+    /// Types given to the JSON intrinsics, `console.log` and `===` directly.
+    direct: Vec<(TyId, Span, Need)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
     closures: Vec<DefId>,
     /// Every type the body mentions (expressions and type arguments of calls), with its first
@@ -59,7 +72,7 @@ impl Uses {
 }
 
 /// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form.
-type Needs = HashMap<DefId, Vec<(TyId, bool)>>;
+type Needs = HashMap<DefId, Vec<(TyId, Need)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
@@ -78,7 +91,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
     let mut needs: Needs = HashMap::new();
-    let mut checked: HashSet<(TyId, Span, bool)> = HashSet::new();
+    let mut checked: HashSet<(TyId, Span, Need)> = HashSet::new();
     // A type without a JSON form is reported once per place, whether it is parsed, written or
     // both (`JSON.stringify(JSON.parse<T>(s))`).
     let mut reported: HashSet<(TyId, Span)> = HashSet::new();
@@ -93,11 +106,17 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                     n.push((t, parse));
                     grew = true;
                 }
-            } else if !reported.contains(&(t, span))
-                && checked.insert((t, span, parse))
-                && check(cx, t, span, parse)
-            {
-                reported.insert((t, span));
+            } else if let Need::Seen(how) = parse {
+                if checked.insert((t, span, parse)) {
+                    cx.object_copies.observe(t, span, how);
+                }
+            } else if let Need::Json(parse) = parse {
+                if !reported.contains(&(t, span))
+                    && checked.insert((t, span, Need::Json(parse)))
+                    && check(cx, t, span, parse)
+                {
+                    reported.insert((t, span));
+                }
             }
         }
         if grew {
@@ -110,8 +129,8 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic
 /// functions it calls (substituted), closures it creates and methods the class types it
 /// mentions dispatch dynamically to (instantiated with those types' arguments).
-fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, bool)> {
-    let mut reqs: Vec<(TyId, Span, bool)> = u.direct.clone();
+fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need)> {
+    let mut reqs: Vec<(TyId, Span, Need)> = u.direct.clone();
     for (d, targs, span) in &u.calls {
         for (t, parse) in needs.get(d).into_iter().flatten() {
             reqs.push((cx.subst(*t, targs), *span, *parse));
@@ -134,6 +153,8 @@ fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, bool)
 
 fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut out = vec![];
+    // Looks at values matter only for object copies; most programs make none.
+    let looks = !cx.object_copies.copies.is_empty();
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
@@ -156,28 +177,42 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                     u.types.push((*t, e.span));
                 }
             }
-            uses_of(&mut u, e);
+            uses_of(&mut u, e, looks);
         });
         out.push((DefId(i as u32), u));
     }
     out
 }
 
-/// The JSON intrinsic calls, generic calls and closures of one expression.
-fn uses_of(u: &mut Uses, e: &Expr) {
+/// The JSON intrinsic calls, generic calls and closures of one expression, and with `looks`
+/// its `console.log` and `===` calls.
+fn uses_of(u: &mut Uses, e: &Expr, looks: bool) {
     match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::JsonStringify),
             args,
         } => {
             if let Some(a) = args.first() {
-                u.direct.push((a.ty, e.span, false));
+                u.direct.push((a.ty, e.span, Need::Json(false)));
             }
         }
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::JsonParse),
             ..
-        } => u.direct.push((e.ty, e.span, true)),
+        } => u.direct.push((e.ty, e.span, Need::Json(true))),
+        E::Call {
+            callee:
+                Callee::Intrinsic(i @ (Intrinsic::Print | Intrinsic::PrintErr | Intrinsic::Same)),
+            args,
+        } if looks => {
+            let how = match i {
+                Intrinsic::Same => Seen::Identity,
+                _ => Seen::Printed,
+            };
+            for a in args {
+                u.direct.push((a.ty, a.span, Need::Seen(how)));
+            }
+        }
         E::Call {
             callee: Callee::Def(d, targs),
             ..

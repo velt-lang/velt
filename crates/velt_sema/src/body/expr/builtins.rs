@@ -188,8 +188,6 @@ impl FnCx<'_, '_> {
             let h = self.expr(a, None, Want::Borrow);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
-            let seen = crate::object_copies::Seen::Printed;
-            self.cx.object_copies.observe(h.ty, h.span, seen);
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 self.cx

@@ -42,7 +42,7 @@ pub(crate) struct Write {
 }
 
 /// How a program looks at a value (other than reading its fields).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Seen {
     /// `console.log`.
     Printed,
@@ -175,7 +175,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen) {
         format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program {what}: {why}"),
         c.span,
     )
-    .with_label(span, "here");
+    .with_label(span, "here, or in the function this calls");
     let d = with_notes(cx, d, c);
     cx.error(d);
 }
@@ -184,11 +184,15 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     let (from, to) = (cx.display(c.from), cx.display(c.to));
     let src = c.source.as_deref().unwrap_or("x");
     let fields: Vec<String> = c.fields.iter().map(|f| format!("{f}: {src}.{f}")).collect();
+    let fields = match c.source {
+        Some(_) => format!("`{{ {} }}`", fields.join(", ")),
+        // An element of a converted array, or another value without a name.
+        None => format!("`(x) => ({{ {} }})` with `.map`", fields.join(", ")),
+    };
     d.with_note(format!(
         "TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `{to}` made from a `{from}` value is a new object with the same field values"
     ))
     .with_note(format!(
-        "build the new object explicitly, `{{ {} }}` (a new object in TypeScript too), or declare the parameter or variable as `{from}`",
-        fields.join(", ")
+        "build the new object explicitly, {fields} (a new object in TypeScript too), or declare the parameter or variable as `{from}`"
     ))
 }

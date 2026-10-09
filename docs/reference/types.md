@@ -498,8 +498,12 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
   a copied field of either type (`a.a += 1` on an `A` anywhere), compares values of the
   expected type with `===`, or prints, serializes or lists the keys of a value holding the
-  expected type (Node would show the original's fields, in its order). Arrays and other
-  containers convert only when fresh, like [wider element types](#objects-arrays-tuples-and-maps).
+  expected type (Node would show the original's fields, in its order), directly or in
+  generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  converts element by element only when fresh, like [wider element
+  types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
+  that returns a new `(Named & Scored)[]`; copy another one with
+  `xs.map((p) => ({ name: p.name }))`.
 - An alias may refer to itself through `&` when its parts are object types written out:
   `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
   `v` (an alias that names itself otherwise is an error, as is one whose parts share a field

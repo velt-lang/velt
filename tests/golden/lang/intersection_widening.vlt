@@ -38,10 +38,8 @@ function main() {
   const p: Player = { name: "Ken", score: 7, tags: ["unix", "c"] };
   console.log(greet(p), best(p), card(p));
   // The original stays usable, and a nested array is shared with the copy.
-  const named: Named[] = [];
-  for (const r of roster()) {
-    named.push(r);
-  }
+  // A fresh array converts element by element.
+  const named: Named[] = roster();
   const s: Scored = p;
   p.tags.push("go");
   console.log(named.map((n) => n.name).join(", "), s.tags.length, p.name);

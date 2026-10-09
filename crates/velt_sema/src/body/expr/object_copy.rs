@@ -48,7 +48,8 @@ impl FnCx<'_, '_> {
                 args,
             } => args.first().and_then(|a| self.place_text(a)),
             _ => self.place_text(&h),
-        };
+        }
+        .filter(|s| !s.starts_with('<'));
         let fresh = crate::fresh_returns::fresh_callees(&h).is_some_and(|c| c.is_empty());
         self.cx.object_copies.copies.push(Copy {
             from,
@@ -82,6 +83,11 @@ impl FnCx<'_, '_> {
         };
         let lit = self.mk(lit, exp, span);
         Ok(self.with_lets(lets, lit))
+    }
+
+    /// Does a `from` convert to a `to` by copying (module docs)?
+    pub(super) fn copies_to(&mut self, from: TyId, to: TyId) -> bool {
+        self.copy_plan(from, to, 0).is_some()
     }
 
     /// Field `index` of `base`: copied, or shared.
