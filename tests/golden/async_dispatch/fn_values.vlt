@@ -42,7 +42,7 @@ function checker(tag: Tag, log: Log): Check {
 }
 
 function size(log: Log): usize {
-  return log.with((v) => v.length);
+  return log.with((v) => v.length as usize);
 }
 
 class Handlers {

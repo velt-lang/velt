@@ -197,9 +197,13 @@ impl FnCx<'_, '_> {
         fn_ty: TyId,
         escaping: Option<bool>,
     ) -> hir::Expr {
-        self.std_callback = true;
+        // Every integer parameter is a JS number in the body.
+        self.std_callback = match self.cx.ty.kind(fn_ty) {
+            TyKind::FnPtr { params, .. } => Some(vec![true; params.len()]),
+            _ => None,
+        };
         let h = self.closure(arrow, Some(fn_ty), escaping.unwrap_or(true));
-        self.std_callback = false;
+        self.std_callback = None;
         h
     }
 

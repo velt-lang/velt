@@ -283,3 +283,24 @@ export function promiseWithResolvers<T, E>(): PromiseWithResolvers<T, E> {
   const s = settlers<T, E>(slot.clone());
   return { promise: settlement<T, E>(slot, "", false), resolve: s.resolve, reject: s.reject };
 }
+
+/**
+ * `Promise.resolve(value)`: a promise fulfilled with `value`. The compiler compiles
+ * `Promise.resolve(v)` to a call of `promiseResolve`, and `Promise.resolve()` to one of
+ * `promiseResolveVoid` (a `Promise<void>`).
+ */
+export async function promiseResolve<T>(value: T): Promise<T> {
+  return value;
+}
+
+/** `Promise.resolve()`: a fulfilled `Promise<void>`. */
+export async function promiseResolveVoid(): Promise<void> {}
+
+/**
+ * `Promise.reject(reason)`: a promise rejected with `reason`. The compiler compiles it to a call
+ * of `promiseReject`; `T` is the value type the promise would have had (the type argument of
+ * `Promise.reject<T>(e)`, else the expected type, else `never`).
+ */
+export async function promiseReject<T, E>(reason: E): Promise<T> throws E {
+  throw reason;
+}

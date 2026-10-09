@@ -75,7 +75,7 @@ impl FnCx<'_, '_> {
 
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
-    fn await_throws(&mut self, h: &hir::Expr) {
+    pub(super) fn await_throws(&mut self, h: &hir::Expr) {
         if let H::Call {
             callee: Callee::Def(d, targs),
             ..
@@ -409,7 +409,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `await call(...)`: the `using` variables passed to the call itself may be shared.
-    fn awaited_using_shares(&mut self, h: &hir::Expr) {
+    pub(super) fn awaited_using_shares(&mut self, h: &hir::Expr) {
         let H::Call { args, .. } = &h.kind else {
             return;
         };

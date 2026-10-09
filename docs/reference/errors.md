@@ -136,7 +136,7 @@ function describe(id: string): string {
   }
 }
 
-function lengths(ids: string[]): usize[] {
+function lengths(ids: string[]): number[] {
   return ids.map((id) => load(id).length);  // throws what `load` throws
 }
 

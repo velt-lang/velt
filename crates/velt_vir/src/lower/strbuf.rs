@@ -44,6 +44,13 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), s], None);
     }
 
+    /// Append the float `v` of type `ty` the way `console.log` prints it (`-0` is `-0`).
+    pub(super) fn push_inspect_float(&mut self, buf: &Operand, v: Operand, ty: TyId) {
+        let from = self.cx.ty(ty);
+        let v = self.cast_to(v, from, Ty::F64);
+        self.call_rt(Rt::StrbufPushInspectF64, vec![buf.clone(), v], None);
+    }
+
     /// Append an int/float/bool (or C-like enum discriminant) `v` of type `ty` in JS format.
     pub(super) fn push_scalar(&mut self, buf: &Operand, v: Operand, ty: TyId) {
         let from = self.cx.ty(ty);

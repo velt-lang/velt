@@ -25,7 +25,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | Method | Notes |
 |---|---|
 | `length` | code units |
-| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` |
+| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` (JS: `s[i]` past the end is `undefined`) |
 | `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
@@ -94,7 +94,7 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
 | `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
-| `sort()`, `sort(cmp)` | `sort()` on `i64`, `i32`, `u64`, `usize`, `f64` and `string` elements, ascending with `NaN` last (unstable, pdqsort); other element types need a comparator; `sort(cmp)` is stable on any element type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
+| `sort()`, `sort(cmp)` | `sort()` on `i64`, `i32`, `u64`, `usize`, `f64` and `string` elements, ascending with `NaN` last (unstable, pdqsort); other element types need a comparator; `sort(cmp)` is stable on any element type; the comparator returns a `number` (an `i64` on arrays of declared integers), and an arrow comparator may return an integer of any type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
@@ -135,7 +135,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
+| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`) |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
@@ -261,9 +261,9 @@ variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-f
   getHours getMinutes getSeconds getMilliseconds` and the `getUTC…` ones; the matching `set…`
   and `setUTC…` setters (with JS's optional extra fields), and `setTime`.
 - `toISOString()` (an invalid date panics), `toJSON()` (the ISO string, or `null` when
-  invalid; `JSON.stringify` does not take a `Date`, so call it first), `toUTCString()`,
-  `toString()`, `toDateString()`, `toTimeString()`, and `toLocaleString()`,
-  `toLocaleDateString()`, `toLocaleTimeString()` (always `en-US`).
+  invalid; `JSON.stringify` writes a date, or a subclass of `Date`, through it, as Node
+  does), `toUTCString()`, `toString()`, `toDateString()`, `toTimeString()`, and
+  `toLocaleString()`, `toLocaleDateString()`, `toLocaleTimeString()` (always `en-US`).
 - Dates compare with `<` (`Date` implements `Comparable`); `console.log` prints one as its ISO
   string, as Node does.
 
@@ -278,7 +278,7 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
-`PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
+`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
 handle ([velt:timers](timers.md)).

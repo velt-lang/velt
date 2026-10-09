@@ -3,7 +3,8 @@
 //! flattened into one builder: reserve an estimate, push every part as soon as it is evaluated
 //! (JS order — later parts cannot change what an earlier part contributed), and the filled
 //! builder is the result (same layout as `VeltStr`, no `finish` call). Non-string parts are
-//! appended by the shared format glue, so `${x}` is exactly what `console.log(x)` prints.
+//! appended by the shared format glue, so `${x}` is what `console.log(x)` prints, except for
+//! objects, which are written as JS's `String(x)` writes them (`[object Object]`, js_string.rs).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -97,9 +98,10 @@ impl FnLower<'_, '_> {
                 Part::Format(e) => {
                     let t = self.sub(e.ty);
                     match self.cx.kind(t) {
-                        TyKind::Int(_) => 8,
+                        // A number is most often a count or an index (`${x},${y}`): as short as
+                        // an integer, so a short template stays inline.
+                        TyKind::Int(_) | TyKind::Float(_) => 8,
                         TyKind::Bool => 5,
-                        TyKind::Float(_) => 12,
                         _ => 32,
                     }
                 }
@@ -117,7 +119,9 @@ impl FnLower<'_, '_> {
             TyKind::Never => {}
             _ => {
                 let p = self.place_of(v, t);
-                self.format_top(buf, &p, t);
+                if !self.push_js_object(buf, &p, t) {
+                    self.format_top(buf, &p, t);
+                }
             }
         }
     }

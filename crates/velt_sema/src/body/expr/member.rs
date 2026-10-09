@@ -280,6 +280,18 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // `xs.length`, a `size` getter: a number in user code (`numbers`).
+        let h = self.member_value(obj, prop, want, span);
+        self.std_number(h)
+    }
+
+    fn member_value(
+        &mut self,
+        obj: hir::Expr,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         if self.record_args(obj.ty).is_some() {
             return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
@@ -453,7 +465,10 @@ impl FnCx<'_, '_> {
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
-        let inner = self.expr(expr, None, Want::Borrow);
+        // An integer literal cast to an integer type is an exact integer first, so the cast
+        // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
+        let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
+        let inner = self.expr(expr, hint, Want::Borrow);
         // `id as string`: a brand's value as its primitive.
         let inner = match self.cx.brand_base(inner.ty) == Some(target) {
             true => return self.unbrand(inner),
@@ -461,6 +476,13 @@ impl FnCx<'_, '_> {
         };
         // A literal type casts as its base type (`k as f64` with `k: 1 | 2`).
         let inner = self.widen_value(inner);
+        // An integer from the standard library made a number (`xs.length as usize`,
+        // `s.charCodeAt(i) as i64`) converts from the integer itself: the same value, since
+        // such numbers are below 2^53, without a round trip through `f64`.
+        let inner = match inner.kind {
+            H::Cast(x) if self.cx.ty.is_int(target) && self.is_std_api_value(&x) => *x,
+            kind => hir::Expr { kind, ..inner },
+        };
         let src = inner.ty;
         let t = &self.cx.ty;
         let c_like = self.is_c_like_enum(src) && !self.is_string_enum(src);
@@ -553,4 +575,17 @@ fn process_note(name: &str) -> String {
 /// The type of `x as const` (the parser's `const` type name).
 pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
     matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
+}
+
+/// An integer literal without a suffix, possibly negated or in parentheses (`-1`, `(300)`).
+pub(super) fn untyped_int(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. }) => true,
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        }
+        | ast::ExprKind::Paren(expr) => untyped_int(expr),
+        _ => false,
+    }
 }

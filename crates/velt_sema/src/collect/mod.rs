@@ -33,7 +33,7 @@ mod imports;
 mod iterable;
 mod lookup;
 mod nested;
-mod ret_infer;
+pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 mod sigs;
 

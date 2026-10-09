@@ -166,6 +166,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         want: Want,
     ) -> hir::Expr {
+        if self.untyped_use(id, false) {
+            return self.error_expr(id.span);
+        }
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
             return self.local_expr(l, want, id.span);
@@ -244,6 +247,15 @@ impl FnCx<'_, '_> {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
             DefInfo::Fn(_) => self.fn_ref(d, id, exp),
+            // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
+            // compares integers, `N / 3` divides numbers.
+            DefInfo::Global(g)
+                if g.src.ann.is_none() && g.src.init.is_some_and(super::member::untyped_int) =>
+            {
+                let init = g.src.init.expect("ICE: checked above");
+                let h = self.expr(init, exp, want);
+                self.literal_at(h, span)
+            }
             DefInfo::Global(_) => self.global_read(d, want, span),
             _ => {
                 self.cx
@@ -257,6 +269,11 @@ impl FnCx<'_, '_> {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, name) = (g.ty, g.name.clone());
+        if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
+            // A function computed at each use: another reference to it is owned.
+            let read = self.mk(H::Global(d), ty, span);
+            return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+        }
         if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)

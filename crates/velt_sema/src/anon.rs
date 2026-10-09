@@ -387,7 +387,6 @@ impl Ctx<'_> {
                     default,
                     default_throws: vec![],
                     private_to: None,
-                    inferred_int: false,
                 }
             })
             .collect();

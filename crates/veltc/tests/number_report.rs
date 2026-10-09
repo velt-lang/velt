@@ -45,7 +45,7 @@ fn report_names_the_doubles_and_why() {
     ] {
         let (_, stderr) = build(LOOPS, &[&["--emit", "vir"], mode].concat());
         assert!(
-            stderr.contains("numbers: 3 `number` variables in loops stay doubles"),
+            stderr.contains("numbers: 2 `number` variables in loops stay doubles"),
             "{stderr}"
         );
         assert!(
@@ -53,8 +53,8 @@ fn report_names_the_doubles_and_why() {
             "{stderr}"
         );
         assert!(stderr.contains("`h`: it may hold a fraction"), "{stderr}");
-        // Nothing compares `count`, so intervals cannot bound it.
-        assert!(stderr.contains("`count`: it may reach ±2^53"), "{stderr}");
+        // Nothing compares `count`, but it counts the iterations of a bounded loop.
+        assert!(!stderr.contains("`count`"), "{stderr}");
         assert!(
             stderr.contains("main.vlt:7:5: `total`"),
             "locations: {stderr}"

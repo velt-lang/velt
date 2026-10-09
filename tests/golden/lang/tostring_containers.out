@@ -20,13 +20,13 @@ options: [ 1, null, 3 ]
 options: [ 1, null, 3 ]
 unions: [ 1, 'two', 3 ]
 unions: [ 1, 'two', 3 ]
+empty map: [object Map]
 empty map: Map(0) {}
-empty map: Map(0) {}
+map: [object Map]
 map: Map(3) { 'one' => 1, 'two' => 2, 'three' => 3 }
-map: Map(3) { 'one' => 1, 'two' => 2, 'three' => 3 }
+map after delete: [object Map]
 map after delete: Map(2) { 'one' => 1, 'three' => 3 }
-map after delete: Map(2) { 'one' => 1, 'three' => 3 }
-map of arrays: Map(2) { 1 => [ 'a' ], 2 => [] }
+map of arrays: [object Map]
 map of arrays: Map(2) { 1 => [ 'a' ], 2 => [] }
 array of maps: [ Map(2) { 'one' => 1, 'three' => 3 } ]
 array of maps: [ Map(2) { 'one' => 1, 'three' => 3 } ]

@@ -3,7 +3,7 @@
 | Type | Meaning |
 |---|---|
 | `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize` | fixed-width integers |
-| `f32 f64`; `number` | floats; `number` is `f64` |
+| `f32 f64`; `number` | floats; `number` is `f64`, a JavaScript number ([Numbers](#numbers)) |
 | `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable text, indexed in UTF-16 code units (stored as UTF-8), a value ([Strings](#strings)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
@@ -43,81 +43,117 @@ console.log(flags);               // [ true, null ]
 
 ## Numbers
 
-Numbers behave like JavaScript numbers wherever the difference would show, while integer types
-keep integer speed. Every integer value is either **declared** or **inferred**:
+`number` is a JavaScript number, always: an IEEE-754 double, with `-0`, `NaN`, `±Infinity` and
+rounding past 2^53, exactly as in Node. The compiler stores a `number` as a 32- or 64-bit
+integer where it proves the result is identical (loop counters, indexes, `% m` sums, the result
+of `| 0`), so integer code runs at integer speed without changing what it computes.
+`velt build --report numbers` lists the `number` variables in loops that stay doubles, and why.
 
-- **Declared**: its integer type is written or implied by a declaration: an annotated variable
-  (`let n: i64 = 7`), a parameter, field or return type, a literal suffix (`7i32`), an `as`
-  cast, an array element or map value of an integer type, or an integer literal typed by such a
-  context (`x + 2` with `x` declared, `f(2)`, `const n: u8 = 200`).
-- **Inferred**: an integer literal with no context (`7`), a variable declared without a type
-  whose initializer is inferred (`const a = 7`, `let i = 0`, `let n = a * 2`), a field declared
-  without a type from an integer literal (`count = 0;`), arithmetic with at least one inferred
-  operand, and every integer the standard library hands to your code: `xs.length`,
-  `s.indexOf(t)`, `m.size`, `Date.now()`, the index of `entries()` and of array callbacks. You
-  wrote no integer type for those, so they are JS numbers (inside `std/` they stay declared).
+Integer types (`i8`..`i64`, `u8`..`u64`, `isize`, `usize`) and `f32` are Velt's opt-in for speed
+and memory where you want a fixed width; code shared with TypeScript never names them.
 
-Both are stored as integers (inferred ones as `i64`), so loop counters, indexes and counts run
-at integer speed; a local declared from a length (`let n = xs.length`) is an `i64` like any
-other inferred one, so `n -= 5` can go below zero. The rules:
-
-- **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
-  `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
-  `const h: i64 = 7 / 2` is `3`.
-- **`-0` is a float** unless an integer type is expected (an integer has no negative zero), so
-  it keeps its sign as in JS: `let z = -0; 1 / z` is `-Infinity`, and so is a field declared
-  `a: number = -0`.
-- **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
-  division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
-- Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,
-  `Math.sqrt(16)`, `const f: f64 = 1`. Next to an integer of another type, or where one is
-  expected, it adapts: `let i = 0; i < xs.length` and `s.slice(0, s.length - 1)` compile as in
-  JS. A declared type other than `usize` wins; otherwise both sides become `i64`, so
-  `let i = -1; i < xs.length` is `true`. Compound assignments adapt the same way, converting the
-  value to the target's type: `let total = 0; total += s.length`. A declared integer never
-  converts implicitly: write `x as f64`, and different declared integer types don't mix
-  (`let n: i32 = 1; let m: u8 = 2; n < m` is an error).
+- **Literals**: `7` and `0.5` are numbers. Where an integer type is expected, a literal takes it:
+  `const n: i64 = 7`, `n + 1` with `n: i64`, `f(2)` with an `i32` parameter, `300 as u8` (`44`).
+  A suffix states the type: `7u8` is a `u8`. A module-level `const N = 4` stands for its literal
+  wherever it is used (TS types it `4`): `i < N` with `i: i64` compares integers. `shared(0)` is
+  a `shared<i64>`, an atomic counter.
+- **Locals declared from literals**: `let i = 0` declares a number, unless the function uses `i`
+  only with one integer type `T` and never as a number; then `i` is a `T`, as if declared
+  `let i: T = 0`. So `let steps = 0; … return steps` in a function returning `i64` counts in an
+  `i64`, and `let i = 0; i < n` with `n: i64` makes `i` an `i64`. A use with `T` is assigning,
+  passing, returning or storing the local (or arithmetic on it: `acc + i`) where a `T` is
+  expected, or combining or comparing it with a 64-bit integer of type `T`. A use as a number is
+  combining it with another number (`0.5`, `xs.length`), `/`, `**`, a `number` parameter or a
+  method call on it, and a bitwise operator unless the other operand is a 64-bit integer
+  (`x << 40` shifts by 8, as in JS). Arithmetic (`+ - * %`, `-x`, `+=`, `++`) on a local
+  allows only a 64-bit `T`: `let n = 200; takeU8(n); n + n` would wrap in a `u8`, so `n` is a
+  number and `takeU8(n)` needs `n as u8`. Only types the program names count: passing the
+  local to an integer parameter of the JavaScript API (`s.slice(k)`) or using it as an index
+  (`xs[k]`) leaves it a number, which the optimizer stores as an integer where that gives the
+  same results. Locals used together (`x = y`, `x + y`) get one type. A local used both ways
+  stays a number, and each use as `T` is an error that says why, with the fix: declare the
+  type (`let i: i64 = 0`, which makes `/` on it integer division) or convert (`i as i64`).
+- **The standard library hands you numbers**: its JavaScript API (the globals `Array`,
+  `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …) gives numbers where JavaScript does:
+  `xs.length`, `s.indexOf(t)`, `m.size`, `Date.now()`, `res.status` and the indexes of
+  `entries()` and of array callbacks (inside the standard library they stay `usize`/`i64`).
+  Velt's own modules (`velt:sqlite`, `velt:hash`, `velt:bigint`, …) and `compareTo` keep the
+  integer types they declare. A number passed to an integer parameter of a standard library
+  function converts like JS's `ToIntegerOrInfinity` (truncated; `NaN` is 0):
+  `xs.slice(0, xs.length / 2)` takes the first half. A callback that the standard library
+  expects to return a number, such as a `sort` comparator, may return an integer of any type:
+  `items.sort((a, b) => a.id - b.id)` with `id: i64`.
+- **Integers next to numbers**: `i8`..`i32`, `u8`..`u32` and `f32` convert to a number
+  implicitly, because every value converts exactly (`k * 0.5` with `k: i32`). `i64`, `u64`,
+  `isize` and `usize` need `as number`, and a number going into a declared integer needs `as T`
+  (`n as usize`). Comparisons are exact: `i < xs.length` with `i: usize` compares the integers.
+- **Declared integers keep Rust semantics**: they wrap at their width, `/` truncates
+  (`7i64 / 2` is `3`), `/ 0` and `% 0` panic, `**` is integer power, and `%` takes the sign of the
+  dividend. On numbers, `/ 0` is `Infinity`, `% 0` is `NaN` and `-4 % 2` is `-0`, as in JS.
+  `Math.trunc(a / b)` on integers is one integer division.
+- **`as`** converts with Rust semantics: floats truncate and saturate (`3.9 as i64` is `3`,
+  `NaN as i64` is `0`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`). So
+  `x as i32` (saturates) and `x | 0` (wraps modulo 2^32, as in JS) are different operations.
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
   `Math.trunc(n / 2)`.
-- A float passed to an integer parameter of a standard library function converts like JS's
-  `ToIntegerOrInfinity`: `xs.slice(0, xs.length / 2)` takes the first half.
-- `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
-  an error (it would store a float).
-- `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
-- **Bitwise operators on numbers are JS's 32-bit operators.** When no operand is a declared
-  integer, `| & ^ << >> ~` take ToInt32 of their operands (truncate, then wrap modulo 2^32 into
-  the signed 32-bit range; `NaN` and ±Infinity give 0) and `>>>` takes ToUint32; shift counts
-  are taken modulo 32, and the result is an inferred integer: `(a / 13) | 0` truncates,
-  `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product inside such an operand rounds like
-  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value, and
-  a sum rounds like JS's double add (`(x + 1) | 0` with `x = 2 ** 53` is `0`);
-  `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
-  32-bit integer instructions. Operands of a declared integer type keep their own width
-  (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
-  integer type is written (`const m: u64 = 1 << 40`; but `let a = 0; a = 1 << 31` stores
-  `-2147483648`, as in JS).
-- `as` converts between number types with Rust semantics: floats truncate and saturate
-  (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
-- Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands); integer
-  `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
-  integers is integer power.
-- Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
-  prints `0`.
+- **Bitwise operators on numbers are JS's 32-bit operators**: `| & ^ << >> ~` take ToInt32 of
+  their operands (truncate, then wrap modulo 2^32 into the signed 32-bit range; `NaN` and
+  ±Infinity give 0) and `>>>` takes ToUint32; shift counts are taken modulo 32, and the result is
+  a number: `(a / 13) | 0` truncates, `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product
+  inside such an operand rounds like JS's double multiply past 2^53, so `(y * 0x2c1b3c6d) | 0`
+  is Node's value; `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction).
+  They compile to 32-bit integer instructions. Operands of a declared integer type keep their
+  own width (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals
+  where an integer type is expected (`const m: u64 = 1 << 40`).
+- **Printing follows Node**: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`.
+  `console.log(-0)` prints `-0` (also inside arrays and objects); `` `${-0}` ``, `String(-0)`,
+  `(-0).toString()` and `JSON.stringify(-0)` give `0`.
 
 ```ts
-const a = 7;                              // inferred: behaves like a JS number
-console.log(a / 2, a + 0.5);              // 3.5 7.5
-const n: i64 = 7;                         // declared: integer arithmetic
+const a = 7;                              // a number
+console.log(a / 2, a + 0.5, -a * 0);      // 3.5 7.5 -0
+const n: i64 = 7;                         // a declared integer: integer arithmetic
 console.log(n / 2, Math.trunc(a / 2));    // 3 3
 let small: u8 = 250;
 small += 10;                              // wraps: 4
-console.log(small, n as f64 / 2.0, 300 as u8);   // 4 3.5 44
+console.log(small, n as number / 2, 300 as u8);  // 4 3.5 44
 const h = 0x12345678;
 console.log((h * 0x2c1b3c6d) | 0, Math.imul(h, 0x2c1b3c6d), -1 >>> 0); // -1019940576 -1019940584 4294967295
+
+function collatz(start: i64): i64 {
+  let x = start;
+  let steps = 0;                          // returned as an i64: an i64
+  while (x != 1) {
+    x = x % 2 == 0 ? x / 2 : 3 * x + 1;
+    steps++;
+  }
+  return steps;
+}
+console.log(collatz(27));                 // 111
 ```
+
+### Migrating from inferred integers
+
+Before the number model (#525), a local declared from an integer literal, a field declared from
+one and every integer from the standard library were *inferred integers*: stored as `i64`, and
+adapted to the integer types around them. They are numbers now, which changes code in these
+ways:
+
+- **Integer results past 2^53 round** instead of wrapping, `-0` prints as `-0`, `number / 0` is
+  `Infinity` and `% 0` is `NaN` instead of panicking, and `**` on numbers is the double power:
+  all as in Node.
+- **A number where a declared integer is expected** is an error: `const k: usize = xs.length`
+  becomes `const k = xs.length` (a number) or `xs.length as usize`, and `f(xs.length)` with
+  `f(n: i64)` becomes `f(xs.length as i64)`. A local declared from a literal is fixed by the rule
+  above when the function only uses it as that type; otherwise declare it (`let i: i64 = 0`).
+- **An `i64` (or `u64`, `isize`, `usize`) next to a number** is an error: `total += c` with
+  `total` a number and `c: i64` becomes `total += c as number`, or declare `total: i64`.
+- **Integer division** on numbers is float division, as before: write `Math.trunc(a / b)`, which
+  is one integer division when both operands are integers.
+- **Fields declared from a literal** (`count = 0;`) are numbers; declare `count: i64 = 0` for an
+  integer field.
 
 ## Strings
 
@@ -130,8 +166,8 @@ usable and no copy method is needed.
   time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
   copies of `s` never change.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
-  with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
-  does.
+  with a template literal (`` `Total: ${n}` ``), which writes any value as `String(x)` does
+  ([Lexical structure](lexical.md)).
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
@@ -231,7 +267,10 @@ has type `T | null`, stored without an extra allocation where possible.
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`.
+  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
+  when `d` converts to it, else `d`'s type when `x`'s non-null type converts to that, else
+  their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
+  `number | string`.
 - `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
@@ -368,7 +407,9 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
-- Printing and template literals show the active member's value. `JSON.stringify` works on
+- Printing and template literals show the active member's value. A union with a member that
+  cannot be printed (a closure) prints once a test has narrowed it to members that can
+  (`typeof v !== "function"`). `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
@@ -664,7 +705,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
   `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
-  (`const [[a, b], [c]] = [gen(), gen()]`).
+  (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
+  `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
+  is called (`const { area } = rect;`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns

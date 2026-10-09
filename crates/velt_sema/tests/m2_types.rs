@@ -57,7 +57,7 @@ fn anonymous_objects_share_a_def_per_shape() {
         })
         .collect();
     // The prelude's own object types (e.g. `PromiseSettledResult`) are not this program's.
-    let own: Vec<&&str> = anon.iter().filter(|n| n.contains("x: i64")).collect();
+    let own: Vec<&&str> = anon.iter().filter(|n| n.contains("x: f64")).collect();
     assert_eq!(own.len(), 2, "{anon:?}");
 }
 
@@ -351,11 +351,11 @@ fn generic_functions_infer_and_check_bounds() {
             _ => None,
         })
         .collect();
-    assert_eq!(tys, vec!["Int(I64)", "Str"]);
+    assert_eq!(tys, vec!["Float(F64)", "Str"]);
     let r = err_src(
         "interface N { n(): i64; } function f<T extends N>(x: T): i64 { return x.n(); } function main() { f(5); }",
     );
-    assert!(r.contains("the type `i64` does not implement `N`"), "{r}");
+    assert!(r.contains("the type `f64` does not implement `N`"), "{r}");
     let r = err_src("function f<T>(x: T): i64 { return x.n(); } function main() {}");
     assert!(r.contains("no method named `n` found for type `T`"), "{r}");
     let r = err_src("function mk<T>(): T[] { return []; } function main() { const x = mk(); }");
@@ -382,7 +382,7 @@ fn interface_and_function_values_compare_by_identity() {
         "interface N { n(): i64; } class C implements N { n(): i64 { return 1; } }
          function eqN(a: N, b: N): bool { return a === b; }
          function eqF(f: () => i64, g: () => i64): bool { return f !== g; }
-         function main() { const c: N = new C(); const f = () => 1; console.log(eqN(c, c), eqF(f, f)); }",
+         function main() { const c: N = new C(); const f = (): i64 => 1; console.log(eqN(c, c), eqF(f, f)); }",
     );
     for f in ["eqN", "eqF"] {
         assert!(calls(func(&p, f))
@@ -501,8 +501,17 @@ fn imports_exports_and_intrinsics() {
     let r = err_src("import { nope } from \"velt:math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt:math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");
-    let r = err_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
-    assert!(r.contains("constant expressions"), "{r}");
+    // A pure call may initialize a module constant (#383); one with effects may not.
+    ok_src("const X: i64 = 1 + f(); function f(): i64 { return 1; } function main() {}");
+    let r = err_src(
+        "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
+    );
+    assert!(
+        r.contains("`f` cannot initialize module constant `X`"),
+        "{r}"
+    );
+    let r = err_src("const X: i64[] = [1]; function main() {}");
+    assert!(r.contains("constant expressions or pure calls"), "{r}");
 }
 
 #[test]
@@ -599,7 +608,7 @@ fn interface_fields_through_values_and_generics() {
         "interface Aged { age: i64; }
          class P { age: i64 = 3; }
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
-         function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4 })); }",
+         function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4i64 })); }",
     );
     let r = err_src(
         "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
@@ -673,7 +682,7 @@ fn array_literal_takes_the_common_base_class() {
 fn reduce_accumulator_follows_the_elements() {
     common::programs::ok_src(
         "function main() { const lens = [\"ab\"].map((w) => w.length);
-           const n: usize = lens.reduce((a, b) => a + b, 0); console.log(n); }",
+           const n: number = lens.reduce((a, b) => a + b, 0); console.log(n); }",
     );
 }
 
@@ -690,7 +699,7 @@ fn reduce_with_a_float_initial_value_accumulates_floats() {
            const b = ns.reduce((acc, n) => acc + 0.5, 0.5);
            const c: f64 = a + b;
            const d = ss.reduce((acc, s) => acc + 1, 0);
-           const e: i64 = d;
+           const e: number = d;
            console.log(`${c}`, e); }",
     );
 }
@@ -699,7 +708,7 @@ fn reduce_with_a_float_initial_value_accumulates_floats() {
 fn assignment_expressions_have_the_assigned_value() {
     common::programs::ok_src(
         "function next(): string | null { return null; }
-         function main() { let line: string | null = null; let n: usize = 0;
+         function main() { let line: string | null = null; let n = 0;
            while ((line = next()) != null) { n += line.length; }
            let x = 0; const y = (x = 5) + 1; console.log(n, x, y); }",
     );
@@ -709,7 +718,7 @@ fn assignment_expressions_have_the_assigned_value() {
 fn literal_unions_use_their_base_members() {
     common::programs::ok_src(
         "type Lvl = \"lo\" | \"mid\";
-         function main() { const l: Lvl = \"mid\"; const n: usize = l.length;
+         function main() { const l: Lvl = \"mid\"; const n = l.length;
            const ls: Lvl[] = [l]; console.log(n, l.toUpperCase(), ls.join(\",\")); }",
     );
 }
@@ -717,7 +726,7 @@ fn literal_unions_use_their_base_members() {
 #[test]
 fn bitwise_operators_convert_floats_like_to_int32() {
     common::programs::ok_src(
-        "function main() { const a = 41; const q = (a / 13) | 0; const n: i64 = q + 1; console.log(n); }",
+        "function main() { const a = 41; const q = (a / 13) | 0; const n: number = q + 1; console.log(n); }",
     );
 }
 

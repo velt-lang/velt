@@ -68,7 +68,8 @@ export class PriorityQueue<T> {
    */
   toSortedArray(): T[] {
     const out = this.heap.clone();
-    out.sort(this.cmp);
+    const cmp = this.cmp;
+    out.sort((a, b) => cmp(a, b) as number);
     return out;
   }
 

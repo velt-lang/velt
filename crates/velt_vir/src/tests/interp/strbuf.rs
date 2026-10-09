@@ -1,7 +1,7 @@
 //! Emulated string builder (rt_abi_async.md §12.1) and `velt_rt_str_eq`. A builder is an owned
 //! `VeltStr`; every push reallocates (simple, and leak/double-free checked like any string).
 
-use super::rt::js_num;
+use super::rt::{inspect_num, js_num};
 use super::Interp;
 
 /// `JSON.stringify` of a string: quotes and the escapes of §12.1.
@@ -60,6 +60,10 @@ impl Interp<'_> {
                 let text = js_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
             }
+            "velt_rt_strbuf_push_inspect_f64" => {
+                let text = inspect_num(f64::from_bits(a[1]));
+                self.buf_push(a[0], text.as_bytes());
+            }
             "velt_rt_strbuf_drop" => {
                 let (p, _, cap) = self.str_header(a[0]);
                 if cap > 0 {
@@ -105,6 +109,8 @@ impl Interp<'_> {
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
             "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
+            // Only line breaking reads these, and the interpreter does not break lines.
+            "velt_rt_strbuf_inspect_atom" => {}
             "velt_rt_strbuf_inspect_circular" => return Some(0),
             // Node's `maxArrayLength` (velt_rt's `inspect::push_more_items`).
             "velt_rt_strbuf_inspect_more" => {

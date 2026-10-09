@@ -103,6 +103,7 @@ impl FnCx<'_, '_> {
         let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
+        let js_api = self.is_js_api(d);
         let rest = f.source.is_some_and(|s| {
             crate::body::defaults::fn_sig_ast(s)
                 .params
@@ -116,6 +117,7 @@ impl FnCx<'_, '_> {
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
             js_numbers,
+            js_api,
             rest,
             defaults: vec![],
         };
@@ -166,7 +168,10 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, span);
+        let wrapped = self.timer_callback(d, args);
+        let args = wrapped.as_deref().unwrap_or(args);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.void_task = None;
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {
@@ -230,6 +235,7 @@ impl FnCx<'_, '_> {
             slot_names: vec![],
             bounds: vec![],
             js_numbers: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };
@@ -331,6 +337,9 @@ impl FnCx<'_, '_> {
             }
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))
+            }
+            None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
+                Some(self.promise_settled(&prop.name, type_args, args, exp, span))
             }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }

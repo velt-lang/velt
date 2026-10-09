@@ -205,6 +205,25 @@ impl FnCx<'_, '_> {
         None
     }
 
+    /// The literal of the visible local `const` named `name` (see `Frame::const_lits`), without
+    /// recording a use.
+    pub fn peek_const_lit(&self, name: &str) -> Option<ast::SignedLit> {
+        let (f, l) = self.peek_local(name)?;
+        f.const_lits.get(&l).cloned()
+    }
+
+    /// The frame declaring the visible local `name`, and the local's id there (no capture is
+    /// made).
+    pub(super) fn peek_local(&self, name: &str) -> Option<(&Frame, LocalId)> {
+        if let Some(l) = frame_lookup(&self.f, name) {
+            return Some((&self.f, l));
+        }
+        self.outer
+            .iter()
+            .rev()
+            .find_map(|f| frame_lookup(f, name).map(|l| (f, l)))
+    }
+
     pub fn is_local_name(&self, name: &str) -> bool {
         frame_lookup(&self.f, name).is_some()
             || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
@@ -253,6 +272,7 @@ impl FnCx<'_, '_> {
 
     pub fn pop_scope(&mut self) {
         if let Some(s) = self.f.scopes.pop() {
+            self.report_untyped_lets(s.names.values().copied());
             self.rec_scope(&s);
         }
     }
@@ -282,6 +302,11 @@ impl FnCx<'_, '_> {
     /// The subclass a local is narrowed to here by `instanceof` (`None`: not narrowed).
     pub fn narrowed_class(&self, l: LocalId) -> Option<TyId> {
         scope_class(&self.f.scopes, l)
+    }
+
+    /// Records that `l` holds only the union variants `vs` from here to the end of the scope.
+    pub(crate) fn narrow_members(&mut self, l: LocalId, vs: Vec<u32>) {
+        self.innermost_scope().members.push((l, vs));
     }
 
     fn innermost_scope(&mut self) -> &mut super::Scope {

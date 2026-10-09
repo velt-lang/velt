@@ -65,13 +65,40 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// A local of a literal type (`const y = "y"`, `y: "y"`) used as a case value: like the
-    /// literal, as in TypeScript (it narrows and counts toward exhaustiveness).
+    /// A constant of a literal type used as a case value: a local or module-level `const`
+    /// initialized with a literal (`const y = "y"`) or a local of a literal type (`y: "y"`). It
+    /// selects like the literal, as in TypeScript (it narrows and counts toward exhaustiveness).
     fn literal_const(&mut self, test: &ast::Expr) -> Option<ast::SignedLit> {
         let ast::ExprKind::Ident(id) = &strip_parens(test).kind else {
             return None;
         };
-        let lit = match self.cx.lit_value(self.peek_local_ty(&id.name)?)? {
+        let lit = match self.const_lit(id) {
+            Some(l) => l,
+            None => self.typed_lit(self.peek_local_ty(&id.name)?)?,
+        };
+        // Checked as a value too, so the constant counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        Some(lit)
+    }
+
+    /// The literal a `const` named `id` was initialized with, when it has no type annotation.
+    fn const_lit(&mut self, id: &ast::Ident) -> Option<ast::SignedLit> {
+        if self.is_local_name(&id.name) {
+            return self.peek_const_lit(&id.name);
+        }
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
+            return None;
+        };
+        let src = &self.cx.global(d)?.src;
+        if src.ann.is_some() || src.owner.is_some() {
+            return None;
+        }
+        literal_of(src.init?)
+    }
+
+    /// The value of literal type `t` as a pattern literal (not a float one).
+    fn typed_lit(&self, t: crate::hir::TyId) -> Option<ast::SignedLit> {
+        let lit = match self.cx.lit_value(t)? {
             LitValue::Str(v) => ast::SignedLit {
                 lit: ast::Lit::Str(v),
                 negative: false,
@@ -89,8 +116,6 @@ impl FnCx<'_, '_> {
             },
             LitValue::Float(..) => return None,
         };
-        // Checked as a value too, so the local counts as used (captures, editors).
-        self.expr(test, None, Want::Borrow);
         Some(lit)
     }
 
@@ -261,8 +286,6 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
-        // A JS number (`switch (xs.length)`) stays one in the comparison.
-        self.note_inferred_local(l, &s.expr);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
         let v = self.expr(test, Some(ty), Want::Borrow);
@@ -352,8 +375,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
-    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
-    /// another number type, literal types as their base), and a mismatch is reported once.
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an integer next to a number,
+    /// literal types as their base), and a mismatch is reported once.
     fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
         let (l, r) = self.nullable_operands(l, r);
         let (l, r) = if l.ty != r.ty {
@@ -361,8 +384,8 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        let (l, r) = self.compared_numbers(l, r);
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = self.mix_ints(l, r);
         let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
             return self.error_expr(span);
         };

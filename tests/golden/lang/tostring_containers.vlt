@@ -1,6 +1,6 @@
-// `${x}` of arrays, nested arrays, tuples of containers and maps is exactly what
-// `console.log(x)` prints: node style `[ 1, 2 ]`, `[]`, quoted strings inside containers,
-// `Map(1) { 'a' => 1 }`.
+// `${x}` of arrays, nested arrays and tuples of containers is what `console.log(x)` prints:
+// node style `[ 1, 2 ]`, `[]`, quoted strings inside containers; a map is `[object Map]`, as
+// JS's `String(x)` writes it (#613).
 class Oops {
   message: string;
   constructor(message: string) {
@@ -56,7 +56,7 @@ function main() {
   show("array of maps", maps);
 
   // A container in a longer template, and string concatenation around it.
-  const xs = [10, 20];
+  const xs: i64[] = [10, 20];
   console.log(`xs=${xs} len=${xs.length} nested=${nested}!`);
   console.log("xs: " + `${xs}` + " done");
 

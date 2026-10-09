@@ -91,6 +91,8 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: HashSet<DefId>,
+    /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
+    pub hook_adapters: HashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
     /// use by a `new` or struct literal in a default checked before them.
     pub field_defaults_checked: HashSet<DefId>,
@@ -128,6 +130,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Memoized purity of functions that initialize module constants (`body::pure_init`).
+    pub pure_fns: crate::body::pure_init::PurityMemo,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
     /// Function bodies being checked, outermost first (a return type inferred from a body that
@@ -160,6 +164,19 @@ pub(crate) struct Ctx<'m> {
     /// (`crate::ts_protocol`).
     pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
+    /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
+    /// and closures to create again (`body::recheck`).
+    pub rechecks: Vec<crate::body::recheck::Frame>,
+    /// Closures created by body checks, in order (`body::recheck`).
+    pub closure_defs: Vec<DefId>,
+    /// The modules of the JS API: the prelude's, and those its globals re-export
+    /// (`body::expr::numbers::is_js_api`).
+    pub js_api_modules: std::cell::OnceCell<HashSet<usize>>,
+    /// Integer types decided for locals declared from literals, by function and declaration
+    /// span (`body::literal_locals`).
+    pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
+    /// What the last check of a body found about those locals.
+    pub literal_found: HashMap<DefId, crate::body::literal_locals::LiteralLocals>,
 }
 
 impl<'m> Ctx<'m> {
@@ -200,6 +217,7 @@ impl<'m> Ctx<'m> {
             generic_overrides: vec![],
             display_params: vec![],
             defaults_checked: HashSet::new(),
+            hook_adapters: HashMap::new(),
             field_defaults_checked: HashSet::new(),
             closure_counts: HashMap::new(),
             fn_defs: vec![],
@@ -215,6 +233,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            pure_fns: HashMap::new(),
             matching_context: false,
             checking: vec![],
             ret_checks: vec![],
@@ -229,6 +248,11 @@ impl<'m> Ctx<'m> {
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
+            rechecks: vec![],
+            closure_defs: vec![],
+            js_api_modules: std::cell::OnceCell::new(),
+            literal_types: HashMap::new(),
+            literal_found: HashMap::new(),
         }
     }
 
@@ -238,6 +262,40 @@ impl<'m> Ctx<'m> {
 
     pub fn err(&mut self, msg: impl Into<String>, span: Span) {
         self.diags.push(Diagnostic::error(msg, span));
+    }
+
+    /// Define the closure of a rolled-back check again as `info` (`body::recheck`).
+    pub(crate) fn redefine_closure(&mut self, id: DefId, span: Span, info: DefInfo<'m>) {
+        self.fn_defs.push(id);
+        self.defs[id.0 as usize] = None;
+        self.info[id.0 as usize] = info;
+        self.def_spans[id.0 as usize] = span;
+    }
+
+    /// Is module `m` part of the JS API the standard library provides: a prelude module, or
+    /// one whose items the prelude's globals re-export (`velt:fetch` and its submodules such as
+    /// `std/fetch/response`, `velt:url`)?
+    pub(crate) fn is_js_api_module(&self, m: usize) -> bool {
+        let modules = self.modules;
+        self.js_api_modules
+            .get_or_init(|| {
+                let std_path =
+                    |i: usize, f: &dyn Fn(&str) -> bool| modules[i].is_std && f(&modules[i].path);
+                let globals: Vec<&String> = modules
+                    .iter()
+                    .filter(|g| g.is_std && g.path.starts_with("std/prelude/global/"))
+                    .flat_map(|g| g.imports.iter().map(|(_, p)| p))
+                    .collect();
+                (0..modules.len())
+                    .filter(|&i| {
+                        std_path(i, &|p| p.starts_with("std/prelude/"))
+                            || globals.iter().any(|g| {
+                                std_path(i, &|p| p == g.as_str() || p.starts_with(&format!("{g}/")))
+                            })
+                    })
+                    .collect()
+            })
+            .contains(&m)
     }
 
     pub fn alloc_def(&mut self, span: Span, info: DefInfo<'m>) -> DefId {

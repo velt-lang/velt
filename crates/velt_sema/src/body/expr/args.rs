@@ -23,9 +23,12 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
-    /// A `std/` function called from user code: a float argument for an integer parameter is
-    /// a JS number and converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
+    /// A `std/` function called from user code: a float argument for a parameter it declares
+    /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
+    /// A function of the JS API (`numbers::is_js_api`): integers it passes to callbacks (an
+    /// index) are numbers there.
+    pub js_api: bool,
     /// The last parameter is a rest parameter (`...xs: T[]`): the remaining arguments, spreads
     /// included, become one array literal.
     pub rest: bool,
@@ -78,6 +81,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let expanded;
+        let args = match self.expand_spreads(c, args) {
+            Ok(Some(a)) => {
+                expanded = a;
+                &expanded[..]
+            }
+            Ok(None) => args,
+            Err(()) => return self.failed_call(c, &slots),
+        };
         let packed;
         let args = match self.pack_rest(c, args) {
             Some((p, skip)) if !skip.is_empty() => {
@@ -89,24 +101,17 @@ impl FnCx<'_, '_> {
             }
             None => args,
         };
+        // Trailing `void` parameters may be left out, as in TS: `resolve()` for a
+        // `Promise<void>`'s `resolve: (value: void) => void`.
         let min = c
             .params
             .iter()
-            .rposition(|p| p.default.is_none())
+            .rposition(|p| p.default.is_none() && p.ty != self.cx.ty.unit)
             .map_or(0, |i| i + 1);
         if args.len() < min || args.len() > c.params.len() {
             self.arg_count_error(&c.what, min, c.params.len(), args.len(), span);
             self.check_args_loose(args);
-            let type_args: Vec<TyId> = slots
-                .iter()
-                .map(|s| s.unwrap_or(self.cx.ty.error))
-                .collect();
-            let ret = self.cx.subst(c.ret, &type_args);
-            return Checked {
-                args: vec![],
-                ret,
-                type_args,
-            };
+            return self.failed_call(c, &slots);
         }
         // The expected result type is a lower-priority inference source, as in TS: it types
         // the arguments of slots no argument has fixed yet (`const y: i32 = id(1)` checks `1`
@@ -130,7 +135,11 @@ impl FnCx<'_, '_> {
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let target = self.cx.subst(p.ty, &type_args);
-            let h = if c.js_numbers && self.cx.ty.is_int(target) && self.cx.ty.is_float(h.ty) {
+            // Only a parameter the library declares an integer (`slice(start: i64)`), not a
+            // type argument the program chose (`push` on an `i64[]`).
+            let declared_int = self.cx.ty.is_int(p.ty);
+            // A neutral use for the literal-local pre-scan: the JS API takes numbers.
+            let h = if c.js_numbers && declared_int && self.cx.ty.is_float(h.ty) {
                 // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
                 let span = h.span;
                 self.mk(H::Cast(Box::new(h)), target, span)
@@ -144,7 +153,11 @@ impl FnCx<'_, '_> {
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let mut d = p.default.clone().expect("ICE: default checked by arity");
+            let Some(mut d) = p.default.clone() else {
+                // A left-out `void` parameter (checked by arity).
+                hargs.push(self.unit_expr(span));
+                continue;
+            };
             crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
             d.span = span;
             hargs.push(d);
@@ -152,6 +165,20 @@ impl FnCx<'_, '_> {
         let ret = self.cx.subst(c.ret, &type_args);
         Checked {
             args: hargs,
+            ret,
+            type_args,
+        }
+    }
+
+    /// A call whose arguments were reported: no arguments, the result with what is known.
+    fn failed_call(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Checked {
+        let type_args: Vec<TyId> = slots
+            .iter()
+            .map(|s| s.unwrap_or(self.cx.ty.error))
+            .collect();
+        let ret = self.cx.subst(c.ret, &type_args);
+        Checked {
+            args: vec![],
             ret,
             type_args,
         }
@@ -181,7 +208,7 @@ impl FnCx<'_, '_> {
                 from = k;
             } else {
                 self.cx.err(
-                    "a spread argument can only fill the rest parameter (`...xs: T[]`)",
+                    "a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)",
                     args[k].span,
                 );
             }
@@ -221,6 +248,7 @@ impl FnCx<'_, '_> {
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
             js_numbers: c.js_numbers,
+            js_api: c.js_api,
             rest: false,
             defaults: c.defaults.clone(),
         };
@@ -275,14 +303,21 @@ impl FnCx<'_, '_> {
                 None => self.method_value_arg(&args[i], expected),
                 Some(_) => None,
             };
+            let arrow = adapter.as_ref().or(as_arrow(&args[i]));
+            // An arrow passed to the JS API (also where `cmp | null` is expected): what its
+            // parameters and result are in user code (`closure`, `returns::returned`).
+            let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
+            self.std_callback = match self.cx.ty.kind(declared) {
+                TyKind::FnPtr { params, .. } if c.js_api && arrow.is_some() => {
+                    Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
+                }
+                _ => None,
+            };
             let owned = p.mode == PassMode::Owned;
-            let h = match (bound, adapter.as_ref().or(as_arrow(&args[i]))) {
+            let h = match (bound, arrow) {
                 (Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
                 (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.std_callback = c.js_numbers;
-                    let h = self.arrow_arg(a, expected, owned);
-                    self.std_callback = false;
-                    h
+                    self.arrow_arg(a, expected, owned)
                 }
                 // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
                 // a value of it, and wrapped.
@@ -299,6 +334,7 @@ impl FnCx<'_, '_> {
                 true => self.error_expr(h.span),
                 false => h,
             };
+            self.std_callback = None;
             let h = match collect {
                 true => self.collected_arg(h, p.ty),
                 false => h,
@@ -344,7 +380,7 @@ impl FnCx<'_, '_> {
         }
         for (h, p) in args.iter().zip(&c.params) {
             let target = self.cx.subst_known(p.ty, &wider);
-            let number = self.is_inferred_int(h) && self.float_core(target);
+            let number = self.exact_in_number(h.ty) && self.float_core(target);
             if !self.converts_to(h.ty, target)
                 && !number
                 && !(is_fresh(h) && self.widens(h.ty, target))
@@ -388,6 +424,11 @@ impl FnCx<'_, '_> {
             if !params.contains(&pty) {
                 continue;
             }
+            // An integer the JS API declares (a callback's index) is a number in user code.
+            let params: Vec<TyId> = params
+                .into_iter()
+                .filter(|t| !(c.js_api && self.cx.ty.is_int(*t)))
+                .collect();
             let known: Vec<TyId> = params
                 .iter()
                 .map(|t| self.cx.subst_known(*t, slots))

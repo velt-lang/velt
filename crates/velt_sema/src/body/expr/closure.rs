@@ -84,7 +84,11 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
-        let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);
+        let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
+        if void_task {
+            self.void_task = None;
+        }
+        let (ret, is_async, span) = (ret.as_ref(), *is_async || void_task, e.span);
         let Expected {
             params: exp_params,
             ret: exp_ret,
@@ -130,6 +134,8 @@ impl FnCx<'_, '_> {
         frame.escaping = escaping || is_async;
         frame.discards_value = ret.is_none() && !is_async && ret_ty == Some(self.cx.ty.unit);
         frame.is_async = is_async;
+        // A JS API callback returning a number (a comparator) may return any integer.
+        frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
         let mut declared = vec![];
@@ -140,10 +146,13 @@ impl FnCx<'_, '_> {
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
-            // A JS number: an index or accumulator from a std callback, or `(n = 0) => …`.
-            let js_number = std_callback || p.default.is_some();
-            if js_number && p.ty.is_none() && self.cx.ty.is_int(*ty) {
-                self.f.inferred_ints.insert(l);
+            // An index from a std callback is a number in the body.
+            let std_int = std_callback
+                .as_ref()
+                .and_then(|m| m.get(k).copied())
+                .unwrap_or(false);
+            if std_int && p.ty.is_none() && self.cx.ty.is_int(*ty) {
+                locals.push(self.number_shadow(l));
             }
             declared.push(l);
         }
@@ -156,7 +165,10 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
-        let mut block = self.closure_body(body, span);
+        let mut block = match body {
+            ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
+            _ => self.closure_body(body, span),
+        };
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()
@@ -208,9 +220,6 @@ impl FnCx<'_, '_> {
         let e = p.default.as_ref().expect("ICE: a defaulted parameter");
         let init = self.expr_coerce(e, ty, Want::Move);
         let local = self.declare_local_mut(&p.name, ty, LocalKind::Let, true);
-        if p.ty.is_none() && self.cx.ty.is_int(ty) {
-            self.f.inferred_ints.insert(local);
-        }
         hir::Stmt {
             kind: S::Let {
                 local,
@@ -244,7 +253,17 @@ impl FnCx<'_, '_> {
             .bounds
             .resize(info.generics.names.len(), vec![]);
         info.state = BodyState::Done;
-        self.cx.alloc_def(span, DefInfo::Fn(Box::new(info)))
+        let info = DefInfo::Fn(Box::new(info));
+        // A check after a rollback creates the same closures again (`recheck`).
+        let def = match crate::body::recheck::reuse_closure(self.cx) {
+            Some(d) => {
+                self.cx.redefine_closure(d, span, info);
+                d
+            }
+            None => self.cx.alloc_def(span, info),
+        };
+        self.cx.closure_defs.push(def);
+        def
     }
 
     fn closure_body(&mut self, body: &ast::ArrowBody, span: Span) -> hir::Block {
@@ -252,7 +271,7 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
                     Some(_) if self.f.discards_value => self.expr_stmt(e),
-                    Some(r) => self.expr_coerce(e, r, Want::Move),
+                    Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };
                 if self.f.ret.is_none() {
@@ -280,10 +299,7 @@ impl FnCx<'_, '_> {
                 };
                 let ret = match self.f.ret {
                     Some(r) => r,
-                    None => {
-                        self.finish_inferred_ret(&mut block, "this arrow function")
-                            .0
-                    }
+                    None => self.finish_inferred_ret(&mut block, "this arrow function"),
                 };
                 self.check_returns("closure", ret, span, &block);
                 block

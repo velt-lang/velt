@@ -100,7 +100,7 @@ fn borrow_params_and_use_modes() {
         func(
             "len",
             &[("s", "string")],
-            Some("usize"),
+            Some("number"),
             vec![ret(member(var("s"), "length"))],
         ),
         func(
@@ -209,7 +209,7 @@ fn no_implicit_conversions() {
         es(log(vec![bin(B::Add, var("a"), var("b"))])),
     ]));
     assert!(has_err(&d, "mismatched types"));
-    // An inferred integer (no declared type) mixes with floats like a JS number.
+    // A local declared from a literal (no declared type) is a number: it mixes with floats.
     ok(main_fn(vec![
         const_("a", int(1)),
         const_("b", float(1.0)),
@@ -223,7 +223,7 @@ fn no_implicit_conversions() {
     ]));
     assert!(has_err(&d, "cannot apply unary operator `-` to type `u8`"));
     let d = errs(main_fn(vec![if_(int(1), vec![], None)]));
-    assert!(has_err(&d, "mismatched types") && d[0].notes[0] == "expected boolean, found i64");
+    assert!(has_err(&d, "mismatched types") && d[0].notes[0] == "expected boolean, found f64");
     let d = errs(main_fn(vec![es(log(vec![cast(str_("1"), "i64")]))]));
     assert!(has_err(&d, "cannot cast `string` as `i64`"));
 }

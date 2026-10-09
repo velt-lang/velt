@@ -49,6 +49,46 @@ class Account {
 const a = JSON.parse<Account>('{"name":"ada","secret":"pw"}');
 ```
 
+- **`toJSON()`:** `JSON.stringify` writes a class with a `toJSON()` method (its own or
+  inherited) as what the method returns, as JavaScript does: a `Date` (and a subclass of
+  `Date`) as its ISO string (`null` when invalid), a `URL` as its `href`, a user class as
+  whatever its `toJSON()` makes. This also holds for a class that has no JSON form otherwise
+  (std private state). `JSON.parse<T>` does not use it: decoding such a class still needs the
+  rules above.
+  - `toJSON(key: string)` gets the key, as in JavaScript: the property name of a member, the
+    index (as a string, `"0"`) of an array element, `""` for the value passed to
+    `JSON.stringify` itself.
+  - Other parameters need default values, which the call passes.
+  - A `toJSON` of another shape is a compile error, so it is never silently left out: an
+    `async` one, a generator, a key that is not a `string`, a parameter without a default, type
+    parameters of its own, or one that can throw.
+
+```ts
+class Stamp extends Date {}
+
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  toJSON(): string {
+    return `${this.cents / 100} EUR`;
+  }
+}
+
+// {"at":"1970-01-01T00:00:00.000Z","price":"12.5 EUR"}
+console.log(JSON.stringify({ at: new Stamp(0), price: new Money(1250) }));
+
+class Field {
+  toJSON(key: string): string {
+    return `field ${key}`;
+  }
+}
+
+// {"a":"field a","list":["field 0"]}
+console.log(JSON.stringify({ a: new Field(), list: [new Field()] }));
+```
+
 - **Private and protected constructors:** `JSON.parse<T>` (and `v.as<T>()`) cannot decode a
   class whose constructor is `private` or `protected`, wherever it appears in `T` (a field, an
   array element, a union member, a `Map` or `Record` value): decoding fills the fields without

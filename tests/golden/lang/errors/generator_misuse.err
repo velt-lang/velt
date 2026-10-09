@@ -7,7 +7,7 @@ TypeScript allows this (the value becomes the `value` of the result with `done: 
 generator_misuse.vlt:18:3: error: `yield` is only allowed in a generator function
 declare the function with `function*` (methods: `*name()`) and the return type `Generator<T>`
 generator_misuse.vlt:22:9: error: mismatched types
-expected string, found i64
+expected string, found f64
 generator_misuse.vlt:26:3: error: `yield` needs a value of type `i64`
 a bare `yield` is only allowed in a `Generator<void>`
 generator_misuse.vlt:30:3: error: `await` is not allowed in a generator

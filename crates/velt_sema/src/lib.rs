@@ -41,6 +41,7 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod hooks;
 pub mod ide;
 mod infer;
 mod instantiation_cycles;
@@ -251,6 +252,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     if instantiation_cycles::check(cx) {
         return;
     }
+    hooks::check_shapes(cx);
     let before = error_count(cx);
     ownership_passes(cx);
     cx.borrow_pass_errors = error_count(cx) > before;
@@ -264,6 +266,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
+    hooks::check_throws(cx);
     record_keys::check_instantiations(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);

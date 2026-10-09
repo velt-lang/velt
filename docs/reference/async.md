@@ -104,6 +104,24 @@ Promises behave like JavaScript's, at Rust's cost:
   (or the array is empty).
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
+- `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
+  is a `Promise<void>`; a promise passed in is returned as it is, as in JS). `T` comes from the
+  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type.
+- `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
+  the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
+
+```ts
+class Failed extends Error {}
+
+async function main() {
+  console.log(await Promise.resolve(5)); // 5
+  try {
+    await Promise.reject(new Failed("no"));
+  } catch (e) {
+    console.log(e.message); // no
+  }
+}
+```
 
 All promises in one call must have the same type. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
@@ -417,6 +435,8 @@ async function main() {
   `spawn` or `setTimeout`, and call them later from any task.
 - The first `resolve(value)` or `reject(reason)` settles the promise; later calls do nothing.
   An error the executor throws rejects it.
+- For a `Promise<void>`, `resolve()` takes no argument (a trailing `void` parameter may be
+  left out, as in TypeScript): `await new Promise<void>((resolve) => resolve())`.
 - A value settled on the promise's own task is the same object the awaiter gets (like JS); one
   settled from another task is transferred like a `spawn` argument, once the settling task has
   finished its current step: moved when that task no longer references it (a value made for the

@@ -21,7 +21,7 @@ class Cart {
     this.items.push(item);
   }
   count(): usize {
-    return this.items.length;
+    return this.items.length as usize;
   }
   addChecked(item: string) {
     if (item == "") {
@@ -38,7 +38,7 @@ class Cart {
   }
   addCounted(item: string): usize {
     this.items.push(item);
-    return this.items.length;
+    return this.items.length as usize;
   }
 }
 
