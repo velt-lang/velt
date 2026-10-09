@@ -9,10 +9,10 @@
 //!   and `memory`, and imports its host services from the `velt` module (the JS glue in
 //!   `editors/web/velt_web.js`).
 //!
-//! The linker is `$VELT_LINKER`, else the `rust-lld` of the active Rust toolchain (`-flavor
-//! wasm`), else `wasm-ld` on `PATH`. rust-lld comes first because it matches the wasi-libc that
-//! rustup installs: a newer libc needs a linker at least as new (an older system `wasm-ld` fails
-//! with undefined symbols such as `__wasm_first_page_end`). The stack is 8 MiB like a native main
+//! The linker is `$VELT_LINKER`, else the toolchain's bundled lld or the `rust-lld` of the active
+//! Rust toolchain (`-flavor wasm`), else `wasm-ld` on `PATH`. lld comes first because it matches
+//! the wasi-libc that rustup installs: a newer libc needs a linker at least as new (an older
+//! system `wasm-ld` fails with undefined symbols such as `__wasm_first_page_end`). The stack is 8 MiB like a native main
 //! thread (wasm-ld's default is 64 KiB, too small for recursive programs).
 
 use std::ffi::OsString;
@@ -107,9 +107,7 @@ pub fn find_wasm_ld() -> Result<(Command, Vec<&'static str>), String> {
     if let Some(cmd) = crate::linker_override() {
         return Ok((cmd, vec![]));
     }
-    let rust_lld = rust_host_bin()
-        .map(|d| d.join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX)))
-        .filter(|p| p.is_file());
+    let rust_lld = crate::bundled::find_lld();
     let wasm_ld = || {
         let name = PathBuf::from(format!("wasm-ld{}", std::env::consts::EXE_SUFFIX));
         runs(&name).then_some(name)
@@ -118,8 +116,8 @@ pub fn find_wasm_ld() -> Result<(Command, Vec<&'static str>), String> {
         Some(WasmLinker::RustLld(p)) => Ok((Command::new(p), vec!["-flavor", "wasm"])),
         Some(WasmLinker::WasmLd(p)) => Ok((Command::new(p), vec![])),
         None => Err(
-            "no WebAssembly linker found: install Rust (its rust-lld links wasm), put \
-             LLVM's `wasm-ld` on PATH, or set $VELT_LINKER"
+            "no WebAssembly linker found: the toolchain has no bundled lld; install Rust (its \
+             rust-lld links wasm), put LLVM's `wasm-ld` on PATH, or set $VELT_LINKER"
                 .into(),
         ),
     }
@@ -128,7 +126,7 @@ pub fn find_wasm_ld() -> Result<(Command, Vec<&'static str>), String> {
 /// A WebAssembly linker found on this machine.
 #[derive(Debug, PartialEq, Eq)]
 enum WasmLinker {
-    /// The Rust toolchain's `rust-lld` (run with `-flavor wasm`).
+    /// The bundled lld or the Rust toolchain's `rust-lld` (run with `-flavor wasm`).
     RustLld(PathBuf),
     /// A `wasm-ld` on `PATH`.
     WasmLd(PathBuf),
@@ -152,8 +150,15 @@ fn runs(program: &Path) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// The Rust toolchain's `rust-lld`, if Rust is installed.
+pub(crate) fn rust_lld() -> Option<PathBuf> {
+    rust_host_bin()
+        .map(|d| d.join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|p| p.is_file())
+}
+
 /// `rustc --print sysroot`.
-fn rust_sysroot() -> Option<PathBuf> {
+pub(crate) fn rust_sysroot() -> Option<PathBuf> {
     let out = Command::new("rustc")
         .args(["--print", "sysroot"])
         .output()

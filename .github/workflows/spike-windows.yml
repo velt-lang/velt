@@ -8,6 +8,34 @@ on:
       script:
         default: windows.ps1
 jobs:
+  lists:
+    if: contains(github.event.head_commit.message, '[lists]')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+      - name: windows lists
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          cargo run -q -p velt_link --bin velt-kit -- lists windows --out "$RUNNER_TEMP/lists/windows"
+      - name: macos lists
+        if: runner.os == 'macOS'
+        run: |
+          cargo build -q --release -p velt_rt
+          cargo run -q -p velt_link --bin velt-kit -- lists macos --runtime target/release/libvelt_rt.a --out "$RUNNER_TEMP/lists/macos-$(uname -m).txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lists-${{ matrix.os }}
+          path: ${{ runner.temp }}/lists
   lld:
     if: contains(github.event.head_commit.message, '[lld]')
     strategy:

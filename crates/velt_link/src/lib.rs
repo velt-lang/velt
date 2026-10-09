@@ -1,11 +1,15 @@
 //! Native linking: object files + velt_rt staticlib → executable, per platform.
 //! The public API below is a contract (maintainer-owned).
 //!
-//! - Windows (MSVC): `link.exe` is located with `cc::windows_registry::find_tool`, which reads the
-//!   registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows SDK libraries,
-//!   so no "Developer Command Prompt" is needed.
-//! - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
-//!   `-fuse-ld=mold`/`lld` for static links when those are installed ([`fast_ld`]).
+//! - The bundled linker ([`bundled`]): the toolchain's own `lld` plus a link kit for the target
+//!   ([`kit`]: import libraries or stub libraries and startup objects), so no system linker,
+//!   SDK or C compiler is needed. Used whenever the toolchain has both.
+//! - Otherwise the system linker:
+//!   - Windows (MSVC): `link.exe` is located with `cc::windows_registry::find_tool`, which reads
+//!     the registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows
+//!     SDK libraries, so no "Developer Command Prompt" is needed.
+//!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
+//!     `-fuse-ld=mold`/`lld` for static links when those are installed ([`fast_ld`]).
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
 //!   `runtime_lib` of a [`LinkRequest`] then names it (see [`find_shared_runtime_lib`]).
 //!
@@ -14,15 +18,19 @@
 //!   (`-l` + rpath on Unix; the import library plus a copy of the DLL beside the executable on
 //!   Windows).
 //!
-//! `$VELT_LINKER` overrides the linker program on every platform (the argument style stays the same).
-//! Cross-linking (target OS != host OS) is not supported, except for the WebAssembly targets
-//! (`wasm`: `wasm-ld`, the same on every host).
+//! `$VELT_LINKER` chooses ([`bundled`]): `bundled` or `system` forces that linker; any other
+//! value overrides the system linker program (the argument style stays the same).
+//! Cross-linking (target OS != host OS) needs the bundled linker and a kit for the target, except
+//! for the WebAssembly targets (`wasm`: `wasm-ld`, the same on every host).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod bundled;
 mod fast_ld;
+pub mod kit;
+mod lld;
 mod native;
 mod runtime_profile;
 mod shared;
@@ -177,11 +185,16 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
     }
     let os = TargetOs::from_triple(req.target)
         .ok_or_else(|| format!("unsupported target `{}`", req.target))?;
-    if os != TargetOs::host() {
+    let choice = bundled::choose(bundled::Request::from_env(), || bundled::find(req.target))?;
+    if os != TargetOs::host() && !matches!(choice, bundled::Choice::Bundled(_)) {
         return Err(format!(
-            "cross-OS linking is not supported: target `{}` does not match the host OS ({})",
+            "cross-OS linking needs the bundled linker and a link kit for `{}`, and this toolchain \
+             has none ({})",
             req.target,
-            std::env::consts::OS
+            match &choice {
+                bundled::Choice::System { why: Some(why) } => why.as_str(),
+                _ => "$VELT_LINKER selects another linker",
+            }
         ));
     }
     if !req.runtime_lib.is_file() {
@@ -196,8 +209,9 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
     }
     native::check_files(req.native)?;
     let shared = shared::is_shared(req.runtime_lib, os);
-    match os {
-        TargetOs::Windows => {
+    match (choice, os) {
+        (bundled::Choice::Bundled(b), _) => link_with_bundled(req, &b, os),
+        (_, TargetOs::Windows) => {
             let mut cmd = msvc_linker(req.target)?;
             cmd.args(msvc_args(req)?);
             run_linker(cmd)?;
@@ -206,7 +220,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             }
             native::place_dlls(req.native, req.output)
         }
-        TargetOs::Linux | TargetOs::MacOs => {
+        (_, TargetOs::Linux | TargetOs::MacOs) => {
             let args = unix_args(req, os);
             let fast = (os == TargetOs::Linux && !shared && linker_override().is_none())
                 .then(fast_ld::fuse_ld_flag)
@@ -225,12 +239,99 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
     }
 }
 
-/// The linker program [`link`] would run for `target` (used by `velt doctor`), or why none is
-/// usable. `$VELT_LINKER` is reported as-is; the default unix `cc` must answer `--version`.
+/// Link with the bundled lld and kit `b` regardless of `$VELT_LINKER` (what [`link`] does when it
+/// chooses the bundled linker; tests use it with a kit of their own).
+pub fn link_bundled(req: &LinkRequest, b: &bundled::Bundled) -> Result<(), String> {
+    let os = TargetOs::from_triple(req.target)
+        .ok_or_else(|| format!("unsupported target `{}`", req.target))?;
+    if !req.runtime_lib.is_file() {
+        return Err(format!(
+            "runtime library not found: {}",
+            req.runtime_lib.display()
+        ));
+    }
+    if let Some(dir) = req.output.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    native::check_files(req.native)?;
+    link_with_bundled(req, b, os)
+}
+
+fn link_with_bundled(req: &LinkRequest, b: &bundled::Bundled, os: TargetOs) -> Result<(), String> {
+    let mut cmd = b.command(lld::flavor(b.kit.kind));
+    cmd.args(lld::args(req, &b.kit)?);
+    run_linker(cmd)?;
+    if os == TargetOs::Windows {
+        if shared::is_shared(req.runtime_lib, os) {
+            shared::place_dll(req.runtime_lib, req.output)?;
+        }
+        native::place_dlls(req.native, req.output)?;
+    }
+    Ok(())
+}
+
+/// Which linker [`link`] uses for a target, and why (for `velt doctor`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkerReport {
+    /// The bundled lld with the kit in `kit`.
+    Bundled { lld: PathBuf, kit: PathBuf },
+    /// The system linker `program`; `why` says why the bundled one is not used (`None` when
+    /// `$VELT_LINKER` asks for the system linker or names a program).
+    System {
+        program: PathBuf,
+        why: Option<String>,
+    },
+}
+
+/// Which linker [`link`] would use for `target` (see [`LinkerReport`]), or why none is usable.
+pub fn linker_report(target: &str) -> Result<LinkerReport, String> {
+    if wasm::WasmFlavor::from_triple(target).is_some() {
+        return find_linker(target).map(|program| LinkerReport::System { program, why: None });
+    }
+    match bundled::choose(bundled::Request::from_env(), || bundled::find(target))? {
+        bundled::Choice::Bundled(b) => Ok(LinkerReport::Bundled {
+            lld: b.lld,
+            kit: b.kit.dir,
+        }),
+        bundled::Choice::Override | bundled::Choice::System { why: None } => {
+            find_system_linker(target).map(|program| LinkerReport::System { program, why: None })
+        }
+        bundled::Choice::System { why: Some(why) } => find_system_linker(target)
+            .map(|program| LinkerReport::System {
+                program,
+                why: Some(why.clone()),
+            })
+            .map_err(|e| format!("{e}\n(the bundled linker cannot be used: {why})")),
+    }
+}
+
+/// What identifies the linker [`link`] would use for `target`, for build stamps: a link with
+/// another linker (or another kit) must not be skipped as up to date.
+pub fn linker_identity(target: &str) -> String {
+    let request = bundled::Request::from_env();
+    let choice = bundled::choose(request.clone(), || bundled::find(target));
+    match choice {
+        Ok(bundled::Choice::Bundled(b)) => bundled::identity(&b),
+        _ => format!("{request:?}"),
+    }
+}
+
+/// The linker program [`link`] would run for `target` (the bundled lld, or the system linker;
+/// [`linker_report`] says which and why), or why none is usable. `$VELT_LINKER` is reported
+/// as-is; the default unix `cc` must answer `--version`.
 pub fn find_linker(target: &str) -> Result<PathBuf, String> {
     if wasm::WasmFlavor::from_triple(target).is_some() {
         return wasm::find_wasm_ld().map(|(cmd, _)| PathBuf::from(cmd.get_program()));
     }
+    match linker_report(target)? {
+        LinkerReport::Bundled { lld, .. } => Ok(lld),
+        LinkerReport::System { program, .. } => Ok(program),
+    }
+}
+
+/// The system linker program for `target` (`$VELT_LINKER` as-is, `link.exe` or `cc`).
+fn find_system_linker(target: &str) -> Result<PathBuf, String> {
     let os =
         TargetOs::from_triple(target).ok_or_else(|| format!("unsupported target `{target}`"))?;
     let cmd = match os {
@@ -277,7 +378,8 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     if os == TargetOs::MacOs {
         args.extend(["-arch", macos_arch(req.target)].map(OsString::from));
         let requested = std::env::var("MACOSX_DEPLOYMENT_TARGET").ok();
-        args.push(macos_version_min(req.target, requested.as_deref()).into());
+        let version = macos_min_version(req.target, requested.as_deref());
+        args.push(format!("-mmacosx-version-min={version}").into());
     }
     let extra = if req.release {
         p.release_args
@@ -314,7 +416,7 @@ fn macos_arch(target: &str) -> &'static str {
 /// machine's OS version into `LC_BUILD_VERSION`, and programs refuse to start on older systems.
 /// The minimums are rustc's (so the runtime library's) and the Cranelift objects': 11.0 on
 /// arm64, 10.12 on x86_64. An unparsable value is ignored, like a missing one.
-fn macos_version_min(target: &str, requested: Option<&str>) -> String {
+fn macos_min_version(target: &str, requested: Option<&str>) -> String {
     let (floor, floor_text) = if target.starts_with("x86_64") {
         ((10, 12, 0), "10.12")
     } else {
@@ -324,7 +426,7 @@ fn macos_version_min(target: &str, requested: Option<&str>) -> String {
         .map(str::trim)
         .filter(|v| parse_macos_version(v).is_some_and(|v| v > floor))
         .unwrap_or(floor_text);
-    format!("-mmacosx-version-min={version}")
+    version.to_string()
 }
 
 /// `major[.minor[.patch]]`.
@@ -335,10 +437,12 @@ fn parse_macos_version(text: &str) -> Option<(u32, u32, u32)> {
     parts.next().is_none().then_some(version)
 }
 
+/// `$VELT_LINKER` when it names a linker program (not the `bundled` / `system` keywords).
 pub(crate) fn linker_override() -> Option<Command> {
-    std::env::var_os("VELT_LINKER")
-        .filter(|s| !s.is_empty())
-        .map(Command::new)
+    match bundled::Request::from_env() {
+        bundled::Request::Program(p) => Some(Command::new(p)),
+        _ => None,
+    }
 }
 
 fn unix_linker() -> Command {
@@ -430,8 +534,7 @@ pub fn find_runtime_lib_in(
             searched.push(cand);
         }
     } else {
-        for d in native_search_dirs(exe) {
-            let cand = d.join(name);
+        for cand in native_runtime_candidates(native_search_dirs(exe), target, name) {
             if cand.is_file() {
                 return Ok(cand);
             }
@@ -452,10 +555,24 @@ pub fn find_runtime_lib_in(
     ))
 }
 
+/// Runtime library candidates for a native target in the search directories `dirs`: first the
+/// target's own directory (`<dir>/targets/<triple>/`, where a toolchain keeps the runtime of a
+/// target other than the host, e.g. musl, beside its link kit), then the directories themselves
+/// (the host's runtime). musl uses only the former: the host's glibc runtime has the same name.
+fn native_runtime_candidates(dirs: Vec<PathBuf>, target: &str, name: &str) -> Vec<PathBuf> {
+    let own = kit::kit_dirs(&dirs, target)
+        .into_iter()
+        .map(|d| d.join(name));
+    if target.contains("musl") {
+        return own.collect();
+    }
+    own.chain(dirs.iter().map(|d| d.join(name))).collect()
+}
+
 /// Where the native runtime libraries are looked for, given the current executable: its
 /// directory, then its parent (cargo test binaries live in `target/<profile>/deps/`), then
 /// `<exe dir>/../lib` (installed toolchain).
-fn native_search_dirs(exe: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn native_search_dirs(exe: Option<&Path>) -> Vec<PathBuf> {
     let Some(dir) = exe.and_then(Path::parent) else {
         return vec![];
     };
@@ -487,7 +604,7 @@ pub fn is_shared_runtime_lib(runtime_lib: &Path, target: &str) -> bool {
 
 /// Testable core of [`find_shared_runtime_lib`]: `exe` is the current executable.
 pub fn find_shared_runtime_lib_in(target: &str, exe: Option<&Path>) -> Option<PathBuf> {
-    if wasm::WasmFlavor::from_triple(target).is_some() {
+    if wasm::WasmFlavor::from_triple(target).is_some() || target.contains("musl") {
         return None;
     }
     let name = shared_runtime_lib_name(TargetOs::from_triple(target)?);
@@ -559,7 +676,7 @@ mod tests {
 
     #[test]
     fn macos_deployment_target_is_honored_above_the_minimum() {
-        let min = macos_version_min;
+        let min = |t, r| format!("-mmacosx-version-min={}", macos_min_version(t, r));
         assert_eq!(
             min("aarch64-apple-darwin", Some("13.4")),
             "-mmacosx-version-min=13.4"

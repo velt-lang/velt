@@ -46,7 +46,8 @@ pub fn link_executable(
         objects.push(entry);
     }
     let stamp_path = stamp_path(exe);
-    let key = link_key(target, &objects, &runtime_lib, strip_debug, native);
+    let linker = velt_link::linker_identity(target);
+    let key = link_key(target, &objects, &runtime_lib, strip_debug, native, &linker);
     if std::fs::read_to_string(&stamp_path).ok() == Some(stamp(&key, exe)) {
         return Ok(Linked::UpToDate);
     }
@@ -87,13 +88,15 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Hash of everything the link reads or is configured by: target, settings, object contents, the
-/// runtime library and native libraries (path, size, modification time) and the linker override.
+/// runtime library and native libraries (path, size, modification time) and the linker
+/// ([`velt_link::linker_identity`]: the bundled lld and kit, or `$VELT_LINKER`).
 fn link_key(
     target: &str,
     objects: &[PathBuf],
     runtime_lib: &Path,
     strip_debug: bool,
     native: &[velt_link::NativeLink],
+    linker: &str,
 ) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (target, strip_debug).hash(&mut h);
@@ -112,7 +115,7 @@ fn link_key(
             file.and_then(|f| file_stamp(f)).hash(&mut h);
         }
     }
-    std::env::var_os("VELT_LINKER").hash(&mut h);
+    linker.hash(&mut h);
     format!("{:016x}", h.finish())
 }
 
@@ -151,18 +154,20 @@ mod tests {
         std::fs::write(&obj, b"one").unwrap();
         std::fs::write(&rt, b"runtime").unwrap();
         let objs = [obj.clone()];
-        let key = link_key("t", &objs, &rt, false, &[]);
-        assert_eq!(key, link_key("t", &objs, &rt, false, &[]));
-        assert_ne!(key, link_key("t", &objs, &rt, true, &[]));
-        assert_ne!(key, link_key("u", &objs, &rt, false, &[]));
+        let key = link_key("t", &objs, &rt, false, &[], "L");
+        assert_eq!(key, link_key("t", &objs, &rt, false, &[], "L"));
+        assert_ne!(key, link_key("t", &objs, &rt, true, &[], "L"));
+        assert_ne!(key, link_key("u", &objs, &rt, false, &[], "L"));
         let native = [velt_link::NativeLink {
             shared: rt.clone(),
             import_lib: None,
             static_obj: None,
         }];
-        assert_ne!(key, link_key("t", &objs, &rt, false, &native));
+        assert_ne!(key, link_key("t", &objs, &rt, false, &native, "L"));
+        // Another linker (bundled ↔ system, another kit) links again.
+        assert_ne!(key, link_key("t", &objs, &rt, false, &[], "M"));
         std::fs::write(&obj, b"two").unwrap();
-        assert_ne!(key, link_key("t", &objs, &rt, false, &[]));
+        assert_ne!(key, link_key("t", &objs, &rt, false, &[], "L"));
     }
 
     #[test]
