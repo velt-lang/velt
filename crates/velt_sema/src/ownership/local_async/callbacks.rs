@@ -150,10 +150,13 @@ fn held_closures(cx: &Ctx, g: &Graph, flags: &[u8]) -> HashMap<usize, usize> {
     }
     // Values of node `n` go only to parameters of standard library functions.
     let stays = |n: usize| {
-        outs.get(&n).into_iter().flatten().all(|&m| match g.nodes[m] {
-            Node::Local(f, _) => in_std(cx, f),
-            _ => false,
-        })
+        outs.get(&n)
+            .into_iter()
+            .flatten()
+            .all(|&m| match g.nodes[m] {
+                Node::Local(f, _) => in_std(cx, f),
+                _ => false,
+            })
     };
     let mut out = HashMap::new();
     for (i, def) in cx.defs.iter().enumerate() {
@@ -169,10 +172,9 @@ fn held_closures(cx: &Ctx, g: &Graph, flags: &[u8]) -> HashMap<usize, usize> {
             if (x.0 as usize) < f.params.len() {
                 continue;
             }
-            let (Some(&lit), Some(&local)) = (
-                g.ids.get(&Node::Lit(c)),
-                g.ids.get(&Node::Local(d, x)),
-            ) else {
+            let (Some(&lit), Some(&local)) =
+                (g.ids.get(&Node::Lit(c)), g.ids.get(&Node::Local(d, x)))
+            else {
                 continue;
             };
             if flags[local] & STORED == 0 && stays(local) && stays(lit) {
@@ -196,7 +198,8 @@ impl VisitMut for Sites<'_, '_> {
         else {
             return;
         };
-        if let E::AdtLit { fields: xs, .. } | E::ArrayLit(xs) | E::New { args: xs, .. } = &init.kind {
+        if let E::AdtLit { fields: xs, .. } | E::ArrayLit(xs) | E::New { args: xs, .. } = &init.kind
+        {
             for x in xs {
                 if let E::Closure(c) = x.kind {
                     self.1.push((c, *local));
@@ -218,7 +221,8 @@ impl VisitMut for Sites<'_, '_> {
                 callee: Callee::Def(g, _),
                 args,
             } if in_std(self.0, *g) => {
-                let method = matches!(&self.0.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.self_ty.is_some());
+                let method =
+                    matches!(&self.0.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.self_ty.is_some());
                 if let (true, Some(x)) = (method, args.first().and_then(root)) {
                     for a in &args[1..] {
                         if let E::Closure(c) = a.kind {
@@ -346,8 +350,7 @@ fn call_site(
                 _ if field == Some(true) => 0,
                 _ if field == Some(false) => return,
                 E::Local(l, _)
-                    if g
-                        .ids
+                    if g.ids
                         .get(&Node::Local(d, *l))
                         .is_some_and(|&n| flows_from(n)) =>
                 {
@@ -361,10 +364,7 @@ fn call_site(
                 return;
             };
             let key = (rank, !request, e.span.lo);
-            if best
-                .as_ref()
-                .is_none_or(|b| key < (b.0, b.1, b.2))
-            {
+            if best.as_ref().is_none_or(|b| key < (b.0, b.1, b.2)) {
                 best = Some((rank, !request, e.span.lo, text, e.span));
             }
         });
