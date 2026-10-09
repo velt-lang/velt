@@ -163,7 +163,9 @@ function main() {
 `const a = ADD_ONE; const b = ADD_ONE;`, `a === b` is `false` (TypeScript: `true`), and so is
 any identity comparison the constant reaches by being passed, which the compiler cannot see:
 `[ADD_ONE].indexOf(ADD_ONE)` is `-1`, and an event emitter's `off(ADD_ONE)` does not find the
-handler that `on(ADD_ONE)` added. Copy the constant into a local once and pass the local:
+handler that `on(ADD_ONE)` added. **Planned**: evaluating such a constant once, as Node does,
+which removes this difference ([#802](https://github.com/velt-lang/velt/issues/802)). Until then,
+copy the constant into a local once and pass the local:
 
 ```ts
 type Handler = (x: number) => number;
