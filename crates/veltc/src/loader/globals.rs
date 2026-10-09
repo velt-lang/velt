@@ -9,7 +9,7 @@
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
 //! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
-//! as `import { Response } from "velt:http"` does, or a declaration), which hides the global.
+//! as `import { Response } from "./api"` does, or a declaration), which hides the global.
 //! A regular expression literal (`/a+/`, which the parser reads as `new RegExp(…)`) counts as
 //! naming `RegExp`. std modules import what they use, so they never trigger one.
 

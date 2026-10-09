@@ -4,7 +4,7 @@
 // Usage: server <port> (bench/http/techempower/run.sh picks the port).
 
 import { escapeHtml } from "velt:html";
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { args } from "velt:process";
 
 class Fortune {
@@ -49,20 +49,29 @@ function fortunesPage(): Response {
     parts.push(`<tr><td>${f.id}</td><td>${escapeHtml(f.message)}</td></tr>`);
   }
   parts.push("</table></body></html>");
-  return Response.html(parts.join(""));
+  return new Response(parts.join(""), { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+// The path of `url`, an absolute URL as a server request has it (`http://host/path?query`): from
+// the first `/` after the scheme (`https://` is 8 characters) up to the query.
+function pathOf(url: string): string {
+  const start = url.indexOf("/", 8);
+  const end = url.indexOf("?", start);
+  return end < 0 ? url.slice(start) : url.slice(start, end);
 }
 
 async function main() {
   const argv = args();
   const port = argv.length > 0 ? parseInt(argv[0], 10) as i64 : 8080;
   const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
-    if (req.path == "/json") {
+    const path = pathOf(req.url);
+    if (path == "/json") {
       return Response.json({ message: "Hello, World!" });
     }
-    if (req.path == "/fortunes") {
+    if (path == "/fortunes") {
       return fortunesPage();
     }
-    return Response.text("Hello, World!");
+    return new Response("Hello, World!");
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);
   await sleep(1000000000);

@@ -207,13 +207,13 @@ they can't modify captured variables, so they share state through `shared(...)` 
 ## An HTTP server
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const hits = shared(0);
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     hits.add(1);
-    return Response.json({ path: req.path, hits: hits.get() });
+    return Response.json({ path: new URL(req.url).pathname, hits: hits.get() });
   });
 }   // like Node, a listening server keeps the program running (until `server.close()`)
 ```

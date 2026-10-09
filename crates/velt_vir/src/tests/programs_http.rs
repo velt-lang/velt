@@ -5,19 +5,20 @@
 //! the port, waits until three requests were handled, prints the count and closes the server.
 //!
 //! ```text
-//! struct Req { method: string; path: string; body: string }
+//! struct Req { method: string; url: string }
 //! async function main() {
 //!   const hits = shared(0);
 //!   const counter = hits.clone();
 //!   const handler = async (req: Req): Promise<u64> => {
 //!     const n = counter.add(1);
-//!     let text = `${req.method} ${req.path} #${n} ${req.body}`;
-//!     const r = velt_rt_http_resp_new(req.path == "/missing" ? 404 : 200);
-//!     velt_rt_http_resp_body_text(r, text);
-//!     return r;
+//!     let text = `${req.method} ${req.url} #${n}`;
+//!     const status = req.url == "http://localhost/missing" ? 404 : 200;
+//!     const headers: string[] = [];
+//!     const bytes: u8[] = [];
+//!     return velt_rt_http_resp_build(status, "", headers, 1, text, bytes, 1);
 //!   };
 //!   const h = __intrinsic_http_handler(async (raw: u64): Promise<u64> => {
-//!     const req = Req { method: req_method(raw), path: req_path(raw), body: req_body(raw) };
+//!     const req = Req { method: req_method(raw), url: req_url(raw) };
 //!     velt_rt_http_req_drop(raw);
 //!     const resp = await handler(req);
 //!     return resp;
@@ -48,16 +49,16 @@ struct Types {
     req: TyId,
     req_def: DefId,
     pu: TyId,
+    strs: TyId,
+    bytes: TyId,
 }
 
-/// `(method, path, body) -> string` request accessors, then drop, resp_new, resp_body_text.
+/// The `method` and `url` request accessors, then drop and resp_build.
 struct Rt {
     method: DefId,
-    path: DefId,
-    body: DefId,
+    url: DefId,
     req_drop: DefId,
-    resp_new: DefId,
-    resp_text: DefId,
+    resp_build: DefId,
 }
 
 fn rt_fns(pb: &mut PB, ty: &Types) -> Rt {
@@ -65,15 +66,13 @@ fn rt_fns(pb: &mut PB, ty: &Types) -> Rt {
     let str_of = |pb: &mut PB, sym: &str| extern_fn(pb, sym, vec![ty.u64t], t.str, false);
     Rt {
         method: str_of(pb, "velt_rt_http_req_method"),
-        path: str_of(pb, "velt_rt_http_req_path"),
-        body: str_of(pb, "velt_rt_http_req_body"),
+        url: str_of(pb, "velt_rt_http_req_url"),
         req_drop: extern_fn(pb, "velt_rt_http_req_drop", vec![ty.u64t], t.unit, false),
-        resp_new: extern_fn(pb, "velt_rt_http_resp_new", vec![ty.u32t], ty.u64t, false),
-        resp_text: extern_fn(
+        resp_build: extern_fn(
             pb,
-            "velt_rt_http_resp_body_text",
-            vec![ty.u64t, t.str],
-            t.unit,
+            "velt_rt_http_resp_build",
+            vec![ty.u32t, t.str, ty.strs, ty.u32t, t.str, ty.bytes, ty.u32t],
+            ty.u64t,
             false,
         ),
     }
@@ -94,26 +93,40 @@ fn user_handler(pb: &mut PB, ty: &Types, rt: &Rt, counter: velt_sema::hir::Local
     let n = c.local("n", t.i64);
     let text = c.local("text", t.str);
     let r = c.local("r", ty.u64t);
+    let headers = c.local("headers", ty.strs);
+    let bytes = c.local("bytes", ty.bytes);
     let fld = |i| field(c.bw(req), i, U::Borrow, t.str);
     let line = concat(
         concat(concat(fld(0), s(" ", t), t), fld(1), t),
-        concat(
-            concat(s(" #", t), to_s(c.cp(n), t), t),
-            concat(s(" ", t), fld(2), t),
-            t,
-        ),
+        concat(s(" #", t), to_s(c.cp(n), t), t),
         t,
     );
     let status = ifx(
-        cmp(B::Eq, fld(1), s("/missing", t), t),
+        cmp(B::Eq, fld(1), s("http://localhost/missing", t), t),
         int(404, ty.u32t),
         int(200, ty.u32t),
     );
     let body = vec![
         let_(n, intr(I::SharedAdd, vec![c.bw(cnt), int(1, t.i64)], t.i64)),
         let_(text, line),
-        let_(r, call(rt.resp_new, vec![status], ty.u64t)),
-        se(call(rt.resp_text, vec![c.cp(r), c.bm(text)], t.unit)),
+        let_(headers, array(vec![], ty.strs)),
+        let_(bytes, array(vec![], ty.bytes)),
+        let_(
+            r,
+            call(
+                rt.resp_build,
+                vec![
+                    status,
+                    s("", t),
+                    c.bw(headers),
+                    int(1, ty.u32t),
+                    c.bm(text),
+                    c.bw(bytes),
+                    int(1, ty.u32t),
+                ],
+                ty.u64t,
+            ),
+        ),
         ret(Some(c.cp(r))),
     ];
     pb.add_fn(c.build_async(body))
@@ -138,11 +151,7 @@ fn adapter(pb: &mut PB, ty: &Types, rt: &Rt, handler: velt_sema::hir::LocalId) -
     let body = vec![
         let_(
             req,
-            adt_lit(
-                ty.req_def,
-                vec![get(rt.method), get(rt.path), get(rt.body)],
-                ty.req,
-            ),
+            adt_lit(ty.req_def, vec![get(rt.method), get(rt.url)], ty.req),
         ),
         se(call(rt.req_drop, vec![c.cp(raw)], t.unit)),
         let_(
@@ -161,11 +170,7 @@ pub(super) fn http_server() -> Program {
     let req_def = pb.add_def(Def::Adt(adt(
         "Req",
         AdtKind::Struct,
-        vec![
-            ("method", t.str, None),
-            ("path", t.str, None),
-            ("body", t.str, None),
-        ],
+        vec![("method", t.str, None), ("url", t.str, None)],
     )));
     let ty = Types {
         u64t,
@@ -174,6 +179,11 @@ pub(super) fn http_server() -> Program {
         req: pb.adt_ty(req_def, vec![]),
         req_def,
         pu: pb.promise(u64t),
+        strs: pb.arr(t.str),
+        bytes: {
+            let u8t = pb.ty(TyKind::Int(IntTy::U8));
+            pb.arr(u8t)
+        },
     };
     let rt = rt_fns(&mut pb, &ty);
     let tup = pb.ty(TyKind::Tuple(vec![u64t; 6]));

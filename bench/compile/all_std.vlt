@@ -1,7 +1,7 @@
 // Compile-time benchmark input: imports every std module (so sema checks all of std and the
 // prelude), with a small main that touches each one.
 import { existsSync } from "velt:fs";
-import { Response } from "velt:http";
+import { ServeOptions } from "velt:http";
 import { ioError } from "velt:io";
 import { Value } from "velt:json";
 import { clamp, gcd } from "velt:math";
@@ -14,6 +14,8 @@ function main() {
   const p = join("a", "b");
   console.log(`${p} ${existsSync(p)} ${clamp(gcd(12, 18), 0, 5)} ${argv().length}`);
   console.log(process.env.HOME ?? "");
-  const r = Response.text("ok");
-  console.log(`${r.setHeader("x-a", "1")}`);
+  const opts: ServeOptions = { port: 0 };
+  const r = new Response("ok");
+  r.headers.set("x-a", "1");
+  console.log(`${opts.port} ${r.headers.get("x-a")}`);
 }

@@ -20,9 +20,9 @@ fn handler_serves_every_request() {
     assert_eq!(out.stdout, "listening 8080\nhits 3\n");
     assert_eq!(out.stderr, "");
     let expected = vec![
-        (200, "GET /a #1 ".to_string()),
-        (200, "POST /echo #2 hi".to_string()),
-        (404, "GET /missing #3 ".to_string()),
+        (200, "GET http://localhost/a #1".to_string()),
+        (200, "POST http://localhost/echo #2".to_string()),
+        (404, "GET http://localhost/missing #3".to_string()),
     ];
     assert_eq!(responses, expected);
     assert_eq!(out.live_allocs, 0, "leaked heap allocations\n{v}");

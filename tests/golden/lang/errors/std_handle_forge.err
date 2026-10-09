@@ -1,13 +1,13 @@
-std_handle_forge.vlt:12:13: error: class `Response` (it has no constructor) takes 0 arguments but 1 argument was supplied
-std_handle_forge.vlt:13:22: error: `adopt` is private
-std_handle_forge.vlt:14:13: error: class `Request` (it has no constructor) takes 0 arguments but 1 argument was supplied
-std_handle_forge.vlt:15:21: error: `adopt` is private
-std_handle_forge.vlt:16:30: error: `handle` is private
-std_handle_forge.vlt:17:25: error: `handle` is private
-std_handle_forge.vlt:18:26: error: `handle` is private
-std_handle_forge.vlt:19:26: error: `handle` is private
-std_handle_forge.vlt:20:23: error: `handle` is private
-std_handle_forge.vlt:21:5: error: no field `handle` on type `Server`
-std_handle_forge.vlt:22:17: error: `handle` is private
-std_handle_forge.vlt:22:27: error: no field `handle` on type `Response`
-std_handle_forge.vlt:23:34: error: `intoRaw` is private
+std_handle_forge.vlt:10:26: error: mismatched types
+std_handle_forge.vlt:11:22: error: `adopt` is private
+std_handle_forge.vlt:12:25: error: mismatched types
+std_handle_forge.vlt:13:21: error: `adopt` is private
+std_handle_forge.vlt:14:22: error: `built` is private
+std_handle_forge.vlt:15:25: error: `handle` is private
+std_handle_forge.vlt:16:26: error: `handle` is private
+std_handle_forge.vlt:17:26: error: `handle` is private
+std_handle_forge.vlt:18:23: error: `handle` is private
+std_handle_forge.vlt:19:5: error: no field `handle` on type `Server`
+std_handle_forge.vlt:20:17: error: `handle` is private
+std_handle_forge.vlt:20:27: error: no field `handle` on type `Response`
+std_handle_forge.vlt:21:33: error: `toServer` is private
