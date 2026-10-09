@@ -360,15 +360,16 @@ impl FnCx<'_, '_> {
             .or_else(|| a.methods.get(&prop.name))
             .copied();
         let mut owner_args = None;
-        if !m.is_some_and(|m| m.is_static) {
-            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`.
-            if let Some((im, n, args)) = self.inherited_static(d, &prop.name) {
-                (m, owner_generics, owner_args) = (Some(im), n, args);
-            }
-        }
         if m.is_none() {
             if let Some((em, n)) = self.extension_static(d, &prop.name) {
                 (m, owner_generics) = (Some(em), n);
+            }
+        }
+        if !m.is_some_and(|m| m.is_static) {
+            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`,
+            // unless `B` has its own `static f` (in the class or an `extend B` block).
+            if let Some((im, n, args)) = self.inherited_static(d, &prop.name) {
+                (m, owner_generics, owner_args) = (Some(im), n, args);
             }
         }
         let Some(m) = m.filter(|m| m.is_static) else {

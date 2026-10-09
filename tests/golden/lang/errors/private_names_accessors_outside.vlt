@@ -1,10 +1,11 @@
-// A private accessor (`set #v`, `get #w`) used outside its class: TS18013, once per use, for
-// assignments, compound assignments, updates and reads alike.
+// A private accessor (`set #v`, `get #w`, getter-only `get #g`) used outside its class: TS18013,
+// once per use, for assignments, compound assignments, updates and reads alike.
 class A {
   #val: number = 0;
   set #v(n: number) { this.#val = n; }
   set #w(n: number) { this.#val = n; }
   get #w(): number { return this.#val; }
+  get #g(): number { return 1; }
 }
 class B extends A {
   poke(): void { this.#v = 2; }
@@ -15,6 +16,9 @@ function f(o: A): number {
   o.#w += 1;
   o.#v += 1;
   o.#w++;
+  o.#g = 2;
+  o.#g += 1;
+  o.#g++;
   return o.#v;
 }
 console.log(f(new A()));

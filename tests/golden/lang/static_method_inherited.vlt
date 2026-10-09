@@ -15,8 +15,14 @@ class Box<T> {
   static make(n: number): number { return n * 2; }
 }
 class NumBox extends Box<string> {}
+// A static from an `extend` block of the class itself also hides the inherited one.
+class D extends A {}
+extend D {
+  static f(): number { return 42; }
+}
 console.log(B.f());
 console.log(B.g(2));
 console.log(C.f(), C.g(5), C.h());
 console.log(B.reveal(), C.reveal());
 console.log(NumBox.make(21));
+console.log(D.f(), D.g(1));

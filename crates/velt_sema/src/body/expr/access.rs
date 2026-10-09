@@ -258,6 +258,9 @@ impl FnCx<'_, '_> {
 
     /// Assigning to a getter without a setter is an error.
     pub(crate) fn reject_getter_assign(&mut self, t: TyId, prop: &ast::Ident) -> bool {
+        if self.private_accessor_outside(t, prop, true) {
+            return true;
+        }
         if !self.has_getter(t, &prop.name) {
             return false;
         }

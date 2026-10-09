@@ -134,8 +134,9 @@ hidden classes and no runtime shape checks.
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
-  `A`'s `static f()` (unless `B` declares a `static f` of its own), keeping its visibility (a
-  `private static` one stays usable only in `A`'s body).
+  `A`'s `static f()` (unless `B` declares a `static f` of its own, in its body or in an
+  `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
+  body).
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
