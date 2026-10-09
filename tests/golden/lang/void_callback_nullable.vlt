@@ -1,0 +1,28 @@
+// An optional callback parameter (`f?: (s: string, i: number) => void`) takes a named function
+// with fewer parameters or a result, and an arrow returning a value, like a required one; so
+// does a nullable function-typed `const`. Same output as Node.
+function each(xs: string[], f?: ((s: string, i: number) => void)) {
+  if (f != null) {
+    for (let i = 0; i < xs.length; i++) {
+      f(xs[i], i);
+    }
+  }
+}
+
+function shout(s: string): number {
+  console.log(s.toUpperCase());
+  return s.length;
+}
+
+function main() {
+  const out: string[] = [];
+  each(["a"], shout);
+  each(["b"], (s) => out.push(s));
+  each(["c"], (s, i) => s.length + i);
+  each(["d"]);
+  const g: ((s: string) => void) | null = shout;
+  if (g != null) {
+    g("e");
+  }
+  console.log(out);
+}

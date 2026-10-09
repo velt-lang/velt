@@ -265,7 +265,9 @@ impl FnCx<'_, '_> {
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
             return self.method_value(obj, object, prop, exp, span);
         }
-        let h = self.member_of(obj, prop, want, span);
+        let r = self.in_place_receiver(object, obj);
+        let h = self.member_of(r.recv, prop, want, span);
+        let h = self.after_receiver(r.before, h);
         let h = self.narrowed_field(object, prop, h, want);
         self.downcast_field(object, prop, h)
     }
@@ -317,7 +319,9 @@ impl FnCx<'_, '_> {
             return h;
         }
         let obj = self.expr(object, None, Want::Borrow);
-        self.index_of(obj, index, want, span)
+        let r = self.in_place_receiver(object, obj);
+        let h = self.index_of(r.recv, index, want, span);
+        self.after_receiver(r.before, h)
     }
 
     pub(super) fn index_of(
