@@ -153,3 +153,47 @@ fn extend_blocks_add_static_methods() {
          function main() { console.log(C.make().n); }",
     );
 }
+
+#[test]
+fn untyped_let_takes_the_type_of_its_first_assignment() {
+    let p = ok_src(
+        "function f(s: string): string { let r; try { r = s + \"!\"; } catch (e) { return \"\"; } return r; }
+         function main() { console.log(f(\"a\")); }",
+    );
+    let f = func(&p, "f");
+    let r = f
+        .body
+        .locals
+        .iter()
+        .find(|l| l.name == "r")
+        .expect("local r");
+    assert!(matches!(p.types.kind(r.ty), TyKind::Str), "{:?}", r.ty);
+    for (src, why) in [
+        (
+            "let a; console.log(a); a = 1;",
+            "`a` is read here before it is first assigned",
+        ),
+        (
+            "let b; b += 1; b = 2;",
+            "`b` is updated here before it is first assigned",
+        ),
+        (
+            "let c; c++;",
+            "`c` is updated here before it is first assigned",
+        ),
+        (
+            "let d; const g = () => d; d = 3;",
+            "a closure uses `d` before the function first assigns it",
+        ),
+        ("let e;", "`e` is never assigned"),
+    ] {
+        let r = err_src(&format!("function main() {{ {src} }}"));
+        assert!(r.contains("type annotations needed for"), "{src}: {r}");
+        assert!(r.contains(why), "{src}: {r}");
+        assert_eq!(
+            r.matches("type annotations needed").count(),
+            1,
+            "{src}: {r}"
+        );
+    }
+}

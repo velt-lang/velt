@@ -166,6 +166,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         want: Want,
     ) -> hir::Expr {
+        if self.untyped_use(id, false) {
+            return self.error_expr(id.span);
+        }
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
             return self.local_expr(l, want, id.span);

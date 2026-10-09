@@ -58,6 +58,7 @@ pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;
+mod untyped_let;
 mod using;
 
 use std::collections::HashMap;
@@ -227,6 +228,9 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
+    /// first assignment gives it its type (`untyped_let`).
+    pub untyped_lets: HashMap<LocalId, Span>,
 }
 
 impl Frame {
@@ -267,6 +271,7 @@ impl Frame {
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
             const_lits: HashMap::new(),
+            untyped_lets: HashMap::new(),
         }
     }
 }

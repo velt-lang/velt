@@ -4,6 +4,23 @@
 
 - `const` bindings cannot be reassigned (``cannot assign twice to const `x` ``); `let`
   bindings can. Both are block-scoped. `let x: T;` may be assigned later.
+- `let x;` without a type takes its type from its first assignment, as in TypeScript (also one
+  inside a `try` or an `if`); later assignments must have that type. Reading it, updating it
+  (`x += 1`) or using it in a closure before that assignment is an error asking for a type
+  (TypeScript reads `undefined` there), as is a `let x;` that is never assigned.
+
+  ```ts
+  function parse(s: string): number {
+    let n;
+    try {
+      n = Number.parseInt(s, 10);
+    } catch (e) {
+      return -1;
+    }
+    return n;
+  }
+  console.log(parse("42")); // 42
+  ```
 - `const` only fixes the binding: modifying a `const` object or array is fine, as in JS.
 - `using` and `await using` declare a `const` that is disposed at the end of the block
   ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)).

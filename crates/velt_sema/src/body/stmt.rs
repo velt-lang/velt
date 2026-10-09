@@ -32,6 +32,15 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
+        self.stmts_in_scope(stmts, out);
+        // A function body's own scope is never popped: its `let x;` never assigned end here.
+        if self.f.scopes.len() == 1 {
+            let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
+            self.report_untyped_lets(left.into_iter());
+        }
+    }
+
+    fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         for (i, s) in stmts.iter().enumerate() {
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {
@@ -319,6 +328,8 @@ impl FnCx<'_, '_> {
             (Some(t), _) => t,
             (None, Some(h)) if h.ty == self.cx.ty.never => h.ty,
             (None, Some(h)) => h.ty,
+            // Typed by its first assignment (`untyped_let`).
+            (None, None) if v.kind == ast::VarKind::Let => self.cx.ty.error,
             (None, None) => {
                 self.cx.err(
                     format!("type annotations needed for `{}`", name.name),
@@ -354,7 +365,11 @@ impl FnCx<'_, '_> {
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
         }
-        if let (LocalKind::Const, None, Some(l)) = (kind, ann, v.init.as_ref().and_then(literal_of)) {
+        if ann.is_none() && init.is_none() && v.kind == ast::VarKind::Let {
+            self.f.untyped_lets.insert(local, name.span);
+        }
+        if let (LocalKind::Const, None, Some(l)) = (kind, ann, v.init.as_ref().and_then(literal_of))
+        {
             self.f.const_lits.insert(local, l);
         }
         if let (None, Some(h)) = (ann, &init) {

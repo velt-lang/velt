@@ -95,6 +95,9 @@ impl FnCx<'_, '_> {
     }
 
     fn assign_local(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {
+        if self.untyped_use(id, true) {
+            return None;
+        }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
             if self.lookup_item(&id.name, id.span).is_some() {
                 self.cx.err(
@@ -341,18 +344,27 @@ impl FnCx<'_, '_> {
     /// `place = value` / `place op= value` on a writable place.
     fn place_assign(
         &mut self,
-        place: hir::Expr,
+        mut place: hir::Expr,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
+        if op.is_some() && self.untyped_update(&place, span) {
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        let first = match op {
+            None => self.first_assign(&mut place, value),
+            Some(_) => None,
+        };
         let lty = place.ty;
         let Some(op) = op else {
-            let v = match self.value_hint(&place, value) {
-                Some(t) => self.expr_coerce(value, t, Want::Move),
-                None => {
+            let v = match (first, self.value_hint(&place, value)) {
+                (Some(v), _) => v,
+                (None, Some(t)) => self.expr_coerce(value, t, Want::Move),
+                (None, None) => {
                     let v = self.expr(value, None, Want::Move);
                     self.coerce(v, lty)
                 }
@@ -463,6 +475,9 @@ impl FnCx<'_, '_> {
             }
             None => return self.error_expr(span),
         };
+        if self.untyped_update(&place, span) {
+            return self.error_expr(span);
+        }
         let lty = place.ty;
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
         if !self.cx.ty.is_numeric(lty) {
