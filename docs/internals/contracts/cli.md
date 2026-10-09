@@ -163,8 +163,20 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   both exist, else the system linker (`link.exe` / `cc`); `$VELT_LINKER=bundled` makes a missing
   bundled linker an error, `$VELT_LINKER=system` uses the system linker, any other value is a
   linker program run with the system linker's arguments. Cross-OS targets link only with the
-  bundled linker. `--target <arch>-unknown-linux-musl` links statically against the runtime in
-  `lib/targets/<triple>/`. Linux static links with the system linker use
+  bundled linker. A target other than the host's (#856) links statically against the runtime of
+  its target pack, `lib/targets/<triple>/` (never the host's runtimes, whose file names it
+  shares); without the pack the build fails naming `velt target add <triple>`. `velt run
+  --target` accepts WebAssembly and targets of the host's OS only.
+- `velt target list|add|remove` (additive, #856): `list` prints `<triple>  (this machine)`, then
+  each installed pack (`(installed)` / `(broken: …)`), then the other release targets
+  (`(not installed: velt target add <triple>)`). `add <triple>...` downloads
+  `velt-<version>-target-<triple>.tar.gz` and `SHA256SUMS` from
+  `$VELT_INSTALL_BASE_URL/releases/download/v<version>/` (https, redirects followed), checks the
+  hash, unpacks only regular files under `<triple>/` and installs the pack into
+  `<prefix>/lib/targets/<triple>/` once its kit and runtime are complete; `--from <file>` (one
+  triple) installs a local pack, checked against a `SHA256SUMS` beside it when there is one.
+  `remove` deletes an installed pack; the host's target cannot be removed. Exit 1 with a message on
+  any failure. Linux static links with the system linker use
   `-fuse-ld=mold`/`lld` when `mold`/`ld.lld` is on `PATH` (falling back to the default linker if
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped

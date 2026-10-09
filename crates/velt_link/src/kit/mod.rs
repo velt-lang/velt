@@ -242,6 +242,26 @@ pub fn stamp_text(target: &str) -> String {
     format!("velt-kit {FORMAT} {target}\n")
 }
 
+/// The targets releases publish a target pack for (`velt target add`): the toolchains' hosts,
+/// and static musl Linux.
+pub const RELEASE_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
+
+/// Where this toolchain installs target packs: `<prefix>/lib/targets` beside
+/// `<prefix>/bin/velt` (`target/lib/targets` for a checkout's `target/<profile>/velt`), which
+/// [`kit_dirs`] searches.
+pub fn targets_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.parent()?.join("lib").join("targets"))
+}
+
 /// Where kits are looked for, given the directories the runtime is searched in
 /// (`<prefix>/lib` and, in a checkout, `target/` and `target/lib`): `<dir>/targets/<triple>`.
 pub(crate) fn kit_dirs(search_dirs: &[PathBuf], target: &str) -> Vec<PathBuf> {

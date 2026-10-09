@@ -305,6 +305,31 @@ pub const COMMANDS: &[CommandHelp] = &[
         )],
     },
     CommandHelp {
+        name: "target",
+        summary: "List, add or remove the targets velt builds for",
+        usage: &[
+            "target list",
+            "target add <triple>... [--from <pack.tar.gz>]",
+            "target remove <triple>...",
+        ],
+        about: "`velt build --target <triple>` builds for another platform with the target's pack: \
+                its runtime and link kit, in <prefix>/lib/targets/<triple>/. `add` downloads the \
+                packs of this velt's release and checks them against its SHA256SUMS \
+                ($VELT_INSTALL_BASE_URL: another repository), or installs a pack from a file.",
+        options: &[("--from <file>", "install a target pack downloaded before")],
+        examples: &[
+            ("velt target list", "the targets this toolchain builds for, and the others"),
+            (
+                "velt target add x86_64-pc-windows-msvc",
+                "build Windows executables: velt build --target x86_64-pc-windows-msvc",
+            ),
+            (
+                "velt target add x86_64-unknown-linux-musl",
+                "static Linux executables",
+            ),
+        ],
+    },
+    CommandHelp {
         name: "search",
         summary: "Find packages in the registry",
         usage: &["search <text> [--json]"],

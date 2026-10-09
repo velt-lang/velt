@@ -121,7 +121,8 @@ The kit is musl's `crt1.o`, `crti.o`, `crtbegin.o`, `crtend.o`, `crtn.o`, `libc.
 `libunwind.a` as the Rust toolchain ships them (`lib/rustlib/<triple>/lib/self-contained`), plus
 the runtime built for musl (`libvelt_rt.a`, where `velt` looks for a non-host target's runtime).
 The program's objects are the same as for glibc. No shared runtime: debug builds link the static
-one too.
+one too. musl is a target pack (`velt target add x86_64-unknown-linux-musl`), not part of the
+Linux toolchain archives.
 
 ## macOS (`*-apple-darwin`)
 
@@ -164,6 +165,16 @@ another system library.
 ## Cross-linking
 
 lld links every format on every host, and the kits are plain files built from the checked-in
-lists, so nothing in them depends on the build machine. `velt_link` already links for another OS
-when the toolchain has a kit and a runtime for that target; what is missing is per-target
-runtime packages to install, and a check that code generation makes no host assumptions.
+lists, so nothing in them depends on the build machine. A **target pack** is a kit plus the
+target's runtime library (`velt-<version>-target-<triple>.tar.gz`, a release asset made by
+`scripts/package.*` on each host, and for musl on Linux); `velt target add` installs it into
+`lib/targets/<triple>/` (`crates/veltc/src/commands/target.rs`). For a target other than the
+host's, `velt_link` takes the runtime from there only (`host.rs`: same architecture, OS and C
+library as the host, the vendor field ignored) and never the shared runtime, so a cross build
+links statically. Code generation needs nothing more: both backends take the target triple, and
+the standard library asks the runtime for the platform at run time (`velt_rt_os_platform`).
+
+`release.yml` checks it end to end: `cross-build` installs every other target's pack into the
+Linux x86_64, macOS arm64 and Windows toolchains and builds hello and `examples/http_hello.vlt`
+for those targets (debug and release), and `cross-run` runs the results on each target's own
+runner (`scripts/cross.sh`).

@@ -184,9 +184,12 @@ jobs:
         run: |
           tar -xzf dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz -C "$RUNNER_TEMP"
           arch=${{ matrix.target }}; arch=${arch%%-*}
-          docker run --rm -v "$RUNNER_TEMP/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}:/velt:ro" \
-            -v "$PWD:/repo:ro" debian:bookworm-slim \
-            bash /repo/scripts/smoke-clean.sh /velt/bin/velt "$arch-unknown-linux-musl"
+          # The musl target is a target pack (velt target add), not part of the archive.
+          docker run --rm -v "$RUNNER_TEMP/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}:/velt" \
+            -v "$PWD:/repo:ro" debian:bookworm-slim bash -c "
+              /velt/bin/velt target add $arch-unknown-linux-musl \
+                --from /repo/dist/velt-${{ needs.version.outputs.version }}-target-$arch-unknown-linux-musl.tar.gz &&
+              bash /repo/scripts/smoke-clean.sh /velt/bin/velt $arch-unknown-linux-musl"
       - name: bundled linker (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -205,9 +208,80 @@ jobs:
             powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # Cross-compiling (#856): on each OS, the toolchain with every other target's pack installed
+  # (velt target add --from) builds hello and http_hello for those targets; cross-run then runs
+  # them on each target's own machine. scripts/cross.sh.
+  cross-build:
+    needs: [version, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - host: aarch64-apple-darwin
+            os: macos-15
+          - host: x86_64-pc-windows-msvc
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: velt-*
+          path: dist
+          merge-multiple: true
+      - name: build for every other target
+        shell: bash
+        run: |
+          name="velt-${{ needs.version.outputs.version }}-${{ matrix.host }}"
+          if [ -f "dist/$name.zip" ]; then
+            pwsh -NoProfile -Command "Expand-Archive dist/$name.zip -DestinationPath '$RUNNER_TEMP'"
+            velt="$RUNNER_TEMP/$name/bin/velt.exe"
+          else
+            tar -xzf "dist/$name.tar.gz" -C "$RUNNER_TEMP"
+            velt="$RUNNER_TEMP/$name/bin/velt"
+          fi
+          scripts/cross.sh build "$velt" dist "$RUNNER_TEMP/cross/${{ matrix.host }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-${{ matrix.host }}
+          path: ${{ runner.temp }}/cross
+          if-no-files-found: error
+
+  cross-run:
+    needs: cross-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            targets: x86_64-unknown-linux-gnu x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-gnu aarch64-unknown-linux-musl
+          - os: macos-15
+            targets: aarch64-apple-darwin
+          - os: macos-15-intel
+            targets: x86_64-apple-darwin
+          - os: windows-2025
+            targets: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cross-*
+          path: ${{ runner.temp }}/cross
+          merge-multiple: true
+      - name: run what the other machines built
+        shell: bash
+        run: scripts/cross.sh run "$RUNNER_TEMP/cross" ${{ matrix.targets }}
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [version, build, clean-machine]
+    needs: [version, build, clean-machine, cross-run]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -23,6 +23,7 @@ prints every command's options and examples.
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
+| `velt target list`, `add`, `remove` | the targets `velt build --target` builds for: install or remove target packs ([Cross-compiling](platforms.md#cross-compiling)) |
 | `velt doctor` | check the installation and run a hello world |
 | `velt completions <shell>` | print a completion script for bash, zsh, fish or PowerShell |
 
@@ -228,7 +229,8 @@ the standard library. The output has one page per module and a client-side searc
 ## `velt doctor`
 
 Checks the runtime library, the standard library, the linker (the bundled lld with the
-target's link kit, or the system linker and why the bundled one is not used), the WebAssembly
+target's link kit, or the system linker and why the bundled one is not used), the installed
+target packs (`velt target`), the WebAssembly
 linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
 `VELT_HOME` is writable, then compiles and runs a hello world (debug, plus release through LLVM
 when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
@@ -282,6 +284,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
 | `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
+| `VELT_INSTALL_BASE_URL` | the repository whose releases `velt target add` (and the installers) download from (default `https://github.com/velt-lang/velt`) |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |

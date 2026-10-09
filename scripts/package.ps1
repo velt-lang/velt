@@ -3,6 +3,7 @@
 # Layout (see docs/tooling/platforms.md):
 #   bin/velt.exe  lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
+# and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
 #   std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # With the bundled linker, velt.exe and velt_rt_shared.dll are linked with it too (lld-link, the
@@ -121,6 +122,23 @@ Copy-Item (Join-Path $Repo "LICENSE-MIT"), (Join-Path $Repo "LICENSE-APACHE"), (
 if (-not $NoBundledLinker) {
     $Size = { param($p) [math]::Round(((Get-ChildItem -Recurse -File $p | Measure-Object Length -Sum).Sum) / 1MB, 1) }
     Write-Host "bundled linker: lld $(& $Size (Join-Path $Out 'lib\velt')) MB, kit $(& $Size (Join-Path $Out 'lib\targets')) MB; toolchain $(& $Size $Out) MB"
+}
+
+# The target pack (`velt target add`, docs/tooling/platforms.md): this host's runtime and link
+# kit, for toolchains on other hosts.
+if (-not $NoBundledLinker) {
+    $Packs = Join-Path $Dist "packs"
+    if (Test-Path $Packs) { Remove-Item -Recurse -Force $Packs }
+    $Pack = Join-Path $Packs $HostTriple
+    New-Item -ItemType Directory -Force $Packs | Out-Null
+    Copy-Item -Recurse (Join-Path $Out "lib\targets\$HostTriple") $Pack
+    Copy-Item $RtLib $Pack
+    $PackFile = Join-Path $Dist "velt-$Version-target-$HostTriple.tar.gz"
+    if (Test-Path $PackFile) { Remove-Item -Force $PackFile }
+    tar.exe -czf $PackFile -C $Packs $HostTriple
+    if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+    Remove-Item -Recurse -Force $Packs
+    Write-Host "target pack: $PackFile ($([math]::Round((Get-Item $PackFile).Length / 1MB, 1)) MB)"
 }
 
 if (-not $NoArchive) {
