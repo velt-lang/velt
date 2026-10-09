@@ -190,6 +190,21 @@ impl FnCx<'_, '_> {
             .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
     }
 
+    /// How the visible local `name` was declared (`const`, `using`, …), looking through the
+    /// captures of enclosing closures, without recording a use.
+    pub(crate) fn peek_local_kind(&self, name: &str) -> Option<super::LocalKind> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        for f in frames {
+            if let Some(l) = frame_lookup(f, name) {
+                let k = f.kinds[l.0 as usize];
+                if k != super::LocalKind::Capture {
+                    return Some(k);
+                }
+            }
+        }
+        None
+    }
+
     /// The literal of the visible local `const` named `name` (see `Frame::const_lits`), without
     /// recording a use.
     pub fn peek_const_lit(&self, name: &str) -> Option<ast::SignedLit> {

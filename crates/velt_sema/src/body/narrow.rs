@@ -58,11 +58,17 @@ impl FnCx<'_, '_> {
                 lhs,
                 rhs,
             } => {
-                let (_, mut f) = self.narrowing(lhs);
+                let (lhs_t, mut f) = self.narrowing(lhs);
                 self.drop_assigned_facts(&mut f, rhs);
-                let rhs_f = self.narrowing_under(&f, rhs).1;
+                let (rhs_t, rhs_f) = self.narrowing_under(&f, rhs);
+                // True when either side is: what both sides establish (the right one read
+                // after the left one failed), `x instanceof S || x instanceof S2` narrowing to
+                // their nearest common class (#747).
+                let mut right = f.clone();
+                right.extend(rhs_t);
+                let t = self.join_facts(&lhs_t, &right);
                 f.extend(rhs_f);
-                (vec![], f)
+                (t, f)
             }
             ast::ExprKind::Binary {
                 op: op @ (B::Eq | B::NotEq),
@@ -103,6 +109,94 @@ impl FnCx<'_, '_> {
             | ast::ExprKind::Assign { op: None, .. } => (self.truthy_facts(cond), vec![]),
             _ => (vec![], vec![]),
         }
+    }
+
+    /// The facts that hold when either `a` or `b` does: per local, null tests both make, the
+    /// union members either allows, and the nearest class both `instanceof` tests imply.
+    fn join_facts(&mut self, a: &[Fact], b: &[Fact]) -> Vec<Fact> {
+        let mut out = vec![];
+        for fa in a {
+            match fa {
+                Fact::NonNull(l) => {
+                    if b.contains(fa) && !out.contains(fa) {
+                        out.push(Fact::NonNull(*l));
+                    }
+                }
+                Fact::Members(l, va) => {
+                    let mut vs = va.clone();
+                    let mut seen = false;
+                    for fb in b {
+                        if let Fact::Members(m, vb) = fb {
+                            if m == l {
+                                seen = true;
+                                vs.extend(vb.iter().copied());
+                            }
+                        }
+                    }
+                    if seen
+                        && !out
+                            .iter()
+                            .any(|f| matches!(f, Fact::Members(m, _) if m == l))
+                    {
+                        vs.sort_unstable();
+                        vs.dedup();
+                        out.push(Fact::Members(*l, vs));
+                    }
+                }
+                Fact::Class(l, ta) => {
+                    let tb = b.iter().find_map(|f| match f {
+                        Fact::Class(m, t) if m == l => Some(*t),
+                        _ => None,
+                    });
+                    let done = out.iter().any(|f| matches!(f, Fact::Class(m, _) if m == l));
+                    if let (Some(tb), false) = (tb, done) {
+                        if let Some(c) = self.common_class(*l, *ta, tb) {
+                            out.push(Fact::Class(*l, c));
+                        }
+                    }
+                }
+            }
+        }
+        // A class fact on a union local holds for the one member it is narrowed to.
+        let wide: Vec<LocalId> = out
+            .iter()
+            .filter_map(|f| match f {
+                Fact::Members(l, vs) if vs.len() > 1 => Some(*l),
+                _ => None,
+            })
+            .collect();
+        out.retain(|f| !matches!(f, Fact::Class(l, _) if wide.contains(l)));
+        out
+    }
+
+    /// The nearest class that class types `a` and `b` both extend, when it narrows local `l`
+    /// (it is not the class `l` is declared with).
+    fn common_class(&mut self, l: LocalId, a: TyId, b: TyId) -> Option<TyId> {
+        let mut cur = a;
+        let mut found = None;
+        for _ in 0..64 {
+            let (d, _) = self.cx.class_of(cur)?;
+            if self.cx.is_instance_of(b, d) {
+                found = Some((cur, d));
+                break;
+            }
+            cur = self.cx.base_of(cur)?;
+        }
+        let (c, d) = found?;
+        if c == a || c == b {
+            // One test's class extends the other's: the latter was a valid target already.
+            return Some(c);
+        }
+        if self.token_path(l).is_some() {
+            return None;
+        }
+        let ty = self.local_ty(l);
+        let ty = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let declared = self.cx.union_members(ty).unwrap_or_else(|| vec![ty]);
+        let is_declared = declared
+            .iter()
+            .any(|t| self.cx.class_of(*t).is_some_and(|(e, _)| e == d));
+        (!is_declared).then_some(c)
     }
 
     /// Drops from `facts` those about a variable `e` assigns, or about a field path of one.

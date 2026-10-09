@@ -229,7 +229,10 @@ console.log(label("Zoë", 1), label("😀", 2));
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way. A `T | null` compares with a
-  `T` (in either order) as if both were `T | null`: `null` equals no value.
+  `T` (in either order) as if both were `T | null`: `null` equals no value. Likewise a union
+  compares with one of its members (`string | number` with `number`): the two are equal when
+  the union holds that member with an equal value, so the string `"3"` never equals the
+  number `3`, as with `===` in JS.
 - An interface value compares the object behind it: two `Shape` values of one class instance
   are equal. A function value is equal to its copies, and a named function to itself; each
   evaluation of an arrow or function expression is a new function, as in JS, also when it

@@ -294,7 +294,10 @@ until `x` is reassigned; a variable that a closure assigns is not narrowed, as
 on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
 `catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
 (`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
-copy it into a local first. The test reads the class id in the object's vtable: one load and
+copy it into a local first. Tests joined by `||` narrow to the nearest class they both imply:
+with `class S2 extends S`, `x instanceof S || x instanceof S2` reads `x` as an `S`, and with
+two subclasses `T1` and `T2` of `S`, `x instanceof T1 || x instanceof T2` does too (when `S` is
+not `x`'s own class). The test reads the class id in the object's vtable: one load and
 one comparison, whatever the depth of the hierarchy.
 
 - The narrowed type keeps the type arguments: a `Box<i64>` tested for
