@@ -75,6 +75,13 @@ jobs:
       - name: build tools (Debian container)
         if: matrix.container
         run: |
+          # Debian 11 is past its support: deb.debian.org no longer has the security updates the
+          # image was built with (404). The image lists the matching snapshot.debian.org sources
+          # (commented out); use those.
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            [ -f "$f" ] || continue
+            sed -i 's|^deb http://deb.debian.org|# deb http://deb.debian.org|; s|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' "$f"
+          done
           apt-get update -q
           apt-get install -y -q --no-install-recommends build-essential git curl ca-certificates musl-tools
       - uses: actions/checkout@v4

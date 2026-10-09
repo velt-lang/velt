@@ -51,6 +51,13 @@ jobs:
       - name: build tools (Debian container)
         if: matrix.container && steps.cache.outputs.cache-hit != 'true'
         run: |
+          # Debian 11 is past its support: deb.debian.org no longer has the security updates the
+          # image was built with (404). The image lists the matching snapshot.debian.org sources
+          # (commented out); use those.
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            [ -f "$f" ] || continue
+            sed -i 's|^deb http://deb.debian.org|# deb http://deb.debian.org|; s|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' "$f"
+          done
           apt-get update -q
           apt-get install -y -q --no-install-recommends build-essential curl ca-certificates xz-utils python3-pip
           pip3 install --quiet cmake ninja
