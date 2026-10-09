@@ -1,0 +1,4 @@
+http_handler_calls_stored_callback.vlt:18:5: error: this closure modifies captured `last`, so it must stay on the task that created it
+http_handler_calls_stored_callback.vlt:20:19: but it is stored in an `Input`, which handles HTTP requests here, which run on several threads
+http_handler_calls_stored_callback.vlt:27:5: error: this closure modifies captured `total`, so it must stay on the task that created it
+http_handler_calls_stored_callback.vlt:29:19: but it is stored in a `Field`, which handles HTTP requests here, which run on several threads

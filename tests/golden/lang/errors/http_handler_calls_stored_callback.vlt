@@ -1,0 +1,36 @@
+// A sync callback stored in a field of an object that an HTTP handler captured, and called by
+// the handler (async or sync), runs on several threads: modifying a capture is an error. (One
+// only stored there and never called keeps its copy: std/http_handler_captured_widget.)
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+class Field {
+  onInput: (v: number) => void = (v) => {};
+}
+
+async function main() {
+  let last = "";
+  const i = new Input();
+  i.onChange = (v: string) => {
+    last = `${v}${last.length}`;
+  };
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    return new Response("ok");
+  });
+  let total = 0;
+  const f = new Field();
+  f.onInput = (v: number) => {
+    total += v;
+  };
+  const b = await serve({ port: 0 }, (req) => {
+    f.onInput(1);
+    return new Response("ok");
+  });
+  a.close();
+  b.close();
+  console.log(last, total);
+}

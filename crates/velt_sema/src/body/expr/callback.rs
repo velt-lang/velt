@@ -466,7 +466,6 @@ impl FnCx<'_, '_> {
             _ => exp,
         };
         let wrap = if discard { Wrap::Discard } else { Wrap::Call };
-        let _ = span;
         Some(self.wrap(Callee::Value(f, None), n, n, wrap, exp))
     }
 
@@ -580,6 +579,7 @@ impl FnCx<'_, '_> {
             e.span,
         );
         self.await_body = Some(e.span);
+        self.cx.sync_handlers.push(e.span);
         let h = self.closure(&as_async, exp, escaping);
         self.await_body = None;
         h

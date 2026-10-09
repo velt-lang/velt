@@ -105,12 +105,14 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             break;
         }
     }
+    let handler_reads = handler_fn_reads(cx, &g, &p);
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n][0].or(p.why[n][1]);
         let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
         finish(cx, c, local, why);
-        sync_crossing(cx, c, p.flags[n] & CROSSES != 0, p.why[n][0]);
+        let crosses = p.flags[n] & CROSSES != 0;
+        sync_crossing(cx, c, crosses, p.why[n][0], g.tys[n], &handler_reads);
     }
 }
 
@@ -204,6 +206,42 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     out
 }
 
+/// The types of the function values that code an HTTP handler runs reads from a field or an
+/// element: the handler closures (and the function values flowing to them as values), the
+/// functions they call directly, and the closures created in those, transitively.
+fn handler_fn_reads(cx: &Ctx, g: &Graph, p: &Propagation) -> Vec<TyId> {
+    let mut work: Vec<DefId> = vec![];
+    for (n, node) in g.nodes.iter().enumerate() {
+        let Node::Lit(c) = *node else { continue };
+        let runs = p.flags[n] & CROSSES != 0
+            && p.why[n][0].is_some_and(|w| {
+                w.boundary == Boundary::Handler
+                    && w.via
+                        .is_none_or(|t| matches!(cx.ty.kind(t), TyKind::FnPtr { .. }))
+            });
+        if runs {
+            work.push(c);
+        }
+    }
+    let mut children: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    for (&c, &parent) in &g.parent {
+        children.entry(parent).or_default().push(c);
+    }
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut out = vec![];
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        out.extend(g.fn_reads.get(&d).into_iter().flatten().copied());
+        work.extend(g.callees.get(&d).into_iter().flatten().copied());
+        work.extend(children.get(&d).into_iter().flatten().copied());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// A sync closure `c` that an HTTP handler runs (`serve`'s handler, or a function value the
 /// handler calls) runs on several threads at once with a copy of what it captured, like an
 /// async handler:
@@ -211,18 +249,30 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
 /// field, a function's result). Other crossings keep their copy semantics (a sync closure
 /// handed to a spawned task counts on its own copy, `spawn_fn_value_copied_per_task`), and
 /// only a definite crossing counts (a closure passed to an unknown callee is called in place).
-fn sync_crossing(cx: &mut Ctx, c: DefId, crosses: bool, why: Option<Why>) {
+fn sync_crossing(
+    cx: &mut Ctx,
+    c: DefId,
+    crosses: bool,
+    why: Option<Why>,
+    ty: TyId,
+    handler_reads: &[TyId],
+) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    // The handler runs it: the handler itself, a function value it calls or passes on (read
-    // from a variable, a field or a function's result). A closure only stored in an object the
-    // handler captured (`w.onClick` of a captured `w`, never called there) keeps the copy
-    // semantics it has on main.
+    // The handler runs it: the handler itself, a function value it gets as a value (a
+    // variable, a function's result), or one of the type of a function value that handler code
+    // reads from a field or an element (to call it or pass it on: `i.onChange("x")`). A
+    // closure only stored in an object the handler captured, of a type handler code never
+    // reads (`w.onClick` of a captured `w`), keeps the copy semantics it has on main.
     let runs = why.is_some_and(|w| {
         w.boundary == Boundary::Handler
-            && w.via
-                .is_none_or(|t| matches!(cx.ty.kind(t), crate::hir::TyKind::FnPtr { .. }))
+            && (w
+                .via
+                .is_none_or(|t| matches!(cx.ty.kind(t), TyKind::FnPtr { .. }))
+                || handler_reads
+                    .iter()
+                    .any(|r| !types::mentions_param(cx, *r) && types::may_be(cx, ty, *r)))
     });
     if f.is_async || f.is_generator || !crosses || !runs {
         return;
@@ -360,6 +410,11 @@ impl Propagation {
 fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
     let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
     let closure = cx.def_spans.get(c.0 as usize).copied();
+    // A sync arrow passed to `serve` is checked as an async one: call it what it is.
+    let what = match closure {
+        Some(span) if cx.sync_handlers.contains(&span) => "handler",
+        _ => what,
+    };
     for (name, at) in mutated {
         // The capture is then moved into the closure: no second error for a later use of it.
         if let Some(span) = closure {

@@ -49,8 +49,10 @@ it throws.
 - Like spawned tasks, handlers, sync or `async` (and the async closures they reach), must not
   modify captured variables (use `shared`): `(req) => { count++; … }` is a compile error,
   however the handler gets to `serve` (a variable, a field, a function's result, a wrapper of
-  `serve`). A sync closure only stored in an object the handler captured (`w.onClick` of a
-  captured `w`) is not checked: on the handler's threads it modifies its own copy. Changing an object's fields through a captured variable is not modifying the
+  `serve`), and for a callback the handler calls through an object it captured
+  (`i.onChange("x")`). A sync closure only stored in such an object, of a type the handler
+  never reads (`w.onClick` of a captured `w`), is not checked: on the handler's threads it
+  modifies its own copy. Changing an object's fields through a captured variable is not modifying the
   variable: each request works on its own copy of the object (unlike Node, which shares it; #854). Requests run on several threads at once and each gets its own copy
   of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
   capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).

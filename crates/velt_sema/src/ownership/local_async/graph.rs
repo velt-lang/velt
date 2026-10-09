@@ -114,6 +114,11 @@ pub(super) struct Graph {
     pub roots: Vec<(TyId, Why)>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: HashMap<usize, Vec<usize>>,
+    /// Per function: the types of the function values it reads from a field or an element
+    /// (to call them or pass them on).
+    pub fn_reads: HashMap<DefId, Vec<TyId>>,
+    /// Per function: the functions it calls directly.
+    pub callees: HashMap<DefId, Vec<DefId>>,
 }
 
 impl Graph {
@@ -402,10 +407,12 @@ impl Walk<'_, '_> {
                 self.unknown(e, to);
             }
             E::Field { base, .. } => {
+                self.fn_read(e.ty);
                 self.value(base, To::Drop);
                 self.unknown(e, to);
             }
             E::Index { base, index, .. } => {
+                self.fn_read(e.ty);
                 self.value(base, To::Drop);
                 self.value(index, To::Drop);
                 self.unknown(e, to);
@@ -421,6 +428,14 @@ impl Walk<'_, '_> {
             }
             E::Throw(x) => self.value(x, STORE),
             E::Lit(_) | E::Global(_) | E::FnRef(..) => self.unknown(e, to),
+        }
+    }
+
+    /// A function value of type `ty` (or `ty | null`) read from a field or an element.
+    fn fn_read(&mut self, ty: TyId) {
+        let t = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        if matches!(self.cx.ty.kind(t), crate::hir::TyKind::FnPtr { .. }) {
+            self.g.fn_reads.entry(self.d).or_default().push(t);
         }
     }
 
@@ -474,6 +489,7 @@ impl Walk<'_, '_> {
     fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr], to: To) {
         match callee {
             Callee::Def(g, targs) => {
+                self.g.callees.entry(self.d).or_default().push(*g);
                 if !targs.is_empty() {
                     let site = (self.d, targs.clone());
                     self.g.insts.entry(*g).or_default().push(site);
