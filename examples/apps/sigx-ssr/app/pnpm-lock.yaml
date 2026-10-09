@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@sigx/server':
+        specifier: 1.0.1
+        version: 1.0.1(sigx@1.0.1)
       '@sigx/server-renderer':
         specifier: 1.0.1
         version: 1.0.1(sigx@1.0.1)
@@ -20,7 +23,7 @@ importers:
         version: link:../sigx-velt
       '@sigx/vite':
         specifier: 1.0.1
-        version: 1.0.1(@sigx/server-renderer@1.0.1(sigx@1.0.1))(sigx@1.0.1)(vite@8.3.4)
+        version: 1.0.1(@sigx/server-renderer@1.0.1(sigx@1.0.1))(@sigx/server@1.0.1(sigx@1.0.1))(sigx@1.0.1)(vite@8.3.4)
       playwright:
         specifier: 1.62.1
         version: 1.62.1
@@ -157,6 +160,11 @@ packages:
 
   '@sigx/server-renderer@1.0.1':
     resolution: {integrity: sha512-NuAdQWz+HYK0BzgO7fZC+dKnkIwmWAbW8qK/o/k4wUtipEy9YJba0muXMBbauc+sXlbFmB9ZOrCbe8+of9a5rQ==}
+    peerDependencies:
+      sigx: ^1.0.1
+
+  '@sigx/server@1.0.1':
+    resolution: {integrity: sha512-tBdDp3pE8o2QadatobwYzvKrG9duwvprp1pKAv9JBX8/OIHUcA8WOLo25W/X6vVfkzrkkuZ/Rjc60HSB6VX8pA==}
     peerDependencies:
       sigx: ^1.0.1
 
@@ -439,11 +447,17 @@ snapshots:
       '@sigx/serialize': 1.0.1
       sigx: 1.0.1
 
-  '@sigx/vite@1.0.1(@sigx/server-renderer@1.0.1(sigx@1.0.1))(sigx@1.0.1)(vite@8.3.4)':
+  '@sigx/server@1.0.1(sigx@1.0.1)':
+    dependencies:
+      '@sigx/serialize': 1.0.1
+      sigx: 1.0.1
+
+  '@sigx/vite@1.0.1(@sigx/server-renderer@1.0.1(sigx@1.0.1))(@sigx/server@1.0.1(sigx@1.0.1))(sigx@1.0.1)(vite@8.3.4)':
     dependencies:
       sigx: 1.0.1
       vite: 8.3.4
     optionalDependencies:
+      '@sigx/server': 1.0.1(sigx@1.0.1)
       '@sigx/server-renderer': 1.0.1(sigx@1.0.1)
 
   detect-libc@2.1.2: {}

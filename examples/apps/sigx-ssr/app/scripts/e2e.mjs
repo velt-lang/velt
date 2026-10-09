@@ -1,8 +1,11 @@
 // End-to-end check of the sigx + Velt packaging POC. Needs `pnpm install`, `velt` on PATH (or
 // $VELT) and Playwright's Chromium. Run `pnpm build` first. Steps:
-//   1. bytes:   Velt's HTML for each page equals JavaScript sigx's (scripts/reference.mjs)
-//   2. prod:    dist/server/app serves the client build and the page hydrates (clicks work, no
-//               console warnings)
+//   1. bytes:   Velt's streamed document for each page equals JavaScript sigx's
+//               (scripts/reference.mjs --stream); the shell does not wait for data; a server
+//               function answers in sigx's wire format
+//   2. prod:    dist/server/app serves the client build; the page hydrates with the streamed
+//               data restored (no server-function call), clicks work, no console warnings;
+//               links navigate without a page load, back works
 //   3. dev/HMR: under `vite`, a shared component edit hot-updates the browser (state kept) and
 //               the server; a server-only edit reloads the page; a Velt compile error shows in
 //               Vite's overlay while the old server keeps serving.
@@ -55,19 +58,38 @@ async function until(fn, ms = 10000) {
   return false;
 }
 
-const outlet = (html) => html.slice(html.indexOf('<div id="app">') + 14, html.lastIndexOf("</div>"));
-
 // --- 1 + 2: production binary ---
 const port = await freePort();
 const prod = await start("./dist/server/app", ["--port", String(port)], /listening/);
 const browser = await chromium.launch();
 try {
+  // The streamed document, whole: shell, $SIGX_REPLACE scripts, state, completion.
   for (const path of PAGES) {
-    const ref = execFileSync("node", ["scripts/reference.mjs", path], { cwd: root, encoding: "utf8" });
-    const html = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
-    check(outlet(html) === ref, `bytes: Velt's ${path} equals JavaScript sigx's`);
-    if (outlet(html) !== ref) console.log(`  velt: ${outlet(html)}\n  node: ${ref}`);
+    const ref = execFileSync("node", ["scripts/reference.mjs", "--stream", path], { cwd: root, encoding: "utf8" });
+    const devPort = await freePort();
+    const raw = await start("./dist/server/app", ["--port", String(devPort), "--template", "index.html", "--dev"], /listening/);
+    const html = await (await fetch(`http://127.0.0.1:${devPort}${path}`)).text();
+    raw.kill();
+    check(html === ref, `stream: Velt's streamed ${path} equals JavaScript sigx's renderDocumentToWebStream`);
   }
+  // The shell does not wait for the data.
+  {
+    const t0 = Date.now();
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    const reader = res.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    const shellMs = Date.now() - t0;
+    let rest = "";
+    for (let r = await reader.read(); !r.done; r = await reader.read()) rest += new TextDecoder().decode(r.value);
+    const allMs = Date.now() - t0;
+    check(first.includes("Loading…") && shellMs < 150 && allMs >= 250 && rest.includes("$SIGX_REPLACE"),
+      `stream: shell after ${shellMs} ms with the pending state, data after ${allMs} ms`);
+  }
+  const fn = await fetch(`http://127.0.0.1:${port}/_sigx/fn/src/api.server/greet`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ args: ["e2e"] }),
+  });
+  check(fn.status === 200 && (await fn.text()) === '{"data":"Hello, e2e, from a Velt server function"}', "server function: POST /_sigx/fn answers in sigx's format");
+
   const asset = readFileSync(`${root}/dist/client/index.html`, "utf8").match(/src="(\/assets\/[^"]+)"/)[1];
   const a = await fetch(`http://127.0.0.1:${port}${asset}`);
   check(
@@ -80,7 +102,11 @@ try {
   const messages = [];
   page.on("console", (m) => (m.type() === "warning" || m.type() === "error") && messages.push(m.text()));
   page.on("pageerror", (e) => messages.push(String(e)));
+  const fnCalls = [];
+  page.on("request", (r) => r.url().includes("/_sigx/fn/") && fnCalls.push(r.url()));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+  check((await page.textContent(".stats")).includes("Rendered by Velt (native)"), "prod: streamed data is on the page");
+  check(fnCalls.length === 0, `prod: hydration restores the data without calling the server${fnCalls.length ? `: ${fnCalls}` : ""}`);
   await page.click("#inc");
   await page.click("#inc");
   check(

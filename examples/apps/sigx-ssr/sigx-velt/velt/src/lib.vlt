@@ -3,4 +3,4 @@
 export { component, SetupContext } from "./component";
 export type { Setup } from "./component";
 export { Runtime, Signal, Computed, Reaction } from "./reactivity";
-export { Element, Renderer, renderToString } from "./node";
+export { Element, Renderer, State, renderToString } from "./node";

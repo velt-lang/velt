@@ -27,8 +27,8 @@ const Parent = component<{ n: i64 }>((ctx) => {
   );
 });
 
-export function test_component_markers_are_pre_order() {
-  const html = renderToString(
+export async function test_component_markers_are_pre_order() {
+  const html = await renderToString(
     <section>
       <Parent n={1} />
       <Plain label="x" />
@@ -42,18 +42,18 @@ export function test_component_markers_are_pre_order() {
   );
 }
 
-export function test_text_and_attributes_are_escaped() {
+export async function test_text_and_attributes_are_escaped() {
   const v = "a<b>&\"c'";
   assertEq(
-    renderToString(<p title={v}>{v}</p>),
+    await renderToString(<p title={v}>{v}</p>),
     "<p title=\"a&lt;b&gt;&amp;&quot;c&#39;\">a&lt;b&gt;&amp;&quot;c&#39;</p>",
   );
 }
 
-export function test_booleans_and_null_render_placeholders() {
+export async function test_booleans_and_null_render_placeholders() {
   const n: string | null = null;
   assertEq(
-    renderToString(
+    await renderToString(
       <p hidden={false} title={n}>
         {true}
         {false}
@@ -62,13 +62,13 @@ export function test_booleans_and_null_render_placeholders() {
     ),
     "<p><!----><!----><!---->x</p>",
   );
-  assertEq(renderToString(<input disabled={true} />), "<input disabled>");
+  assertEq(await renderToString(<input disabled={true} />), "<input disabled>");
 }
 
-export function test_text_separator_crosses_fragments() {
+export async function test_text_separator_crosses_fragments() {
   const a = "a";
   assertEq(
-    renderToString(
+    await renderToString(
       <p>
         {a}
         <>{"b"}</>c
@@ -78,9 +78,9 @@ export function test_text_separator_crosses_fragments() {
   );
 }
 
-export function test_handlers_render_nothing() {
+export async function test_handlers_render_nothing() {
   assertEq(
-    renderToString(
+    await renderToString(
       <button id="b" onClick={() => {}}>
         go
       </button>,
@@ -89,15 +89,19 @@ export function test_handlers_render_nothing() {
   );
 }
 
-export function test_sole_null_child_renders_nothing() {
+export async function test_sole_null_child_renders_nothing() {
   const n: string | null = null;
-  assertEq(renderToString(<p>{n}</p>), "<p></p>");
-  assertEq(renderToString(<p>{n}a</p>), "<p><!---->a</p>");
+  assertEq(await renderToString(<p>{n}</p>), "<p></p>");
+  assertEq(await renderToString(<p>{n}a</p>), "<p><!---->a</p>");
 }
 
-export function test_render_document_fills_the_outlet() {
+export async function test_render_document_fills_the_outlet() {
   assertEq(
-    renderDocument("<body><div id=\"app\"><!--ssr-outlet--></div></body>", <Counter start={2} />),
-    "<body><div id=\"app\"><p>Count: <!--t-->2<!--t--> doubled <!--t-->4</p><!--$c:1--></div></body>",
+    await renderDocument(
+      "<body><div id=\"app\"><!--ssr-outlet--></div></body>",
+      <Counter start={2} />,
+    ),
+    "<body><div id=\"app\"><p>Count: <!--t-->2<!--t--> doubled <!--t-->4</p><!--$c:1--></div>" +
+      "<script>window.__SIGX_STREAMING_COMPLETE__=true;window.dispatchEvent(new Event('sigx:ready'));</script></body>",
   );
 }

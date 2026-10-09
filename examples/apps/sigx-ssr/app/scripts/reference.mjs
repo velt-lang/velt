@@ -1,11 +1,16 @@
 // Renders the shared App with JavaScript sigx (@sigx/server-renderer) through Vite's
-// ssrLoadModule, the same .tsx files Velt compiles. Prints the app's HTML (what goes in place of
-// <!--ssr-outlet-->). Usage: node scripts/reference.mjs [path]
+// ssrLoadModule: the same .tsx files Velt compiles, with api.server.vlt's functions replaced by
+// their JavaScript twins (api.reference.js).
+//   node scripts/reference.mjs [path]            the app's HTML (renderToString, data awaited)
+//   node scripts/reference.mjs --stream [path]   the whole streamed document, as sigx streams
+//                                                it into index.html (renderDocumentToWebStream)
 import { createServer } from "vite";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const path = process.argv[2] ?? "/";
+const stream = process.argv[2] === "--stream";
+const path = process.argv[stream ? 3 : 2] ?? "/";
 const vite = await createServer({
   root,
   configFile: false,
@@ -16,12 +21,25 @@ const vite = await createServer({
   optimizeDeps: { noDiscovery: true },
   resolve: { dedupe: ["sigx", "@sigx/server-renderer"] },
   ssr: { noExternal: ["sigx", "@sigx/server-renderer", "@sigx/velt"] },
+  plugins: [
+    {
+      name: "api-reference",
+      resolveId: (source) => (/\.server$/.test(source) ? fileURLToPath(new URL("./api.reference.js", import.meta.url)) : null),
+    },
+  ],
 });
 try {
   const { App } = await vite.ssrLoadModule("/src/shared/App.tsx");
-  const { renderToString } = await vite.ssrLoadModule("@sigx/server-renderer/server");
+  const server = await vite.ssrLoadModule("@sigx/server-renderer/server");
   const { jsx } = await vite.ssrLoadModule("sigx/jsx-runtime");
-  process.stdout.write(await renderToString(jsx(App, { path })));
+  const app = jsx(App, { path });
+  if (stream) {
+    const template = readFileSync(`${root}/index.html`, "utf8");
+    const body = server.renderDocumentToWebStream(app, { template });
+    process.stdout.write(await new Response(body).text());
+  } else {
+    process.stdout.write(await server.renderToString(app));
+  }
 } finally {
   await vite.close();
 }

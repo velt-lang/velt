@@ -12,8 +12,8 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
-import { realpathSync, existsSync, mkdirSync } from "node:fs";
-import { resolve, relative, sep } from "node:path";
+import { realpathSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { resolve, relative, sep, dirname } from "node:path";
 
 const STATUS = /^velt dev: (started|hot-swapped|restarted|build failed|program exited|exited)/;
 const LISTENING = /^sigx: listening on /;
@@ -49,6 +49,21 @@ function isDocument(req) {
   return !last.includes(".") || last.endsWith(".html");
 }
 
+// Server functions: a `*.server.vlt` module's `export async function`s are callable from the
+// browser. An import of it from browser code becomes this stub module (sigx's own client,
+// `POST /_sigx/fn/<key>`); the Velt server registers the same keys (`serverFn` in sigx/server).
+const STUB_PREFIX = "\0sigx-velt-fns:";
+const EXPORTED_FN = /^export\s+async\s+function\s+([A-Za-z_$][\w$]*)/gm;
+
+function serverFnStubs(file, root) {
+  const module = relative(root, file).replace(/\\/g, "/").replace(/\.vlt$/, "");
+  const names = [...readFileSync(file, "utf8").matchAll(EXPORTED_FN)].map((m) => m[1]);
+  return [
+    `import { __serverFnStub } from "@sigx/server/client";`,
+    ...names.map((n) => `export const ${n} = __serverFnStub(${JSON.stringify(`${module}/${n}`)}, ${JSON.stringify(n)}, "/_sigx/fn", "");`),
+  ].join("\n");
+}
+
 /**
  * @param {import("./index").VeltOptions} [opts]
  * @returns {import("vite").Plugin}
@@ -71,6 +86,19 @@ export default function velt(opts = {}) {
     configResolved(config) {
       root = config.root;
       outDir = config.build.outDir;
+    },
+
+    resolveId(source, importer) {
+      if (!importer || !/\.server(\.vlt)?$/.test(source) || !source.startsWith(".")) return null;
+      const file = resolve(dirname(importer.replace(/[?#].*$/, "")), source.replace(/\.vlt$/, "") + ".vlt");
+      return existsSync(file) ? STUB_PREFIX + file : null;
+    },
+
+    load(id) {
+      if (!id.startsWith(STUB_PREFIX)) return null;
+      const file = id.slice(STUB_PREFIX.length);
+      this.addWatchFile(file);
+      return serverFnStubs(file, root);
     },
 
     async configureServer(server) {
@@ -161,6 +189,26 @@ export default function velt(opts = {}) {
         changed = file;
         output = [];
         unsettle();
+      });
+
+      // Server-function calls go to the Velt server as they are.
+      server.middlewares.use(async (req, res, next) => {
+        if (!(req.url ?? "").startsWith("/_sigx/fn/")) return next();
+        try {
+          if (settled) await Promise.race([settled.promise, new Promise((r) => setTimeout(r, holdMs))]);
+          const chunks = [];
+          for await (const c of req) chunks.push(c);
+          const r = await fetch(`http://127.0.0.1:${port}${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "", origin: req.headers.origin ?? "" },
+            body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
+          });
+          res.statusCode = r.status;
+          res.setHeader("content-type", r.headers.get("content-type") ?? "application/json");
+          res.end(Buffer.from(await r.arrayBuffer()));
+        } catch (e) {
+          next(e);
+        }
       });
 
       server.middlewares.use(async (req, res, next) => {

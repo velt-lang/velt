@@ -11,6 +11,10 @@
     "./router": {
       "types": "./src/router.d.ts",
       "default": "./src/router.js"
+    },
+    "./data": {
+      "types": "./src/data.d.ts",
+      "default": "./src/data.js"
     }
   },
   "files": [
@@ -20,6 +24,7 @@
   ],
   "peerDependencies": {
     "sigx": "^1.0.0",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "@sigx/server": "^1.0.0"
   }
 }

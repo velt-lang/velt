@@ -12,7 +12,11 @@
 import { serve, Server } from "velt:http";
 import { readFile, readFileBytes, exists } from "velt:fs";
 import { args } from "velt:process";
-import { Element, renderToString } from "./node";
+import { BodyStream } from "velt:fetch";
+import { utf8Encode } from "velt:encoding";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { Element, Renderer } from "./node";
 
 export struct Options {
   port: i64;
@@ -54,13 +58,150 @@ export function options(): Options {
 
 const OUTLET = "<!--ssr-outlet-->";
 
-// The template with the rendered app in place of `<!--ssr-outlet-->`.
-export function renderDocument(template: string, app: Element): string {
+// What sigx's streaming writes (@sigx/server-renderer 1.0.1, byte for byte): the function its
+// replacement scripts call, and the completion signal the client waits for.
+const BOOTSTRAP =
+  "\n<script>\nwindow.$SIGX_REPLACE = function(id, html) {\n    var placeholder = document.querySelector('[data-async-placeholder=\"' + id + '\"]');\n    if (placeholder) {\n        var template = document.createElement('template');\n        template.innerHTML = html;\n        placeholder.innerHTML = '';\n        while (template.content.firstChild) {\n            placeholder.appendChild(template.content.firstChild);\n        }\n        placeholder.dispatchEvent(new CustomEvent('sigx:async-ready', { bubbles: true, detail: { id: id } }));\n    }\n};\n</script>";
+const COMPLETE =
+  "<script>window.__SIGX_STREAMING_COMPLETE__=true;window.dispatchEvent(new Event('sigx:ready'));</script>";
+
+function scriptOf(js: string): string {
+  return js == "" ? "" : `<script>${js}</script>`;
+}
+
+// The template with the rendered app in place of `<!--ssr-outlet-->`, every data load awaited
+// (sigx's blocking `renderDocument`).
+export async function renderDocument(template: string, app: Element): Promise<string> {
+  const r = new Renderer();
+  await r.render(app);
   const at = template.indexOf(OUTLET);
   if (at < 0) {
     return template;
   }
-  return template.slice(0, at) + renderToString(app) + template.slice(at + OUTLET.length);
+  const after = template.slice(at + OUTLET.length);
+  const end = after.lastIndexOf("</body>");
+  const cut: i64 = end < 0 ? after.length as i64 : end;
+  return template.slice(0, at) +
+    r.take() +
+    scriptOf(r.state.script()) +
+    after.slice(0, cut) +
+    COMPLETE +
+    after.slice(cut);
+}
+
+// The document as sigx streams it (`renderDocumentToWebStream`): the shell with each loading
+// component's pending state, then one script per component as its data arrives, then the
+// completion signal and the end of the template.
+async function* streamDocument(
+  template: string,
+  app: Element,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  const r = new Renderer();
+  r.streaming = true;
+  await r.render(app);
+  const at = template.indexOf(OUTLET);
+  const before = at < 0 ? template : template.slice(0, at);
+  const after = at < 0 ? "" : template.slice(at + OUTLET.length);
+  const end = after.lastIndexOf("</body>");
+  const cut: i64 = end < 0 ? after.length as i64 : end;
+  yield utf8Encode(before + r.take() + scriptOf(r.state.script()) + after.slice(0, cut));
+  if (r.pending.length > 0) {
+    yield utf8Encode(BOOTSTRAP);
+  }
+  while (true) {
+    const script = await r.next();
+    if (script == "") {
+      break;
+    }
+    yield utf8Encode(script);
+  }
+  yield utf8Encode(scriptOf(r.state.script()) + COMPLETE + after.slice(cut));
+}
+
+// --- Server functions ---
+//
+// The browser calls a server function through sigx's client (`@sigx/server/client`): `POST
+// /_sigx/fn/<key>` with `{"args":[input]}`, answered by `{"data": result}` or
+// `{"error": {"message", "status"}}`. The @sigx/velt Vite plugin generates the browser's stubs
+// for the functions a `*.server.vlt` module exports; the server registers the same functions here.
+
+export const SERVER_FN_BASE = "/_sigx/fn";
+
+export class ServerFn {
+  key: string;
+  // The request body to the response's JSON, or a thrown error.
+  call: (body: string) => Promise<string>;
+
+  constructor(key: string, call: (body: string) => Promise<string>) {
+    this.key = key;
+    this.call = call;
+  }
+}
+
+type Args<I> = { args: I[] };
+
+// The error envelope; `callServerFn` answers it with status 500.
+function failure(message: string): string {
+  return `{"error":{"message":${JSON.stringify(message)},"status":500}}`;
+}
+
+// A server function without input, under `key` (`<module>/<export>`, e.g. "api.server/getStats").
+export function serverFn<O>(key: string, handler: () => Promise<O>): ServerFn {
+  return new ServerFn(key, async (body: string): Promise<string> => {
+    try {
+      const result = await handler();
+      return `{"data":${JSON.stringify(result)}}`;
+    } catch (e) {
+      return failure(`${e}`);
+    }
+  });
+}
+
+// A server function with one input.
+export function serverFnWith<I, O>(key: string, handler: (input: I) => Promise<O>): ServerFn {
+  return new ServerFn(key, async (body: string): Promise<string> => {
+    try {
+      const req = JSON.parse<Args<I>>(body);
+      if (req.args.length != 1) {
+        return failure("server functions take a single input argument");
+      }
+      const result = await handler(req.args[0]);
+      return `{"data":${JSON.stringify(result)}}`;
+    } catch (e) {
+      return failure(`${e}`);
+    }
+  });
+}
+
+function jsonResponse(status: i64, body: string): Response {
+  return new Response(body, { status, headers: { "content-type": "application/json" } });
+}
+
+function errorResponse(status: i64, message: string): Response {
+  return jsonResponse(
+    status,
+    `{"error":{"message":${JSON.stringify(message)},"status":${status}}}`,
+  );
+}
+
+async function callServerFn(fns: ServerFn[], req: Request, pathname: string): Promise<Response> {
+  if (req.method != "POST") {
+    return errorResponse(405, "Method not allowed");
+  }
+  if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) {
+    return errorResponse(415, "Unsupported media type");
+  }
+  // Keys are `<module>/<export>`: nothing in them is percent-encoded (Velt has no
+  // `decodeURIComponent` yet).
+  const key = pathname.slice(SERVER_FN_BASE.length + 1);
+  for (const fn of fns) {
+    if (fn.key == key) {
+      const call = fn.call;
+      const out = await call(await req.text());
+      return jsonResponse(out.startsWith(`{"error"`) ? 500 : 200, out);
+    }
+  }
+  return errorResponse(404, `Unknown server function "${key}"`);
 }
 
 function contentType(path: string): string {
@@ -125,11 +266,13 @@ async function staticFile(dir: string, pathname: string): Promise<Response | nul
   }
 }
 
-// Serves the app: static files from `opts.staticDir`, then every other GET as a document
-// rendered by `render(pathname)` into the template.
+// Serves the app in sigx's order: static files from `opts.staticDir`, server functions under
+// /_sigx/fn, then every other GET as a document rendered by `render(pathname)` into the
+// template and streamed.
 export async function serveApp(
   opts: Options,
   render: (pathname: string) => Element,
+  fns: ServerFn[] = [],
 ): Promise<Server> {
   const cached = opts.dev ? "" : await readFile(opts.template);
   const server = await serve({ port: opts.port }, async (req: Request): Promise<Response> => {
@@ -138,8 +281,11 @@ export async function serveApp(
     if (file != null) {
       return file;
     }
+    if (url.pathname.startsWith(`${SERVER_FN_BASE}/`)) {
+      return await callServerFn(fns, req, url.pathname);
+    }
     const template = opts.dev ? await readFile(opts.template) : cached;
-    return new Response(renderDocument(template, render(url.pathname)), {
+    return new Response(BodyStream.from(streamDocument(template, render(url.pathname))), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   });
