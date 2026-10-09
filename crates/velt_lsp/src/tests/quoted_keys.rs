@@ -65,5 +65,7 @@ fn symbol_keyed_members_complete_with_their_key_not_a_string() {
     let items = items_after("const c = bag.");
     let symbol = find(&items, "[Symbol.iterator]");
     assert_eq!(symbol["textEdit"]["newText"], "[Symbol.iterator]");
-    assert!(find(&items, "items").get("textEdit").is_none_or(Value::is_null));
+    assert!(find(&items, "items")
+        .get("textEdit")
+        .is_none_or(Value::is_null));
 }
