@@ -3,7 +3,7 @@
 // function, a function value, or one a call returns. A sync arrow may declare its result
 // (`Response`, or the promise it returns) and may return a promise of a function that throws.
 // An async handler that throws still gets a 500.
-import { serve } from "velt:http";
+import { serve, Server, ServeInfo } from "velt:http";
 
 class NotAllowed extends Error {}
 
@@ -26,6 +26,13 @@ function prefixed(prefix: string): (req: Request) => Response {
   return (req: Request): Response => new Response(`${prefix} ${req.method}`);
 }
 
+// A wrapper of `serve` with `serve`'s own handler type passes the handler on.
+async function startWith<E>(
+  h: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws E,
+): Promise<Server> {
+  return await serve({ port: 0 }, h);
+}
+
 async function get(port: i64, path: string): Promise<string> {
   const r = await fetch(`http://127.0.0.1:${port}${path}`);
   return `${r.status} ${await r.text()}`;
@@ -46,6 +53,7 @@ async function main() {
   const f = await serve({ port: 0 }, (req: Request): Promise<Response> => respond("promise"));
   const g = await serve({ port: 0 }, (req) => respondThrows(new URL(req.url).pathname));
   const h = await serve({ port: 0 }, prefixed("made"));
+  const k = await startWith((req, info) => new Response("wrapped"));
   console.log(await get(a.port, "/x"));
   console.log(await get(b.port, "/y"));
   console.log(await get(c.port, "/z"));
@@ -61,4 +69,6 @@ async function main() {
   await f.shutdown();
   await g.shutdown();
   await h.shutdown();
+  console.log(await get(k.port, "/"));
+  await k.shutdown();
 }

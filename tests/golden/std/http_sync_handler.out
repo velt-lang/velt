@@ -5,3 +5,4 @@
 500 Internal Server Error
 200 declared | 200 promise | 200 made GET
 200 checked /page | 500 Internal Server Error
+200 wrapped

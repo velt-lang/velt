@@ -4,7 +4,12 @@
 //   doesn't change what was passed);
 // - an async named function or local as a `() => void` callback starts its promise;
 // - a sync arrow that returns a promise fits a promise member of a union of function types;
-// - a sync arrow for `(n) => T | Promise<T, E> throws E` that returns a promise.
+// - a sync arrow for `(n) => T | Promise<T, E> throws E` that returns a promise;
+// - an arrow typed by a member of a union of function types whose nested arrow uses its
+//   parameter (the nested arrow's member is chosen again for each try of the outer one);
+// - a function of a namespace import, with a defaulted parameter, as a `void` callback.
+
+import * as lib from "./_callback_lib";
 
 class Input {
   onChange: (v: string) => void = (v) => {};
@@ -47,6 +52,23 @@ function each(xs: string[], f: (s: string, i: number) => void) {
 
 type Handler = (() => void) | (() => Promise<void>);
 
+type Inner = (() => number) | (() => string);
+type Outer = ((x: number) => void) | ((x: string) => void);
+
+function show(f: Inner) {
+  console.log("show");
+}
+
+function run(o: Outer) {
+  console.log("run");
+}
+
+function eachName(xs: string[], f: (s: string) => void) {
+  for (const x of xs) {
+    f(x);
+  }
+}
+
 async function take(h: Handler) {
   await h();
 }
@@ -83,4 +105,10 @@ async function main() {
 
   await take(() => announce());
   console.log(await newStyle((k) => work(k)));
+
+  run((x) => {
+    const s: string = x;
+    show(() => x);
+  });
+  eachName(["ns"], lib.greet);
 }

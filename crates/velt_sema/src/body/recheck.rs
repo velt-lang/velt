@@ -140,7 +140,12 @@ impl Mark {
         for d in cx.fn_defs.split_off(m.fn_defs) {
             drop_orphan(cx, d);
         }
-        cx.closure_defs.truncate(m.closures);
+        for c in cx
+            .closure_defs
+            .split_off(m.closures.min(cx.closure_defs.len()))
+        {
+            cx.callback_wrappers.remove(&c);
+        }
         cx.rec.reported.truncate(m.reported);
         if let (Some(r), Some([refs, types, scopes, params])) = (&mut cx.ide, m.ide) {
             r.refs.truncate(refs);
@@ -196,6 +201,9 @@ impl Mark {
         keep_ranges(&mut cx.fn_values, m.fn_values, &ranges(|l| l.fn_values));
         let own_fns = keep_ranges(&mut cx.fn_defs, m.fn_defs, &ranges(|l| l.fn_defs));
         let own_closures = keep_ranges(&mut cx.closure_defs, m.closures, &ranges(|l| l.closures));
+        for c in &own_closures {
+            cx.callback_wrappers.remove(c);
+        }
         keep_ranges(&mut cx.rec.reported, m.reported, &ranges(|l| l.reported));
         keep_ranges(&mut cx.rec.completed, m.completed, &ranges(|l| l.completed));
         if let (Some(r), Some(start)) = (&mut cx.ide, m.ide) {

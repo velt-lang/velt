@@ -1,0 +1,52 @@
+// A sync closure that an HTTP handler runs, however it gets there, may not modify a capture:
+// through a variable, a field, a function's result, a parameter of a wrapper of `serve`, a
+// conditional. The same holds for async ones.
+import { serve, Server } from "velt:http";
+
+class Box {
+  h: (req: Request) => Response;
+  constructor(h: (req: Request) => Response) {
+    this.h = h;
+  }
+}
+
+function made(): (req: Request) => Response {
+  let made = 0;
+  return (req) => {
+    made++;
+    return new Response(`${made}`);
+  };
+}
+
+async function start(h: (req: Request) => Response): Promise<Server> {
+  return await serve({ port: 0 }, h);
+}
+
+async function main() {
+  let a = 0;
+  const viaLocal = (req: Request): Response => {
+    a++;
+    return new Response(`${a}`);
+  };
+  const s1 = await serve({ port: 0 }, viaLocal);
+  let b = 0;
+  const box = new Box((req) => {
+    b++;
+    return new Response(`${b}`);
+  });
+  const s2 = await serve({ port: 0 }, box.h);
+  const s3 = await serve({ port: 0 }, made());
+  let c = 0;
+  const s4 = await start((req) => {
+    c++;
+    return new Response(`${c}`);
+  });
+  let d = 0;
+  const s5 = await serve({ port: 0 }, d == 0 ? (req: Request): Response => {
+    d++;
+    return new Response(`${d}`);
+  } : (req: Request): Response => new Response("no"));
+  for (const s of [s1, s2, s3, s4, s5]) {
+    s.close();
+  }
+}

@@ -427,8 +427,6 @@ impl Walk<'_, '_> {
     /// A closure literal: its captured variables flow into its capture locals.
     fn closure(&mut self, c: DefId, ty: TyId, to: To) {
         self.g.parent.insert(c, self.d);
-        // A callback wrapper of an async closure is matched by the async closure's type.
-        let ty = self.cx.callback_wrappers.get(&c).copied().unwrap_or(ty);
         let n = self.g.node(Node::Lit(c), ty);
         if !self.g.captures.contains_key(&n) {
             let mut inner = vec![];

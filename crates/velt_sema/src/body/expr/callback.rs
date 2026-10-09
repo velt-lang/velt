@@ -188,6 +188,11 @@ impl FnCx<'_, '_> {
         if as_arrow(arg).is_some() {
             return None;
         }
+        // `ns.f` (a function of a namespace import) is the function `f`, by name.
+        let resolved = self
+            .without_namespace(arg)
+            .filter(|e| matches!(e.kind, ast::ExprKind::Ident(_)));
+        let arg = resolved.as_ref().unwrap_or(arg);
         // `f?: (s: string) => void` is `((s: string) => void) | null`: adapt to the function type.
         let exp = expected;
         let expected = self.cx.ty.opt_payload(expected).unwrap_or(expected);
@@ -590,7 +595,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The body of an expression-bodied arrow checked as `async` by [`FnCx::thread_arrow`]: its
-    /// value, awaited when it is a promise.
+    /// value, awaited when it is a promise or may be one.
     pub(super) fn awaited_body(&mut self, e: &ast::Expr) -> hir::Block {
         self.direct_await = super::promise_new::awaited_new_promise(e);
         let h = self.expr(e, self.f.ret, Want::Move);
@@ -602,7 +607,11 @@ impl FnCx<'_, '_> {
                 let span = h.span;
                 self.mk(H::Await(Box::new(h)), v, span)
             }
-            _ => h,
+            // A value that may be a promise (a handler of `serve`'s own type, passed on).
+            _ => {
+                let span = h.span;
+                self.await_union(h, span).unwrap_or_else(|h| h)
+            }
         };
         let h = match self.f.ret {
             Some(r) => self.coerce(h, r),

@@ -67,10 +67,32 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             {
                 continue;
             }
+            // A callback wrapper of an async closure (`body/expr/callback.rs`) is matched by the
+            // async closure's type, or by its own type only where nothing generic stands for it:
+            // `input.onChange = async (v) => …` in a `(v: string) => void` field is not the
+            // prelude's `resolve`, a `(T) => void`, but is any `(v: string) => void` that crosses.
+            let wrapped = match node {
+                Node::Lit(c) => cx.callback_wrappers.get(c).copied(),
+                _ => None,
+            };
+            // A sync closure is matched the same strict way: `resolve`'s `(T) => void` stands for
+            // no sync callback the user stores.
+            let sync = match node {
+                Node::Lit(c) => matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async),
+                _ => false,
+            };
+            let matches = |t: TyId| match wrapped {
+                Some(inner) => {
+                    types::may_be(cx, inner, t)
+                        || (!types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t))
+                }
+                None if sync => !types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t),
+                None => types::may_be(cx, g.tys[n], t),
+            };
             // Several crossing types may match: report one in user code, the earliest.
             let why = fns
                 .iter()
-                .filter(|(t, _)| types::may_be(cx, g.tys[n], **t))
+                .filter(|(t, _)| matches(**t))
                 .map(|(_, w)| *w)
                 .min_by_key(|w| (w.std, w.span.file, w.span.lo));
             if let Some(w) = why {
@@ -88,6 +110,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         let why = p.why[n][0].or(p.why[n][1]);
         let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
         finish(cx, c, local, why);
+        sync_crossing(cx, c, p.flags[n] & CROSSES != 0, p.why[n][0]);
     }
 }
 
@@ -181,6 +204,23 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     out
 }
 
+/// A sync closure `c` that an HTTP handler calls (`serve`'s handler, or a closure it reaches)
+/// runs on several threads at once with a copy of what it captured, like an async handler:
+/// modifying a capture is the same error, wherever the closure was written (a variable, a
+/// field, a function's result). Other crossings keep their copy semantics (a sync closure
+/// handed to a spawned task counts on its own copy, `spawn_fn_value_copied_per_task`), and
+/// only a definite crossing counts (a closure passed to an unknown callee is called in place).
+fn sync_crossing(cx: &mut Ctx, c: DefId, crosses: bool, why: Option<Why>) {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return;
+    };
+    let handler = why.is_some_and(|w| w.boundary == Boundary::Handler);
+    if f.is_async || f.is_generator || !crosses || !handler {
+        return;
+    }
+    report_mutated(cx, c, why, "closure");
+}
+
 /// Record what was decided for async closure `c`.
 fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
     let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] else {
@@ -193,32 +233,7 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         f.shares_captures = true;
         return;
     }
-    let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
-    for (name, at) in mutated {
-        let mut d = Diagnostic::error(
-            format!("this async closure modifies captured `{name}`, so it must stay on the task that created it"),
-            at,
-        );
-        if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
-        }
-        let runs = match why.map(|w| w.boundary) {
-            Some(Boundary::Spawn) => "the spawned task runs it on another thread",
-            Some(Boundary::Handler) => "requests run it on several threads at once",
-            Some(Boundary::Shared | Boundary::Mutex) => {
-                "every thread holding the `shared` value may call it"
-            }
-            Some(Boundary::Channel) => "the task receiving it runs it on another thread",
-            Some(Boundary::Settle) => "the task awaiting the promise may run it on another thread",
-            Some(Boundary::FnValue) | None => {
-                "the function it is passed to may keep it and run it on another thread"
-            }
-        };
-        cx.error(d.with_note(format!(
-            "{runs}, with its own copy of what it captured: pass `{name}` as a parameter instead, or share it with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
-        )));
-    }
+    report_mutated(cx, c, why, "async closure");
 }
 
 /// The label naming where a non-local closure leaves its task.
@@ -321,5 +336,36 @@ impl Propagation {
                 self.roots.push((t, w.through(site)));
             }
         }
+    }
+}
+
+/// "this `what` modifies captured `x`" for each capture closure `c` modifies, naming the
+/// boundary `why` it reaches.
+fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
+    let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
+    for (name, at) in mutated {
+        let mut d = Diagnostic::error(
+            format!("this {what} modifies captured `{name}`, so it must stay on the task that created it"),
+            at,
+        );
+        if let Some(w) = why {
+            let label = reaches(cx, &w);
+            d = d.with_label(w.span, label);
+        }
+        let runs = match why.map(|w| w.boundary) {
+            Some(Boundary::Spawn) => "the spawned task runs it on another thread",
+            Some(Boundary::Handler) => "requests run it on several threads at once",
+            Some(Boundary::Shared | Boundary::Mutex) => {
+                "every thread holding the `shared` value may call it"
+            }
+            Some(Boundary::Channel) => "the task receiving it runs it on another thread",
+            Some(Boundary::Settle) => "the task awaiting the promise may run it on another thread",
+            Some(Boundary::FnValue) | None => {
+                "the function it is passed to may keep it and run it on another thread"
+            }
+        };
+        cx.error(d.with_note(format!(
+            "{runs}, with its own copy of what it captured: pass `{name}` as a parameter instead, or share it with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
+        )));
     }
 }

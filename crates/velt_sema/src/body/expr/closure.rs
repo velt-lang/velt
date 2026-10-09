@@ -99,16 +99,35 @@ impl FnCx<'_, '_> {
     fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
         // Remembered per arrow and members: an arrow nested in one being tried is tried once,
         // not once per try of each enclosing arrow (which would be exponential in the nesting).
+        // Not when the arrow uses a parameter of an enclosing arrow being tried: its type
+        // differs between those tries (`(x) => show(() => x)` with `x` a number, then a string).
         let key = (e.span, members.to_vec());
-        if let Some(&m) = self.member_choices.get(&key) {
+        let cacheable = !crate::body::mentions::mentions(e, &self.trial_params);
+        if let Some(&m) = self.member_choices.get(&key).filter(|_| cacheable) {
             return m;
         }
         let m = self.try_members(e, members, escaping);
-        self.member_choices.insert(key, m);
+        if cacheable {
+            self.member_choices.insert(key, m);
+        }
         m
     }
 
     fn try_members(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
+        let names: Vec<String> = match &e.kind {
+            ast::ExprKind::Arrow { params, .. } => {
+                params.iter().map(|p| p.name.name.clone()).collect()
+            }
+            _ => vec![],
+        };
+        let outer = self.trial_params.len();
+        self.trial_params.extend(names);
+        let m = self.first_fitting(e, members, escaping);
+        self.trial_params.truncate(outer);
+        m
+    }
+
+    fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
         for &m in members {
             let mark = crate::body::recheck::Mark::here(self.cx);
             let frames = self.trial_frames();
@@ -274,12 +293,11 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
-        let mutated = if is_async {
+        if is_async {
             self.no_captured_generators(&frame);
-            mutated_captures(&frame)
-        } else {
-            vec![]
-        };
+        }
+        // Allowed while the closure stays on its task (`ownership::local_async`).
+        let mutated = mutated_captures(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
         let err = self.closure_error(def, declared_err, &frame, clause);
@@ -587,7 +605,7 @@ fn closure_assigned_in(
     crate::body::closure_assigned::owned(assigned)
 }
 
-/// The captured variables an async closure's body modifies, with the first place each is
+/// The captured variables a closure's body modifies, with the first place each is
 /// modified. They are only allowed when the closure stays on its task
 /// (`crate::ownership::local_async`).
 fn mutated_captures(frame: &Frame) -> Vec<(String, Span)> {
