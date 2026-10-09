@@ -168,6 +168,9 @@ pub(crate) struct Ctx<'m> {
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+    /// Object values converted by copying their fields, and the field assignments that could
+    /// tell the copy from the original (`crate::object_copies`).
+    pub object_copies: crate::object_copies::Copies,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -258,6 +261,7 @@ impl<'m> Ctx<'m> {
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
+            object_copies: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

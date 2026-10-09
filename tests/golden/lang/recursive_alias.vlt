@@ -1,0 +1,32 @@
+// A type alias may refer to itself through an intersection of object types, or an object type,
+// written out (#654): the recursion goes through an array or a nullable field, as in an
+// interface.
+
+type Tree = { kids: Tree[] } & { v: number };
+type Node = { next: Node | null; value: number };
+type List<T> = { head: T } & { tail?: List<T> };
+
+function sum(t: Tree): number {
+  let total = t.v;
+  for (const k of t.kids) {
+    total += sum(k);
+  }
+  return total;
+}
+
+function count<T>(l: List<T>): number {
+  return 1 + (l.tail == null ? 0 : count(l.tail));
+}
+
+function main() {
+  const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
+  console.log(t.kids[0].v);
+  t.kids.push({ kids: [{ kids: [], v: 4 }], v: 3 });
+  console.log(sum(t), JSON.stringify(t));
+  console.log(t);
+
+  const n: Node = { next: { next: null, value: 2 }, value: 1 };
+  console.log(n.next?.value ?? 0);
+  const l: List<string> = { head: "a", tail: { head: "b" } };
+  console.log(count(l), l.tail?.head ?? "-");
+}

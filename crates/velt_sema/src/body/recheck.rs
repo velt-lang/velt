@@ -22,6 +22,7 @@ pub(crate) struct Lens {
     diags: usize,
     throw_checks: usize,
     fresh_checks: usize,
+    object_copies: [usize; 3],
     jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
@@ -37,6 +38,7 @@ impl Lens {
             diags: cx.diags.len(),
             throw_checks: cx.throw_checks.len(),
             fresh_checks: cx.fresh_checks.len(),
+            object_copies: cx.object_copies.mark(),
             jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
@@ -135,6 +137,7 @@ impl Mark {
         cx.diags.truncate(m.diags);
         cx.throw_checks.truncate(m.throw_checks);
         cx.fresh_checks.truncate(m.fresh_checks);
+        cx.object_copies.rollback(m.object_copies);
         cx.jsx_adapters.truncate(m.jsx_adapters);
         cx.fn_values.truncate(m.fn_values);
         for d in cx.fn_defs.split_off(m.fn_defs) {
@@ -193,6 +196,19 @@ impl Mark {
             m.fresh_checks,
             &ranges(|l| l.fresh_checks),
         );
+        let copies = &mut cx.object_copies;
+        let start = m.object_copies;
+        keep_ranges(
+            &mut copies.copies,
+            start[0],
+            &ranges(|l| l.object_copies[0]),
+        );
+        keep_ranges(
+            &mut copies.writes,
+            start[1],
+            &ranges(|l| l.object_copies[1]),
+        );
+        keep_ranges(&mut copies.seen, start[2], &ranges(|l| l.object_copies[2]));
         keep_ranges(
             &mut cx.jsx_adapters,
             m.jsx_adapters,
@@ -279,6 +295,7 @@ mod tests {
             diags: 0,
             throw_checks: 0,
             fresh_checks: 0,
+            object_copies: [0; 3],
             jsx_adapters: 0,
             fn_values: 0,
             fn_defs: 0,
