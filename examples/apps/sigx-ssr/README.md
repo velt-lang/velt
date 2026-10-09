@@ -114,8 +114,10 @@ export const Clicker = component<{ start: number; label: string }>((ctx) => { â€
 <Clicker client:only start={9} label="only" />
 ```
 
-- **Directives.** The provider declares `client` as a directive prefix. This uses the JSX
-  contract extension in #815.
+- **Directives.** The provider declares them as TypeScript does, in `JSX.IntrinsicAttributes`
+  (`"client:load"?: boolean`, `"client:media"?: string`, â€¦; #815, with quoted property names
+  from #826). Velt checks them like `tsc`: a typo such as `client:lod` is an error, and the
+  editor completes them. They reach the provider through `jsxComponentAttributes`.
 - **What the server writes.** It records each island in sigx's `__SIGX_BOUNDARIES__` table:
   strategy, export name and props as JSON. `client:only` gets sigx's empty placeholder.
 - **Production.** The server reads the build's islands manifest
@@ -255,9 +257,9 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
    would give the plugin each function's name and types. It would then generate both the
    browser stubs and the TypeScript declarations, and the server's registration list, which
    today are a regex, a hand-written `.d.ts` and a list in `server.vlt`.
-9. **Component directives** (`<Counter client:load />`), for sigx islands: a provider declares
-   directive prefixes, and the compiler passes those attributes separately instead of as
-   props (#815, used by `/islands`).
+9. **`JSX.IntrinsicAttributes`** (`<Counter client:load />`), for sigx islands: attributes
+   every component takes, checked as in TypeScript and passed to the provider separately
+   (#815 on #826, used by `/islands`).
 10. **Binding names for providers.** The provider could learn the name a value is bound to
     (`const count = ctx.signal(0)` gives `"count"`), for example through an opt-in parameter the
     compiler fills in. This is what sigx's island state and resume need, and it replaces a

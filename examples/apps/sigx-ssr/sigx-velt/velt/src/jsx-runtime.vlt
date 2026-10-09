@@ -141,14 +141,29 @@ export function jsxComponent<P>(
 
 // --- Islands (sigx `client:*` directives) ---
 
-export const jsxDirectivePrefixes = "client";
+// The attributes every component takes (TypeScript's `JSX.IntrinsicAttributes`): sigx's island
+// directives. They are checked like props; `jsxComponentAttributes` receives them.
+export type IntrinsicAttributes = {
+  /** Hydrate as soon as the page loads. */
+  "client:load"?: boolean;
+  /** Hydrate when the browser is idle. */
+  "client:idle"?: boolean;
+  /** Hydrate when the island scrolls into view. */
+  "client:visible"?: boolean;
+  /** Hydrate on the first interaction with the island. */
+  "client:interaction"?: boolean;
+  /** Render in the browser only; the server sends a placeholder. */
+  "client:only"?: boolean;
+  /** Hydrate when the media query matches. */
+  "client:media"?: string;
+};
 
 // sigx's order: the first of these written decides how the island hydrates.
 const STRATEGIES = "load idle visible interaction only media";
 
 // `<Counter client:load start={1} />`: the component renders as usual and is marked as an
 // island, recorded with its props (which must be data: they are sent to the browser as JSON).
-export function jsxComponentDirectives<P>(
+export function jsxComponentAttributes<P>(
   component: (props: P) => Element,
   props: P,
   key: string | null,
