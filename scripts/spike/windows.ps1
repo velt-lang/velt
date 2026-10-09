@@ -26,7 +26,9 @@ Get-ChildItem $Out
 
 Section "import libs from System32"
 $libs = "$Out/libs"; New-Item -ItemType Directory -Force $libs | Out-Null
-$dlls = "kernel32","ntdll","advapi32","ws2_32","bcrypt","userenv","dbghelp","secur32","psapi","shell32","user32","ucrtbase","msvcrt","api-ms-win-core-synch-l1-2-0","ole32","oleaut32","crypt32","ncrypt","iphlpapi"
+Set-Content "$libs/api-ms-win-core-synch-l1-2-0.def" "LIBRARY api-ms-win-core-synch-l1-2-0.dll`r`nEXPORTS`r`n  WaitOnAddress`r`n  WakeByAddressSingle`r`n  WakeByAddressAll"
+& $lld -flavor link /lib /nologo /machine:x64 "/def:$libs/api-ms-win-core-synch-l1-2-0.def" "/out:$libs/api-ms-win-core-synch-l1-2-0.lib"
+$dlls = "kernel32","ntdll","advapi32","ws2_32","bcrypt","userenv","dbghelp","secur32","psapi","shell32","user32","ucrtbase","msvcrt","ole32","oleaut32","crypt32","ncrypt","iphlpapi"
 foreach ($d in $dlls) {
   $path = "$env:WINDIR\System32\$d.dll"
   if (-not (Test-Path $path)) { Write-Host "missing $path"; continue }
@@ -48,11 +50,17 @@ Section "directives in velt_rt.lib (DEFAULTLIB)"
 $sys = "kernel32.lib","ntdll.lib","advapi32.lib","ws2_32.lib","bcrypt.lib","userenv.lib","dbghelp.lib","secur32.lib","psapi.lib","shell32.lib","user32.lib","api-ms-win-core-synch-l1-2-0.lib"
 foreach ($p in "hello","http") {
   Section "link $p : NODEFAULTLIB, system DLL libs only (no CRT)"
-  & $lld -flavor link /nologo /NODEFAULTLIB /SUBSYSTEM:CONSOLE "/LIBPATH:$libs" "/OUT:$Out/$p-a.exe" "$Out/$p.obj" $rt $sys "/errorlimit:0" 2>&1 |
-    Select-String -Pattern 'undefined symbol' | ForEach-Object { ($_.Line -replace '.*undefined symbol: ','').Trim() } | Sort-Object -Unique | Tee-Object "$Out/$p-undef-nocrt.txt"
+  $log = "$Out/$p-nocrt.log"
+  & $lld -flavor link /nologo /NODEFAULTLIB /SUBSYSTEM:CONSOLE "/LIBPATH:$libs" "/OUT:$Out/$p-a.exe" "$Out/$p.obj" $rt $sys "/errorlimit:0" *> $log
+  Write-Host "exit $LASTEXITCODE"
+  Get-Content $log | Select-String "undefined symbol" | ForEach-Object { ($_.Line -replace '.*undefined symbol: ','').Trim() } | Sort-Object -Unique | Tee-Object "$Out/$p-undef-nocrt.txt"
+  Get-Content $log | Select-String -NotMatch "undefined symbol|>>> referenced" | Select-Object -First 20
   Section "link $p : + ucrtbase + msvcrt.dll"
-  & $lld -flavor link /nologo /NODEFAULTLIB /SUBSYSTEM:CONSOLE "/LIBPATH:$libs" "/OUT:$Out/$p-b.exe" "$Out/$p.obj" $rt $sys ucrtbase.lib msvcrt_dll.lib "/errorlimit:0" 2>&1 |
-    Select-String -Pattern 'undefined symbol' | ForEach-Object { ($_.Line -replace '.*undefined symbol: ','').Trim() } | Sort-Object -Unique | Tee-Object "$Out/$p-undef-ucrt.txt"
+  $log = "$Out/$p-ucrt.log"
+  & $lld -flavor link /nologo /NODEFAULTLIB /SUBSYSTEM:CONSOLE "/LIBPATH:$libs" "/OUT:$Out/$p-b.exe" "$Out/$p.obj" $rt $sys ucrtbase.lib msvcrt_dll.lib "/errorlimit:0" *> $log
+  Write-Host "exit $LASTEXITCODE"
+  Get-Content $log | Select-String "undefined symbol" | ForEach-Object { ($_.Line -replace '.*undefined symbol: ','').Trim() } | Sort-Object -Unique | Tee-Object "$Out/$p-undef-ucrt.txt"
+  Get-Content $log | Select-String -NotMatch "undefined symbol|>>> referenced" | Select-Object -First 20
 }
 Section "run b"
-& "$Out/hello-b.exe"; Write-Host "exit $LASTEXITCODE"
+if (Test-Path "$Out/hello-b.exe") { & "$Out/hello-b.exe"; Write-Host "exit $LASTEXITCODE" }
