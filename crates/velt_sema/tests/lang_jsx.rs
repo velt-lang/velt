@@ -12,6 +12,8 @@ const GENERIC: &str = "// @jsxImportSource ./_jsx_test_provider\n";
 const PRECOMPILE: &str = "// @jsxImportSource ./_jsx_test_precompile\n";
 const LIST: &str = "// @jsxImportSource ./_jsx_test_list\n";
 const TEMPLATE_STRING: &str = "// @jsxImportSource ./_jsx_test_template_string\n";
+const ESCAPE_STRING: &str = "// @jsxImportSource ./_jsx_test_escape_string\n";
+const NUMERIC_TEXT: &str = "// @jsxImportSource ./_jsx_test_numeric_text\n";
 const SEPARATOR: &str = "// @jsxImportSource ./_jsx_sep_precompile\n";
 const VOID: &str = "// @jsxImportSource ./_jsx_test_void\n";
 const SOLE_PLAIN: &str = "// @jsxImportSource ./_jsx_sole_plain\n";
@@ -253,6 +255,51 @@ fn template_without_slots_uses_jsx_template_string() {
         function main() {{ view(\"x\"); }}"
     ));
     assert_eq!(runtime_calls(&p, "view", "jsxTemplate").len(), 1);
+}
+
+/// #77: with `jsxEscapeString`, a `string` child (and static text with a `'`) is escaped by it,
+/// without the `Text` union; other text still goes through `jsxEscape`, and so does every
+/// string without the export.
+#[test]
+fn string_children_use_jsx_escape_string() {
+    let src =
+        "function view(s: string, m: string | null, b: bool) { const a = <p>{s} {m} {b} it's</p>; }
+        function main() { view(\"x\", null, true); }";
+    let p = ok(&format!("{ESCAPE_STRING}{src}"));
+    assert_eq!(runtime_calls(&p, "view", "jsxEscapeString").len(), 2);
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 2);
+    let p = ok(&format!("{PRECOMPILE}{src}"));
+    assert!(runtime_calls(&p, "view", "jsxEscapeString").is_empty());
+    assert_eq!(runtime_calls(&p, "view", "jsxEscape").len(), 4);
+}
+
+/// #759 review: without `jsxEscapeString`, a `string` child goes where it went before: a slot
+/// when the provider's `Text` has no strings (not a type error).
+#[test]
+fn without_jsx_escape_string_a_string_child_follows_text() {
+    let p = ok(&format!(
+        "{NUMERIC_TEXT}function view(s: string, n: i64) {{ const a = <p>{{s}} {{n}}</p>; }}
+        function main() {{ view(\"x\", 1); }}"
+    ));
+    assert!(runtime_calls(&p, "view", "jsxEscape").is_empty());
+    assert_eq!(runtime_calls(&p, "view", "Fragment").len(), 1);
+}
+
+/// #77: `{f.message}` is passed to `jsxEscapeString` where it is (borrowed), not copied out of
+/// `f` for each row.
+#[test]
+fn a_string_field_child_is_borrowed_by_jsx_escape_string() {
+    let p = ok(&format!(
+        "{ESCAPE_STRING}class F {{ constructor(public m: string) {{}} }}
+        function view(f: F) {{ const a = <p>{{f.m}}</p>; }}
+        function main() {{ view(new F(\"x\")); }}"
+    ));
+    let calls = runtime_calls(&p, "view", "jsxEscapeString");
+    assert!(
+        matches!(&calls[0][0].kind, E::Field { mode, .. } if *mode == hir::UseMode::Borrow),
+        "{:?}",
+        calls[0][0].kind
+    );
 }
 
 /// #676 review: providers escape `'` differently (react-dom `&#x27;`, sigx and `escapeHtml`

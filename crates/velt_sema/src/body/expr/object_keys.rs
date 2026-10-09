@@ -103,6 +103,9 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        self.cx
+            .object_copies
+            .observe(obj.ty, span, crate::object_copies::Seen::Keys);
         // An interface value lists the fields of the class it holds (none can hold anything
         // else: see `iface_classes`).
         let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {

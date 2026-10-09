@@ -57,6 +57,31 @@ pub(crate) fn unix_lib_args(lib: &Path) -> Vec<OsString> {
     vec![search, format!("-l{name}").into(), rpath]
 }
 
+/// The bundled lld's arguments for the shared runtime at `lib` (ELF and Mach-O alike): as
+/// [`unix_args`], with the rpath given to the linker directly.
+pub(crate) fn lld_args(lib: &Path) -> Vec<OsString> {
+    lld_lib_args(lib, "velt_rt_shared")
+}
+
+/// The bundled lld's arguments for any shared library `lib` (`lib<name>.so` / `.dylib`).
+pub(crate) fn lld_shared_lib_args(lib: &Path) -> Vec<OsString> {
+    let stem = lib.file_stem().unwrap_or_default().to_string_lossy();
+    let name = stem.strip_prefix("lib").unwrap_or(&stem).to_string();
+    lld_lib_args(lib, &name)
+}
+
+fn lld_lib_args(lib: &Path, name: &str) -> Vec<OsString> {
+    let dir = absolute_dir(lib);
+    let mut search = OsString::from("-L");
+    search.push(&dir);
+    vec![
+        search,
+        format!("-l{name}").into(),
+        "-rpath".into(),
+        dir.into(),
+    ]
+}
+
 /// Windows: copy the DLL `file` beside `output` (unless an up-to-date copy is there).
 pub(crate) fn place_file(file: &Path, output: &Path) -> Result<(), String> {
     let to_dir = match output.parent() {

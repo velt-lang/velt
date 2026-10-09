@@ -116,6 +116,9 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// For each item nested in a method (or constructor) of a class or struct: that type. Its
+    /// body is inside the type's body, for `private` and `#x` (TypeScript).
+    pub enclosing_class: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included
@@ -158,6 +161,9 @@ pub(crate) struct Ctx<'m> {
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+    /// Object values converted by copying their fields, and the field assignments that could
+    /// tell the copy from the original (`crate::object_copies`).
+    pub object_copies: crate::object_copies::Copies,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -227,6 +233,7 @@ impl<'m> Ctx<'m> {
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            enclosing_class: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
@@ -245,6 +252,7 @@ impl<'m> Ctx<'m> {
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
+            object_copies: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

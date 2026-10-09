@@ -11,6 +11,12 @@ variant in its own process (issue #77):
 | `rows-strings` | only the 13 rows, as strings (`hand`'s rows) |
 | `rows` | only the 13 rows, as TSX elements |
 | `rows-render` | the rows in a fragment, rendered to a string |
+| `shape-no-doctype` | hand-written in the compiled page's shape: the rows joined, then one template literal for the page |
+| `shape-jsx-escape` | that, with the messages escaped by `jsxEscape` |
+| `precompiled-no-doctype` | the TSX page rendered, without the doctype |
+| `shape` | `shape-no-doctype` with the doctype prepended by another template literal, as for the TSX page |
+
+The last four split the difference between `hand` and `precompiled` into steps.
 
 ```sh
 bench/jsx/run.sh [runs]                  # this checkout
@@ -21,7 +27,8 @@ BASE=origin/main BASE_FULL=1 bench/jsx/run.sh   # also with origin/main's compil
 `run.sh` prints the best wall-clock time over the runs and the instructions retired by one run
 (macOS `time -l`; Linux `perf stat` when installed, or valgrind's cachegrind with
 `COUNT=valgrind`). Instructions are the number to compare on a loaded machine. The other knobs
-(`VELT`, `VARIANTS`, `LABEL`, `OUT`) are listed at the top of `run.sh`. Each build first checks that the precompiled and generic pages are the
+(`VELT`, `VARIANTS`, `LABEL`, `OUT`, `CG_OUT` for cachegrind files to diff per function) are
+listed at the top of `run.sh`. Each build first checks that the precompiled and generic pages are the
 same, and the same as `hand` apart from the apostrophe (std/jsx writes `&#x27;` as react-dom
 does, `escapeHtml` `&#39;`).
 
@@ -87,3 +94,46 @@ benchmark on the main it builds on (#682):
 The precompiled page goes from 8% to 6% more instructions than `hand` on both. Linux arm64 is
 the bench-arm workflow (`gh workflow run bench-arm -f suite=jsx -f ref=template-builder -f
 base=main`, run 37830325119; cachegrind on a GitHub `ubuntu-24.04-arm` runner).
+
+With a template literal reusing the buffer of a long fresh part (a call's result of 1 KiB or
+more that nothing else holds: the rows that `jsxList` joined, the page the doctype is put in
+front of) instead of copying it into a new one. Linux arm64, cachegrind, `run.sh` with every
+variant, the base's compiler and std building the same programs (bench-arm run 37910227799 of
+25da008, `VARIANTS="hand precompiled generic shape-no-doctype shape-jsx-escape
+precompiled-no-doctype shape" COUNT=valgrind`, base #707 at fd041ac):
+
+| variant | #707 | this | Δ |
+|---|---:|---:|---:|
+| hand | 2 176 944 855 | 2 185 834 796 | +0.4% |
+| precompiled | 2 311 353 151 | 2 267 626 821 | −1.9% |
+| generic | 9 285 734 715 | 9 273 225 843 | −0.1% |
+| shape-no-doctype | 2 183 555 198 | 2 176 419 265 | −0.3% |
+| shape-jsx-escape | 2 241 704 756 | 2 231 462 491 | −0.5% |
+| precompiled-no-doctype | 2 250 853 736 | 2 224 027 719 | −1.2% |
+| shape | 2 245 227 617 | 2 222 323 309 | −1.0% |
+
+The precompiled page is 3.7% over `hand`. Reusing a buffer saves its allocation and free, but
+the text still moves: putting the doctype in front of a 1.2 KB page moves the page with
+`memmove`, which costs about as much as copying it. The `+0.4%` on `hand` is the check on every
+template literal with a call's result in it (`escapeHtml(f.message)` in each row).
+
+With a `string` child escaped by `jsxEscapeString` (std/jsx's optional export: no `Text` union),
+read where it is rather than copied out of its object (`{f.message}`). Linux arm64, the same
+command as above (bench-arm run 37910235102 of 5cbd117, base #707 at fd041ac):
+
+| variant | #707 | this | Δ |
+|---|---:|---:|---:|
+| hand | 2 176 944 844 | 2 185 734 797 | +0.4% |
+| precompiled | 2 311 353 164 | 2 220 826 815 | −3.9% |
+| generic | 9 285 734 728 | 9 273 125 852 | −0.1% |
+| shape-no-doctype | 2 183 555 185 | 2 176 319 283 | −0.3% |
+| shape-jsx-escape | 2 241 704 743 | 2 234 562 509 | −0.3% |
+| precompiled-no-doctype | 2 250 853 734 | 2 177 227 731 | −3.3% |
+| shape | 2 245 227 595 | 2 222 223 315 | −1.0% |
+
+The precompiled page is 1.6% over `hand` (it was 6.2%). Without the doctype it costs what the
+same page written by hand in the same shape costs (`precompiled-no-doctype` against
+`shape-no-doctype`, +0.04%), and with it slightly less than that page with the doctype
+(`shape`). What is left against `hand` is the shape: the page is built around the rows and then
+the doctype is put in front of it, which moves the page twice, where `hand` joins one array
+once (cachegrind per function: `memmove` +35 M and `prepend_in_place` +22 M against `hand`).

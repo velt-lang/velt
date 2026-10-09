@@ -1,0 +1,4 @@
+method_value_shared_resource.vlt:18:13
+error: this function captures
+and it is in `shared(...)`, so several threads may call it at once
+`Store` owns a resource (`[Symbol.dispose]`) and has no `clone()`

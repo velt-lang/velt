@@ -24,6 +24,9 @@
 //! - A golden whose first lines contain `// check: heap strings at most N` allocates at most N
 //!   heap string buffers in its debug run (`alloc=` of the same report): a count that does not
 //!   depend on timing, for programs that must not copy a string per step (e.g. appends).
+//! - A golden whose first lines contain `// check: heap blocks at most N` allocates at most N
+//!   heap blocks in its debug run (`blocks=A/F` of the same report, A <= N): for programs that
+//!   must not allocate per step (e.g. a callback per call).
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
 //! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
@@ -262,7 +265,8 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             }
             let leak_check = mode.is_none() && checks_leaks(f);
             let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
-            if leak_check || str_limit.is_some() {
+            let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
+            if leak_check || str_limit.is_some() || block_limit.is_some() {
                 cmd.env("VELT_RC_STATS", "1");
             }
             let o = run_with_timeout(cmd);
@@ -274,6 +278,11 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             }
             if let Some(limit) = str_limit {
                 if let Some(e) = too_many_strings(&String::from_utf8_lossy(&o.stderr), limit) {
+                    failures.push(format!("{rel} [debug]: {e}"));
+                }
+            }
+            if let Some(limit) = block_limit {
+                if let Some(e) = too_many_blocks(&String::from_utf8_lossy(&o.stderr), limit) {
                     failures.push(format!("{rel} [debug]: {e}"));
                 }
             }
@@ -328,6 +337,40 @@ fn heap_string_limit(file: &Path) -> Option<u64> {
             .parse()
             .expect("a number after `heap strings at most`"),
     )
+}
+
+/// The N of a `// check: heap blocks at most N` line among the golden's first lines.
+fn heap_block_limit(file: &Path) -> Option<u64> {
+    let src = std::fs::read_to_string(file).ok()?;
+    let limit = src
+        .lines()
+        .take(10)
+        .find_map(|l| l.trim().strip_prefix("// check: heap blocks at most "))?;
+    Some(
+        limit
+            .trim()
+            .parse()
+            .expect("a number after `heap blocks at most`"),
+    )
+}
+
+/// More heap blocks allocated than `limit` in a `rc stats: ... blocks=A/F` report, or no
+/// report.
+fn too_many_blocks(stderr: &str, limit: u64) -> Option<String> {
+    let allocs = stderr
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("rc stats:"))
+        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+        .and_then(|b| b.split_once('/'))
+        .and_then(|(a, _)| a.parse::<u64>().ok());
+    match allocs {
+        Some(n) if n <= limit => None,
+        Some(n) => Some(format!(
+            "{n} heap blocks allocated, at most {limit} expected"
+        )),
+        None => Some("heap block check: no `rc stats` report on stderr".into()),
+    }
 }
 
 /// More heap string buffers allocated than `limit` in a `rc stats: ... alloc=N` report, or no

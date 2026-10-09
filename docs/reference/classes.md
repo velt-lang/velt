@@ -121,8 +121,8 @@ hidden classes and no runtime shape checks.
   overridden methods go through a vtable, and only where the static type is a base class. A
   call on an object whose class is known from where it was allocated (`const s: Shape = new
   Square()`) is usually made direct while the object has not been passed on.
-- **Members**: `private` (usable only inside the declaring type's body, including closures
-  there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
+- **Members**: `private` (usable only inside the declaring type's body, including closures,
+  functions and classes declared in its methods, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
   use the private members of its types, which is how std types build each other's handles
   (this covers `private` only: a `#x` name is usable only in its class's body, in std too);
   `console.log` shows private fields, as Node shows a TypeScript `private` field, except
@@ -133,16 +133,24 @@ hidden classes and no runtime shape checks.
   and `protected` members don't exist (only a constructor can be `protected`). Static and
   instance members are separate namespaces, as in TypeScript: a subclass's `static m()` doesn't
   hide an inherited instance method `m()`, and a class below it can still `override` that method.
+  Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
+  `A`'s `static f()` (unless `B` declares a `static f` of its own, in its body or in an
+  `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
+  body).
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
   names the member that the class whose body the code is in declares, on any instance of that
-  class or a subclass, not only `this`; elsewhere, also in a subclass, it is an error (``
-  property `#x` is not accessible outside class `A` because it has a private name ``). A
+  class or a subclass, not only `this` (a function or class declared in a method is in the body
+  too; where class bodies nest, the innermost one declaring `#x`); elsewhere, also in a subclass, it is an error (``
+  property `#x` is not accessible outside class `A` because it has a private name ``, also for
+  an accessor: reading `o.#v`, assigning `o.#v = 1` or updating `o.#v += 1` reports it once). A
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
   method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides
   nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
-  the class declaring `#x`, and narrows like `instanceof`. Private names exist only in class
+  the class declaring `#x`, and narrows like `instanceof`. As in TypeScript, `o` must not be
+  possibly null (``the right operand of `in` may be null``; JavaScript throws a `TypeError` for
+  `null`): test `o !== null && #x in o`. Private names exist only in class
   bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
   with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
   slot, a direct call); they differ where Node differs:
@@ -286,7 +294,10 @@ until `x` is reassigned; a variable that a closure assigns is not narrowed, as
 on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
 `catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
 (`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
-copy it into a local first. The test reads the class id in the object's vtable: one load and
+copy it into a local first. Tests joined by `||` narrow to the nearest class they both imply:
+with `class S2 extends S`, `x instanceof S || x instanceof S2` reads `x` as an `S`, and with
+two subclasses `T1` and `T2` of `S`, `x instanceof T1 || x instanceof T2` does too (when `S` is
+not `x`'s own class). The test reads the class id in the object's vtable: one load and
 one comparison, whatever the depth of the hierarchy.
 
 - The narrowed type keeps the type arguments: a `Box<i64>` tested for

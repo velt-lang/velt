@@ -1,0 +1,32 @@
+object_copies_generic.vlt:25:11: error: a value of type `AB` converts to `A` by copying its fields, and this program compares `A` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:26:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_generic.vlt:26:27: error: a value of type `AB` converts to `A` by copying its fields, and this program compares `A` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:26:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_generic.vlt:26:43: error: a value of type `AB` converts to `A` by copying its fields, and this program compares `A` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:26:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_generic.vlt:28:20: error: a value of type `CD` converts to `C` by copying its fields, and this program compares `C` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:29:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `C` made from a `CD` value is a new object with the same field values
+  = note: build the new object explicitly, `{ c: cd.c }` (a new object in TypeScript too), or declare the parameter or variable as `CD`
+object_copies_generic.vlt:29:30: error: a value of type `CD` converts to `C` by copying its fields, and this program compares `C` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:29:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `C` made from a `CD` value is a new object with the same field values
+  = note: build the new object explicitly, `{ c: cd.c }` (a new object in TypeScript too), or declare the parameter or variable as `CD`
+object_copies_generic.vlt:31:21: error: a value of type `EF` converts to `E` by copying its fields, and this program compares `E` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:31:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `E` made from a `EF` value is a new object with the same field values
+  = note: build the new object explicitly, `{ e: ef.e }` (a new object in TypeScript too), or declare the parameter or variable as `EF`
+object_copies_generic.vlt:31:25: error: a value of type `EF` converts to `E` by copying its fields, and this program compares `E` values with `===`: two copies of one object are not `===`
+object_copies_generic.vlt:31:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `E` made from a `EF` value is a new object with the same field values
+  = note: build the new object explicitly, `{ e: ef.e }` (a new object in TypeScript too), or declare the parameter or variable as `EF`
+object_copies_generic.vlt:33:10: error: a value of type `GH` converts to `G` by copying its fields, and this program prints a `G`: Node would show the original object's fields, in its order
+object_copies_generic.vlt:33:3: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `G` made from a `GH` value is a new object with the same field values
+  = note: build the new object explicitly, `{ g: gh.g }` (a new object in TypeScript too), or declare the parameter or variable as `GH`

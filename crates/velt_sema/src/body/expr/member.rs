@@ -30,7 +30,8 @@ impl FnCx<'_, '_> {
     /// Field `name` of struct / class / object values of type `t`: (index, field type).
     pub(crate) fn field_of(&mut self, t: TyId, name: &str) -> Option<(u32, TyId)> {
         // A class and its subclass may each have a field `#x` (`Ctx::field_seen_from`).
-        self.cx.field_seen_from(t, name, self.owner)
+        let owner = self.name_owner(name);
+        self.cx.field_seen_from(t, name, owner)
     }
 
     /// `x.field` on an interface value or bounded generic: a call of the field's getter slot
@@ -152,6 +153,9 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
+        if self.private_accessor_outside(t, prop, false) {
+            return;
+        }
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
                 format!("cannot read `{}`: it has a setter but no getter", prop.name),
@@ -262,6 +266,9 @@ impl FnCx<'_, '_> {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
         let obj = self.expr(object, None, Want::Borrow);
+        if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            return self.method_value(obj, object, prop, exp, span);
+        }
         let r = self.in_place_receiver(object, obj);
         let h = self.member_of(r.recv, prop, want, span);
         let h = self.after_receiver(r.before, h);
