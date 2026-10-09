@@ -3,7 +3,8 @@
 // (a closure captured it and the enclosing code changes it), a call of that closure may replace
 // `o.a` (or `o` itself) and free the object `keep` points to (#819). `keep` holds a share of
 // the value instead, as in JS, where it keeps referring to the old object. The same holds for
-// destructured fields (also of a reference-counted object) and for `for...of` over an array in
+// destructured fields (also of a reference-counted object; strings, tuples, object literals and
+// unions, which a destructuring binds by reference) and for `for...of` over an array in
 // such a cell.
 // Each case has classes of its own: a type another case shares would be reference counted in
 // every case. The closures add 0 so the output does not depend on when `o.a.b.c.v` is read.
@@ -197,6 +198,64 @@ function forOfReassigned(): void {
     console.log("for...of reassigned", x.b.c.v + 120, xs.length);
   }
 }
+class O13 { k = 0; s: string = "init-" + (Math.random() > 2 ? "1" : "2") + "-padding-padding-padding" }
+function destructuredString(): void {
+  const o = new O13();
+  const g = (n: number): number => { o.s = `new-${n}-padding-padding-padding-padding`; return 0; };
+  o.k += g(1);
+  const { s } = o;
+  o.k += g(2);
+  console.log("destructured string", s, o.s);
+}
+
+class A14 { v = 1 }
+class O14 { k = 0; t: [A14, number] = [new A14(), 1] }
+function destructuredTuple(): void {
+  const o = new O14();
+  const g = (n: number): number => { o.t = [new A14(), n]; return 0; };
+  o.k += g(1);
+  const { t } = o;
+  t[0].v = 5;
+  t[1] = 7;
+  console.log("destructured tuple write", t[1], o.t[1]);
+  o.k += g(2);
+  console.log("destructured tuple", t[0].v, t[1], o.t[0].v, o.t[1]);
+}
+
+interface P15 { x: number; tag: string }
+class O15 {
+  k = 0;
+  p: P15 = { x: 1, tag: "t-" + (Math.random() > 2 ? "1" : "2") + "-padding-padding-padding" };
+}
+function use15(q: P15, f: (n: number) => number): string {
+  const t = q.tag;
+  f(3);
+  return `${t}/${q.x}`;
+}
+function destructuredObjectLiteral(): void {
+  const o = new O15();
+  const g = (n: number): number => { o.p = { x: n, tag: `u-${n}-padding-padding-padding` }; return 0; };
+  o.k += g(1);
+  const { p } = o;
+  p.x = 9;
+  console.log("destructured object literal write", p.x, o.p.x);
+  o.k += g(2);
+  console.log("destructured object literal", p.x, p.tag, o.p.x);
+  console.log("destructured object literal call", use15(p, g));
+}
+
+class O16 { k = 0; u: string | number = "init-" + (Math.random() > 2 ? "1" : "2") + "-padding-padding-padding" }
+function destructuredUnion(): void {
+  const o = new O16();
+  const g = (n: number): number => { o.u = n; return 0; };
+  o.k += g(1);
+  o.u = "again-" + (Math.random() > 2 ? "1" : "2") + "-padding-padding-padding";
+  const { u } = o;
+  if (typeof u === "string") {
+    o.k += g(123456789);
+    console.log("destructured union", u.length, u, o.u);
+  }
+}
 issue();
 fieldOfField();
 element();
@@ -208,4 +267,8 @@ destructured();
 destructuredShared();
 forOfField();
 forOfReassigned();
+destructuredString();
+destructuredTuple();
+destructuredObjectLiteral();
+destructuredUnion();
 await asyncClosure();

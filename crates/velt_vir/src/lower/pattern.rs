@@ -278,19 +278,27 @@ impl FnLower<'_, '_> {
     }
 
     /// A binding by reference into a place others may replace while it lives (`stable_binds`):
-    /// it refers to a share of the value, owned by the current scope (semantics stage 2).
+    /// it refers to a share of the value, owned by the current scope (semantics stage 2). An
+    /// indirect binding (a value stored inline, bound by reference) points to that share. A
+    /// share copies the parts that can be changed in place, so those types are counted first
+    /// (`Cx::note_identity_borrow`, as `stable_borrow` does): the share is then the same
+    /// object, and writes through the binding reach the original.
     fn bind_share(&mut self, id: hir::LocalId, place: &Place) {
         let info = &self.info[id.0 as usize];
         let (Some(l), ty) = (info.vir, info.ty) else {
             return;
         };
-        if info.indirect {
-            return self.bind_local(id, false, false, place);
+        let indirect = info.indirect;
+        for p in self.cx.in_place_parts(ty) {
+            self.cx.note_identity_borrow(p);
         }
         let s = self.share_value(Operand::Copy(place.clone()), ty);
         let vt = self.cx.ty(ty);
         let t = Place::local(self.copy_to_temp(s, vt));
         self.own_place(t.clone(), ty);
+        if indirect {
+            return self.bind_local(id, false, false, &t);
+        }
         self.assign(Place::local(l), Rvalue::Use(Operand::Copy(t)));
     }
 

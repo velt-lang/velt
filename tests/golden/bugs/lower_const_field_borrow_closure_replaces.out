@@ -11,4 +11,11 @@ for...of field 111 1
 for...of field 111 1
 for...of reassigned 121 0
 for...of reassigned 121 0
+destructured string new-1-padding-padding-padding-padding new-2-padding-padding-padding-padding
+destructured tuple write 7 7
+destructured tuple 5 7 1 2
+destructured object literal write 9 9
+destructured object literal 9 u-1-padding-padding-padding 2
+destructured object literal call u-1-padding-padding-padding/9
+destructured union 31 again-2-padding-padding-padding 123456789
 async closure 81 1
