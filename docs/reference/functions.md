@@ -410,7 +410,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   default's type.
 - As in TS, a function may take **fewer parameters** than the function type it is passed as:
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
-  `double`. An arrow may also take more, when the extra ones have defaults.
+  `double`. A function may also take more, when the extra ones are optional or have defaults
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
 - As in TS, a function that returns a value is accepted where a **`void`-returning** function
   type is expected; the value is evaluated and dropped. This holds for an arrow without a
   return type (its expression body, or a `return value;` in it) and for a named function or a

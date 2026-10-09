@@ -161,20 +161,23 @@ impl FnCx<'_, '_> {
         let mut prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         let mut narrowing = frame_narrowing(&self.outer[j], prev);
+        // A captured closure `const` is still that closure: a call through the capture fills
+        // in its parameters' defaults (`FnCx::call_value`).
+        let closure = self.outer[j].closure_consts.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
+            if let Some(c) = closure {
+                f.closure_consts.insert(prev, c);
+            }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = frame_narrowing(f, prev);
         }
-        Some(add_narrowed_capture(
-            &mut self.f,
-            name,
-            prev,
-            ty,
-            span,
-            narrowing,
-        ))
+        let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        if let Some(c) = closure {
+            self.f.closure_consts.insert(inner, c);
+        }
+        Some(inner)
     }
 
     /// Lookup without creating captures (for "is this name a local?" questions).
@@ -190,10 +193,12 @@ impl FnCx<'_, '_> {
             .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
     }
 
-    /// The closure a `const` of the current function named `name` holds (`closure_consts`).
+    /// The closure the visible `const` named `name` holds (`closure_consts`), if it is one.
     pub fn local_closure_const(&self, name: &str) -> Option<crate::hir::DefId> {
-        let l = frame_lookup(&self.f, name)?;
-        self.f.closure_consts.get(&l).copied()
+        std::iter::once(&self.f)
+            .chain(self.outer.iter().rev())
+            .find_map(|f| frame_lookup(f, name).map(|l| f.closure_consts.get(&l).copied()))
+            .flatten()
     }
 
     pub fn is_local_name(&self, name: &str) -> bool {

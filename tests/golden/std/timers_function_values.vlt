@@ -1,0 +1,37 @@
+// Function values as timer and `void` callbacks (#789): a local function value, functions
+// whose parameters are all optional or have defaults (called with none of them), and a
+// function with a defaulted second parameter where one argument is passed.
+
+import { delay } from "velt:timers";
+
+function tick(n?: number) {
+  console.log("optional", n == null ? "none" : `${n}`);
+}
+
+function withDefault(n: number = 3) {
+  console.log("default", n);
+}
+
+function show(s: string, prefix: string = ">") {
+  console.log(prefix, s);
+}
+
+function each(xs: string[], f: (s: string) => void) {
+  for (const x of xs) {
+    f(x);
+  }
+}
+
+async function main() {
+  const local = () => console.log("local");
+  const localOptional = (n?: number) => console.log("local optional", n == null ? "none" : `${n}`);
+  setTimeout(local, 10);
+  setTimeout(tick, 20);
+  setTimeout(withDefault, 30);
+  setTimeout(localOptional, 40);
+  const interval = setInterval(local, 60);
+  each(["a", "b"], show);
+  await delay(90);
+  clearInterval(interval);
+  await delay(10);
+}

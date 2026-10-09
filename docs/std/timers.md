@@ -4,8 +4,9 @@
 `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` and `Timer` are globals (from the
 [prelude](prelude.md)), as in TypeScript; `velt:timers` exports them too. A timer takes a
 callback, like JS: one returning the promise to run (`() => save(doc)` or `async () => { … }`),
-or a plain one (`() => console.log("x")`, or a function without parameters, `setTimeout(tick,
-10)`), which the compiler runs as an `async` one. The callback owns what it captures; the task
+or a plain one (`() => console.log("x")`, a function name or a local function value,
+`setTimeout(tick, 10)`, whose parameters, if any, are optional or have defaults and are left
+out), which the compiler runs as an `async` one. The callback owns what it captures; the task
 runs as its own spawned task, so an error it throws is uncaught (catch inside the task).
 
 - `setTimeout(task: () => Promise<void>, ms): Timer`, `setImmediate(task): Timer`,
@@ -49,8 +50,8 @@ Differences from Node:
   `await sleep(ms)` in the callback keeps both alive), but a callback waiting for something
   that never comes keeps a Velt process waiting.
 - Extra arguments after `ms` are not supported: capture them in the callback. A callback
-  passed as a value other than an arrow or a function name (`setTimeout(this.tick, 10)`) must
-  return a promise.
+  passed as a value other than an arrow, a function name or a local (`setTimeout(this.tick,
+  10)`) must return a promise.
 
 ## Ticker
 
