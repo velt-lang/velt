@@ -8,7 +8,7 @@ function main() {
   for (let i = 0; i < 200000; i++) {
     const comma = new RegExp(",", "g");
     n += comma.replace(line, ";").length;
-    n += new RegExp("\s*[,;]\s*").split(line).length;
+    n += new RegExp("\\s*[,;]\\s*").split(line).length;
     if (new RegExp("gam+a").test(line)) {
       n += 1;
     }
