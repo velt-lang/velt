@@ -135,10 +135,22 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
     native::check_files(req.native)?;
+    let why_not_bundled = match &choice {
+        bundled::Choice::System { why } => why.clone(),
+        _ => None,
+    };
+    match choice {
+        bundled::Choice::Bundled(b) => link_with_bundled(req, &b, os),
+        _ => link_with_system(req, os)
+            .map_err(|e| with_bundled_reason(e, why_not_bundled.as_deref())),
+    }
+}
+
+/// The system linker's link (`link.exe`, `cc`).
+fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
     let shared = shared::is_shared(req.runtime_lib, os);
-    match (choice, os) {
-        (bundled::Choice::Bundled(b), _) => link_with_bundled(req, &b, os),
-        (_, TargetOs::Windows) => {
+    match os {
+        TargetOs::Windows => {
             let mut cmd = msvc_linker(req.target)?;
             cmd.args(msvc_args(req)?);
             run_linker(cmd)?;
@@ -147,7 +159,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             }
             native::place_dlls(req.native, req.output)
         }
-        (_, TargetOs::Linux | TargetOs::MacOs) => {
+        TargetOs::Linux | TargetOs::MacOs => {
             let args = unix_args(req, os);
             let fast = (os == TargetOs::Linux && !shared && linker_override().is_none())
                 .then(fast_ld::fuse_ld_flag)
@@ -163,6 +175,20 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             cmd.args(&args);
             run_linker(cmd)
         }
+    }
+}
+
+/// How the error starts when the linker program cannot be started (see [`with_bundled_reason`]).
+const LINKER_NOT_RUN: &str = "failed to run linker";
+
+/// A system link that failed because there is no system linker (`link.exe` not found, `cc`
+/// not runnable), after the bundled linker was passed over for `why`: say why, since a toolchain
+/// with a bundled linker should not need one. Other link errors are left as they are.
+fn with_bundled_reason(err: String, why: Option<&str>) -> String {
+    let no_linker = err.starts_with(system::NO_MSVC_LINKER) || err.starts_with(LINKER_NOT_RUN);
+    match why {
+        Some(why) if no_linker => format!("{err}\n(the bundled linker cannot be used: {why})"),
+        _ => err,
     }
 }
 
@@ -269,7 +295,7 @@ pub(crate) fn run_linker(mut cmd: Command) -> Result<(), String> {
     let program = cmd.get_program().to_string_lossy().into_owned();
     let out = cmd
         .output()
-        .map_err(|e| format!("failed to run linker `{program}`: {e}"))?;
+        .map_err(|e| format!("{LINKER_NOT_RUN} `{program}`: {e}"))?;
     if out.status.success() {
         return Ok(());
     }
@@ -513,6 +539,22 @@ mod tests {
         assert!(find_runtime_lib_in(target, Some(tmp.join("missing.a")), Some(&exe)).is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_missing_system_linker_says_why_the_bundled_one_was_not_used() {
+        let why = "no link kit for `x86_64-pc-windows-msvc` (looked in C:\\velt\\lib\\targets\\x86_64-pc-windows-msvc)";
+        let msvc = "could not find the MSVC linker (link.exe). Install Visual Studio …".to_string();
+        assert_eq!(
+            with_bundled_reason(msvc.clone(), Some(why)),
+            format!("{msvc}\n(the bundled linker cannot be used: {why})")
+        );
+        let cc = "failed to run linker `cc`: No such file or directory (os error 2)".to_string();
+        assert!(with_bundled_reason(cc, Some(why)).ends_with(&format!("cannot be used: {why})")));
+        // A link that ran and failed is the linker's own error; with no fallback, nothing to add.
+        let undefined = "linker `cc` failed (exit code 1)\nundefined symbol: foo".to_string();
+        assert_eq!(with_bundled_reason(undefined.clone(), Some(why)), undefined);
+        assert_eq!(with_bundled_reason(msvc.clone(), None), msvc);
     }
 
     #[test]

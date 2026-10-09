@@ -10,6 +10,9 @@ use std::process::Command;
 
 use crate::{linker_override, native, shared, LinkRequest, TargetOs};
 
+/// How the error starts when there is no MSVC linker (see [`crate::with_bundled_reason`]).
+pub(crate) const NO_MSVC_LINKER: &str = "could not find the MSVC linker";
+
 /// Per-platform link settings. Native libraries are what the Rust `std` (and later tokio) inside the
 /// velt_rt staticlib needs — cross-checked with
 /// `cargo rustc -p velt_rt --crate-type staticlib -- --print native-static-libs`.
@@ -206,10 +209,11 @@ pub(crate) fn msvc_linker(target: &str) -> Result<Command, String> {
     let arch = target.split('-').next().unwrap_or("x86_64");
     let triple = format!("{arch}-pc-windows-msvc");
     let tool = cc::windows_registry::find_tool(&triple, "link.exe").ok_or_else(|| {
-        "could not find the MSVC linker (link.exe). Install Visual Studio or the \"Build Tools for Visual \
-         Studio\" with the \"Desktop development with C++\" workload (MSVC + Windows SDK), or set \
-         $VELT_LINKER to link.exe"
-            .to_string()
+        format!(
+            "{NO_MSVC_LINKER} (link.exe). Install Visual Studio or the \"Build Tools for Visual \
+             Studio\" with the \"Desktop development with C++\" workload (MSVC + Windows SDK), or \
+             set $VELT_LINKER to link.exe"
+        )
     })?;
     // `to_command` applies the LIB / PATH / INCLUDE environment that find_tool discovered.
     Ok(tool.to_command())
