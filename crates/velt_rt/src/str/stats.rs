@@ -12,9 +12,11 @@
 //! the runtime hands to compiled code (`VeltBytes`, `VeltArray`, `VeltStrArray` `from_vec`) or
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
-//! checks, semantics stage 2). `channel leftovers=<n>`: values still queued in channels when
-//! `main` returned normally, which the runtime dropped then (docs/std/channel.md); a leak check
-//! passes with them, so the count keeps them visible.
+//! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
+//! once no task is left that could make them so ([`freeze`]). `channel
+//! leftovers=<n>`: values still queued in channels when `main` returned normally, which the
+//! runtime dropped then (docs/std/channel.md); a leak check passes with them, so the count keeps
+//! them visible.
 
 #[cfg(debug_assertions)]
 mod counters {
@@ -25,8 +27,7 @@ mod counters {
     pub static RELEASE: AtomicU64 = AtomicU64::new(0);
     pub static ALLOC: AtomicU64 = AtomicU64::new(0);
     pub static FREE: AtomicU64 = AtomicU64::new(0);
-    pub static BLOCK_ALLOC: AtomicU64 = AtomicU64::new(0);
-    pub static BLOCK_FREE: AtomicU64 = AtomicU64::new(0);
+    pub static BLOCKS: super::BlockCount = super::BlockCount::new();
     pub static CHANNEL_LEFTOVERS: AtomicU64 = AtomicU64::new(0);
 
     pub fn enabled() -> bool {
@@ -55,8 +56,105 @@ hook!(retain, RETAIN);
 hook!(release, RELEASE);
 hook!(alloc, ALLOC);
 hook!(free, FREE);
-hook!(block_alloc, BLOCK_ALLOC);
-hook!(block_free, BLOCK_FREE);
+/// A block was allocated (`velt_rt_alloc`, or an array buffer handed to compiled code).
+#[inline(always)]
+pub(crate) fn block_alloc() {
+    #[cfg(debug_assertions)]
+    if counters::enabled() {
+        counters::BLOCKS.alloc();
+    }
+}
+
+/// A block was freed (`velt_rt_free`, or an array buffer taken back from compiled code).
+#[inline(always)]
+pub(crate) fn block_free() {
+    #[cfg(debug_assertions)]
+    if counters::enabled() {
+        counters::BLOCKS.free();
+    }
+}
+
+/// The `blocks=<allocated>/<freed>` counts, which [`freeze`] freezes at exit.
+///
+/// Tasks still running when `main` returns go on allocating and freeing while the count is
+/// taken, so allocated and freed numbers read one after the other were no count of any one
+/// moment: a straggler that allocated its result between the two reads (or between the check
+/// that found them equal and the report) showed up as a leak now and then (#804). The counts
+/// therefore change together under one lock, and once frozen they stay as they were: blocks a
+/// straggler allocates after a moment when every block was freed are neither leaked by compiled
+/// code nor part of the count (the process ends with that task).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub(crate) struct BlockCount(std::sync::Mutex<Blocks>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub(crate) struct Blocks {
+    pub allocated: u64,
+    pub freed: u64,
+    frozen: bool,
+}
+
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+impl BlockCount {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::Mutex::new(Blocks {
+            allocated: 0,
+            freed: 0,
+            frozen: false,
+        }))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Blocks> {
+        // The counts are plain numbers: a panic while holding the lock leaves them consistent.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(crate) fn alloc(&self) {
+        let mut b = self.lock();
+        if !b.frozen {
+            b.allocated += 1;
+        }
+    }
+
+    pub(crate) fn free(&self) {
+        let mut b = self.lock();
+        if !b.frozen {
+            b.freed += 1;
+        }
+    }
+
+    /// The counts now (frozen ones once [`Self::settle`] returned).
+    pub(crate) fn get(&self) -> Blocks {
+        *self.lock()
+    }
+
+    /// Wait until every block allocated so far is freed, or no task that could free one is
+    /// alive (`tasks_alive`), or `deadline` passed. With `freeze`, then freeze the counts: equal
+    /// counts are checked and frozen in one step, so no straggler's allocation slips in between.
+    pub(crate) fn settle(
+        &self,
+        tasks_alive: impl Fn() -> bool,
+        deadline: std::time::Instant,
+        freeze: bool,
+    ) {
+        loop {
+            {
+                let mut b = self.lock();
+                if b.allocated == b.freed {
+                    b.frozen |= freeze;
+                    return;
+                }
+            }
+            // Unfreed blocks: only a task still alive can free them (checked without the lock,
+            // which the tasks need to count).
+            if !tasks_alive() || std::time::Instant::now() >= deadline {
+                self.lock().frozen |= freeze;
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
 
 /// Record the number of values left in channels at exit, dropped by the runtime (reported as
 /// `channel leftovers=<n>`).
@@ -69,27 +167,31 @@ pub(crate) fn channel_leftovers(n: u64) {
     let _ = n;
 }
 
-/// Before [`report`] when `main` returned normally (debug runtime with `VELT_RC_STATS=1` only):
-/// tasks still running then (a task whose handle was dropped, the loser of a race) free their
-/// blocks when they finish, so wait while blocks are unfreed and tasks are alive, instead of
-/// counting a straggler as a leak. Up to a minute: a hang guard, which a real leak waits out.
-/// `tasks_alive`: whether any task is still alive.
+/// After `main` returned normally (debug runtime with `VELT_RC_STATS=1` only): tasks still
+/// running then (a task whose handle was dropped, the loser of a race) free their blocks when
+/// they finish, so wait while blocks are unfreed and tasks are alive, instead of counting a
+/// straggler as a leak. Up to a minute: a hang guard, which a real leak waits out.
+/// `tasks_alive`: whether any task is still alive. [`freeze`] takes the final count.
 pub fn settle(tasks_alive: impl Fn() -> bool) {
+    settle_blocks(tasks_alive, false);
+}
+
+/// Before [`report`]: [`settle`] again (after the runtime dropped what was left in channels),
+/// then freeze the block counts ([`BlockCount`]): what tasks still running allocate after that
+/// is not counted.
+pub fn freeze(tasks_alive: impl Fn() -> bool) {
+    settle_blocks(tasks_alive, true);
+}
+
+fn settle_blocks(tasks_alive: impl Fn() -> bool, freeze: bool) {
     #[cfg(debug_assertions)]
     if counters::enabled() {
-        use counters::*;
-        use std::sync::atomic::Ordering::SeqCst;
         use std::time::{Duration, Instant};
         let deadline = Instant::now() + Duration::from_secs(60);
-        while BLOCK_ALLOC.load(SeqCst) != BLOCK_FREE.load(SeqCst)
-            && tasks_alive()
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        counters::BLOCKS.settle(tasks_alive, deadline, freeze);
     }
     #[cfg(not(debug_assertions))]
-    let _ = tasks_alive;
+    let _ = (tasks_alive, freeze);
 }
 
 /// Print the counters (debug runtime with `VELT_RC_STATS=1` only). Called at process exit.
@@ -98,15 +200,86 @@ pub fn report() {
     if counters::enabled() {
         use counters::*;
         use std::sync::atomic::Ordering::Relaxed;
+        let blocks = BLOCKS.get();
         eprintln!(
             "rc stats: retain={} release={} alloc={} free={} blocks={}/{} channel leftovers={}",
             RETAIN.load(Relaxed),
             RELEASE.load(Relaxed),
             ALLOC.load(Relaxed),
             FREE.load(Relaxed),
-            BLOCK_ALLOC.load(Relaxed),
-            BLOCK_FREE.load(Relaxed),
+            blocks.allocated,
+            blocks.freed,
             CHANNEL_LEFTOVERS.load(Relaxed)
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlockCount;
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    fn counts(c: &BlockCount) -> (u64, u64) {
+        let b = c.get();
+        (b.allocated, b.freed)
+    }
+
+    /// #804: a task still running after `main` returned allocated its result between the moment
+    /// the counts were seen equal and the report, which then showed a leak.
+    #[test]
+    fn a_straggler_allocating_after_the_counts_settled_is_not_a_leak() {
+        let c = BlockCount::new();
+        c.alloc();
+        c.free();
+        let far = Instant::now() + Duration::from_secs(60);
+        c.settle(|| true, far, true);
+        // The straggler finishes now: it allocates its result, and the process exits before
+        // anything frees it.
+        c.alloc();
+        assert_eq!(counts(&c), (1, 1));
+        c.free();
+        assert_eq!(counts(&c), (1, 1));
+    }
+
+    /// Waiting before the runtime drops what is left in channels must not freeze the counts:
+    /// those frees still count.
+    #[test]
+    fn waiting_without_freezing_keeps_counting() {
+        let c = BlockCount::new();
+        c.settle(|| true, Instant::now() + Duration::from_secs(60), false);
+        c.alloc();
+        c.free();
+        assert_eq!(counts(&c), (1, 1));
+    }
+
+    #[test]
+    fn settling_waits_for_a_task_that_frees_its_blocks() {
+        let c = BlockCount::new();
+        c.alloc();
+        c.alloc();
+        c.free();
+        // The task frees its block on the third look and then ends.
+        let looks = Cell::new(0);
+        let alive = || {
+            looks.set(looks.get() + 1);
+            if looks.get() == 3 {
+                c.free();
+            }
+            looks.get() < 3
+        };
+        c.settle(alive, Instant::now() + Duration::from_secs(60), true);
+        assert_eq!(counts(&c), (2, 2));
+        assert_eq!(looks.get(), 3);
+    }
+
+    #[test]
+    fn a_leak_with_no_task_left_is_counted_and_frozen() {
+        let c = BlockCount::new();
+        c.alloc();
+        c.settle(|| false, Instant::now() + Duration::from_secs(60), true);
+        c.alloc();
+        c.free();
+        assert_eq!(counts(&c), (1, 0));
     }
 }
