@@ -124,6 +124,10 @@ pub(crate) struct Ctx<'m> {
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
     /// JSX component adapters, checked after ownership inference.
     pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
+    /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
+    /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
+    /// stored on the heap by that type, the function the user wrote.
+    pub callback_wrappers: std::collections::HashMap<DefId, TyId>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -228,6 +232,7 @@ impl<'m> Ctx<'m> {
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
+            callback_wrappers: Default::default(),
             ide: None,
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),
