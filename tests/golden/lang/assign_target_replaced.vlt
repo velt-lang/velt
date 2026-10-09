@@ -1,0 +1,89 @@
+// An assignment writes to the object its target named before the right-hand side ran (JS
+// evaluates the reference first), even when the right-hand side replaces that object: the new
+// object keeps its value (#581).
+class P {
+  v: number = 1;
+  name: string = "p";
+}
+
+class Box2 {
+  inner: P = new P();
+
+  swapIn(): number {
+    this.inner = new P();
+    return 20;
+  }
+
+  setFromSwap() {
+    this.inner.v = this.swapIn();
+  }
+}
+
+function replaced() {
+  const b = new Box2();
+  const swap = (): number => {
+    b.inner = new P();
+    return 10;
+  };
+  b.inner.v = swap();
+  console.log(b.inner.v);
+  const rename = (): string => {
+    b.inner = new P();
+    return "renamed";
+  };
+  b.inner.name = rename();
+  console.log(b.inner.name);
+  b.inner.v = b.swapIn();
+  console.log(b.inner.v);
+  b.setFromSwap();
+  console.log(b.inner.v);
+}
+
+function kept() {
+  const b = new Box2();
+  const old = b.inner;
+  const swap = (): number => {
+    b.inner = new P();
+    b.inner.v = 100;
+    return 10;
+  };
+  b.inner.v = swap();
+  console.log(b.inner.v, old.v);
+  const before = b.inner;
+  const rename = (): string => {
+    b.inner = new P();
+    return "renamed";
+  };
+  b.inner.name = rename();
+  console.log(b.inner.name, before.name);
+}
+
+function elements() {
+  const ps = [new P(), new P()];
+  const swap = (): number => {
+    ps[0] = new P();
+    return 5;
+  };
+  ps[0].v = swap();
+  ps[1].v = swap();
+  console.log(ps[0].v, ps[1].v);
+}
+
+function unchanged() {
+  const b = new Box2();
+  const calls: number[] = [];
+  const next = (): number => {
+    calls.push(calls.length);
+    return calls.length;
+  };
+  b.inner.v = next();
+  b.inner.name = `n${next()}`;
+  console.log(b.inner.v, b.inner.name);
+}
+
+function main() {
+  replaced();
+  kept();
+  elements();
+  unchanged();
+}

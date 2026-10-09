@@ -9,7 +9,7 @@ use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::may_write;
+use super::sequence::{may_write, Later};
 use super::types::VariantAt;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -294,7 +294,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `place_expr` with the index operands `pre` already evaluated by `place_indices`.
-    fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
+    pub(super) fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(id, _) => self
@@ -357,6 +357,10 @@ impl FnLower<'_, '_> {
         }
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
+        let pin = match place.kind {
+            hir::ExprKind::Local(..) => None,
+            _ => self.pin_target(place, &pre, Later::of(value)),
+        };
         let v = self.consume(value);
         if self.dead() {
             return unit();
@@ -374,17 +378,40 @@ impl FnLower<'_, '_> {
         let ty = self.sub(place.ty);
         let shared = self.through_counted(place, ty);
         let p = self.place_expr_with(place, &mut pre);
+        let v = match self.cx.needs_drop(ty) {
+            true => self.detach(v, place.ty),
+            false => v,
+        };
+        let drops = refill.is_none() && self.cx.needs_drop(ty);
+        let unstored = v.clone();
+        self.write_pinned(
+            pin,
+            p,
+            |this, p| this.store_assigned(place, p, v, ty, shared, drops),
+            |this| this.drop_unstored(&unstored, ty),
+        );
+        unit()
+    }
+
+    /// The store of `place = v` into `p`, dropping the old value when `drops`.
+    fn store_assigned(
+        &mut self,
+        place: &hir::Expr,
+        p: Place,
+        v: Operand,
+        ty: TyId,
+        shared: bool,
+        drops: bool,
+    ) {
         let flag = self.presence_place(place, &p);
-        if shared && self.cx.needs_drop(ty) {
+        if shared && drops {
             // Other owners see the place: store first, then drop the old value (its `dispose`
             // may reach the place's container and must find it consistent).
             let vt = self.cx.ty(ty);
-            let v = self.detach(v, place.ty);
             let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
             self.store(p, v);
             self.drop_glue(Place::local(old), ty);
-        } else if refill.is_none() && self.cx.needs_drop(ty) {
-            let v = self.detach(v, place.ty);
+        } else if drops {
             self.drop_glue(p.clone(), ty);
             self.store(p, v);
         } else {
@@ -394,7 +421,6 @@ impl FnLower<'_, '_> {
         if let Some(fp) = flag {
             self.assign(fp, Rvalue::Use(FnLower::ctrue()));
         }
-        unit()
     }
 
     /// The presence flag of the `presence` field the HIR `place` (at VIR place `p`) names.

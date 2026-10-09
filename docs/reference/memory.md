@@ -50,6 +50,12 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   (`this.onChange = () => {}`) when the object is done to free both. **Planned**
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
   `weak` references and a compile-time warning for reference cycles.
+- **Evaluation order is JS's**: operands and arguments run left to right, and one read before a
+  later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). An
+  assignment writes to the object its target named before the right-hand side ran: in
+  `o.inner.v = f()`, when `f` replaces `o.inner`, the old object gets the value and the new one
+  keeps its own, as in JS. (The old object then lives on only if something else refers to it;
+  otherwise it is freed by `f`, and the write is dropped with it.)
 
 ```ts
 class Box {
