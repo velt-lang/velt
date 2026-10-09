@@ -97,7 +97,9 @@ console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
 *Why*: the `null` vs `undefined` bug class disappears. `JSON.parse` treats an absent key like
-`null`; only `JsonValue` tells them apart.
+`null`; only `JsonValue` tells them apart. What JS gives as `undefined` for a missing value is
+`null`, and prints as `null`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match,
+`s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 

@@ -25,7 +25,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | Method | Notes |
 |---|---|
 | `length` | code units |
-| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` |
+| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` (JS: `s[i]` past the end is `undefined`) |
 | `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
@@ -135,7 +135,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
+| `set(k, v)`, `get(k): V | null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`) |\| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
