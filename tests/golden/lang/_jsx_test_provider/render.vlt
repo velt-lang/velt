@@ -1,6 +1,6 @@
-// A minimal string-building JSX provider for the JSX goldens (docs/contracts/jsx.md): elements
-// are lists of HTML pieces, child elements and components not run yet. `render` joins them and
-// runs each component when it reaches it, so parents run before their children (as a provider
+// A minimal string-building JSX provider for the JSX goldens (docs/internals/contracts/jsx.md):
+// elements are lists of HTML pieces, child elements and components not run yet. `render` joins them
+// and runs each component when it reaches it, so parents run before their children (as a provider
 // with `provide`/`inject` needs). Numbers are spelled `i64 | f64`.
 
 import { escapeHtml } from "velt:html";

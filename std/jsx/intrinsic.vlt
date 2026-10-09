@@ -1,5 +1,5 @@
-// std/jsx/intrinsic: the JSX types of std/jsx (docs/contracts/jsx.md): which lower-case tags
-// exist and which attributes each accepts (attribute types: std/jsx/attrs/*.vlt). A tag or
+// std/jsx/intrinsic: the JSX types of std/jsx (docs/internals/contracts/jsx.md): which lower-case
+// tags exist and which attributes each accepts (attribute types: std/jsx/attrs/*.vlt). A tag or
 // attribute that is not listed is a compile error, so typos are caught; custom elements
 // (`<my-widget>`, `<annotation-xml>`) and hyphenated attributes (`data-*`, `aria-*`,
 // `stroke-width`) are not checked. There are no event handler attributes: std/jsx renders HTML
