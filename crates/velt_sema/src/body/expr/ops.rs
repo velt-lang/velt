@@ -252,6 +252,7 @@ impl FnCx<'_, '_> {
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
             let (l, r) = self.nullable_operands(l, r);
+            let (l, r) = self.union_operands(l, r);
             self.identity_operands(l, r)
         } else {
             (l, r)
@@ -324,6 +325,35 @@ impl FnCx<'_, '_> {
             let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
             (l, r)
         }
+    }
+
+    /// `a === b` between a union and one of its members, in either order (`string | number`
+    /// and `number`, #741): the member side converts to the union, so the two compare like two
+    /// union values: equal only when they hold the same member with equal values, as `===` in
+    /// JS (no coercion: the string `"3"` never equals the number `3`).
+    fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let union = |s: &Self, t: TyId| s.cx.union_def(t).is_some();
+        if l.ty == r.ty || self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
+            return (l, r);
+        }
+        if union(self, l.ty) {
+            let to = l.ty;
+            match self.try_coerce(r, to) {
+                Ok(r) => return (l, r),
+                Err(r) if !union(self, r.ty) => return (l, r),
+                Err(r) => {
+                    let to = r.ty;
+                    let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+                    return (l, r);
+                }
+            }
+        }
+        if union(self, r.ty) {
+            let to = r.ty;
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            return (l, r);
+        }
+        (l, r)
     }
 
     /// `a === b` between an interface value and a class or struct value (or a base and a
