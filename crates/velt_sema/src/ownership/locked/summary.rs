@@ -67,17 +67,40 @@ impl Summaries {
             sums: HashMap::new(),
             captures,
         };
-        // Summaries only grow, and are bounded by the parameter pairs: this ends.
+        // A body's summary depends only on the summaries of the functions it calls by name
+        // (`Walk::callees`). A pass summarizes a function again only when one of those changed
+        // after its last summary (otherwise the result is the one it already has), so each pass
+        // after the first walks only the callers of what the previous one changed.
+        let mut callees: HashMap<DefId, HashSet<DefId>> = HashMap::new();
+        // The run (a counter over every `summarize`) that last summarized a function, and the
+        // run that last changed its summary.
+        let mut last_run: HashMap<DefId, u64> = HashMap::new();
+        let mut changed_at: HashMap<DefId, u64> = HashMap::new();
+        let mut run = 0u64;
+        // Passes repeat until one changes no summary. A summary is bounded by the parameter pairs
+        // and bits, and grows with its callees' summaries; it is not monotone across passes,
+        // though: one computed while a callee had no summary yet (read as an unknown callee,
+        // which may store any argument into any argument it modifies) can shrink once that
+        // callee has its own. The pass order is fixed, so the result does not depend on hashing.
         loop {
             let mut changed = false;
             for &d in &fns {
+                if let (Some(&at), Some(cs)) = (last_run.get(&d), callees.get(&d)) {
+                    if cs.iter().all(|g| changed_at.get(g).is_none_or(|&c| c < at)) {
+                        continue;
+                    }
+                }
                 let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
                     continue;
                 };
-                let new = summarize(cx, &s, &mut f);
+                run += 1;
+                let (new, cs) = summarize(cx, &s, &mut f);
                 cx.defs[d.0 as usize] = Some(Def::Fn(f));
+                last_run.insert(d, run);
+                callees.insert(d, cs);
                 if s.sums.get(&d) != Some(&new) {
                     s.sums.insert(d, new);
+                    changed_at.insert(d, run);
                     changed = true;
                 }
             }
@@ -106,8 +129,9 @@ fn bits_of(b: u64) -> impl Iterator<Item = usize> {
     (0..64).filter(move |i| b & (1 << i) != 0)
 }
 
-/// Summary of body `f` given its callees' current summaries.
-fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> Summary {
+/// Summary of body `f` given its callees' current summaries, and the functions whose
+/// summaries it read (the callees it calls by name).
+fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, HashSet<DefId>) {
     let mut w = Walk {
         cx,
         s,
@@ -115,6 +139,7 @@ fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> Summary {
         out: Summary::default(),
         changed: false,
         spawned: HashSet::new(),
+        callees: HashSet::new(),
     };
     for (i, p) in f.params.iter().enumerate() {
         w.bits.insert(p.local, bit(i));
@@ -123,7 +148,7 @@ fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> Summary {
         w.changed = false;
         visit::block(&mut f.body.block, &mut w);
         if !w.changed {
-            return w.out;
+            return (w.out, w.callees);
         }
     }
 }
@@ -137,6 +162,8 @@ struct Walk<'a, 's, 'm> {
     changed: bool,
     /// Spans of the calls `spawn` takes.
     spawned: HashSet<Span>,
+    /// The functions called by name, whose summaries this one depends on.
+    callees: HashSet<DefId>,
 }
 
 impl Walk<'_, '_, '_> {
@@ -221,6 +248,9 @@ impl Walk<'_, '_, '_> {
         }
         if skip {
             return;
+        }
+        if let Callee::Def(g, _) = callee {
+            self.callees.insert(*g);
         }
         let spawned = self.spawned.contains(&span);
         if self.cx.holds_promise(ty) && !spawned {
