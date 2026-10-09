@@ -70,7 +70,7 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |
           $script = "${{ inputs.script }}"
-          if (-not $script) { $script = "windows2.ps1" }
+          if (-not $script) { $script = "windows3.ps1" }
           pwsh -NoProfile -File "scripts/spike/$script" -Out "$env:RUNNER_TEMP/spike/out" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/spike.log"
           exit $LASTEXITCODE
       - name: summary
