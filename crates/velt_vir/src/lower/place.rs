@@ -537,6 +537,7 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
+        let pin = self.pin_target(place, &pre, Later::of(value));
         let first = self.place_expr_with(place, &mut pre.clone());
         let l = self.share_value(Operand::Copy(first), ty);
         let l = self.own_value(l, ty);
@@ -549,9 +550,13 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
         let p = self.place_expr_with(place, &mut pre);
-        let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
-        self.assign(p, Rvalue::Use(v));
-        self.drop_glue(Place::local(old), ty);
+        let unstored = v.clone();
+        let write = |this: &mut Self, p: Place| {
+            let old = this.copy_to_temp(Operand::Copy(p.clone()), vt);
+            this.assign(p, Rvalue::Use(v));
+            this.drop_glue(Place::local(old), ty);
+        };
+        self.write_pinned(pin, p, write, |this| this.drop_unstored(&unstored, ty));
         unit()
     }
 
