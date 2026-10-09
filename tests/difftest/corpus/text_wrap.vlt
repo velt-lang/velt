@@ -1,11 +1,11 @@
 // Greedy word wrapping to a column width, with justification of full lines.
-function wrap(text: string, width: i64): string[] {
+function wrap(text: string, width: number): string[] {
   const lines: string[] = [];
   let line = "";
   for (const w of text.split(" ")) {
     if (line.length == 0) {
       line = `${w}`;
-    } else if ((line.length as i64) + 1 + (w.length as i64) <= width) {
+    } else if ((line.length as number) + 1 + (w.length as number) <= width) {
       line += ` ${w}`;
     } else {
       lines.push(line);

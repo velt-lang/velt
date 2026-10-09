@@ -28,7 +28,7 @@ class Stack<T> {
   }
 
   size(): usize {
-    return this.items.length;
+    return this.items.length as usize;
   }
 }
 

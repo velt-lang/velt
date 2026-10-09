@@ -24,6 +24,8 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         // A branded value has its primitive's methods.
         let recv = self.unbrand(recv);
+        // `x.toFixed(2)`: a number's method (`literal_locals`).
+        self.literal_use_number(&recv);
         self.method_call_at(recv, prop, type_args, args, exp, span, false)
     }
 

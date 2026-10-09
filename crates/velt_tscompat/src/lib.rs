@@ -46,7 +46,6 @@ pub const RULES: &[&str] = &[
     "nullable-in-template",
     "default-sort",
     "json-map",
-    "unsigned-arith",
     "map-iter-as-array",
     "velt-global",
     "velt-member",

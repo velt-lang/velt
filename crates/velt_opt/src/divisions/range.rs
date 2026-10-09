@@ -357,6 +357,15 @@ pub(crate) fn binary(op: BinOp, a: Interval, b: Interval, ty: Ty) -> Option<Inte
             };
             Some(Interval { lo: 0, hi })
         }
+        // Non-negative operands: no bit above the highest one either has.
+        BinOp::BitOr | BinOp::BitXor if a.lo >= 0 && b.lo >= 0 => {
+            let top = a.hi.max(b.hi);
+            let bits = 128 - top.leading_zeros();
+            Some(Interval {
+                lo: 0,
+                hi: (1i128 << bits) - 1,
+            })
+        }
         BinOp::Shr | BinOp::UShr if a.lo >= 0 && b.lo == b.hi && (0..width).contains(&b.lo) => {
             Some(Interval {
                 lo: a.lo >> b.lo,

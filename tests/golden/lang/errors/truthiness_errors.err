@@ -9,7 +9,7 @@ expected boolean, found i64 | null
 only `boolean` and nullable objects are conditions (`0` and `""` are not falsy in Velt): compare with `!== null`
 truthiness_errors.vlt:18:13: error: cannot apply unary operator `!` to type `string`
 strings are not conditions: compare explicitly, e.g. `name !== ""`
-truthiness_errors.vlt:19:16: error: `||` needs a `boolean` or nullable left side, found `i64`
+truthiness_errors.vlt:19:16: error: `||` needs a `boolean` or nullable left side, found `f64`
 use `??` for a default (`x ?? d` replaces only `null`)
 numbers are not conditions: compare explicitly, e.g. `count !== 0`
 truthiness_errors.vlt:20:27: error: mismatched types

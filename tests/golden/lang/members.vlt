@@ -16,7 +16,7 @@ class Account {
   }
 
   get count(): usize {
-    return this.history.length;
+    return this.history.length as usize;
   }
 
   deposit(amount: i64): bool {

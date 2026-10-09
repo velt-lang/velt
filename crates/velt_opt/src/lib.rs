@@ -81,7 +81,12 @@ pub use timings::PassTimings;
 /// The `number` variables inside loops of the (optimized) `program` that stay doubles, with
 /// why, per function symbol (`velt build --report numbers`).
 pub fn number_report(program: &vir::Program) -> Vec<(String, Vec<Unnarrowed>)> {
-    let env = numrep::Env::of(&program.externs, &program.funcs);
+    let env = numrep::Env::of(
+        &program.externs,
+        &program.funcs,
+        &program.aggs,
+        &program.statics,
+    );
     program
         .funcs
         .iter()
@@ -120,11 +125,17 @@ pub fn optimize(program: &mut vir::Program, level: OptLevel) {
 pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings) {
     match level {
         OptLevel::None => {
+            numrep::declare_formatters(&mut program.externs);
             let helpers = numrep::int32_helpers(&program.funcs);
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
             }
-            let env = numrep::Env::of(&program.externs, &program.funcs);
+            let env = numrep::Env::of(
+                &program.externs,
+                &program.funcs,
+                &program.aggs,
+                &program.statics,
+            );
             for func in &mut program.funcs {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 if t.time("numrep", || numrep::run(&env, func)) {
@@ -134,6 +145,21 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
         }
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));
+            numrep::declare_formatters(&mut program.externs);
+            // Once before inlining as well: an array is still one value there, whose length
+            // bounds the index loops over it (`numrep` knows a length is below 2^53); after
+            // inlining, `sroa` splits it into locals the length fact no longer reaches.
+            let env = numrep::Env::of(
+                &program.externs,
+                &program.funcs,
+                &program.aggs,
+                &program.statics,
+            );
+            for func in &mut program.funcs {
+                if t.time("numrep", || numrep::run(&env, func)) {
+                    numrep_cleanup(&program.aggs, func, t);
+                }
+            }
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();
             for _ in 0..MAX_ROUNDS {
@@ -143,7 +169,12 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             }
             let allocator = heap_sroa::Allocator::find(program);
             let probes = map_probe::Probes::find(program);
-            let env = numrep::Env::of(&program.externs, &program.funcs);
+            let env = numrep::Env::of(
+                &program.externs,
+                &program.funcs,
+                &program.aggs,
+                &program.statics,
+            );
             for func in &mut program.funcs {
                 if t.time("map_probe", || map_probe::run(&program.aggs, &probes, func)) {
                     t.time("copyprop", || copyprop::run(func));

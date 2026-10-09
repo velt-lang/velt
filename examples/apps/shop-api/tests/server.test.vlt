@@ -10,7 +10,7 @@ function order(sku: string): string {
   return `{"customer":{"id":1,"name":"A","email":"a@example.com"},"items":[{"sku":"${sku}","quantity":1}],"shipping":{"line1":"x","city":"y","postalCode":"z","country":"SE"}}`;
 }
 
-async function post(base: string, path: string, body: string): Promise<i64> {
+async function post(base: string, path: string, body: string): Promise<number> {
   const res = await fetch(`${base}${path}`, { method: "POST", body });
   await res.text();
   return res.status;
@@ -26,7 +26,7 @@ export async function test_concurrent_orders_never_oversell() {
   );
   assertEq(created, 201);
 
-  const attempts: Promise<i64, AbortError | IoError>[] = [];
+  const attempts: Promise<number, AbortError | IoError>[] = [];
   for (let i = 0; i < 20; i++) {
     attempts.push(spawn(post(base, "/orders", order("LIM-1"))));
   }

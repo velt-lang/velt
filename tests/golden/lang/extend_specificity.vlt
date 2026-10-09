@@ -33,7 +33,7 @@ extend<T> Map<string, T> {
 function main() {
   const words = ["a"];
   const grid = [["a"], ["b"]];
-  const numbers = [[1], [2]];
+  const numbers: i64[][] = [[1], [2]];
   console.log(words.shape(), grid.shape(), numbers.shape());
   const byId = new Map<i64, i64>();
   const byName = new Map<string, bool>();

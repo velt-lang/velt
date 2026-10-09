@@ -150,7 +150,6 @@ impl FnCx<'_, '_> {
         }
         let (ty, span) = (h.ty, h.span);
         let l = self.new_local("<switch>", ty, false, span, LocalKind::Temp);
-        self.note_inferred_local(l, &h);
         pre.push(hir::Stmt {
             kind: hir::StmtKind::Let {
                 local: l,

@@ -92,7 +92,7 @@ function append(xs: i64[]) {
 function rebind(xs: i64[]): usize {
   xs = [0];
   xs.push(1);
-  return xs.length;
+  return xs.length as usize;
 }
 
 // Reassigning a string param is local; the caller keeps its string.
@@ -143,7 +143,7 @@ function main() {
   b.reset();
   console.log(b.items.length);
 
-  const xs = [1, 2];
+  const xs: i64[] = [1, 2];
   append(xs);
   console.log(rebind(xs), xs);
 

@@ -25,7 +25,7 @@ use velt_syntax::ast;
 use super::intrinsic_tag;
 use super::precompile::{precompilable, Template};
 use super::provider::{Precompile, Provider};
-use crate::body::recursion::Mark;
+use crate::body::recheck::Mark;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H};
 
@@ -106,13 +106,14 @@ impl FnCx<'_, '_> {
         let Some(row) = row_element(p, e) else {
             return false;
         };
-        let mark = Mark::new(self.cx);
+        let mark = Mark::here(self.cx);
         // `Mark` restores the context; the function's own state (locals, captures, throws,
-        // moves) is restored from these copies.
+        // moves, literal-local uses) is restored from these copies.
         let frames = (
             self.f.clone(),
             self.outer.clone(),
             self.refused_reads.clone(),
+            self.literal.clone(),
         );
         let diags = self.cx.diags.len();
         let saved = (self.jsx_list_fold.replace(row.span), self.jsx_list_folded);
@@ -125,8 +126,7 @@ impl FnCx<'_, '_> {
         let strings = self.cx.ty.array(self.cx.ty.str_);
         if !folded || h.ty != strings || self.cx.diags.len() != diags || !self.is_array_map(&h) {
             mark.rollback(self.cx);
-            mark.keep_closures(self.cx);
-            (self.f, self.outer, self.refused_reads) = frames;
+            (self.f, self.outer, self.refused_reads, self.literal) = frames;
             return false;
         }
         let s = self.jsx_call(p, list, "jsxList", vec![h], span);

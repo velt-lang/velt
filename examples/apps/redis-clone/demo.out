@@ -1,0 +1,38 @@
+> PING
+< +PONG\r\n
+> SET greeting hello EX 60
+< +OK\r\n
+> GET greeting
+< $5\r\nhello\r\n
+> EXISTS greeting nope
+< :1\r\n
+> TTL nope
+< :-2\r\n
+> INCRBY visits 41
+< :41\r\n
+> INCR visits
+< :42\r\n
+> RPUSH queue a b c
+< :3\r\n
+> LRANGE queue 0 -1
+< *3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n
+> HSET user:1 name Ada lang velt
+< :2\r\n
+> HGETALL user:1
+< *4\r\n$4\r\nname\r\n$3\r\nAda\r\n$4\r\nlang\r\n$4\r\nvelt\r\n
+> ZADD board 3 c 1 a 2 b
+< :3\r\n
+> ZRANGE board 0 -1 WITHSCORES
+< *6\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nc\r\n$1\r\n3\r\n
+> GET queue
+< -WRONGTYPE Operation against a key holding the wrong kind of value\r\n
+> INCR greeting
+< -ERR value is not an integer or out of range\r\n
+> NOSUCH x
+< -ERR unknown command 'NOSUCH', with args beginning with: 'x' \r\n
+> SET n 1 | INCR n | GET n (pipelined)
+< +OK\r\n:2\r\n$1\r\n2\r\n
+> DBSIZE
+< :6\r\n
+> QUIT
+< +OK\r\n

@@ -23,7 +23,7 @@ class Outer {
 
   // Stores only a number: nothing to copy.
   countInto(ns: i64[]) {
-    ns.push(this.items.length);
+    ns.push(this.items.length as i64);
   }
 }
 
