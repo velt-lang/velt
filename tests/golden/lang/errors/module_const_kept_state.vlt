@@ -1,0 +1,57 @@
+// A closure created while a module constant's initializer runs would keep its state in Node
+// (one closure for the whole program); evaluated at each use, it would start over each time.
+// Such an initializer is an error.
+
+class Acc {
+  n: number = 0;
+
+  add(): number {
+    this.n += 1;
+    return this.n;
+  }
+}
+
+type Inc = { inc: () => number };
+type Bag = { add: (x: number) => number };
+
+function makeCounter(): () => number {
+  let n: number = 0;
+  return () => {
+    n += 1;
+    return n;
+  };
+}
+
+function makeInc(): Inc {
+  let n: number = 0;
+  return {
+    inc: () => {
+      n += 1;
+      return n;
+    },
+  };
+}
+
+function makeAcc(): () => number {
+  const a = new Acc();
+  return () => a.add();
+}
+
+function makeBag(): Bag {
+  const xs: number[] = [];
+  return {
+    add: (x: number): number => {
+      xs.push(x);
+      return xs.length;
+    },
+  };
+}
+
+const next = makeCounter();
+const CNT = makeInc();
+const NEXT = makeAcc();
+const BAG = makeBag();
+
+function main() {
+  console.log(next(), CNT.inc(), NEXT(), BAG.add(1));
+}
