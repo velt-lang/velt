@@ -38,7 +38,7 @@ class ReplyReader {
     if (at >= this.buf.length) {
       return -1;
     }
-    const eol = this.buf.indexOf(13, at);
+    const eol = this.buf.indexOf(13, at) as i64;
     if (eol < 0 || eol + 1 >= this.buf.length) {
       return -1;
     }

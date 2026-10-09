@@ -257,9 +257,9 @@ impl FnCx<'_, '_> {
         });
         let fh = match as_arrow(f) {
             Some(a) => {
-                self.std_callback = true;
+                self.std_callback = Some(vec![false, true]);
                 let h = self.closure(a, Some(expected), false);
-                self.std_callback = false;
+                self.std_callback = None;
                 h
             }
             None => self.expr(f, Some(expected), Want::Borrow),

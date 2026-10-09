@@ -9,7 +9,7 @@ function Item(props: { label: string }): JSX.Element {
   return <li title={props.label}>{props.label}</li>;
 }
 
-async function Late(props: { n: i64 }): Promise<JSX.Element> {
+async function Late(props: { n: number }): Promise<JSX.Element> {
   return <em>late {props.n}</em>;
 }
 

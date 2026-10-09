@@ -29,7 +29,7 @@ function f(u: User | null): string {
 }
 
 function nameLength(u: User | null): usize {
-  return u?.name.length ?? 0;
+  return (u?.name.length ?? 0) as usize;
 }
 
 function main() {

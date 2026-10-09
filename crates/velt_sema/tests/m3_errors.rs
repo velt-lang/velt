@@ -23,7 +23,7 @@ fn await_needs_an_async_body_and_a_promise() {
         "{r}"
     );
     let r = err_src("async function main() { const x = await 1; }");
-    assert!(r.contains("`await` needs a promise, found `i64`"), "{r}");
+    assert!(r.contains("`await` needs a promise, found `f64`"), "{r}");
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn json_types() {
         "function send<T>(v: T): string { return JSON.stringify(v); }
          function main() { console.log(send(shared(1))); }",
     );
-    assert!(r.contains("`shared<i64>` has no JSON form"), "{r}");
+    assert!(r.contains("`shared<f64>` has no JSON form"), "{r}");
 }
 
 #[test]
@@ -176,18 +176,18 @@ fn moves_into_call_arguments_happen_at_the_call() {
          }",
     );
     ok_src(
-        "struct P { s: string; n: usize; }
+        "struct P { s: string; n: number; }
          function main() { const s = \"ab\"; const p = P { s: s, n: s.length }; console.log(p.n); }",
     );
     // Semantics stage 2: the first argument shares the array.
     ok_src(
         "function keep(a: i64[], b: i64[]): i64[][] { return [a, b]; }
-         function main() { const s = [1]; console.log(keep(s, s)); }",
+         function main() { const s: i64[] = [1]; console.log(keep(s, s)); }",
     );
     ok_src(
         "function keep(a: i64[]): i64[][] { return [a]; }
-         function both(a: i64[][], b: i64[][]): usize { return a.length + b.length; }
-         function main() { const s = [1]; console.log(both(keep(s), keep(s))); }",
+         function both(a: i64[][], b: i64[][]): number { return a.length + b.length; }
+         function main() { const s: i64[] = [1]; console.log(both(keep(s), keep(s))); }",
     );
     // The same with strings: the first argument is a copy.
     ok_src(

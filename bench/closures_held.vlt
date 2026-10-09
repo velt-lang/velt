@@ -8,7 +8,7 @@ function main() {
     const m = i % 3;
     const scale = (x: i64) => x * k + m;
     const w = words[i % 4];
-    const score = (n: i64) => n + w.length * k;
+    const score = (n: i64) => n + (w.length as i64) * k;
     total = (total + scale(i) + scale(i + 1) + score(i)) % 1000000007;
   }
   console.log(total);
