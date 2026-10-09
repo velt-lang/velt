@@ -327,6 +327,9 @@ impl FnCx<'_, '_> {
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))
             }
+            None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
+                Some(self.promise_settled(&prop.name, type_args, args, exp, span))
+            }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
     }

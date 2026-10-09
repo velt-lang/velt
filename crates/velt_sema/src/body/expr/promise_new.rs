@@ -10,6 +10,7 @@
 //!
 //! `Promise.withResolvers<T, E>()` (ES2024) is the same slot without an executor: a call of the
 //! prelude's `promiseWithResolvers`, whose `resolve` and `reject` are fields of the result.
+//! `Promise.resolve(v)` and `Promise.reject(e)` are calls of `promiseResolve` / `promiseReject`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -79,6 +80,52 @@ impl FnCx<'_, '_> {
         }
         let what = "Promise.withResolvers";
         self.prelude_call("promiseWithResolvers", what, &type_args, args, hint, span)
+    }
+
+    /// `Promise.resolve(value)` / `Promise.reject(reason)`: calls of the prelude's
+    /// `promiseResolve` (`promiseResolveVoid` without an argument: a `Promise<void>`) /
+    /// `promiseReject`. As in TS, the one type argument is the promise's value type: for
+    /// `reject` it comes from the type argument or the expected type, else it is `never`.
+    /// `Promise.resolve(p)` of a promise is `p`.
+    pub(super) fn promise_settled(
+        &mut self,
+        which: &str,
+        targs: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        if targs.len() > 1 {
+            self.cx.err(
+                format!("`Promise.{which}` takes at most 1 type argument"),
+                span,
+            );
+        }
+        let mut type_args: Vec<TyId> = targs.iter().take(1).map(|t| self.resolve(t)).collect();
+        let hint = self.hint(exp);
+        let what = format!("Promise.{which}");
+        if which == "resolve" {
+            if args.is_empty() && type_args.is_empty() {
+                return self.prelude_call("promiseResolveVoid", &what, &[], args, hint, span);
+            }
+            let mut call = self.prelude_call("promiseResolve", &what, &type_args, args, hint, span);
+            // `Promise.resolve(p)` of a promise is `p` itself, as in JS.
+            if let H::Call { args, .. } = &mut call.kind {
+                if let [arg] = args.as_mut_slice() {
+                    if matches!(self.cx.ty.kind(arg.ty), TyKind::Promise(..)) {
+                        return std::mem::replace(arg, self.error_expr(span));
+                    }
+                }
+            }
+            return call;
+        }
+        if type_args.is_empty() {
+            type_args.push(match hint.map(|h| self.cx.ty.kind(h)) {
+                Some(&TyKind::Promise(t, _)) => t,
+                _ => self.cx.ty.never,
+            });
+        }
+        self.prelude_call("promiseReject", &what, &type_args, args, hint, span)
     }
 
     /// `T` and `E` from the type arguments or the expected `Promise<T, E>` (`E` defaults to

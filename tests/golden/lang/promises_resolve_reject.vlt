@@ -1,0 +1,35 @@
+// `Promise.resolve(v)` and `Promise.reject(e)`: promises settled when created, as in TypeScript.
+class Failed extends Error {}
+
+async function seven(): Promise<i64> {
+  return 7;
+}
+
+async function main() {
+  const v = await Promise.resolve(5);
+  console.log("resolved", v);
+  await Promise.resolve();
+  console.log("resolved void");
+
+  const s = Promise.resolve("kept");
+  console.log("stored", await s);
+
+  try {
+    await Promise.reject(new Failed("no"));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  const p: Promise<string, Failed> = Promise.reject(new Failed("typed"));
+  try {
+    console.log(await p);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  // A promise passed to `Promise.resolve` is the promise itself.
+  console.log("flattened", await Promise.resolve(seven()));
+
+  const all = await Promise.all([Promise.resolve(1), Promise.resolve(2)]);
+  console.log("all", all.length, all[0] + all[1]);
+}

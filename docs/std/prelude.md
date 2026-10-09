@@ -278,7 +278,7 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
-`PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
+`PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
 functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
 handle ([velt:timers](timers.md)).

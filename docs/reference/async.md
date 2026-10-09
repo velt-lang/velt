@@ -99,6 +99,23 @@ Promises behave like JavaScript's, at Rust's cost:
   (or the array is empty).
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
+- `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
+  is a `Promise<void>`; a promise passed in is returned as it is, as in JS).
+- `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
+  the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
+
+```ts
+class Failed extends Error {}
+
+async function main() {
+  console.log(await Promise.resolve(5)); // 5
+  try {
+    await Promise.reject(new Failed("no"));
+  } catch (e) {
+    console.log(e.message); // no
+  }
+}
+```
 
 All promises in one call must have the same type. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
