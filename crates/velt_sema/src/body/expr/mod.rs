@@ -7,8 +7,10 @@ mod args;
 mod array_ctor;
 mod assign;
 mod attempt;
+mod await_union;
 mod builtins;
 mod call;
+mod callback;
 mod chain;
 mod closure;
 mod closure_sig;
@@ -18,8 +20,9 @@ mod discriminated;
 mod dispose_call;
 mod division;
 pub(crate) mod downcast;
+mod error_slots;
 mod errors;
-mod fn_arity;
+mod fn_union_call;
 mod gen_closure;
 mod hoist;
 mod iface_call;
@@ -60,7 +63,6 @@ mod structured_clone;
 mod supers;
 mod sync;
 mod tasks;
-mod timer_task;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
@@ -78,11 +80,14 @@ impl FnCx<'_, '_> {
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
         let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
-        let adapter = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.fewer_params_adapter(e, exp),
+        let adapted = match self.cx.ty.kind(fn_ty) {
+            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
         };
-        let h = self.expr(adapter.as_ref().unwrap_or(e), Some(exp), want);
+        let h = match adapted {
+            Some(h) => h,
+            None => self.expr(e, Some(exp), want),
+        };
         if self.in_place_misuse(e, &h, exp) {
             return self.error_expr(e.span);
         }

@@ -1,0 +1,74 @@
+// check: no leaks
+// A handler may return a `Response` directly, as in Deno and Bun: a sync arrow, a named
+// function, a function value, or one a call returns. A sync arrow may declare its result
+// (`Response`, or the promise it returns) and may return a promise of a function that throws.
+// An async handler that throws still gets a 500.
+import { serve, Server, ServeInfo } from "velt:http";
+
+class NotAllowed extends Error {}
+
+function hello(req: Request): Response {
+  return new Response(`named ${new URL(req.url).pathname}`);
+}
+
+async function respond(text: string): Promise<Response> {
+  return new Response(text);
+}
+
+async function respondThrows(path: string): Promise<Response> {
+  if (path == "/admin") {
+    throw new NotAllowed("admins only");
+  }
+  return new Response(`checked ${path}`);
+}
+
+function prefixed(prefix: string): (req: Request) => Response {
+  return (req: Request): Response => new Response(`${prefix} ${req.method}`);
+}
+
+// A wrapper of `serve` with `serve`'s own handler type passes the handler on.
+async function startWith<E>(
+  h: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws E,
+): Promise<Server> {
+  return await serve({ port: 0 }, h);
+}
+
+async function get(port: i64, path: string): Promise<string> {
+  const r = await fetch(`http://127.0.0.1:${port}${path}`);
+  return `${r.status} ${await r.text()}`;
+}
+
+async function main() {
+  const a = await serve({ port: 0 }, (req) => new Response(`sync ${new URL(req.url).pathname}`));
+  const b = await serve({ port: 0 }, hello);
+  const local = (req: Request): Response => new Response(`local ${req.method}`);
+  const c = await serve({ port: 0 }, local);
+  const d = await serve({ port: 0 }, async (req) => {
+    if (new URL(req.url).pathname == "/admin") {
+      throw new NotAllowed("admins only");
+    }
+    return new Response("async ok");
+  });
+  const e = await serve({ port: 0 }, (req): Response => new Response("declared"));
+  const f = await serve({ port: 0 }, (req: Request): Promise<Response> => respond("promise"));
+  const g = await serve({ port: 0 }, (req) => respondThrows(new URL(req.url).pathname));
+  const h = await serve({ port: 0 }, prefixed("made"));
+  const k = await startWith((req, info) => new Response("wrapped"));
+  console.log(await get(a.port, "/x"));
+  console.log(await get(b.port, "/y"));
+  console.log(await get(c.port, "/z"));
+  console.log(await get(d.port, "/home"));
+  console.log(await get(d.port, "/admin"));
+  await a.shutdown();
+  await b.shutdown();
+  await c.shutdown();
+  await d.shutdown();
+  console.log(await get(e.port, "/"), "|", await get(f.port, "/"), "|", await get(h.port, "/"));
+  console.log(await get(g.port, "/page"), "|", await get(g.port, "/admin"));
+  await e.shutdown();
+  await f.shutdown();
+  await g.shutdown();
+  await h.shutdown();
+  console.log(await get(k.port, "/"));
+  await k.shutdown();
+}

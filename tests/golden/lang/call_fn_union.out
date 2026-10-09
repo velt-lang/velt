@@ -1,0 +1,9 @@
+sync: start
+sync: returned nothing
+async: start
+async: returned a promise
+count 22
+text #3 number 6
+42
+7
+a!
