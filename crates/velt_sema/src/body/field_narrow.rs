@@ -207,9 +207,9 @@ impl FnCx<'_, '_> {
         prop: &ast::Ident,
     ) -> Option<(LocalId, Vec<String>)> {
         let (root, mut path) = match &object.kind {
-            ast::ExprKind::Member { .. } | ast::ExprKind::Index { .. } | ast::ExprKind::Paren(_) => {
-                self.field_path(object)?
-            }
+            ast::ExprKind::Member { .. }
+            | ast::ExprKind::Index { .. }
+            | ast::ExprKind::Paren(_) => self.field_path(object)?,
             _ => (self.named_local(object)?, vec![]),
         };
         path.push(prop.name.clone());
