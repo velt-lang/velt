@@ -55,7 +55,6 @@ jobs:
           path: ${{ runner.temp }}/spike
           if-no-files-found: ignore
   windows:
-    if: false
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -69,8 +68,8 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |
           $script = "${{ inputs.script }}"
-          if (-not $script) { $script = "windows.ps1" }
-          pwsh -NoProfile -File "scripts/spike/$script" -Out "$env:RUNNER_TEMP/spike" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/spike.log"
+          if (-not $script) { $script = "windows2.ps1" }
+          pwsh -NoProfile -File "scripts/spike/$script" -Out "$env:RUNNER_TEMP/spike/out" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/spike.log"
           exit $LASTEXITCODE
       - name: summary
         if: always()
