@@ -287,16 +287,22 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
   - a required field that is missing;
   - the same attribute twice.
 
-  `key` keeps its own handling. The names are usually quoted property names, since they hold a
-  `:`.
+  An optional field's value is checked against its type without `| null`, as `tsc` reports
+  it. A spread source may give these attributes, and a prop of the same name counts as given
+  (its value must fit both types, as `tsc` intersects them). `key` keeps its own handling. The
+  names are usually quoted property names, since they hold a `:`.
 - **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
   component element with at least one of them calls `jsxComponentAttributes`, with the names and
   the values converted to `AttrValue` (a bare attribute is `true`), in source order. The values
   are evaluated after the props, where TypeScript evaluates every attribute in source order;
-  `key` differs the same way. An element without them calls `jsxComponent` as before.
+  `key` differs the same way. An attribute given by a spread source is passed too, and a later
+  attribute of the same name replaces it, as in an object. An element without any calls
+  `jsxComponent` as before.
 - **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
-  `jsxComponentAttributes` with these six parameters. `IntrinsicAttributes` must be an object
-  type.
+  `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
+  take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
+  an object type whose fields convert to `AttrValue`. All of this is checked once, when the
+  provider is loaded: a mismatch is one error, not one per element.
 - **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
   synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
   namespaced names on them are ordinary attributes.
