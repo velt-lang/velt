@@ -693,7 +693,20 @@ noise.
 The shared-runtime link with the system linker is mostly the `cc` driver (a process that starts
 `ld`); lld runs directly.
 
-@@WINDOWS@@
+**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V45, 4 vCPUs), Windows Server 2025; system
+linker: `link.exe` of Visual Studio 18 (MSVC 14.51). Only the link columns (the script's first
+table runs out of memory on `long_main_4000` there, linker or not), measured as the script does:
+the `link` stage of `velt build -v`, best of 5, ms.
+
+| program | linker | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|
+| http_hello | system | 38.4 | 200.3 | 0.3 |
+| http_hello | **bundled** | **35.0** | **156.9** | 0.6 |
+| all_std | system | 41.4 | 214.3 | 0.2 |
+| all_std | **bundled** | **32.8** | **149.1** | 0.5 |
+
+A rebuild with nothing changed checks which linker would link (the link stamp includes it); with
+the bundled one that opens the kit, a fraction of a millisecond.
 
 ## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
 
