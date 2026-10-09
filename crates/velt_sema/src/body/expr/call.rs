@@ -165,7 +165,10 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, span);
+        let wrapped = self.timer_callback(d, args);
+        let args = wrapped.as_deref().unwrap_or(args);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.void_task = None;
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {
@@ -331,6 +334,9 @@ impl FnCx<'_, '_> {
             }
             None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
                 Some(self.promise_with_resolvers(type_args, args, exp, span))
+            }
+            None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
+                Some(self.promise_settled(&prop.name, type_args, args, exp, span))
             }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
