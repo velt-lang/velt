@@ -15,7 +15,9 @@
 //! ```
 //!
 //! `m` is evaluated once, at loop entry, into a hidden local referring to the same map: a body
-//! that assigns another map to `m` goes on iterating the original one, as in JS. Only a place
+//! that assigns another map to `m` goes on iterating the original one, as in JS. A `const`
+//! variable or `this` cannot be assigned, so there `<map@N>` is `m` itself: a second name for
+//! a map that is still used can make the program count its maps. Only a place
 //! written without calls qualifies (a variable, `this`, fields of those; no getter); the body
 //! may change the map, since nothing borrows it between steps. Any other source iterates the
 //! array `entries()`, `keys()` or `values()` returns (`loops.rs`).
@@ -39,13 +41,33 @@ impl FnCx<'_, '_> {
         let Some((recv, read)) = self.live_map_source(iter, it) else {
             return false;
         };
-        let names = CursorLoop::new(p.span, recv, iter.span);
+        let mut names = CursorLoop::new(p.span, recv, iter.span);
+        names.held = !self.fixed_source(it);
         let block = ast::Stmt {
             kind: ast::StmtKind::Block(names.desugar(&p, read)),
             span: p.span,
         };
         self.stmt(&block, out);
         true
+    }
+
+    /// Does the map source `it` (checked), or the receiver of its `keys()`, `values()` or
+    /// `entries()` call, always name the same map: a `const` variable or `this`?
+    fn fixed_source(&self, it: &hir::Expr) -> bool {
+        let src = match &it.kind {
+            H::Call { args, .. } => match args.first() {
+                Some(r) => r,
+                None => return false,
+            },
+            _ => it,
+        };
+        match &src.kind {
+            H::Local(id, _) => matches!(
+                self.local_kind(*id),
+                super::LocalKind::Const | super::LocalKind::Using | super::LocalKind::This
+            ),
+            _ => false,
+        }
     }
 
     /// The map place and the cursor method reading each value, when `iter` is one per the
@@ -106,7 +128,9 @@ fn pure_place(e: &ast::Expr) -> bool {
 struct CursorLoop<'e> {
     cursor: String,
     /// The hidden local holding the map for the whole loop.
-    held: String,
+    hold: String,
+    /// Whether the loop uses `hold` (otherwise the map expression itself).
+    held: bool,
     map: &'e ast::Expr,
     /// The iterated expression: where the value reads point (a diagnostic about them is one
     /// about iterating the map).
@@ -120,7 +144,8 @@ impl<'e> CursorLoop<'e> {
     fn new(span: velt_common::Span, map: &'e ast::Expr, iter: velt_common::Span) -> Self {
         CursorLoop {
             cursor: format!("<cursor@{}>", span.lo),
-            held: format!("<map@{}>", span.lo),
+            hold: format!("<map@{}>", span.lo),
+            held: true,
             map,
             iter,
             span,
@@ -130,11 +155,6 @@ impl<'e> CursorLoop<'e> {
 
     /// The block of the module docs; `read` is the cursor method giving each value.
     fn desugar(&self, p: &ForOfParts<'_>, read: &str) -> ast::Block {
-        let held = self.var(
-            ast::VarKind::Const,
-            self.ident_pat(&self.held),
-            self.map.clone(),
-        );
         let cursor = self.var(
             ast::VarKind::Let,
             self.ident_pat(&self.cursor),
@@ -159,14 +179,23 @@ impl<'e> CursorLoop<'e> {
                 body: Box::new(lp),
             });
         }
-        self.block(vec![held, cursor, lp])
+        let mut stmts = vec![cursor, lp];
+        if self.held {
+            let hold = self.ident_pat(&self.hold);
+            stmts.insert(0, self.var(ast::VarKind::Const, hold, self.map.clone()));
+        }
+        self.block(stmts)
     }
 
     /// `<map@N>.method(args)`.
     fn on_map(&self, method: &str, args: Vec<ast::Expr>) -> ast::Expr {
-        let held = self.expr(ast::ExprKind::Ident(self.ident(&self.held)));
+        let map = if self.held {
+            self.expr(ast::ExprKind::Ident(self.ident(&self.hold)))
+        } else {
+            self.map.clone()
+        };
         let callee = self.expr(ast::ExprKind::Member {
-            object: Box::new(held),
+            object: Box::new(map),
             prop: self.ident(method),
             optional: false,
         });
