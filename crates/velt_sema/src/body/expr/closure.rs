@@ -25,7 +25,7 @@ use super::closure_sig::Expected;
 use crate::body::{FnCx, Frame, LocalKind, Want};
 use crate::collect::fn_placeholder;
 use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
-use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
+use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId, TyKind};
 
 /// A checked closure, before its locals are renumbered (captures first).
 pub(super) struct Checked {
@@ -54,17 +54,15 @@ fn local_order(frame: &Frame, captures: &[hir::Capture], declared: &[LocalId]) -
     order
 }
 
-/// `async (params) => body` as `(params) => (async () => body)()`: a sync arrow whose value is
-/// the promise the inner async arrow returns (`FnCx::async_into_union`). `discard`: as
-/// `(params) => { const p = (async () => body)(); }` instead, for a `void` function type
-/// (`FnCx::async_into_void`): the started promise is dropped and runs to completion, as in JS.
+/// `async (params) => body` as `(params) => { const p = (async () => body)(); }`, for a `void`
+/// function type (`FnCx::async_into_void`): the started promise is dropped and runs to
+/// completion, as in JS.
 fn async_in_sync_arrow(
     e: &ast::Expr,
     params: &[ast::ArrowParam],
     ret: &Option<ast::TypeExpr>,
     throws: &Option<ast::TypeExpr>,
     body: &ast::ArrowBody,
-    discard: bool,
 ) -> ast::Expr {
     let mk = |kind| ast::Expr {
         id: ast::NodeId(u32::MAX),
@@ -85,34 +83,30 @@ fn async_in_sync_arrow(
         args: vec![],
         optional: false,
     });
-    let body = if discard {
-        let span = e.span;
-        let pattern = ast::Pattern {
-            id: ast::NodeId(u32::MAX),
-            // Not a valid identifier, so the body cannot name it.
-            kind: ast::PatternKind::Ident(ast::Ident {
-                name: "#started".into(),
-                span,
-            }),
+    let span = e.span;
+    let pattern = ast::Pattern {
+        id: ast::NodeId(u32::MAX),
+        // Not a valid identifier, so the body cannot name it.
+        kind: ast::PatternKind::Ident(ast::Ident {
+            name: "#started".into(),
             span,
-        };
-        let decl = ast::Stmt {
-            kind: ast::StmtKind::Var(ast::VarDecl {
-                kind: ast::VarKind::Const,
-                pattern,
-                ty: None,
-                init: Some(call),
-                span,
-            }),
-            span,
-        };
-        ast::ArrowBody::Block(ast::Block {
-            stmts: vec![decl],
-            span,
-        })
-    } else {
-        ast::ArrowBody::Expr(Box::new(call))
+        }),
+        span,
     };
+    let decl = ast::Stmt {
+        kind: ast::StmtKind::Var(ast::VarDecl {
+            kind: ast::VarKind::Const,
+            pattern,
+            ty: None,
+            init: Some(call),
+            span,
+        }),
+        span,
+    };
+    let body = ast::ArrowBody::Block(ast::Block {
+        stmts: vec![decl],
+        span,
+    });
     mk(ast::ExprKind::Arrow {
         type_params: vec![],
         params: params.to_vec(),
@@ -124,6 +118,129 @@ fn async_in_sync_arrow(
 }
 
 impl FnCx<'_, '_> {
+    /// An async arrow where the function type returns a union with one promise member
+    /// (`FnCx::async_into_union`): the arrow is an async closure typed by that member, held in a
+    /// hidden local `f`, and the value is the sync arrow `(params) => f(params)`, whose result
+    /// (the promise) converts to the union. Wrapping the closure value, rather than nesting the
+    /// arrow's body in another closure, keeps the async closure's own capture rules (each call
+    /// of one that may run on another thread copies what it captured).
+    fn async_closure_into_union(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+        escaping: bool,
+    ) -> hir::Expr {
+        let span = e.span;
+        let Some(fn_ty) = self.hint(exp) else {
+            return self.closure(e, exp, escaping);
+        };
+        let TyKind::FnPtr {
+            params: ptys,
+            ret,
+            throws,
+        } = self.cx.ty.kind(fn_ty).clone()
+        else {
+            return self.closure(e, exp, escaping);
+        };
+        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let member = match self.cx.ty.promise_payload(inner) {
+            Some(_) => inner,
+            None => self
+                .cx
+                .union_members(inner)
+                .and_then(|ms| {
+                    ms.into_iter()
+                        .find(|m| self.cx.ty.promise_payload(*m).is_some())
+                })
+                .unwrap_or(inner),
+        };
+        let n_params = ptys.len();
+        let async_ty = self.cx.ty.intern(TyKind::FnPtr {
+            params: ptys,
+            ret: member,
+            throws,
+        });
+        let f = self.closure(e, Some(async_ty), true);
+        let n = self.f.locals.len();
+        let name = ast::Ident {
+            name: format!("#async{n}"),
+            span,
+        };
+        self.push_scope();
+        let local = self.declare_local(&name, f.ty, LocalKind::Const);
+        let mk = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span,
+        };
+        let arg = |k: usize| ast::Ident {
+            name: format!("#arg{k}"),
+            span,
+        };
+        let call = mk(ast::ExprKind::Call {
+            callee: Box::new(mk(ast::ExprKind::Ident(name.clone()))),
+            type_args: vec![],
+            args: (0..n_params)
+                .map(|k| mk(ast::ExprKind::Ident(arg(k))))
+                .collect(),
+            optional: false,
+        });
+        let wrapper = mk(ast::ExprKind::Arrow {
+            type_params: vec![],
+            params: (0..n_params)
+                .map(|k| ast::ArrowParam {
+                    name: arg(k),
+                    ty: None,
+                    default: None,
+                    optional: false,
+                })
+                .collect(),
+            ret: None,
+            throws: None,
+            body: ast::ArrowBody::Expr(Box::new(call)),
+            is_async: false,
+        });
+        let w = self.closure(&wrapper, exp, escaping);
+        self.pop_scope();
+        let ty = w.ty;
+        let stmt = hir::Stmt {
+            kind: S::Let {
+                local,
+                init: Some(f),
+            },
+            span,
+        };
+        let block = hir::Block {
+            stmts: vec![stmt],
+            value: Some(Box::new(w)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
+    /// the first one, whose errors the real check then reports.
+    fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
+        for &m in members {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = (
+                self.f.clone(),
+                self.outer.clone(),
+                self.refused_reads.clone(),
+                self.literal.clone(),
+            );
+            let diags = self.cx.diags.len();
+            let h = self.closure(e, Some(m), escaping);
+            let ok = self.cx.diags.len() == diags && h.ty == m;
+            mark.rollback(self.cx);
+            (self.f, self.outer, self.refused_reads, self.literal) = frames;
+            if ok {
+                return m;
+            }
+        }
+        members[0]
+    }
+
     /// An arrow function (`e` is an `ast::ExprKind::Arrow`) where a value of type `exp` is
     /// expected; `escaping` when it is stored or returned rather than passed to a call.
     pub(crate) fn closure(
@@ -155,13 +272,17 @@ impl FnCx<'_, '_> {
         }
         // Against a union of function types, the arrow is typed by one member; the caller
         // converts the closure to the union.
-        let exp = self.arrow_member(exp, *is_async, params.len()).or(exp);
+        let members = self.arrow_members(exp, *is_async, params.len());
+        let exp = match members.as_slice() {
+            [] => exp,
+            [one] => Some(*one),
+            several => Some(self.member_by_trial(e, several, escaping)),
+        };
         if *is_async && self.async_into_union(exp) {
-            let wrapped = async_in_sync_arrow(e, params, ret, throws, body, false);
-            return self.closure(&wrapped, exp, escaping);
+            return self.async_closure_into_union(e, exp, escaping);
         }
         if *is_async && self.async_into_void(exp) {
-            let wrapped = async_in_sync_arrow(e, params, ret, throws, body, true);
+            let wrapped = async_in_sync_arrow(e, params, ret, throws, body);
             return self.closure(&wrapped, exp, escaping);
         }
         let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);

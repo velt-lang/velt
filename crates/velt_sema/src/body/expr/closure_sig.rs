@@ -53,7 +53,7 @@ impl FnCx<'_, '_> {
         else {
             return false;
         };
-        if self.cx.ty.promise_payload(ret).is_some() || self.cx.ty.has_error(ret) {
+        if self.cx.ty.promise_payload(ret).is_some() || ret == self.cx.ty.error {
             return false;
         }
         let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
@@ -78,18 +78,23 @@ impl FnCx<'_, '_> {
         )
     }
 
-    /// The member of a union of function types (`(() => void) | (() => Promise<void>)`) that
-    /// an arrow with `n_params` parameters is typed by, as TS's contextual typing picks one: an
-    /// async arrow takes a member returning a promise (or a union with one), else a `void` one;
-    /// a sync arrow the first member not returning a promise.
-    pub(super) fn arrow_member(
+    /// The members of a union of function types (`(() => void) | (() => Promise<void>)`) that
+    /// an arrow with `n_params` parameters may be typed by, in order of preference, as TS's
+    /// contextual typing picks one: for an async arrow the members returning a promise (or a
+    /// union with one), then the `void` ones; for a sync arrow those not returning a promise.
+    /// Empty when `exp` is not such a union.
+    pub(super) fn arrow_members(
         &mut self,
         exp: Option<TyId>,
         is_async: bool,
         n_params: usize,
-    ) -> Option<TyId> {
-        let u = self.hint(exp)?;
-        let members = self.cx.union_members(u)?;
+    ) -> Vec<TyId> {
+        let Some(u) = self.hint(exp) else {
+            return vec![];
+        };
+        let Some(members) = self.cx.union_members(u) else {
+            return vec![];
+        };
         let fns: Vec<(TyId, TyId)> = members
             .iter()
             .filter_map(|m| match self.cx.ty.kind(*m) {
@@ -99,25 +104,27 @@ impl FnCx<'_, '_> {
             .collect();
         let promise = |s: &mut Self, ret: TyId| {
             s.cx.ty.promise_payload(ret).is_some()
-                || s.cx
-                    .union_members(ret)
-                    .is_some_and(|ms| ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some()))
+                || s.cx.union_members(ret).is_some_and(|ms| {
+                    ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some())
+                })
         };
         let unit = self.cx.ty.unit;
+        let mut out = vec![];
         if is_async {
             for &(m, ret) in &fns {
                 if promise(self, ret) {
-                    return Some(m);
+                    out.push(m);
                 }
             }
-            return fns.iter().find(|(_, ret)| *ret == unit).map(|(m, _)| *m);
-        }
-        for &(m, ret) in &fns {
-            if !promise(self, ret) {
-                return Some(m);
+            out.extend(fns.iter().filter(|(_, r)| *r == unit).map(|(m, _)| *m));
+        } else {
+            for &(m, ret) in &fns {
+                if !promise(self, ret) {
+                    out.push(m);
+                }
             }
         }
-        None
+        out
     }
 
     /// The closure's error type: written or expected (`declared`), else what its body is known
