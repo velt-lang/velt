@@ -40,9 +40,9 @@ pub fn publish_thread_output() {
 
 /// Called before this task hands work to another one, ahead of the change the other task sees:
 /// spawning a task, a channel send or close, a receive that frees room in a bounded channel,
-/// settling a `new Promise`, aborting a signal, a child leaving a task group. What this thread
-/// printed so far becomes visible before anything the other task prints, which may run on another
-/// worker at once.
+/// settling a `new Promise`, aborting a signal, a child leaving a task group, releasing a
+/// keep-alive reference (the last one lets the program exit). What this thread printed so far
+/// becomes visible before anything the other task prints, which may run on another worker at once.
 pub fn publish_before_handoff() {
     stdout::publish_if_buffered();
 }

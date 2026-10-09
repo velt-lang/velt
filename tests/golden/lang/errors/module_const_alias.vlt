@@ -1,0 +1,26 @@
+// An object constant initialized by a call is not shared on a move: TypeScript would alias it,
+// so a change through the copy would show in the constant. The move is an error.
+
+type Point = { x: number; y: number };
+
+function point(x: number, y: number): Point {
+  return { x: x, y: y };
+}
+
+const UNIT = point(1, 2);
+
+class Holder {
+  p: Point;
+
+  constructor(p: Point) {
+    this.p = p;
+  }
+}
+
+function main() {
+  const a = UNIT;
+  a.x = 5;
+  const h = new Holder(UNIT);
+  h.p.x = 9;
+  console.log(UNIT.x, a.x, h.p.x);
+}
