@@ -151,7 +151,7 @@ impl FnCx<'_, '_> {
         true
     }
 
-    fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
+    pub(super) fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
         let H::Field { base, index, .. } = &place.kind else {
             return;
         };

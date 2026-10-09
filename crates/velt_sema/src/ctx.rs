@@ -672,10 +672,11 @@ impl<'m> Ctx<'m> {
                         .fields
                         .iter()
                         .map(|f| {
+                            let name = display_key(&f.name);
                             if f.optional {
-                                format!("{}?: {}", f.name, self.display_in(f.declared, &bound))
+                                format!("{name}?: {}", self.display_in(f.declared, &bound))
                             } else {
-                                format!("{}: {}", f.name, self.display_in(f.ty, &bound))
+                                format!("{name}: {}", self.display_in(f.ty, &bound))
                             }
                         })
                         .collect();
@@ -715,5 +716,20 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

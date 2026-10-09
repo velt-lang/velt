@@ -359,6 +359,22 @@ impl FnCx<'_, '_> {
                 self.expr(index, None, Want::Borrow);
                 self.error_expr(span)
             }
+            // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
+            // same property either way; the quoted form allows any name).
+            _ if literal_key(index).is_some() => {
+                let prop = ast::Ident {
+                    name: literal_key(index).unwrap_or_default(),
+                    span: index.span,
+                };
+                if matches!(want, Want::BorrowMut) {
+                    let Some(place) = self.field_access(obj, &prop, want, span) else {
+                        return self.error_expr(span);
+                    };
+                    self.check_readonly(&place, &prop);
+                    return place;
+                }
+                self.member_of(obj, &prop, want, span)
+            }
             _ => {
                 let tn = self.cx.display(t);
                 let mut d =
@@ -584,5 +600,16 @@ pub(super) fn untyped_int(e: &ast::Expr) -> bool {
         }
         | ast::ExprKind::Paren(expr) => untyped_int(expr),
         _ => false,
+    }
+}
+
+/// The key of `o["name"]` / `` o[`name`] ``: a string literal (a template without
+/// substitutions).
+fn literal_key(index: &ast::Expr) -> Option<String> {
+    match &index.kind {
+        ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
+        ast::ExprKind::Template { quasis, exprs } if exprs.is_empty() => quasis.first().cloned(),
+        ast::ExprKind::Paren(inner) => literal_key(inner),
+        _ => None,
     }
 }

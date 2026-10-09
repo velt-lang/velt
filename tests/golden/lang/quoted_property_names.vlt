@@ -1,0 +1,53 @@
+// Quoted property names (#810), as in TypeScript: in object types, interfaces, object literals,
+// destructuring, and element access with a constant key, which reads the same field as `.name`.
+// Printing quotes the names that are not identifiers, as Node's `util.inspect` does.
+
+type Headers = { "content-type": string; "x-count"?: number; plain: boolean };
+
+interface Attrs {
+  "data-id": string;
+  "aria-label"?: string;
+}
+
+type Counts = { "a-b": number; "client:load"?: boolean };
+
+function show(h: Headers): string {
+  return `${h["content-type"]} ${h["x-count"] ?? 0} ${h.plain}`;
+}
+
+function label(a: Attrs): string {
+  return `${a["data-id"]}/${a["aria-label"] ?? "none"}`;
+}
+
+function main() {
+  const h: Headers = { "content-type": "text/html", "x-count": 2, plain: true };
+  console.log(show(h));
+  h["x-count"] = 3;
+  console.log(show(h));
+  console.log(JSON.stringify(h));
+  console.log(Object.keys(h).join(","));
+  console.log(h);
+  const { "content-type": ct, plain } = h;
+  console.log(ct, plain);
+
+  const o = { "a-b": 1, c: "two", "3d": false, $x: 0 };
+  console.log(o["a-b"], o.c, o["3d"], o[`a-b`]);
+  console.log(JSON.stringify(o));
+  console.log(o);
+
+  const a: Attrs = { "data-id": "x1", "aria-label": "it's" };
+  console.log(label(a));
+  console.log(a);
+
+  const c: Counts = { "a-b": 1 };
+  c["a-b"] += 2;
+  c["a-b"]++;
+  console.log(c["a-b"], c["client:load"] ?? false);
+  const maybe: Counts | null = c;
+  console.log(maybe?.["a-b"]);
+  const { "a-b": n, "client:load": load = true } = c;
+  console.log(n, load);
+
+  const back = JSON.parse<Headers>('{"content-type":"x","plain":false}');
+  console.log(back["content-type"], back.plain, back["x-count"] ?? -1);
+}
