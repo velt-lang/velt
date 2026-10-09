@@ -59,10 +59,7 @@ unsafe fn count<'a>(data: *mut u8) -> &'a AtomicU64 {
     let c = &*(data.sub(COUNT) as *const AtomicU64);
     // A string kept after its buffer was freed (debug runtime, `VELT_RT_DEBUG_ALLOC=1`, #872).
     #[cfg(debug_assertions)]
-    crate::debug_alloc::check_value(
-        c.load(Ordering::Relaxed),
-        "a string whose buffer was freed",
-    );
+    crate::freed::check_value(c.load(Ordering::Relaxed), "a string whose buffer was freed");
     c
 }
 

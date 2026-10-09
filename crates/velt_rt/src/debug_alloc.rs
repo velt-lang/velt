@@ -23,7 +23,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
 mod guard;
-pub use guard::check_value;
 
 /// Header magic of a live block, and of a block already freed (in quarantine).
 const LIVE: u64 = 0x5641_4953_4c49_5645;

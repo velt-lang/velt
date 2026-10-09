@@ -10,7 +10,8 @@
 //!   handler installed here reports `use after free` instead of the plain crash a non-canonical
 //!   address gave (#819);
 //! - as a **number**, it is a tiny subnormal `f64` (or a large `i64`) that the runtime's number
-//!   formatting recognises ([`check_value`]): printing it, or making a string of it, aborts;
+//!   formatting recognises ([`crate::freed::check_value`]): printing it, or making a string of
+//!   it, aborts;
 //! - as a **string's count** (the string value is live but its buffer was freed), the runtime's
 //!   retain and release recognise it.
 //!
@@ -35,7 +36,8 @@ const GUARD_SPAN: usize = 256 << 20;
 /// and still 8-aligned.
 const POISON_OFFSET: usize = 0x00A5_A5A0;
 
-/// The poison word (0 until the checking allocator reserved its guard range).
+/// The poison word (0 until the checking allocator reserved its guard range; also published
+/// to [`crate::freed`], which recognises it in values).
 static POISON: AtomicU64 = AtomicU64::new(0);
 /// The reservation: `[GUARD_START, GUARD_START + 2 * GUARD_SPAN)`.
 static GUARD_START: AtomicU64 = AtomicU64::new(0);
@@ -49,37 +51,11 @@ pub(super) fn poison() -> u64 {
     }
 }
 
-/// Abort with `use after free` when `word`, a value the runtime was handed or read from a block
-/// it was handed, is the poison of a freed block. Compiled out of the release runtime, and a
-/// single comparison with the checking allocator off.
-#[inline(always)]
-pub fn check_value(word: u64, what: &str) {
-    #[cfg(debug_assertions)]
-    {
-        let p = POISON.load(Ordering::Relaxed);
-        if p != 0 && word == p {
-            use_after_free(what, word as usize);
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = (word, what);
-}
-
-#[cold]
-#[inline(never)]
-fn use_after_free(what: &str, addr: usize) -> ! {
-    report(what, addr);
-    std::process::abort()
-}
-
 /// Print `velt debug-alloc: use after free: <what> (address …)` without allocating or locking
-/// (it runs in a fault handler too).
+/// (it runs in a fault handler).
 fn report(what: &str, addr: usize) {
-    use std::io::Write;
     let mut buf = [0u8; 256];
-    let mut w = &mut buf[..];
-    let _ = writeln!(w, "velt debug-alloc: use after free: {what} (address {addr:#x})");
-    let n = 256 - w.len();
+    let n = crate::freed::message(&mut buf, what, addr);
     write_stderr(&buf[..n]);
 }
 
@@ -99,7 +75,9 @@ pub(super) fn init() {
     };
     GUARD_START.store(start as u64, Ordering::Relaxed);
     install_fault_handler();
-    POISON.store((start + GUARD_SPAN + POISON_OFFSET) as u64, Ordering::Relaxed);
+    let word = (start + GUARD_SPAN + POISON_OFFSET) as u64;
+    POISON.store(word, Ordering::Relaxed);
+    crate::freed::set_poison(word);
 }
 
 #[cfg(windows)]
@@ -201,8 +179,10 @@ mod os {
     }
 
     /// The handlers that were installed before ours, put back for a fault outside the guard.
-    static mut PREVIOUS: [std::mem::MaybeUninit<libc::sigaction>; 2] =
-        [std::mem::MaybeUninit::zeroed(), std::mem::MaybeUninit::zeroed()];
+    static mut PREVIOUS: [std::mem::MaybeUninit<libc::sigaction>; 2] = [
+        std::mem::MaybeUninit::zeroed(),
+        std::mem::MaybeUninit::zeroed(),
+    ];
     static INSTALLED: AtomicBool = AtomicBool::new(false);
     const SIGNALS: [libc::c_int; 2] = [libc::SIGSEGV, libc::SIGBUS];
 
@@ -333,7 +313,10 @@ mod tests {
     #[test]
     fn reads_of_freed_blocks_abort() {
         if let Some(case) = std::env::var_os(CHILD) {
-            assert!(super::super::enabled(), "the child runs with the checking allocator");
+            assert!(
+                super::super::enabled(),
+                "the child runs with the checking allocator"
+            );
             assert_ne!(super::poison(), super::BYTE_POISON, "the guard is reserved");
             unsafe {
                 match case.to_str() {
@@ -361,8 +344,8 @@ mod tests {
     #[test]
     fn values_pass_without_the_checking_allocator() {
         if std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
-            super::check_value(super::BYTE_POISON, "unreachable");
-            super::check_value(0, "unreachable");
+            crate::freed::check_value(super::BYTE_POISON, "unreachable");
+            crate::freed::check_value(0, "unreachable");
         }
     }
 }
