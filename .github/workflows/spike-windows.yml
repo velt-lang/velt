@@ -1,183 +1,36 @@
-# TEMPORARY (bundled-linker spike, #803): runs scripts/spike/*.ps1 on Windows. Removed before the PR.
+# TEMPORARY (#853 review): Windows link times with bench/compile/run.ps1 -LinkOnly, from the
+# toolchain archive of release run 37930536191, with Defender's status. Removed afterwards.
 name: spike
 on:
   push:
     branches: ["spike/**"]
-  workflow_dispatch:
-    inputs:
-      script:
-        default: windows.ps1
 jobs:
-  winpkg:
-    if: contains(github.event.head_commit.message, '[winpkg]')
+  winbench:
     runs-on: windows-2025
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
         with:
-          tools: "false"
-          save-cache: "true"
+          ref: bundled-linker
       - uses: actions/download-artifact@v4
         with:
-          name: lld-windows-2025
-          path: ${{ runner.temp }}/lld
-          run-id: 37907209278
+          name: velt-x86_64-pc-windows-msvc
+          path: ${{ runner.temp }}/dist
+          run-id: 37930536191
           github-token: ${{ github.token }}
-      - name: package
+      - name: bench
         shell: pwsh
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |
-          pwsh -NoProfile -File scripts/package.ps1 -Lld "$env:RUNNER_TEMP/lld/lld.exe" 2>&1 | Select-String -NotMatch "Compiling" | Out-Host
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1 -ExpandProperty FullName
-          Get-ChildItem dist/*/bin/velt.exe, dist/*/lib/velt_rt_shared.dll | ForEach-Object { Write-Host "$($_.Name): $(& $dumpbin /nologo /dependents $_.FullName | Select-String '\.dll' | ForEach-Object { $_.Line.Trim() })" }
-          Get-ChildItem dist/*.zip | Select-Object Name, Length | Format-Table | Out-Host
-      - name: clean machine (servercore)
-        shell: pwsh
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: |
-          # Containers cannot mount the Dev Drive: copy to the runner's temp drive.
-          # Some runner images leave the Docker service stopped.
-          if ((Get-Service docker -ErrorAction SilentlyContinue).Status -ne "Running") { Start-Service docker }
-          $dist = (Get-ChildItem dist -Directory | Select-Object -First 1).FullName
-          $t = Join-Path $env:RUNNER_TEMP "clean"
-          New-Item -ItemType Directory -Force "$t/repo/tests/golden/m1", "$t/repo/examples", "$t/repo/scripts" | Out-Null
-          Copy-Item -Recurse $dist "$t/velt"
-          Copy-Item tests/golden/m1/hello.vlt "$t/repo/tests/golden/m1/"
-          Copy-Item examples/http_hello.vlt "$t/repo/examples/"
-          Copy-Item scripts/smoke-clean.ps1 "$t/repo/scripts/"
-          docker run --rm -v "$t\velt:C:\velt" -v "$t\repo:C:\repo" mcr.microsoft.com/windows/servercore:ltsc2025 powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: bench links (system vs bundled)
-        if: always()
-        shell: pwsh
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: |
-          $velt = (Get-ChildItem dist/*/bin/velt.exe | Select-Object -First 1).FullName
           Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name
-          $out = Join-Path $env:RUNNER_TEMP "bl"; New-Item -ItemType Directory -Force $out | Out-Null
-          function LinkMs($file, $exe, $relink) {
-            if (-not $relink) { Remove-Item -ErrorAction SilentlyContinue "$exe.exe.link-stamp" }
-            $log = & $velt build -v $file -o $exe 2>&1 | Out-String
-            if ($LASTEXITCODE) { throw $log }
-            [double]([regex]::Match($log, 'velt: link\s+([\d.]+) ms').Groups[1].Value)
-          }
+          Get-MpComputerStatus | Select-Object AMServiceEnabled, RealTimeProtectionEnabled, AntivirusEnabled | Format-List | Out-Host
+          Expand-Archive "$env:RUNNER_TEMP/dist/*.zip" -DestinationPath "$env:RUNNER_TEMP/tc"
+          $velt = (Get-ChildItem "$env:RUNNER_TEMP/tc/*/bin/velt.exe").FullName
           foreach ($l in "system", "bundled") {
+            Write-Host "### VELT_LINKER=$l"
             $env:VELT_LINKER = $l
-            foreach ($p in @("examples/http_hello.vlt", "bench/compile/all_std.vlt")) {
-              $exe = Join-Path $out ([IO.Path]::GetFileNameWithoutExtension($p) + "_$l")
-              Remove-Item Env:VELT_RT_LINK -ErrorAction SilentlyContinue
-              $shared = (1..5 | ForEach-Object { LinkMs $p $exe $false } | Measure-Object -Minimum).Minimum
-              $env:VELT_RT_LINK = "static"
-              $static = (1..5 | ForEach-Object { LinkMs $p $exe $false } | Measure-Object -Minimum).Minimum
-              $relink = (1..5 | ForEach-Object { LinkMs $p $exe $true } | Measure-Object -Minimum).Minimum
-              Remove-Item Env:VELT_RT_LINK
-              Write-Host "| $([IO.Path]::GetFileNameWithoutExtension($p)) | $l | $shared | $static | $relink |"
-            }
+            pwsh -NoProfile -File bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt $velt -LinkOnly
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
-  lists:
-    if: contains(github.event.head_commit.message, '[lists]')
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2025]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-        with:
-          tools: "false"
-      - name: windows lists
-        if: runner.os == 'Windows'
-        shell: bash
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: |
-          cargo run -q -p velt_link --bin velt-kit -- lists windows --out "$RUNNER_TEMP/lists/windows"
-      - name: macos lists
-        if: runner.os == 'macOS'
-        run: |
-          cargo build -q --release -p velt_rt
-          cargo run -q -p velt_link --bin velt-kit -- lists macos --runtime target/release/libvelt_rt.a --out "$RUNNER_TEMP/lists/macos-$(uname -m).txt"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lists-${{ matrix.os }}
-          path: ${{ runner.temp }}/lists
-  lld:
-    if: contains(github.event.head_commit.message, '[lld]')
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15, macos-15-intel]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - name: ninja
-        if: runner.os != 'Windows'
-        shell: bash
-        run: if [ "$RUNNER_OS" = macOS ]; then brew install ninja >/dev/null; else sudo apt-get install -y -qq ninja-build >/dev/null; fi
-      - name: build lld (unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: time scripts/build-lld.sh "$RUNNER_TEMP/lld"
-      - name: build lld (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $t = Measure-Command { pwsh -NoProfile -File scripts/build-lld.ps1 -OutDir "$env:RUNNER_TEMP/lld" | Out-Host }
-          Write-Host "took $($t.TotalMinutes) min"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lld-${{ matrix.os }}
-          path: ${{ runner.temp }}/lld
-  linux:
-    if: contains(github.event.head_commit.message, '[linux]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-        with:
-          tools: "false"
-          save-cache: "true"
-      - name: spike
-        shell: bash
-        run: scripts/spike/linux.sh "$RUNNER_TEMP/spike" 2>&1 | tee "$RUNNER_TEMP/spike.log"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: spike-linux
-          path: ${{ runner.temp }}/spike
-          if-no-files-found: ignore
-  windows:
-    if: contains(github.event.head_commit.message, '[windows]') || github.event_name == 'workflow_dispatch'
-    runs-on: windows-2025
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-        with:
-          tools: "false"
-          save-cache: "true"
-      - name: spike
-        shell: pwsh
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: |
-          $script = "${{ inputs.script }}"
-          if (-not $script) { $script = "windows3.ps1" }
-          pwsh -NoProfile -File "scripts/spike/$script" -Out "$env:RUNNER_TEMP/spike/out" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/spike.log"
-          exit $LASTEXITCODE
-      - name: summary
-        if: always()
-        shell: bash
-        run: |
-          { echo '```'; tail -n 300 "$RUNNER_TEMP/spike.log" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: spike-windows
-          path: ${{ runner.temp }}/spike
-          if-no-files-found: ignore
+          Write-Host "### first start of the bundled lld after a fresh copy (Defender scans new files)"
+          $copy = Join-Path $env:RUNNER_TEMP "lld-copy.exe"; Copy-Item (Get-ChildItem "$env:RUNNER_TEMP/tc/*/lib/velt/lld.exe").FullName $copy
+          foreach ($i in 1..3) { $t = Measure-Command { & $copy -flavor link /? | Out-Null }; Write-Host "lld start $i: $([math]::Round($t.TotalMilliseconds)) ms" }
