@@ -14,6 +14,10 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
+- A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
+  not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
+  parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
+  `resolve()`.
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`) accept a

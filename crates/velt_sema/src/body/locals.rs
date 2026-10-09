@@ -289,6 +289,11 @@ impl FnCx<'_, '_> {
         scope_class(&self.f.scopes, l)
     }
 
+    /// Records that `l` holds only the union variants `vs` from here to the end of the scope.
+    pub(crate) fn narrow_members(&mut self, l: LocalId, vs: Vec<u32>) {
+        self.innermost_scope().members.push((l, vs));
+    }
+
     fn innermost_scope(&mut self) -> &mut super::Scope {
         self.f.scopes.last_mut().expect("ICE: no scope")
     }

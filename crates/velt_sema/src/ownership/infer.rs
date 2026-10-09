@@ -308,6 +308,20 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 .global(*d)
                 .map(|g| (g.ty, g.name.clone()))
                 .unwrap_or((cx.ty.error, String::new()));
+            if crate::body::pure_init::shares_on_move(cx, *d) {
+                // A function computed at each use: another reference to it is owned.
+                let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));
+                let read = Expr {
+                    kind: read,
+                    ty: e.ty,
+                    span: e.span,
+                };
+                e.kind = E::Call {
+                    callee: Callee::Intrinsic(Intrinsic::Share),
+                    args: vec![read],
+                };
+                return true;
+            }
             if !cx.is_copy(ty) && ty != cx.ty.str_ {
                 errors.push(
                     Diagnostic::error(

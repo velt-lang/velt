@@ -50,8 +50,9 @@ accept `bool` and nullable values.
 Module scope holds only constants, functions and types. A module-level `let` is an error
 ("mutable module-level state is not allowed"; in a root file with top-level statements, a `let`
 that only those statements use is a local of the generated `main`, see
-[Scripts](modules.md#scripts-top-level-statements)), and module `const` initializers must be literals
-or struct literals of constants. State that changes lives in values created by `main` (for
+[Scripts](modules.md#scripts-top-level-statements)), and module `const` initializers must be
+constant expressions (literals, struct literals of constants, other module constants, closures)
+or [calls of pure functions](#module-constants-initialized-by-a-call). State that changes lives in values created by `main` (for
 example `shared(...)` or class instances) and is passed where it is needed. This keeps request
 handlers free of data races, and it is what lets `velt dev` swap code in a running program
 without migrating globals ([hot reload](../tooling/dev.md)).
@@ -92,3 +93,114 @@ function main() {
   }
 }
 ```
+
+## Module constants initialized by a call
+
+A module constant is not stored: its initializer is evaluated where the constant is used. A
+call can initialize one when that call is *pure*, so that evaluating it at each use gives what
+TypeScript's single evaluation at load gives:
+
+- the callee is a named function (a free function, a static method or an imported function,
+  generic or not), not a function value or a method of a value;
+- each argument is a constant expression, another module constant, a function or a closure;
+- the callee and everything it calls have no loops, no recursion, no `throw`, no `await`, no
+  calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
+  `spawn`, external functions). It may allocate, construct objects and create closures, as
+  `component` does below: the closures it returns run later as ordinary code;
+- a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
+  object, array or class instance (``it returns a closure that keeps mutable state (`n`)``).
+  In Node the constant is one closure whose state carries over from call to call; a new
+  closure at each use would start over each time;
+- the result is a value: a number, string, struct, tuple, enum or function. Class instances,
+  arrays and maps are rejected (a new array at each use would change what `X.push(1)` does).
+  An object or struct constant can't be moved into a variable or a field (``cannot move out of
+  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
+  so a change through the copy would show in the constant.
+
+```ts
+type Props = { start: number };
+type Component = (props: Props) => string;
+
+function component(setup: (props: Props) => () => string): Component {
+  return (props: Props): string => setup(props)();
+}
+
+const Counter = component((props: Props) => {
+  const count = props.start + 1;
+  return (): string => `Count: ${count}`;
+});
+
+type Point = { x: number; y: number };
+
+function point(x: number, y: number): Point {
+  return { x: x, y: y };
+}
+
+const ORIGIN = point(0, 0);
+
+function main() {
+  console.log(Counter({ start: 1 }), ORIGIN.x);   // Count: 2 0
+}
+```
+
+A call that does not qualify is an error that says why and where, through the call chain, with
+the fix: compute the value in `main` and pass it on, or make the constant a function.
+
+```ts error
+function load(): string {
+  console.log("loading");
+  return "data";
+}
+
+const DATA = load();                    // error: `load` cannot initialize module constant `DATA`:
+                                        // it calls `console.log`, which has effects
+function main() {
+  console.log(DATA);
+}
+```
+
+Evaluated at each use, such a constant is a new object or closure each time, so comparing it by
+identity would always be false where TypeScript says `true`. `===` and `!==` with a module
+constant compared by identity (objects, arrays, functions) are an error: ``Counter` is evaluated
+at each use, so comparing it by identity is always false``.
+
+```ts error
+function adder(n: number): (x: number) => number {
+  return (x: number): number => x + n;
+}
+
+const ADD_ONE = adder(1);
+
+function main() {
+  console.log(ADD_ONE === ADD_ONE);     // error: `ADD_ONE` is evaluated at each use
+}
+```
+
+**Known difference.** A function-valued constant passed on is a new closure at each use: after
+`const a = ADD_ONE; const b = ADD_ONE;`, `a === b` is `false` (TypeScript: `true`), and so is
+any identity comparison the constant reaches by being passed, which the compiler cannot see:
+`[ADD_ONE].indexOf(ADD_ONE)` is `-1`, and an event emitter's `off(ADD_ONE)` does not find the
+handler that `on(ADD_ONE)` added. **Planned**: evaluating such a constant once, as Node does,
+which removes this difference ([#802](https://github.com/velt-lang/velt/issues/802)). Until then,
+copy the constant into a local once and pass the local:
+
+```ts
+type Handler = (x: number) => number;
+
+function adder(n: number): Handler {
+  return (x: number): number => x + n;
+}
+
+const ADD_ONE = adder(1);
+
+function main() {
+  const handlers: Handler[] = [];
+  const h = ADD_ONE;                    // one value, passed on
+  handlers.push(h);
+  console.log(handlers.indexOf(h));     // 0 (`handlers.indexOf(ADD_ONE)` would be -1)
+}
+```
+
+A panic (an integer overflow,
+an index out of bounds) in an initializer happens at the use, where TypeScript would throw at
+module load.

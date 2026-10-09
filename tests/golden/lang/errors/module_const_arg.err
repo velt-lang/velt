@@ -1,0 +1,1 @@
+module_const_arg.vlt:11:16: error: argument 1 of `pick` is not constant: module constants take constant expressions, other module constants and closures
