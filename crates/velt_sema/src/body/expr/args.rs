@@ -286,28 +286,26 @@ impl FnCx<'_, '_> {
                 known[k] = slots[k];
             }
             let expected = self.cx.subst_known(p.ty, &known);
-            let adapter = self.callback_adapter(&args[i], expected, false);
-            let arrow = adapter.as_ref().or(as_arrow(&args[i]));
-            // An arrow passed to the JS API (also where `cmp | null` is expected): what its
-            // parameters and result are in user code (`closure`, `returns::returned`).
+            let mode = self.callback_mode(&args[i]);
+            let arrow = as_arrow(&args[i]);
+            let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
+            // An arrow (or a function's adapter) passed to the JS API (also where `cmp | null` is
+            // expected): what its parameters and result are in user code (`closure`,
+            // `returns::returned`).
             let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
             self.std_callback = match self.cx.ty.kind(declared) {
-                TyKind::FnPtr { params, .. } if c.js_api && arrow.is_some() => {
+                TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
                     Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
                 }
                 _ => None,
             };
-            let h = match arrow {
-                Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
+            let adapted = self.callback_adapter(&args[i], expected, mode);
+            let h = match (adapted, arrow) {
+                (Some(h), _) => h,
+                (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
                     self.arrow_arg(a, expected, p.mode == PassMode::Owned)
                 }
-                // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
-                // a value of it, and wrapped.
-                _ => self.expr(
-                    adapter.as_ref().unwrap_or(&args[i]),
-                    Some(expected),
-                    want_of(p.mode),
-                ),
+                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };
             // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
             let h = match self.cx.ty.array_elem(expected).is_some()
@@ -538,6 +536,11 @@ impl FnCx<'_, '_> {
         if is_async || (arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_))) {
             return None;
         }
+        // A server's handler is checked as an async arrow (`FnCx::thread_arrow`), which infers
+        // its error type itself.
+        if self.thread_task == Some(arg.span) || self.thread_callback == Some(arg.span) {
+            return None;
+        }
         let fn_ty = self.cx.ty.opt_payload(pty).unwrap_or(pty);
         let TyKind::FnPtr {
             params,
@@ -558,21 +561,36 @@ impl FnCx<'_, '_> {
         let k = (0..slots.len())
             .find(|&k| known[k].is_none() && error_only(self.cx, fn_ty, k as u32))?;
         let mark = crate::body::recheck::Mark::here(self.cx);
-        let frames = (
-            self.f.clone(),
-            self.outer.clone(),
-            self.refused_reads.clone(),
-            self.literal.clone(),
-        );
+        let frames = self.trial_frames();
         let (trial, found) = match arrow {
             Some(a) => {
+                // Checked without a result type first: what it returns says which member it
+                // fills (`(n) => work(n)` returns a promise).
+                let error = self.cx.ty.error;
+                let open = self.cx.ty.intern(TyKind::FnPtr {
+                    params: params.clone(),
+                    ret: error,
+                    throws: error,
+                });
+                let expected = self.cx.subst_known(open, known);
+                let found = self.closure(a, Some(expected), false).ty;
+                let ret = match self.cx.ty.kind(found) {
+                    TyKind::FnPtr { ret, .. } if self.cx.ty.promise_payload(*ret).is_some() => {
+                        *promise
+                    }
+                    _ => *value,
+                };
+                let throws = if ret == *promise {
+                    self.cx.ty.never
+                } else {
+                    throws
+                };
                 let trial = self.cx.ty.intern(TyKind::FnPtr {
                     params,
-                    ret: *value,
+                    ret,
                     throws,
                 });
-                let expected = self.cx.subst_known(trial, known);
-                (trial, self.closure(a, Some(expected), false).ty)
+                (trial, found)
             }
             None => {
                 let h = self.expr(arg, None, Want::Borrow);
@@ -593,7 +611,7 @@ impl FnCx<'_, '_> {
         let mut fixed: Vec<Option<TyId>> = slots.to_vec();
         self.cx.match_ty(trial, found, &mut fixed);
         mark.rollback(self.cx);
-        (self.f, self.outer, self.refused_reads, self.literal) = frames;
+        self.restore_trial_frames(frames);
         // Nothing the function throws or rejects with: `E` is `never`.
         let e = fixed.get(k).copied().flatten().unwrap_or(self.cx.ty.never);
         slots[k] = Some(e);

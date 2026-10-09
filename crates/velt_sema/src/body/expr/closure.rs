@@ -27,6 +27,18 @@ use crate::collect::fn_placeholder;
 use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
 
+/// What [`FnCx::trial_frames`] saves.
+pub(super) struct TrialFrames {
+    f: Frame,
+    outer: Vec<Frame>,
+    refused_reads: Vec<(Span, crate::body::closure_assigned::Refused)>,
+    literal: crate::body::literal_locals::LiteralLocals,
+    std_callback: Option<Vec<bool>>,
+    void_task: Option<Span>,
+    thread_task: Option<Span>,
+    await_body: Option<Span>,
+}
+
 /// A checked closure, before its locals are renumbered (captures first).
 pub(super) struct Checked {
     pub def: DefId,
@@ -55,22 +67,56 @@ fn local_order(frame: &Frame, captures: &[hir::Capture], declared: &[LocalId]) -
 }
 
 impl FnCx<'_, '_> {
+    /// The function's state a trial check changes, to restore after rolling it back (`Mark`
+    /// restores the context): locals, captures, throws, moves, literal-local uses and the
+    /// pending callback notes of the call being checked.
+    pub(super) fn trial_frames(&self) -> TrialFrames {
+        TrialFrames {
+            f: self.f.clone(),
+            outer: self.outer.clone(),
+            refused_reads: self.refused_reads.clone(),
+            literal: self.literal.clone(),
+            std_callback: self.std_callback.clone(),
+            void_task: self.void_task,
+            thread_task: self.thread_task,
+            await_body: self.await_body,
+        }
+    }
+
+    pub(super) fn restore_trial_frames(&mut self, t: TrialFrames) {
+        self.f = t.f;
+        self.outer = t.outer;
+        self.refused_reads = t.refused_reads;
+        self.literal = t.literal;
+        self.std_callback = t.std_callback;
+        self.void_task = t.void_task;
+        self.thread_task = t.thread_task;
+        self.await_body = t.await_body;
+    }
+
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
     /// the first one, whose errors the real check then reports.
     fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
+        // Remembered per arrow and members: an arrow nested in one being tried is tried once,
+        // not once per try of each enclosing arrow (which would be exponential in the nesting).
+        let key = (e.span, members.to_vec());
+        if let Some(&m) = self.member_choices.get(&key) {
+            return m;
+        }
+        let m = self.try_members(e, members, escaping);
+        self.member_choices.insert(key, m);
+        m
+    }
+
+    fn try_members(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
         for &m in members {
             let mark = crate::body::recheck::Mark::here(self.cx);
-            let frames = (
-                self.f.clone(),
-                self.outer.clone(),
-                self.refused_reads.clone(),
-                self.literal.clone(),
-            );
+            let frames = self.trial_frames();
             let diags = self.cx.diags.len();
             let h = self.closure(e, Some(m), escaping);
             let ok = self.cx.diags.len() == diags && h.ty == m;
             mark.rollback(self.cx);
-            (self.f, self.outer, self.refused_reads, self.literal) = frames;
+            self.restore_trial_frames(frames);
             if ok {
                 return m;
             }
@@ -115,10 +161,20 @@ impl FnCx<'_, '_> {
             [one] => Some(*one),
             several => Some(self.member_by_trial(e, several, escaping)),
         };
+        if !*is_async && self.thread_task == Some(e.span) {
+            self.thread_task = None;
+            return self.thread_arrow(e, exp, escaping);
+        }
         if *is_async {
             if let Some(h) = self.async_arrow_callback(e, exp) {
                 return h;
             }
+        } else if let Some(h) = self.declared_member_callback(e, exp) {
+            return h;
+        }
+        let await_body = self.await_body == Some(e.span) && *is_async;
+        if await_body {
+            self.await_body = None;
         }
         let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
         if void_task {
@@ -203,6 +259,7 @@ impl FnCx<'_, '_> {
         }
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
+            ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),
             _ => self.closure_body(body, span),
         };
         block.stmts.splice(0..0, locals);

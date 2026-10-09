@@ -40,11 +40,14 @@ Request, info: ServeInfo) => Response | Promise<Response, E> throws E): Promise<
 (address in use, a TLS certificate or key that does not parse) drops the handler closure before
 it throws.
 
-- A handler returns a `Response` or a promise of one, as in Deno and Bun: an arrow or a named
-  function, sync or `async` (`serve({ port: 8080 }, handle)`), and may take only `req`. A sync
-  handler costs no state machine. `E` is what it throws (or its promise rejects with).
-- Like spawned tasks, handlers (and async closures they reach) must not mutate captured
-  variables (use `shared`). Requests run on several threads at once and each gets its own copy
+- A handler returns a `Response` or a promise of one, as in Deno and Bun: an arrow or any
+  function value, sync or `async` (`serve({ port: 8080 }, handle)`), and may take only `req`.
+  Because requests run on several threads, a sync arrow is checked and run as an `async` one
+  (its result, awaited when it is a promise, is the response), and any other function is
+  called from an `async` wrapper; so every handler follows the rules below. `E` is what it
+  throws (or its promise rejects with).
+- Like spawned tasks, handlers, sync or `async` (and async closures they reach), must not
+  modify captured variables (use `shared`): `(req) => { count++; … }` is a compile error. Requests run on several threads at once and each gets its own copy
   of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
   capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).
 - A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to

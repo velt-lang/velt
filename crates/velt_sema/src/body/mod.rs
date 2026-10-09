@@ -302,6 +302,19 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
+    pub task_callback: Option<Span>,
+    /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
+    /// arrow (`expr/callback.rs`).
+    pub thread_task: Option<Span>,
+    /// The handler of a server call that is a function value, not an arrow.
+    pub thread_callback: Option<Span>,
+    /// An arrow checked as `async` by `thread_arrow`: its expression body is awaited when it is
+    /// a promise.
+    pub await_body: Option<Span>,
+    /// The member of a union of function types each arrow (by span) was typed by, for the
+    /// members it was tried against (`expr/closure.rs`).
+    pub member_choices: HashMap<(Span, Vec<TyId>), TyId>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -337,6 +350,11 @@ impl<'a, 'm> FnCx<'a, 'm> {
             direct_await: None,
             std_callback: None,
             void_task: None,
+            task_callback: None,
+            thread_task: None,
+            thread_callback: None,
+            await_body: None,
+            member_choices: HashMap::new(),
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],

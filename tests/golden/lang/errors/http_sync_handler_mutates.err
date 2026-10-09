@@ -1,0 +1,2 @@
+http_sync_handler_mutates.vlt:8:5: error: this async closure modifies captured `count`, so it must stay on the task that created it
+http_sync_handler_mutates.vlt:7:24: but it handles HTTP requests here, which run on several threads

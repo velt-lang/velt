@@ -1,12 +1,29 @@
 // check: no leaks
 // A handler may return a `Response` directly, as in Deno and Bun: a sync arrow, a named
-// function, or a function value. An async handler that throws still gets a 500.
+// function, a function value, or one a call returns. A sync arrow may declare its result
+// (`Response`, or the promise it returns) and may return a promise of a function that throws.
+// An async handler that throws still gets a 500.
 import { serve } from "velt:http";
 
 class NotAllowed extends Error {}
 
 function hello(req: Request): Response {
   return new Response(`named ${new URL(req.url).pathname}`);
+}
+
+async function respond(text: string): Promise<Response> {
+  return new Response(text);
+}
+
+async function respondThrows(path: string): Promise<Response> {
+  if (path == "/admin") {
+    throw new NotAllowed("admins only");
+  }
+  return new Response(`checked ${path}`);
+}
+
+function prefixed(prefix: string): (req: Request) => Response {
+  return (req: Request): Response => new Response(`${prefix} ${req.method}`);
 }
 
 async function get(port: i64, path: string): Promise<string> {
@@ -25,6 +42,10 @@ async function main() {
     }
     return new Response("async ok");
   });
+  const e = await serve({ port: 0 }, (req): Response => new Response("declared"));
+  const f = await serve({ port: 0 }, (req: Request): Promise<Response> => respond("promise"));
+  const g = await serve({ port: 0 }, (req) => respondThrows(new URL(req.url).pathname));
+  const h = await serve({ port: 0 }, prefixed("made"));
   console.log(await get(a.port, "/x"));
   console.log(await get(b.port, "/y"));
   console.log(await get(c.port, "/z"));
@@ -34,4 +55,10 @@ async function main() {
   await b.shutdown();
   await c.shutdown();
   await d.shutdown();
+  console.log(await get(e.port, "/"), "|", await get(f.port, "/"), "|", await get(h.port, "/"));
+  console.log(await get(g.port, "/page"), "|", await get(g.port, "/admin"));
+  await e.shutdown();
+  await f.shutdown();
+  await g.shutdown();
+  await h.shutdown();
 }

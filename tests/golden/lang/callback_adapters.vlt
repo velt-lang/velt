@@ -1,0 +1,86 @@
+// Callbacks adapted to the function type they are passed as (#813 review):
+// - an async arrow stored in a field typed `(v: string) => void` stays local to its task;
+// - a function value adapter reads its variable once, where it is passed (a later assignment
+//   doesn't change what was passed);
+// - an async named function or local as a `() => void` callback starts its promise;
+// - a sync arrow that returns a promise fits a promise member of a union of function types;
+// - a sync arrow for `(n) => T | Promise<T, E> throws E` that returns a promise.
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+class Btn {
+  render: ((n: number) => string | Promise<string>) | null = null;
+}
+
+class Bad extends Error {}
+
+async function work(n: number): Promise<string> {
+  if (n > 1) {
+    throw new Bad("x");
+  }
+  return "ok";
+}
+
+async function newStyle<E>(h: (n: number) => string | Promise<string, E> throws E): Promise<string> {
+  try {
+    return await h(2);
+  } catch (e) {
+    return "caught";
+  }
+}
+
+async function announce() {
+  console.log("announced");
+}
+
+function fire(h: () => void) {
+  h();
+}
+
+function each(xs: string[], f: (s: string, i: number) => void) {
+  for (let i = 0; i < xs.length; i++) {
+    f(xs[i], i);
+  }
+}
+
+type Handler = (() => void) | (() => Promise<void>);
+
+async function take(h: Handler) {
+  await h();
+}
+
+async function main() {
+  let last = "";
+  const input = new Input();
+  input.onChange = async (v: string) => {
+    last = v;
+  };
+  const onChange = input.onChange;
+  onChange("typed");
+  console.log(last);
+
+  let n = 0;
+  const b = new Btn();
+  b.render = async (k: number) => {
+    n += k;
+    return `r${n}`;
+  };
+  const r = b.render;
+  console.log(await r(10));
+
+  let g = (s: string) => console.log("g1", s);
+  const stored: ((s: string, i: number) => void)[] = [];
+  stored.push(g);
+  g = (s: string) => console.log("g2", s);
+  each(["a"], stored[0]);
+  each(["b"], g);
+
+  fire(announce);
+  const one = async () => 1;
+  fire(one);
+
+  await take(() => announce());
+  console.log(await newStyle((k) => work(k)));
+}

@@ -74,11 +74,14 @@ impl FnCx<'_, '_> {
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
         let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
-        let adapter = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, false),
+        let adapted = match self.cx.ty.kind(fn_ty) {
+            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, callback::CallbackMode::Plain),
             _ => None,
         };
-        let h = self.expr(adapter.as_ref().unwrap_or(e), Some(exp), want);
+        let h = match adapted {
+            Some(h) => h,
+            None => self.expr(e, Some(exp), want),
+        };
         if self.in_place_misuse(e, &h, exp) {
             return self.error_expr(e.span);
         }
