@@ -20,7 +20,9 @@ impl FnCx<'_, '_> {
                 Some(ms) => (Some(def), ms),
                 None => return Err(h),
             },
-            None if inner != sty && self.cx.ty.promise_payload(inner).is_some() => (None, vec![inner]),
+            None if inner != sty && self.cx.ty.promise_payload(inner).is_some() => {
+                (None, vec![inner])
+            }
             None => return Err(h),
         };
         if !members

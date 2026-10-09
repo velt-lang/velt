@@ -104,9 +104,9 @@ impl FnCx<'_, '_> {
             .collect();
         let promise = |s: &mut Self, ret: TyId| {
             s.cx.ty.promise_payload(ret).is_some()
-                || s.cx.union_members(ret).is_some_and(|ms| {
-                    ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some())
-                })
+                || s.cx
+                    .union_members(ret)
+                    .is_some_and(|ms| ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some()))
         };
         let unit = self.cx.ty.unit;
         let mut out = vec![];

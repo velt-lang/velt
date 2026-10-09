@@ -9,8 +9,8 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::super::LocalKind;
-use crate::body::FnCx;
 use super::args::Callable;
+use crate::body::FnCx;
 use crate::defs::ParamSig;
 use crate::hir::{self, Callee, ExprKind as H, PassMode, PatKind as P, TyId, TyKind, UseMode};
 
@@ -68,7 +68,11 @@ impl FnCx<'_, '_> {
             .collect();
         let has_void = sigs.iter().any(|(_, r, _)| *r == unit);
         let ret = if values.is_empty() {
-            if has_void { unit } else { never }
+            if has_void {
+                unit
+            } else {
+                never
+            }
         } else {
             self.cx.union_of(&values, has_void, span)
         };

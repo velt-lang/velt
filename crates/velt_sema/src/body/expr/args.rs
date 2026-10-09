@@ -546,9 +546,8 @@ impl FnCx<'_, '_> {
         let ([promise], [value]) = (promises.as_slice(), values.as_slice()) else {
             return None;
         };
-        let k = (0..slots.len()).find(|&k| {
-            known[k].is_none() && error_only(self.cx, fn_ty, k as u32)
-        })?;
+        let k = (0..slots.len())
+            .find(|&k| known[k].is_none() && error_only(self.cx, fn_ty, k as u32))?;
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = (
             self.f.clone(),
@@ -602,15 +601,15 @@ impl FnCx<'_, '_> {
     /// error type parameter nothing fixed (it appears only as a promise's or function's error
     /// type) is `never`.
     fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
-        for k in 0..slots.len() {
-            if slots[k].is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
+        for (k, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
                 continue;
             }
             let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
             let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
                 && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
             if unconstrained_error {
-                slots[k] = Some(self.cx.ty.never);
+                *slot = Some(self.cx.ty.never);
             }
         }
         for k in 0..slots.len() {
