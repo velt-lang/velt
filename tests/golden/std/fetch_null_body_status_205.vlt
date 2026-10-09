@@ -1,0 +1,7 @@
+// 205 (Reset Content) is a null-body status too, like 204 and 304: a body stops the program
+// with Node's TypeError message, a null body is fine.
+function main() {
+  console.log(new Response(null, { status: 205 }).status);
+  const r = new Response("x", { status: 205 });
+  console.log("unreachable", r.status);
+}

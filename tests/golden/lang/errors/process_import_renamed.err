@@ -1,0 +1,2 @@
+process_import_renamed.vlt:3:21: error: `process` cannot be imported as `proc`
+  = note: TypeScript allows renaming it, but Velt's `process` is a builtin namespace that is only known by its name: write `import { process } from "velt:process"` (or leave the import out) and use `process`

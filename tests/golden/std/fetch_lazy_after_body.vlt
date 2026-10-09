@@ -3,7 +3,7 @@
 // when first read; here the first read comes after the body was read, on a redirected response
 // and on a URL that WHATWG parsing normalizes. The client half is valid TypeScript and prints
 // what Node 22 prints for it (against an equivalent `node:http` server).
-import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { serve } from "velt:http";
 
 async function show(label: string, res: Response, base: string) {
   const body = await res.text();
@@ -31,18 +31,19 @@ async function client(port: number) {
   await show("missing", await fetch(`${base}/missing`), base);
 }
 
-async function handle(req: ServerRequest): Promise<ServerResponse> {
-  if (req.path == "/start") {
-    const r = ServerResponse.text("", 302);
-    r.header("location", "/b");
+async function handle(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/start") {
+    const r = new Response(null, { status: 302 });
+    r.headers.append("location", "/b");
     return r;
   }
-  if (req.path == "/b") {
-    const r = ServerResponse.text("at b");
-    r.header("x-kind", "b");
+  if (path == "/b") {
+    const r = new Response("at b");
+    r.headers.append("x-kind", "b");
     return r;
   }
-  return ServerResponse.text("nope", 404);
+  return new Response("nope", { status: 404 });
 }
 
 async function main() {

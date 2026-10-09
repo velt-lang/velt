@@ -1,9 +1,9 @@
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { label } from "./label";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    return Response.text(label());
+    return new Response(label());
   });
   console.log(`listening on ${server.port}`);
   await sleep(1000000000);

@@ -1,5 +1,6 @@
-// std/fetch/response: the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to, or a
-// response built with `new Response(body, init)` / `Response.json(data)`.
+// std/fetch/response: the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to, what
+// a server handler returns (std/http.vlt), or a response built with `new Response(body, init)` /
+// `Response.json(data)`.
 //
 // A fetched response holds a runtime response (`VeltFetchResp`, a registry key) whose head has
 // arrived; its body is received by the first `text()`, `json()`, `bytes()` or `arrayBuffer()`,
@@ -7,12 +8,22 @@
 // (`content-encoding: gzip`, `deflate`, `br`) arrives decoded. The handle is released when the
 // response is dropped, which closes the connection of a body nobody read. The status text, URL,
 // `redirected` and headers are copied out of the runtime the first time they are read (most
-// programs read none of them), and stay readable after the body was read.
+// programs read none of them), and stay readable after the body was read. A built response
+// makes no `Headers` until they are read: the `content-type` its body implies waits in
+// `#implied`, and a server sends it from there.
 
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { BodyInit, bodyParts } from "velt:fetch/body";
+import {
+  BodyInit,
+  BodyStream,
+  JSON_TYPE,
+  TEXT_TYPE,
+  bodyParts,
+  collect,
+  impliedType,
+} from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
 declare function velt_rt_http_fetch_resp_status(r: u64): u32;
@@ -24,6 +35,43 @@ declare async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<st
 declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>>;
 declare async function velt_rt_http_fetch_resp_chunk(r: u64): Promise<IoResult<u8[]>>;
 declare function velt_rt_http_fetch_resp_drop(r: u64);
+declare function velt_rt_http_resp_drop(r: u64);
+// A server response (std/http): the text body is taken (moved out, left empty), the bytes copied.
+declare function velt_rt_http_resp_build(
+  status: u32,
+  reason: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;
+// The response a handler returns for server request `raw`, with no body or a text one (`kind`
+// 0 or 1), handed straight to the request: what the handler returns next (std/http). `name` and
+// `value` are a first header as given ("" for none). `_list` adds the rest of the headers
+// (`headers`), and takes a bytes body (`kind` 2) too.
+declare function velt_rt_http_req_respond(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  kind: u32,
+  text: string,
+  implied: u32,
+): u64;
+declare function velt_rt_http_req_respond_list(
+  raw: u64,
+  status: u32,
+  reason: string,
+  name: string,
+  value: string,
+  headers: string[],
+  kind: u32,
+  text: string,
+  bytes: u8[],
+  implied: u32,
+): u64;
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
@@ -32,30 +80,89 @@ export struct ResponseInit {
   headers?: HeadersInit;
 }
 
-// Where a response's body is (`Response.source`).
+// Where a response's body is (`Response.#source`); the first five are also the `kind` a server
+// builds a response with (`velt_rt_http_resp_build`).
 const NONE: i64 = 0;
 const TEXT: i64 = 1;
 const BYTES: i64 = 2;
-const RUNTIME: i64 = 3;
+const STREAM: i64 = 3;
+// A fetched response's body, in the runtime.
+const RUNTIME: i64 = 4;
+// A server response the runtime built (a WebSocket upgrade's 101): `#handle` is its key.
+const BUILT: i64 = 5;
 
 export class Response {
   #code: i64 = 200;
   // Null until `headers` is first read.
   #fields: Headers | null = null;
+  // The `content-type` the body implies (`impliedType`), until `headers` is first read.
+  #implied: u32 = 0;
   // A fetched response's status text and URL: null until first read.
   #reason: string | null = "";
-  #where: string | null = "";
-  // Null for a fetched response until first read.
-  #hops: bool | null = false;
-  #kind: string = "default";
+  // A fetched response's signal, URL and `redirected`: null for one made here.
+  #remote: Remote | null = null;
   #used: bool = false;
   #source: i64 = 0;
   #str: string = "";
-  #data: u8[] = [];
+  // A bytes body (null for any other), so a response without one allocates no array.
+  #data: u8[] | null = null;
+  #stream: BodyStream | null = null;
   #handle: u64 = 0;
-  #signal: AbortSignal | null = null;
 
-  constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
+  constructor(body: BodyInit | null = null, init?: ResponseInit) {
+    if (init == null && typeof body == "string") {
+      // Most responses: text and no options, so no parts and no status to check.
+      this.#source = TEXT;
+      this.#str = body;
+      this.#implied = TEXT_TYPE;
+      return;
+    }
+    if (body != null || init != null) {
+      this.setUp(body, init, 0);
+    }
+  }
+
+  // The constructor's work; `type` (if not 0) replaces the `content-type` the body implies.
+  private setUp(body: BodyInit | null, init: ResponseInit | null, type: u32) {
+    if (init != null) {
+      this.init(init);
+    }
+    if (body == null) {
+      return;
+    }
+    const status = this.#code;
+    if (status == 204 || status == 205 || status == 304) {
+      panic(`TypeError: Response constructor: Invalid response status code ${status}`);
+    }
+    let implied = type;
+    if (typeof body == "string") {
+      // Most bodies: no parts to make.
+      this.#source = TEXT;
+      this.#str = body;
+      implied = type != 0 ? type : TEXT_TYPE;
+    } else {
+      const parts = bodyParts(body);
+      this.#source = parts.kind as i64;
+      this.#str = parts.text;
+      if (parts.kind == 2) {
+        this.#data = parts.bytes;
+      }
+      this.#stream = parts.stream;
+      implied = type != 0 ? type : parts.implied;
+    }
+    const fields = this.#fields;
+    if (fields == null) {
+      this.#implied = implied;
+      return;
+    }
+    const ct = impliedType(implied);
+    if (ct != null && !fields.has("content-type")) {
+      fields.set("content-type", ct);
+    }
+  }
+
+  // The status, status text and headers of `init`.
+  private init(init: ResponseInit) {
     const status = init.status ?? 200;
     if (status < 200 || status > 599) {
       panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
@@ -66,18 +173,6 @@ export class Response {
     if (given != null) {
       this.#fields = new Headers(given);
     }
-    if (body == null) {
-      // `Response.adopt` too: no body parts to make.
-      return;
-    }
-    const parts = bodyParts(body);
-    this.#source = parts.kind as i64;
-    this.#str = parts.text;
-    this.#data = parts.bytes;
-    const ct = parts.contentType;
-    if (ct != null && !this.headers.has("content-type")) {
-      this.headers.set("content-type", ct);
-    }
   }
 
   // The response behind runtime key `handle`, whose body aborts with `signal` (std only). The
@@ -87,24 +182,35 @@ export class Response {
     const r = new Response();
     r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
     r.#reason = null;
-    r.#where = null;
-    r.#hops = null;
-    r.#kind = "basic";
+    r.#remote = new Remote(signal);
     r.#source = head ? NONE : RUNTIME;
     r.#handle = handle;
-    r.#signal = signal;
     return r;
   }
 
-  /** A response whose body is `JSON.stringify(data)`, with `content-type: application/json`. */
-  static json<T>(data: T, init: ResponseInit = {}): Response {
-    // The caller's own `content-type` wins; the string body's default does not.
-    const own = init.headers;
-    const typed = own != null && new Headers(own).has("content-type");
-    const r = new Response(JSON.stringify(data), init);
-    if (!typed) {
-      r.headers.set("content-type", "application/json");
+  // A server response with status `status` the runtime built, behind key `handle` (std only:
+  // std/websocket's 101).
+  private static built(handle: u64, status: i64): Response {
+    const r = new Response();
+    r.#code = status;
+    r.#source = BUILT;
+    r.#handle = handle;
+    return r;
+  }
+
+  /**
+   * A response whose body is `JSON.stringify(data)`, with `content-type: application/json`
+   * unless `init` sets one.
+   */
+  static json<T>(data: T, init?: ResponseInit): Response {
+    const r = new Response();
+    if (init == null) {
+      r.#source = TEXT;
+      r.#str = JSON.stringify(data);
+      r.#implied = JSON_TYPE;
+      return r;
     }
+    r.setUp(JSON.stringify(data), init, JSON_TYPE);
     return r;
   }
 
@@ -112,7 +218,6 @@ export class Response {
   static error(): Response {
     const r = new Response();
     r.#code = 0;
-    r.#kind = "error";
     return r;
   }
 
@@ -133,10 +238,13 @@ export class Response {
       return known;
     }
     let h = new Headers();
-    if (this.#handle != 0) {
+    if (this.#source == RUNTIME || (this.#handle != 0 && this.#source == NONE)) {
       h = Headers.adopt(velt_rt_http_fetch_resp_headers(this.#handle));
       h.frozen = true;
     }
+    // `h` is empty: the implied type moves over as its number (std/fetch/headers.vlt).
+    h.implied = this.#implied;
+    this.#implied = 0;
     this.#fields = h;
     return h;
   }
@@ -166,29 +274,40 @@ export class Response {
 
   /** The URL the response came from, after redirects ("" for a constructed response). */
   get url(): string {
-    const known = this.#where;
+    const remote = this.#remote;
+    if (remote == null) {
+      return "";
+    }
+    const known = remote.url;
     if (known != null) {
       return known;
     }
     const s = velt_rt_http_fetch_resp_url(this.#handle);
-    this.#where = s;
+    remote.url = s;
     return s;
   }
 
   /** Whether `fetch` followed a redirect to get it. */
   get redirected(): bool {
-    const known = this.#hops;
+    const remote = this.#remote;
+    if (remote == null) {
+      return false;
+    }
+    const known = remote.redirected;
     if (known != null) {
       return known;
     }
     const hops = velt_rt_http_fetch_resp_redirected(this.#handle);
-    this.#hops = hops;
+    remote.redirected = hops;
     return hops;
   }
 
   /** "basic" (fetched), "default" (constructed) or "error" (`Response.error()`). */
   get type(): string {
-    return this.#kind;
+    if (this.#code == 0) {
+      return "error";
+    }
+    return this.#remote != null ? "basic" : "default";
   }
 
   /**
@@ -199,10 +318,10 @@ export class Response {
   get body(): BodyStream | null {
     const code = this.#code;
     const none = code == 101 || code == 103 || code == 204 || code == 205;
-    if (none || code == 304 || this.#source == NONE) {
+    if (none || code == 304 || this.#source == NONE || this.#source == BUILT) {
       return null;
     }
-    return new BodyStream(this);
+    return BodyStream.adopt(this.chunks(), this.#used);
   }
 
   /** Whether the body has been read. */
@@ -218,13 +337,17 @@ export class Response {
       this.check(r.code);
       return unwrapIo(r);
     }
-    if (this.#source == BYTES) {
-      const d = this.#data;
-      // A leading byte order mark is not text, as in JS.
-      const bom = d.length >= 3 && d[0] == 239 && d[1] == 187 && d[2] == 191;
-      return utf8DecodeLossy(bom ? d.slice(3) : d);
+    if (this.#source == TEXT) {
+      return this.#str;
     }
-    return this.#str;
+    let d = this.#data ?? [];
+    const s = this.#stream;
+    if (this.#source == STREAM && s != null) {
+      d = await collect(s);
+    }
+    // A leading byte order mark is not text, as in JS.
+    const bom = d.length >= 3 && d[0] == 239 && d[1] == 187 && d[2] == 191;
+    return utf8DecodeLossy(bom ? d.slice(3) : d);
   }
 
   /**
@@ -246,7 +369,11 @@ export class Response {
     if (this.#source == TEXT) {
       return utf8Encode(this.#str);
     }
-    return this.#data;
+    const s = this.#stream;
+    if (this.#source == STREAM && s != null) {
+      return await collect(s);
+    }
+    return this.#data ?? [];
   }
 
   /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
@@ -268,17 +395,112 @@ export class Response {
         yield chunk;
       }
     }
+    const s = this.#stream;
     if (this.#source == TEXT) {
       yield utf8Encode(this.#str);
-    } else if (this.#data.length > 0) {
-      yield this.#data;
+    } else if (this.#source == STREAM && s != null) {
+      for await (const chunk of s) {
+        yield chunk;
+      }
+    } else {
+      const d = this.#data;
+      if (d != null && d.length > 0) {
+        yield d;
+      }
     }
+  }
+
+  // This response as what a server handler returns for request `raw` (std only: std/http): a
+  // complete body goes straight to the request (`velt_rt_http_req_respond`); a response the
+  // runtime built is given up as it is; a streamed body (a `BodyStream`, or a fetched
+  // response's body) gets a runtime response for std/http to copy the body into
+  // (`serverStream`). 0 if a header name or value is not valid HTTP.
+  private toServer(raw: u64): u64 {
+    const source = this.#source;
+    if (source == BUILT) {
+      const h = this.#handle;
+      this.#handle = 0;
+      return h;
+    }
+    const fields = this.#fields;
+    if (source == STREAM || source == RUNTIME) {
+      return this.streamed(fields);
+    }
+    let name = "";
+    let value = "";
+    let list: string[] | null = null;
+    let implied = this.#implied;
+    if (fields != null) {
+      const [n, v, l, type] = fields.serverList();
+      name = n;
+      value = v;
+      list = l;
+      implied = type;
+    }
+    let text = this.#str;
+    const data = this.#data;
+    if (list == null && data == null) {
+      return velt_rt_http_req_respond(
+        raw,
+        this.#code as u32,
+        this.#reason ?? "",
+        name,
+        value,
+        source as u32,
+        text,
+        implied,
+      );
+    }
+    return velt_rt_http_req_respond_list(
+      raw,
+      this.#code as u32,
+      this.#reason ?? "",
+      name,
+      value,
+      list ?? [],
+      source as u32,
+      text,
+      data ?? [],
+      implied,
+    );
+  }
+
+  // `toServer` of a streamed body: a runtime response std/http copies the body into.
+  private streamed(fields: Headers | null): u64 {
+    let headers: string[] = [];
+    let implied: u32 = 0;
+    if (fields != null) {
+      const [list, type] = fields.serverFlat();
+      headers = list;
+      implied = type;
+    } else if (this.#source == RUNTIME) {
+      headers = this.headers.raw();
+    }
+    let none = "";
+    return velt_rt_http_resp_build(
+      this.#code as u32,
+      this.#reason ?? "",
+      headers,
+      this.#source as u32,
+      none,
+      [],
+      implied,
+    );
+  }
+
+  // The body std/http copies into a server response once `toServer` built it (std only): null
+  // when the body is not streamed.
+  private serverStream(): BodyStream | null {
+    if (this.#source == RUNTIME) {
+      return this.body;
+    }
+    return this.#stream;
   }
 
   // Marks the body read; throws if it was already. A response without a body can be read any
   // number of times, as in JS.
   private claim() throws IoError {
-    if (this.#source == NONE) {
+    if (this.#source == NONE || this.#source == BUILT) {
       return;
     }
     if (this.#used) {
@@ -289,7 +511,8 @@ export class Response {
 
   // After a failed body read: the signal's `AbortError` if it was aborted.
   private check(code: i32) throws AbortError {
-    const s = this.#signal;
+    const remote = this.#remote;
+    const s = remote == null ? null : remote.signal;
     if (code != 0 && s != null) {
       s.throwIfAborted();
     }
@@ -313,32 +536,24 @@ export class Response {
   /** Drop hook: releases the runtime response. */
   [Symbol.dispose]() {
     if (this.#handle != 0) {
-      velt_rt_http_fetch_resp_drop(this.#handle);
+      if (this.#source == BUILT) {
+        velt_rt_http_resp_drop(this.#handle);
+      } else {
+        velt_rt_http_fetch_resp_drop(this.#handle);
+      }
       this.#handle = 0;
     }
   }
 }
 
-/**
- * `res.body`: the body as a stream of byte chunks, read with `for await`. Reading it uses the
- * body up, as `text()` does. It keeps its response alive while it is read.
- */
-export class BodyStream {
-  private res: Response;
+// What only a fetched response has besides its runtime key: the signal that aborts its body,
+// and its URL and `redirected` (null until first read).
+class Remote {
+  signal: AbortSignal | null;
+  url: string | null = null;
+  redirected: bool | null = null;
 
-  /** The body of `res` (std only: `res.body` makes it). */
-  constructor(res: Response) {
-    this.res = res;
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
-    return this.res.chunks();
-  }
-
-  /** How `console.log` shows the stream: as Node shows a response body's `ReadableStream`. */
-  __inspect(): string {
-    return this.res.bodyUsed
-      ? "ReadableStream { locked: true, state: 'closed', supportsBYOB: true }"
-      : "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";
+  constructor(signal: AbortSignal | null) {
+    this.signal = signal;
   }
 }

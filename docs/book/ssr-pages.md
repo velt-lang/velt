@@ -112,13 +112,14 @@ naming the component.
 
 ## Streaming pages
 
-`renderToStream` writes a page into a streamed response (`Response.stream` from
-[`velt:http`](../std/http.md)) and flushes before each async component, so the browser gets the
-top of the page while the rest loads. The status goes out first, so decide
-it before streaming starts:
+`renderToStream` turns a page into a streamed response body (a `BodyStream` for
+`new Response`, see [`velt:http`](../std/http.md#the-response)) that is sent in chunks: the
+markup above each async component goes out before the component is awaited, so the browser gets
+the top of the page while the rest loads. The status goes out first, so decide it before
+streaming starts:
 
 ```ts
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+import { serve } from "velt:http";
 import { renderToStream } from "velt:jsx";
 
 async function Slow(): Promise<JSX.Element> {
@@ -127,19 +128,20 @@ async function Slow(): Promise<JSX.Element> {
 }
 
 async function handle(req: Request): Promise<Response> {
-  const path = req.path; // keep the request's properties, not the request
+  const path = new URL(req.url).pathname;
   const status = path == "/" ? 200 : 404;
-  const res = Response.stream(async (w: ResponseWriter) => {
-    w.write("<!DOCTYPE html>");
-    await renderToStream(<main><h1>{path}</h1><Slow /></main>, w);
-  }, status);
-  res.setHeader("content-type", "text/html; charset=utf-8");
-  return res;
+  return new Response(renderToStream(<main><h1>{path}</h1><Slow /></main>), {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
 
 const server = await serve({ port: 0 }, handle);
 server.close();
 ```
+
+To put something before the page, such as `<!DOCTYPE html>`, yield it from an async generator
+that then passes on the page's chunks (`examples/apps/ssr-blog/src/server.vlt`).
 
 ## Sharing components with a TypeScript client
 

@@ -1,16 +1,17 @@
 // check: no leaks
 // A request handler that throws (its promise rejects) gets a 500 response; the error is printed
 // to stderr and the server keeps serving.
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class NotAllowed extends Error {}
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    if (req.path == "/admin") {
+    const path = new URL(req.url).pathname;
+    if (path == "/admin") {
       throw new NotAllowed("admins only");
     }
-    return Response.text(`hello ${req.path}`);
+    return new Response(`hello ${path}`);
   });
   const base = `http://127.0.0.1:${server.port}`;
   const bad = await fetch(`${base}/admin`);

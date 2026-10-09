@@ -3,12 +3,9 @@
 // streams a body chunk by chunk (`for await (const chunk of res.body)`). The client half is
 // valid TypeScript and prints what Node 22 prints for it (against an equivalent `node:http`
 // server).
-import {
-  serve,
-  Request as ServerRequest,
-  Response as ServerResponse,
-  ResponseWriter,
-} from "velt:http";
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
 
 async function client(base: string) {
   for (const enc of ["gzip", "br", "deflate", "raw"]) {
@@ -159,48 +156,51 @@ function twice(): u8[] {
   ];
 }
 
-async function handle(req: ServerRequest): Promise<ServerResponse> {
-  const p = req.path.slice(1);
+// The body of `/stream`: three parts, sent as they are made.
+async function* parts(): AsyncGenerator<u8[]> {
+  for (let i = 0; i < 3; i++) {
+    yield utf8Encode("x".repeat(1000));
+    await sleep(20);
+  }
+}
+
+async function handle(req: Request): Promise<Response> {
+  const p = new URL(req.url).pathname.slice(1);
   if (p == "gzip" || p == "br" || p == "deflate" || p == "raw") {
-    const r = ServerResponse.bytes(encoded(p));
-    r.setHeader("content-encoding", p == "raw" ? "deflate" : p);
+    const r = new Response(encoded(p));
+    r.headers.set("content-encoding", p == "raw" ? "deflate" : p);
     return r;
   }
   if (p == "twice") {
-    const r = ServerResponse.bytes(twice());
-    r.setHeader("content-encoding", "deflate, gzip");
+    const r = new Response(twice());
+    r.headers.set("content-encoding", "deflate, gzip");
     return r;
   }
   if (p == "not-modified") {
-    const r = ServerResponse.text("", 304);
-    r.setHeader("content-encoding", "gzip");
+    const r = new Response(null, { status: 304 });
+    r.headers.set("content-encoding", "gzip");
     return r;
   }
   if (p == "nothing-gzip" || p == "nothing-br") {
-    const r = ServerResponse.text("");
-    r.setHeader("content-encoding", p.slice(8));
+    const r = new Response("");
+    r.headers.set("content-encoding", p.slice(8));
     return r;
   }
   if (p == "bom") {
-    return ServerResponse.bytes([239, 187, 191, 104, 105]);
+    const bom: u8[] = [239, 187, 191, 104, 105];
+    return new Response(bom);
   }
   if (p == "accept") {
-    return ServerResponse.text(req.header("accept-encoding") ?? "-");
+    return new Response(req.headers.get("accept-encoding") ?? "-");
   }
   if (p == "stream") {
-    return ServerResponse.stream(async (w: ResponseWriter) => {
-      for (let i = 0; i < 3; i++) {
-        w.write("x".repeat(1000));
-        await w.flush();
-        await sleep(20);
-      }
-    });
+    return new Response(BodyStream.from(parts()));
   }
   if (p == "empty") {
-    return ServerResponse.text("", 204);
+    return new Response(null, { status: 204 });
   }
-  const bad = ServerResponse.text("this is not gzip");
-  bad.setHeader("content-encoding", "gzip");
+  const bad = new Response("this is not gzip");
+  bad.headers.set("content-encoding", "gzip");
   return bad;
 }
 

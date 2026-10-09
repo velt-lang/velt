@@ -1,7 +1,7 @@
 // check: no leaks
 // The global `fetch` API against a local server; the client half is valid TypeScript and prints
 // what Node 22 prints for it (against an equivalent `node:http` server).
-import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { serve } from "velt:http";
 
 type Info = { name: string; tags: string[] };
 
@@ -116,29 +116,30 @@ async function client(base: string) {
   }
 }
 
-async function handle(req: ServerRequest): Promise<ServerResponse> {
-  if (req.path == "/json") {
-    return ServerResponse.json({ name: "velt", tags: ["a", "b"] });
+async function handle(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/json") {
+    return Response.json({ name: "velt", tags: ["a", "b"] });
   }
-  if (req.path == "/echo") {
-    const ct = req.header("content-type") ?? "-";
-    return ServerResponse.text(`${req.method} ${ct} ${req.header("x-a") ?? "-"} ${req.body}`);
+  if (path == "/echo") {
+    const ct = req.headers.get("content-type") ?? "-";
+    return new Response(`${req.method} ${ct} ${req.headers.get("x-a") ?? "-"} ${await req.text()}`);
   }
-  if (req.path == "/redirect" || req.path == "/see-other") {
-    const r = ServerResponse.text("", req.path == "/redirect" ? 302 : 303);
-    r.header("location", req.path == "/redirect" ? "/json" : "/echo");
+  if (path == "/redirect" || path == "/see-other") {
+    const r = new Response(null, { status: path == "/redirect" ? 302 : 303 });
+    r.headers.append("location", path == "/redirect" ? "/json" : "/echo");
     return r;
   }
-  if (req.path == "/headers") {
-    const r = ServerResponse.text("ok");
-    r.header("x-multi", "1");
-    r.header("x-multi", "2");
-    r.header("set-cookie", "a=1");
-    r.header("set-cookie", "b=2");
-    r.header("x-one", "one");
+  if (path == "/headers") {
+    const r = new Response("ok");
+    r.headers.append("x-multi", "1");
+    r.headers.append("x-multi", "2");
+    r.headers.append("set-cookie", "a=1");
+    r.headers.append("set-cookie", "b=2");
+    r.headers.append("x-one", "one");
     return r;
   }
-  return ServerResponse.text("nope", 404);
+  return new Response("nope", { status: 404 });
 }
 
 async function main() {

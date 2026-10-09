@@ -1,8 +1,8 @@
-// std classes keep runtime handles in ES private fields (`#raw`), which `console.log` leaves
+// std classes keep runtime handles in ES private fields (`#handle`), which `console.log` leaves
 // out, as Node does; public fields still print.
-import * as http from "velt:http";
+import { Server } from "velt:http";
 
 function main() {
-  console.log(new http.Request(), new http.Response());
+  console.log(new Server());
   console.log(JSON.parseValue('{"a":[1]}'));
 }
