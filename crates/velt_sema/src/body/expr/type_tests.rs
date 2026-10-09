@@ -221,12 +221,21 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
+        let inner = self.cx.ty.opt_payload(s.ty).unwrap_or(s.ty);
+        // A value of one type that is not a promise (`5 instanceof Promise`).
+        let single = (self.cx.union_def(inner).is_none() && !pred(self.cx, inner))
+            .then(|| self.cx.display(s.ty));
         let test = self.type_test(s, &pred, false, span);
         if let Some(what) = test.never_msg {
             self.cx.err(
                 format!(
                     "this `instanceof` test is always false: no member of {what} is a `Promise`"
                 ),
+                span,
+            );
+        } else if let Some(t) = single {
+            self.cx.err(
+                format!("this `instanceof` test is always false: `{t}` is not a `Promise`"),
                 span,
             );
         }
