@@ -28,6 +28,7 @@ use std::process::Command;
 
 pub mod bundled;
 mod fast_ld;
+mod host;
 pub mod kit;
 mod lld;
 mod native;
@@ -36,6 +37,7 @@ mod shared;
 mod system;
 pub mod wasm;
 
+pub use host::{host_triple, same_target};
 pub use native::NativeLink;
 pub use runtime_profile::runtime_lib_is_debug;
 pub use shared::shared_runtime_lib_name;
@@ -332,6 +334,18 @@ pub fn find_runtime_lib_in(
     env: Option<PathBuf>,
     exe: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    find_runtime_lib_for(target, &host_triple(), env, exe)
+}
+
+/// [`find_runtime_lib_in`] on a host `host`: the toolchain's own runtime (`lib/`, a checkout's
+/// `target/<profile>/`) serves only the host target; another target's is in
+/// `lib/targets/<triple>/` (its target pack).
+fn find_runtime_lib_for(
+    target: &str,
+    host: &str,
+    env: Option<PathBuf>,
+    exe: Option<&Path>,
+) -> Result<PathBuf, String> {
     if let Some(p) = env {
         return if p.is_file() {
             Ok(p)
@@ -353,7 +367,8 @@ pub fn find_runtime_lib_in(
             searched.push(cand);
         }
     } else {
-        for cand in native_runtime_candidates(native_search_dirs(exe), target, name) {
+        let is_host = same_target(target, host);
+        for cand in native_runtime_candidates(native_search_dirs(exe), target, name, is_host) {
             if cand.is_file() {
                 return Ok(cand);
             }
@@ -364,13 +379,18 @@ pub fn find_runtime_lib_in(
         .iter()
         .map(|p| format!("  {}", p.display()))
         .collect();
+    if flavor.is_none() && !same_target(target, host) {
+        // A non-host target's runtime comes with its target pack (`lib/targets/<triple>/`).
+        return Err(format!(
+            "this toolchain has no runtime for `{target}`; searched:\n{}\ninstall the target with \
+             `velt target add {target}` (from a source checkout: `cargo build -p velt_rt --target \
+             {target}`, then `velt-kit build --target {target} --runtime <it> --out \
+             <prefix>/lib/targets/{target}`)",
+            list.join("\n")
+        ));
+    }
     let build = match flavor {
         Some(f) => format!("cargo build -p velt_rt_wasm --target {}", f.rust_triple()),
-        // A non-host target's runtime lives in its kit (`lib/targets/<triple>/`).
-        None if target.contains("musl") => format!(
-            "cargo build -p velt_rt --target {target}` plus `velt-kit build --target {target} \
-             --runtime <it> --out <prefix>/lib/targets/{target}"
-        ),
         None => "cargo build -p velt_rt".into(),
     };
     Err(format!(
@@ -381,13 +401,18 @@ pub fn find_runtime_lib_in(
 
 /// Runtime library candidates for a native target in the search directories `dirs`: first the
 /// target's own directory (`<dir>/targets/<triple>/`, where a toolchain keeps the runtime of a
-/// target other than the host, e.g. musl, beside its link kit), then the directories themselves
-/// (the host's runtime). musl uses only the former: the host's glibc runtime has the same name.
-fn native_runtime_candidates(dirs: Vec<PathBuf>, target: &str, name: &str) -> Vec<PathBuf> {
+/// target other than the host beside its link kit), then, for the host target only, the
+/// directories themselves (the host's runtime: another target's has the same file name).
+fn native_runtime_candidates(
+    dirs: Vec<PathBuf>,
+    target: &str,
+    name: &str,
+    is_host: bool,
+) -> Vec<PathBuf> {
     let own = kit::kit_dirs(&dirs, target)
         .into_iter()
         .map(|d| d.join(name));
-    if target.contains("musl") {
+    if !is_host {
         return own.collect();
     }
     own.chain(dirs.iter().map(|d| d.join(name))).collect()
@@ -428,7 +453,16 @@ pub fn is_shared_runtime_lib(runtime_lib: &Path, target: &str) -> bool {
 
 /// Testable core of [`find_shared_runtime_lib`]: `exe` is the current executable.
 pub fn find_shared_runtime_lib_in(target: &str, exe: Option<&Path>) -> Option<PathBuf> {
-    if wasm::WasmFlavor::from_triple(target).is_some() || target.contains("musl") {
+    find_shared_runtime_lib_for(target, &host_triple(), exe)
+}
+
+/// [`find_shared_runtime_lib_in`] on a host `host`: only the host target links the shared
+/// runtime (a build for another target links its static runtime; musl has no shared one).
+fn find_shared_runtime_lib_for(target: &str, host: &str, exe: Option<&Path>) -> Option<PathBuf> {
+    if wasm::WasmFlavor::from_triple(target).is_some()
+        || target.contains("musl")
+        || !same_target(target, host)
+    {
         return None;
     }
     let name = shared_runtime_lib_name(TargetOs::from_triple(target)?);
@@ -495,7 +529,7 @@ mod tests {
         let exe = deps.join("test-bin");
 
         // Not found anywhere → error lists both candidates.
-        let err = find_runtime_lib_in(target, None, Some(&exe)).unwrap_err();
+        let err = find_runtime_lib_for(target, target, None, Some(&exe)).unwrap_err();
         assert!(
             err.contains("libvelt_rt.a") && err.contains("deps"),
             "{err}"
@@ -505,7 +539,7 @@ mod tests {
         let in_parent = tmp.join("debug").join("libvelt_rt.a");
         std::fs::write(&in_parent, b"").unwrap();
         assert_eq!(
-            find_runtime_lib_in(target, None, Some(&exe)).unwrap(),
+            find_runtime_lib_for(target, target, None, Some(&exe)).unwrap(),
             in_parent
         );
 
@@ -517,7 +551,7 @@ mod tests {
         std::fs::write(&installed, b"").unwrap();
         let installed_exe = prefix.join("bin").join("velt");
         assert_eq!(
-            find_runtime_lib_in(target, None, Some(&installed_exe)).unwrap(),
+            find_runtime_lib_for(target, target, None, Some(&installed_exe)).unwrap(),
             installed
         );
 
@@ -525,7 +559,7 @@ mod tests {
         let beside = deps.join("libvelt_rt.a");
         std::fs::write(&beside, b"").unwrap();
         assert_eq!(
-            find_runtime_lib_in(target, None, Some(&exe)).unwrap(),
+            find_runtime_lib_for(target, target, None, Some(&exe)).unwrap(),
             beside
         );
 
@@ -533,10 +567,12 @@ mod tests {
         let custom = tmp.join("custom.a");
         std::fs::write(&custom, b"").unwrap();
         assert_eq!(
-            find_runtime_lib_in(target, Some(custom.clone()), Some(&exe)).unwrap(),
+            find_runtime_lib_for(target, target, Some(custom.clone()), Some(&exe)).unwrap(),
             custom
         );
-        assert!(find_runtime_lib_in(target, Some(tmp.join("missing.a")), Some(&exe)).is_err());
+        assert!(
+            find_runtime_lib_for(target, target, Some(tmp.join("missing.a")), Some(&exe)).is_err()
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -558,27 +594,36 @@ mod tests {
     }
 
     #[test]
-    fn musl_runtime_comes_from_its_target_directory() {
-        let tmp = std::env::temp_dir().join(format!("velt_link_musl_{}", std::process::id()));
+    fn other_targets_use_their_target_packs_only() {
+        let tmp = std::env::temp_dir().join(format!("velt_link_packs_{}", std::process::id()));
         let prefix = tmp.join("prefix");
-        let target = "x86_64-unknown-linux-musl";
+        let host = "x86_64-unknown-linux-gnu";
         std::fs::create_dir_all(prefix.join("bin")).unwrap();
-        std::fs::create_dir_all(prefix.join("lib/targets").join(target)).unwrap();
-        // The host's (glibc) runtime has the same name and must not be taken.
+        // The host's runtimes; every Linux target's has the same file names.
+        std::fs::create_dir_all(prefix.join("lib")).unwrap();
         std::fs::write(prefix.join("lib/libvelt_rt.a"), b"").unwrap();
+        std::fs::write(prefix.join("lib/libvelt_rt_shared.so"), b"").unwrap();
         let exe = prefix.join("bin/velt");
-        let err = find_runtime_lib_in(target, None, Some(&exe)).unwrap_err();
-        assert!(err.contains("--target x86_64-unknown-linux-musl"), "{err}");
-        let own = prefix.join("lib/targets").join(target).join("libvelt_rt.a");
-        std::fs::write(&own, b"").unwrap();
-        assert_eq!(find_runtime_lib_in(target, None, Some(&exe)).unwrap(), own);
-        // Other targets prefer their own directory, then the host's.
-        let gnu = "x86_64-unknown-linux-gnu";
         assert_eq!(
-            find_runtime_lib_in(gnu, None, Some(&exe)).unwrap(),
+            find_runtime_lib_for(host, host, None, Some(&exe)).unwrap(),
             prefix.join("lib/libvelt_rt.a")
         );
-        assert_eq!(find_shared_runtime_lib_in(target, Some(&exe)), None);
+        assert!(find_shared_runtime_lib_for(host, host, Some(&exe)).is_some());
+        for target in ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-gnu"] {
+            let err = find_runtime_lib_for(target, host, None, Some(&exe)).unwrap_err();
+            assert!(err.contains(&format!("velt target add {target}")), "{err}");
+            assert_eq!(find_shared_runtime_lib_for(target, host, Some(&exe)), None);
+            let pack = prefix.join("lib/targets").join(target);
+            std::fs::create_dir_all(&pack).unwrap();
+            std::fs::write(pack.join("libvelt_rt.a"), b"").unwrap();
+            assert_eq!(
+                find_runtime_lib_for(target, host, None, Some(&exe)).unwrap(),
+                pack.join("libvelt_rt.a")
+            );
+        }
+        // A Windows target's runtime is `velt_rt.lib`, in its pack too.
+        let windows = "x86_64-pc-windows-msvc";
+        assert!(find_runtime_lib_for(windows, host, None, Some(&exe)).is_err());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
@@ -589,12 +634,18 @@ mod tests {
         std::fs::create_dir_all(&deps).unwrap();
         let target = "x86_64-unknown-linux-gnu";
         let exe = deps.join("test-bin");
-        assert_eq!(find_shared_runtime_lib_in(target, Some(&exe)), None);
+        assert_eq!(
+            find_shared_runtime_lib_for(target, target, Some(&exe)),
+            None
+        );
         let lib = tmp.join("debug").join("libvelt_rt_shared.so");
         std::fs::write(&lib, b"").unwrap();
-        assert_eq!(find_shared_runtime_lib_in(target, Some(&exe)), Some(lib));
         assert_eq!(
-            find_shared_runtime_lib_in("wasm32-wasip1", Some(&exe)),
+            find_shared_runtime_lib_for(target, target, Some(&exe)),
+            Some(lib)
+        );
+        assert_eq!(
+            find_shared_runtime_lib_for("wasm32-wasip1", "wasm32-wasip1", Some(&exe)),
             None
         );
         let _ = std::fs::remove_dir_all(&tmp);

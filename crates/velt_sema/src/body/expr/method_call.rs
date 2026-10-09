@@ -53,6 +53,13 @@ impl FnCx<'_, '_> {
         }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
+        // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs).
+        let writes_list = matches!(prop.name.as_str(), "join" | "toString")
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
+        if writes_list && self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         if prop.name == crate::collect::DISPOSE && !getter {
             return self.explicit_dispose(recv, args, span);
         }

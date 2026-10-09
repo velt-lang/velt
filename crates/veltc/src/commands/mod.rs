@@ -17,6 +17,7 @@ pub mod lsp;
 mod package;
 mod project;
 mod registry;
+mod target;
 pub mod test;
 mod ts_compat;
 mod version;
@@ -48,6 +49,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             Ok(())
         }
         Command::Clean => clean::clean_command(),
+        Command::Target(action) => target::target_command(&action),
         Command::Build(args) => return build::build_command(&args),
         Command::Run {
             build: args,

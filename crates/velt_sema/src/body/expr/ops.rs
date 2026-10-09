@@ -273,7 +273,14 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
-        self.literal_operands(op, &l, &r);
+        // `"k" + n`: the number is written as `String(n)` writes it.
+        let s = self.cx.ty.str_;
+        let (l, r) = if op == B::Add && (l.ty == s) != (r.ty == s) {
+            self.concat_operands(l, r)
+        } else {
+            self.literal_operands(op, &l, &r);
+            (l, r)
+        };
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
