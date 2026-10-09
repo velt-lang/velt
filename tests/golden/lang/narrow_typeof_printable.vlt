@@ -1,0 +1,41 @@
+// A union with a closure member, narrowed by `typeof` to several members that can be printed
+// (`i64 | f64` for "number", every member but the closure for `!== "function"`), formats and
+// prints like JS: the narrowed members are converted to their own union first (sigx POC, #379).
+
+type Handler = () => void;
+type AttrValue = string | i64 | f64 | bool | Handler | null;
+
+function attr(name: string, v: AttrValue): string {
+  if (typeof v === "string") {
+    return ` ${name}="${v}"`;
+  } else if (typeof v === "boolean") {
+    return v ? ` ${name}` : "";
+  } else if (typeof v === "number") {
+    return ` ${name}="${v}"`;
+  }
+  return "";
+}
+
+function show(v: AttrValue): string {
+  if (typeof v === "function") {
+    return "a handler";
+  }
+  if (v == null) {
+    return "null";
+  }
+  // `string | i64 | f64 | boolean` here.
+  console.log("show:", v);
+  return `${v}`;
+}
+
+function main() {
+  const values: AttrValue[] = ["a", 3, 2.5, true, false, null, () => {}];
+  let out = "";
+  for (const v of values) {
+    out += attr("x", v);
+  }
+  console.log(out);
+  for (const v of values) {
+    console.log(show(v));
+  }
+}

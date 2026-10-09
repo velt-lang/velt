@@ -215,6 +215,31 @@ impl FnCx<'_, '_> {
             .all(|p| self.printable_depth(p, depth + 1))
     }
 
+    /// A union local read narrowed to printable members (`typeof v === "number"` on
+    /// `string | i64 | f64 | () => void`) as the union of just those members, so it can be
+    /// printed; `h` unchanged otherwise.
+    pub(crate) fn narrowed_for_print(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.printable(h.ty) {
+            return h;
+        }
+        let (Some(vs), Some(members)) = (self.narrowed_variants(&h), self.cx.union_members(h.ty))
+        else {
+            return h;
+        };
+        let sub: Vec<TyId> = vs.iter().map(|v| members[*v as usize]).collect();
+        if sub.is_empty() || !sub.iter().all(|t| self.printable(*t)) {
+            return h;
+        }
+        let span = h.span;
+        let target = self.cx.union_of(&sub, false, span);
+        let res = if self.cx.union_def(target).is_some() {
+            self.coerce_to_union(h, target)
+        } else {
+            self.union_to_common(h, target)
+        };
+        res.unwrap_or_else(|h| h)
+    }
+
     pub(crate) fn template(
         &mut self,
         quasis: &[String],
@@ -230,6 +255,7 @@ impl FnCx<'_, '_> {
                 let h = self.expr(e, None, Want::Borrow);
                 let h = self.unbrand(h);
                 let h = self.own_to_string(h, "toString");
+                let h = self.narrowed_for_print(h);
                 let t = h.ty;
                 if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
                     parts.push(h);

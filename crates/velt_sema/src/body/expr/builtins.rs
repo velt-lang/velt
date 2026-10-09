@@ -188,6 +188,7 @@ impl FnCx<'_, '_> {
             let h = self.expr(a, None, Want::Borrow);
             // A `Date` prints as its ISO string, like Node.
             let h = self.own_to_string(h, "__inspect");
+            let h = self.narrowed_for_print(h);
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 let mut d =
