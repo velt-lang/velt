@@ -1,0 +1,129 @@
+// String methods with a regex argument, as in Node (#793).
+import { RegExp } from "velt:regex";
+
+function show(label: string, v: string[] | null) {
+  console.log(label, v);
+}
+
+function main() {
+  // replace with strings
+  console.log(
+    "banana".replace(/a/g, "o"),
+    "banana".replace(/a/, "o"),
+    "banana".replace(/A/gi, "[$&]"),
+  );
+  console.log(
+    "john smith".replace(/(\w+)\s(\w+)/, "$2, $1"),
+    "x1y22".replace(/(?<d>\d+)/g, "<$<d>>"),
+  );
+  console.log(
+    "abc".replace(/b/, "$`|$'|$$|$0|$3"),
+    "".replace(/x*/g, "-"),
+    "abc".replace(/x*/g, "-"),
+  );
+  // replace with a function
+  console.log(
+    "hello world".replace(
+      /\b(\w)(\w*)/g,
+      (m, first: string, rest: string) => first.toUpperCase() + rest,
+    ),
+  );
+  console.log("a1b22c333".replace(/\d+/g, (m) => `${m.length}`));
+  console.log("a-b-c".replace(/-/g, (m, offset: number) => `${offset}`));
+  console.log(
+    "x=1, y=2".replace(
+      /(\w)=(\d)/g,
+      (_m, k: string, v: string, off: number, s: string) => `${k}${v}@${off}/${s.length}`,
+    ),
+  );
+  console.log("ab".replace(/(a)|(z)/, (m, a: string, z?: string) => `${a}:${z ?? "none"}`));
+  const upper = (m: string) => m.toUpperCase();
+  console.log("abc def".replace(/\w+/g, upper));
+  console.log("aaa".replaceAll(/a/g, "b"), "aXbX".replaceAll(/x/gi, (m) => m.toLowerCase()));
+  // match
+  show("m1", "abc123def45".match(/\d+/g));
+  show("m2", "abc".match(/\d+/g));
+  const date = "2024-05-06".match(/(\d+)-(\d+)-(\d+)/);
+  console.log("m3", date?.length, date?.[0], date?.[1], date?.[3]);
+  const opt = "abc".match(/(x)?b/);
+  console.log("m4", opt?.[0], opt?.length);
+  show("m5", "abc".match(/z/));
+  const m = "key=value".match(/(\w+)=(\w+)/);
+  if (m != null) {
+    const [_, key, value] = m;
+    console.log(key, value, m.length);
+  }
+  // matchAll
+  for (const x of "a1b2c3".matchAll(/([a-z])(\d)/g)) {
+    console.log(x[0], x[1], x[2], x.index);
+  }
+  console.log([..."test1 test2".matchAll(/t(e)(st(\d?))/g)].map((x) => x[0] + ":" + x[3]));
+  // search
+  console.log("hello".search(/l+/), "hello".search(/z/), "Hello".search(/h/i));
+  // split
+  console.log("a, b,c ,d".split(/\s*,\s*/), "1-2-3".split(/(-)/), "abc".split(/(?:)/));
+  console.log("a,b,c,d".split(/,/, 2), "".split(/,/), "".split(/(?:)/), "a,b".split(/,/, 0));
+  console.log("one  two   three".split(/\s+/));
+  // unicode
+  console.log("café crème".replace(/é/g, "e"), "日本語テキスト".match(/[本語]/g), "😀a😀".replace(/a/, "-"));
+  console.log("😀😀".split(/(?:)/u), "x😀y".search(/y/));
+  // lastIndex
+  const g = /o/g;
+  console.log(g.test("foo"), g.lastIndex, g.test("foo"), g.lastIndex, g.test("foo"), g.lastIndex);
+  g.lastIndex = 2;
+  console.log("foo".replace(g, "0"), g.lastIndex);
+  g.lastIndex = 2;
+  console.log("foo".match(g), g.lastIndex);
+  g.lastIndex = 2;
+  console.log([..."foo".matchAll(g)].map((x) => x.index), g.lastIndex);
+  g.lastIndex = 2;
+  console.log("foo".search(g), g.lastIndex);
+  const y = /a/y;
+  console.log(
+    "aab".replace(y, "x"),
+    y.lastIndex,
+    "aab".replace(y, "x"),
+    y.lastIndex,
+    "aab".replace(y, "x"),
+    y.lastIndex,
+  );
+  console.log(
+    "aab".replace(/a/gy, "x"),
+    "baa".replace(/a/gy, "x"),
+    "aab".match(/a/gy),
+    "baa".search(/a/y),
+  );
+  const gl = /b/g;
+  gl.lastIndex = 1;
+  console.log(gl.lastIndex, "abc".replace(gl, "B"), gl.lastIndex, gl.source);
+  const yy = /a/y;
+  console.log("aab".match(yy)?.[0], yy.lastIndex, "aab".match(yy)?.[0], yy.lastIndex);
+  console.log("aab".match(yy), yy.lastIndex);
+  const ex = /(\d)/g;
+  let found = ex.exec("a1b2");
+  while (found != null) {
+    console.log(found[1], found.index, ex.lastIndex);
+    found = ex.exec("a1b2");
+  }
+  // overlapping candidates, empty subjects, regexes in variables, fields and callbacks
+  console.log("aaaa".match(/aa/g), "aaa".replace(/aa/g, "b"), "".match(/x/g), "".replace(/^/, "s"));
+  const word = /\w+/g;
+  const words = ["a b", "c d e"].map((s) => s.match(word)?.length ?? 0);
+  console.log(words, ["x-y", "z"].map((s) => s.replace(/-/g, "+")));
+  const holder = new Holder(/(\d+)/g);
+  console.log(holder.double("1 and 20"), holder.re.lastIndex);
+  const sep = new RegExp("[;|]");
+  console.log("a;b|c".split(sep), "a;b|c".search(sep), "a;b".replace(sep, (m) => `<${m}>`));
+}
+
+class Holder {
+  readonly re: RegExp;
+
+  constructor(re: RegExp) {
+    this.re = re;
+  }
+
+  double(s: string): string {
+    return s.replace(this.re, (_m, n: string) => `${Number(n) * 2}`);
+  }
+}

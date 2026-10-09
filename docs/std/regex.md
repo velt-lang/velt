@@ -2,25 +2,73 @@
 
 `import { RegExp } from "velt:regex"`. JavaScript-flavoured regular expressions on Rust's `regex`
 engine. Matching is linear-time. Offsets (`index`, `end`, `from`) are UTF-16 code units, like
-every string position, so `s.slice(m.index, m.end)` is the match. There is no hidden
-`lastIndex`: `exec(s, from)` takes the start offset explicitly. A lone surrogate is not matched
+every string position, so `s.slice(m.index, m.end)` is the match. `exec(s)` and `test(s)` of a
+regex with the `g` or `y` flag start at `lastIndex` and update it, as in JS; `exec(s, from)`
+takes the start offset explicitly and leaves `lastIndex` alone. A lone surrogate is not matched
 by `.` or a negated class yet (#377 phase 5), and an empty match steps over a whole surrogate
 pair (JavaScript without the `u` flag stops between its halves; #401).
 
 - `new RegExp(pattern, flags = "")`: flags `g i m s y` (`d u v` are accepted and change
   nothing). Throws `RegExpError` for an invalid pattern, or an unknown or repeated flag.
-  Fields: `source`, `flags`, `global`, `sticky`, `groupCount`.
-- `test(s, from = 0)`, `exec(s, from = 0): RegExpMatch | null`.
-- `matchAll(s): RegExpMatch[]`, `matches(s): string[]`.
-- `replace(s, repl)`: every match with `g`, otherwise the first. `replaceAll(s, repl)`.
+  Fields: `source`, `flags`, `global`, `sticky`, `groupCount`, `lastIndex` (a `number`, as in
+  JS).
+- `test(s, from?)`, `exec(s, from?): RegExpMatch | null`.
+- `matchAll(s): RegExpMatch[]`, `matches(s): string[]`: every match from 0, whatever the flags.
+- `replace(s, repl)`: every match with `g`, otherwise the first; with `y` only at `lastIndex`
+  (JS's `s.replace(re, repl)`). `replaceAll(s, repl)`: every match, whatever the flags.
   `repl` expands `` $& $1 $<name> $` $' $$ ``.
-- `replaceWith(s, f: (m) => string)`.
+- `replaceWith(s, f: (m) => string)`: the matches `replace` replaces.
 - `split(s, limit = 0)`: captured groups are included in the result (`""` for a group that did
   not take part, where JS gives `undefined`); `limit` 0 means no limit.
 - `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
   holding a `RegExp` can be copied for another task, `spawn` or a channel).
-- `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)` and
-  `named(name)`.
+- `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)`,
+  `named(name)` and `substitute(s, repl)` (`repl` expanded for the match). `m[n]` is group `n`
+  (`m[0]` the match), `""` for a group that did not take part.
+
+## String methods with a regex
+
+A string's `replace`, `replaceAll`, `match`, `matchAll`, `search` and `split` take a `RegExp`
+(a regex literal or a variable) as in JS, `lastIndex` included:
+
+| Call | Result |
+|---|---|
+| `s.replace(re, repl)` | as `re.replace(s, repl)` |
+| `s.replace(re, (match, p1, …, offset, s) => …)` | each replaced match is the function's result |
+| `s.replaceAll(re, …)` | the same; `re` must have the `g` flag |
+| `s.match(re)` | `string[] \| null`: with `g`, the text of every match (`null` if none); otherwise the match and its groups |
+| `s.matchAll(re)` | `RegExpMatch[]`, every match from `lastIndex` on; `re` must have the `g` flag |
+| `s.search(re)` | where the first match starts, or -1 |
+| `s.split(re, limit?)` | the pieces between matches, with the groups between them |
+
+A replacer function gets the match, then each group, then the match's offset (a `number`) and
+the string, as in JS, and may take fewer parameters. A group that did not take part is `""`
+(JS: `undefined`), or `null` for a parameter declared optional (`(m, p1?: string) => …`). The
+offset and the string follow the groups, so for a regex that isn't a literal (where the
+number of groups isn't known when compiling) every parameter after the match is a group. For
+`matchAll` and `replaceAll`, a regex literal without `g` is a compile error, and another regex
+without it panics like JS's `TypeError`.
+
+```ts
+import { RegExp } from "velt:regex";
+
+function main() {
+  console.log("banana".replace(/a/g, "o"), "a-b_c".split(/[-_]/)); // bonono [ 'a', 'b', 'c' ]
+  const title = "hello world".replace(/\b(\w)(\w*)/g, (_m, first: string, rest: string) =>
+    first.toUpperCase() + rest,
+  );
+  console.log(title, "x1y22".match(/\d+/g)); // Hello World [ '1', '22' ]
+  for (const m of "a1b2".matchAll(/([a-z])(\d)/g)) {
+    console.log(m[1], m[2], m.index); // a 1 0, then b 2 2
+  }
+  const date = "2024-05-06".match(/(\d+)-(\d+)/);
+  console.log(date?.[1], "hello".search(/l+/)); // 2024 2
+}
+```
+
+Unlike JS, the array of a match without `g` (`s.match(/(a)/)`) has no `index`, `input` or
+`groups` properties (it prints as a plain array; use the regex's `exec` for the position), and
+the replacer function doesn't get the named-groups object.
 
 ```ts
 import { RegExp } from "velt:regex";

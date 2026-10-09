@@ -382,6 +382,14 @@ impl FnCx<'_, '_> {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
+            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+                let prop = ast::Ident {
+                    name: "__index".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {
