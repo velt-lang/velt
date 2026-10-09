@@ -54,6 +54,48 @@ pub(super) fn later_each(es: &[hir::Expr]) -> Vec<Later> {
     out
 }
 
+/// The local a read of `e` starts from (`s`, `o.name`, `xs[i]`), if it is one.
+pub(super) fn root_local(e: &hir::Expr) -> Option<hir::LocalId> {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Local(l, _) => Some(*l),
+        K::Field { base, .. } | K::Index { base, .. } => root_local(base),
+        K::Cast(x) | K::Upcast(x) | K::Downcast(x) | K::UnwrapSome(x, _) => root_local(x),
+        _ => None,
+    }
+}
+
+/// Can evaluating `e` move local `l` (and so free what it holds)? Conservative: shapes not
+/// listed may.
+pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
+    use hir::ExprKind as K;
+    let any = |es: &[hir::Expr]| es.iter().any(|x| may_move_local(x, l));
+    match &e.kind {
+        K::Lit(_) | K::Global(_) | K::FnRef(..) => false,
+        K::Local(x, mode) => *x == l && *mode == hir::UseMode::Move,
+        K::Unary { expr: x, .. }
+        | K::Cast(x)
+        | K::Upcast(x)
+        | K::Downcast(x)
+        | K::WrapSome(x)
+        | K::UnwrapSome(x, _)
+        | K::UnwrapVariant { expr: x, .. }
+        | K::Field { base: x, .. } => may_move_local(x, l),
+        K::Index { base, index, .. } => may_move_local(base, l) || may_move_local(index, l),
+        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
+            may_move_local(lhs, l) || may_move_local(rhs, l)
+        }
+        K::If { cond, then, els } => {
+            may_move_local(cond, l) || may_move_local(then, l) || may_move_local(els, l)
+        }
+        K::Call { callee, args } => {
+            any(args) || matches!(callee, hir::Callee::Indirect(f) if may_move_local(f, l))
+        }
+        K::ArrayLit(xs) => any(xs),
+        _ => true,
+    }
+}
+
 /// Can evaluating `e` change what an earlier operand reads?
 pub(super) fn may_write(e: &hir::Expr) -> bool {
     Later::of(e).any()
