@@ -18,8 +18,8 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
   - find references, rename, document highlight (reads and writes of the name under the cursor);
   - workspace symbols (`Ctrl+T`: declarations in the open programs and the workspace folders);
   - quick fixes (light bulb) for compiler errors: remove `mut`, `undefined` → `null`,
-    `"a" + n` → a template literal, `if (count)` → `if (count !== 0)` (`""` / `null` / `0.0` by
-    type); and for a promise left floating as a statement: add `await` or wrap it in `spawn(...)`;
+    `"a" + n` → a template literal; and for a promise left floating as a statement: add `await`
+    or wrap it in `spawn(...)`;
   - inlay hints: inferred types of `const` / `let` / `for ... of` bindings and parameter names at
     call sites (toggle with `editor.inlayHints.enabled`);
   - signature help while typing call arguments (functions, methods, constructors, function-typed
