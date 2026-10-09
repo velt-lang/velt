@@ -8,7 +8,35 @@ on:
       script:
         default: windows.ps1
 jobs:
+  lld:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: ninja
+        if: runner.os != 'Windows'
+        shell: bash
+        run: if [ "$RUNNER_OS" = macOS ]; then brew install ninja >/dev/null; else sudo apt-get install -y -qq ninja-build >/dev/null; fi
+      - name: build lld (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: time scripts/build-lld.sh "$RUNNER_TEMP/lld"
+      - name: build lld (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $t = Measure-Command { pwsh -NoProfile -File scripts/build-lld.ps1 -OutDir "$env:RUNNER_TEMP/lld" | Out-Host }
+          Write-Host "took $($t.TotalMinutes) min"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lld-${{ matrix.os }}
+          path: ${{ runner.temp }}/lld
   linux:
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -27,6 +55,7 @@ jobs:
           path: ${{ runner.temp }}/spike
           if-no-files-found: ignore
   windows:
+    if: false
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
