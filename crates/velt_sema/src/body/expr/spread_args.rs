@@ -12,6 +12,7 @@
 use velt_syntax::ast;
 
 use super::args::Callable;
+use crate::body::places::is_path;
 use crate::body::{FnCx, Want};
 use crate::hir::TyKind;
 
@@ -28,45 +29,72 @@ impl FnCx<'_, '_> {
         }
         let mut out = vec![];
         let mut left = vec![];
+        let mut failed = false;
         for a in args {
             let ast::ExprKind::Spread(inner) = &a.kind else {
                 out.push(a.clone());
                 continue;
             };
             match self.spread_elems(inner) {
-                Some(elems) => out.extend(elems),
-                None => {
+                Ok(Some(elems)) => out.extend(elems),
+                Ok(None) => {
                     left.push(inner.as_ref());
                     out.push(a.clone());
                 }
+                Err(()) => failed = true,
             }
         }
-        if c.rest || left.is_empty() {
+        if !failed && (c.rest || left.is_empty()) {
             return Ok(Some(out));
         }
-        for inner in left {
-            self.unknown_length_spread(inner);
+        if !c.rest {
+            for inner in left {
+                self.unknown_length_spread(inner);
+            }
         }
         let others: Vec<ast::Expr> = args.iter().filter(|a| !is_spread(a)).cloned().collect();
         self.check_args_loose(&others);
         Err(())
     }
 
-    /// The elements a spread of `inner` stands for, when its length is known.
-    fn spread_elems(&mut self, inner: &ast::Expr) -> Option<Vec<ast::Expr>> {
+    /// The elements a spread of `inner` stands for, when its length is known. `Err` after
+    /// reporting a tuple read through a getter: reading it once per element would call it
+    /// again each time, where JS reads it once.
+    fn spread_elems(&mut self, inner: &ast::Expr) -> Result<Option<Vec<ast::Expr>>, ()> {
         let e = strip(inner);
         if let ast::ExprKind::Array(xs) = &e.kind {
-            return (!xs.iter().any(is_spread)).then(|| xs.clone());
+            return Ok((!xs.iter().any(is_spread)).then(|| xs.clone()));
         }
-        if !is_path(e) {
-            return None;
+        if !is_member_chain(e) {
+            return Ok(None);
         }
-        // Reading a path has no effect, so checking it here and again per element is safe.
+        // Checking a member chain has no effect, so checking it again per element is safe; the
+        // checked value says whether reading it is a call (a getter).
         let h = self.expr(e, None, Want::Borrow);
         let TyKind::Tuple(ts) = self.cx.ty.kind(h.ty) else {
-            return None;
+            return Ok(None);
         };
-        Some((0..ts.len()).map(|k| index(e, k)).collect())
+        let n = ts.len();
+        if !is_path(&h) {
+            self.tuple_not_stored(e);
+            return Err(());
+        }
+        Ok(Some((0..n).map(|k| index(e, k)).collect()))
+    }
+
+    /// A spread of a tuple that is not a variable or a field (a call, a getter): reported.
+    fn tuple_not_stored(&mut self, e: &ast::Expr) {
+        let shown = crate::body::switch::cases::source_text(e);
+        self.cx.error(
+            velt_common::Diagnostic::error(
+                "a spread argument of a tuple must be a variable or a field (not a call or a getter)",
+                e.span,
+            )
+            .with_note("JavaScript reads the value once, and each parameter takes one element of it")
+            .with_note(format!(
+                "store the value in a variable first: `const t = {shown}; f(...t);`"
+            )),
+        );
     }
 
     /// A spread for fixed parameters whose length is not known when compiling (reported).
@@ -76,15 +104,11 @@ impl FnCx<'_, '_> {
             return;
         }
         let span = inner.span;
-        let d = if matches!(self.cx.ty.kind(h.ty), TyKind::Tuple(_)) {
-            velt_common::Diagnostic::error(
-                "a spread argument of a tuple must be a variable or a field",
-                span,
-            )
-            .with_note("store the value in a variable first: `const t = pair(); f(...t);`")
-        } else {
-            let tn = self.cx.display(h.ty);
-            velt_common::Diagnostic::error(
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Tuple(_)) {
+            return self.tuple_not_stored(inner);
+        }
+        let tn = self.cx.display(h.ty);
+        let d = velt_common::Diagnostic::error(
                 "a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)",
                 span,
             )
@@ -95,8 +119,7 @@ impl FnCx<'_, '_> {
             .with_note(
                 "pass the elements (`f(xs[0], xs[1])`), or give the value a tuple type \
                  (`const t: [number, number] = [1, 2];`)",
-            )
-        };
+            );
         self.cx.error(d);
     }
 }
@@ -113,15 +136,15 @@ fn strip(e: &ast::Expr) -> &ast::Expr {
     }
 }
 
-/// A variable, `this` or a field path of one.
-fn is_path(e: &ast::Expr) -> bool {
+/// A variable, `this` or a member chain on one (fields, or getters: see `spread_elems`).
+fn is_member_chain(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Member {
             object,
             optional: false,
             ..
-        } => is_path(object),
+        } => is_member_chain(object),
         _ => false,
     }
 }

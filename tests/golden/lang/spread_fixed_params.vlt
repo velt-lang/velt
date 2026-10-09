@@ -22,6 +22,27 @@ class Holder {
   }
 }
 
+class Cnt {
+  n: number = 0;
+}
+
+// A tuple read through a getter is stored first (spreading `g.pair` itself is an error: JS reads
+// it once), then spread.
+class G {
+  c: Cnt;
+  constructor(c: Cnt) {
+    this.c = c;
+  }
+  get pair(): [number, number] {
+    this.c.n += 1;
+    return [this.c.n, this.c.n * 10];
+  }
+}
+
+function join3(a: number, b: number, c: number): string {
+  return `${a},${b},${c}`;
+}
+
 function add3(a: number, b: number, c: number): number {
   return a + b + c;
 }
@@ -53,4 +74,8 @@ function main() {
   console.log(new Holder().show());
   console.log(sum(...t), sum(0, ...t), Math.max(...t), Math.min(...[7, 3, 9]));
   console.log(label(...(["s", 1] as [string, number])));
+  const cnt = new Cnt();
+  const g = new G(cnt);
+  const t2 = g.pair;
+  console.log(join3(0, ...t2), cnt.n);
 }

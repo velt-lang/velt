@@ -24,7 +24,8 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   too many elements are the usual arity error, and a missing optional parameter takes its
   default. A spread of an array type (`T[]`) into fixed parameters is an error, as in
   TypeScript (JS would bind `undefined` to the parameters its elements do not fill); a tuple
-  returned by a call is stored in a variable first (`const t = pair(); f(...t);`).
+  returned by a call or a getter is stored in a variable first (`const t = pair(); f(...t);`),
+  since JS reads it once.
 
   ```ts
   function label(name: string, n: number, suffix?: string): string {

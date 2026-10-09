@@ -9,7 +9,7 @@
 use velt_syntax::ast;
 
 use super::pattern::BindCtx;
-use super::places::is_place;
+use super::places::{is_path, is_place};
 use super::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, StmtKind as S, UseMode};
 
@@ -67,14 +67,5 @@ impl FnCx<'_, '_> {
                 span: sub.span,
             });
         }
-    }
-}
-
-/// A variable, constant or field path of one: reading it again has no effect.
-fn is_path(e: &hir::Expr) -> bool {
-    match &e.kind {
-        H::Local(..) | H::Global(_) => true,
-        H::Field { base, .. } => is_path(base),
-        _ => false,
     }
 }
