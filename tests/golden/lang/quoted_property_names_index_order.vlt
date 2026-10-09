@@ -1,0 +1,36 @@
+// Field names that are array indices (`"0"`, `"404"`: canonical, up to 2^32 - 2) come first, in
+// ascending order, then the other fields in declaration order, as JavaScript orders an object's
+// keys: in console.log, JSON.stringify and Object.keys, after JSON.parse and through spreads (#756).
+
+type Status = {
+  "404": string;
+  ok: boolean;
+  "200": string;
+  "01": number;
+  "4294967295": number;
+  "4294967294": number;
+};
+
+function main() {
+  const o = { b: 1, "3d": 2, "1": 3, "01": 4, a: 5, "0": 6 };
+  console.log(o);
+  console.log(JSON.stringify(o));
+  console.log(Object.keys(o).join(","));
+  const s: Status = {
+    "404": "missing",
+    ok: true,
+    "200": "fine",
+    "01": 1,
+    "4294967295": 2,
+    "4294967294": 3,
+  };
+  console.log(s);
+  console.log(JSON.stringify(s));
+  console.log(Object.keys(s));
+  const back = JSON.parse<Status>(
+    '{"ok":false,"404":"m","200":"f","01":0,"4294967295":0,"4294967294":0}',
+  );
+  console.log(back["404"], back.ok, JSON.stringify(back));
+  const spread = { ...o, z: 9, "2": 7 };
+  console.log(spread, JSON.stringify(spread), Object.keys(spread).join(","));
+}

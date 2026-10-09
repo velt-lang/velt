@@ -51,6 +51,7 @@ mod literals;
 mod moves;
 mod ownership;
 mod promise_copies;
+pub mod property_order;
 mod readonly;
 mod record_keys;
 mod resolve;
