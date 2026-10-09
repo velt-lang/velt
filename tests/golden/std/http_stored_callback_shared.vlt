@@ -1,0 +1,47 @@
+// check: no leaks
+// An async handler calls a sync callback stored in a field of an object it captured, and the
+// callback changes state it shares with every request through `shared(new Mutex(...))`, the
+// fix the compiler proposes for a callback that assigns a captured variable (#873). Requests run
+// at the same time and take turns on the lock; the output matches Node's.
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+async function client(base: string, n: i64): Promise<i64> {
+  let ok: i64 = 0;
+  for (let i = 0; i < n; i++) {
+    try {
+      const t = await (await fetch(`${base}/x`)).text();
+      ok += t.length > 0 ? 1 : 0;
+    } catch (e) {
+      console.log("request failed");
+    }
+  }
+  return ok;
+}
+
+async function main() {
+  const last = shared(new Mutex({ value: "" }));
+  const i = new Input();
+  i.onChange = (v: string) => {
+    last.with((s) => {
+      s.value = `${v}${s.value.length}`;
+    });
+  };
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    return new Response("ok");
+  });
+  const ts: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    ts.push(spawn(client(`http://127.0.0.1:${a.port}`, 40)));
+  }
+  let n: i64 = 0;
+  for (const x of await Promise.all(ts)) {
+    n += x;
+  }
+  await a.shutdown();
+  console.log(n, last.with((s) => s.value.length));
+}

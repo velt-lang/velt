@@ -1,0 +1,50 @@
+// What an HTTP handler reaches is only an error when a callback it calls assigns a variable that
+// callback captured (#873): callbacks that only read, a render function, a pool, closures each
+// request makes for itself, and a callback of the same type stored in an object the handler
+// never reaches all compile and run.
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+class Pool {
+  conns: string[] = ["a", "b"];
+  pick(i: number): string {
+    return this.conns[i % 2];
+  }
+}
+
+async function main() {
+  const prefix = "p";
+  const i = new Input();
+  i.onChange = (v: string) => {
+    if (`${prefix}${v}`.length > 100) {
+      console.log("long");
+    }
+  };
+  const render = (s: string): string => `<b>${s}</b>`;
+  const pool = new Pool();
+  const hits = shared(0);
+  const a = await serve({ port: 0 }, async (req) => {
+    let mine = 0;
+    const bump = () => {
+      mine += 1;
+    };
+    bump();
+    i.onChange("x");
+    hits.add(1);
+    return new Response(render(pool.pick(mine)));
+  });
+  let local = 0;
+  const other = new Input();
+  other.onChange = (v: string) => {
+    local += v.length;
+  };
+  other.onChange("abc");
+  for (let k = 0; k < 3; k++) {
+    console.log(await (await fetch(`http://127.0.0.1:${a.port}/`)).text());
+  }
+  await a.shutdown();
+  console.log(local, hits.get());
+}

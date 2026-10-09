@@ -47,6 +47,46 @@ it throws.
   variables (use `shared`). Requests run on several threads at once and each gets its own copy
   of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
   capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).
+- That includes a variable assigned by a sync callback the handler calls: a function value
+  stored in something it captured (`i.onChange("x")` with `i.onChange = (v) => { last = v; }`),
+  in an array (`cbs[0]()`), or returned by a function (`const next = makeCounter()`). Requests
+  would all assign that one variable at the same time, so it is an error that names the call and
+  the variable, and shows the variable's declaration rewritten to hold one value every request
+  shares, as Node does:
+
+  ```
+  error: this handler calls `i.onChange`, which changes `last`; requests run at the same time
+    = note: fix: const last = shared(new Mutex({ value: "" }))  // one value shared by every request, as in Node
+    = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`
+  ```
+
+  A 64-bit integer goes in `shared(0)` itself (`.add(1)`, `.get()`, `.set(v)`), a `number` or
+  `boolean` in `shared(new Mutex(0))`. Callbacks that only read what they captured, functions
+  the handler calls that change only their own variables, and closures a request makes for
+  itself are not affected. Sharing such a variable without `shared(...)` is planned (#885).
+
+  ```ts
+  import { serve } from "velt:http";
+
+  class Input {
+    onChange: (v: string) => void = (v) => {};
+  }
+
+  async function main() {
+    const last = shared(new Mutex({ value: "" }));
+    const i = new Input();
+    i.onChange = (v: string) => {
+      last.with((s) => {
+        s.value = `${v}${s.value.length}`;
+      });
+    };
+    const server = await serve({ port: 0 }, async (req) => {
+      i.onChange("x");
+      return new Response("ok");
+    });
+    await server.shutdown();
+  }
+  ```
 - A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 

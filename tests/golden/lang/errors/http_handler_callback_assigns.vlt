@@ -1,0 +1,53 @@
+// An HTTP handler that calls a sync callback which assigns a variable it captured itself: requests
+// run at the same time and share what the handler captured, so they would all assign that one
+// variable at once (#873). The error names the call and the variable, and shows the variable
+// shared with `shared(...)`, as Node shares it.
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+class Widget {
+  set: (v: string) => void = (v) => {};
+  get: () => string = () => "";
+}
+
+function makeCounter(): () => number {
+  let n = 0;
+  return () => {
+    n += 1;
+    return n;
+  };
+}
+
+async function main() {
+  // The issue's program: a callback stored in a field of an object the handler captured.
+  let last = "";
+  const i = new Input();
+  i.onChange = (v: string) => {
+    last = `${v}${last.length}`;
+  };
+  // A set/get pair sharing one variable: only `set` changes it.
+  let state = "start";
+  const w = new Widget();
+  w.set = (v: string) => {
+    state = v;
+  };
+  w.get = () => state;
+  // A callback in an array.
+  let hits: i64 = 0;
+  const cbs: (() => void)[] = [];
+  cbs.push(() => {
+    hits++;
+  });
+  // A callback reached through a function's result.
+  const next = makeCounter();
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    w.set("y");
+    cbs[0]();
+    return new Response(`${w.get()} ${next()}`);
+  });
+  await a.shutdown();
+}
