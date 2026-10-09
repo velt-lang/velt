@@ -41,7 +41,7 @@ impl FnCx<'_, '_> {
             return Err(h);
         };
         let (span, from) = (h.span, h.ty);
-        let fields = self.copied_names(exp, &slots);
+        let (fields, absent) = self.copied_names(exp, &slots);
         let source = match &h.kind {
             H::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::Share),
@@ -55,6 +55,7 @@ impl FnCx<'_, '_> {
             from,
             to: exp,
             fields,
+            absent,
             span,
             source,
             fresh,
@@ -106,20 +107,23 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The names of the fields of `exp` that `slots` copy from the source.
-    fn copied_names(&self, exp: TyId, slots: &[Slot]) -> Vec<String> {
+    /// The names of the fields of `exp` that `slots` copy from the source, and of the optional
+    /// ones it leaves absent.
+    fn copied_names(&self, exp: TyId, slots: &[Slot]) -> (Vec<String>, Vec<String>) {
+        let (mut copied, mut absent) = (vec![], vec![]);
         let TyKind::Adt(d, _) = self.cx.ty.kind(exp) else {
-            return vec![];
+            return (copied, absent);
         };
         let Some(a) = self.cx.adt(*d) else {
-            return vec![];
+            return (copied, absent);
         };
-        a.fields
-            .iter()
-            .zip(slots)
-            .filter(|(_, s)| matches!(s, Slot::Field { .. }))
-            .map(|(f, _)| f.name.clone())
-            .collect()
+        for (f, s) in a.fields.iter().zip(slots) {
+            match s {
+                Slot::Field { .. } => copied.push(f.name.clone()),
+                Slot::Absent(_) => absent.push(f.name.clone()),
+            }
+        }
+        (copied, absent)
     }
 
     /// For each field of object type `to`, where it comes from in a `from` value; `None` when a

@@ -5,11 +5,14 @@
 //! objects are shared, not copied). Once the program is checked, a conversion is an error where
 //! the program could tell the copy from the original:
 //!
-//! - it assigns one of the copied fields on a value of either type (one object would miss it);
+//! - it assigns one of the copied fields, or an optional field the source doesn't have, on a
+//!   value of either type (one object would miss it);
 //! - it compares values of the converted-to type with `===` (two copies of one object are not
 //!   `===`);
 //! - it prints, serializes (`JSON.stringify`) or lists the keys (`Object.keys`) of a value whose
-//!   type holds the converted-to type (Node shows the original's keys, in its order).
+//!   type holds the converted-to type (Node shows the original's keys, in its order);
+//! - it spreads a value of the converted-to type into an object literal (Node copies the
+//!   original's fields, all of them).
 //!
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
@@ -26,6 +29,8 @@ pub(crate) struct Copy {
     pub from: TyId,
     pub to: TyId,
     pub fields: Vec<String>,
+    /// The optional fields of `to` the source doesn't have: the copy leaves them absent.
+    pub absent: Vec<String>,
     pub span: Span,
     /// The source as written (`ab`, `p.owner`), for the fix.
     pub source: Option<String>,
@@ -52,6 +57,8 @@ pub(crate) enum Seen {
     Keys,
     /// `===` / `!==`.
     Identity,
+    /// `{ ...x }`: the top-level fields.
+    Spread,
 }
 
 /// The conversions, field writes and looks seen so far.
@@ -97,13 +104,13 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
 }
 
-/// An assignment to a copied field of either type of `c`.
+/// An assignment to a copied or absent field of either type of `c`.
 fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write> {
     if c.fresh {
         return None;
     }
     writes.iter().find(|w| {
-        c.fields.contains(&w.name)
+        (c.fields.contains(&w.name) || c.absent.contains(&w.name))
             && w.ty
                 .is_none_or(|t| related(cx, t, c.from) || related(cx, t, c.to))
     })
@@ -113,6 +120,7 @@ fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write
 fn sees(cx: &mut Ctx, c: &Copy, t: TyId, how: Seen) -> bool {
     match how {
         Seen::Identity => !c.fresh && related(cx, t, c.to),
+        Seen::Spread => related(cx, t, c.to),
         _ => holds(cx, t, c.to, &mut HashSet::new()),
     }
 }
@@ -166,9 +174,11 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen) {
         Seen::Serialized => format!("serializes a `{shown}`"),
         Seen::Keys => format!("lists the keys of a `{shown}`"),
         Seen::Identity => format!("compares `{shown}` values with `===`"),
+        Seen::Spread => format!("spreads a `{shown}`"),
     };
     let why = match how {
         Seen::Identity => "two copies of one object are not `===`",
+        Seen::Spread => "Node would copy all the original object's fields, in its order",
         _ => "Node would show the original object's fields, in its order",
     };
     let d = Diagnostic::error(

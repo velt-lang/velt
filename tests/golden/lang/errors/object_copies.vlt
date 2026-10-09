@@ -1,7 +1,8 @@
 // Object types convert to one with some of their fields, or the same ones in another order, by
 // copying the fields (#650, #651). Where the program could tell the copy from the original, the
-// conversion is an error: a copied field is assigned, the converted-to type is compared with
-// `===`, or a value holding it is printed, serialized or has its keys listed.
+// conversion is an error: a copied field, or an optional one the source doesn't have, is
+// assigned, the converted-to type is compared with `===`, or a value holding it is printed,
+// serialized or has its keys listed.
 type A = { a: number };
 type AB = A & { b: string };
 
@@ -27,6 +28,14 @@ function keys(n: Aged): string[] {
   return Object.keys(n);
 }
 
+type K = { k: number };
+type KC = { k: number; c?: string };
+type KD = { k: number; d?: string };
+
+function setD(x: KD) {
+  x.d = "s";
+}
+
 type Id = { id: number };
 type Row = Id & { label: string };
 
@@ -43,4 +52,9 @@ function main() {
   const row: Row = { id: 1, label: "r" };
   const ids: Id[] = [row];
   console.log(JSON.stringify(ids));
+  const k1: K = { k: 1 };
+  const x: KC = k1;
+  x.c = "s";
+  const k2: K = { k: 2 };
+  setD(k2);
 }

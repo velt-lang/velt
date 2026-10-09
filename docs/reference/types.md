@@ -496,10 +496,11 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   (nested objects and arrays are shared, not copied). TypeScript passes the same object, so
   where the program could tell the difference, the conversion is an error with the fix (build
   the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
-  a copied field of either type (`a.a += 1` on an `A` anywhere), compares values of the
-  expected type with `===`, or prints, serializes or lists the keys of a value holding the
-  expected type (Node would show the original's fields, in its order), directly or in
-  generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
+  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
+  expected type with `===`, prints, serializes or lists the keys of a value holding the
+  expected type, or spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
+  or copy the original's fields, in its order), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with

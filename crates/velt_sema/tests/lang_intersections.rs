@@ -174,6 +174,42 @@ fn a_wider_object_converts_by_copying_its_fields() {
 }
 
 #[test]
+fn a_write_to_an_absent_optional_field_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AC = { a: f64; c?: string };";
+    // In Node `a` gains `c`; in Velt only the copy would.
+    let e = err_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: AC = a; x.c = \"s\"; }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    let e = err_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ const a: A = {{ a: 1 }}; setC(a); }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    // A fresh source has no other name to see the write through.
+    ok_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ setC({{ a: 1 }}); }}"
+    ));
+}
+
+#[test]
+fn spreading_the_copy_tells_it_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 };";
+    let e = err_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
+           const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
+    ));
+    assert!(e.contains("spreads a `A`"), "{e}");
+    // Spreading the source keeps all its fields, as in Node.
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const y = {{ ...ab, c: 3 }};
+           console.log(g(ab), y.c); }}"
+    ));
+}
+
+#[test]
 fn literals_are_checked_against_the_alias_by_name() {
     let e =
         err_src("type AB = { a: f64 } & { b: f64 }; function main() { const x: AB = { a: 1 }; }");
