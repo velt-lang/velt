@@ -273,10 +273,10 @@ impl FnLower<'_, '_> {
         self.place_expr_with(e, &mut VecDeque::new())
     }
 
-    /// Evaluate the index expressions of place `e` (outermost base first) into temporaries, so
-    /// they run before an assignment's right-hand side as in JS (`xs[f()] = g()` calls `f`
-    /// first) while the element places themselves are formed only after it (the right-hand
-    /// side may grow the array).
+    /// Evaluate the root of place `e` when it is not a place, then its index expressions
+    /// (outermost base first), into temporaries, so they run before an assignment's right-hand
+    /// side as in JS (`xs[f()] = g()` calls `f` first) while the element places themselves are
+    /// formed only after it (the right-hand side may grow the array).
     fn place_indices(&mut self, e: &hir::Expr, out: &mut VecDeque<Operand>) {
         use hir::ExprKind as K;
         match &e.kind {
@@ -289,11 +289,18 @@ impl FnLower<'_, '_> {
                 let i = self.expr(index);
                 out.push_back(self.freeze(i, index.ty));
             }
-            _ => {}
+            K::Local(..) => {}
+            // A root that is not a place (`get().v = r()`, `m.get(k)!.v = r()`) is evaluated
+            // once, before the right-hand side; every later forming of the place reuses it.
+            _ => {
+                let v = self.expr(e);
+                out.push_back(self.freeze(v, e.ty));
+            }
         }
     }
 
-    /// `place_expr` with the index operands `pre` already evaluated by `place_indices`.
+    /// `place_expr` with the root and index operands `pre` already evaluated by
+    /// `place_indices`.
     pub(super) fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
         use hir::ExprKind as K;
         match &e.kind {
@@ -342,7 +349,10 @@ impl FnLower<'_, '_> {
                 self.downcast_place(p, inner.ty)
             }
             _ => {
-                let v = self.expr(e);
+                let v = match pre.pop_front() {
+                    Some(v) => v,
+                    None => self.expr(e),
+                };
                 let ty = self.sub(e.ty);
                 self.place_of(v, ty)
             }
