@@ -178,7 +178,7 @@ fn shape(cx: &mut Ctx, owner: DefId, m: DefId, name: &str) -> Result<Shape, (Str
     if key && f.params[0].ty != cx.ty.str_ {
         let p = &f.params[0].name;
         return Err((
-            format!("the parameter of `toJSON` is the property key, a `string`"),
+            "the parameter of `toJSON` is the property key, a `string`".to_string(),
             format!("declare it `{p}: string` (`JSON.stringify` passes `\"\"` for the top value)"),
         ));
     }
