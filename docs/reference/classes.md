@@ -146,7 +146,9 @@ hidden classes and no runtime shape checks.
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
   method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides
   nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
-  the class declaring `#x`, and narrows like `instanceof`. Private names exist only in class
+  the class declaring `#x`, and narrows like `instanceof`. As in TypeScript, `o` must not be
+  possibly null (``the right operand of `in` may be null``; JavaScript throws a `TypeError` for
+  `null`): test `o !== null && #x in o`. Private names exist only in class
   bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
   with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
   slot, a direct call); they differ where Node differs:

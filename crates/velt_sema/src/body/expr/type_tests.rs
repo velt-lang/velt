@@ -113,6 +113,26 @@ impl FnCx<'_, '_> {
         let Some(class) = class.filter(|_| !self.cx.ty.is_bottom(s.ty)) else {
             return self.error_expr(span);
         };
+        if self.cx.ty.opt_payload(s.ty).is_some() {
+            // TypeScript rejects it (TS18047), and JavaScript throws a `TypeError` for `null`.
+            let tn = self.cx.display(s.ty);
+            let note = match (&lhs.kind, &rhs.kind) {
+                (ast::ExprKind::Ident(x), ast::ExprKind::Ident(o)) => format!(
+                    "test it first: `{o} !== null && {x} in {o}`",
+                    o = o.name,
+                    x = x.name
+                ),
+                _ => "test that it is not null first".to_string(),
+            };
+            self.cx.error(
+                Diagnostic::error(
+                    format!("the right operand of `in` may be null: its type is `{tn}`"),
+                    rhs.span,
+                )
+                .with_note(note),
+            );
+            return self.error_expr(span);
+        }
         if !self.testable_instance(s.ty) {
             let tn = self.cx.display(s.ty);
             self.cx.err(
