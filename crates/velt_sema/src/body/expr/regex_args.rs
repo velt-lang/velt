@@ -50,7 +50,10 @@ impl FnCx<'_, '_> {
             _ => return None,
         };
         let needs_g = matches!(prop.name.as_str(), "matchAll" | "replaceAll");
-        if shape.as_ref().is_some_and(|(_, f)| needs_g && !f.contains('g')) {
+        if shape
+            .as_ref()
+            .is_some_and(|(_, f)| needs_g && !f.contains('g'))
+        {
             self.cx.error(
                 Diagnostic::error(
                     format!("`{}` needs a regex with the `g` flag", prop.name),
