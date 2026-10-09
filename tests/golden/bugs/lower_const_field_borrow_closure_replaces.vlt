@@ -1,0 +1,211 @@
+// check: no leaks
+// `const keep = o.a` binds `keep` by reference to the field. When `o` lives in a shared cell
+// (a closure captured it and the enclosing code changes it), a call of that closure may replace
+// `o.a` (or `o` itself) and free the object `keep` points to (#819). `keep` holds a share of
+// the value instead, as in JS, where it keeps referring to the old object. The same holds for
+// destructured fields (also of a reference-counted object) and for `for...of` over an array in
+// such a cell.
+// Each case has classes of its own: a type another case shares would be reference counted in
+// every case. The closures add 0 so the output does not depend on when `o.a.b.c.v` is read.
+
+class C1 { v = 1 }
+class B1 { c = new C1() }
+class A1 { b = new B1() }
+class O1 {
+  a = new A1();
+  reset(): void { this.a = new A1(); }
+}
+function issue(): void {
+  const o = new O1();
+  const g = (): number => { o.a = new A1(); return 0; };
+  const keep = o.a;
+  o.a.b.c.v += g();
+  keep.b.c.v += 10;
+  console.log("issue", keep.b.c.v, o.a.b.c.v);
+}
+
+class C2 { v = 1 }
+class B2 { c = new C2() }
+class A2 { b = new B2() }
+class O2 {
+  a = new A2();
+  reset(): void { this.a = new A2(); }
+}
+function fieldOfField(): void {
+  const o = new O2();
+  const g = (): number => { o.a = new A2(); return 0; };
+  const keep = o.a.b;
+  o.a.b.c.v += g();
+  console.log("field of field", keep.c.v + 20, o.a.b.c.v);
+}
+
+class C3 { v = 1 }
+class B3 { c = new C3() }
+class A3 { b = new B3() }
+class O3 {
+  a = new A3();
+  reset(): void { this.a = new A3(); }
+}
+function element(): void {
+  const xs = [new A3()];
+  const g = (): number => { xs[0] = new A3(); return 0; };
+  const keep = xs[0];
+  xs[0].b.c.v += g();
+  console.log("element", keep.b.c.v + 30, xs[0].b.c.v);
+}
+
+class C4 { v = 1 }
+class B4 { c = new C4() }
+class A4 { b = new B4() }
+class O4 {
+  a = new A4();
+  reset(): void { this.a = new A4(); }
+}
+function method(): void {
+  const o = new O4();
+  const g = (): number => { o.reset(); return 0; };
+  const keep = o.a;
+  o.a.b.c.v += g();
+  console.log("method", keep.b.c.v + 40, o.a.b.c.v);
+}
+
+class C5 { v = 1 }
+class B5 { c = new C5() }
+class A5 { b = new B5() }
+class O5 {
+  a = new A5();
+  reset(): void { this.a = new A5(); }
+}
+function reassigned(): void {
+  let o = new O5();
+  const g = (): void => { o = new O5(); };
+  const keep = o.a;
+  keep.b.c.v = 50;
+  g();
+  console.log("reassigned", keep.b.c.v, o.a.b.c.v);
+}
+
+class C6 { v = 1 }
+class B6 { c = new C6() }
+class A6 { b = new B6() }
+class O6 {
+  a = new A6();
+  reset(): void { this.a = new A6(); }
+}
+class H6 { o = new O6() }
+function nested(): void {
+  const h = new H6();
+  const g = (): number => { h.o.a = new A6(); return 0; };
+  const keep = h.o.a;
+  h.o.a.b.c.v += g();
+  console.log("nested", keep.b.c.v + 60, h.o.a.b.c.v);
+}
+
+class C7 { v = 1 }
+class B7 { c = new C7() }
+class A7 { b = new B7() }
+class O7 {
+  a = new A7();
+  reset(): void { this.a = new A7(); }
+}
+function laterStatement(): void {
+  const o = new O7();
+  const g = (): number => { o.a = new A7(); return 0; };
+  const keep = o.a;
+  let s = 0;
+  s += g();
+  o.a.b.c.v += 1;
+  console.log("later statement", keep.b.c.v + 70, o.a.b.c.v, s);
+}
+
+class C8 { v = 1 }
+class B8 { c = new C8() }
+class A8 { b = new B8() }
+class O8 {
+  a = new A8();
+  reset(): void { this.a = new A8(); }
+}
+async function asyncClosure(): Promise<void> {
+  const o = new O8();
+  const g = async (): Promise<number> => { o.a = new A8(); return 0; };
+  const keep = o.a;
+  o.a.b.c.v += await g();
+  console.log("async closure", keep.b.c.v + 80, o.a.b.c.v);
+}
+
+
+class C9 { v = 1 }
+class B9 { c = new C9() }
+class A9 { b = new B9() }
+class O9 {
+  a = new A9();
+  xs: A9[] = [new A9(), new A9()];
+}
+function destructured(): void {
+  const o = new O9();
+  const g = (): number => { o.a = new A9(); return 0; };
+  const { a } = o;
+  o.a.b.c.v += g();
+  console.log("destructured", a.b.c.v + 90, o.a.b.c.v);
+}
+
+class C10 { v = 1 }
+class B10 { c = new C10() }
+class A10 { b = new B10() }
+class O10 {
+  a = new A10();
+  xs: A10[] = [new A10(), new A10()];
+}
+function destructuredShared(): void {
+  const o = new O10();
+  const g = (): void => { o.a = new A10(); };
+  const { a } = o;
+  g();
+  console.log("destructured shared", a.b.c.v + 100, o.a.b.c.v);
+}
+
+class C11 { v = 1 }
+class B11 { c = new C11() }
+class A11 { b = new B11() }
+class O11 {
+  a = new A11();
+  xs: A11[] = [new A11(), new A11()];
+}
+function forOfField(): void {
+  const o = new O11();
+  const g = (): number => { o.xs = [new A11()]; return 0; };
+  o.a.b.c.v += g();
+  o.xs.push(new A11());
+  for (const x of o.xs) {
+    o.a.b.c.v += g();
+    console.log("for...of field", x.b.c.v + 110, o.xs.length);
+  }
+}
+
+class C12 { v = 1 }
+class B12 { c = new C12() }
+class A12 { b = new B12() }
+class O12 {
+  a = new A12();
+  xs: A12[] = [new A12(), new A12()];
+}
+function forOfReassigned(): void {
+  let xs = [new A12(), new A12()];
+  const g = (): void => { xs = []; };
+  for (const x of xs) {
+    g();
+    console.log("for...of reassigned", x.b.c.v + 120, xs.length);
+  }
+}
+issue();
+fieldOfField();
+element();
+method();
+reassigned();
+nested();
+laterStatement();
+destructured();
+destructuredShared();
+forOfField();
+forOfReassigned();
+await asyncClosure();

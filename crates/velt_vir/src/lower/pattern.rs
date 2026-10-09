@@ -194,6 +194,9 @@ impl FnLower<'_, '_> {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
                 let moving = *mode == UseMode::Move;
+                if *mode == UseMode::Borrow && self.stable_binds {
+                    return self.bind_share(*id, place);
+                }
                 self.bind_local(*id, moving && register, moving, place)
             }
             PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
@@ -272,6 +275,23 @@ impl FnLower<'_, '_> {
             self.mark_init(id);
             self.register_local_drop(id);
         }
+    }
+
+    /// A binding by reference into a place others may replace while it lives (`stable_binds`):
+    /// it refers to a share of the value, owned by the current scope (semantics stage 2).
+    fn bind_share(&mut self, id: hir::LocalId, place: &Place) {
+        let info = &self.info[id.0 as usize];
+        let (Some(l), ty) = (info.vir, info.ty) else {
+            return;
+        };
+        if info.indirect {
+            return self.bind_local(id, false, false, place);
+        }
+        let s = self.share_value(Operand::Copy(place.clone()), ty);
+        let vt = self.cx.ty(ty);
+        let t = Place::local(self.copy_to_temp(s, vt));
+        self.own_place(t.clone(), ty);
+        self.assign(Place::local(l), Rvalue::Use(Operand::Copy(t)));
     }
 
     /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).

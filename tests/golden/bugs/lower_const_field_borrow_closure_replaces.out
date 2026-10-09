@@ -1,0 +1,14 @@
+issue 11 1
+field of field 21 1
+element 31 1
+method 41 1
+reassigned 50 1
+nested 61 1
+later statement 71 2 0
+destructured 91 1
+destructured shared 101 1
+for...of field 111 1
+for...of field 111 1
+for...of reassigned 121 0
+for...of reassigned 121 0
+async closure 81 1

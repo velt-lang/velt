@@ -396,6 +396,9 @@ struct FnLower<'c, 'h> {
     pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
+    /// While binding a destructuring `const` of a place others may change (matching.rs
+    /// `let_pat`): bindings by reference take owned shares instead (pattern.rs).
+    stable_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
     transfer_args: bool,
     /// The next call lowered is spawned through a function value, vtable or interface: its
