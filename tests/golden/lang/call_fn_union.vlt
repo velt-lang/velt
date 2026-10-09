@@ -17,6 +17,20 @@ async function run(name: string, h: Handler) {
   }
 }
 
+// A value-returning arrow is typed by the member returning a value, not the `void` one (which
+// would drop its result).
+function g(h: (() => void) | (() => number)) {
+  const x = h();
+  console.log(x === null ? "nothing" : `${x}`);
+}
+
+type F2 = ((s: string) => void) | ((s: string) => string);
+
+function g2(h: F2) {
+  const x = h("a");
+  console.log(x === null ? "nothing" : x);
+}
+
 function show(f: Format, n: number): string {
   const v = f(n);
   return typeof v === "string" ? `text ${v}` : `number ${v}`;
@@ -33,4 +47,9 @@ async function main() {
   });
   console.log(`count ${count}`);
   console.log(show((n) => `#${n}`, 3), show((n) => n * 2, 3));
+  g(() => 42);
+  g(() => {
+    return 7;
+  });
+  g2((s) => s + "!");
 }

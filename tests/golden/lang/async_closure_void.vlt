@@ -1,8 +1,8 @@
 // Async arrows where a `void` function is expected (event handler fields, `(() => void) | null`
 // parameters): as in TS they are accepted, and each call starts a promise that runs to
 // completion on its own. Against a union of function types (`(() => void) | (() => Promise<void>)`)
-// an arrow is typed by the member that fits: a sync arrow returning a value by the void one,
-// an async arrow by the promise one.
+// an arrow is typed by the member that fits: a sync arrow by the void one (the only member it
+// fits here), an async arrow by the promise one.
 
 import { delay } from "velt:timers";
 

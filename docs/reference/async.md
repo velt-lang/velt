@@ -10,8 +10,11 @@ multi-threaded tokio executor with one worker per core.
 An async arrow passed where a `void` function is expected (`onClick?: () => void`, a
 `(() => void) | null` parameter) is accepted, as in TypeScript: each call starts the arrow's
 promise, which runs to completion on its own (a [dropped promise](#promises) is not cancelled).
-Against a union of function types (`(() => void) | (() => Promise<void>)`) an arrow takes the
-member that fits: an async arrow the one returning a promise, a sync arrow the other.
+Against a union of function types an arrow takes the member that fits, as TypeScript's contextual
+typing does: an async arrow the one returning a promise (`(() => void) | (() => Promise<void>)`), a
+sync arrow one returning a value before a `void` one, so its result is kept
+(`(() => void) | (() => number)` given `() => 42` returns `42`), and a promise-returning member
+last.
 
 `await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
 callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
