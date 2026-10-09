@@ -350,7 +350,8 @@ impl FnCx<'_, '_> {
     /// getters or setters, so `m["k"]` on a `Map` keeps the indexing error)?
     fn has_fields(&mut self, t: TyId, name: &str) -> bool {
         if self.cx.class_of(t).is_some() {
-            return self.field_of(t, name).is_some()
+            return crate::reserved_key(name)
+                || self.field_of(t, name).is_some()
                 || self.has_getter(t, name)
                 || self.has_setter(t, name);
         }
@@ -395,6 +396,17 @@ impl FnCx<'_, '_> {
                     name: literal_key(index).unwrap_or_default(),
                     span: index.span,
                 };
+                if crate::reserved_key(&prop.name) {
+                    // Not the private field `#x` or a symbol-keyed member.
+                    self.cx.err(
+                        format!(
+                            "the property name {:?} is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys",
+                            prop.name
+                        ),
+                        index.span,
+                    );
+                    return self.error_expr(span);
+                }
                 if matches!(want, Want::BorrowMut) {
                     let Some(place) = self.field_access(obj, &prop, want, span) else {
                         return self.error_expr(span);
