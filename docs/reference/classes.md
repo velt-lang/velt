@@ -121,8 +121,8 @@ hidden classes and no runtime shape checks.
   overridden methods go through a vtable, and only where the static type is a base class. A
   call on an object whose class is known from where it was allocated (`const s: Shape = new
   Square()`) is usually made direct while the object has not been passed on.
-- **Members**: `private` (usable only inside the declaring type's body, including closures
-  there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
+- **Members**: `private` (usable only inside the declaring type's body, including closures,
+  functions and classes declared in its methods, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
   use the private members of its types, which is how std types build each other's handles
   (this covers `private` only: a `#x` name is usable only in its class's body, in std too);
   `console.log` shows private fields, as Node shows a TypeScript `private` field, except
@@ -140,7 +140,8 @@ hidden classes and no runtime shape checks.
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
   names the member that the class whose body the code is in declares, on any instance of that
-  class or a subclass, not only `this`; elsewhere, also in a subclass, it is an error (``
+  class or a subclass, not only `this` (a function or class declared in a method is in the body
+  too; where class bodies nest, the innermost one declaring `#x`); elsewhere, also in a subclass, it is an error (``
   property `#x` is not accessible outside class `A` because it has a private name ``). A
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
   method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides

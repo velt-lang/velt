@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
     fn own_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         // `o.#m()` in the body of class `C` is `C`'s `#m`, also on a subclass instance that
         // declares a `#m` of its own (never virtual).
-        let recv = match (self.owner, crate::defs::is_private_key(name)) {
+        let recv = match (self.name_owner(name), crate::defs::is_private_key(name)) {
             (Some(owner), true) => self.ancestor(recv, owner),
             _ => recv,
         };

@@ -1,7 +1,7 @@
 //! Member access rules (docs/reference/classes.md):
 //! - `private` fields, methods and static fields are usable only inside the body of the type
-//!   declaring them (its methods, constructor, field initializers and the closures inside them;
-//!   not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
+//!   declaring them (its methods, constructor, field initializers and the closures, functions
+//!   and classes declared inside them; not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
 //!   use the private members of its own types (one std type builds another's handle, as
 //!   `TcpListener.accept()` builds a `TcpStream`), so no std handle can be built or read by user
 //!   code.
@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
     /// TS18013: an ES private name `#x` declared by class `owner` is usable only in that class's
     /// body (not in subclasses, and with no exemption for std).
     fn check_private_name(&mut self, owner: DefId, name: &str, span: Span) {
-        if self.owner == Some(owner) {
+        if self.in_body_of(owner) {
             return;
         }
         let tn = self
@@ -104,11 +104,51 @@ impl FnCx<'_, '_> {
     /// May this body use the private members of type `owner`: inside `owner`'s body, or
     /// anywhere in the standard library for a std type.
     pub(crate) fn private_allowed(&self, owner: DefId) -> bool {
-        if self.owner == Some(owner) {
+        if self.in_body_of(owner) {
             return true;
         }
         let owner_module = self.cx.adt(owner).map(|a| a.module);
         self.cx.scopes[self.module].is_std && owner_module.is_some_and(|m| self.cx.scopes[m].is_std)
+    }
+
+    /// The classes (and structs) whose bodies this body is in, innermost first: the type whose
+    /// method this is, and for a function or class nested in a method, the types around it
+    /// (TypeScript: a nested `function` in a method is inside the class body).
+    pub(crate) fn lexical_classes(&self) -> Vec<DefId> {
+        let mut out = vec![];
+        let mut cur = self.owner.or_else(|| {
+            self.body_def
+                .and_then(|d| self.cx.enclosing_class.get(&d).copied())
+        });
+        while let Some(c) = cur {
+            if out.contains(&c) {
+                break;
+            }
+            out.push(c);
+            cur = self.cx.enclosing_class.get(&c).copied();
+        }
+        out
+    }
+
+    /// Is this body inside the body of class `class`?
+    pub(crate) fn in_body_of(&self, class: DefId) -> bool {
+        self.owner == Some(class) || self.lexical_classes().contains(&class)
+    }
+
+    /// The class whose `#x` a private name `name` in this body means: the innermost enclosing
+    /// class declaring it, else the innermost enclosing class. Any other name: the type whose
+    /// method this is.
+    pub(crate) fn name_owner(&self, name: &str) -> Option<DefId> {
+        if !crate::defs::is_private_key(name) {
+            return self.owner;
+        }
+        let classes = self.lexical_classes();
+        let member = crate::defs::key_member_name(name);
+        classes
+            .iter()
+            .copied()
+            .find(|&c| self.cx.declares_private_name(c, member))
+            .or_else(|| classes.first().copied())
     }
 
     /// `private` check for field `index` of struct/class values of type `t`.

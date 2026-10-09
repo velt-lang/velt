@@ -282,6 +282,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
     /// its `private` members are accessible.
     pub owner: Option<DefId>,
+    /// The function whose body is being checked, if it is a declared function (for a nested
+    /// one, `Ctx::enclosing_class` gives the class whose body it is in).
+    pub body_def: Option<DefId>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
@@ -320,6 +323,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             bounds: vec![],
             fn_name: String::new(),
             owner: None,
+            body_def: None,
             enclosing_locals: vec![],
             generic_arrow: false,
             f: frame,

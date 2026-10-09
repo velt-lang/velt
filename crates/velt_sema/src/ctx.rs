@@ -114,6 +114,9 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// For each item nested in a method (or constructor) of a class or struct: that type. Its
+    /// body is inside the type's body, for `private` and `#x` (TypeScript).
+    pub enclosing_class: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included
@@ -209,6 +212,7 @@ impl<'m> Ctx<'m> {
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            enclosing_class: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),

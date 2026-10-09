@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(id) = &lhs.kind else {
             return None;
         };
-        let Some(owner) = self.owner.filter(|_| id.is_private_name()) else {
+        let Some(owner) = self.name_owner(&id.name).filter(|_| id.is_private_name()) else {
             if report {
                 self.cx
                     .err("private names are only allowed in class bodies", id.span);
