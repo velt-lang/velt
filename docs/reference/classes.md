@@ -141,6 +141,21 @@ hidden classes and no runtime shape checks.
   nearest first. A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
   the static's signature doesn't use (in TypeScript statics can't use them) needs no inference.
+  In a static method, `this` is the class the method was called on, as in TypeScript: with
+  `class A { static kind() { return "A"; } static hello() { return "hello " + this.kind(); } }`
+  and `class B extends A { static kind() { return "B"; } }`, `B.hello()` is `"hello B"`.
+  `this.f()` calls a static method and `this.NAME` reads a `static readonly` constant (own or
+  inherited); other uses of `this` there are an error (``` `this` in a static method can only
+  be used to call or read its class's static members ```). `super.f()` in a static method calls
+  the base class's static `f`, with `this` unchanged. These calls are resolved at compile time:
+  a static method using `this` or `super` is compiled once per class below its own that can
+  run it, so there is no dispatch at run time.
+  A static method is also a value: `const f = C.kind`, `xs.map(C.double)` (passing it where a
+  function with more parameters is expected calls it with the leading arguments, as for any
+  named function). One using `this` or `super` is not (``` `C.hello` uses `this` or `super`, so
+  it cannot be used as a value ```): TypeScript accepts it, but JavaScript calls the function
+  with `this` undefined, so `this.kind()` would throw a `TypeError`. Call it, or wrap the call:
+  `() => C.hello()`.
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`

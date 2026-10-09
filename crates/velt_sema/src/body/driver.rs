@@ -176,6 +176,13 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         return;
     };
     let inferred = f.ret_source == RetSource::Body;
+    // A copy of a static method (`collect::static_this`) reports only what the method's own
+    // check doesn't.
+    let copy_of = cx.static_copy_of.get(&def).copied();
+    if let Some(m) = copy_of {
+        ensure_body(cx, m);
+    }
+    let diags_before = cx.diags.len();
     cx.fn_info_mut(def).state = BodyState::InProgress;
     let mark = recheck::Mark::new(cx, def);
     recheck::enter(cx);
@@ -197,10 +204,25 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         fndef = check_body(cx, def, src);
     }
     literal_locals::finish(cx, def, mark.lens().diags());
+    if copy_of.is_some() {
+        drop_repeated_diags(cx, diags_before);
+    }
     recheck::leave(cx, mark.lens());
     cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
     cx.fn_info_mut(def).state = BodyState::Done;
     recursion::completed(cx, def, inferred);
+}
+
+/// Drops the diagnostics from `from` on at a place reported before (a static method's copy
+/// repeats the method's errors, naming the subclass where the method names its own class).
+fn drop_repeated_diags(cx: &mut Ctx, from: usize) {
+    let new = cx.diags.split_off(from.min(cx.diags.len()));
+    let place = |e: &Diagnostic| e.labels.first().map(|l| l.span);
+    for d in new {
+        if !cx.diags.iter().any(|e| place(e) == place(&d)) {
+            cx.diags.push(d);
+        }
+    }
 }
 
 fn check_body(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
@@ -271,6 +293,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
     fcx.body_def = Some(def);
+    fcx.static_this = fcx.cx.static_this.get(&def).map(|&this| {
+        let method = fcx.cx.static_copy_of.get(&def).copied().unwrap_or(def);
+        (this, fcx.cx.static_this[&method])
+    });
     fcx.enclosing_locals = enclosing_locals;
     fcx.generic_arrow = fcx.cx.generic_arrow_fns.contains(&f.name_span);
     let params = fcx.declare_params(&f);

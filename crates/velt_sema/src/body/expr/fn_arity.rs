@@ -80,6 +80,14 @@ impl FnCx<'_, '_> {
     /// (inferring it from the body if needed): a local of function type, or a non-generic
     /// module-level function.
     fn named_fn_sig(&mut self, arg: &ast::Expr, with_ret: bool) -> Option<(usize, Option<TyId>)> {
+        if let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &arg.kind
+        {
+            return self.static_method_sig(object, prop, with_ret);
+        }
         let ast::ExprKind::Ident(id) = &arg.kind else {
             return None;
         };
@@ -101,5 +109,33 @@ impl FnCx<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// `C.f` naming a static method without type parameters of its own that doesn't use `this`
+    /// (which can't be a value): like a module-level function in `named_fn_sig`.
+    fn static_method_sig(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        with_ret: bool,
+    ) -> Option<(usize, Option<TyId>)> {
+        let ast::ExprKind::Ident(id) = &object.kind else {
+            return None;
+        };
+        if self.peek_local_ty(&id.name).is_some() {
+            return None;
+        }
+        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
+            return None;
+        };
+        self.cx.adt(d)?;
+        let (m, owner_generics, _) = self.find_static(d, &prop.name).ok()?;
+        let f = self.cx.fn_info(m.def);
+        if f.generics.len() != owner_generics || self.cx.static_this.contains_key(&m.def) {
+            return None;
+        }
+        let n = f.params.len();
+        let ret = with_ret.then(|| crate::body::returns::ret_of(self.cx, m.def, prop.span));
+        Some((n, ret))
     }
 }
