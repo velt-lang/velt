@@ -14,7 +14,7 @@
 export class Runtime {
   // The effect or computed currently running, which reads subscribe.
   active: Reaction | null = null;
-  batchDepth: i64 = 0;
+  batchDepth = 0;
   queue: Reaction[] = [];
   // True while `flush` drains the queue: a reaction that writes a signal then only enqueues,
   // and the running loop picks the new item up (a nested drain would rerun the queue from 0).
@@ -60,7 +60,7 @@ export class Runtime {
     }
     this.flushing = true;
     // Index-based: running a reaction may queue more.
-    let i: usize = 0;
+    let i = 0;
     while (i < this.queue.length) {
       const r = this.queue[i];
       i += 1;

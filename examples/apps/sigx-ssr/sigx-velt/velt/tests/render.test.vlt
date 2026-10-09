@@ -4,7 +4,7 @@
 import { component, renderToString } from "../src/lib";
 import { renderDocument } from "../src/server";
 
-const Counter = component<{ start: i64 }>((ctx) => {
+const Counter = component<{ start: number }>((ctx) => {
   const count = ctx.signal(ctx.props.start);
   const double = ctx.computed(() => count.value * 2, 0);
   return () => (
@@ -18,7 +18,7 @@ function Plain(props: { label: string }): JSX.Element {
   return <b>{props.label}</b>;
 }
 
-const Parent = component<{ n: i64 }>((ctx) => {
+const Parent = component<{ n: number }>((ctx) => {
   return () => (
     <div>
       <Counter start={ctx.props.n} />

@@ -5,7 +5,7 @@ import { Runtime } from "../src/reactivity";
 export function test_effect_runs_now_and_on_change() {
   const rt = new Runtime();
   const count = rt.signal(1);
-  const seen: i64[] = [];
+  const seen: number[] = [];
   rt.effect(() => {
     seen.push(count.value);
   });
@@ -18,7 +18,7 @@ export function test_batch_runs_effects_once() {
   const rt = new Runtime();
   const a = rt.signal(1);
   const b = rt.signal(10);
-  const sums: i64[] = [];
+  const sums: number[] = [];
   rt.effect(() => {
     sums.push(a.value + b.value);
   });
@@ -32,7 +32,7 @@ export function test_batch_runs_effects_once() {
 export function test_computed_is_lazy_and_cached() {
   const rt = new Runtime();
   const n = rt.signal(2);
-  const calls: i64[] = [];
+  const calls: number[] = [];
   const double = rt.computed(
     () => {
       calls.push(n.value);
@@ -64,7 +64,7 @@ export function test_effect_through_computed() {
 export function test_stopped_effect_does_not_run() {
   const rt = new Runtime();
   const s = rt.signal(0);
-  const seen: i64[] = [];
+  const seen: number[] = [];
   const e = rt.effect(() => {
     seen.push(s.value);
   });
@@ -76,7 +76,7 @@ export function test_stopped_effect_does_not_run() {
 export function test_peek_does_not_subscribe() {
   const rt = new Runtime();
   const s = rt.signal(0);
-  const seen: i64[] = [];
+  const seen: number[] = [];
   rt.effect(() => {
     seen.push(s.peek());
   });
@@ -90,8 +90,8 @@ export function test_effect_writing_a_signal_runs_each_effect_once() {
   const rt = new Runtime();
   const a = rt.signal(0);
   const b = rt.signal(0);
-  const runsA: i64[] = [];
-  const runsB: i64[] = [];
+  const runsA: number[] = [];
+  const runsB: number[] = [];
   rt.effect(() => {
     const v = a.value;
     runsA.push(v);

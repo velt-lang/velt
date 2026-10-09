@@ -18,14 +18,14 @@ import { Runtime } from "./reactivity";
 
 // What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
 // the attribute, numbers render like `${n}`.
-export type AttrValue = string | i64 | f64 | bool | null;
+export type AttrValue = string | number | bool | null;
 
 // Text a precompiled template folds into its strings.
-export type Text = string | i64 | f64 | bool | null;
+export type Text = string | number | bool | null;
 
 // What may appear as a child: text is escaped, numbers render like `${n}`, `true`, `false` and
 // `null` render nothing, and an array renders its elements in order.
-export type Child = Element | Element[] | string | i64 | f64 | bool | null;
+export type Child = Element | Element[] | string | number | bool | null;
 
 export class Element {
   // Markup of this node; with `parts`, only what precedes them.
@@ -194,10 +194,10 @@ export function escapeForScript(json: string): string {
 
 // A component whose data is still loading: streamed after the shell (`$SIGX_REPLACE`).
 class Pending {
-  id: i64;
+  id: number;
   inst: Instance;
 
-  constructor(id: i64, inst: Instance) {
+  constructor(id: number, inst: Instance) {
     this.id = id;
     this.inst = inst;
   }
@@ -216,7 +216,7 @@ async function runLoads(loads: Load[]): Promise<void> {
 export class Renderer {
   // Output pieces, joined once at the end (measured the same as `+=` on one string, #379).
   out: string[] = [];
-  nextId: i64 = 1;
+  nextId = 1;
   lastText: bool = false;
   rt: Runtime = new Runtime();
   state: State = new State();

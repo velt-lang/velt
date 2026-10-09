@@ -14,18 +14,23 @@ sigx-velt/                 the npm package @sigx/velt: both halves in one packag
   package.json             exports the Vite plugin; "files" ships velt/ too
   src/index.js, index.d.ts velt(): runs `velt dev`, proxies documents, builds the server
   velt/package.vlt         a Velt package named `sigx`: the JSX provider (Velt code)
-  velt/src/*.vlt           component, reactivity, jsx-runtime (with precompile), server
+  src/router.js, data.js   the browser halves of @sigx/velt/router and @sigx/velt/data
+  velt/src/*.vlt           component, reactivity, jsx-runtime (with precompile), router, data,
+                           server (streaming documents, static files, server functions)
   velt/tests/*.test.vlt    provider unit tests (expected strings taken from real sigx output)
 app/                       what a user's app looks like
   package.json             sigx, @sigx/vite, @sigx/velt from npm
-  package.vlt              dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } }
+  package.vlt              dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
+                           paths: { "@sigx/velt/*": "node_modules/@sigx/velt/velt/src/*" }
   vite.config.ts           plugins: [sigx(), velt()]
   index.html               <!--ssr-outlet--> and the client entry
   src/shared/*.tsx         components, compiled by Vite (JS sigx) and by Velt (the provider)
   src/client.tsx           hydrate
   src/entry-client.js      the browser entry (works around a sigx HMR ordering issue, below)
-  src/server.vlt           the native server: serveApp(options(), (path) => <App path={path} />)
-  scripts/reference.mjs    renders the same components with JavaScript sigx
+  src/api.server.vlt       server functions, written in Velt (api.server.d.ts types them for TS)
+  src/server.vlt           the native server: serveApp(options(), render, serverFns)
+  scripts/reference.mjs    renders the same components with JavaScript sigx (api.reference.js
+                           stands in for the server functions)
   scripts/e2e.mjs          the end-to-end check
 ```
 
@@ -53,6 +58,47 @@ This is unchanged JavaScript sigx source. It needs `const X = component(...)` (m
 initialized by pure calls, #383 / #773) and uses `ctx.signal`, which JavaScript sigx already
 has. On the server, handlers are typed through the provider's `IntrinsicElements` and render
 nothing.
+
+## Routing, data and server functions
+
+Some modules exist in both a JavaScript and a Velt version under one import, as sigx itself does.
+`@sigx/velt/router` and `@sigx/velt/data` resolve:
+- under Vite, through the npm package's `exports`;
+- under Velt, through a `paths` alias to the same package's Velt half.
+
+```tsx
+import { createRouter, Link } from "@sigx/velt/router";
+import { useData } from "@sigx/velt/data";
+import { getStats } from "../api.server";   // Velt server functions
+
+export const App = component<{ path: string }>((ctx) => {
+  const router = createRouter(ctx, ctx.props.path);
+  const stats = useData(ctx, "stats", () => getStats());
+  return () => (
+    <main>
+      <Link router={router} href="/about" label="About" />
+      {router.path.value === "/about" ? <About /> : <Home />}
+      {stats.match({ pending: () => <p>Loading…</p>, ready: (s: Stats) => <p>{s.renderer}</p> })}
+    </main>
+  );
+});
+```
+
+- **Router.** `<Link>` navigates in the browser without a page load, and the back button
+  works. The server renders the requested path.
+- **`useData` and streaming.** The server streams the document exactly as sigx's
+  `renderDocumentToWebStream` does: the shell with the `pending` state first, then a
+  `$SIGX_REPLACE` script with the `ready` content and the data (`__SIGX_ASYNC__`) once it
+  arrives, then the completion signal. The browser restores the data without fetching it again.
+- **Server functions.** These are `export async function`s in a `*.server.vlt` file.
+  - The server calls them directly while rendering.
+  - When browser code imports `./api.server`, the Vite plugin turns the import into sigx client
+    stubs (`__serverFnStub`) that `POST /_sigx/fn/<key>`.
+  - `serveApp` answers those calls in sigx's wire format, and in dev the plugin proxies them to
+    `velt dev`.
+
+Both take `ctx` where JavaScript sigx finds the component itself (`useRouter()`, `useData(key,
+…)`): Velt has no "current component" yet (#386).
 
 ## Develop, build, run
 
@@ -88,9 +134,13 @@ gets the old server's HTML.
 
 ## Checked by `scripts/e2e.mjs`
 
-1. Velt's HTML for each page is byte-identical to JavaScript sigx's for the same `.tsx` files.
-2. The production binary serves the client build, the page hydrates, two clicks give
-   `Count: 3`, and the browser logs no warnings or errors.
+1. For each page, Velt's whole streamed document is byte-identical to sigx's
+   `renderDocumentToWebStream` for the same `.tsx` files. The shell arrives before the data
+   (about 1 ms against 300 ms), and a server function answers in sigx's wire format.
+2. The production binary serves the client build, and the page hydrates with the streamed data
+   restored, without a server-function call. Two clicks give `Count: 3`, and the browser logs
+   no warnings or errors. Links navigate without a page load, back works, and `/about` loaded
+   directly hydrates.
 3. Under `vite`:
    - editing a shared component hot-updates the browser without a reload, and the server renders
      the new markup;
@@ -104,11 +154,21 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
 ## What this found
 
 **Velt**
-- `typeof v === "number"` does not narrow `string | i64 | f64 | bool | (() => void) | null`; it
-  does without the function member. The provider's `AttrValue` uses `f64` only until the fix is
-  in.
-- `arr.length` is `usize`, which is not a JSX child: `ctx.signal(xs.length)` needs
-  `ctx.signal<number>(…)` in shared code. TypeScript sees `number`.
+- `typeof v === "number"` did not narrow a union with a function member and two number types
+  (#800).
+- An `async` arrow is not accepted where `() => void` is expected (`onClick={async () => …}`),
+  so a click handler that awaits a server function can't be written in shared code yet; Velt
+  has no `.then` either. A fix is in progress.
+- Calling a setter on a captured object (`signal.value = x`) inside an async closure counts as
+  modifying the captured variable, but assigning a plain field does not.
+- Not supported yet:
+  - type parameter defaults (`component<P = {}>`); shared code writes `component<{}>`;
+  - quoted property names in object types (`{ "client:load"?: bool }`);
+  - `decodeURIComponent`;
+  - `setTimeout` with a sync callback, and `resolve()` with no argument for `Promise<void>`;
+  - `paths` targets as arrays, as in TypeScript.
+- After #685, std's `Response` `status` and `serve`'s `port` still take `i64`, so a `number`
+  needs `as i64`.
 - Velt's tools walk every `.ts`/`.tsx` file, and a browser entry with `import.meta` or `import()`
   does not parse, so `velt fmt --check` fails on it. That is why the entry here is a `.js` file.
 - `velt build -o dist/server/app` leaves `app.o` and `app.link-stamp` next to the binary.
@@ -145,3 +205,10 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
    runtime, so shared code needs no `ctx.signal`. Deep reactive objects (#385) are the largest
    remaining source difference.
 7. **Clean `-o` output.** Intermediates go to `target/`, and only the executable goes to `-o`.
+8. **Server functions from Velt signatures.** `velt check --exports json` (or emitted `.d.ts`)
+   would give the plugin each function's name and types. It would then generate both the
+   browser stubs and the TypeScript declarations, and the server's registration list, which
+   today are a regex, a hand-written `.d.ts` and a list in `server.vlt`.
+9. **Component directives** (`<Counter client:load />`), for sigx islands: a provider declares
+   directive prefixes, and the compiler passes those attributes separately instead of as
+   props. This is in progress as a JSX contract extension.

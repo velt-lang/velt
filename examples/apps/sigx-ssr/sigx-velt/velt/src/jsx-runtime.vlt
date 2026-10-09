@@ -16,9 +16,7 @@ export type ElementChildrenAttribute = { children: Child };
 // An event handler: the browser's sigx binds it when it hydrates; the server renders nothing.
 export type Handler = () => void;
 export type InputHandler = (e: Event) => void;
-// Numbers are `f64` only for now: with both `i64` and `f64` next to a function member, `typeof v
-// === "number"` does not narrow (a Velt sema bug, fix in progress).
-export type AttrValue = string | f64 | bool | Handler | null;
+export type AttrValue = string | number | bool | Handler | null;
 
 // The DOM event object, as far as server-rendered handler code can see it (handlers never run
 // on the server; this only lets shared code type-check).
@@ -96,7 +94,7 @@ export function jsx(
   key: string | null,
 ): Element {
   let open = `<${tag}`;
-  for (let i: usize = 0; i < names.length; i++) {
+  for (let i = 0; i < names.length; i++) {
     open += attr(names[i], values[i]);
   }
   open += ">";
@@ -178,7 +176,7 @@ export function jsxTemplate(strings: string[], slots: Element[]): Element {
   }
   const b = new Builder();
   b.element(chunk(strings[0]));
-  for (let i: usize = 0; i < slots.length; i++) {
+  for (let i = 0; i < slots.length; i++) {
     b.element(slots[i]);
     b.element(chunk(strings[i + 1]));
   }
