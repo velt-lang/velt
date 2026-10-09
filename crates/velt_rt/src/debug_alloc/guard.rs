@@ -65,6 +65,14 @@ fn in_guard(addr: usize) -> bool {
     start != 0 && addr >= start && addr - start < 2 * GUARD_SPAN
 }
 
+/// Make sure the fault handler is the one that runs (see the unix `install_fault_handler`);
+/// nothing without a reservation.
+pub(super) fn claim_faults() {
+    if GUARD_START.load(Ordering::Relaxed) != 0 {
+        install_fault_handler();
+    }
+}
+
 const FOLLOWED: &str = "followed a pointer read from a freed block";
 
 /// Reserve the guard range and install the fault handler; called once, when the checking
@@ -138,7 +146,13 @@ mod os {
         EXCEPTION_CONTINUE_SEARCH
     }
 
+    /// Register [`on_fault`] once: a first vectored handler runs ahead of everything else.
     pub(super) fn install_fault_handler() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static INSTALLED: AtomicBool = AtomicBool::new(false);
+        if INSTALLED.swap(true, Ordering::AcqRel) {
+            return;
+        }
         // SAFETY: registers a handler that only reads the exception record.
         unsafe { AddVectoredExceptionHandler(1, on_fault) };
     }
@@ -161,8 +175,6 @@ mod os {
 
 #[cfg(unix)]
 mod os {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     pub(super) fn reserve(size: usize) -> Option<usize> {
         // SAFETY: maps fresh address space, accessible to nobody.
         let p = unsafe {
@@ -183,7 +195,6 @@ mod os {
         std::mem::MaybeUninit::zeroed(),
         std::mem::MaybeUninit::zeroed(),
     ];
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
     const SIGNALS: [libc::c_int; 2] = [libc::SIGSEGV, libc::SIGBUS];
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -214,20 +225,27 @@ mod os {
         }
     }
 
+    /// Make [`on_fault`] the handler of `SIGSEGV` and `SIGBUS`, keeping the one it replaces
+    /// for other faults. Called again when the runtime starts: a handler installed after the
+    /// first allocation (Rust's own start-up installs its stack overflow handler unconditionally
+    /// in a Rust `main`, like the tests') would otherwise take the faults.
     pub(super) fn install_fault_handler() {
-        if INSTALLED.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // SAFETY: plain signal-handling calls; `PREVIOUS` is written here once, before the
-        // handler that reads it can run.
+        let ours = on_fault as extern "C" fn(_, _, _) as usize;
+        // SAFETY: plain signal-handling calls; `PREVIOUS` is written while the old handler is
+        // still the one that runs, and only read by `on_fault`.
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = on_fault as usize;
+            sa.sa_sigaction = ours;
             sa.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
             libc::sigemptyset(&mut sa.sa_mask);
             for (k, sig) in SIGNALS.into_iter().enumerate() {
-                let prev = std::ptr::addr_of_mut!(PREVIOUS[k]).cast::<libc::sigaction>();
-                libc::sigaction(sig, &sa, prev);
+                let mut cur: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(sig, std::ptr::null(), &mut cur);
+                if cur.sa_sigaction == ours {
+                    continue;
+                }
+                std::ptr::addr_of_mut!(PREVIOUS[k]).write(std::mem::MaybeUninit::new(cur));
+                libc::sigaction(sig, &sa, std::ptr::null_mut());
             }
         }
     }
@@ -318,6 +336,9 @@ mod tests {
                 "the child runs with the checking allocator"
             );
             assert_ne!(super::poison(), super::BYTE_POISON, "the guard is reserved");
+            // What the runtime's start does (`entry::init`): the test harness's Rust start-up
+            // installed its own fault handler after the first allocation.
+            super::super::claim_faults();
             unsafe {
                 match case.to_str() {
                     Some("chain") => dangling_field_chain(),

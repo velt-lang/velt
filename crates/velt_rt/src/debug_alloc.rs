@@ -280,6 +280,15 @@ impl<A: GlobalAlloc> DebugAlloc<A> {
     }
 }
 
+/// With `VELT_RT_DEBUG_ALLOC=1`, make the checking allocator's fault handler (which reports a
+/// pointer read from a freed block) the one that runs, ahead of any installed since it was
+/// turned on. Called when the runtime starts.
+pub fn claim_faults() {
+    if MODE.load(Ordering::Relaxed) == 2 {
+        guard::claim_faults();
+    }
+}
+
 /// Check every block still in `quarantine` for writes after it was freed (debug runtime with
 /// `VELT_RT_DEBUG_ALLOC=1`). Called when the program ends: a block freed late enough never
 /// leaves the quarantine, so without this a write after free into it went unnoticed.
