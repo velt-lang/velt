@@ -294,7 +294,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ),
     ("Object", &["entries", "keys", "values"]),
     ("String", &["fromCharCode"]),
-    ("number", &["toFixed"]),
+    ("number", &["toExponential", "toFixed", "toPrecision"]),
     (
         "string",
         &[

@@ -55,7 +55,16 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
   constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
   `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
   class `NumberConstructor`, TypeScript's name for the type of `Number`).
-- `x.toFixed(digits = 0)` on `f64`, rounded like JS.
+- `x.toFixed(digits = 0)`, `x.toExponential(digits?)` and `x.toPrecision(precision?)` on `f64`,
+  with JS's output and rounding (the nearest, an exact tie away from zero):
+
+  ```ts
+  console.log((123.456).toExponential(2), (0).toExponential()); // 1.23e+2 0e+0
+  console.log((123.456).toPrecision(4), (0.000123).toPrecision(2)); // 123.5 0.00012
+  ```
+
+  A digit count out of range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100)
+  panics like JS's `RangeError`.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
