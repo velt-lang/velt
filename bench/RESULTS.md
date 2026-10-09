@@ -671,6 +671,43 @@ debug runtime) to 34 KB.
 command incl. process start, std and the prelude, best of 5): chat 24 ms, log-pipeline 24 ms,
 notes-cli 25 ms, todo-api 30 ms (target < 100 ms).
 
+## Debug links on macOS and Windows; the bundled linker (#45, #803, 2026-10-09)
+
+The installed toolchain (`scripts/package.*`: release `velt` and runtimes, the bundled lld 23.1.3
+and the host's link kit), `bench/compile/run.sh 5 1000 <prefix>/bin/velt` (`run.ps1 -Runs 5 -Units
+1000 -Velt …` on Windows) once with `VELT_LINKER=system` and once with `VELT_LINKER=bundled`.
+Second table of the script, best of 5, ms; the "check" columns do not link and differ only by
+noise.
+
+**macOS**: Apple M4 (10 cores), macOS 27.0.1; system linker: `cc` → Apple `ld` (ld-1267).
+
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 30.1 | 39.3 | 38.8 | 85.5 | 0.2 |
+| http_hello | **bundled** | 25.6 | 32.7 | **7.1** | **53.1** | 0.2 |
+| all_std | system | 32.3 | 42.4 | 38.7 | 83.6 | 0.1 |
+| all_std | **bundled** | 29.2 | 38.1 | **6.4** | **42.2** | 0.1 |
+| units_1000 | system | 171.2 | 188.9 | 58.9 | 91.8 | 3.1 |
+| units_1000 | **bundled** | 194.2 | 218.3 | **47.5** | **72.7** | 2.9 |
+
+The shared-runtime link with the system linker is mostly the `cc` driver (a process that starts
+`ld`); lld runs directly.
+
+**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V45, 4 vCPUs), Windows Server 2025; system
+linker: `link.exe` of Visual Studio 18 (MSVC 14.51). Only the link columns (the script's first
+table runs out of memory on `long_main_4000` there, linker or not), measured as the script does:
+the `link` stage of `velt build -v`, best of 5, ms.
+
+| program | linker | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|
+| http_hello | system | 38.4 | 200.3 | 0.3 |
+| http_hello | **bundled** | **35.0** | **156.9** | 0.6 |
+| all_std | system | 41.4 | 214.3 | 0.2 |
+| all_std | **bundled** | **32.8** | **149.1** | 0.5 |
+
+A rebuild with nothing changed checks which linker would link (the link stamp includes it); with
+the bundled one that opens the kit, a fraction of a millisecond.
+
 ## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
 
 Machine: cloud VM, x86_64 Linux (Ubuntu 24.04), 4 × Intel Xeon @ 2.10 GHz, 15 GB; clang 18.1.3
