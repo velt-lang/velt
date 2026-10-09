@@ -223,6 +223,9 @@ pub(crate) struct Frame {
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: HashMap<String, Span>,
+    /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
+    /// selects like the literal itself (TypeScript gives the constant the literal type).
+    pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
 }
 
 impl Frame {
@@ -262,6 +265,7 @@ impl Frame {
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
+            const_lits: HashMap::new(),
         }
     }
 }

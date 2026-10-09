@@ -4,7 +4,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::narrow::Fact;
+use super::narrow::{literal_of, Fact};
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind, Want};
 use crate::defs::FnKind;
@@ -348,6 +348,9 @@ impl FnCx<'_, '_> {
         let local = self.declare_local(name, ty, kind);
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
+        }
+        if let (LocalKind::Const, None, Some(l)) = (kind, ann, v.init.as_ref().and_then(literal_of)) {
+            self.f.const_lits.insert(local, l);
         }
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);

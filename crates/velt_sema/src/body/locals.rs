@@ -190,6 +190,19 @@ impl FnCx<'_, '_> {
             .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
     }
 
+    /// The literal of the visible local `const` named `name` (see `Frame::const_lits`), without
+    /// recording a use.
+    pub fn peek_const_lit(&self, name: &str) -> Option<ast::SignedLit> {
+        if let Some(l) = frame_lookup(&self.f, name) {
+            return self.f.const_lits.get(&l).cloned();
+        }
+        self.outer
+            .iter()
+            .rev()
+            .find_map(|f| frame_lookup(f, name).map(|l| f.const_lits.get(&l).cloned()))
+            .flatten()
+    }
+
     pub fn is_local_name(&self, name: &str) -> bool {
         frame_lookup(&self.f, name).is_some()
             || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
