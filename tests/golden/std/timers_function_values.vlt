@@ -25,13 +25,18 @@ function each(xs: string[], f: (s: string) => void) {
 async function main() {
   const local = () => console.log("local");
   const localOptional = (n?: number) => console.log("local optional", n == null ? "none" : `${n}`);
-  setTimeout(local, 10);
-  setTimeout(tick, 20);
-  setTimeout(withDefault, 30);
-  setTimeout(localOptional, 40);
-  const interval = setInterval(local, 60);
-  each(["a", "b"], show);
-  await delay(90);
+  // Each timer fires before the next one is set: timer callbacks run as their own tasks, so
+  // two that are due at once may run in either order.
+  setTimeout(local, 1);
+  await delay(20);
+  setTimeout(tick, 1);
+  await delay(20);
+  setTimeout(withDefault, 1);
+  await delay(20);
+  setTimeout(localOptional, 1);
+  await delay(20);
+  const interval = setInterval(local, 30);
+  await delay(45);
   clearInterval(interval);
-  await delay(10);
+  each(["a", "b"], show);
 }

@@ -116,7 +116,7 @@ impl FnCx<'_, '_> {
             several => Some(self.member_by_trial(e, several, escaping)),
         };
         if *is_async {
-            if let Some(h) = self.async_arrow_callback(e, exp, escaping) {
+            if let Some(h) = self.async_arrow_callback(e, exp) {
                 return h;
             }
         }

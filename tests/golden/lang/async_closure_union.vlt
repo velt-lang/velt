@@ -29,6 +29,14 @@ function maybe(make: (ok: boolean) => Promise<string> | null, ok: boolean): Prom
   return make(ok);
 }
 
+// The wrapped setup outlives the expression that made it.
+function makeSlow(label: string): (n: i64) => Promise<string> {
+  return component(async (n) => {
+    await delay(5);
+    return () => `${label} ${n}`;
+  });
+}
+
 async function main() {
   const sync = component((n) => () => `sync ${n}`);
   const slow = component(async (n) => {
@@ -37,6 +45,12 @@ async function main() {
   });
   const annotated = component(async (n): Promise<View> => () => `annotated ${n}`);
   console.log(await sync(1), await slow(2), await annotated(3));
+  const made = makeSlow("made");
+  const filler: string[] = [];
+  for (let i = 0; i < 100; i++) {
+    filler.push(`filler ${i}`);
+  }
+  console.log(await made(4), await made(5), filler.length);
 
   console.log(await settle(() => "now"));
   console.log(await settle((async (): Promise<View> => () => "later")()));

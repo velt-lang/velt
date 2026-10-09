@@ -259,7 +259,6 @@ impl FnCx<'_, '_> {
         &mut self,
         e: &ast::Expr,
         exp: Option<TyId>,
-        escaping: bool,
     ) -> Option<hir::Expr> {
         let fn_ty = self.hint(exp)?;
         let TyKind::FnPtr {
@@ -297,7 +296,9 @@ impl FnCx<'_, '_> {
         self.push_scope();
         let local = self.declare_local(&name, f.ty, LocalKind::Const);
         let callee = synth(ast::ExprKind::Ident(name), span);
-        let w = self.closure(&wrapper(callee, n, n, discard, span), exp, escaping);
+        // The wrapper owns the async closure (it escapes the hidden local's block): borrowing
+        // it would leave a callee that keeps the wrapper with a dropped closure.
+        let w = self.closure(&wrapper(callee, n, n, discard, span), exp, true);
         self.pop_scope();
         let ty = w.ty;
         let block = hir::Block {
