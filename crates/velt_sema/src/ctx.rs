@@ -136,6 +136,9 @@ pub(crate) struct Ctx<'m> {
     /// Spans of the sync arrows passed to `serve` that are checked as async ones
     /// (`body/expr/callback.rs` `thread_arrow`): diagnostics call them handlers, as written.
     pub sync_handlers: Vec<velt_common::Span>,
+    /// The async adapters calling a function value passed to `serve` as its handler
+    /// (`body/expr/callback.rs`): the sync closures flowing into them are handlers.
+    pub thread_adapters: Vec<DefId>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -247,6 +250,7 @@ impl<'m> Ctx<'m> {
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             sync_handlers: vec![],
+            thread_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),

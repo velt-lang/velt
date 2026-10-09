@@ -323,6 +323,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// An arrow checked as `async` by `thread_arrow`: its expression body is awaited when it is
     /// a promise.
     pub await_body: Option<Span>,
+    /// The wrapper arrow `serve`'s adapter makes for a handler function value: the async
+    /// closure it becomes is recorded in `Ctx::thread_adapters`.
+    pub thread_adapter: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types it could see (`expr/closure.rs`).
     pub member_choices: HashMap<(Span, Vec<TyId>, u64), TyId>,
@@ -365,6 +368,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             thread_task: None,
             thread_callback: None,
             await_body: None,
+            thread_adapter: None,
             member_choices: HashMap::new(),
             detached: false,
             collect_iterable_args: false,

@@ -105,14 +105,15 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             break;
         }
     }
-    let handler_reads = handler_fn_reads(cx, &g, &p);
+    let handlers = sync_handlers(cx, &g, &p);
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n][0].or(p.why[n][1]);
         let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
         finish(cx, c, local, why);
-        let crosses = p.flags[n] & CROSSES != 0;
-        sync_crossing(cx, c, crosses, p.why[n][0], g.tys[n], &handler_reads);
+        if let Some(why) = handlers.get(&c) {
+            sync_handler(cx, c, *why);
+        }
     }
 }
 
@@ -206,78 +207,64 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     out
 }
 
-/// The types of the function values that code an HTTP handler runs reads from a field or an
-/// element: the handler closures (and the function values flowing to them as values), the
-/// functions they call directly, and the closures created in those, transitively.
-fn handler_fn_reads(cx: &Ctx, g: &Graph, p: &Propagation) -> Vec<TyId> {
-    let mut work: Vec<DefId> = vec![];
+/// The sync closures passed to `serve` as its handler (directly, or through a variable, a
+/// function's result, a parameter, a conditional, a field), with why they cross: the values
+/// flowing into what the async adapter of `serve`'s handler (`body/expr/callback.rs`) calls.
+/// A value read from the heap stands for every stored sync closure of its type. Only these are
+/// checked as sync handlers: a sync closure an async handler reaches otherwise (through an
+/// object or a collection the handler captured) is not a compile-time error, as on main.
+fn sync_handlers(cx: &Ctx, g: &Graph, p: &Propagation) -> HashMap<DefId, Option<Why>> {
+    let mut out = HashMap::new();
+    let mut work = vec![];
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
-        let runs = p.flags[n] & CROSSES != 0
-            && p.why[n][0].is_some_and(|w| {
-                w.boundary == Boundary::Handler
-                    && w.via
-                        .is_none_or(|t| matches!(cx.ty.kind(t), TyKind::FnPtr { .. }))
-            });
-        if runs {
-            work.push(c);
+        if cx.thread_adapters.contains(&c) {
+            for &i in g.captures.get(&n).into_iter().flatten() {
+                work.push((i, p.why[n][0]));
+            }
         }
     }
-    let mut children: HashMap<DefId, Vec<DefId>> = HashMap::new();
-    for (&c, &parent) in &g.parent {
-        children.entry(parent).or_default().push(c);
-    }
-    let mut seen: HashSet<DefId> = HashSet::new();
-    let mut out = vec![];
-    while let Some(d) = work.pop() {
-        if !seen.insert(d) {
+    let mut seen = HashSet::new();
+    let mut heap_tys = vec![];
+    while let Some((i, why)) = work.pop() {
+        if !seen.insert(i) {
             continue;
         }
-        out.extend(g.fn_reads.get(&d).into_iter().flatten().copied());
-        work.extend(g.callees.get(&d).into_iter().flatten().copied());
-        work.extend(children.get(&d).into_iter().flatten().copied());
+        if let Node::Lit(c) = g.nodes[i] {
+            out.entry(c).or_insert(why);
+        }
+        if g.unknown[i] {
+            heap_tys.extend(g.inflows[i].iter().map(|(t, _)| (*t, why)));
+        }
+        for &(src, _) in &g.srcs[i] {
+            work.push((src, why));
+        }
     }
-    out.sort();
-    out.dedup();
+    for (n, node) in g.nodes.iter().enumerate() {
+        let Node::Lit(c) = *node else { continue };
+        if p.flags[n] & STORED == 0 {
+            continue;
+        }
+        if let Some((_, why)) = heap_tys
+            .iter()
+            .find(|(t, _)| !types::mentions_param(cx, *t) && types::may_be(cx, g.tys[n], *t))
+        {
+            out.entry(c).or_insert(*why);
+        }
+    }
     out
 }
 
-/// A sync closure `c` that an HTTP handler runs (`serve`'s handler, or a function value the
-/// handler calls) runs on several threads at once with a copy of what it captured, like an
-/// async handler:
-/// modifying a capture is the same error, wherever the closure was written (a variable, a
-/// field, a function's result). Other crossings keep their copy semantics (a sync closure
-/// handed to a spawned task counts on its own copy, `spawn_fn_value_copied_per_task`), and
-/// only a definite crossing counts (a closure passed to an unknown callee is called in place).
-fn sync_crossing(
-    cx: &mut Ctx,
-    c: DefId,
-    crosses: bool,
-    why: Option<Why>,
-    ty: TyId,
-    handler_reads: &[TyId],
-) {
+/// A sync closure `c` passed to `serve` as its handler runs on several threads at once with a
+/// copy of what it captured, like an async handler: modifying a capture is the same error.
+fn sync_handler(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    // The handler runs it: the handler itself, a function value it gets as a value (a
-    // variable, a function's result), or one of the type of a function value that handler code
-    // reads from a field or an element (to call it or pass it on: `i.onChange("x")`). A
-    // closure only stored in an object the handler captured, of a type handler code never
-    // reads (`w.onClick` of a captured `w`), keeps the copy semantics it has on main.
-    let runs = why.is_some_and(|w| {
-        w.boundary == Boundary::Handler
-            && (w
-                .via
-                .is_none_or(|t| matches!(cx.ty.kind(t), TyKind::FnPtr { .. }))
-                || handler_reads
-                    .iter()
-                    .any(|r| !types::mentions_param(cx, *r) && types::may_be(cx, ty, *r)))
-    });
-    if f.is_async || f.is_generator || !crosses || !runs {
+    if f.is_async || f.is_generator {
         return;
     }
-    report_mutated(cx, c, why, "closure");
+    report_mutated(cx, c, why, "handler");
 }
 
 /// Record what was decided for async closure `c`.

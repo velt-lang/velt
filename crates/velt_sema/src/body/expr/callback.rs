@@ -324,7 +324,10 @@ impl FnCx<'_, '_> {
         let arrow = wrapper(call, n, passed, wrap == Wrap::Discard, span);
         match wrap {
             Wrap::Task => self.void_task = Some(arrow.span),
-            Wrap::Thread => self.thread_task = Some(arrow.span),
+            Wrap::Thread => {
+                self.thread_task = Some(arrow.span);
+                self.thread_adapter = Some(arrow.span);
+            }
             Wrap::Call | Wrap::Discard => {}
         }
         let w = self.closure(&arrow, exp, true);
@@ -457,6 +460,12 @@ impl FnCx<'_, '_> {
             async_ty
         };
         let f = self.closure(e, Some(async_ty), true);
+        if self.thread_adapter == Some(e.span) {
+            self.thread_adapter = None;
+            if let H::Closure(c) = &f.kind {
+                self.cx.thread_adapters.push(*c);
+            }
+        }
         // An error type still unknown (`E` of a generic callee's `T | Promise<T, E>`) is what the
         // async closure rejects with, now that it is checked: the wrapper is typed with it.
         let exp = match self.cx.ty.kind(f.ty).clone() {

@@ -1,10 +1,10 @@
-http_sync_handler_indirect.vlt:16:5: error: this closure modifies captured `made`, so it must stay on the task that created it
+http_sync_handler_indirect.vlt:16:5: error: this handler modifies captured `made`, so it must stay on the task that created it
 http_sync_handler_indirect.vlt:38:20: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:28:5: error: this closure modifies captured `a`, so it must stay on the task that created it
+http_sync_handler_indirect.vlt:28:5: error: this handler modifies captured `a`, so it must stay on the task that created it
 http_sync_handler_indirect.vlt:31:20: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:34:5: error: this closure modifies captured `b`, so it must stay on the task that created it
-http_sync_handler_indirect.vlt:37:20: but it is stored in a `(Request) => Response`, which handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:41:5: error: this closure modifies captured `c`, so it must stay on the task that created it
+http_sync_handler_indirect.vlt:34:5: error: this handler modifies captured `b`, so it must stay on the task that created it
+http_sync_handler_indirect.vlt:37:20: but it handles HTTP requests here, which run on several threads
+http_sync_handler_indirect.vlt:41:5: error: this handler modifies captured `c`, so it must stay on the task that created it
 http_sync_handler_indirect.vlt:22:16: but it handles HTTP requests here, which run on several threads
-http_sync_handler_indirect.vlt:46:5: error: this closure modifies captured `d`, so it must stay on the task that created it
+http_sync_handler_indirect.vlt:46:5: error: this handler modifies captured `d`, so it must stay on the task that created it
 http_sync_handler_indirect.vlt:45:20: but it handles HTTP requests here, which run on several threads
