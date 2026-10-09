@@ -131,7 +131,22 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let Some(sig) = self.method_sig(obj.ty, prop, span) else {
+        // `this` and a `const`/`using` local name one object for as long as the value lives:
+        // the arrow names it directly and captures it as an arrow would, with no block around
+        // it (so a callback parameter keeps it off the heap, and a `using` value stays put).
+        let direct = self.direct_receiver(object, obj.ty);
+        let recv = if direct {
+            strip_parens(object).clone()
+        } else {
+            synth(
+                ast::ExprKind::Ident(ast::Ident {
+                    name: BOUND.into(),
+                    span: obj.span,
+                }),
+                obj.span,
+            )
+        };
+        let Some((arrow, fn_ty)) = self.bound_parts(obj.ty, recv, prop, exp, span) else {
             let d = Diagnostic::error(
                 format!("method `{}` cannot be used as a function value", prop.name),
                 prop.span,
@@ -146,6 +161,116 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return self.error_expr(span);
         };
+        if direct {
+            return self.bound_closure(&arrow, fn_ty, None);
+        }
+        self.push_scope();
+        set_place_mode(&mut obj, UseMode::Move);
+        let (ty, at) = (obj.ty, obj.span);
+        let l = self.new_local(BOUND, ty, false, at, LocalKind::Temp);
+        let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+        scope.names.insert(BOUND.to_string(), l);
+        let stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: l,
+                init: Some(obj),
+            },
+            span: at,
+        }];
+        let value = self.bound_closure(&arrow, fn_ty, None);
+        self.pop_scope();
+        let ty = value.ty;
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(value)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// The closure of a method value's `arrow`, checked against `fn_ty`; `escaping` as for an
+    /// argument (`None`: a value, which may escape). Its parameters are JS numbers, as an
+    /// unannotated arrow's in a callback (`[1, 2].forEach(p.log)` with `log(x: number)`).
+    pub(super) fn bound_closure(
+        &mut self,
+        arrow: &ast::Expr,
+        fn_ty: TyId,
+        escaping: Option<bool>,
+    ) -> hir::Expr {
+        self.std_callback = true;
+        let h = self.closure(arrow, Some(fn_ty), escaping.unwrap_or(true));
+        self.std_callback = false;
+        h
+    }
+
+    /// A method value passed where a function type is expected, read from `this` or a
+    /// `const`/`using` local (`xs.forEach(o.log)`, `xs.forEach(o.log.bind(o))`): the arrow it
+    /// stands for and the function type to check it against, so the argument is checked as
+    /// that arrow would be (a callback parameter keeps it off the heap). `None`: not this
+    /// shape, or a method with no single function type (reported where it is checked).
+    pub(super) fn method_value_arg(
+        &mut self,
+        arg: &ast::Expr,
+        exp: TyId,
+    ) -> Option<(ast::Expr, TyId)> {
+        if !matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) {
+            return None;
+        }
+        let (object, prop) = method_value_read(arg)?;
+        let t = match &strip_parens(object).kind {
+            ast::ExprKind::This => self.peek_ty(object)?,
+            ast::ExprKind::Ident(id) => self.peek_local_ty(&id.name)?,
+            _ => return None,
+        };
+        if self.cx.ty.has_error(t)
+            || !self.direct_receiver(object, t)
+            || !self.is_method_value(t, &prop.name)
+        {
+            return None;
+        }
+        let recv = strip_parens(object).clone();
+        self.bound_parts(t, recv, prop, Some(exp), arg.span)
+    }
+
+    /// `o.m` or `o.m.bind(o)` where `m` is a method of `o` (a path): `o.m`, for notes.
+    pub(super) fn method_value_read_text(&mut self, e: &ast::Expr) -> Option<String> {
+        let (object, prop) = method_value_read(e)?;
+        let t = self.peek_ty(object)?;
+        if !self.is_method_value(t, &prop.name) {
+            return None;
+        }
+        Some(format!("{}.{}", path_text(object)?, prop.name))
+    }
+
+    /// Does `object` (of type `t`) name one object for as long as a method value read from it
+    /// lives: `this`, a `using` local, or a `const` local holding a class instance or an
+    /// interface value (a reference, which the arrow shares)?
+    fn direct_receiver(&self, object: &ast::Expr, t: TyId) -> bool {
+        match &strip_parens(object).kind {
+            ast::ExprKind::This => true,
+            ast::ExprKind::Ident(id) => match self.peek_local_kind(&id.name) {
+                Some(LocalKind::Using) => true,
+                Some(LocalKind::Const) => {
+                    self.cx.class_of(t).is_some() || matches!(self.cx.ty.kind(t), TyKind::Dyn(..))
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// The arrow `(p0, …) => recv.prop(p0, …)` a method value of type-`t` objects stands for,
+    /// and the function type it is checked against. `None`: the method has no single function
+    /// type.
+    fn bound_parts(
+        &mut self,
+        t: TyId,
+        recv: ast::Expr,
+        prop: &ast::Ident,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<(ast::Expr, TyId)> {
+        let sig = self.method_sig(t, prop, span)?;
         let expected = exp.and_then(|e| match self.cx.ty.kind(e) {
             TyKind::FnPtr { params, ret, .. } => Some((params.clone(), *ret)),
             _ => None,
@@ -175,42 +300,8 @@ impl FnCx<'_, '_> {
             ret,
             throws: error,
         });
-        let this = matches!(strip_parens(object).kind, ast::ExprKind::This);
-        let mut stmts = vec![];
-        self.push_scope();
-        let recv = if this {
-            synth(ast::ExprKind::This, object.span)
-        } else {
-            set_place_mode(&mut obj, UseMode::Move);
-            let (ty, at) = (obj.ty, obj.span);
-            let l = self.new_local(BOUND, ty, false, at, LocalKind::Temp);
-            let scope = self.f.scopes.last_mut().expect("ICE: no scope");
-            scope.names.insert(BOUND.to_string(), l);
-            stmts.push(hir::Stmt {
-                kind: hir::StmtKind::Let {
-                    local: l,
-                    init: Some(obj),
-                },
-                span: at,
-            });
-            synth(
-                ast::ExprKind::Ident(ast::Ident {
-                    name: BOUND.into(),
-                    span: at,
-                }),
-                at,
-            )
-        };
         let arrow = bound_arrow(recv, prop, n, &defaults, discard, span);
-        let value = self.expr(&arrow, Some(fn_ty), Want::Move);
-        self.pop_scope();
-        let ty = value.ty;
-        let block = hir::Block {
-            stmts,
-            value: Some(Box::new(value)),
-            span,
-        };
-        self.mk(H::Block(block), ty, span)
+        Some((arrow, fn_ty))
     }
 
     /// The parameter types and result of method `prop` on values of type `t`, when it has one
@@ -392,6 +483,47 @@ fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),
         _ => e,
+    }
+}
+
+/// `o.m` or `o.m.bind(o)`: the object and the method.
+fn method_value_read(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
+    match &strip_parens(e).kind {
+        ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } => Some((object, prop)),
+        ast::ExprKind::Call {
+            callee,
+            type_args,
+            args,
+            optional: false,
+        } if type_args.is_empty() => {
+            let ast::ExprKind::Member {
+                object: inner,
+                prop: bind,
+                optional: false,
+            } = &callee.kind
+            else {
+                return None;
+            };
+            let ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } = &strip_parens(inner).kind
+            else {
+                return None;
+            };
+            match args.as_slice() {
+                [this_arg] if bind.name == "bind" && same_path(object, this_arg) => {
+                    Some((object, prop))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 

@@ -231,6 +231,9 @@ impl FnCx<'_, '_> {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
                     return self.typeof_test(x, tag, op == B::NotEq, span);
                 }
+                if let Some(h) = self.method_value_identity(lhs, rhs, span) {
+                    return h;
+                }
             }
             _ => {}
         }
@@ -325,6 +328,29 @@ impl FnCx<'_, '_> {
             let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
             (l, r)
         }
+    }
+
+    /// `o.m === f` where `o.m` reads a method as a value: an error. Each read is a new function
+    /// value (JS returns the one function of the prototype, so `o.m === o.m` is `true` there).
+    fn method_value_identity(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let read = match self.method_value_read_text(lhs) {
+            Some(r) => r,
+            None => self.method_value_read_text(rhs)?,
+        };
+        let d = Diagnostic::error(
+            format!("method value `{read}` compared by identity: each read of a method is a new function"),
+            span,
+        )
+        .with_note(format!(
+            "store it in a `const` first and compare that: `const f = {read};`"
+        ));
+        self.cx.error(d);
+        Some(self.error_expr(span))
     }
 
     /// `a === b` between a union and one of its members, in either order (`string | number`

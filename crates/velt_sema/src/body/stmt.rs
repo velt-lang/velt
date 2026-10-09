@@ -433,8 +433,9 @@ pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
     matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
 }
 
-/// The closure `h` creates: a closure expression, or a block whose value is one.
-fn closure_def(h: &hir::Expr) -> Option<crate::hir::DefId> {
+/// The closure `h` creates: a closure expression, or a block whose value is one (a method
+/// value read from a `let` local or a field: `{ let <bound receiver> = o; closure }`).
+pub(crate) fn closure_def(h: &hir::Expr) -> Option<crate::hir::DefId> {
     match &h.kind {
         hir::ExprKind::Closure(d) => Some(*d),
         hir::ExprKind::Block(b) => b.value.as_deref().and_then(closure_def),

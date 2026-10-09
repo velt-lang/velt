@@ -56,6 +56,7 @@ pub(crate) mod places;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
+pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod using;
 

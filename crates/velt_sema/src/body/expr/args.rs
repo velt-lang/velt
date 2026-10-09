@@ -270,16 +270,23 @@ impl FnCx<'_, '_> {
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             let expected = self.cx.subst_known(p.ty, &known);
             let adapter = self.fewer_params_adapter(&args[i], expected);
-            let h = match adapter.as_ref().or(as_arrow(&args[i])) {
-                Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
+            // `xs.forEach(o.log)`: checked as the arrow it stands for.
+            let bound = match adapter {
+                None => self.method_value_arg(&args[i], expected),
+                Some(_) => None,
+            };
+            let owned = p.mode == PassMode::Owned;
+            let h = match (bound, adapter.as_ref().or(as_arrow(&args[i]))) {
+                (Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
                     self.std_callback = c.js_numbers;
-                    let h = self.arrow_arg(a, expected, p.mode == PassMode::Owned);
+                    let h = self.arrow_arg(a, expected, owned);
                     self.std_callback = false;
                     h
                 }
                 // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
                 // a value of it, and wrapped.
-                _ => self.expr(
+                (None, _) => self.expr(
                     adapter.as_ref().unwrap_or(&args[i]),
                     Some(expected),
                     want_of(p.mode),

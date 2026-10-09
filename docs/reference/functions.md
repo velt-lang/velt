@@ -455,10 +455,20 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   function values bound to `obj`: `xs.forEach(log.write)`, `const add = counter.add.bind(counter)`.
   The object is evaluated once, where the method is read, so a later assignment to the
   variable does not change which object it calls, as with `bind` in JS. The method dispatches
-  like a call (an override in the object's class runs). An unbound read is a deliberate
-  difference from JavaScript: there `this` is lost (calling the value with a method that uses
-  `this` throws a `TypeError`); Velt binds it to the object it was read from, so the two differ
-  only where JavaScript would throw. `bind` takes exactly the object the method is read from
+  like a call (an override in the object's class runs), and converts its arguments as a named
+  function does (`[1, 2].forEach(p.log)` with `log(x: number)`). Read from `this` or a
+  `const` or `using` local, it is the arrow `(x) => obj.method(x)` itself: it captures the
+  object as that arrow would, and costs no allocation where such an arrow costs none. Two
+  deliberate differences from JavaScript:
+  - An unbound read: there `this` is lost (calling the value with a method that uses `this`
+    throws a `TypeError`); Velt binds it to the object it was read from, so the two differ
+    only where JavaScript would throw.
+  - Identity: each read is a new function value, as each `bind` is in JavaScript, where an
+    unbound read returns the one function of the prototype (`o.get === o.get` is `true`).
+    So `===` and `!==` on a method read are errors: store it in a `const` first and use that,
+    e.g. to register and remove a handler (`const tick = w.tick; e.on(tick); e.off(tick)`).
+
+  `bind` takes exactly the object the method is read from
   (`a.m.bind(b)` is an error: write `(x) => b.m(x)`). A generic method, or one with a rest
   parameter, has no single function type: wrap it in an arrow.
 
