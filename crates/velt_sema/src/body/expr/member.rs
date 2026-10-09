@@ -345,6 +345,22 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Does `o[name]` on a value of type `t` name a field (an object type, struct, interface,
+    /// union or type parameter, possibly nullable or shared; a class only for one of its fields,
+    /// getters or setters, so `m["k"]` on a `Map` keeps the indexing error)?
+    fn has_fields(&mut self, t: TyId, name: &str) -> bool {
+        if self.cx.class_of(t).is_some() {
+            return self.field_of(t, name).is_some()
+                || self.has_getter(t, name)
+                || self.has_setter(t, name);
+        }
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
+            TyKind::Option(inner) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            _ => false,
+        }
+    }
+
     pub(super) fn index_of(
         &mut self,
         obj: hir::Expr,
@@ -372,8 +388,9 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
-            // same property either way; the quoted form allows any name).
-            _ if literal_key(index).is_some() => {
+            // same property either way; the quoted form allows any name). Only on a type with
+            // fields: a `Map` keeps its "use a method" error.
+            _ if literal_key(index).is_some_and(|k| self.has_fields(t, &k)) => {
                 let prop = ast::Ident {
                     name: literal_key(index).unwrap_or_default(),
                     span: index.span,
