@@ -492,7 +492,7 @@ extend string {
   /** `s.replaceAll(re, replacement)`: `re` must have the `g` flag. */
   __replaceAllRegExp(re: RegExp, replacement: string): string {
     if (!re.global) {
-      panic("TypeError: replaceAll must be called with a global RegExp");
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
     }
     return re.replace(this, replacement);
   }
@@ -503,7 +503,7 @@ extend string {
     f: (m: RegExpMatch, s: string) => string throws E,
   ): string throws E {
     if (!re.global) {
-      panic("TypeError: replaceAll must be called with a global RegExp");
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
     }
     return re.__replaceCalling(this, f);
   }
