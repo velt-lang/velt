@@ -1,34 +1,39 @@
 // check: no leaks
-// A streamed response (`Response.stream`): the producer keeps writing after the handler
-// returned, with awaited sleeps between flushes; the client gets the headers that were set
-// before returning, no content-length (chunked transfer), and every chunk in order. A producer
-// that throws cuts the response off, so the client sees a failed body, not a complete one.
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+// A streamed response (a `BodyStream` made from an async generator): the generator is read
+// after the handler returned, with awaited sleeps between chunks; the client gets the headers
+// that were set before returning, no content-length (chunked transfer), and every chunk in
+// order. A generator that throws cuts the response off, so the client sees a failed body, not a
+// complete one.
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
 
 class RenderError extends Error {}
 
+// The list, one chunk per item; each item's line is printed once it was sent (the next chunk is
+// asked for once the client took the previous one).
+async function* list(count: i64, broken: bool): AsyncGenerator<u8[], RenderError> {
+  yield utf8Encode("<ul>");
+  for (let i: i64 = 1; i <= count; i++) {
+    yield utf8Encode(`<li>${i}</li>`);
+    console.log(`server: sent ${i}`);
+    // The task publishes its output when it suspends here, before the next chunk (or the end of
+    // the body) goes out, so the client's lines come after every `server:` line.
+    await sleep(20);
+  }
+  if (broken) {
+    throw new RenderError("template failed");
+  }
+  yield utf8Encode("</ul>");
+}
+
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    const count = parseInt(req.query);
-    // Copy what the body needs: the request is released once the handler returns.
-    const broken = req.path == "/broken";
-    const res = Response.stream(async (w: ResponseWriter) => {
-      w.write("<ul>");
-      for (let i = 1; i <= count; i++) {
-        w.write(`<li>${i}</li>`);
-        await w.flush();
-        console.log(`server: flushed ${i}`);
-        // The task publishes its output when it suspends here, before the next chunk (or the
-        // end of the body) goes out, so the client's lines come after every `server:` line.
-        await sleep(20);
-      }
-      if (broken) {
-        throw new RenderError("template failed");
-      }
-      w.write("</ul>");
-    });
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.header("x-stream", "yes");
+    const url = new URL(req.url);
+    const count = parseInt(url.search.slice(1)) as i64;
+    const res = new Response(BodyStream.from(list(count, url.pathname == "/broken")));
+    res.headers.set("content-type", "text/html; charset=utf-8");
+    res.headers.append("x-stream", "yes");
     console.log("server: response returned");
     return res;
   });

@@ -1,0 +1,5 @@
+300000 bytes in several chunks
+application/json {"name":"AB","twice":42}
+body null: true, used: false
+200 application/json {"name":"P","twice":8}
+500 Internal Server Error

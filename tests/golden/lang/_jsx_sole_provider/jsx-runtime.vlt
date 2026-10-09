@@ -1,7 +1,7 @@
-// A generic JSX runtime like sigx's (docs/contracts/jsx.md "Sole child"): the text separator
-// test runtime, except that an element whose only child is `true`, `false` or `null` renders it
-// as nothing. sigx receives one child as itself and renders those as nothing; among siblings
-// they are the `<!---->` placeholder that hydration aligns on.
+// A generic JSX runtime like sigx's (docs/internals/contracts/jsx.md "Sole child"): the text
+// separator test runtime, except that an element whose only child is `true`, `false` or `null`
+// renders it as nothing. sigx receives one child as itself and renders those as nothing; among
+// siblings they are the `<!---->` placeholder that hydration aligns on.
 
 import { Child, AttrValue, Element, element } from "../_jsx_sep_provider/render";
 

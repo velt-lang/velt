@@ -1,0 +1,24 @@
+// The sigx-like precompiling runtime without `jsxTemplateString`: a sole `null`/boolean slot
+// falls back to `jsxTemplate([sole], [])`.
+
+import { AttrValue, Element, Template, Text, attr, textOf } from "../_jsx_sep_provider/render";
+
+export * from "../_jsx_sole_provider/jsx-runtime";
+export { Text } from "../_jsx_sep_provider/render";
+
+export const jsxTextSeparator = "<!--t-->";
+export const jsxSoleEmpty = "";
+
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  const el = new Element();
+  el.parts.push(new Template(strings, slots));
+  return el;
+}
+
+export function jsxEscape(value: Text): string {
+  return textOf(value);
+}
+
+export function jsxAttr(name: string, value: AttrValue): string {
+  return attr(name, value);
+}

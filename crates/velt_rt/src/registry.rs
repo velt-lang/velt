@@ -123,7 +123,11 @@ impl<T> Registry<T> {
 
     /// Register a new object; the table holds one reference until [`remove`](Self::remove).
     pub fn insert(&self, obj: T) -> Key<T> {
-        let obj = Arc::new(obj);
+        self.insert_shared(Arc::new(obj))
+    }
+
+    /// [`insert`](Self::insert) for an object the caller keeps a reference to as well.
+    pub fn insert_shared(&self, obj: Arc<T>) -> Key<T> {
         let shard = home_shard();
         let mut t = self.lock(shard).expect("ICE: home shard exists");
         let index = match t.free.pop() {

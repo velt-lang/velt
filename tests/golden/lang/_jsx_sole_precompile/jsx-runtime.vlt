@@ -16,6 +16,10 @@ export function jsxTemplate(strings: string[], slots: Element[]): Element {
   return el;
 }
 
+export function jsxTemplateString(html: string): Element {
+  return jsxTemplate([html], []);
+}
+
 export function jsxEscape(value: Text): string {
   return textOf(value);
 }

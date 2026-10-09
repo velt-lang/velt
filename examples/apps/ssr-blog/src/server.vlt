@@ -1,26 +1,39 @@
-// The HTTP side: every page is streamed (`Response.stream` + `renderToStream`), so the browser
-// gets the layout and the post before the comments have loaded.
+// The HTTP side: every page is streamed (`renderToStream`), so the browser gets the layout and
+// the post before the comments have loaded.
 
-import { serve, Request, Response, ResponseWriter, Server } from "velt:http";
+import { Channel } from "velt:channel";
+import { serve, Server } from "velt:http";
+import { BodyStream } from "velt:fetch";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
+import { utf8Encode } from "velt:encoding";
 import { renderToStream } from "velt:jsx";
-import { render, route } from "./pages";
+import { render, route, Route } from "./pages";
 
-async function handle(req: Request): Promise<Response> {
-  // Keep the request's properties, not the request: the body below outlives the handler.
-  const r = route(req.path, req.query);
-  const status = r.status;
-  const res = Response.stream(
-    async (w: ResponseWriter) => {
-      w.write("<!DOCTYPE html>");
-      await renderToStream(render(r), w);
-    },
-    status,
-  );
-  res.setHeader("content-type", "text/html; charset=utf-8");
-  return res;
+// The doctype, then the page as it renders.
+async function* page(
+  r: Route,
+  gate: Channel<i64> | null,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  yield utf8Encode("<!DOCTYPE html>");
+  for await (const chunk of renderToStream(render(r, gate))) {
+    yield chunk;
+  }
 }
 
-/** Serves the blog on `port` (0 = any free port). */
-export async function startServer(port: i64): Promise<Server> {
-  return await serve({ port }, handle);
+async function handle(req: Request, gate: Channel<i64> | null): Promise<Response> {
+  const url = new URL(req.url);
+  const r = route(url.pathname, url.search.slice(1));
+  return new Response(BodyStream.from(page(r, gate)), {
+    status: r.status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/**
+ * Serves the blog on `port` (0 = any free port). With `gate`, a post's comments load only once a
+ * value arrives on it (for demo.vlt).
+ */
+export async function startServer(port: i64, gate: Channel<i64> | null = null): Promise<Server> {
+  return await serve({ port }, async (req: Request): Promise<Response> => await handle(req, gate));
 }

@@ -103,15 +103,6 @@ fn floor_boundary(s: &[u8], i: usize) -> usize {
     i
 }
 
-/// Smallest code point boundary `>= i` (and `<= s.len()`).
-fn ceil_boundary(s: &[u8], i: usize) -> usize {
-    let mut i = i.min(s.len());
-    while !is_boundary(s, i) {
-        i += 1;
-    }
-    i
-}
-
 /// Is the code point `cp` (a surrogate code point is not) JS whitespace?
 fn is_js_whitespace_cp(cp: u32) -> bool {
     char::from_u32(cp).is_some_and(is_js_whitespace)
