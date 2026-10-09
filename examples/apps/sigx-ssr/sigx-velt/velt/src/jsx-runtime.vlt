@@ -1,0 +1,184 @@
+// sigx/jsx-runtime: the sigx JSX provider for Velt (velt docs/internals/contracts/jsx.md), with
+// the SSR precompile exports. Output matches @sigx/server-renderer byte for byte: `<!--t-->`
+// between adjacent text nodes, `<!---->` for `true`/`false`/`null` children, `<!--$c:N-->` after
+// each component, event handlers dropped.
+
+import { escapeHtml } from "velt:html";
+import type { IntrinsicElements as Html } from "velt:jsx/intrinsic";
+import { Element, Builder } from "./node";
+import type { Child, Text } from "./node";
+
+export { Element } from "./node";
+export type { Child, Text } from "./node";
+
+export type ElementChildrenAttribute = { children: Child };
+
+// An event handler: the browser's sigx binds it when it hydrates; the server renders nothing.
+export type Handler = () => void;
+export type InputHandler = (e: Event) => void;
+export type AttrValue = string | number | bool | Handler | null;
+
+// The DOM event object, as far as server-rendered handler code can see it (handlers never run
+// on the server; this only lets shared code type-check).
+export class Event {
+  target: EventTarget = new EventTarget();
+}
+
+export class EventTarget {
+  value: string = "";
+  checked: bool = false;
+}
+
+type Events = { onClick?: Handler; onInput?: Handler; onChange?: Handler; onSubmit?: Handler };
+
+export type IntrinsicElements = Html & {
+  button: Events;
+  input: Events;
+  form: Events;
+  a: Events;
+  li: Events;
+  div: Events;
+};
+
+export const jsxVoidElements = "area base br col embed hr img input link meta source track wbr";
+
+function isVoid(tag: string): bool {
+  return ` ${jsxVoidElements} `.includes(` ${tag} `);
+}
+
+// ` name="value"`, ` name` for `true`, nothing for `false` / `null` / handlers.
+export function attr(name: string, v: AttrValue): string {
+  if (typeof v === "string") {
+    return ` ${name}="${escapeHtml(v)}"`;
+  } else if (typeof v === "boolean") {
+    return v ? ` ${name}` : "";
+  } else if (typeof v === "number") {
+    return ` ${name}="${v}"`;
+  }
+  // `null`, or an event handler.
+  return "";
+}
+
+// sigx renders a `true`, `false` or `null` child as an empty comment, the placeholder its
+// hydration aligns on.
+const EMPTY = "<!---->";
+
+function textOf(v: Text): string {
+  if (typeof v === "string") {
+    return escapeHtml(v);
+  }
+  return `${v}`;
+}
+
+function addChild(b: Builder, c: Child) {
+  if (c == null) {
+    b.markup(EMPTY);
+  } else if (c instanceof Element) {
+    b.element(c);
+  } else if (typeof c === "object") {
+    for (const e of c) {
+      b.element(e);
+    }
+  } else if (typeof c === "boolean") {
+    b.markup(EMPTY);
+  } else {
+    b.text(textOf(c));
+  }
+}
+
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  let open = `<${tag}`;
+  for (let i = 0; i < names.length; i++) {
+    open += attr(names[i], values[i]);
+  }
+  open += ">";
+  if (isVoid(tag)) {
+    return new Element(open);
+  }
+  const b = new Builder();
+  b.markup(open);
+  // sigx renders a sole `null`/boolean child as nothing (`<p></p>`), one among siblings as the
+  // placeholder.
+  if (children.length == 1) {
+    const only = children[0];
+    if (only == null || typeof only === "boolean") {
+      b.markup(`</${tag}>`);
+      return b.finish();
+    }
+  }
+  for (const c of children) {
+    addChild(b, c);
+  }
+  b.markup(`</${tag}>`);
+  return b.finish();
+}
+
+export function Fragment(children: Child[], key: string | null): Element {
+  const b = new Builder();
+  for (const c of children) {
+    addChild(b, c);
+  }
+  return b.finish();
+}
+
+// `<Card …/>`: a sigx component returns its boundary node, which runs when the renderer reaches
+// it; a plain function component is called at once and has no marker.
+export function jsxComponent<P>(
+  component: (props: P) => Element,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  return component(props);
+}
+
+// --- SSR precompile ---
+
+export const jsxTextSeparator = "<!--t-->";
+export const jsxSoleEmpty = "";
+
+export function jsxEscape(value: Text): string {
+  if (value == null) {
+    return EMPTY;
+  }
+  if (typeof value === "boolean") {
+    return EMPTY;
+  }
+  return textOf(value);
+}
+
+export function jsxAttr(name: string, value: AttrValue): string {
+  return attr(name, value);
+}
+
+// A template string as a chunk: it starts with text unless it starts with `<`, and ends with
+// text unless it ends with `>` (the contract's rule for separators at slot edges).
+function chunk(s: string): Element {
+  const el = new Element(s);
+  el.textStart = !s.startsWith("<");
+  el.textEnd = !s.endsWith(">");
+  return el;
+}
+
+export function jsxTemplateString(html: string): Element {
+  return chunk(html);
+}
+
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  if (slots.length == 0) {
+    return chunk(strings[0]);
+  }
+  const b = new Builder();
+  b.element(chunk(strings[0]));
+  for (let i = 0; i < slots.length; i++) {
+    b.element(slots[i]);
+    b.element(chunk(strings[i + 1]));
+  }
+  return b.finish();
+}

@@ -66,11 +66,11 @@ pub(crate) enum Seen {
 pub(crate) struct Copies {
     pub copies: Vec<Copy>,
     pub writes: Vec<Write>,
-    seen: Vec<(TyId, Span, Seen)>,
+    pub seen: Vec<(TyId, Span, Seen)>,
 }
 
 impl Copies {
-    /// How many of each there are now (`body::recursion::Mark`).
+    /// How many of each there are now (`body::recheck::Lens`).
     pub(crate) fn mark(&self) -> [usize; 3] {
         [self.copies.len(), self.writes.len(), self.seen.len()]
     }

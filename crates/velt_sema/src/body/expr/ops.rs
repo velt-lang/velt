@@ -113,6 +113,11 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let exp = self.hint(exp);
+        // A union expected (`string | i64`): its one number member.
+        let exp = exp.map(|t| {
+            self.union_member(t, |s, m| s.cx.ty.is_numeric(m))
+                .unwrap_or(t)
+        });
         let num_exp = exp.filter(|t| self.cx.ty.is_numeric(*t));
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
@@ -138,6 +143,7 @@ impl FnCx<'_, '_> {
                     _ => self.expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
+                self.literal_use_arith(&inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
                     || self.cx.ty.is_float(t)
@@ -161,8 +167,9 @@ impl FnCx<'_, '_> {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
+                self.literal_use_number(&inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
-                if self.js_bitnot_applies(&inner, int_exp) {
+                if self.js_bitnot_applies(&inner) {
                     return self.js_bitnot(inner, span);
                 }
                 if !self.cx.ty.is_int(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
@@ -262,13 +269,17 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        self.literal_operands(op, &l, &r);
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
-        if let Some(bop) = self.js_bitwise_applies(op, &l, &r, hint) {
+        if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
         }
+        let (l, r) = if is_comparison(op) {
+            self.compared_numbers(l, r)
+        } else {
+            (l, r)
+        };
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = self.mix_ints(l, r);
-        let (l, r) = self.bitwise_int32(op, l, r);
         let bop = hir_binop(op).expect("ICE: logical op in binary");
         if let Some(found) = self.param_ordering(bop, l.ty, r.ty) {
             return self.compare_via(found, bop, l, r, span);
@@ -280,10 +291,11 @@ impl FnCx<'_, '_> {
             return self.concat(l, r, span);
         }
         if matches!(op, B::Eq | B::NotEq) && !self.primitive_eq(t) {
+            crate::body::pure_init::check_identity(self.cx, [&l, &r]);
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
         if op == B::Div {
-            return self.divide(l, r, t, hint, span);
+            return self.divide(l, r, t, span);
         }
         let ty = if is_comparison(op) {
             self.cx.ty.bool_
@@ -402,6 +414,9 @@ impl FnCx<'_, '_> {
             let (e, f) = (self.cx.display(t), self.cx.display(rt));
             let mut d = Diagnostic::error("mismatched types", r.span)
                 .with_note(format!("expected {e}, found {f}"));
+            if let Some(note) = self.number_note(t, rt) {
+                d = d.with_note(note);
+            }
             if op == B::Add && (t == self.cx.ty.str_ || rt == self.cx.ty.str_) {
                 d = d.with_note(
                     "use a template literal to combine strings with other values: `${a}${b}`",

@@ -1,6 +1,6 @@
 // Map insertion order across delete and re-insert; keys, values, entries.
 function main() {
-  const m = new Map<string, i64>();
+  const m = new Map<string, number>();
   for (const k of ["d", "a", "c", "b"]) {
     m.set(k, k.charCodeAt(0));
   }

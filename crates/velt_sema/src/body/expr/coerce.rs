@@ -2,11 +2,12 @@
 //! `T` → `T | null` (`WrapSome`), member → union, union → wider union and union → a type every
 //! member converts to (`union_coerce`), literal type → its base (`literal_types`), string enum
 //! → `string`, subclass → base class (`Upcast`), concrete type → interface value (`ToDyn`,
-//! moves the value), inferred integer → float (`expr::numbers`), `never` → anything, and
-//! `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1` (`never` included:
-//! `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` → `U | null` when `T`
-//! converts to `U`, a fresh array or object to a wider one (`widen_fresh`), and an object type
-//! to one with some of its fields, or the same ones in another order (`object_copy`).
+//! moves the value), `i8`..`i32`, `u8`..`u32` and `f32` → `number` (`expr::numbers`), `never`
+//! → anything, and `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1`
+//! (`never` included: `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` →
+//! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
+//! and an object type to one with some of its fields, or the same ones in another order
+//! (`object_copy`).
 
 use velt_common::Diagnostic;
 
@@ -16,6 +17,7 @@ use crate::hir::{self, ExprKind as H, TyId, TyKind};
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
     pub fn coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        self.literal_use_as(&h, exp);
         match self.try_coerce(h, exp) {
             Ok(h) => h,
             Err(h) => {
@@ -114,14 +116,9 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }
-        if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
+        // `i8`..`i32`, `u8`..`u32` and `f32` are numbers too (exactly).
+        if exp == self.cx.ty.f64 && self.exact_in_number(h.ty) {
             return Ok(self.int_to_float(h, exp));
-        }
-        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
-        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
-        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
-        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
-            return Ok(self.int_as(h, exp));
         }
         let h = match self.copy_object(h, exp) {
             Ok(h) => return Ok(h),
@@ -237,9 +234,15 @@ impl FnCx<'_, '_> {
                 "integer literals are not floats; write it with a decimal point, e.g. `1.0`",
             );
         }
-        if self.cx.ty.is_int(expected) {
-            if let Some(note) = self.float_division_note(found) {
-                d = d.with_note(note);
+        match self
+            .float_division_note(found)
+            .filter(|_| self.cx.ty.is_int(expected))
+        {
+            Some(note) => d = d.with_note(note),
+            None => {
+                if let Some(note) = self.number_note(expected, found.ty) {
+                    d = d.with_note(note);
+                }
             }
         }
         if let Some(note) = self.narrowing_note(found.ty) {

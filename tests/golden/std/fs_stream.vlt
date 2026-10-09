@@ -29,7 +29,7 @@ async function main() {
   r.close();
 
   const chunks = await openRead(path);
-  let total: usize = 0;
+  let total = 0;
   let pieces = 0;
   let text = await chunks.readString(7);
   while (text != "") {

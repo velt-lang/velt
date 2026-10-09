@@ -74,7 +74,7 @@ function main() {
 
   const reg = new Registry();
   reg.on("push", (xs: i64[]) => {
-    xs.push(xs.length * 10);
+    xs.push(xs.length as i64 * 10);
   });
   reg.on("pop", (xs: i64[]) => {
     xs.pop();

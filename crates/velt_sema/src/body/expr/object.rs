@@ -21,6 +21,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let exp = self.hint(exp);
+        // A union expected (`string | i64[]`): its one array or tuple member types the literal.
+        let exp = exp.map(|t| {
+            self.union_member(t, |s, m| {
+                s.cx.ty.array_elem(m).is_some() || matches!(s.cx.ty.kind(m), TyKind::Tuple(_))
+            })
+            .unwrap_or(t)
+        });
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }

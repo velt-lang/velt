@@ -230,7 +230,7 @@ drop function in their header releases one reference.
 | `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` |
 | `velt_rt_write_i64` | `(uint32_t stream, int64_t v)` |
 | `velt_rt_write_u64` | `(uint32_t stream, uint64_t v)` |
-| `velt_rt_write_f64` | `(uint32_t stream, double v)` — JS formatting (`1`, `1.5`, `1e+21`, `NaN`) |
+| `velt_rt_write_f64` | `(uint32_t stream, double v)` — `console.log` formatting (`1`, `1.5`, `1e+21`, `NaN`, `-0`) |
 | `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` |
 | `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — used for `' '` and `'\n'` |
 | `velt_rt_flush` | `(void)` |

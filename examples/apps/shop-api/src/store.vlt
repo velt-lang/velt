@@ -19,6 +19,7 @@ import {
   ProductPatch,
   ProductStats,
   Stats,
+  StatusCounts,
   Variant,
 } from "./model";
 import { isoAt, priced, Random, seedOrders, seedProducts, slugify } from "./seed";
@@ -114,7 +115,7 @@ function sign(x: f64): i64 {
 
 function pageOf<T>(all: T[], page: i64, limit: i64): Page<T> {
   // An `i64` copy of the length, so the page count below is integer division (#214).
-  const total: i64 = all.length;
+  const total: i64 = all.length as i64;
   const start = (page - 1) * limit;
   return {
     items: all.slice(start, start + limit),
@@ -155,8 +156,8 @@ export class Store {
   }
 
   private addProduct(p: Product) {
-    const index = this.products.length;
-    for (let v = 0; v < p.variants.length; v++) {
+    const index = this.products.length as i64;
+    for (let v: i64 = 0; v < p.variants.length; v++) {
       this.bySku.set(p.variants[v].sku, { product: index, variant: v });
     }
     this.byId.set(p.id, index);
@@ -167,7 +168,7 @@ export class Store {
   }
 
   private addOrder(o: Order) {
-    this.orderById.set(o.id, this.orders.length);
+    this.orderById.set(o.id, this.orders.length as i64);
     this.orders.push(o);
     if (o.id >= this.nextOrderId) {
       this.nextOrderId = o.id + 1;
@@ -330,14 +331,14 @@ export class Store {
     }
     const ids: i64[] = [];
     const errors: BulkError[] = [];
-    for (let i = 0; i < inputs.length; i++) {
+    for (let i: i64 = 0; i < inputs.length; i++) {
       try {
         ids.push(this.create(inputs[i]).id);
       } catch (e) {
         errors.push({ index: i, code: e.code, message: e.message });
       }
     }
-    return { created: ids.length, ids, errors };
+    return { created: ids.length as i64, ids, errors };
   }
 
   patchProduct(id: i64, patch: ProductPatch): Product {
@@ -475,10 +476,10 @@ export class Store {
       if (p.active) {
         active++;
       }
-      variants += p.variants.length;
+      variants += p.variants.length as i64;
       units += totalStock(p);
     }
-    const byStatus = { pending: 0, paid: 0, shipped: 0, cancelled: 0 };
+    const byStatus: StatusCounts = { pending: 0, paid: 0, shipped: 0, cancelled: 0 };
     const byCategory = new Map<string, CategoryStats>();
     for (const c of categories()) {
       byCategory.set(c, { category: c, orders: 0, units: 0, revenue: 0 });
@@ -531,11 +532,11 @@ export class Store {
     const top = [...byProduct.values()];
     top.sort((a, b) => cmp(b.units - a.units, a.productId - b.productId));
     return {
-      products: this.products.length,
+      products: this.products.length as i64,
       activeProducts: active,
       variants,
       unitsInStock: units,
-      orders: this.orders.length,
+      orders: this.orders.length as i64,
       ordersByStatus: byStatus,
       revenue,
       averageOrderValue: counted === 0 ? 0 : revenue / counted,

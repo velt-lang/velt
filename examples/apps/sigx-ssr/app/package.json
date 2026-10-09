@@ -1,0 +1,24 @@
+{
+  "name": "sigx-velt-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "./dist/server/app",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "sigx": "1.0.1",
+    "@sigx/server-renderer": "1.0.1",
+    "@sigx/server": "1.0.1"
+  },
+  "devDependencies": {
+    "@sigx/velt": "link:../sigx-velt",
+    "@sigx/vite": "1.0.1",
+    "vite": "^8.0.0",
+    "typescript": "^5.9.0",
+    "playwright": "1.62.1"
+  }
+}

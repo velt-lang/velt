@@ -261,8 +261,6 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
-        // A JS number (`switch (xs.length)`) stays one in the comparison.
-        self.note_inferred_local(l, &s.expr);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
         let v = self.expr(test, Some(ty), Want::Borrow);
@@ -352,8 +350,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
-    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
-    /// another number type, literal types as their base), and a mismatch is reported once.
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an integer next to a number,
+    /// literal types as their base), and a mismatch is reported once.
     fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
         let (l, r) = self.nullable_operands(l, r);
         let (l, r) = if l.ty != r.ty {
@@ -361,8 +359,8 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
+        let (l, r) = self.compared_numbers(l, r);
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = self.mix_ints(l, r);
         let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
             return self.error_expr(span);
         };

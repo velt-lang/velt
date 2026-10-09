@@ -1,26 +1,23 @@
-//! Rules on numbers: `/` on integer types (`int-division`), subtraction that wraps on unsigned
-//! integers (`unsigned-arith`), and sorting numbers without a comparator (`default-sort`).
+//! Rules on numbers: `/` on integer types (`int-division`) and sorting numbers without a
+//! comparator (`default-sort`). Lengths and sizes are numbers (#525), so subtracting from one
+//! goes negative as in JavaScript; Velt's unsigned types are reported as `velt-number-type`.
 
 use velt_common::Span;
 use velt_sema::ide::{LiteralKind, TypeView};
-use velt_syntax::ast::{self, BinaryOp, ExprKind as E, UpdateOp};
+use velt_syntax::ast::{self, BinaryOp, ExprKind as E};
 
 use super::Typed;
 use crate::rules::types::INT_TYPES;
 use crate::{Fix, Severity};
 
-/// `a / b`: Velt divides integers when both operands have integer types; `a - b` on unsigned
-/// integers.
+/// `a / b`: Velt divides integers when both operands have integer types.
 pub(super) fn binary(e: &ast::Expr, op: BinaryOp, lhs: &ast::Expr, rhs: &ast::Expr, t: &mut Typed) {
-    match op {
-        BinaryOp::Div if !t.truncated.contains(&(e.span.lo, e.span.hi)) => {
-            if matches!(t.view_of(e), TypeView::Int(_)) {
-                let fix = division_fix(e, lhs, rhs, t);
-                int_division(e.span, fix, t);
-            }
-        }
-        BinaryOp::Sub => unsigned(e.span, &t.view_of(e), "-", t),
-        _ => {}
+    if op == BinaryOp::Div
+        && !t.truncated.contains(&(e.span.lo, e.span.hi))
+        && matches!(t.view_of(e), TypeView::Int(_))
+    {
+        let fix = division_fix(e, lhs, rhs, t);
+        int_division(e.span, fix, t);
     }
 }
 
@@ -53,7 +50,7 @@ fn division_fix(e: &ast::Expr, lhs: &ast::Expr, rhs: &ast::Expr, t: &Typed) -> O
     })
 }
 
-/// `x /= y` and `x -= y`.
+/// `x /= y`.
 pub(super) fn assign(
     e: &ast::Expr,
     op: Option<BinaryOp>,
@@ -80,15 +77,7 @@ pub(super) fn assign(
             };
             int_division(e.span, fix, t);
         }
-        Some(BinaryOp::Sub) => unsigned(e.span, &view, "-=", t),
         _ => {}
-    }
-}
-
-/// `x--` / `--x`.
-pub(super) fn update(e: &ast::Expr, op: UpdateOp, target: &ast::Expr, t: &mut Typed) {
-    if op == UpdateOp::Dec {
-        unsigned(e.span, &t.place_view(target), "--", t);
     }
 }
 
@@ -105,26 +94,6 @@ fn int_division(span: Span, fix: Option<Fix>, t: &mut Typed) {
              `number` for the fraction",
         ],
         fix,
-    );
-}
-
-fn unsigned(span: Span, view: &TypeView, op: &str, t: &mut Typed) {
-    let TypeView::Int(int) = view else { return };
-    if int.is_signed() {
-        return;
-    }
-    t.cx.report(
-        "unsigned-arith",
-        Severity::Warning,
-        span,
-        format!("`{op}` on an unsigned integer wraps around below zero in Velt"),
-        &[
-            "the value is unsigned (a length, a size, or a `u` type), so where JavaScript \
-             gives a negative number (`[].length - 1` is `-1`) Velt wraps to a huge one",
-            "compare before subtracting (`i < xs.length` rather than `i <= xs.length - 1`), \
-             or keep the arithmetic away from zero",
-        ],
-        None,
     );
 }
 

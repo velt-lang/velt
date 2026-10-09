@@ -56,6 +56,7 @@ mod std_glue;
 mod supers;
 mod sync;
 mod tasks;
+mod timer_task;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
@@ -96,6 +97,8 @@ impl FnCx<'_, '_> {
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
         let h = self.expr_kind(e, exp, want);
+        // An integer from the standard library is a number in user code (`numbers`).
+        let h = self.std_number(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);

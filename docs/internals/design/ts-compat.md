@@ -10,6 +10,11 @@ source. This round removes the errors a TypeScript developer meets in a first sm
 
 ## 1. Numbers from the standard library are JS numbers
 
+> **Superseded** by the number model (#525, step 3): there are no inferred integers any more.
+> A `number` is an `f64` in sema, integers from the standard library are converted to it in
+> user code, and `velt_opt`'s `numrep` stores numbers as integers where that is exact
+> ([Numbers](../../reference/types.md#numbers)). The text below is the design as it was.
+
 **Problem.** `for (let i = 0; i < xs.length; i++)` was `expected i64, found usize`;
 `xs.length / 2` truncated although the user wrote no integer type; `xs[i]` with `i: number`
 was an error; `s.slice(0, s.length - 1)` mixed `usize` and `i64`.

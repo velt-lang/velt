@@ -2,4 +2,4 @@ random: 9/9 ok
 special: 9/9 ok
 nanfirst: 9/9 ok
 sorted_nans: 9/9 ok
-[ -Infinity, -7.25, 0, 0, 2, 3.5, Infinity, NaN, NaN ]
+[ -Infinity, -7.25, -0, 0, 2, 3.5, Infinity, NaN, NaN ]

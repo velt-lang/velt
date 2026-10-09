@@ -27,37 +27,43 @@ The differences come from three rules:
   constant, and a module-level `let` that a function uses is an error ("mutable module-level
   state is not allowed"). *Why*: no hidden global state means request handlers can't race on
   it, and `velt dev` can hot-swap code without migrating globals.
+- A module constant may be initialized by a call of a function without effects
+  (`const Counter = component(...)`): it is evaluated at each use, with the same result as
+  TypeScript's evaluation at load. Its identity is the one difference: `Counter === Counter` is
+  an error, and two copies of it in locals compare unequal
+  ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
 - Semicolons are required (no automatic semicolon insertion).
 
 ## Numbers
 
-`number` is `f64`, and number literals behave like JavaScript numbers:
+`number` is a JavaScript number, exactly: a double, with `-0`, `NaN` and rounding past 2^53.
 
 ```ts
 const a = 7;
-console.log(a / 2, 0.1 + 0.2);    // 3.5 0.30000000000000004
+console.log(a / 2, 0.1 + 0.2, -a * 0);    // 3.5 0.30000000000000004 -0
 ```
 
-Numbers the standard library gives you behave the same: lengths, `indexOf`, `size`, indexes.
+Numbers the standard library gives you are numbers too: lengths, `indexOf`, `size`, indexes.
 `for (let i = 0; i < xs.length; i++)` works, `xs.length / 2` is `1.5` for three elements, and
 `xs[i]` takes a `number` (a non-whole index panics).
 
 The difference: integer types (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) exist, and you
-opt into them by writing them. Declared integers do integer arithmetic: `/` truncates when both
-sides are declared integers, values wrap at their width instead of losing precision past 2^53,
-and integer division by zero panics. *Why*: integer loops and indexes run at integer speed
-either way (numbers that hold whole values are stored as integers), and you decide where
-integer semantics apply ([Numbers](../reference/types.md#numbers)).
+opt into them by writing them. Declared integers do integer arithmetic: `/` truncates, values
+wrap at their width instead of losing precision past 2^53, and integer division by zero panics.
+*Why*: the compiler already stores a `number` as an integer wherever it proves that gives the
+same result (loop counters, indexes), so integer types are for when you want integer semantics
+or a fixed width ([Numbers](../reference/types.md#numbers)).
 
-Declared types don't convert implicitly; `as` converts between number types:
+`i8` … `i32`, `u8` … `u32` and `f32` convert to `number` implicitly (exactly); the 64-bit types
+need `as number`, and a `number` needs `as T` to become an integer:
 
 ```ts
 const xs = [1, 2, 3];
 console.log(xs.length / 2);       // 1.5
 const n: i64 = 7;
-console.log(n / 2, n as f64 / 2, 300 as u8); // 3 3.5 44 (integers wrap)
+console.log(n / 2, n as number / 2, 300 as u8); // 3 3.5 44 (integers wrap)
 ```
 
 ## Booleans
@@ -231,8 +237,8 @@ surprise ([Error handling](errors.md)).
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
-  their `clear` functions are globals; the callback returns the promise to run
-  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  their `clear` functions are globals and take any callback (`() => console.log("x")`,
+  `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
   process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
@@ -283,7 +289,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 
 | TypeScript / JavaScript | Velt today | Coming |
 |---|---|---|
-| `number` is always a float | `number` is `f64`; integer literals are stored as integers but `/` still gives `3.5`; `i64`, `u8`, … are opt-in | — |
+| `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | compile error: use a template literal | — |
 | `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
 | `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |

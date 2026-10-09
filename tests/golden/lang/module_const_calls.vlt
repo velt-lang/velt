@@ -1,0 +1,56 @@
+// Module constants initialized by calls of pure functions: evaluated at each use, with the same
+// results as TypeScript evaluating them once at module load.
+
+import { HELLO, greeter } from "./_module_const_lib";
+
+type Point = { x: number; y: number };
+
+function point(x: number, y: number): Point {
+  return { x: x, y: y };
+}
+
+function pair<T>(a: T, b: T): [T, T] {
+  return [a, b];
+}
+
+function scale(p: Point, k: number): Point {
+  return point(p.x * k, p.y * k);
+}
+
+function label(p: Point): string {
+  return `(${p.x}, ${p.y})`;
+}
+
+function adder(n: number): (x: number) => number {
+  return (x: number): number => x + n;
+}
+
+const UNIT = point(1, 2);
+const BIG = scale(UNIT, 10);
+const NAME = label(BIG);
+const NAMES = pair("a", "b");
+const ADD_TEN = adder(10);
+const DOUBLE = (x: number): number => x * 2;
+const TWICE = adder(BIG.y);
+const HI = greeter("Hi");
+const LENGTH = NAME.length + 1;
+
+class Defaults {
+  static readonly ORIGIN: Point = point(0, 0);
+}
+
+function apply(f: (x: number) => number, x: number): number {
+  return f(x);
+}
+
+function main() {
+  console.log(UNIT.x, UNIT.y, BIG.x, BIG.y, NAME, LENGTH);
+  console.log(NAMES[0], NAMES[1]);
+  console.log(ADD_TEN(5), apply(ADD_TEN, 1), DOUBLE(21), TWICE(1));
+  console.log(HELLO("Ann"), HI("Bo"));
+  console.log(Defaults.ORIGIN.x, label(Defaults.ORIGIN));
+  const keep = ADD_TEN;
+  console.log(keep === keep, keep(0));
+  const fns = [ADD_TEN, DOUBLE];
+  console.log(fns.length, fns[1](3));
+}

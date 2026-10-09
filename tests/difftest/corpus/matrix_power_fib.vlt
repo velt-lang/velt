@@ -1,5 +1,5 @@
 // Fibonacci by 2x2 matrix exponentiation modulo a prime, checked against iteration.
-function mul(a: i64[], b: i64[], m: i64): i64[] {
+function mul(a: number[], b: number[], m: number): number[] {
   return [
     (a[0] * b[0] + a[1] * b[2]) % m,
     (a[0] * b[1] + a[1] * b[3]) % m,
@@ -8,7 +8,7 @@ function mul(a: i64[], b: i64[], m: i64): i64[] {
   ];
 }
 
-function fibMod(n: i64, m: i64): i64 {
+function fibMod(n: number, m: number): number {
   let result = [1, 0, 0, 1];
   let base = [1, 1, 1, 0];
   let e = n;
@@ -22,7 +22,7 @@ function fibMod(n: i64, m: i64): i64 {
   return result[1];
 }
 
-function fibIter(n: i64, m: i64): i64 {
+function fibIter(n: number, m: number): number {
   let a = 0;
   let b = 1;
   for (let i = 0; i < n; i++) {
