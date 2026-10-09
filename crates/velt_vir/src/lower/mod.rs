@@ -23,6 +23,7 @@ mod abi;
 mod adt;
 mod append;
 mod array;
+mod assign_target;
 mod async_fn;
 mod attempt;
 mod boxes;

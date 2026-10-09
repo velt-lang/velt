@@ -337,6 +337,9 @@ fn report(cx: &mut Ctx, span: Span, t: TyId, callee: DefId, iterating: bool) {
         _ => String::new(),
     };
     let (from, map) = container(&name);
+    // The value reads of a live `for...of` over a map (`body/for_map.rs`) are iterating too.
+    let method = name.rsplit('.').next().unwrap_or("");
+    let iterating = iterating || matches!(method, "__keyAt" | "__valueAt" | "__entryAt");
     // `T | null` from a read that may miss: name the value.
     let t = cx.ty.opt_payload(t).unwrap_or(t);
     let tn = cx.display(t);
