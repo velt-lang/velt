@@ -11,11 +11,11 @@ modules, with tests.
 ## Hello, HTTP
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    return Response.json({ path: req.path, method: req.method });
+    return Response.json({ path: new URL(req.url).pathname, method: req.method });
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);
 }
@@ -28,13 +28,14 @@ curl localhost:8080/hi        # {"path":"/hi","method":"GET"}
 
 A listening server keeps the program running after `main` returns, like Node, until
 `server.close()`. The handler is an async arrow that receives a `Request` and returns a
-`Response`. `Response.json(value)` serializes any value with `JSON.stringify`, which is
-generated at compile time for your types.
+`Response`: the same global classes `fetch` uses, as in Deno and Bun. `req.url` is absolute
+(`http://localhost:8080/hi`), so `new URL(req.url).pathname` is the path. `Response.json(value)`
+serializes any value with `JSON.stringify`, which is generated at compile time for your types.
 
 ## A JSON API
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class ApiError extends Error {
   status: i64;
@@ -119,10 +120,14 @@ function handle(store: Store, method: string, path: string, body: string): Reply
 async function main() {
   const store = shared(new Mutex<Store>(new Store()));
   const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    const reply = store.with((s) => handle(s, req.method, req.path, req.body));
-    const res = Response.text(reply.body, reply.status);
-    res.setHeader("content-type", "application/json");
-    return res;
+    const path = new URL(req.url).pathname;
+    const method = req.method;
+    const body = await req.text();
+    const reply = store.with((s) => handle(s, method, path, body));
+    return new Response(reply.body, {
+      status: reply.status,
+      headers: { "content-type": "application/json" },
+    });
   });
   console.log(`listening on http://127.0.0.1:${server.port}`);
 }
@@ -158,11 +163,15 @@ What to notice:
 
 ## Requests and responses
 
-- `Request`: `method`, `path` (without the query), `query` (without the `?`), `headers`
-  (`get(name)` and `has(name)`, case-insensitive) and `body`.
-- `Response.text(body, status = 200)`, `Response.json(value, status = 200)`,
-  `Response.html(body, status = 200)`, `Response.bytes(data, status = 200)`;
-  `res.header(name, value)` adds a header, `res.setHeader(name, value)` replaces one.
+- `Request`: `method`, `url` (absolute: route on `new URL(req.url).pathname`, read the query
+  from `url.searchParams`), `headers` (`get(name)` and `has(name)`, case-insensitive) and the
+  body, received while you read it: `await req.text()`, `await req.json<T>()`, or chunk by
+  chunk from `req.body`.
+- `new Response(body, { status, headers })`, `Response.json(value, { status })`;
+  `res.headers.set(name, value)` sets a header. A streamed body is `new
+  Response(BodyStream.from(chunks))` with an async generator of `u8[]` chunks
+  ([velt:http](../std/http.md#the-response)).
+- The second handler argument, `info: ServeInfo`, says who connected (`info.remoteAddr`).
 - A handler that throws gets a `500 Internal Server Error`, and its error is printed to stderr.
 - `server.close()` stops accepting connections and lets in-flight requests finish;
   `await server.shutdown()` also waits for them.

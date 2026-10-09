@@ -350,7 +350,7 @@ fn spare_host_is_discarded() {
     let mark = dev.mark();
     write(
         main.replace("1000000000", "1000000001")
-            .replace("Response.text", "Response.txt"),
+            .replace("new Response(", "Response.txt("),
     );
     ok(dev.wait_stderr(mark, "velt dev: build failed"));
     std::thread::sleep(Duration::from_millis(300));
@@ -377,7 +377,7 @@ fn spare_host_is_discarded() {
 fn quiet_host_prints_no_diagnostics() {
     let dir = TestDir::new();
     let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
-    let bad = main.unwrap().replace("Response.text", "Response.txt");
+    let bad = main.unwrap().replace("new Response(", "Response.txt(");
     save(&dir.path().join("main.vlt"), bad);
     let host = |quiet: bool| {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));

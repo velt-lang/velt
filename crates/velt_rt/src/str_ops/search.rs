@@ -6,7 +6,7 @@
 //! can match half of a pair, which is searched in code units (`units.rs`).
 
 use super::units::{self, is_half_needle};
-use super::{bytes, ceil_boundary, clamp_position, floor_boundary, text};
+use super::{bytes, clamp_position, floor_boundary, text};
 use crate::str::{wtf8, VeltStr};
 use memchr::memmem;
 
@@ -26,12 +26,78 @@ pub unsafe extern "C" fn velt_rt_str_index_of(
     if nb.is_empty() {
         return from as i64;
     }
-    let start = ceil_boundary(sb, from);
-    let found = match (text(s), text(needle)) {
-        (Ok(s), Ok(needle)) => s[start..].find(needle),
-        _ => memmem::find(&sb[start..], nb),
+    // ASCII: every position is a character boundary.
+    let start = from;
+    let found = if nb.len() <= SHORT_NEEDLE {
+        find_short(&sb[start..], nb)
+    } else {
+        match (text(s), text(needle)) {
+            (Ok(s), Ok(needle)) => s[start..].find(needle),
+            _ => memmem::find(&sb[start..], nb),
+        }
     };
     found.map_or(-1, |i| (start + i) as i64)
+}
+
+/// Needles this short are found by `memchr` on their first byte and a comparison: a searcher
+/// (`str::find`'s Two-Way, `memmem`) costs more to set up than such a search (`url.indexOf("/")`).
+const SHORT_NEEDLE: usize = 4;
+
+/// Below this many bytes a byte is found eight at a time ([`find_byte_short`]): `memchr`'s
+/// dispatch costs more than such a search (a URL, a header value).
+const SHORT_HAY: usize = 32;
+
+/// The first position of `b` in `hay`, which is shorter than [`SHORT_HAY`]: eight bytes per
+/// step, with the classic test for a zero byte in `word ^ (b × 0x01…01)`; the last step reads
+/// the final eight bytes (overlapping the previous step, whose bytes are masked off) instead of
+/// going byte by byte.
+fn find_byte_short(hay: &[u8], b: u8) -> Option<usize> {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    let pattern = LO * b as u64;
+    // The positions of `b` in the eight bytes at `at`, as the high bit of each byte; exact up to
+    // and including the first one (a borrow only spreads upwards from a match).
+    let matches = |at: usize| {
+        let word = u64::from_le_bytes(hay[at..at + 8].try_into().expect("ICE: 8 bytes"));
+        let x = word ^ pattern;
+        x.wrapping_sub(LO) & !x & HI
+    };
+    let len = hay.len();
+    if len < 8 {
+        return hay.iter().position(|&c| c == b);
+    }
+    let mut at = 0;
+    while at + 8 <= len {
+        let zero = matches(at);
+        if zero != 0 {
+            return Some(at + (zero.trailing_zeros() / 8) as usize);
+        }
+        at += 8;
+    }
+    if at == len {
+        return None;
+    }
+    // The bytes before `at` hold no match, so masking them off leaves the rest exact.
+    let last = len - 8;
+    let zero = matches(last) & (u64::MAX << ((at - last) * 8));
+    (zero != 0).then(|| last + (zero.trailing_zeros() / 8) as usize)
+}
+
+/// The first position of the non-empty `needle` in `hay`.
+fn find_short(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    let (first, rest) = (needle[0], &needle[1..]);
+    if rest.is_empty() && hay.len() < SHORT_HAY {
+        return find_byte_short(hay, first);
+    }
+    let mut at = 0;
+    while let Some(i) = memchr::memchr(first, &hay[at..]) {
+        let p = at + i;
+        if hay[p + 1..].starts_with(rest) {
+            return Some(p);
+        }
+        at = p + 1;
+    }
+    None
 }
 
 /// [`velt_rt_str_index_of`] on a non-ASCII string.

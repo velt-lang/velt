@@ -1,7 +1,7 @@
 // The HTTP side: opens the store, serves `route`, and persists the store after each change.
 // The store is picked by the file name: `*.sqlite`, `*.sqlite3` and `*.db` are SQLite
 // databases, anything else is a JSON file.
-import { serve, Request, Response, Server } from "velt:http";
+import { serve, Server } from "velt:http";
 import { readFile, writeFile, rename, exists } from "velt:fs";
 import { TodoStore } from "./store";
 import { SqliteTodoStore } from "./sqlite_store";
@@ -35,8 +35,13 @@ async function handle<S extends TodoRepository>(
   store: shared<Mutex<S>>,
   file: string,
 ): Promise<Response> {
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const query = url.search.slice(1);
+  const method = req.method;
+  const body = await req.text();
   const out: Outcome = store.with((s) => {
-    const r = route(s, req.method, req.path, req.query, req.body);
+    const r = route(s, method, path, query, body);
     const snapshot = r.changed ? s.fileSnapshot() : null;
     return { res: r, snapshot };
   });
@@ -45,13 +50,14 @@ async function handle<S extends TodoRepository>(
     await persist(file, snapshot);
   }
   if (out.res.status === 204) {
-    return Response.text("", 204);
+    return new Response(null, { status: 204 });
   }
   // `.clone()`: moving a nested field (`out.res.body`) out of a local frees it twice today
   // (garbage body, then a hang).
-  const res = Response.text(out.res.body.clone(), out.res.status);
-  res.setHeader("content-type", "application/json");
-  return res;
+  return new Response(out.res.body.clone(), {
+    status: out.res.status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 async function serveStore<S extends TodoRepository>(

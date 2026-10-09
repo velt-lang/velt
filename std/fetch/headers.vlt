@@ -5,18 +5,33 @@
 // they are added (header names are case-insensitive), values have surrounding whitespace
 // removed. The list is the runtime's format too, so a fetched response's headers arrive as one
 // array without being copied again. Lookups scan the list: a message has a handful of headers,
-// for which a scan beats hashing.
+// for which a scan beats hashing. A server request's headers stay in the runtime until
+// something needs all of them: `get` and `has` look one name up there. The headers of a
+// response made here start with the `content-type` its body implies held as a number
+// (`implied`), which a server hands to the runtime as it is; it becomes the list's first entry
+// when something reads or changes `content-type` or needs the whole list. The first header
+// added to an empty `Headers` is kept as it was given, outside the list (a new response
+// usually gets one or two: `res.headers.set("server", "velt")` makes no list and lowercases
+// nothing); a server hands it to the runtime that way, and anything else moves it into the
+// list first.
 //
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
 // (`getSetCookie()` returns them as an array). Unlike JavaScript, an invalid name or value is
-// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request. A
-// fetched response's headers are immutable, as in JS: changing them stops the program
-// (`TypeError: immutable`), a programming error like an index out of bounds.
+// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request (a
+// server answers 500). A fetched response's and a received request's headers are immutable, as
+// in JS: changing them stops the program (`TypeError: immutable`), a programming error like an
+// index out of bounds.
+
+import { impliedType } from "velt:fetch/body";
 
 // HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
 function trimHttp(v: string): string {
   const n = v.length as i64;
+  // Most values have nothing to trim: two reads tell (HTTP whitespace is below 33).
+  if (n == 0 || (v.charCodeAt(0) > 32 && v.charCodeAt(n - 1) > 32)) {
+    return v;
+  }
   let start: i64 = 0;
   let end: i64 = n;
   while (start < end && isHttpSpace(v.charCodeAt(start))) {
@@ -32,21 +47,48 @@ function isHttpSpace(c: i64): bool {
   return c == 9 || c == 10 || c == 13 || c == 32;
 }
 
+// Whether `name` is `content-type`, in any case.
+function isContentType(name: string): bool {
+  return name.length == 12 && name.toLowerCase() == "content-type";
+}
+
+// Whether two header names are the same (names are case-insensitive).
+function sameName(a: string, b: string): bool {
+  return a.length == b.length && (a == b || a.toLowerCase() == b.toLowerCase());
+}
+
+declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
+declare function velt_rt_http_req_headers(r: u64): string[];
+
 /** `Headers` or an object literal (`{ "content-type": "text/plain" }`). */
 export type HeadersInit = Headers | Record<string, string>;
 
 export class Headers {
-  // `[name, value, …]`: lowercase names, trimmed values.
-  private list: string[] = [];
-  // A fetched response's headers (std sets it): changing them is an error.
+  // `[name, value, …]`: lowercase names, trimmed values; with `one`, the entries after the
+  // first. Null while there are none, so a new `Headers` allocates no list.
+  private list: string[] | null = null;
+  // The first entry, as it was given (name not lowercased, value not trimmed), while `one`: a
+  // response's first header (`res.headers.set("server", …)` on a new response) is stored here,
+  // without a list to allocate or a name to lowercase, and a server hands it to the runtime as
+  // it is (the runtime lowercases names and trims values). Anything that needs more than that
+  // moves it into the list first (`spill`).
+  private name0: string = "";
+  private value0: string = "";
+  private one: bool = false;
+  // A fetched response's or a server request's headers (std sets it): changing them is an error.
   private frozen: bool = false;
+  // The server request (runtime key) whose headers the list does not hold yet; 0 once loaded.
+  private req: u64 = 0;
+  // The `content-type` a response's body implies (`impliedType`), not in the list yet; 0 when
+  // there is none or it was moved there (std sets it).
+  private implied: u32 = 0;
 
   constructor(init: HeadersInit | null = null) {
     if (init == null) {
       return;
     }
     if (init instanceof Headers) {
-      this.list = init.list.clone();
+      this.list = init.items().clone();
       return;
     }
     for (const [name, value] of Object.entries(init)) {
@@ -61,40 +103,179 @@ export class Headers {
     return h;
   }
 
+  // The immutable headers of the server request behind runtime key `req`, read from the
+  // runtime when needed (std only).
+  private static ofRequest(req: u64): Headers {
+    const h = new Headers();
+    h.req = req;
+    h.frozen = true;
+    return h;
+  }
+
   // The flat list (std only: what `fetch` and the server hand to the runtime).
   private raw(): string[] {
-    return this.list;
+    return this.items();
+  }
+
+  // What a server response hands to the runtime (std only): the first entry as given ("" when
+  // there is none), the rest of the list (null for none), and the implied `content-type`'s
+  // number (the runtime adds the type unless a header names one). A response's headers are
+  // never a server request's, so there is nothing to load.
+  private serverList(): [string, string, string[] | null, u32] {
+    if (!this.one) {
+      return ["", "", this.list, this.implied];
+    }
+    return [this.name0, this.value0, this.list, this.implied];
+  }
+
+  // `serverList` with every entry in the list (std only: a streamed response).
+  private serverFlat(): [string[], u32] {
+    this.spill();
+    return [this.rest(), this.implied];
+  }
+
+  // The whole list: a server request's headers copied out of the runtime (once), the first
+  // entry and the implied `content-type` moved in.
+  private items(): string[] {
+    if (this.req != 0) {
+      this.list = velt_rt_http_req_headers(this.req);
+      this.req = 0;
+    }
+    this.fill();
+    return this.rest();
+  }
+
+  // The list, made if there is none (the first entry stays where it is).
+  private rest(): string[] {
+    const known = this.list;
+    if (known != null) {
+      return known;
+    }
+    const made: string[] = [];
+    this.list = made;
+    return made;
+  }
+
+  // Moves the first entry into the list (normalized).
+  private spill() {
+    if (!this.one) {
+      return;
+    }
+    this.one = false;
+    const list = [this.name0.toLowerCase(), trimHttp(this.value0)];
+    this.name0 = "";
+    this.value0 = "";
+    this.prepend(list);
+  }
+
+  // Puts the first entry and the implied `content-type` into the list, the type first (where
+  // it was set).
+  private fill() {
+    this.spill();
+    const ct = impliedType(this.implied);
+    this.implied = 0;
+    if (ct != null) {
+      this.prepend(["content-type", ct]);
+    }
+  }
+
+  // Makes `head` followed by the list the list.
+  private prepend(head: string[]) {
+    const rest = this.list;
+    if (rest != null) {
+      for (const s of rest) {
+        head.push(s);
+      }
+    }
+    this.list = head;
+  }
+
+  // Whether the first entry is all there is to look at, and may be (or become) `name`
+  // (non-empty) as given: the list is empty, and the implied type is not in question (`name`
+  // is not `content-type`, no type is implied, or `set` replaces it).
+  private alone(name: string, replaces: bool): bool {
+    const list = this.list;
+    if ((list != null && list.length != 0) || name.length == 0) {
+      return false;
+    }
+    return replaces || this.implied == 0 || !isContentType(name);
   }
 
   /** Adds a value; a header that already has one gets another. */
   append(name: string, value: string) {
     this.change();
-    this.list.push(name.toLowerCase());
-    this.list.push(trimHttp(value));
+    if (!this.one && this.alone(name, false)) {
+      this.name0 = name;
+      this.value0 = value;
+      this.one = true;
+      return;
+    }
+    this.spill();
+    const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.fill();
+    }
+    const list = this.rest();
+    list.push(key);
+    list.push(trimHttp(value));
   }
 
   /** Replaces every value of `name` with `value`. */
   set(name: string, value: string) {
     this.change();
+    if (this.alone(name, true) && (!this.one || sameName(this.name0, name))) {
+      if (this.implied != 0 && isContentType(name)) {
+        this.implied = 0;
+      }
+      this.name0 = name;
+      this.value0 = value;
+      this.one = true;
+      return;
+    }
+    this.spill();
     const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.implied = 0;
+    }
     this.remove(key);
-    this.list.push(key);
-    this.list.push(trimHttp(value));
+    const list = this.rest();
+    list.push(key);
+    list.push(trimHttp(value));
   }
 
   /** Removes every value of `name`. */
   delete(name: string) {
     this.change();
-    this.remove(name.toLowerCase());
+    this.spill();
+    const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.implied = 0;
+    }
+    this.remove(key);
   }
 
   /** The values of `name` joined with ", ", or null when there is none. */
   get(name: string): string | null {
+    if (this.req != 0) {
+      let out = "";
+      return velt_rt_http_req_header(this.req, name, out) ? out : null;
+    }
+    if (this.one && this.alone(name, false)) {
+      return sameName(this.name0, name) ? trimHttp(this.value0) : null;
+    }
     const key = name.toLowerCase();
+    if (key == "content-type") {
+      this.fill();
+    }
+    this.spill();
+    const list = this.list;
+    if (list == null) {
+      return null;
+    }
     let out: string | null = null;
-    for (let i: usize = 0; i < this.list.length; i += 2) {
-      if (this.list[i] == key) {
-        const v = this.list[i + 1].clone();
+    for (let i: usize = 0; i < list.length; i += 2) {
+      if (list[i] == key) {
+        const v = list[i + 1].clone();
         out = out == null ? v : `${out}, ${v}`;
       }
     }
@@ -103,19 +284,35 @@ export class Headers {
 
   /** Every `set-cookie` value, in order (they can't be joined with commas). */
   getSetCookie(): string[] {
+    const list = this.items();
     const out: string[] = [];
-    for (let i: usize = 0; i < this.list.length; i += 2) {
-      if (this.list[i] == "set-cookie") {
-        out.push(this.list[i + 1].clone());
+    for (let i: usize = 0; i < list.length; i += 2) {
+      if (list[i] == "set-cookie") {
+        out.push(list[i + 1].clone());
       }
     }
     return out;
   }
 
   has(name: string): bool {
+    if (this.req != 0) {
+      let out = "";
+      return velt_rt_http_req_header(this.req, name, out);
+    }
+    if (this.one && this.alone(name, false)) {
+      return sameName(this.name0, name);
+    }
     const key = name.toLowerCase();
-    for (let i: usize = 0; i < this.list.length; i += 2) {
-      if (this.list[i] == key) {
+    if (key == "content-type") {
+      this.fill();
+    }
+    this.spill();
+    const list = this.list;
+    if (list == null) {
+      return false;
+    }
+    for (let i: usize = 0; i < list.length; i += 2) {
+      if (list[i] == key) {
         return true;
       }
     }
@@ -124,9 +321,10 @@ export class Headers {
 
   // `[name, value]` pairs as iteration yields them: sorted by name, repeats joined.
   private sorted(): [string, string][] {
+    const list = this.items();
     const names: string[] = [];
-    for (let i: usize = 0; i < this.list.length; i += 2) {
-      const n = this.list[i];
+    for (let i: usize = 0; i < list.length; i += 2) {
+      const n = list[i];
       if (n == "set-cookie" || !names.includes(n)) {
         names.push(n.clone());
       }
@@ -183,17 +381,30 @@ export class Headers {
     }
   }
 
-  // Removes the entries named `key` (lowercase), keeping the order of the others.
+  // Removes the entries named `key` (lowercase), keeping the order of the others; the first
+  // entry is in the list.
   private remove(key: string) {
-    let w: usize = 0;
-    for (let i: usize = 0; i < this.list.length; i += 2) {
-      if (this.list[i] == key) {
+    const list = this.list;
+    if (list == null) {
+      return;
+    }
+    // Usually there is nothing to remove (`set` of a new name): look before moving anything.
+    let first: usize = 0;
+    while (first < list.length && list[first] != key) {
+      first += 2;
+    }
+    if (first >= list.length) {
+      return;
+    }
+    let w: usize = first;
+    for (let i: usize = first; i < list.length; i += 2) {
+      if (list[i] == key) {
         continue;
       }
-      __intrinsic_array_swap(this.list, w, i);
-      __intrinsic_array_swap(this.list, w + 1, i + 1);
+      __intrinsic_array_swap(list, w, i);
+      __intrinsic_array_swap(list, w + 1, i + 1);
       w += 2;
     }
-    __intrinsic_array_truncate(this.list, w);
+    __intrinsic_array_truncate(list, w);
   }
 }

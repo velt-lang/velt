@@ -2,7 +2,7 @@
 // copy is dead, operations throw `IoError` `EBADF` ("handle is closed") instead of touching
 // freed memory, and closing again is a no-op (apps ergonomics #4: a WebSocket receiver task kept
 // using a handle the stdin loop had closed).
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { WebSocket, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 import { listen, connect } from "velt:net";
 import { bindUdp } from "velt:udp";

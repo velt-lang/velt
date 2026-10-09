@@ -4,7 +4,7 @@
 native code with Rust-level performance.**
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 
 class NotFound extends Error {}
 
@@ -17,10 +17,11 @@ async function main() {
   const hits = shared(0);                          // a counter shared by all request handlers
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
     hits.add(1);
+    const id = new URL(req.url).searchParams.get("id") ?? "";
     try {
-      return Response.json({ user: findUser(req.query), hits: hits.get() });
+      return Response.json({ user: findUser(id), hits: hits.get() });
     } catch (e) {                                  // e: NotFound, never `unknown`
-      return Response.json({ error: e.message }, 404);
+      return Response.json({ error: e.message }, { status: 404 });
     }
   });
 }

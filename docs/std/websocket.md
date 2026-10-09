@@ -17,7 +17,7 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs.
 - `WsMessage { isBinary; text; data: u8[] }`.
 
 ```ts
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 
 async function echo(ws: WebSocket): Promise<void> {
@@ -34,7 +34,7 @@ async function main() {
       spawn(echo(up.socket));
       return up.response;
     }
-    return Response.text("websocket only", 400);
+    return new Response("websocket only", { status: 400 });
   });
   const ws = await connectWebSocket(`ws://127.0.0.1:${server.port}/`);
   await ws.send("hi");

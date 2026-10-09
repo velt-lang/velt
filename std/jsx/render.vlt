@@ -1,4 +1,4 @@
-// std/jsx/render: turns an Element into HTML, as one string or into a streamed response.
+// std/jsx/render: turns an Element into HTML, as one string or as a streamed response body.
 //
 // A complete element already is its HTML, as a string or a tree of template strings (node.vlt)
 // joined or written once. Otherwise the renderer walks the node's
@@ -6,8 +6,9 @@
 // awaited async component, then the other parts. Every async component started when its node was
 // created, so awaiting them one after the other still lets them load concurrently.
 
-import { Element, RenderError, Tree, markupOf, pushMarkup } from "velt:jsx/node";
-import { ResponseWriter } from "velt:http";
+import { Element, RenderError, markupOf, pushMarkup } from "velt:jsx/node";
+import { utf8Encode } from "velt:encoding";
+import { BodyStream } from "velt:fetch/body";
 
 /**
  * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
@@ -64,54 +65,40 @@ function collect(node: Element, pieces: string[]) throws RenderError {
 }
 
 /**
- * Writes `el` into a streamed response body (`Response.stream`, std/http), flushing before each
- * pending async component so the markup above it reaches the client while it loads. Returns
- * false, and stops rendering, once the client has gone away. Throws like `renderToString`;
- * thrown from the `Response.stream` producer, that cuts the response off.
+ * The HTML of `el` as a streamed `Response` body (like React's `renderToReadableStream`):
+ * `new Response(renderToStream(el), ...)`. The markup above each pending async component is sent
+ * before the component is awaited, so it reaches the client while the component loads. Once
+ * the client has gone away, rendering stops. A component that throws cuts the response off (its
+ * `RenderError` is printed to stderr).
  */
-export async function renderToStream(
-  el: Element,
-  w: ResponseWriter,
-): Promise<bool> throws RenderError {
+export function renderToStream(el: Element): BodyStream {
+  return BodyStream.from(chunks(el));
+}
+
+// `renderToStream`'s chunks: the markup up to each pending async component, then the rest.
+async function* chunks(el: Element): AsyncGenerator<u8[], RenderError> {
+  let pieces: string[] = [];
   const stack: Element[] = [el];
   while (stack.length > 0) {
     const node = stack.pop();
     if (node == null) {
       break;
     }
-    if (!writeMarkup(node, w)) {
-      return false;
-    }
+    pushMarkup(node, pieces);
     const pending = pushParts(node, stack);
     if (pending != null) {
-      if (!(await w.flush())) {
-        return false;
+      const out = pieces.join("");
+      if (out != "") {
+        yield utf8Encode(out);
       }
+      pieces = [];
       stack.push(await pending);
     }
   }
-  return true;
-}
-
-// Writes the markup of `node` (not its parts) string by string; false once the client has gone
-// away.
-function writeMarkup(node: Element, w: ResponseWriter): bool {
-  if (node.tree == null) {
-    return node.html == "" || w.write(node.html);
+  const out = pieces.join("");
+  if (out != "") {
+    yield utf8Encode(out);
   }
-  if (!writeString(node.tree, 0, w)) {
-    return false;
-  }
-  for (let i: usize = 0; i < node.tree.slots.length; i++) {
-    if (!writeMarkup(node.tree.slots[i], w) || !writeString(node.tree, i + 1, w)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function writeString(tree: Tree, i: usize, w: ResponseWriter): bool {
-  return tree.strings == null || tree.strings[i] == "" || w.write(tree.strings[i]);
 }
 
 // Pushes the node's parts onto the stack so that they pop in document order, and returns its
