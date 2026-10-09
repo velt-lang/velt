@@ -106,9 +106,15 @@ fn panicked(app: &Path, payload: Box<dyn std::any::Any + Send>) -> String {
 
 #[test]
 fn the_summary_line_counts_passed_tests() {
-    assert_eq!(passed_tests("x\n\ntest result: ok. 7 passed; 0 failed\n"), Some(7));
+    assert_eq!(
+        passed_tests("x\n\ntest result: ok. 7 passed; 0 failed\n"),
+        Some(7)
+    );
     assert_eq!(passed_tests("test result: ok. 0 passed; 0 failed"), Some(0));
-    assert_eq!(passed_tests("test result: FAILED. 1 passed; 1 failed"), None);
+    assert_eq!(
+        passed_tests("test result: FAILED. 1 passed; 1 failed"),
+        None
+    );
     assert_eq!(passed_tests("no test files found\n"), None);
 }
 
