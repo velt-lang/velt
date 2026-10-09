@@ -116,3 +116,24 @@ The precompiled page is 3.7% over `hand`. Reusing a buffer saves its allocation 
 the text still moves: putting the doctype in front of a 1.2 KB page moves the page with
 `memmove`, which costs about as much as copying it. The `+0.4%` on `hand` is the check on every
 template literal with a call's result in it (`escapeHtml(f.message)` in each row).
+
+With a `string` child escaped by `jsxEscapeString` (std/jsx's optional export: no `Text` union),
+read where it is rather than copied out of its object (`{f.message}`). Linux arm64, the same
+command as above (bench-arm run 37910235102 of 5cbd117, base #707 at fd041ac):
+
+| variant | #707 | this | Δ |
+|---|---:|---:|---:|
+| hand | 2 176 944 844 | 2 185 734 797 | +0.4% |
+| precompiled | 2 311 353 164 | 2 220 826 815 | −3.9% |
+| generic | 9 285 734 728 | 9 273 125 852 | −0.1% |
+| shape-no-doctype | 2 183 555 185 | 2 176 319 283 | −0.3% |
+| shape-jsx-escape | 2 241 704 743 | 2 234 562 509 | −0.3% |
+| precompiled-no-doctype | 2 250 853 734 | 2 177 227 731 | −3.3% |
+| shape | 2 245 227 595 | 2 222 223 315 | −1.0% |
+
+The precompiled page is 1.6% over `hand` (it was 6.2%). Without the doctype it costs what the
+same page written by hand in the same shape costs (`precompiled-no-doctype` against
+`shape-no-doctype`, +0.04%), and with it slightly less than that page with the doctype
+(`shape`). What is left against `hand` is the shape: the page is built around the rows and then
+the doctype is put in front of it, which moves the page twice, where `hand` joins one array
+once (cachegrind per function: `memmove` +35 M and `prepend_in_place` +22 M against `hand`).

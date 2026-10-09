@@ -1,0 +1,34 @@
+// A precompiling test JSX runtime whose `Text` has no strings and that has no
+// `jsxEscapeString`: a `string` child is then a slot, `Fragment([s], null)`, as before that
+// export existed (docs/internals/contracts/jsx.md "SSR precompile").
+
+import { AttrValue, Element, attr, textOf } from "../_jsx_test_provider/render";
+
+export * from "../_jsx_test_provider/jsx-runtime";
+
+export type Text = i64 | f64 | bool | null;
+
+// Pass an array along by value, so `for...of` consumes it.
+function own<T>(xs: T[]): T[] {
+  return xs;
+}
+
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  const el = new Element();
+  let i: usize = 0;
+  for (const s of own(slots)) {
+    el.parts.push(strings[i]);
+    el.parts.push(s);
+    i++;
+  }
+  el.parts.push(strings[i]);
+  return el;
+}
+
+export function jsxEscape(value: Text): string {
+  return textOf(value);
+}
+
+export function jsxAttr(name: string, value: AttrValue): string {
+  return attr(name, value);
+}
