@@ -15,7 +15,9 @@
 //! ```
 //!
 //! `m` is evaluated once, at loop entry, into a hidden local referring to the same map: a body
-//! that assigns another map to `m` goes on iterating the original one, as in JS. A `const`
+//! that assigns another map to `m` goes on iterating the original one, as in JS. For a field
+//! (`o.inner.m`) the hidden local holds a share of the map, which keeps it alive when the body
+//! replaces the field through another reference to its object. A `const`
 //! variable or `this` cannot be assigned, so there `<map@N>` is `m` itself: a second name for
 //! a map that is still used can make the program count its maps. Only a place
 //! written without calls qualifies (a variable, `this`, fields of those; no getter); the body
@@ -48,7 +50,41 @@ impl FnCx<'_, '_> {
             span: p.span,
         };
         self.stmt(&block, out);
+        if names.held {
+            if let Some(hir::Stmt {
+                kind: hir::StmtKind::Block(b),
+                ..
+            }) = out.last_mut()
+            {
+                if let Some(first) = b.stmts.first_mut() {
+                    self.own_hold(first);
+                }
+            }
+        }
         true
+    }
+
+    /// The hidden local of a loop over a field (`o.inner.m`) is bound by reference to it
+    /// (`const_borrow`), but the body may replace the field through another name for its object
+    /// (`inn.m = …`), which frees the map the loop walks: hold a share of the map instead.
+    fn own_hold(&mut self, s: &mut hir::Stmt) {
+        let hir::StmtKind::LetPat { pat, init } = &mut s.kind else {
+            return;
+        };
+        let hir::PatKind::Binding(local, hir::UseMode::Borrow) = pat.kind else {
+            return;
+        };
+        let (ty, span) = (init.ty, init.span);
+        let place = std::mem::replace(init, self.error_expr(span));
+        let kind = H::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+            args: vec![place],
+        };
+        let init = self.mk(kind, ty, span);
+        s.kind = hir::StmtKind::Let {
+            local,
+            init: Some(init),
+        };
     }
 
     /// Does the map source `it` (checked), or the receiver of its `keys()`, `values()` or
