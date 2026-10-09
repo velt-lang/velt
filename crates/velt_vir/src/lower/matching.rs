@@ -150,8 +150,9 @@ impl FnLower<'_, '_> {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
             // place keeps ownership.
             // Through a counted object, other owners may replace the place while `x` lives:
-            // `x` refers to a share of its own instead (semantics stage 2).
-            let shared = self.through_counted(init, ty);
+            // `x` refers to a share of its own instead (semantics stage 2). So may a closure
+            // when the place is rooted in a variable held in a shared cell (stabilize.rs).
+            let shared = self.through_counted(init, ty) || self.in_shared_cell(init);
             let v = self.expr(init);
             if !self.dead() {
                 let p = match shared {
@@ -168,6 +169,12 @@ impl FnLower<'_, '_> {
             }
             return;
         }
+        // A destructuring `const` of a place (`const { a } = o`) binds by reference into it.
+        // When other owners or a closure may replace parts of it while the bindings live (it is,
+        // or is reached through, a counted object, or lies in a shared cell), they take shares.
+        let stable = local_place(init)
+            && binds_by_ref(pat)
+            && (self.cx.counted(ty) || self.through_counted(init, ty) || self.in_shared_cell(init));
         self.push_scope(ScopeKind::Temps);
         let v = self.consume(init);
         self.pop_scope();
@@ -180,8 +187,23 @@ impl FnLower<'_, '_> {
         }
         let s = self.copy_to_temp(v, vt);
         let sp = Place::local(s);
+        let outer = std::mem::replace(&mut self.stable_binds, stable);
         self.bind_pat(pat, &sp, ty, true);
+        self.stable_binds = outer;
         self.own_rest(sp, ty, Rc::new(pat.clone()));
+    }
+}
+
+/// Does `pat` bind a part of the value by reference?
+fn binds_by_ref(pat: &Pat) -> bool {
+    use hir::PatKind as P;
+    match &pat.kind {
+        P::Binding(_, mode) => *mode == UseMode::Borrow,
+        P::Variant { args: ps, .. } | P::Tuple(ps) => ps.iter().any(binds_by_ref),
+        P::Adt { fields } => fields.iter().any(|(_, p)| binds_by_ref(p)),
+        P::Array { elems, .. } => elems.iter().any(binds_by_ref),
+        P::Some(p) => binds_by_ref(p),
+        _ => false,
     }
 }
 

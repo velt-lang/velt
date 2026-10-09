@@ -37,6 +37,18 @@ fn expressions() {
 }
 
 #[test]
+fn quoted_property_names() {
+    holds(
+        "type H = { \"content-type\": string; readonly 'x-y'?: number; plain: boolean };
+interface A { \"data-id\": string; \"aria-label\"?: string }
+function f(h: H) {
+  const { \"content-type\": ct, plain, 'x-y': n = 0 } = h;
+  const v = h[\"content-type\"];
+}",
+    );
+}
+
+#[test]
 fn resource_management() {
     holds(
         "class R { [Symbol.dispose]() {} async   [Symbol.asyncDispose]() {} }

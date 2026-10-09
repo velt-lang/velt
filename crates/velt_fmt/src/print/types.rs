@@ -84,10 +84,11 @@ impl<'a> Printer<'a> {
 
     /// `name: T` / `name?: T` / `readonly name: T`
     fn object_type_field(&mut self, f: &ObjectTypeField) -> Doc {
+        let key = self.prop_key(&f.name);
         let name = if f.readonly {
-            format!("readonly {}", f.name.name)
+            cat!["readonly ", key]
         } else {
-            f.name.name.clone()
+            key
         };
         if f.optional {
             cat![name, "?: ", self.ty_optional_field(&f.ty)]

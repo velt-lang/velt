@@ -52,11 +52,7 @@ impl FnLower<'_, '_> {
         if !self.js_object(ty) {
             return false;
         }
-        if let Some(m) = self.hook(ty, Hook::ToString) {
-            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty, None);
-            let s = self.addr(res.clone());
-            self.push_str(buf, s);
-            self.drop_glue(res, rty);
+        if self.push_to_string(buf, place, ty) {
             return true;
         }
         let std = match self.cx.kind(ty) {
@@ -68,6 +64,23 @@ impl FnLower<'_, '_> {
             false => self.cx.type_name(ty),
         };
         self.push_text(buf, &format!("[object {tag}]"));
+        true
+    }
+
+    /// Append the class object at `place` (of type `ty`) through its `toString()` (the
+    /// `to_string` hook, dispatched through the vtable); false (nothing written) if `ty` has no
+    /// such hook or is an error.
+    pub(super) fn push_to_string(&mut self, buf: &Operand, place: &Place, ty: TyId) -> bool {
+        if !self.js_object(ty) {
+            return false;
+        }
+        let Some(m) = self.hook(ty, Hook::ToString) else {
+            return false;
+        };
+        let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty, None);
+        let s = self.addr(res.clone());
+        self.push_str(buf, s);
+        self.drop_glue(res, rty);
         true
     }
 

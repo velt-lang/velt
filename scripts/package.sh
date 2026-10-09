@@ -3,7 +3,9 @@
 #
 # Layout (see docs/tooling/platforms.md):
 #   bin/velt  lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
-#   lib/velt/lld  lib/targets/<triple>/ (link kits; Linux: also <arch>-unknown-linux-musl with its runtime)
+#   lib/velt/lld  lib/targets/<host>/ (the link kit)
+# and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
+# runtime and kit, and on Linux <arch>-unknown-linux-musl's.
 #   std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: scripts/package.sh [--std-dir <dir>] [--skip-build] [--no-archive] [--lld <path>]
@@ -14,7 +16,7 @@
 #   --lld                the lld to bundle (scripts/build-lld.sh builds one; default: build it
 #                        once into $VELT_LLD_CACHE, ~/.cache/velt/lld-<LLVM version>)
 #   --no-bundled-linker  ship no lld and no link kits (programs link with the system linker)
-#   --no-musl            (Linux) skip the musl target (its runtime and kit)
+#   --no-musl            (Linux) skip the musl target pack
 set -eu
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -116,17 +118,41 @@ if [ "$bundled" = 1 ]; then
     cp "$lld" "$out/lib/velt/lld"
     cp "$repo/crates/velt_link/kit/licenses/LLVM-LICENSE.txt" "$out/lib/velt/LICENSE.txt"
     "$release/velt-kit" build --target "$host" --lld "$out/lib/velt/lld" --out "$out/lib/targets/$host"
+    after=$(du -sk "$out" | cut -f1)
+    echo "bundled linker: lld $(du -sk "$out/lib/velt" | cut -f1) KiB, kit $(du -sk "$out/lib/targets" | cut -f1) KiB; toolchain $before -> $after KiB"
+
+    # Target packs (`velt target add`, docs/tooling/platforms.md): a target's runtime and link
+    # kit, for toolchains on other hosts (this host's) and for musl (Linux).
+    packs="$dist/packs"
+    rm -rf "$packs"
+    mkdir -p "$packs"
+    cp -R "$out/lib/targets/$host" "$packs/$host"
+    cp "$release/libvelt_rt.a" "$packs/$host/"
     if [ "$musl" = 1 ]; then
         "$release/velt-kit" build --target "$musl_target" --lld "$out/lib/velt/lld" \
-            --runtime "$target_dir/$musl_target/release/libvelt_rt.a" --out "$out/lib/targets/$musl_target"
-        cp "$repo/crates/velt_link/kit/licenses/musl-COPYRIGHT.txt" "$out/lib/targets/$musl_target/COPYRIGHT"
+            --runtime "$target_dir/$musl_target/release/libvelt_rt.a" --out "$packs/$musl_target"
+        cp "$repo/crates/velt_link/kit/licenses/musl-COPYRIGHT.txt" "$packs/$musl_target/COPYRIGHT"
+        # libunwind.a, crtbegin.o and crtend.o are LLVM's.
+        cp "$repo/crates/velt_link/kit/licenses/LLVM-LICENSE.txt" "$packs/$musl_target/LLVM-LICENSE.txt"
     fi
-    after=$(du -sk "$out" | cut -f1)
-    echo "bundled linker: lld $(du -sk "$out/lib/velt" | cut -f1) KiB, kits $(du -sk "$out/lib/targets" | cut -f1) KiB; toolchain $before -> $after KiB"
+    for pack in "$packs"/*; do
+        triple=$(basename "$pack")
+        # The runtime bundles third-party crates: their notices and Velt's licenses go along.
+        cp "$repo/NOTICE" "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$pack/"
+        file="velt-$version-target-$triple.tar.gz"
+        # No macOS metadata (`._*` files) in the archive.
+        COPYFILE_DISABLE=1 tar -czf "$dist/$file" -C "$packs" "$triple"
+        echo "target pack: $dist/$file ($(du -sk "$dist/$file" | cut -f1) KiB)"
+        # The toolchain lists its packs' hashes (`velt target add` checks packs against them);
+        # the release workflow replaces the list with every target's.
+        (cd "$dist" && { command -v sha256sum >/dev/null && sha256sum "$file" || shasum -a 256 "$file"; }) \
+            >> "$out/lib/targets/PACKS.sha256"
+    done
+    rm -rf "$packs"
 fi
 
 if [ "$archive" = 1 ]; then
-    tar -czf "$dist/$name.tar.gz" -C "$dist" "$name"
+    COPYFILE_DISABLE=1 tar -czf "$dist/$name.tar.gz" -C "$dist" "$name"
     echo "archive: $dist/$name.tar.gz"
 fi
 echo "dist:    $out"

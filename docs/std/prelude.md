@@ -6,10 +6,14 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 
 Node's web globals need no import either: `fetch`, `Request`, `Response` and `Headers`
 ([fetch](fetch.md)), `URL` and `URLSearchParams` ([velt:url](url.md)), and `AbortController` and
-`AbortSignal` ([velt:task](task.md)). They are loaded when a module names one and doesn't bind
-that name itself. The builtin `process` (`process.stdout.write(s)`, `process.env`,
-`process.argv`, `process.exit(code)`, `process.memoryUsage()`; [velt:process](process.md)) needs
-no import either.
+`AbortSignal` ([velt:task](task.md)), `Set` ([velt:collections/set](collections/set.md)),
+`RegExp` ([velt:regex](regex.md); a regex literal counts as naming it), and `TextEncoder` and
+`TextDecoder` ([velt:encoding](encoding.md)). They are loaded when a module names one and
+doesn't bind that name itself. `structuredClone(x)` is a deep copy (`x.clone()`); a value that
+JS can't clone (a function, at any depth) or would copy as a plain object (an instance of a
+class of your own: write `x.clone()`) is a compile error. The builtin `process`
+(`process.stdout.write(s)`, `process.env`, `process.argv`, `process.exit(code)`,
+`process.memoryUsage()`; [velt:process](process.md)) needs no import either.
 
 Every export and public member in `std/prelude` has a doc comment, which `velt doc --std` shows
 under its signature. Where TypeScript has the same function, the text is adapted from the JSDoc
@@ -93,7 +97,7 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `xs.length = n`, `truncate(n)` | drop the elements from `n` on, as in JS (`xs.length = 0` empties the array; `xs.length -= k` works too). `n` is a `number`: one that is not a whole number from 0 to 2^32 - 1 (negative, fractional, `NaN`) panics with `RangeError: Invalid array length`, the error JS throws. Setting a larger `length` panics too: JS would add empty slots, which Velt has no value for (push the elements, or build the array with `new Array<T>(n).fill(v)`); `truncate(n)` leaves the array unchanged instead |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
-| `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
+| `join(sep = ",")`, `toString()` | as JS: strings, numbers and booleans as `String(x)`, inner arrays joined with `","` at any depth, `null` elements as empty text, class instances through their `toString()` (a `Date` too), other objects as `[object Object]`, maps as `[object Map]` and sets as `[object Set]`; `toString()` is `join(",")`, what `${xs}` writes. Elements JS writes with a method Velt cannot call there (a struct's `toString()`, an `Error`, a `RegExp`) are a compile error: write `xs.map((x) => x.toString()).join(sep)` |
 | `sort()`, `sort(cmp)` | `sort()` on `i64`, `i32`, `u64`, `usize`, `f64` and `string` elements, ascending with `NaN` last (unstable, pdqsort); other element types need a comparator; `sort(cmp)` is stable on any element type; the comparator returns a `number` (an `i64` on arrays of declared integers), and an arrow comparator may return an integer of any type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |

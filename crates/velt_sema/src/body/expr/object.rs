@@ -242,7 +242,13 @@ impl FnCx<'_, '_> {
         let target = self.hint(exp).and_then(|t| self.adt_of(t));
         if let Some((d, args)) = target {
             if let Some((k, v)) = self.hint(exp).and_then(|t| self.record_args(t)) {
+                if self.proto_key(props) {
+                    return self.error_expr(span);
+                }
                 return self.record_literal(d, k, v, props, span);
+            }
+            if self.reserved_keys(props) {
+                return self.error_expr(span);
             }
             if self.is_class_def(d) {
                 let cn = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
@@ -270,6 +276,9 @@ impl FnCx<'_, '_> {
             }
             return self.fill_struct(d, slots, &hints, props, None, span);
         }
+        if self.reserved_keys(props) {
+            return self.error_expr(span);
+        }
         if super::spread::has_spread(props) {
             return self.spread_object(props, None, None, span);
         }
@@ -289,6 +298,46 @@ impl FnCx<'_, '_> {
             fields: hs,
         };
         self.mk(kind, ty, span)
+    }
+
+    /// Reports a `__proto__: v` entry of an object literal, which in JavaScript sets the prototype
+    /// rather than a property (also in a `Record`); true if there is one.
+    fn proto_key(&mut self, props: &[ast::ObjectProp]) -> bool {
+        let mut found = false;
+        for p in props {
+            if let ast::ObjectProp::KeyValue(k, _) = p {
+                if k.name == "__proto__" {
+                    self.cx.err(crate::reserved_key_message(&k.name), k.span);
+                    found = true;
+                }
+            }
+        }
+        found
+    }
+
+    /// Reports the keys of an object literal that builds an object type (not a `Record`) whose
+    /// names Velt uses for private names and symbol keys (`"#x"`, `"[Symbol.foo]"`); true if any.
+    fn reserved_keys(&mut self, props: &[ast::ObjectProp]) -> bool {
+        let mut found = false;
+        for p in props {
+            let (ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k)) = p else {
+                continue;
+            };
+            if k.name == "__proto__" && matches!(p, ast::ObjectProp::KeyValue(..)) {
+                self.cx.err(crate::reserved_key_message(&k.name), k.span);
+                found = true;
+            } else if crate::reserved_key(&k.name) && k.name != "__proto__" {
+                self.cx.err(
+                    format!(
+                        "the property name {:?} is not supported in an object type: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys (a `Record<string, V>` may hold it)",
+                        k.name
+                    ),
+                    k.span,
+                );
+                found = true;
+            }
+        }
+        found
     }
 
     /// The anonymous object def of this shape (generic over the type params it mentions).

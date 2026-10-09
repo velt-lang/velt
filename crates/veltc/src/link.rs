@@ -171,6 +171,12 @@ mod tests {
     }
 
     #[test]
+    fn link_and_codegen_agree_on_the_host() {
+        // The runtime lookup tells the host target from others with velt_link's copy.
+        assert_eq!(velt_link::host_triple(), velt_codegen_cl::host_triple());
+    }
+
+    #[test]
     fn stamp_tracks_the_executable() {
         let tmp = tempfile::tempdir().unwrap();
         let exe = tmp.path().join("app");

@@ -167,9 +167,19 @@ usable and no copy method is needed.
   the only reference to its text, growing it geometrically, so building a string in a loop costs
   time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
   copies of `s` never change.
-- **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
-  with a template literal (`` `Total: ${n}` ``), which writes any value as `String(x)` does
-  ([Lexical structure](lexical.md)).
+- `+` with a string on one side and a number or boolean (or one of those or `null`) on the
+  other concatenates, as in JS: `"Total: " + 5` is `"Total: 5"`, `"a" + true` is `"atrue"` and
+  `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
+  `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
+  error; build that text with a template literal (`` `Total: ${xs}` ``).
+- A template literal writes `${x}` as JS's `String(x)` does ([Lexical structure](lexical.md)):
+  an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays the same way, `null`
+  elements as empty text, a class instance through its `toString()`, another object as
+  `[object Object]`, a map as `[object Map]`, a set as `[object Set]`), and a class instance
+  through its `toString()`, else as `[object Object]`. An array whose elements JS writes with a
+  method Velt cannot call there (a struct's `toString()`, an `Error`, a `RegExp`) is a compile
+  error in a template literal, in `join` and in `toString()`: write
+  `` `${xs.map((x) => x.toString()).join(",")}` ``.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
@@ -642,6 +652,18 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **Quoted property names** work as in TypeScript, for names that are not identifiers:
+  `type Headers = { "content-type": string }`, `{ "a-b": 1 }`, `interface A { "data-id": string }`
+  and `const { "a-b": n } = o`. `o["a-b"]` (or `` o[`a-b`] ``) reads the field; with any string
+  literal, `o["name"]` is the same as `o.name`. `console.log` quotes the names that are not
+  identifiers, as Node does (`{ 'a-b': 1 }`), and `JSON.stringify` writes them as given. Names
+  beginning with `#` or `[Symbol.`, `"__proto__"` (it sets the prototype in JavaScript) and
+  quoted method names are not supported. Parameter destructuring isn't supported yet, so quoted
+  names in it aren't either.
+- **Key order** of an object type is JavaScript's: field names that are array indices (`"0"`,
+  `"404"`: canonical, up to 2^32 - 2) come first, ascending, then the others in declaration
+  order. `console.log`, `JSON.stringify` and `Object.keys` all follow it. A `Record` and a
+  `JsonValue` keep insertion order for every key (#756).
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
   the instance of a generic interface with only fields.
@@ -753,7 +775,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
-  reverse isEmpty entries fill`, `join` (any elements, shown as `${x}` shows them), `sort()` on
+  reverse isEmpty entries fill`, `join` and `toString()` (any elements, written as
+  `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
   (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
@@ -796,7 +819,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
-  and `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
+  and `Object.entries(r)` return arrays in insertion order, also for array-index keys, which
+  JavaScript lists first (#756) (`for (const [k, v] of
   Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
   as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",

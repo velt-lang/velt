@@ -163,8 +163,26 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   both exist, else the system linker (`link.exe` / `cc`); `$VELT_LINKER=bundled` makes a missing
   bundled linker an error, `$VELT_LINKER=system` uses the system linker, any other value is a
   linker program run with the system linker's arguments. Cross-OS targets link only with the
-  bundled linker. `--target <arch>-unknown-linux-musl` links statically against the runtime in
-  `lib/targets/<triple>/`. Linux static links with the system linker use
+  bundled linker. A target other than the host's (#856) links statically against the runtime of
+  its target pack, `lib/targets/<triple>/` (never the host's runtimes, whose file names it
+  shares); without the pack the build fails naming `velt target add <triple>`. `velt run
+  --target` accepts WebAssembly and targets of the host's OS only.
+- `velt target list|add|remove` (additive, #856): `list` prints `<triple>  (this machine)`, then
+  each installed pack (`(installed)` / `(broken: …)`; `.`-prefixed directories are an `add` in
+  progress and not listed), then the other release targets (`(not installed: velt target add
+  <triple>)`). `add <triple>...` (release targets only; the host's prints that it is built in)
+  downloads `velt-<version>-target-<triple>.tar.gz` from
+  `$VELT_INSTALL_BASE_URL/releases/download/v<version>/` (https, redirects followed) and checks
+  it against `<prefix>/lib/targets/PACKS.sha256` (written by the release workflow), or, when the
+  toolchain lists no hash for it, against the release's `SHA256SUMS` (fetched first; a note says
+  that this shows integrity only). It unpacks only regular files under `<triple>/` and installs the
+  pack into `<prefix>/lib/targets/<triple>/` once its kit and runtime are complete and its stamp
+  names this velt (`velt_link::kit::toolchain_id`), swapping a previous pack out whole. `--from
+  <file>` (one triple) installs a local pack checked the same way, or against a `SHA256SUMS`
+  beside it; `--unverified` (with `--from` only) installs one that cannot be checked. `remove`
+  takes a release target's name only and deletes its pack; the host's target cannot be removed.
+  Exit 1 with a message on any failure. A kit whose stamp names another velt is not used: the
+  build falls back (host) or fails naming `velt target add` (other targets). Linux static links with the system linker use
   `-fuse-ld=mold`/`lld` when `mold`/`ld.lld` is on `PATH` (falling back to the default linker if
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped

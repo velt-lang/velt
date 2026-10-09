@@ -62,6 +62,22 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
+                // `c["v"] = x` with a constant key is `c.v = x`: a setter or a getter-only
+                // accessor is handled the same way.
+                if let Some(name) = super::member::literal_key(index) {
+                    let prop = ast::Ident {
+                        name,
+                        span: index.span,
+                    };
+                    // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
+                    self.note_field_write(obj.ty, &prop);
+                    if self.has_setter(obj.ty, &prop.name) {
+                        return Some(AssignTarget::Setter(obj));
+                    }
+                    if self.reject_getter_assign(obj.ty, &prop) {
+                        return None;
+                    }
+                }
                 let place = self.index_of(obj, index, Want::BorrowMut, target.span);
                 if self.cx.ty.is_bottom(place.ty) {
                     return None;
@@ -173,7 +189,7 @@ impl FnCx<'_, '_> {
             });
     }
 
-    fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
+    pub(super) fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
         let H::Field { base, index, .. } = &place.kind else {
             return;
         };
@@ -410,7 +426,10 @@ impl FnCx<'_, '_> {
             let mut place = place;
             let mut stmts = Vec::new();
             self.hoist_indices(&mut place, &mut stmts);
-            let v = self.expr_coerce(value, lty, Want::Borrow);
+            // `s += n`: the number is appended as `String(n)` writes it (#740).
+            let v = self.expr(value, Some(lty), Want::Borrow);
+            let v = self.concat_operand(v);
+            let v = self.coerce(v, lty);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=

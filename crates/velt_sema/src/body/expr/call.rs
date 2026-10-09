@@ -174,6 +174,11 @@ impl FnCx<'_, '_> {
         self.task_callback = None;
         self.thread_task = None;
         self.thread_callback = None;
+        if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
+            if let Some(a) = ck.args.first() {
+                self.check_structured_clone(a.ty, a.span);
+            }
+        }
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {

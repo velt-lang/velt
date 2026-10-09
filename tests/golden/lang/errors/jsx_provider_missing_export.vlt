@@ -5,5 +5,5 @@
 
 function main() {
   const a = <p>one</p>;
-  const b = <p>two {1 + "x"}</p>;
+  const b = <p>two {1 + true}</p>;
 }

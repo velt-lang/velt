@@ -1,0 +1,36 @@
+// A template literal writes an array as JS's `String(x)` does: the elements joined with ",",
+// nested arrays the same way at any depth, `null` elements as empty text (#757). `join` on
+// nested arrays agrees. The expected output is Node's.
+function show<T>(label: string, x: T) {
+  console.log(`${label}: ${x}`);
+}
+
+function main() {
+  const z = -0;
+  const xs = [1, 2];
+  const ss = ["a", "b"];
+  console.log(`${z}|${xs}|${ss}`);
+  const empty: number[] = [];
+  console.log(`[${empty}]`);
+  const nested: number[][] = [[1, 2], [], [3]];
+  const deep: string[][][] = [[["x", "y"]], [[]], [["z"]]];
+  const opts: (number | null)[] = [1, null, 3];
+  const nestedOpts: (number[] | null)[] = [[1], null, [2, 3]];
+  const mixed: (number | string)[] = [1, "two", 3];
+  const fl = [0.5, -0, 1e21, 0 / 0, 1 / 0];
+  console.log(`${nested}|${deep}|${opts}|${nestedOpts}|${mixed}|${fl}`);
+  const pair: [number, string] = [1, "a"];
+  console.log(`${pair}`);
+  show("generic", nested);
+  show("generic deep", deep);
+  const bs = [true, false];
+  let s = "bs=";
+  s += `${bs}`;
+  console.log(s, `${[["a"], ["b", "c"]]}`);
+  const innerNull: (number | null)[][] = [[1, null], [2]];
+  console.log(nested.join(";"), deep.join(";"), innerNull.join(";"));
+  const some: number[] | null = [4, 5];
+  const none: number[] | null = null;
+  console.log(`${some} ${none}`);
+  console.log(nested, `${nested}`);
+}

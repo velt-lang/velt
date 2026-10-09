@@ -53,7 +53,7 @@ garbage collector and no runtime to install.
   awaited call costs nothing, `spawn` runs work on other cores, and data races are compile
   errors.
 - **It drops JavaScript's bug sources**: no `undefined` (only `null`), no implicit
-  `"5" + 1`, no truthy `0` and `""`, no loose equality, no mutable globals, and a forgotten
+  `"5" + 1`, no loose equality, no mutable globals, and a forgotten
   `await` is a compile error. Every such error tells you what to write instead
   ([Velt for TypeScript developers](docs/book/ts-developers.md)).
 - **A fast edit loop.** `velt dev` hot-swaps changed functions into the running program, keeping

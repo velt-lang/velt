@@ -53,6 +53,7 @@ mod moves;
 mod object_copies;
 mod ownership;
 mod promise_copies;
+pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
@@ -381,4 +382,20 @@ fn check_main(
         ok = false;
     }
     ok.then_some(id)
+}
+
+/// Is `name` a property name a quoted key may not use: Velt's encodings of ES private names
+/// (`#x`) and well-known symbol keys (`[Symbol.iterator]`), or `__proto__`?
+pub(crate) fn reserved_key(name: &str) -> bool {
+    name.starts_with('#') || name.starts_with("[Symbol.") || name == "__proto__"
+}
+
+/// Why property name `name` (a [`reserved_key`]) is not supported.
+pub(crate) fn reserved_key_message(name: &str) -> String {
+    if name == "__proto__" {
+        return "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property".to_string();
+    }
+    format!(
+        "the property name {name:?} is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys"
+    )
 }

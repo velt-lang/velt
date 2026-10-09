@@ -24,7 +24,20 @@ use std::path::{Path, PathBuf};
 pub mod build;
 
 /// Version of the kit layout; a kit with another `kit.stamp` is not used.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
+
+/// The velt a kit belongs to: its version, and for a build from a git checkout its commit
+/// (`0.1.0+1a2b3c4d`). A kit or target pack holds a runtime built by that velt; another velt's
+/// runtime may not match what its compiler emits, so [`Kit::open`] refuses it.
+pub fn toolchain_id() -> &'static str {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const HASH: &str = env!("VELT_GIT_HASH");
+    if HASH.is_empty() {
+        VERSION
+    } else {
+        concat!(env!("CARGO_PKG_VERSION"), "+", env!("VELT_GIT_HASH"))
+    }
+}
 
 /// The file that marks a complete kit.
 pub const STAMP: &str = "kit.stamp";
@@ -178,21 +191,36 @@ pub struct Kit {
 
 impl Kit {
     /// The kit in `dir` for `target`, if it is complete (`kit.stamp` of this [`FORMAT`] and
-    /// every file the link uses); otherwise what is wrong with it.
+    /// [`toolchain_id`], and every file the link uses); otherwise what is wrong with it.
     pub fn open(dir: &Path, target: &str) -> Result<Kit, String> {
+        Kit::open_for(dir, target, toolchain_id())
+    }
+
+    /// [`Kit::open`] for the velt `toolchain` (tests).
+    pub(crate) fn open_for(dir: &Path, target: &str, toolchain: &str) -> Result<Kit, String> {
         let kind = KitKind::for_target(target)
             .ok_or_else(|| format!("no link kit exists for target `{target}`"))?;
         let arch = Arch::from_triple(target).expect("kit kinds have an arch");
         let stamp = dir.join(STAMP);
-        match std::fs::read_to_string(&stamp) {
-            Ok(text) if stamp_format(&text) == Some(FORMAT) => {}
-            Ok(_) => {
-                return Err(format!(
-                "the link kit in {} has another format than this velt (reinstall the toolchain)",
+        let text = std::fs::read_to_string(&stamp)
+            .map_err(|_| format!("no link kit in {}", dir.display()))?;
+        let fields: Vec<&str> = text.split_whitespace().collect();
+        let fix = format!("run `velt target add {target}` again, or reinstall the toolchain");
+        if fields.get(1) != Some(&FORMAT.to_string().as_str()) {
+            return Err(format!(
+                "the link kit in {} has another format than this velt; {fix}",
                 dir.display()
-            ))
+            ));
+        }
+        match fields.get(3) {
+            Some(made_by) if *made_by == toolchain => {}
+            made_by => {
+                return Err(format!(
+                    "the link kit in {} belongs to velt {}, not to this velt ({toolchain}); {fix}",
+                    dir.display(),
+                    made_by.unwrap_or(&"(unknown)")
+                ))
             }
-            Err(_) => return Err(format!("no link kit in {}", dir.display())),
         }
         let kit = Kit {
             dir: dir.to_path_buf(),
@@ -232,14 +260,29 @@ impl Kit {
     }
 }
 
-/// `velt-kit <format> <target>` → the format.
-fn stamp_format(text: &str) -> Option<u32> {
-    text.split_whitespace().nth(1)?.parse().ok()
-}
-
 /// The contents of `kit.stamp` for `target`.
 pub fn stamp_text(target: &str) -> String {
-    format!("velt-kit {FORMAT} {target}\n")
+    format!("velt-kit {FORMAT} {target} {}\n", toolchain_id())
+}
+
+/// The targets releases publish a target pack for (`velt target add`): the toolchains' hosts,
+/// and static musl Linux.
+pub const RELEASE_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
+
+/// Where this toolchain installs target packs: `<prefix>/lib/targets` beside
+/// `<prefix>/bin/velt` (`target/lib/targets` for a checkout's `target/<profile>/velt`), which
+/// [`kit_dirs`] searches.
+pub fn targets_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.parent()?.join("lib").join("targets"))
 }
 
 /// Where kits are looked for, given the directories the runtime is searched in
