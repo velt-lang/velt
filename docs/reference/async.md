@@ -135,7 +135,10 @@ Promises behave like JavaScript's, at Rust's cost:
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
 
-All promises in one call must have the same type. Like in JS, every promise passed to a
+All promises in one call must have the same value type (**Planned**: different ones, #754).
+Their error types may differ: an array of promises rejecting with `A` and with `B` (or never
+rejecting) is an array of promises rejecting with `A | B`, and the combinator rejects with
+that. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
 dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
 `Promise.race` is fine once the work won (`Promise.allSettled` awaits every promise itself).
