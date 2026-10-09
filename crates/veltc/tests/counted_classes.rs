@@ -75,3 +75,38 @@ fn a_stored_closure_still_shares_this() {
     );
     assert!(c.iter().any(|t| t == "class A"), "{c:?}");
 }
+
+/// A by-reference `const` of a field of an object in a variable a closure shares (a shared
+/// cell) holds a share of the value: a call of the closure may replace the field and would free
+/// what the binding points to (#819). So the field's class is counted.
+#[test]
+fn fields_borrowed_from_a_shared_cell_are_counted() {
+    let c = counted(
+        "class A { v = 1 }
+         class O { a = new A() }
+         function main() {
+           const o = new O();
+           const g = (): number => { o.a = new A(); return 0; };
+           const keep = o.a;
+           o.a.v += g();
+           console.log(keep.v);
+         }",
+    );
+    assert!(c.iter().any(|t| t == "class A"), "{c:?}");
+}
+
+/// The same borrows of a variable no closure shares stay plain references: nothing counts.
+#[test]
+fn fields_borrowed_from_a_plain_variable_stay_uncounted() {
+    let c = counted(
+        "class A { v = 1 }
+         class O { a = new A(); xs: A[] = [new A()] }
+         function main() {
+           const o = new O();
+           const keep = o.a;
+           for (const x of o.xs) { console.log(x.v); }
+           console.log(keep.v);
+         }",
+    );
+    assert!(!c.iter().any(|t| t.starts_with("class")), "{c:?}");
+}
