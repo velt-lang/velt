@@ -60,6 +60,7 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
         // exit: tasks may still be running then, and drop glue runs user code.
         let left = crate::task::channel::drop_abandoned_items();
         crate::str::stats::channel_leftovers(left);
+        crate::str::stats::freeze(|| crate::task::runtime::alive_tasks() > 0);
     }
     crate::io::flush_stdout();
     crate::str::stats::report();

@@ -6,7 +6,7 @@
 //! the replacement from the AST and sema's types:
 //! - [`fixits`]: `mut` removal, `undefined` → `null`, a non-`bool` condition → an explicit comparison,
 //!   `async` for a method whose promise must carry its errors;
-//! - [`concat`]: `"a" + n` → a template literal;
+//! - [`concat`]: `"a" + xs` → a template literal;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
 //!   `await` it or `spawn` it;
@@ -112,15 +112,6 @@ fn merged(fixes: &[&Fix]) -> Vec<(Span, String)> {
     }
     out.sort_by_key(|(s, _)| (s.lo, s.hi));
     out
-}
-
-/// The first non-whitespace byte of `text` before `offset`.
-fn char_before(text: &str, offset: u32) -> Option<u8> {
-    text.as_bytes()[..(offset as usize).min(text.len())]
-        .iter()
-        .rev()
-        .copied()
-        .find(|b| !b.is_ascii_whitespace())
 }
 
 #[cfg(test)]

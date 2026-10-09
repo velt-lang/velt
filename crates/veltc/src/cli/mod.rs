@@ -15,6 +15,7 @@ pub mod help;
 mod package;
 pub mod registry;
 pub mod suggest;
+pub mod target;
 mod tools;
 
 use std::ffi::OsString;
@@ -211,6 +212,8 @@ pub enum Command {
         /// Registry directory (`None`: the local registry).
         dir: Option<PathBuf>,
     },
+    /// `velt target list|add|remove`: target packs for cross-compiling.
+    Target(target::TargetAction),
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -271,6 +274,7 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "yank" => registry::parse_yank(rest),
         "owner" => registry::parse_owner(rest),
         "search" => registry::parse_search(rest),
+        "target" => target::parse_target(rest),
         "login" | "logout" => registry::parse_login(sub, rest),
         _ => Err(unknown_command(sub)),
     }

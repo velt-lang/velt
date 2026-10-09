@@ -1,20 +1,5 @@
-truthiness_errors.vlt:13:7: error: mismatched types
-expected boolean, found i64
-numbers are not conditions: compare explicitly, e.g. `count !== 0`
-truthiness_errors.vlt:16:10: error: mismatched types
-expected boolean, found string
-strings are not conditions: compare explicitly, e.g. `name !== ""`
-truthiness_errors.vlt:17:13: error: mismatched types
-expected boolean, found i64 | null
-only `boolean` and nullable objects are conditions (`0` and `""` are not falsy in Velt): compare with `!== null`
-truthiness_errors.vlt:18:13: error: cannot apply unary operator `!` to type `string`
-strings are not conditions: compare explicitly, e.g. `name !== ""`
-truthiness_errors.vlt:19:16: error: `||` needs a `boolean` or nullable left side, found `f64`
-use `??` for a default (`x ?? d` replaces only `null`)
-numbers are not conditions: compare explicitly, e.g. `count !== 0`
-truthiness_errors.vlt:20:27: error: mismatched types
-expected boolean, found string
-strings are not conditions: compare explicitly, e.g. `name !== ""`
-truthiness_errors.vlt:21:7: error: mismatched types
-expected boolean, found Color
-only `boolean` and nullable values are conditions: compare explicitly
+truthiness_errors.vlt:6:11: error: an expression of type `T` cannot be tested for truthiness
+the test would depend on the type argument: compare explicitly
+truthiness_errors.vlt:10:7: error: an expression of type `void` cannot be tested for truthiness
+a `void` value is never a condition
+truthiness_errors.vlt:13:13: error: an expression of type `void` cannot be tested for truthiness

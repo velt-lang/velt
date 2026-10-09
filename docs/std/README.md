@@ -5,12 +5,13 @@ The standard library is written in Velt and ships with the toolchain. Import a m
 
 ```ts ignore
 import { readFile, writeFile } from "velt:fs";
-import { Set } from "velt:collections/set";
+import { Deque } from "velt:collections/deque";
 ```
 
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
 scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
-`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL` and `URLSearchParams`.
+`Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
+`Set`, `RegExp`, `TextEncoder`, `TextDecoder` and `structuredClone`.
 `velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions

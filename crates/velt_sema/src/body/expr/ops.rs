@@ -238,6 +238,9 @@ impl FnCx<'_, '_> {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
                     return self.typeof_test(x, tag, op == B::NotEq, span);
                 }
+                if let Some(h) = self.method_value_identity(lhs, rhs, span) {
+                    return h;
+                }
             }
             _ => {}
         }
@@ -259,6 +262,7 @@ impl FnCx<'_, '_> {
         let (l, r) = (self.unbrand(l), self.unbrand(r));
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
             let (l, r) = self.nullable_operands(l, r);
+            let (l, r) = self.union_operands(l, r);
             self.identity_operands(l, r)
         } else {
             (l, r)
@@ -269,7 +273,14 @@ impl FnCx<'_, '_> {
         } else {
             (l, r)
         };
-        self.literal_operands(op, &l, &r);
+        // `"k" + n`: the number is written as `String(n)` writes it.
+        let s = self.cx.ty.str_;
+        let (l, r) = if op == B::Add && (l.ty == s) != (r.ty == s) {
+            self.concat_operands(l, r)
+        } else {
+            self.literal_operands(op, &l, &r);
+            (l, r)
+        };
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
@@ -336,6 +347,58 @@ impl FnCx<'_, '_> {
             let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
             (l, r)
         }
+    }
+
+    /// `o.m === f` where `o.m` reads a method as a value: an error. Each read is a new function
+    /// value (JS returns the one function of the prototype, so `o.m === o.m` is `true` there).
+    fn method_value_identity(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let read = match self.method_value_read_text(lhs) {
+            Some(r) => r,
+            None => self.method_value_read_text(rhs)?,
+        };
+        let d = Diagnostic::error(
+            format!("method value `{read}` compared by identity: each read of a method is a new function"),
+            span,
+        )
+        .with_note(format!(
+            "store it in a `const` first and compare that: `const f = {read};`"
+        ));
+        self.cx.error(d);
+        Some(self.error_expr(span))
+    }
+
+    /// `a === b` between a union and one of its members, in either order (`string | number`
+    /// and `number`, #741): the member side converts to the union, so the two compare like two
+    /// union values: equal only when they hold the same member with equal values, as `===` in
+    /// JS (no coercion: the string `"3"` never equals the number `3`).
+    fn union_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let union = |s: &Self, t: TyId| s.cx.union_def(t).is_some();
+        if l.ty == r.ty || self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
+            return (l, r);
+        }
+        if union(self, l.ty) {
+            let to = l.ty;
+            match self.try_coerce(r, to) {
+                Ok(r) => return (l, r),
+                Err(r) if !union(self, r.ty) => return (l, r),
+                Err(r) => {
+                    let to = r.ty;
+                    let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+                    return (l, r);
+                }
+            }
+        }
+        if union(self, r.ty) {
+            let to = r.ty;
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            return (l, r);
+        }
+        (l, r)
     }
 
     /// `a === b` between an interface value and a class or struct value (or a base and a

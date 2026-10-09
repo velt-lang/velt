@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
     /// `match (h) { V(m) => f(m), ... }` over the variants union value `h` can hold (narrowing
     /// included); `Err(h)` when `f` rejects a member. Literal members are matched without a
     /// binding and passed as their constant.
-    fn map_members(
+    pub(super) fn map_members(
         &mut self,
         h: hir::Expr,
         exp: TyId,

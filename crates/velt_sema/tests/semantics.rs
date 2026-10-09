@@ -215,15 +215,18 @@ fn no_implicit_conversions() {
         const_("b", float(1.0)),
         es(log(vec![bin(B::Add, var("a"), var("b"))])),
     ]));
-    let d = errs(main_fn(vec![es(log(vec![bin(B::Add, str_("a"), int(1))]))]));
-    assert!(has_err(&d, "mismatched types"));
+    // A string and a number concatenate, as in JS (#740).
+    ok(main_fn(vec![es(log(vec![bin(B::Add, str_("a"), int(1))]))]));
     let d = errs(main_fn(vec![
         const_t("u", "u8", int(1)),
         es(log(vec![neg(var("u"))])),
     ]));
     assert!(has_err(&d, "cannot apply unary operator `-` to type `u8`"));
-    let d = errs(main_fn(vec![if_(int(1), vec![], None)]));
-    assert!(has_err(&d, "mismatched types") && d[0].notes[0] == "expected boolean, found f64");
+    let d = errs(main_fn(vec![es(log(vec![neg(str_("1"))]))]));
+    assert!(has_err(
+        &d,
+        "cannot apply unary operator `-` to type `string`"
+    ));
     let d = errs(main_fn(vec![es(log(vec![cast(str_("1"), "i64")]))]));
     assert!(has_err(&d, "cannot cast `string` as `i64`"));
 }

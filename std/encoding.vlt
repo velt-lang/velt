@@ -304,3 +304,85 @@ function validToString(bytes: u8[]): string {
   }
   return r.value;
 }
+
+// ──────────────────────── TextEncoder, TextDecoder ────────────────────────
+
+// Whether `label` names UTF-8 in the WHATWG Encoding standard (ASCII case-insensitive, with
+// surrounding whitespace ignored).
+function isUtf8Label(label: string): bool {
+  const l = label.trim().toLowerCase();
+  return (
+    l == "utf-8" ||
+    l == "utf8" ||
+    l == "unicode-1-1-utf-8" ||
+    l == "unicode11utf8" ||
+    l == "unicode20utf8" ||
+    l == "x-unicode20utf8"
+  );
+}
+
+/** `TextDecoder`'s options. */
+export struct TextDecoderOptions {
+  /** Throw `EncodingError` on invalid UTF-8 instead of writing U+FFFD (default false). */
+  fatal?: bool;
+  /** Keep a leading byte order mark instead of dropping it (default false). */
+  ignoreBOM?: bool;
+}
+
+/**
+ * The WHATWG `TextEncoder` (a global, as in Node): strings to UTF-8 bytes. The bytes are a
+ * `u8[]`, where JS has a `Uint8Array`.
+ */
+export class TextEncoder {
+  /** Always `"utf-8"`. */
+  readonly encoding: string = "utf-8";
+
+  /** The UTF-8 bytes of `input` (a lone surrogate is written as U+FFFD, as in JS). */
+  encode(input: string = ""): u8[] {
+    return velt_rt_bytes_from_str(input);
+  }
+}
+
+/**
+ * The WHATWG `TextDecoder` (a global, as in Node) for UTF-8, the only encoding it takes: a
+ * leading byte order mark is dropped (unless `ignoreBOM`), and invalid input becomes U+FFFD
+ * (or throws `EncodingError` with `fatal`). One `decode` call decodes one whole input.
+ */
+export class TextDecoder {
+  /** Always `"utf-8"`. */
+  readonly encoding: string = "utf-8";
+  /** Whether invalid input throws. */
+  readonly fatal: bool;
+  /** Whether a leading byte order mark is kept. */
+  readonly ignoreBOM: bool;
+
+  /** Throws `EncodingError` for a `label` that does not name UTF-8, as Node's RangeError. */
+  constructor(label: string = "utf-8", options: TextDecoderOptions = {}) {
+    if (!isUtf8Label(label)) {
+      throw new EncodingError(`The "${label}" encoding is not supported`);
+    }
+    this.fatal = options.fatal ?? false;
+    this.ignoreBOM = options.ignoreBOM ?? false;
+  }
+
+  /** The text `input` encodes. */
+  decode(input: u8[] = []): string {
+    let data = input;
+    if (
+      !this.ignoreBOM &&
+      input.length >= 3 &&
+      input[0] == 0xef &&
+      input[1] == 0xbb &&
+      input[2] == 0xbf
+    ) {
+      data = input.slice(3);
+    }
+    if (!this.fatal) {
+      return utf8DecodeLossy(data);
+    }
+    if (firstInvalid(data) >= 0) {
+      throw new EncodingError("The encoded data was not valid for encoding utf-8");
+    }
+    return validToString(data);
+  }
+}

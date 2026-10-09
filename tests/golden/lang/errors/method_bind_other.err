@@ -1,0 +1,6 @@
+method_bind_other.vlt:10:13
+error: `.bind` of method `one` to another object
+call it on the other object instead: `(x) => h.one(x)`
+method_bind_other.vlt:11:13
+error: `.bind` of a method takes exactly the object it is read from
+for other arguments, use an arrow function: `(x) => g.one(x)`

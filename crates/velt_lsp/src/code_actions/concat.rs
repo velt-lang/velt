@@ -1,9 +1,10 @@
-//! `"total: " + n + "ms"` → `` `total: ${n}ms` ``: the fix for sema's "mismatched types" error on a
-//! `+` between a string and another value (its note suggests a template literal).
+//! `"total: " + xs + "ms"` → `` `total: ${xs}ms` ``: the fix for sema's "mismatched types" error
+//! on a `+` between a string and a value it does not convert, such as an array (its note
+//! suggests a template literal; numbers and booleans concatenate as in JS).
 //!
 //! The whole `+` chain around the reported operand is rewritten. Operands before the first string
-//! keep their numeric meaning: `1 + n + "a"` becomes `` `${1 + n}a` ``, as the `+` would have
-//! computed the sum first.
+//! keep their numeric meaning: `1 + n + "a" + xs` becomes `` `${1 + n}a${xs}` ``, as the `+`
+//! would have computed the sum first.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, BinaryOp, ExprKind as E};

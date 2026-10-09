@@ -60,6 +60,7 @@ pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
+pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
 mod untyped_let;
 mod using;

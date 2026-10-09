@@ -33,6 +33,12 @@ pub fn build_command(args: &BuildArgs) -> ExitCode {
 
 /// `velt run`: build, then run with inherited stdio and exit with the program's exit code.
 pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCode {
+    if let Some(target) = args.target.as_deref() {
+        if let Err(msg) = runnable_here(target) {
+            crate::style::error(&msg);
+            return ExitCode::from(1);
+        }
+    }
     let (exe, script) = match build_with_input(args) {
         Ok((Artifact::Executable(p), input)) => {
             (vpm::relpath::absolute(&p), vpm::relpath::absolute(&input))
@@ -63,6 +69,26 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
             crate::style::error(&format!("cannot run `{}`: {e}", exe.display()));
             ExitCode::from(1)
         }
+    }
+}
+
+/// Whether `velt run --target <target>` can run the program here: WebAssembly through its
+/// runner, and native targets of the host's OS (another architecture may still run, e.g. under
+/// Rosetta 2 or QEMU's binfmt handler; the OS decides). A program for another OS is built with
+/// `velt build --target` and run there.
+fn runnable_here(target: &str) -> Result<(), String> {
+    if super::wasm::is_wasm(target) {
+        return Ok(());
+    }
+    let host = velt_link::TargetOs::host();
+    match velt_link::TargetOs::from_triple(target) {
+        Some(os) if os == host => Ok(()),
+        Some(_) => Err(format!(
+            "`velt run` cannot run a `{target}` program on this machine ({}); build it with \
+             `velt build --target {target}` and run it on that system",
+            velt_link::host_triple()
+        )),
+        None => Err(format!("unsupported target `{target}`")),
     }
 }
 
@@ -237,6 +263,24 @@ pub fn exit_code(st: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_accepts_targets_of_this_os_only() {
+        let host = velt_link::host_triple();
+        assert!(runnable_here(&host).is_ok());
+        assert!(runnable_here("wasm32-wasip1").is_ok());
+        let other = if cfg!(windows) {
+            "x86_64-unknown-linux-gnu"
+        } else {
+            "x86_64-pc-windows-msvc"
+        };
+        let err = runnable_here(other).unwrap_err();
+        assert!(
+            err.contains(&format!("velt build --target {other}")),
+            "{err}"
+        );
+        assert!(runnable_here("sparc-sun-solaris").is_err());
+    }
 
     #[test]
     fn package_output_paths() {

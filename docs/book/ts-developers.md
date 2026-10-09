@@ -75,9 +75,10 @@ accept; compiler messages and editors print `boolean` either way
 
 ## Strings
 
-- **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a
-  template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
-  `"Total: " + a + b` bugs can't happen.
+- `+` with a string and a number or boolean concatenates, as in JS: `"Total: " + 5` is
+  `"Total: 5"`, and `s += n` appends `n` written as `String(n)` writes it (`1e+21`, `NaN`, `0`
+  for `-0`). Other values (arrays, objects) are a compile error next to a string: use a
+  template literal, `` `Total: ${xs.length}` ``.
 - Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
   by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
   `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
@@ -109,22 +110,25 @@ console.log(connect(new Config()));  // localhost:80 (30 s)
 
 ## Truthiness
 
-Conditions, `!`, `&&` and `||` take `bool` and nullable values. A nullable is true when it is
-not null, so `if (!user) return;` is a null check and narrows `user`. Numbers and strings are
-rejected:
+The same as in JavaScript: conditions, `!`, `&&` and `||` take values of any type, and `0`,
+`-0`, `NaN`, `""` and `null` are falsy (also `0` of `i64`, `u8` and the other integer types).
+`||` and `&&` return an operand, typed as TypeScript types them, and `if (!user) return;` is a
+null check that narrows `user`.
 
-```ts error
+```ts
 function main() {
   const count = 0;
-  const port: i64 | null = null;
-  if (count) {                       // error: write `count !== 0`
-    console.log(port || 8080);       // error: use `??` for a default
+  const name = "";
+  const port: number | null = null;
+  console.log(count || 10, name || "anon", port || 8080, port ?? 8080);   // 10 anon 8080 8080
+  if (!count && !name) {
+    console.log("both falsy");
   }
 }
 ```
 
-*Why*: `0`, `""` and `NaN` being false is the source of the `port || 8080` and
-`if (items.length)` class of bugs. Each error names the comparison to write.
+A condition on a number is one comparison in the compiled code, a condition on a string a
+length check.
 
 ## Equality
 
@@ -292,9 +296,9 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | TypeScript / JavaScript | Velt today | Coming |
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
-| `"5" + 1 === "51"` | compile error: use a template literal | — |
+| `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
 | `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
-| `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |
+| `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""` and `null` are falsy; `\|\|` and `&&` return an operand) | — |
 | `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |

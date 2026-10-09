@@ -112,11 +112,6 @@ impl FnCx<'_, '_> {
                 };
                 (binary(op, old_ref(), one, span), None)
             }
-            Rmw::Logical(op @ (ast::BinaryOp::Or | ast::BinaryOp::And), _)
-                if self.reject_logical_assign(op, old_ty, span) =>
-            {
-                return self.error_expr(span);
-            }
             Rmw::Logical(op, v) if as_value => {
                 let cond = self.decides(op, old_ref(), span);
                 let lv = LogicalValue {

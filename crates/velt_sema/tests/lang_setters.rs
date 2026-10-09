@@ -92,12 +92,9 @@ fn setter_errors() {
         "class S { t: string = \"\"; get s(): string { return this.t; } set s(v: string) { this.t = v; } } function main() { const x = new S(); x.s++; }",
     );
     assert!(r.contains("cannot apply `++` to type `string`"), "{r}");
-    let r = err_src(
+    // `||=` assigns when the old value is falsy (`null` or `""`), as in JavaScript.
+    ok_src(
         "class S { t: string | null = null; get s(): string | null { return this.t; } set s(v: string | null) { this.t = v; } } function main() { const x = new S(); x.s ||= \"d\"; }",
-    );
-    assert!(
-        r.contains("`||=` needs a `boolean` or nullable left side, found `string | null`"),
-        "{r}"
     );
     // As a value, `x.n ??= 1` is non-null (TypeScript's type).
     ok_src(

@@ -10,7 +10,7 @@ class: [object Object]
 class: Animal { name: 'cat' }
 subclass via base: [object Object]
 subclass via base: Dog { name: 'rex', tricks: 2 }
-class array: [ Animal { name: 'a' }, Animal { name: 'b' } ]
+class array: [object Object],[object Object]
 class array: [ Animal { name: 'a' }, Animal { name: 'b' } ]
 union member: [object Object]
 union member: { kind: 'rect', w: 1, h: 2.5 }
@@ -18,17 +18,17 @@ union string: [object Object]
 union string: { kind: 'label', text: 'hi' }
 union unit: [object Object]
 union unit: { kind: 'empty' }
-union array: [ { kind: 'circle', r: 1 }, { kind: 'empty' } ]
+union array: [object Object],[object Object]
 union array: [ { kind: 'circle', r: 1 }, { kind: 'empty' } ]
 c-like enum: 6
 c-like enum: 6
 string enum: SLOW
 string enum: SLOW
-string enum array: [ 'FAST', 'SLOW' ]
+string enum array: FAST,SLOW
 string enum array: [ 'FAST', 'SLOW' ]
 literal union: down
 literal union: down
-literal array: [ 'up', 'down' ]
+literal array: up,down
 literal array: [ 'up', 'down' ]
 value ok: 1
 value ok: 1

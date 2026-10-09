@@ -1,24 +1,15 @@
-// Numbers, strings and enums (also nullable ones) are not conditions: JS's falsy `0` / `""`
-// would hide bugs. Each error says which comparison to write instead.
-enum Color {
-  Red,
-  Green,
+// Values of any type are conditions, as in JavaScript, except `void` (TypeScript rejects it
+// too) and values of a generic type, whose test would depend on the type argument.
+function log(): void {}
+
+function isEmpty<T>(x: T): boolean {
+  return !x;
 }
 
 function main() {
-  const count = 3;
-  const name = "ann";
-  const maybe: i64 | null = 0;
-  const color = Color.Red;
-  if (count) {
-    console.log("count");
+  if (log()) {
+    console.log("never");
   }
-  while (name) {}
-  const a = maybe ? 1 : 2;
-  const b = !name;
-  const port = count || 8080;
-  const ok = count > 0 && name;
-  if (color) {
-    console.log(a, b, port, ok);
-  }
+  const v = log() || 1;
+  console.log(isEmpty(1), v);
 }

@@ -1,0 +1,35 @@
+// `+` and `+=` with a string and a number or boolean concatenate, writing the number as
+// `String(n)` does (#740). The expected output is Node's.
+class Row {
+  label: string = "row";
+}
+
+function main() {
+  const n: number = 3;
+  let s = "a";
+  s += n;
+  console.log(s, "k" + n, n + "k");
+
+  const xs: number[] = [1, 1.5, 1e21, -0, 0 / 0, 1 / 0, -1 / 0, 0.1 + 0.2, 123456789012, 1e-7];
+  for (const x of xs) {
+    console.log("v=" + x, x + "!");
+  }
+
+  let t = "";
+  t += 1.5;
+  t += true;
+  t += -0;
+  t += 7;
+  console.log(t);
+
+  const none: number | null = null;
+  const some: number | null = 2;
+  console.log("m" + none, "m" + some, "a" + 1 + 2, 1 + 2 + "a", "b" + false);
+
+  const k = 5;
+  const parts = ["p"];
+  parts[0] += k;
+  const row = new Row();
+  row.label += 2 ** 53;
+  console.log("lit" + k, parts[0], row.label);
+}

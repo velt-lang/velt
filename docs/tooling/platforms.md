@@ -9,7 +9,7 @@
 | Linux aarch64 (glibc) | Verified: the full test suite in an Ubuntu 24.04 arm64 VM and in Debian 12 containers, database drivers included (PostgreSQL 17, Redis 7, Redis over TLS). |
 | macOS arm64 (Apple silicon) | Verified: the full test suite (release through LLVM and, separately, through Cranelift), `velt doctor`, packaging and installation into a fresh prefix. Tested on macOS 26. |
 | macOS x86_64 | Verified under Rosetta 2: every end-to-end test cross-built by the arm64 `velt` and run as x86_64. Not yet run on an Intel Mac. |
-| Linux musl (Alpine) | As a host, not an official target, but works: `velt doctor`, every end-to-end test and the HTTP example pass on Alpine 3.21 (aarch64). `velt dev`'s JIT host is unavailable there (use `velt dev --exe`). As a build target, the Linux toolchains build fully static executables with `--target <arch>-unknown-linux-musl` ([Linux notes](#linux-notes)). |
+| Linux musl (Alpine) | As a host, not an official target, but works: `velt doctor`, every end-to-end test and the HTTP example pass on Alpine 3.21 (aarch64). `velt dev`'s JIT host is unavailable there (use `velt dev --exe`). As a build target, every toolchain builds fully static executables with `--target <arch>-unknown-linux-musl` after `velt target add` ([Cross-compiling](#cross-compiling)). |
 | WebAssembly | `wasm32-wasip1` and `wasm32-unknown-unknown`, single-threaded, without networking ([WebAssembly](webassembly.md)). |
 
 Windows on arm64 has not been run yet. Its executables carry unwind information (`.pdata` and
@@ -55,8 +55,8 @@ globally: put `<prefix>/bin` on `PATH` and run `velt doctor`.
   lib/velt/lld[.exe]      the bundled linker (LLVM lld: COFF, ELF, Mach-O and WebAssembly),
                           with its license (lib/velt/LICENSE.txt)
   lib/targets/<triple>/   link kit per target: import or stub libraries of the system and the
-                          startup objects; Linux toolchains also have
-                          <arch>-unknown-linux-musl/ with musl and the runtime built for it
+                          startup objects; for other targets (target packs, `velt target add`)
+                          also their runtime library
   std/**                  standard library sources
   README.md, LICENSE-MIT, LICENSE-APACHE, NOTICE
 ```
@@ -99,6 +99,53 @@ bundled linker unless the package script added it (`scripts/package.*`, which bu
 writes a kit that the checkout's `velt` uses with the Rust toolchain's `rust-lld`. How the kits
 are made: [Linking](../internals/linking.md).
 
+## Cross-compiling
+
+Any toolchain builds for every released target, whatever it runs on: a Mac builds Windows and
+Linux executables, Windows builds Linux and macOS ones, one CI runner builds them all. A target
+other than this machine's needs its **target pack** (its runtime library and link kit,
+downloaded from the same release):
+
+```sh
+velt target add x86_64-pc-windows-msvc        # into <prefix>/lib/targets/<triple>/
+velt build --target x86_64-pc-windows-msvc app.vlt
+velt build --release --target x86_64-unknown-linux-musl app.vlt   # static Linux executable
+velt target list                              # this machine, installed and available targets
+velt target remove x86_64-pc-windows-msvc
+```
+
+| Target | Built executable runs on |
+|---|---|
+| `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` | Linux with glibc 2.31 or newer |
+| `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` | any Linux (static) |
+| `aarch64-apple-darwin`, `x86_64-apple-darwin` | macOS 11 / 10.12 or newer (ad-hoc signed) |
+| `x86_64-pc-windows-msvc` | Windows 10 or newer |
+
+- Builds for another target link the runtime statically, also in debug mode (the shared runtime
+  is this machine's), and with the bundled linker.
+- `velt run --target` runs only programs for this machine's OS (another architecture of it may
+  run under Rosetta 2 or QEMU); build the others and run them on their system.
+- `--release` uses the LLVM backend for any target when clang is installed (clang emits the
+  object only; no SDK is involved), else Cranelift.
+- Packs are verified against the hashes the installed toolchain carries
+  (`lib/targets/PACKS.sha256`, every target's packs of that release), so a pack replaced on the
+  way is refused. A toolchain without that list (built from source) checks downloads against the
+  release's `SHA256SUMS` instead, which shows a pack is intact but not where it comes from, and
+  says so.
+- A pack holds a runtime built with one velt: `velt build` uses it only with that velt (version
+  and commit) and otherwise asks for `velt target add` again.
+- `velt target add --from <pack.tar.gz>` installs a pack downloaded before, verified the same
+  way (or against a `SHA256SUMS` beside it); one that cannot be verified, such as a pack you
+  built yourself with `scripts/package.*` (`dist/velt-<version>-target-<triple>.tar.gz`), needs
+  `--unverified`. `$VELT_INSTALL_BASE_URL` downloads from another repository's releases, for
+  `velt target add` as for the installers.
+- Each pack carries the licenses of what it contains (`NOTICE`, `LICENSE-MIT`, `LICENSE-APACHE`;
+  musl's packs also musl's `COPYRIGHT` and LLVM's license).
+- A package with a native library needs a prebuilt library for the target, which
+  `velt build --target` fetches. Debug builds link it as a shared library from this machine's
+  package cache, so for another machine build with `--release` (Linux and macOS link the
+  library's object statically; Windows executables get its DLL beside them).
+
 ## Installing a release
 
 Every [GitHub release](https://github.com/velt-lang/velt/releases) carries a toolchain archive
@@ -121,9 +168,11 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 | `velt-<version>-x86_64-apple-darwin.tar.gz` | macOS 10.12 or newer on Intel |
 | `velt-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 (also used on Windows arm64, under emulation) |
 
-There is no prebuilt toolchain that runs on musl (Alpine) yet; build it from source there. The
-Linux toolchains build static musl executables (`--target <arch>-unknown-linux-musl`), which
-run on Alpine.
+Each release also has a **target pack** per target, `velt-<version>-target-<triple>.tar.gz`
+(also for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`), which
+`velt target add` installs ([Cross-compiling](#cross-compiling)). There is no prebuilt toolchain
+that runs on musl (Alpine) yet; build it from source there, or build static musl executables
+anywhere with the musl target packs.
 
 | `get-velt.sh` | `get-velt.ps1` | Environment variable | Meaning |
 |---|---|---|---|
@@ -213,6 +262,6 @@ installer replaces `bin/`, `lib/` and `std/` in the prefix and prints the comman
   `sudo spctl developer-mode enable-terminal` to make the entry appear, enable it, and restart
   the terminal). `velt doctor` reports the first-launch time. `velt dev` in its default JIT
   mode is not affected.
-- Cross-building: an arm64 `velt` builds x86_64 programs with `--target x86_64-apple-darwin`
-  (with the x86_64 runtime library: `cargo build -p velt_rt --target x86_64-apple-darwin`, and
-  `VELT_RT_LIB` pointing at it); they run under Rosetta 2.
+- Cross-building: after `velt target add x86_64-apple-darwin`, an arm64 `velt` builds x86_64
+  programs with `--target x86_64-apple-darwin`; they run under Rosetta 2, so `velt run --target`
+  works too ([Cross-compiling](#cross-compiling)).

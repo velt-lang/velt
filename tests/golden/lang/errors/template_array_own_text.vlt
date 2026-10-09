@@ -1,0 +1,22 @@
+// An array whose elements JS writes with their own method that lowering has no hook for (a
+// struct's `toString()`, an `Error`, a `RegExp`) cannot be written by a template literal,
+// `join` or `toString()`: the error says what JS writes and gives the `.map(...).join(",")`
+// that writes it. A class's `toString()` is called (template_array_tostring.vlt).
+struct S {
+  x: number;
+  toString(): string {
+    return "S!";
+  }
+}
+
+class Oops extends Error {}
+
+function main() {
+  const ss: S[] = [{ x: 1 }];
+  console.log(`${ss}`);
+  console.log(ss.join(","));
+  console.log(`${[new Oops("m")]}`);
+  console.log([/a/g].join());
+  const t: [number, S | null] = [1, null];
+  console.log(`${t}`);
+}
