@@ -51,16 +51,23 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
   `weak` references and a compile-time warning for reference cycles.
 - **Evaluation order is JS's**: operands and arguments run left to right, and one read before a
-  later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). An
-  assignment or compound assignment writes to the object its target named before the
-  right-hand side ran: in `o.inner.v = f()` or `o.inner.v += f()`, when `f` replaces
-  `o.inner`, the old object gets the value and the new one keeps its own, as in JS. This holds
-  however deep the target is (`o.a.b.c.v = f()` when `f` replaces `o.a` and something else
-  still refers to the old `o.a`). An old object nothing else refers to is freed by `f`, and the
-  write is dropped with it. **Known difference:** when `f` frees the old object and then
-  installs a new one at the same place (`o.inner = null; o.inner = new P()`), the allocator
-  may give the new object the freed address; the write then goes to the new object, where
-  Node writes to the unreachable old one ([#825](https://github.com/velt-lang/velt/issues/825)).
+  later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). The
+  target of an assignment is evaluated before its right-hand side: a call at its root runs
+  once, first (`get().v = f()`, `m.get(k)!.v = f()`). An assignment or compound assignment to
+  a field of a class object reached through a place writes to the object its target named
+  before the right-hand side ran: in `o.inner.v = f()` or `o.inner.v += f()`, when `f`
+  replaces `o.inner`, the old object gets the value and the new one keeps its own, as in JS.
+  This holds however deep the target is (`o.a.b.c.v = f()` when `f` replaces `o.a` and
+  something else still refers to the old `o.a`). An old object nothing else refers to is freed
+  by `f`, and the write is dropped with it. **Known differences:** when `f` frees the old
+  object and then installs a new one at the same place (`o.inner = null; o.inner = new P()`),
+  the allocator may give the new object the freed address; the write then goes to the new
+  object, where Node writes to the unreachable old one
+  ([#825](https://github.com/velt-lang/velt/issues/825)). A target in an object literal
+  (`o.inner.v = f()` with `o = { inner: { v: 1 } }`) is written in the object the right-hand
+  side installed ([#876](https://github.com/velt-lang/velt/issues/876)), and so is an array
+  element whose array the right-hand side replaces
+  ([#820](https://github.com/velt-lang/velt/issues/820)).
 
 ```ts
 class Box {
