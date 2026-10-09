@@ -61,6 +61,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             throws: None,
             div_zero_bbs: vec![],
             ref_bindings: HashSet::new(),
+            handler_copies: HashSet::new(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
@@ -103,7 +104,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::RaceBoxDrop(t) => Self::build_race_box_drop(cx, *t),
             Work::WidenPoll(from, to) => Self::build_widen_poll(cx, *from, *to),
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
-            Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
+            Work::HandlerInit(def, targs, copy) => Self::build_handler_init(cx, *def, targs, *copy),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
             Work::Init(t, e) => Self::build_init(cx, *t, *e),
             Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
@@ -298,7 +299,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         for p in &f.params {
             if self.info[p.local.0 as usize].droppable {
-                self.mark_init(p.local);
+                // A handler's copied capture: `init` set its drop flag.
+                if !self.handler_copies.contains(&p.local) {
+                    self.mark_init(p.local);
+                }
                 self.register_local_drop(p.local);
             }
         }

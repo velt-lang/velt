@@ -183,7 +183,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    fn drop_local(&mut self, id: LocalId) {
+    pub(super) fn drop_local(&mut self, id: LocalId) {
         if self.info[id.0 as usize].cell {
             return self.release_cell(id);
         }

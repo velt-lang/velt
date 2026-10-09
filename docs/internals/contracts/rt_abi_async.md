@@ -69,6 +69,8 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one (additive) |
 | `velt_rt_xfer_suspend` / `velt_rt_xfer_resume` | `() -> u32` / `(u32 depth)` | set the transfer under way aside while user code runs (a class's own `clone()`), and continue it: in between nothing is looked up or recorded in it, and a transfer the user code starts gets a map of its own (additive) |
 | `velt_rt_xfer_defer` | `(void* obj, void (*drop)(void* slot)) -> u8` | the transfer gave up its reference to `obj` (replaced by a copy): `1`, and `drop` (the type's drop glue) runs on it at the outermost `end`, so every object in the map stays alive with its count until then; `0` outside a transfer (the caller releases it) (additive) |
+| `velt_rt_copy_lock` / `velt_rt_copy_unlock` | `()` | bracket the copies an HTTP handler's request makes of captures that reach captured variables' cells (§7): copying from the environment all requests share updates those cells' counts, so such copies take turns (one process-wide lock; nested pairs on one thread lock once) (additive) |
+| `velt_rt_saw_cells` / `velt_rt_take_cells` | `()` / `() -> u8` | the many-threads check of a closure environment with captured variables' cells marks it (`saw`); `take` returns 1 if marked since the last `take` (this thread) and clears it. `serve` uses them to tell which captures its requests copy (additive) |
 | `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` (additive) |
 | `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down (additive) |
 | `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word (additive) |
@@ -373,6 +375,10 @@ typedef struct {
 The runtime stores each request's state inline in the request future (no extra allocation for
 states ≤ 1 KiB) and polls it on a worker. `init` runs once the request's head has arrived; the
 body is received while the handler reads it (`req_text`, `req_bytes`, `req_chunk`).
+An `init` that copies captures reaching captured variables' cells for its request (the
+compiler picks such an `init` per server, velt_vir `async_fn/handler.rs`) updates those cells'
+counts in `env`, so it brackets the copies with `velt_rt_copy_lock` / `velt_rt_copy_unlock`
+(§1): such `init`s take turns, and nothing else writes to `env`.
 The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
 `VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
 it, and using a request after it was dropped stops the program with a clear message instead of

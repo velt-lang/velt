@@ -47,6 +47,12 @@ it throws.
   variables (use `shared`). Requests run on several threads at once and each gets its own copy
   of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
   capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).
+- That includes the variables a sync callback the handler calls captured itself: with
+  `i.onChange = (v) => { last = v; }` and `i.onChange(…)` in the handler, each request changes
+  its own copy of `last` (made when the request starts, from the value `last` had when the
+  server started), not the caller's variable and not another request's (unlike Node, which
+  shares one). Callbacks that share a variable (`set`/`get` pairs) still share it within a
+  request. Keep state that requests should share in `shared(...)`.
 - A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 

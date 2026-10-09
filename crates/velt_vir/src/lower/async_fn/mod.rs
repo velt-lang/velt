@@ -39,9 +39,10 @@ mod tasks;
 mod value;
 mod widen;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(super) use generator::GenLocal;
+pub(super) use handler::HandlerCaps;
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::flags::FlagScan;
@@ -175,7 +176,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Params `(state, cx)`, the dispatch switch, then the body. Returns the VIR local of each
     /// input (param/capture) for the state layout.
-    fn lower_poll_body(&mut self, f: &FnDef, shared: Option<Vec<PassMode>>) -> Vec<Option<Local>> {
+    fn lower_poll_body(&mut self, f: &FnDef, shared: Option<HandlerCaps>) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
         let targs = self.targs.clone();
@@ -211,19 +212,43 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Params and captures are values stored in the state (owned/copied), or pointers for
     /// borrowed aggregates; every other local is declared as in a sync function. `shared`
-    /// overrides the capture modes (http handlers borrow from their shared environment).
+    /// overrides the capture modes (http handlers borrow from their shared environment); a
+    /// handler capture its requests may copy is held by value, owned when its drop flag says
+    /// so, and the drop flags are inputs after the params' (handler.rs).
     fn declare_async_locals(
         &mut self,
         f: &FnDef,
-        shared: Option<Vec<PassMode>>,
+        shared: Option<HandlerCaps>,
     ) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
-        let modes: HashMap<hir::LocalId, PassMode> = match shared {
-            Some(ms) => f.captures.iter().map(|c| c.inner).zip(ms).collect(),
-            None => f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
-        };
+        let (modes, copied): (HashMap<hir::LocalId, PassMode>, HashSet<hir::LocalId>) =
+            match shared {
+                Some(h) => {
+                    let copied = h.flagged(f).collect();
+                    (f.captures.iter().map(|c| c.inner).zip(h.modes).collect(), copied)
+                }
+                None => (
+                    f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
+                    HashSet::new(),
+                ),
+            };
         let mut inputs = vec![];
+        let mut flags = vec![];
         for p in &f.params {
+            if copied.contains(&p.local) {
+                let name = f.body.locals[p.local.0 as usize].name.clone();
+                let ty = self.sub(p.ty);
+                let vt = self.cx.ty(ty);
+                let vir = self.new_local(vt, Some(name.clone()));
+                let fl = self.new_local(Ty::Bool, Some(format!("{name}.copied")));
+                let mut li = LInfo::new(Some(vir), ty, false, true, LState::Init);
+                li.flag = Some(fl);
+                info[p.local.0 as usize] = Some(li);
+                self.handler_copies.insert(p.local);
+                inputs.push(Some(vir));
+                flags.push(Some(fl));
+                continue;
+            }
             let mode = modes.get(&p.local).copied().unwrap_or(p.mode);
             let name = f.body.locals[p.local.0 as usize].name.clone();
             let ty = self.sub(p.ty);
@@ -242,6 +267,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
             inputs.push(vir);
         }
+        inputs.extend(flags);
         self.declare_body_locals(f, info);
         inputs
     }
@@ -356,6 +382,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 // after the capture): release the state's reference to the cell, as the
                 // started paths do, not the value inside it.
                 self.release_cell(p.local);
+            } else if info.flag.is_some() {
+                // A handler's copied capture: owned only when `init` copied it.
+                self.drop_local(p.local);
             } else if info.droppable {
                 let ty = info.ty;
                 let place = self.local_place(p.local);

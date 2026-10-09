@@ -1,12 +1,14 @@
 //! Transfer glue for function values (glue/transfer.rs): a closure's environment carries its
 //! own transfer entry (`build_env_transfer`, the env header's third word), which moves a unique
 //! environment, copies a shared one, and gives the environment captured variables' cells of
-//! its own. Called with a tagged pointer, it runs the many-threads check instead (many.rs).
+//! its own. Called with a tagged pointer, it runs the many-threads check instead (many.rs), which
+//! also reports an environment holding cells (`velt_rt_saw_cells`).
 
 use velt_sema::hir::{DefId, PassMode, TyId};
 
 use crate::lower::closure::closure_name;
 use crate::lower::operand::proj;
+use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -88,6 +90,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     "an async closure that changes or shares what it captured is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): its calls would use the captured values from several threads at once; capture `shared` values instead",
                 );
             }
+            if !cells2.is_empty() {
+                // Its calls update those cells: an HTTP handler's requests copy it
+                // (async_fn/handler.rs).
+                lw.call_rt(Rt::SawCells, vec![], None);
+            }
             let ep = lw.operand_place(e, Ty::Ptr);
             let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
             for (field, mode, ty) in caps2 {
@@ -148,7 +155,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The cell pointer at `slot` (holding a `ty`), made this env's own: transferred in place
-    /// when nothing else references it, else replaced by a new cell with a copy of the value.
+    /// when nothing else references it, else replaced by a new cell with a copy of the value —
+    /// one per transfer, so two closures that shared the variable still share it on the other
+    /// side (velt_rt `transfer_map`).
     pub(super) fn own_cell(&mut self, slot: Place, ty: TyId) {
         let vt = self.cx.ty(ty);
         let cell = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(slot.clone())));
@@ -156,6 +165,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let one = self.count_is_one(cell.clone());
         self.branch(one, unique, shared);
         self.switch_to(shared);
+        let found = self.find_copy(cell.clone(), |lw, copy| {
+            lw.assign(slot.clone(), Rvalue::Use(copy));
+            // This env's reference to the shared cell goes (the count is above 1).
+            let c = lw.count_place(cell.clone());
+            let n = lw.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
+            );
+            lw.assign(c, Rvalue::Use(n));
+            lw.goto(done);
+        });
         let cp = self.operand_place(cell.clone(), Ty::Ptr);
         let value = proj(&cp, Proj::Deref(vt));
         let new = self.shared_copy(cell.clone(), ty, false, |lw, _| {
@@ -165,6 +185,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.store(proj(&fp, Proj::Deref(vt)), copy);
             fresh
         });
+        let new = self.rvalue_temp(Ty::Ptr, Rvalue::Use(new));
+        self.record_copy(found, cell.clone(), new.clone());
         self.assign(slot, Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);

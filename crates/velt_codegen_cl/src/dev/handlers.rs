@@ -22,9 +22,13 @@ pub struct HandlerCode {
     pub state_align: u64,
 }
 
-/// The poll and drop keys of the handler whose `init` key is `init_key` (`<closure>$init`).
+/// The poll and drop keys of the handler whose `init` key is `init_key` (`<closure>$init`, or
+/// `<closure>$copy$init`, the one whose requests copy some captures: velt_vir
+/// `async_fn/handler.rs`).
 pub(crate) fn state_machine_keys(init_key: &str) -> Option<(String, String)> {
-    let base = init_key.strip_suffix("$init")?;
+    let base = init_key
+        .strip_suffix("$copy$init")
+        .or_else(|| init_key.strip_suffix("$init"))?;
     Some((format!("{base}$poll"), format!("{base}$drop")))
 }
 

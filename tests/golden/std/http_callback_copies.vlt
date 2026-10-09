@@ -1,0 +1,58 @@
+// check: no leaks
+// Function values an HTTP handler reaches that change variables they captured themselves: each
+// request gets its own copy of them, with its own copies of those variables (#873), the way
+// it gets its own copy of everything the handler captured (docs/std/http.md).
+import { serve } from "velt:http";
+
+class Widget {
+  set: (v: string) => void = (v) => {};
+  get: () => string = () => "";
+}
+
+async function client(base: string, n: i64): Promise<i64> {
+  let ok: i64 = 0;
+  for (let i = 0; i < n; i++) {
+    const path = `p${i}`;
+    try {
+      const t = await (await fetch(`${base}/${path}`)).text();
+      ok += t == `/${path} /${path} 1` ? 1 : 0;
+    } catch (e) {
+      console.log("request failed");
+    }
+  }
+  return ok;
+}
+
+async function main() {
+  // Two function values sharing one variable: within a request they still share it.
+  let state = "start";
+  const w = new Widget();
+  w.set = (v: string) => {
+    state = v;
+  };
+  w.get = () => state;
+  // A captured function value (not in an object) counting its calls.
+  let calls = 0;
+  const count = (): number => {
+    calls += 1;
+    return calls;
+  };
+  const a = await serve({ port: 0 }, async (req) => {
+    const path = new URL(req.url).pathname;
+    w.set(path);
+    const first = w.get();
+    await sleep(1);
+    return new Response(`${first} ${w.get()} ${count()}`);
+  });
+  const ts: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    ts.push(spawn(client(`http://127.0.0.1:${a.port}`, 25)));
+  }
+  let n: i64 = 0;
+  for (const x of await Promise.all(ts)) {
+    n += x;
+  }
+  await a.shutdown();
+  // The handler's copies never change the caller's variables.
+  console.log(n, state, calls);
+}

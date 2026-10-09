@@ -131,6 +131,9 @@ impl Interp<'_> {
             "velt_rt_xfer_suspend" | "velt_rt_xfer_resume" => 0,
             "velt_rt_xfer_find" => 1,
             "velt_rt_xfer_defer" => 0,
+            // One thread: copies never take turns, and no handler copies its captures.
+            "velt_rt_copy_lock" | "velt_rt_copy_unlock" | "velt_rt_saw_cells" => 0,
+            "velt_rt_take_cells" => 0,
             "velt_rt_futs_handled" => return Some(self.futs_handled(a[0], a[1], a[2]).map(|_| 0)),
             "velt_rt_race" => self.rt_race(a, None),
             "velt_rt_race_ok" => self.rt_race(a, Some(a[3])),

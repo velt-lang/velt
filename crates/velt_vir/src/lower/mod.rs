@@ -210,8 +210,9 @@ enum Work {
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
-    /// `(env, req, state)` initializer of an http handler closure's per-request state.
-    HandlerInit(DefId, Vec<TyId>),
+    /// `(env, req, state)` initializer of an http handler closure's per-request state; with
+    /// `true`, the one that copies the captures the env's mask names (async_fn/handler.rs).
+    HandlerInit(DefId, Vec<TyId>, bool),
     /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
     /// throwing `E`; built only for classes whose initializers construct each other in a
     /// cycle (ctor_init.rs).
@@ -245,9 +246,9 @@ struct Cx<'h> {
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`
     /// callbacks update the locked value in place.
     by_ref_params: HashSet<(DefId, Vec<TyId>)>,
-    /// Async closure instances used as http handlers: the capture modes their state machine
-    /// uses, reading the shared, leaked environment (async_fn/handler.rs).
-    shared_envs: HashMap<(DefId, Vec<TyId>), Vec<hir::PassMode>>,
+    /// Async closure instances used as http handlers: how their state machine holds the
+    /// captures it reads from the shared environment (async_fn/handler.rs).
+    shared_envs: HashMap<(DefId, Vec<TyId>), async_fn::HandlerCaps>,
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
@@ -388,6 +389,9 @@ struct FnLower<'c, 'h> {
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
     ref_bindings: HashSet<LocalId>,
+    /// Captures an http handler's state owns only when its drop flag (set by `init`) says so
+    /// (async_fn/handler.rs).
+    handler_copies: HashSet<LocalId>,
     /// Set while lowering the body of an async function (a poll function).
     asyncx: Option<async_fn::AsyncCx>,
     /// The next call lowered is awaited or spawned right away: its promise is not started

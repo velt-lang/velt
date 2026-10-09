@@ -171,6 +171,59 @@ pub extern "C" fn velt_rt_xfer_defer(object: *mut u8, drop: DropFn) -> u8 {
     1
 }
 
+/// HTTP handlers whose requests copy what they captured (velt_vir `async_fn/handler.rs`): a
+/// request copies from the environment all requests share, and the copy updates the counts of
+/// captured variables' cells there (another reference while the closure's environment is
+/// copied, given up once the copy has cells of its own). Counts are not atomic, so those copies
+/// take turns: `copy_lock` / `copy_unlock` bracket one request's copies (nested pairs on one
+/// thread take the lock once).
+static COPY_LOCK: parking_lot::Mutex<()> = parking_lot::const_mutex(());
+
+thread_local! {
+    /// The `copy_lock`s this thread holds (the guard lives in `COPY_GUARD`).
+    static COPY_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static COPY_GUARD: RefCell<Option<parking_lot::MutexGuard<'static, ()>>> =
+        const { RefCell::new(None) };
+    /// Set by the many-threads check of a closure environment with captured variables' cells
+    /// (`saw_cells`), read and cleared by `take_cells`.
+    static SAW_CELLS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Start copying a request's captures from a shared handler environment (see `COPY_LOCK`).
+#[no_mangle]
+pub extern "C" fn velt_rt_copy_lock() {
+    let depth = COPY_DEPTH.with(|d| d.replace(d.get() + 1));
+    if depth == 0 {
+        let guard = COPY_LOCK.lock();
+        COPY_GUARD.with(|g| *g.borrow_mut() = Some(guard));
+    }
+}
+
+/// Done copying (the outermost call releases the lock).
+#[no_mangle]
+pub extern "C" fn velt_rt_copy_unlock() {
+    let depth = COPY_DEPTH.with(|d| {
+        d.set(d.get().saturating_sub(1));
+        d.get()
+    });
+    if depth == 0 {
+        COPY_GUARD.with(|g| drop(g.borrow_mut().take()));
+    }
+}
+
+/// The many-threads check (velt_vir `glue/many.rs`) reached a function value whose environment
+/// holds captured variables' cells, which its calls update.
+#[no_mangle]
+pub extern "C" fn velt_rt_saw_cells() {
+    SAW_CELLS.with(|s| s.set(true));
+}
+
+/// Did the many-threads check reach such cells since the last call (1 or 0)? Clears the mark.
+#[no_mangle]
+pub extern "C" fn velt_rt_take_cells() -> u8 {
+    u8::from(SAW_CELLS.with(|s| s.replace(false)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +266,19 @@ mod tests {
         unsafe { velt_rt_xfer_end() };
         assert_eq!(DROPPED.load(Ordering::SeqCst), 0x3000);
         assert_eq!(velt_rt_xfer_find(a) as usize, NO_TRANSFER);
+    }
+
+    #[test]
+    fn copy_lock_nests_and_cells_mark_clears() {
+        velt_rt_copy_lock();
+        velt_rt_copy_lock();
+        velt_rt_copy_unlock();
+        assert!(COPY_LOCK.is_locked(), "held until the outermost unlock");
+        velt_rt_copy_unlock();
+        assert!(!COPY_LOCK.is_locked());
+        assert_eq!(velt_rt_take_cells(), 0);
+        velt_rt_saw_cells();
+        assert_eq!(velt_rt_take_cells(), 1);
+        assert_eq!(velt_rt_take_cells(), 0);
     }
 }
