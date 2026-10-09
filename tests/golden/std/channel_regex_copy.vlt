@@ -1,6 +1,6 @@
 // A value holding a `RegExp`, sent on a channel while the program still uses it, is copied for
 // the receiving task with `RegExp.clone()` (#690); a resource the sender no longer uses moves.
-import { channel } from "velt:channel";
+import { channel, Channel } from "velt:channel";
 import { RegExp } from "velt:regex";
 
 class Rule {
@@ -24,6 +24,21 @@ class Conn {
 
 type Job = { rules: Rule[] };
 
+async function worker(rules: Rule[]): Promise<i64> {
+  return rules.length as i64;
+}
+
+// Passes its parameter on to `send`: a call whose argument is its last use moves it.
+async function enqueue(ch: Channel<Conn>, c: Conn) {
+  await ch.send(c);
+}
+
+// Assigns its parameter before sending, so the caller's value is not what crosses.
+async function sendNext(ch: Channel<Conn>, c: Conn) {
+  c = new Conn(c.id + 10);
+  await ch.send(c);
+}
+
 async function main() {
   const jobs = channel<Job>();
   const rules = [new Rule(new RegExp("a+", "g"))];
@@ -39,10 +54,17 @@ async function main() {
     return n;
   });
   console.log(await t, rules[0].re.test("xa"));
+  const w = spawn(worker(rules));
+  console.log(await w, rules[0].re.source);
   const conns = channel<Conn>();
   const c = new Conn(1);
   await conns.send(c);
   await conns.send(new Conn(2));
+  const last = new Conn(3);
+  await enqueue(conns, last);
+  const kept = new Conn(4);
+  await sendNext(conns, kept);
+  console.log("kept", kept.id);
   conns.close();
   for await (const x of conns) {
     console.log("got", x.id);

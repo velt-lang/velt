@@ -90,6 +90,14 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        // A sender call that is itself the operand of `spawn` (`spawn(producer(ch, x))`) is
+        // reported once, for the `spawn`.
+        let spawned: Vec<Span> = found
+            .iter()
+            .filter(|f| matches!(f.3, Site::Spawn))
+            .map(|f| f.0)
+            .collect();
+        found.retain(|f| matches!(f.3, Site::Spawn) || !spawned.contains(&f.0));
         for (span, ty, why, site) in found {
             report(cx, span, ty, why, site);
         }
@@ -103,7 +111,8 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
 /// parameters (`this` is parameter 0, as in the call's arguments): `Channel.send` and
 /// `Channel.trySend` pass it to `Intrinsic::ChanSend` / `ChanTrySend`, and a function that
 /// passes its parameter on to one of those (`enqueue(ch, x)` calling `ch.send(x)`) hands it
-/// over too.
+/// over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
+/// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
 fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> HashMap<DefId, Vec<usize>> {
     let mut out: HashMap<DefId, Vec<usize>> = HashMap::new();
     // (function, callee, argument index, parameter index): the parameter is passed on as is.
@@ -118,7 +127,12 @@ fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> HashMap<DefId, Vec<usize>> {
             _ => None,
         };
         let mut sent: Vec<usize> = vec![];
+        let mut assigned: Vec<usize> = vec![];
+        let from = passes.len();
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
+                assigned.extend(param(Some(place)));
+            }
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::ChanSend | Intrinsic::ChanTrySend),
                 args,
@@ -136,6 +150,12 @@ fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> HashMap<DefId, Vec<usize>> {
             _ => {}
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        sent.retain(|p| !assigned.contains(p));
+        let kept: Vec<_> = passes
+            .drain(from..)
+            .filter(|x| !assigned.contains(&x.3))
+            .collect();
+        passes.extend(kept);
         if !sent.is_empty() {
             out.insert(d, sent);
         }

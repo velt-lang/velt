@@ -1,7 +1,14 @@
 a+ g c-b
 a+ g c-b
 2 true
+1 a+
+kept 4
 got 1
 close 1
 got 2
 close 2
+got 3
+close 3
+got 14
+close 14
+close 4

@@ -201,7 +201,7 @@ export class RegExp {
     try {
       return new RegExp(this.source, this.flags);
     } catch (e) {
-      panic(`RegExp.clone: the pattern no longer compiles: ${e.message}`);
+      panic(`ICE: RegExp.clone: the pattern no longer compiles: ${e.message}`);
     }
   }
 

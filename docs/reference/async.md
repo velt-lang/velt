@@ -87,7 +87,8 @@ Promises behave like JavaScript's, at Rust's cost:
   channel (`ch.send(r)`, `ch.trySend(r)`, or a function that passes its parameter on to one:
   "`r` is still used after `send`, so the receiving task would get a copy, …"), and for such
   a value inside an object, array or tuple literal built for the task or the channel
-  (`ch.send({ conns })`). When another reference is only found at run time
+  (`ch.send({ conns })`). A function that sends its parameter only on some paths is checked
+  as if it always sent it, like a `spawn` inside an `if`. When another reference is only found at run time
   (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
   for another thread …``.
 
