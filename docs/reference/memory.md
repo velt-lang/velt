@@ -54,8 +54,13 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). An
   assignment or compound assignment writes to the object its target named before the
   right-hand side ran: in `o.inner.v = f()` or `o.inner.v += f()`, when `f` replaces
-  `o.inner`, the old object gets the value and the new one keeps its own, as in JS. (The old object then lives on only if something else refers to it;
-  otherwise it is freed by `f`, and the write is dropped with it.)
+  `o.inner`, the old object gets the value and the new one keeps its own, as in JS. This holds
+  however deep the target is (`o.a.b.c.v = f()` when `f` replaces `o.a` and something else
+  still refers to the old `o.a`). An old object nothing else refers to is freed by `f`, and the
+  write is dropped with it. **Known difference:** when `f` frees the old object and then
+  installs a new one at the same place (`o.inner = null; o.inner = new P()`), the allocator
+  may give the new object the freed address; the write then goes to the new object, where
+  Node writes to the unreachable old one ([#825](https://github.com/velt-lang/velt/issues/825)).
 
 ```ts
 class Box {
