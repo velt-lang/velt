@@ -44,40 +44,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Whether an async arrow is expected to return a type that is not a promise but includes
-    /// exactly one (`View | Promise<View>`, `Promise<T> | null`): TS types the arrow by that
-    /// member, so it is checked as `(params) => (async () => body)()` (`closure`), and the
-    /// promise it returns converts to the expected type like any other value.
-    pub(super) fn async_into_union(&mut self, exp: Option<TyId>) -> bool {
-        let Some(TyKind::FnPtr { ret, .. }) = self.hint(exp).map(|t| self.cx.ty.kind(t).clone())
-        else {
-            return false;
-        };
-        if self.cx.ty.promise_payload(ret).is_some() || ret == self.cx.ty.error {
-            return false;
-        }
-        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
-        if self.cx.ty.promise_payload(inner).is_some() {
-            return true;
-        }
-        self.cx.union_members(inner).is_some_and(|ms| {
-            ms.iter()
-                .filter(|m| self.cx.ty.promise_payload(**m).is_some())
-                .count()
-                == 1
-        })
-    }
-
-    /// Whether an async arrow is expected to be a `void` function (`onClick: () => void`): TS
-    /// accepts it, and the promise each call starts runs to completion on its own. It is
-    /// checked as `(params) => { const p = (async () => body)(); }` (`closure`).
-    pub(super) fn async_into_void(&mut self, exp: Option<TyId>) -> bool {
-        matches!(
-            self.hint(exp).map(|t| self.cx.ty.kind(t).clone()),
-            Some(TyKind::FnPtr { ret, .. }) if ret == self.cx.ty.unit
-        )
-    }
-
     /// The members of a union of function types (`(() => void) | (() => Promise<void>)`) that
     /// an arrow with `n_params` parameters may be typed by, in order of preference, as TS's
     /// contextual typing picks one: for an async arrow the members returning a promise (or a

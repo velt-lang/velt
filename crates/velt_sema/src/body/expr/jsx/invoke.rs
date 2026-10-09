@@ -10,7 +10,8 @@ use crate::body::FnCx;
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId};
 
 /// Reports an argument its parameter does not accept: (parameter name, its type, the argument).
-pub(super) type OnMismatch<'f, 'a, 'm> = dyn FnMut(&mut FnCx<'a, 'm>, &str, TyId, &hir::Expr) + 'f;
+pub(in crate::body::expr) type OnMismatch<'f, 'a, 'm> =
+    dyn FnMut(&mut FnCx<'a, 'm>, &str, TyId, &hir::Expr) + 'f;
 
 impl<'a, 'm> FnCx<'a, 'm> {
     /// `name(args)` for runtime function `d` of provider `p`.
@@ -53,7 +54,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
     }
 
     /// `d(args)` with `args` already checked (as many as `d` has parameters).
-    pub(super) fn call_checked(
+    pub(in crate::body::expr) fn call_checked(
         &mut self,
         d: DefId,
         args: Vec<hir::Expr>,

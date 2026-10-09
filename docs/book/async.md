@@ -226,9 +226,9 @@ for other receivers. Your own sources are `async function*` generators
 ## Timers
 
 `sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
-`setTimeout` (with `clear()`), `setImmediate` and `Ticker`, a drift-free interval you iterate
-with `for await (const n of ticker)` or pull with `await ticker.tick()`. There is no global
-`setTimeout`.
+`setImmediate` and `Ticker`, a drift-free interval you iterate with `for await (const n of
+ticker)` or pull with `await ticker.tick()`. `setTimeout` and `setInterval` are globals, as in
+TypeScript.
 
 ## Performance
 

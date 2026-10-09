@@ -18,14 +18,14 @@ declare function velt_rt_keep_alive_release();
 
 // A timer's state, behind one lock shared by the handle and the task. While the timer is ref'd
 // and has work left (a timeout until its callback's promise settles, an interval until it is
-// cleared and its current run settled), it holds one of the runtime's keep-alive references, so
-// the process outlives `main`, like a ref'd Node `Timeout`. Every change goes through `update`,
-// which takes or releases that reference exactly when the condition changes.
+// cleared and its runs in progress settled), it holds one of the runtime's keep-alive
+// references, so the process outlives `main`, like a ref'd Node `Timeout`. Every change goes
+// through `update`, which takes or releases that reference exactly when the condition changes.
 class TimerState {
   // The task has started a run (a timeout: its only one).
   started: bool;
-  // A run's promise has not settled yet.
-  running: bool;
+  // Runs whose promise has not settled yet (an interval's runs may overlap).
+  running: i64;
   // `clear()` stopped the timer.
   stopped: bool;
   // The task has ended.
@@ -37,7 +37,7 @@ class TimerState {
 
   constructor() {
     this.started = false;
-    this.running = false;
+    this.running = 0;
     this.stopped = false;
     this.finished = false;
     this.refd = true;
@@ -46,7 +46,7 @@ class TimerState {
 
   // Takes or releases the keep-alive reference to match the state.
   update() {
-    const busy = !this.finished && (this.running || !this.stopped);
+    const busy = this.running > 0 || (!this.finished && !this.stopped);
     const want = this.refd && busy;
     if (want && !this.held) {
       velt_rt_keep_alive_acquire();
@@ -56,7 +56,8 @@ class TimerState {
     this.held = want;
   }
 
-  // The task is due to run: true if it should (it was not cleared), and it is now running.
+  // The task is due to run: true if it should (it was not cleared), and a run is now in
+  // progress.
   begin(): bool {
     if (this.stopped) {
       this.finished = true;
@@ -64,19 +65,17 @@ class TimerState {
       return false;
     }
     this.started = true;
-    this.running = true;
+    this.running += 1;
     return true;
   }
 
-  // A run's promise settled; `last`: the task ends with it (a timeout). True if an interval
-  // goes on.
-  end(last: bool): bool {
-    this.running = false;
-    if (last || this.stopped) {
+  // A run's promise settled; `last`: the task ends with it (a timeout).
+  end(last: bool) {
+    this.running -= 1;
+    if (last) {
       this.finished = true;
     }
     this.update();
-    return !this.finished;
   }
 }
 
@@ -174,8 +173,9 @@ export function clearTimeout(t: Timer) {
 }
 
 /**
- * Calls `task` every `ms` milliseconds (at least 1) until the returned timer is cleared. Each
- * run waits for the previous run's promise, then `ms` more.
+ * Calls `task` every `ms` milliseconds (at least 1) until the returned timer is cleared, like
+ * Node: on a fixed schedule, also while an earlier run's promise is still pending. Runs that
+ * overlap interleave at their `await`s on the timer's task; they never run in parallel.
  */
 export function setInterval(task: () => Promise<void>, ms: i64): Timer {
   const state = newState();
@@ -215,9 +215,13 @@ async function fireEvery(
     if (!state.with((s) => s.begin())) {
       return;
     }
-    await task();
-    if (!state.with((s) => s.end(false))) {
-      return;
-    }
+    // Not awaited: the next run is due `ms` later whether or not this one has settled.
+    const run = runOnce(task, state.clone());
   }
+}
+
+// One run of an interval: ends it in the state when its promise settles.
+async function runOnce(task: () => Promise<void>, state: shared<Mutex<TimerState>>): Promise<void> {
+  await task();
+  state.with((s) => s.end(false));
 }

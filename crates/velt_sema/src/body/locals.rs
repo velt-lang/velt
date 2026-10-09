@@ -190,6 +190,12 @@ impl FnCx<'_, '_> {
             .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
     }
 
+    /// The closure a `const` of the current function named `name` holds (`closure_consts`).
+    pub fn local_closure_const(&self, name: &str) -> Option<crate::hir::DefId> {
+        let l = frame_lookup(&self.f, name)?;
+        self.f.closure_consts.get(&l).copied()
+    }
+
     pub fn is_local_name(&self, name: &str) -> bool {
         frame_lookup(&self.f, name).is_some()
             || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
@@ -267,6 +273,11 @@ impl FnCx<'_, '_> {
     /// The subclass a local is narrowed to here by `instanceof` (`None`: not narrowed).
     pub fn narrowed_class(&self, l: LocalId) -> Option<TyId> {
         scope_class(&self.f.scopes, l)
+    }
+
+    /// Records that `l` holds only the union variants `vs` from here to the end of the scope.
+    pub(crate) fn narrow_members(&mut self, l: LocalId, vs: Vec<u32>) {
+        self.innermost_scope().members.push((l, vs));
     }
 
     fn innermost_scope(&mut self) -> &mut super::Scope {

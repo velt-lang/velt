@@ -291,6 +291,7 @@ impl FnCx<'_, '_> {
             return self.concat(l, r, span);
         }
         if matches!(op, B::Eq | B::NotEq) && !self.primitive_eq(t) {
+            crate::body::pure_init::check_identity(self.cx, [&l, &r]);
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
         if op == B::Div {

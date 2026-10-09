@@ -402,7 +402,9 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
-- Printing and template literals show the active member's value. `JSON.stringify` works on
+- Printing and template literals show the active member's value. A union with a member that
+  cannot be printed (a closure) prints once a test has narrowed it to members that can
+  (`typeof v !== "function"`). `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to

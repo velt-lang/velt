@@ -10,6 +10,7 @@ mod attempt;
 mod await_union;
 mod builtins;
 mod call;
+mod callback;
 mod chain;
 mod closure;
 mod closure_sig;
@@ -20,7 +21,6 @@ mod dispose_call;
 mod division;
 pub(crate) mod downcast;
 mod errors;
-mod fn_arity;
 mod fn_union_call;
 mod gen_closure;
 mod hoist;
@@ -75,7 +75,7 @@ impl FnCx<'_, '_> {
         // `const f: (s: string) => void = count`: a named function adapted to the type.
         let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
         let adapter = match self.cx.ty.kind(fn_ty) {
-            TyKind::FnPtr { .. } => self.fewer_params_adapter(e, exp),
+            TyKind::FnPtr { .. } => self.callback_adapter(e, exp, false),
             _ => None,
         };
         let h = self.expr(adapter.as_ref().unwrap_or(e), Some(exp), want);

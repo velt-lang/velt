@@ -27,6 +27,11 @@ The differences come from three rules:
   constant, and a module-level `let` that a function uses is an error ("mutable module-level
   state is not allowed"). *Why*: no hidden global state means request handlers can't race on
   it, and `velt dev` can hot-swap code without migrating globals.
+- A module constant may be initialized by a call of a function without effects
+  (`const Counter = component(...)`): it is evaluated at each use, with the same result as
+  TypeScript's evaluation at load. Its identity is the one difference: `Counter === Counter` is
+  an error, and two copies of it in locals compare unequal
+  ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
 - Semicolons are required (no automatic semicolon insertion).
@@ -237,8 +242,8 @@ surprise ([Error handling](errors.md)).
   completion on its own.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
-  their `clear` functions are globals; the callback returns the promise to run
-  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  their `clear` functions are globals and take any callback (`() => console.log("x")`,
+  `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
   process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
