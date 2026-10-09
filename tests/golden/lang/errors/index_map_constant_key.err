@@ -1,0 +1,1 @@
+index_map_constant_key.vlt:6:13: error: cannot index a value of type `Map<string, string>`

@@ -17,6 +17,7 @@ mod modules;
 mod navigation;
 mod protocol;
 mod quick_fixes;
+mod quoted_keys;
 mod refactor;
 mod server_features;
 mod ts_compat;

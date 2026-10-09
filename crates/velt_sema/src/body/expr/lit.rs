@@ -204,6 +204,11 @@ impl FnCx<'_, '_> {
                 .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
                 .collect(),
             TyKind::Adt(d, args) => {
+                // A class printed through its `__inspect()` shows what that returns.
+                if let Some((_, ret)) = crate::hooks::hook(self.cx, d, &args, crate::hooks::INSPECT)
+                {
+                    return self.printable_depth(ret, depth + 1);
+                }
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
                     crate::defs::DefInfo::Enum(e) => {
@@ -290,8 +295,11 @@ impl FnCx<'_, '_> {
         self.concat_parts(parts, span)
     }
 
-    /// `h.<method>()` when `h` is a class or struct value with its own `method(): string` (a
-    /// template literal uses `toString()`, as in JS; `console.log` a `__inspect()`), else `h`.
+    /// `h.<method>()` when `h` is a class or struct value with its own `method` (a template
+    /// literal uses `toString()`, as in JS; `console.log` a `__inspect()` returning a
+    /// `string`), else `h`. A parameter left out takes its default, and a `toString()` result
+    /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
+    /// reports the shapes this cannot call).
     pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
         let Some((d, _)) = self.adt_of(h.ty) else {
             return h;
@@ -299,15 +307,26 @@ impl FnCx<'_, '_> {
         let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
             return h;
         };
+        crate::body::param_defaults(self.cx, m.def);
         let f = self.cx.fn_info(m.def);
-        if m.is_static || !f.params.is_empty() || f.ret != self.cx.ty.str_ {
+        let plain = !(f.is_async || f.is_generator || f.is_async_gen);
+        let to_string = method == crate::hooks::TO_STRING;
+        if m.is_static
+            || !plain
+            || f.params.iter().any(|p| p.default.is_none())
+            || (!to_string && f.ret != self.cx.ty.str_)
+        {
             return h;
         }
         let span = h.span;
-        match self.method_call_hir(h.clone(), method, span) {
-            Some(call) => call,
-            None => h,
+        let Some(call) = self.method_call_hir(h.clone(), method, span) else {
+            return h;
+        };
+        if call.ty == self.cx.ty.str_ || !self.printable(call.ty) {
+            return call;
         }
+        let str_ = self.cx.ty.str_;
+        self.intrinsic(Intrinsic::ToString, vec![call], str_, span)
     }
 
     /// The string parts of a template literal joined: a left fold of `StrConcat` (one part that

@@ -5,6 +5,7 @@
 //! at the start of the piece into the pair's 4-byte code point (canonical WTF-8).
 
 use std::mem::MaybeUninit;
+use std::sync::atomic::Ordering;
 
 use super::slice::SLICE_TAG;
 use super::{
@@ -157,6 +158,56 @@ impl VeltStr {
             return;
         }
         self.push_wtf8(bytes, Some(s.summary()));
+    }
+
+    /// Make `self` the string `head + self` with room for `cap` bytes, in its own buffer: when
+    /// `self` holds the only reference to a heap buffer of its own (not a slice, a literal or an
+    /// inline string), the buffer grows to `cap` (`realloc`), the text moves up behind `head`
+    /// and `head` is copied in front. A template literal reuses its longest part this way
+    /// instead of copying it into a new buffer (`velt_rt_strbuf_adopt`). Returns false, changing
+    /// nothing, when the buffer can't be reused: it is shared, it lacks the header a non-ASCII
+    /// result needs, it has breadcrumbs or remembered positions (they locate the text where it
+    /// is), or a lone surrogate in `head` could join the text.
+    ///
+    /// # Safety
+    /// Both strings must be valid; `head` must not lie in `self`'s buffer.
+    pub unsafe fn prepend_in_place(&mut self, head: &VeltStr, cap: usize) -> bool {
+        if !self.is_plain_heap() || !heap::is_unique(self.ptr()) {
+            return false;
+        }
+        debug_assert!(
+            !self.buffer_holds(head.as_bytes()),
+            "the head lies in the part's buffer"
+        );
+        let header = !self.is_ascii();
+        if !head.is_ascii() && !header {
+            return false;
+        }
+        if header && !heap::crumbs(self.ptr()).load(Ordering::Relaxed).is_null() {
+            return false;
+        }
+        if head.may_have_lone() && head.lone() > 0 {
+            return false;
+        }
+        let (len, hlen) = (self.len(), head.len());
+        let total = len + hlen;
+        let old_cap = self.w2 as usize;
+        let mut data = self.ptr();
+        let new_cap = cap.max(total);
+        if new_cap > old_cap {
+            data = heap::grow(data, old_cap, new_cap, header);
+            self.w2 = new_cap as u64;
+        }
+        if hlen > 0 {
+            std::ptr::copy(data, data.add(hlen), len);
+            std::ptr::copy_nonoverlapping(head.data(), data, hlen);
+        }
+        self.w0 = data as usize as u64;
+        self.w1 = pack(self.units() + head.units(), total);
+        #[cfg(debug_assertions)]
+        invariants::check_seam(self, hlen);
+        invariants::check_whole(self);
+        true
     }
 
     /// `a + b` as a new string (`velt_rt_str_concat`), allocated once at its exact size.

@@ -1,0 +1,65 @@
+// check: no leaks
+// A template literal with string parts is built in one allocation, sized from the parts' values
+// (#77): every part is evaluated first, in order, and appended after; parts with side effects
+// still run in order, and a number read before a later part reassigns it keeps its value.
+// Byte lengths count UTF-8 (non-ASCII text), and short strings (stored inline) and long ones
+// (on the heap) are sized alike. (Reassigning a string or changing an array that an earlier part
+// reads is a compile error.)
+
+function note(log: string[], s: string): string {
+  log.push(s);
+  return s;
+}
+
+// Takes ownership of `s` and frees it.
+function eat(s: string): number {
+  const t = s;
+  return t.length;
+}
+
+class Refused extends Error {}
+
+// Throws when `fail`, after the parts before it were evaluated (and own their strings).
+function maybe(fail: bool, s: string): string throws Refused {
+  if (fail) {
+    throw new Refused(`refused ${s}`);
+  }
+  return s;
+}
+
+function mk(n: i64): string {
+  return "m-" + "k".repeat(n);
+}
+
+function main() {
+  const log: string[] = [];
+  console.log(`${note(log, "1")}-${note(log, "2")}-${3}-${note(log, "4")}`);
+  console.log(log.join(","));
+  const long = "x".repeat(100);
+  const short = "é";
+  const emoji = "😀 ünïcödé";
+  const out = `<${short}${long}${emoji}${""}${short}>`;
+  console.log(out.length, out.slice(0, 4), out.slice(out.length - 4), out == `<é${long}${emoji}é>`);
+  const big: i64 = -9223372036854775807 - 1;
+  const f = 1.2345678901234568e-300;
+  console.log(`${big}|${f}|${true}|${-0.0}|${0 / 0}|${short}`);
+  let n: i64 = 0;
+  console.log(`${n}${(n = 5)}${n}${short}`);
+  const parts: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    parts.push(`${i}:${long.slice(0, i * 30)}:${emoji}`);
+  }
+  console.log(parts.map((p) => p.length).join(" "));
+  // A later part that moves (and frees) a string an earlier part reads: the earlier part keeps
+  // its value, read before the move frees it.
+  const owned = mk(40);
+  console.log(`${owned}|${eat(owned)}|`);
+  // A part that throws after earlier parts made owned strings: those are freed, once.
+  for (const fail of [false, true]) {
+    try {
+      console.log(`${mk(30)}-${maybe(fail, mk(25))}-${3.5}`);
+    } catch (e) {
+      console.log(`caught: ${e.message.length}`);
+    }
+  }
+}

@@ -44,6 +44,9 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_layout(buf: *mut VeltStrBuf, sta
         let Ok(mut scratch) = scratch.try_borrow_mut() else {
             return;
         };
+        crate::inspect_cycles::atoms_of(buf, start, &mut scratch.atoms);
+        // A `<ref *N> ` inserted later moves text: never read past the end.
+        scratch.atoms.retain(|a| a.end <= text.len());
         if scratch.layout(text) && scratch.out != text {
             (*buf).replace_tail(start, &scratch.out);
         }
@@ -68,6 +71,8 @@ pub unsafe extern "C" fn velt_rt_strbuf_len(buf: *const VeltStrBuf) -> u64 {
 struct Scratch {
     value: Value,
     work: Work,
+    /// Custom inspect text in the value (relative to its start), kept as one piece.
+    atoms: Vec<std::ops::Range<usize>>,
     /// The laid-out text.
     out: Vec<u8>,
 }
@@ -76,7 +81,7 @@ impl Scratch {
     /// Lay out the value printed on one line as `text` into `self.out`; false if it is not the
     /// glue's text.
     fn layout(&mut self, text: &[u8]) -> bool {
-        if !self.value.parse(text) {
+        if !self.value.parse(text, &self.atoms) {
             return false;
         }
         self.out.clear();

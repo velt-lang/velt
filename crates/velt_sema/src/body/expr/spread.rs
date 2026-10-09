@@ -165,6 +165,8 @@ impl FnCx<'_, '_> {
         lets: &mut Vec<hir::Stmt>,
     ) -> Vec<(String, hir::Expr, Src)> {
         let h = self.expr(e, None, Want::Borrow);
+        let seen = crate::object_copies::Seen::Spread;
+        self.cx.object_copies.observe(h.ty, e.span, seen);
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
                 let tn = self.cx.display(h.ty);

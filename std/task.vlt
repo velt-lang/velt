@@ -147,6 +147,11 @@ export class AbortSignal {
     }
     return new AbortSignal(signalCell(velt_rt_signal_any(handles)));
   }
+
+  /** How `console.log` shows the signal, like Node: `AbortSignal { aborted: false }`. */
+  __inspect() {
+    return { aborted: this.aborted };
+  }
 }
 
 /** The sending half: `abort()` aborts its `signal`. */
@@ -168,6 +173,11 @@ export class AbortController {
   /** Aborts the signal (a no-op if it already is). */
   abort(reason: string = DEFAULT_REASON) {
     velt_rt_signal_abort(this.#h, reason);
+  }
+
+  /** How `console.log` shows the controller, like Node: its signal. */
+  __inspect() {
+    return { signal: this.#sig };
   }
 }
 

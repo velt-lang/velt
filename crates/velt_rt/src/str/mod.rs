@@ -25,6 +25,9 @@
 mod abi;
 mod crumbs;
 mod heap;
+
+/// The largest capacity a string can have (below 2 GiB).
+pub(crate) const MAX_CAPACITY: usize = heap::MAX_CAP;
 mod invariants;
 mod join;
 mod order;

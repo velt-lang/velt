@@ -1,0 +1,30 @@
+{
+  "name": "@sigx/velt",
+  "version": "0.0.1",
+  "description": "Render sigx apps with a native Velt server: the Vite plugin and the Velt provider in one package",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./router": {
+      "types": "./src/router.d.ts",
+      "default": "./src/router.js"
+    },
+    "./data": {
+      "types": "./src/data.d.ts",
+      "default": "./src/data.js"
+    }
+  },
+  "files": [
+    "src",
+    "velt/package.vlt",
+    "velt/src"
+  ],
+  "peerDependencies": {
+    "sigx": "^1.0.0",
+    "vite": "^8.0.0",
+    "@sigx/server": "^1.0.0"
+  }
+}

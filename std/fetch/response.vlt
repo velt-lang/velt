@@ -321,7 +321,7 @@ export class Response {
     if (none || code == 304 || this.#source == NONE || this.#source == BUILT) {
       return null;
     }
-    return BodyStream.adopt(this.chunks());
+    return BodyStream.adopt(this.chunks(), this.#used);
   }
 
   /** Whether the body has been read. */
@@ -516,6 +516,21 @@ export class Response {
     if (code != 0 && s != null) {
       s.throwIfAborted();
     }
+  }
+
+  /** How `console.log` shows the response, like Node: its public state. */
+  __inspect() {
+    return {
+      status: this.status,
+      statusText: this.statusText,
+      headers: this.headers,
+      body: this.body,
+      bodyUsed: this.bodyUsed,
+      ok: this.ok,
+      redirected: this.redirected,
+      type: this.type,
+      url: this.url,
+    };
   }
 
   /** Drop hook: releases the runtime response. */

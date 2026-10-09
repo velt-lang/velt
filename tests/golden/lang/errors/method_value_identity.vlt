@@ -1,0 +1,14 @@
+// `===` and `!==` on a method read as a value are errors (#746): each read is a new function
+// value, where JS returns the one function of the prototype (`o.get === o.get` is `true`).
+class O {
+  get(): number {
+    return 1;
+  }
+}
+
+function main() {
+  const o = new O();
+  console.log(o.get === o.get);
+  const f = o.get;
+  console.log(f !== o.get.bind(o));
+}

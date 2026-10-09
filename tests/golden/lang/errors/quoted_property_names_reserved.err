@@ -1,0 +1,3 @@
+quoted_property_names_reserved.vlt:5:12: error: the property name "#x" is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys
+quoted_property_names_reserved.vlt:7:12: error: the property name "__proto__" is not supported: in JavaScript it sets the object's prototype and creates no property
+quoted_property_names_reserved.vlt:10:3: error: a quoted name is supported for interface fields, not methods

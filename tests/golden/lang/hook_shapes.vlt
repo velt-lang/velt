@@ -1,0 +1,57 @@
+// toString() and toJSON() are called as JS calls them: toJSON(key) gets the property name, the
+// array index or "" for the top value; a parameter JS leaves undefined takes its default; a
+// toString() that returns something else is written with String(result).
+class Tagged {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  toJSON(key: string): string {
+    return `key=${key}`;
+  }
+}
+
+class Holder {
+  k: Tagged = new Tagged(1);
+  ks: Tagged[] = [new Tagged(2), new Tagged(3)];
+  pair: [Tagged, number] = [new Tagged(4), 5];
+}
+
+class Radix {
+  toString(radix: number = 10): string {
+    return `r${radix}`;
+  }
+}
+
+class Seven {
+  toString(): number {
+    return 7;
+  }
+}
+
+class Base {
+  toJSON(key: string = "none"): string {
+    return `base:${key}`;
+  }
+}
+
+class Derived extends Base {
+  override toJSON(key: string = "none"): string {
+    return `derived:${key}`;
+  }
+}
+
+function show<T>(x: T): string {
+  return `${x}!`;
+}
+
+const k = new Tagged(1);
+console.log(JSON.stringify({ a: k, b: [k] }));
+console.log(JSON.stringify(k), JSON.stringify([k, k]));
+console.log(JSON.stringify(new Holder()));
+const maybe: Tagged | null = k;
+console.log(JSON.stringify({ o: maybe }));
+const b: Base = new Derived();
+console.log(JSON.stringify({ b: b, list: [new Base(), b] }));
+console.log(`${new Radix()}`, show(new Radix()));
+console.log(`${new Seven()}`, show(new Seven()), `${[1, 2].length}`);

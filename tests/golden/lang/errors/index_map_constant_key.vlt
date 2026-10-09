@@ -1,0 +1,7 @@
+// A constant key reads a field only on a value that can have one: on a `Map` (or a class without
+// that member) `m["k"]` stays an indexing error with the hint to use a method.
+
+function main() {
+  const m = new Map<string, string>();
+  const v = m["k"];
+}

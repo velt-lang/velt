@@ -47,7 +47,9 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod glue;
+mod hooks;
 mod intrinsics;
+mod js_string;
 mod json;
 mod keys;
 mod layout;
@@ -267,6 +269,9 @@ struct Cx<'h> {
     honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
+    /// (json/key.rs); `None` until first asked.
+    json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
 }

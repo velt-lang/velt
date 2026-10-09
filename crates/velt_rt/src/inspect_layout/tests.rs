@@ -429,3 +429,35 @@ fn other_text_is_printed_as_is() {
         "Ok({\n  first: 'aaaaaaaaaaaaaaaa',\n  second: 'bbbbbbbbbbbbbbbb',\n  third: E.V(1, 2)\n})";
     assert_eq!(layout(long.as_bytes()).unwrap(), want.as_bytes());
 }
+
+/// Text a custom inspect wrote is kept as one piece (node inserts the string a custom inspect
+/// returns as it is): node prints a response's body stream on one line at any indentation.
+#[test]
+fn custom_inspect_text_stays_on_one_line() {
+    let stream = "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";
+    let head = "Response { status: 200, statusText: '', headers: Headers {}, body: ";
+    let tail = ", bodyUsed: false, ok: true }";
+    let want = format!(
+        "Response {{\n  status: 200,\n  statusText: '',\n  headers: Headers {{}},\n  body: {stream},\n  bodyUsed: false,\n  ok: true\n}}"
+    );
+    unsafe {
+        crate::inspect_cycles::velt_rt_strbuf_inspect_begin();
+        let mut b = VeltStr::from_bytes(head.as_bytes());
+        let at = b.len() as u64;
+        b.push_wtf8(stream.as_bytes(), None);
+        crate::inspect_cycles::velt_rt_strbuf_inspect_atom(&b, at);
+        b.push_wtf8(tail.as_bytes(), None);
+        velt_rt_strbuf_inspect_layout(&mut b, 0);
+        assert_eq!(String::from_utf8(b.as_bytes().to_vec()).unwrap(), want);
+        // The next value starts without it: the stream's text is laid out as usual.
+        crate::inspect_cycles::velt_rt_strbuf_inspect_begin();
+        let mut c =
+            VeltStr::from_bytes(format!("{{ a: {{ b: {{ body: {stream} }} }} }}").as_bytes());
+        velt_rt_strbuf_inspect_layout(&mut c, 0);
+        assert!(c
+            .as_bytes()
+            .ends_with(b"supportsBYOB: true\n      }\n    }\n  }\n}"));
+        b.release();
+        c.release();
+    }
+}

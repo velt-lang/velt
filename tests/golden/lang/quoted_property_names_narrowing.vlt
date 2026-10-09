@@ -1,0 +1,26 @@
+// `o["a"]` (a constant key) narrows like `o.a`, as in TypeScript: a null test on either form
+// narrows reads through either form.
+
+type T = { a: string | null; "b-c": string | null };
+
+function lens(t: T): number {
+  let n = 0;
+  if (t["a"] !== null) {
+    n += t["a"].length;
+  }
+  if (t.a !== null) {
+    n += t["a"].length;
+  }
+  if (t["a"] != null) {
+    n += t.a.length;
+  }
+  if (t["b-c"] !== null) {
+    n += t["b-c"].length;
+  }
+  return n;
+}
+
+function main() {
+  console.log(lens({ a: "abc", "b-c": "de" }));
+  console.log(lens({ a: null, "b-c": null }));
+}

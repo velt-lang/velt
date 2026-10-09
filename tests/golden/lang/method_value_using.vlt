@@ -1,0 +1,23 @@
+// A method of a `using` receiver read as a value (#746): the function value captures the
+// receiver as an arrow would, and the receiver is still disposed at the end of its block.
+class Res {
+  name = "r";
+  say(s: string): void {
+    console.log(this.name, s);
+  }
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+function main() {
+  {
+    using r = new Res();
+    const f = r.say;
+    f("a");
+    ["b", "c"].forEach(r.say);
+    ["d"].forEach(r.say.bind(r));
+    console.log("end of block");
+  }
+  console.log("after");
+}

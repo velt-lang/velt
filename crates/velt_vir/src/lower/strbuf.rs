@@ -19,6 +19,14 @@ impl FnLower<'_, '_> {
         (buf, bp)
     }
 
+    /// [`new_strbuf`](Self::new_strbuf) with a capacity computed at run time (a `u64`).
+    pub(super) fn new_strbuf_sized(&mut self, cap: Operand) -> (vir::Local, Operand) {
+        let buf = self.temp(Ty::Agg(STR_AGG));
+        let bp = self.addr(Place::local(buf));
+        self.call_rt(Rt::StrbufNew, vec![cap, bp.clone()], None);
+        (buf, bp)
+    }
+
     /// Append static text to the builder at `buf` (one byte, or a static chunk).
     pub(super) fn push_text(&mut self, buf: &Operand, text: &str) {
         match text.as_bytes() {

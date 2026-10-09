@@ -1,0 +1,2 @@
+spread_getter_tuple.vlt:26:23
+error: a spread argument of a tuple must be a variable or a field (not a call or a getter)

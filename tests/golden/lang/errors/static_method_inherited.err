@@ -1,0 +1,4 @@
+static_method_inherited.vlt:7:36: error: `secret` is private
+it can only be used inside the body of `A`
+static_method_inherited.vlt:9:15: error: `secret` is private
+static_method_inherited.vlt:10:15: error: `B.m` is not a static method

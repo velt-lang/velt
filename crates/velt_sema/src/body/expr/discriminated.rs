@@ -35,9 +35,10 @@ impl FnCx<'_, '_> {
             .unwrap_or_else(|| (0..members.len() as u32).collect());
         let mut fields = vec![];
         let mut without = vec![];
+        let owner = self.name_owner(&prop.name);
         for &v in &live {
             let m = members[v as usize];
-            match self.cx.field_seen_from(m, &prop.name, self.owner) {
+            match self.cx.field_seen_from(m, &prop.name, owner) {
                 Some((i, fty)) => fields.push((v, m, i, fty)),
                 None => without.push((v, m)),
             }

@@ -1,0 +1,69 @@
+// A method read as a value stays bound to the object it was read from (#746). JavaScript
+// loses `this` there, so each unbound read below throws a TypeError in Node; with
+// `.bind(obj)` it prints the same as Velt.
+interface Shape {
+  area(): number;
+}
+
+class Sq implements Shape {
+  s: number;
+  constructor(s: number) {
+    this.s = s;
+  }
+  area(): number {
+    return this.s * this.s;
+  }
+}
+
+class A {
+  name(): string {
+    return "A";
+  }
+}
+
+class B extends A {
+  override name(): string {
+    return "B";
+  }
+}
+
+class Counter {
+  n: number = 0;
+  inc(): void {
+    this.n++;
+  }
+  run(times: number): void {
+    const step = this.inc.bind(this);
+    for (let i = 0; i < times; i++) step();
+    const again = this.inc;
+    again();
+  }
+}
+
+class P {
+  tag = "p";
+  show(x: number): void {
+    console.log(this.tag, x);
+  }
+}
+
+function main() {
+  const p = new P();
+  const xs: number[] = [1, 2];
+  xs.forEach(p.show);
+  const s = p.show;
+  p.tag = "changed";
+  s(3);
+  const sh: Shape = new Sq(3);
+  const ar = sh.area;
+  console.log(ar());
+  const a: A = new B();
+  const nm = a.name;
+  console.log(nm(), a.name.bind(a)());
+  const c = new Counter();
+  c.run(3);
+  console.log(c.n);
+  const shapes: Shape[] = [new Sq(1), new Sq(2)];
+  const fs = shapes.map((sq) => sq.area);
+  console.log(fs.map((f) => f()).join(","));
+}
