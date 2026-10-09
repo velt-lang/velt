@@ -221,17 +221,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
         shared: Option<HandlerCaps>,
     ) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
-        let (modes, copied): (HashMap<hir::LocalId, PassMode>, HashSet<hir::LocalId>) =
-            match shared {
-                Some(h) => {
-                    let copied = h.flagged(f).collect();
-                    (f.captures.iter().map(|c| c.inner).zip(h.modes).collect(), copied)
-                }
-                None => (
-                    f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
-                    HashSet::new(),
-                ),
-            };
+        let (modes, copied): (HashMap<hir::LocalId, PassMode>, HashSet<hir::LocalId>) = match shared
+        {
+            Some(h) => {
+                let copied = h.flagged(f).collect();
+                (
+                    f.captures.iter().map(|c| c.inner).zip(h.modes).collect(),
+                    copied,
+                )
+            }
+            None => (
+                f.captures.iter().map(|c| (c.inner, c.mode)).collect(),
+                HashSet::new(),
+            ),
+        };
         let mut inputs = vec![];
         let mut flags = vec![];
         for p in &f.params {

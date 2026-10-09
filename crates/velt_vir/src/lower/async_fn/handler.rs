@@ -104,7 +104,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let targs = self.targs.clone();
         let caps = self.handler_caps(def);
-        self.cx.shared_envs.insert((def, targs.clone()), caps.clone());
+        self.cx
+            .shared_envs
+            .insert((def, targs.clone()), caps.clone());
         let info = self
             .cx
             .async_info(def, &targs)
@@ -118,7 +120,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.assign(Place::local(chosen), Rvalue::Use(init));
             let any = self.rvalue_temp(
                 Ty::Bool,
-                Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(mask)), cint(0, Ty::U64)),
+                Rvalue::Binary(
+                    BinOp::Ne,
+                    Operand::Copy(Place::local(mask)),
+                    cint(0, Ty::U64),
+                ),
             );
             let done = self.new_block();
             self.when(any, done);
@@ -342,7 +348,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             _ => Operand::Copy(slot),
         };
         let Some(mask) = mask else {
-            return (shared(self, slot), Operand::Const(Const::Bool(false), Ty::Bool));
+            return (
+                shared(self, slot),
+                Operand::Const(Const::Bool(false), Ty::Bool),
+            );
         };
         let bits = self.rvalue_temp(
             Ty::U64,
