@@ -307,13 +307,13 @@ mod tests {
         crate::io::velt_rt_write_f64(1, v);
     }
 
-    /// A string kept (a bitwise copy, no count) after its buffer was freed, then copied.
+    /// A string kept (a bitwise copy, no count; `VeltStr` has no `Drop`) after its buffer was
+    /// freed, then copied.
     unsafe fn freed_string_buffer() {
         let mut s = VeltStr::from_vec(vec![b'x'; 100]);
         let kept = std::ptr::read(&s);
         s.release();
-        let copy = kept.share();
-        std::mem::forget(copy);
+        std::hint::black_box(kept.share());
     }
 
     fn run_child(case: &str) -> String {
