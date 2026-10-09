@@ -218,17 +218,9 @@ impl FnLower<'_, '_> {
         let order = velt_sema::property_order::js_key_order(
             &names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
         );
-        let fields: Vec<(usize, (String, bool), TyId)> = names
-            .into_iter()
-            .zip(tys)
-            .enumerate()
-            .map(|(i, (n, t))| (i, n, t))
-            .collect();
-        let mut fields: Vec<Option<(usize, (String, bool), TyId)>> =
-            fields.into_iter().map(Some).collect();
-        let ordered: Vec<(usize, (String, bool), TyId)> =
-            order.into_iter().filter_map(|i| fields[i].take()).collect();
-        for (i, (name, optional), fty) in ordered {
+        for i in order {
+            let (name, optional) = names[i].clone();
+            let fty = tys[i];
             // ES private fields (`#x`) are not written, as in JavaScript.
             if name.starts_with('#') {
                 continue;
