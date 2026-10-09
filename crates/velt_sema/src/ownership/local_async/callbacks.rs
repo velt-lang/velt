@@ -10,9 +10,12 @@
 //! and through the heap by type ([`super::types`]): a sync closure stored in a field, element or
 //! map value is reached when a value the handler reaches has a type holding a function type of
 //! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
-//! stands for no callback the user stores). Closures made by a request (inside a reached async
-//! closure) assign that request's own variables, and the standard library's closures are not
-//! the user's to change, so neither is reported.
+//! stands for no callback the user stores). A closure stored straight into an object or array
+//! that one local of its function holds, and that never leaves that function, is reached only
+//! when that local is ([`held_closures`]): `other.onChange = …` on an `Input` the handler never
+//! sees is not one the handler's `Input` may hold. Closures made by a request (inside a reached
+//! async closure) assign that request's own variables, and the standard library's closures are
+//! not the user's to change, so neither is reported.
 
 use std::collections::{HashMap, HashSet};
 
