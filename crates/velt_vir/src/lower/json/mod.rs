@@ -16,6 +16,7 @@
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
 mod dynamic;
+mod key;
 mod literal;
 mod map;
 mod object;
@@ -120,7 +121,7 @@ impl FnLower<'_, '_> {
         let buf = self.temp(STR);
         let bp = self.addr(Place::local(buf));
         self.call_rt(Rt::StrbufNew, vec![cint(0, Ty::U64), bp.clone()], None);
-        self.json_write(&bp, &place, t);
+        self.json_write_at(&bp, &place, t, key::JsonKey::Text(""));
         let out = self.temp(STR);
         let op = self.addr(Place::local(out));
         self.call_rt(Rt::StrbufFinish, vec![bp, op], None);

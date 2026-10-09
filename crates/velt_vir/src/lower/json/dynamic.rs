@@ -11,12 +11,12 @@
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
-use crate::lower::{Cx, FnLower, Glue, VtableKey};
+use crate::lower::{Cx, FnLower, VtableKey};
 use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
 
 impl Cx<'_> {
     /// Concrete strict descendants of class type `cls` that can be written as JSON.
-    fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
+    pub(super) fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
         let TyKind::Adt(target, args) = self.kind(cls) else {
             return vec![];
         };
@@ -167,6 +167,7 @@ impl FnLower<'_, '_> {
         buf: &Operand,
         place: &Place,
         ty: TyId,
+        key: Option<&Place>,
         write_static: impl FnOnce(&mut Self),
     ) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
@@ -190,8 +191,7 @@ impl FnLower<'_, '_> {
             self.branch(hit, then, next);
             self.switch_to(then);
             // A class value is its object pointer, so `place` is also a `sub`-typed place.
-            let a = self.addr(place.clone());
-            self.call_glue(Glue::JsonWrite, sub, vec![buf.clone(), a]);
+            self.json_write_with(buf, place, sub, key);
             self.goto(done);
             self.switch_to(next);
         }

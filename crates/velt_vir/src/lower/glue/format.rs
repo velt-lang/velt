@@ -357,7 +357,7 @@ impl FnLower<'_, '_> {
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
-        let (res, rty) = self.call_hook(m, obj, ty);
+        let (res, rty) = self.call_hook(m, obj, ty, None);
         // The string, or the name before the value, is kept as one piece when the value is
         // broken across lines: node inserts a custom inspect's text as it is.
         let start = self.temp(Ty::U64);

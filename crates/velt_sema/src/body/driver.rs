@@ -7,7 +7,7 @@ use velt_common::{Diagnostic, Span};
 use super::{literal_locals, recheck, recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
-use crate::hir::{self, Def, DefId, ExprKind as H};
+use crate::hir::{self, Def, DefId, ExprKind as H, TyId};
 use crate::resolve::TyEnv;
 
 /// How many times a body is checked again for the types of its locals declared from literals
@@ -45,6 +45,11 @@ pub(super) fn detached<'a, 'm>(
     let mut fcx = FnCx::new(cx, module, env, Frame::new(FnKind::Free, None));
     fcx.detached = true;
     fcx
+}
+
+/// Can values of type `t` be printed / formatted (`FnCx::printable`), checked outside a body?
+pub(crate) fn printable(cx: &mut Ctx, t: TyId) -> bool {
+    detached(cx, 0, &[]).printable(t)
 }
 
 /// Check the own field defaults of type `d` (once), recording what each may throw.

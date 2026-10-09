@@ -53,7 +53,7 @@ impl FnLower<'_, '_> {
             return false;
         }
         if let Some(m) = self.hook(ty, Hook::ToString) {
-            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty);
+            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty, None);
             let s = self.addr(res.clone());
             self.push_str(buf, s);
             self.drop_glue(res, rty);

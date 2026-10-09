@@ -2,6 +2,7 @@
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::key::JsonKey;
 use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -18,10 +19,20 @@ enum Sep {
 }
 
 impl FnLower<'_, '_> {
-    /// `Glue::JsonWrite` body: `(buf, p)`.
-    pub(in crate::lower) fn json_write_body(&mut self, buf: Operand, p: Local, ty: TyId) {
+    /// `Glue::JsonWrite` body: `(buf, p)`; `Glue::JsonWriteKey`: `(buf, p, key)`.
+    pub(in crate::lower) fn json_write_body(
+        &mut self,
+        buf: Operand,
+        p: Local,
+        key: Option<Local>,
+        ty: TyId,
+    ) {
         let place = self.deref_param(p, ty);
-        self.json_write_expand(&buf, &place, ty);
+        let key = key.map(|k| {
+            let s = self.cx.str_ty();
+            self.deref_param(k, s)
+        });
+        self.json_write_expand(&buf, &place, ty, key.as_ref());
         self.terminate(Terminator::Return(unit()));
     }
 
@@ -40,14 +51,16 @@ impl FnLower<'_, '_> {
     /// Append `*place` (of concrete type `ty`) to the builder at `buf`.
     pub(super) fn json_write(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         if self.json_inline(ty) {
-            self.json_write_expand(buf, place, ty);
+            self.json_write_expand(buf, place, ty, None);
         } else {
             let a = self.addr(place.clone());
             self.call_glue(Glue::JsonWrite, ty, vec![buf.clone(), a]);
         }
     }
 
-    fn json_write_expand(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+    /// `key`: the value's key in its parent, for a type that passes it to a `toJSON(key)`
+    /// (key.rs).
+    fn json_write_expand(&mut self, buf: &Operand, place: &Place, ty: TyId, key: Option<&Place>) {
         let v = Operand::Copy(place.clone());
         let vt = self.cx.ty(ty);
         let b = buf.clone();
@@ -71,7 +84,7 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
-            TyKind::Option(e) => self.json_write_option(buf, place, ty, e),
+            TyKind::Option(e) => self.json_write_option(buf, place, ty, e, key),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
                 self.json_write_array(buf, &arr, e)
@@ -83,14 +96,14 @@ impl FnLower<'_, '_> {
                         self.push_text(buf, ",");
                     }
                     let fp = self.field_place(place, ty, i as u32);
-                    self.json_write(buf, &fp, e);
+                    self.json_write_at(buf, &fp, e, JsonKey::Text(&i.to_string()));
                 }
                 self.push_text(buf, "]");
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
-                self.json_write(buf, &inner, e);
+                self.json_write_with(buf, &inner, e, key);
             }
             TyKind::Adt(..) if self.json_inline(ty) => match self.enum_strings(ty) {
                 Some(strings) => self.push_enum_str(buf, place, &strings, false, true),
@@ -117,9 +130,10 @@ impl FnLower<'_, '_> {
                     .unwrap_or_else(|| ice("not a Record"));
                 self.json_write_record(buf, place, ty, kv)
             }
-            TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
-                self.json_write_class(buf, place, ty, |lw| lw.json_write_static(buf, place, ty, d))
-            }
+            TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => self
+                .json_write_class(buf, place, ty, key, |lw| {
+                    lw.json_write_static(buf, place, ty, d, key)
+                }),
             // A union is written as its active member.
             TyKind::Adt(..) if self.cx.is_union(ty) => {
                 self.for_each_variant(place, ty, |lw, v, parts| {
@@ -127,7 +141,7 @@ impl FnLower<'_, '_> {
                         lw.push_literal_json(buf, &l);
                     }
                     for (pp, pt) in parts {
-                        lw.json_write(buf, &pp, pt);
+                        lw.json_write_with(buf, &pp, pt, key);
                     }
                 });
             }
@@ -139,14 +153,21 @@ impl FnLower<'_, '_> {
 
     /// A struct, class or object written as its static type `ty`: what its `toJSON()` returns,
     /// as in JS, else its fields.
-    fn json_write_static(&mut self, buf: &Operand, place: &Place, ty: TyId, d: hir::DefId) {
+    fn json_write_static(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        d: hir::DefId,
+        key: Option<&Place>,
+    ) {
         if let Some(m) = self.hook(ty, Hook::ToJson) {
-            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty);
+            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty, key);
             if rty == ty {
                 // `toJSON() { return this; }`: JS writes the fields of the result.
                 self.json_write_object(buf, &res, ty);
             } else {
-                self.json_write(buf, &res, rty);
+                self.json_write_with(buf, &res, rty, key);
             }
             self.drop_glue(res, rty);
             return;
@@ -179,11 +200,18 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    fn json_write_option(&mut self, buf: &Operand, place: &Place, ty: TyId, e: TyId) {
+    fn json_write_option(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        e: TyId,
+        key: Option<&Place>,
+    ) {
         self.if_some(
             place,
             ty,
-            |lw, p| lw.json_write(buf, &p, e),
+            |lw, p| lw.json_write_with(buf, &p, e, key),
             |lw| lw.push_text(buf, "null"),
         );
     }
@@ -204,8 +232,8 @@ impl FnLower<'_, '_> {
             lw.push_text(buf, ",");
             lw.goto(join);
             lw.switch_to(join);
-            let ep = lw.elem_place(arr, kv, e);
-            lw.json_write(buf, &ep, e);
+            let ep = lw.elem_place(arr, kv.clone(), e);
+            lw.json_write_at(buf, &ep, e, JsonKey::Index(kv));
         });
         self.push_text(buf, "]");
     }
@@ -273,7 +301,7 @@ impl FnLower<'_, '_> {
                             self.json_member_sep(buf, prev);
                             self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
                             self.push_text(buf, &key);
-                            self.json_write(buf, &fp, fty);
+                            self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                             self.goto(done);
                             self.switch_to(done);
                         }
@@ -284,7 +312,7 @@ impl FnLower<'_, '_> {
                                 lw.json_member_sep(buf, prev);
                                 lw.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
                                 lw.push_text(buf, &key);
-                                lw.json_write(buf, &p, e);
+                                lw.json_write_at(buf, &p, e, JsonKey::Text(&name));
                             },
                             |_| {},
                         ),
@@ -294,7 +322,7 @@ impl FnLower<'_, '_> {
                 _ => {
                     self.json_member_sep(buf, sep);
                     self.push_text(buf, &key);
-                    self.json_write(buf, &fp, fty);
+                    self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                     sep = Sep::Rest;
                 }
             }

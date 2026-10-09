@@ -22,6 +22,7 @@
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
+//! | JsonWriteKey | `(buf: ptr, p: ptr, key: ptr)`  | JsonWrite of a type that passes its key (a string) to a `toJSON(key)` (json/key.rs) |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
 //! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
 //!
@@ -81,6 +82,7 @@ pub(crate) enum Glue {
     DynTransfer,
     ManyCheck,
     JsonWrite,
+    JsonWriteKey,
     JsonRead,
     JsonParse,
 }
@@ -121,6 +123,7 @@ impl Glue {
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
             Glue::JsonWrite => "jsonwrite",
+            Glue::JsonWriteKey => "jsonwritekey",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
         }
@@ -147,6 +150,7 @@ impl Glue {
             Glue::Eq | Glue::Same | Glue::KeyEq => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
+            Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
         }
@@ -181,7 +185,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
-            Glue::JsonWrite => lw.json_write_body(a(0), args[1], ty),
+            Glue::JsonWrite => lw.json_write_body(a(0), args[1], None, ty),
+            Glue::JsonWriteKey => lw.json_write_body(a(0), args[1], Some(args[2]), ty),
             Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
             Glue::JsonParse => {
                 lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)

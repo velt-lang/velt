@@ -29,3 +29,17 @@ const s: Shape = { kind: "rect", w: 1 };
 const n: number | string = 5;
 const l: "a" | "b" = "b";
 console.log(`${s}|${n}|${l}`);
+
+// A subclass's override runs also through a base-class value in generic code.
+class Greeting {
+  toString(): string {
+    return "A!";
+  }
+}
+class LoudGreeting extends Greeting {
+  override toString(): string {
+    return "C!";
+  }
+}
+const g: Greeting = new LoudGreeting();
+console.log(show(g), `${g}`, show(new Greeting()));
