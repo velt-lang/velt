@@ -28,7 +28,7 @@ map after delete: Map(2) { 'one' => 1, 'three' => 3 }
 map after delete: Map(2) { 'one' => 1, 'three' => 3 }
 map of arrays: Map(2) { 1 => [ 'a' ], 2 => [] }
 map of arrays: Map(2) { 1 => [ 'a' ], 2 => [] }
-array of maps: Map(2) { 'one' => 1, 'three' => 3 }
+array of maps: [object Map]
 array of maps: [ Map(2) { 'one' => 1, 'three' => 3 } ]
 xs=10,20 len=2 nested=1,2,,3!
 xs: 10,20 done

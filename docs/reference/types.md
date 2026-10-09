@@ -136,9 +136,12 @@ usable and no copy method is needed.
   error; build that text with a template literal (`` `Total: ${xs}` ``).
 - A template literal writes `${x}` as JS's `String(x)` does for strings, numbers, booleans,
   `null` and arrays: an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays
-  the same way, `null` elements as empty text). It calls a class's own `toString()`; other
+  the same way, `null` elements as empty text, an object in the array as `[object Object]`, a
+  map as `[object Map]`, a set as `[object Set]`). It calls a class's own `toString()`; other
   values (objects, maps) are formatted the way `console.log` formats them, where JS writes
-  `[object Object]`.
+  `[object Object]`. An array whose elements JS writes with their own method (a class with a
+  `toString()`, a `Date`, an `Error`, a `RegExp`) is a compile error in a template literal, in
+  `join` and in `toString()`: write `` `${xs.map((x) => x.toString()).join(",")}` ``.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
@@ -676,7 +679,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
-  reverse isEmpty entries fill`, `join` (any elements, shown as `${x}` shows them), `sort()` on
+  reverse isEmpty entries fill`, `join` and `toString()` (any elements, written as
+  `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
   (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the

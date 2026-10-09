@@ -164,6 +164,11 @@ impl FnCx<'_, '_> {
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, span);
         let ck = self.check_call(&c, slots, args, exp, span);
+        if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
+            if let Some(a) = ck.args.first() {
+                self.check_structured_clone(a.ty, a.span);
+            }
+        }
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {

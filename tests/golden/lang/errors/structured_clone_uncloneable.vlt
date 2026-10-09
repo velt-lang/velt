@@ -1,0 +1,14 @@
+// `structuredClone` rejects what JS's structured clone throws for (a function, at any
+// depth) and class instances, which JS copies as plain objects without their class.
+class C {
+  v: number = 1;
+}
+
+function main() {
+  const f = (x: number) => x + 1;
+  structuredClone(f);
+  structuredClone({ name: "a", cb: f });
+  structuredClone(new C());
+  const m = new Map<string, C[]>();
+  structuredClone(m);
+}

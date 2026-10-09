@@ -35,7 +35,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Set<T>` | insertion-ordered hash set ([velt:collections/set](../std/collections/set.md)) |
 | `RegExp`, `/ab+c/gi` | regular expressions ([velt:regex](../std/regex.md)) |
 | `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt:encoding](../std/encoding.md)) |
-| `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)) |
+| `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 

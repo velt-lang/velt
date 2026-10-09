@@ -37,17 +37,16 @@ extend<T> Array<T[]> {
 }
 
 extend<T> Array<T | null> {
-  /** `null` elements join as empty text, like JS; the others as `${x}`. */
+  /** `null` elements join as empty text, like JS; the others as `join` writes them. */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
       if (i > 0) {
         s += sep;
       }
-      const x = this[i];
-      if (x != null) {
-        s += `${x}`;
-      }
+      // A one-element tuple is written as its element is written in an array: `null` as "".
+      const one: [T | null] = [__intrinsic_share(this[i])];
+      s += `${one}`;
     }
     return s;
   }

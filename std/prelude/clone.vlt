@@ -1,9 +1,11 @@
 // Prelude: `structuredClone`, JavaScript's deep copy.
 
 /**
- * An independent deep copy of `value`, like JS's `structuredClone`: arrays, maps, sets, object
- * types and class instances are copied all the way down (`value.clone()`), so changing the copy
- * never changes the original.
+ * An independent deep copy of `value`, like JS's `structuredClone`: arrays, maps, sets, dates
+ * and object types are copied all the way down (`value.clone()`), so changing the copy never
+ * changes the original. What JS can't clone is a compile error: a function (JS throws a
+ * `DataCloneError`) and an instance of a class of your own (JS copies it as a plain object,
+ * without its class; write `value.clone()` for a copy that keeps it).
  */
 export function structuredClone<T>(value: T): T {
   return value.clone();

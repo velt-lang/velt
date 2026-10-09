@@ -191,6 +191,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "toReversed",
             "toSorted",
             "toSpliced",
+            "toString",
             "with",
             // Builtins.
             "length",

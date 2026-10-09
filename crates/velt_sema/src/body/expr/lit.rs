@@ -261,6 +261,8 @@ impl FnCx<'_, '_> {
                 let t = h.ty;
                 if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
                     parts.push(h);
+                } else if self.reject_js_list(t, "a template literal", h.span) {
+                    parts.push(self.error_expr(h.span));
                 } else if self.printable(t) {
                     let hs = h.span;
                     parts.push(self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs));

@@ -76,7 +76,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `(T, bool)` if `ty` is std's `Set<T>` class (a `Map<T, bool>` in field 0).
-    fn std_set(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
+    pub(in crate::lower) fn std_set(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return None;
         };

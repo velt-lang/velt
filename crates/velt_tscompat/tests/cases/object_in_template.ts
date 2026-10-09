@@ -25,8 +25,14 @@ export function describe(p: Point, xs: number[], m: Money, e: Euro, l: Level): s
   return a + b + c + d;
 }
 
-export function pair(t: [number, string], ns: (number | null)[], ps: Point[], ms: Money[]): string {
-  const a = `${ps}`; //~ object-in-template
-  const b = `${ms}`; //~ object-in-template
-  return `${t} ${ns}` + a + b;
+// In an array, an object is `[object Object]` in both (an element with its own `toString()` is
+// a compile error in Velt).
+export function pair(t: [number, string], ns: (number | null)[], ps: Point[]): string {
+  const a = `${ps}`;
+  const d = `${[new Map<string, number>()]} ${[[p0()]]}`;
+  return `${t} ${ns}` + a + d;
+}
+
+function p0(): Point {
+  return { x: 0, y: 0 };
 }

@@ -1,0 +1,12 @@
+structured_clone_uncloneable.vlt:9:19
+error: `structuredClone` cannot copy a function
+  = note: JS throws a `DataCloneError` for a function value; copy the data around it and pass the function along as it is
+structured_clone_uncloneable.vlt:10:19
+error: `structuredClone` cannot copy a function (inside `{ name: string; cb:
+  = note: JS throws a `DataCloneError` for a function value; copy the data around it and pass the function along as it is
+structured_clone_uncloneable.vlt:11:19
+error: `structuredClone` cannot copy an instance of class `C`
+  = note: JS copies a class instance as a plain object: the copy is not `instanceof C` and has none of its methods; write `.clone()` for a deep copy that stays a `C`
+structured_clone_uncloneable.vlt:13:19
+error: `structuredClone` cannot copy an instance of class `C` (inside `Map<string, C[]>`)
+  = note: JS copies a class instance as a plain object: the copy is not `instanceof C` and has none of its methods; write `.clone()` for a deep copy that stays a `C`

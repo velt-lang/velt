@@ -1,0 +1,21 @@
+template_array_own_text.vlt:21:18
+error: a template literal cannot write an array of `P` as JavaScript does
+  = note: JS calls each element's `toString()`; write the text with `.map((x) => x.toString()).join(",")`
+template_array_own_text.vlt:22:18
+error: `join` cannot write an array of `P` as JavaScript does
+  = note: JS calls each element's `toString()`; write the text with `.map((x) => x.toString()).join(",")`
+template_array_own_text.vlt:23:26
+error: `toString` cannot write an array of `Q` as JavaScript does
+  = note: JS calls each element's `toString()`; write the text with `.map((x) => x.toString()).join(",")`
+template_array_own_text.vlt:24:18
+error: a template literal cannot write an array of `Date` as JavaScript does
+  = note: JS calls each element's `toString()`; write the text with `.map((x) => x.toString()).join(",")`
+template_array_own_text.vlt:25:18
+error: a template literal cannot write an array of `Oops` as JavaScript does
+  = note: JS writes each element as `Error: message`; write the text with `.map((x) => `Error: ${x.message}`).join(",")`
+template_array_own_text.vlt:26:22
+error: `join` cannot write an array of `RegExp` as JavaScript does
+  = note: JS writes each element as `/source/flags`; write the text with `.map((x) => `/${x.source}/${x.flags}`).join(",")`
+template_array_own_text.vlt:28:18
+error: a template literal cannot write an array of `P` as JavaScript does
+  = note: JS calls each element's `toString()`; write the text with `.map((x) => x.toString()).join(",")`

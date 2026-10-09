@@ -4,7 +4,8 @@
 //! (JS order — later parts cannot change what an earlier part contributed), and the filled
 //! builder is the result (same layout as `VeltStr`, no `finish` call). Non-string parts are
 //! appended by the shared format glue, so `${x}` is what `console.log(x)` prints, except for
-//! arrays and tuples, which are written as JS's `String(x)` writes them (`1,2`).
+//! arrays and tuples, which are written as JS's `String(x)` writes them (`1,2`; an object in
+//! them as `[object Object]`).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -182,8 +183,14 @@ impl FnLower<'_, '_> {
     }
 
     /// An element of an array being written by [`push_js_string`](Self::push_js_string):
-    /// `null` is empty text, as in JS.
+    /// `null` is empty text, a union member is written as itself, and an object as JS's default
+    /// `Object.prototype.toString` writes it (`[object Object]`, `[object Map]`, ...). Sema
+    /// rejects element types whose JS text comes from their own method (`toString()`, `Error`,
+    /// `RegExp`; velt_sema's js_list.rs), except through a type parameter.
     fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        if let Some(tag) = self.object_tag(ty) {
+            return self.push_text(buf, tag);
+        }
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
@@ -198,7 +205,40 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(done);
             }
+            TyKind::Shared(e) => {
+                let bx = self.cx.shared_box(e);
+                let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
+                self.push_js_element(buf, &inner, e);
+            }
+            TyKind::Adt(..) if self.cx.is_union(ty) => {
+                self.for_each_variant(place, ty, |lw, v, parts| {
+                    if let Some(l) = lw.variant_literal(ty, v) {
+                        lw.push_literal(buf, &l, false);
+                    }
+                    for (pp, pt) in parts {
+                        lw.push_js_element(buf, &pp, pt);
+                    }
+                });
+            }
             _ => self.push_js_string(buf, place, ty),
+        }
+    }
+
+    /// What JS's `Object.prototype.toString` writes for an array element of type `ty` when it
+    /// is an object (a class, struct or object literal, a `Map`, `Set` or promise); `None` for
+    /// everything else (numbers, strings, enums, unions, arrays, ...).
+    fn object_tag(&mut self, ty: TyId) -> Option<&'static str> {
+        match self.cx.kind(ty) {
+            TyKind::Promise(..) => Some("[object Promise]"),
+            TyKind::Adt(..)
+                if self.cx.is_json_value(ty) || self.cx.is_union(ty) || self.is_enum(ty) =>
+            {
+                None
+            }
+            TyKind::Adt(..) if self.prelude_map(ty).is_some() => Some("[object Map]"),
+            TyKind::Adt(..) if self.std_set(ty).is_some() => Some("[object Set]"),
+            TyKind::Adt(..) => Some("[object Object]"),
+            _ => None,
         }
     }
 
