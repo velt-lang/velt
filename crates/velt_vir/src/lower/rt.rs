@@ -90,6 +90,8 @@ pub(super) enum Rt {
     // M4: string builder and JSON pull reader (rt_abi_async.md §12)
     StrEq,
     StrbufNew,
+    /// A template literal's builder made from a fresh part's buffer (`build_sized`).
+    StrbufAdopt,
     StrbufPushStr,
     StrbufPushBytes,
     StrbufPushI64,
@@ -98,6 +100,7 @@ pub(super) enum Rt {
     StrbufInspectEnter,
     StrbufInspectLeave,
     StrbufInspectCircular,
+    StrbufInspectAtom,
     StrbufInspectMore,
     StrbufLen,
     StrbufInspectLayout,
@@ -248,6 +251,7 @@ impl Rt {
         match self {
             Rt::StrEq => f("velt_rt_str_eq", vec![Ptr, Ptr], U8),
             Rt::StrbufNew => f("velt_rt_strbuf_new", vec![U64, Ptr], Unit),
+            Rt::StrbufAdopt => f("velt_rt_strbuf_adopt", vec![Ptr, Ptr, U64, Ptr], U8),
             Rt::StrbufPushStr => f("velt_rt_strbuf_push_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushBytes => f("velt_rt_strbuf_push_bytes", vec![Ptr, Ptr, U64], Unit),
             Rt::StrbufPushI64 => f("velt_rt_strbuf_push_i64", vec![Ptr, I64], Unit),
@@ -256,6 +260,7 @@ impl Rt {
             Rt::StrbufInspectEnter => f("velt_rt_strbuf_inspect_enter", vec![Ptr, Ptr], U8),
             Rt::StrbufInspectLeave => f("velt_rt_strbuf_inspect_leave", vec![Ptr], Unit),
             Rt::StrbufInspectCircular => f("velt_rt_strbuf_inspect_circular", vec![Ptr, Ptr], U8),
+            Rt::StrbufInspectAtom => f("velt_rt_strbuf_inspect_atom", vec![Ptr, U64], Unit),
             Rt::StrbufInspectMore => f("velt_rt_strbuf_inspect_more", vec![Ptr, U64], Unit),
             Rt::StrbufLen => f("velt_rt_strbuf_len", vec![Ptr], U64),
             Rt::StrbufInspectLayout => f("velt_rt_strbuf_inspect_layout", vec![Ptr, U64], Unit),

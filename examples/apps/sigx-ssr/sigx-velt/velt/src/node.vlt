@@ -1,0 +1,295 @@
+// sigx/node: what every JSX expression evaluates to under the sigx provider, and the renderer
+// that turns it into sigx-compatible SSR HTML.
+//
+// Elements are built eagerly where they can be: an intrinsic element or fragment whose children
+// contain no component is one string by the time it is complete (`html`). A component is never
+// called when its element is built: its node holds a `setup` thunk that the renderer runs
+// parent-first, handing it the per-render `Renderer`. That is what gives sigx's pre-order
+// component ids (`<!--$c:N-->`, the hydration anchors), and it is how per-render state (the id
+// counter, the reactive runtime) reaches a component without module-level state, which Velt
+// does not have.
+//
+// sigx's server renderer separates adjacent text nodes in one DOM parent with `<!--t-->` (the
+// browser's parser would merge them, and hydration claims them one by one). Text adjacency is
+// tracked inside a node while it is built and across nodes by the renderer: every chunk records
+// whether it starts and ends with text.
+
+import { Runtime } from "./reactivity";
+
+// What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
+// the attribute, numbers render like `${n}`.
+export type AttrValue = string | number | bool | null;
+
+// Text a precompiled template folds into its strings.
+export type Text = string | number | bool | null;
+
+// What may appear as a child: text is escaped, numbers render like `${n}`, `true`, `false` and
+// `null` render nothing, and an array renders its elements in order.
+export type Child = Element | Element[] | string | number | bool | null;
+
+export class Element {
+  // Markup of this node; with `parts`, only what precedes them.
+  html: string;
+  // `html` starts / ends with a text node (drives the `<!--t-->` separators).
+  textStart: bool = false;
+  textEnd: bool = false;
+  // What follows `html`, in document order, when the node contains a component.
+  parts: Element[] | null = null;
+  // Set on a component's node: the component, started by the renderer when it reaches it.
+  setup: ((r: Renderer) => Instance) | null = null;
+
+  constructor(html: string) {
+    this.html = html;
+  }
+
+  // True when `html` is the whole node (no component inside).
+  get isComplete(): bool {
+    return this.parts == null && this.setup == null;
+  }
+}
+
+// A started component: its render function, and the data loads its setup registered
+// (`useData`). With loads, the render function shows their pending state until they finish.
+export interface Load {
+  run(): Promise<void>;
+}
+
+export class Instance {
+  view: () => Element;
+  loads: Load[];
+
+  constructor(view: () => Element, loads: Load[]) {
+    this.view = view;
+    this.loads = loads;
+  }
+}
+
+// A component's node: `run` is called by the renderer, parent first.
+export function componentNode(run: (r: Renderer) => Instance): Element {
+  const node = new Element("");
+  node.setup = run;
+  return node;
+}
+
+// Builds one node from a sequence of markup, text and child elements, folding complete
+// children into the current string and keeping incomplete ones as parts.
+export class Builder {
+  cur: string = "";
+  curTextStart: bool = false;
+  lastText: bool = false;
+  started: bool = false;
+  parts: Element[] = [];
+  first: Element | null = null;
+
+  // Markup (a tag or a comment): never text.
+  markup(s: string) {
+    if (!this.started) {
+      this.started = true;
+      this.curTextStart = false;
+    }
+    this.cur += s;
+    this.lastText = false;
+  }
+
+  // Already escaped text; empty text emits nothing (as in sigx).
+  text(s: string) {
+    if (s == "") {
+      return;
+    }
+    if (!this.started) {
+      this.started = true;
+      this.curTextStart = true;
+    }
+    if (this.lastText) {
+      this.cur += "<!--t-->";
+    }
+    this.cur += s;
+    this.lastText = true;
+  }
+
+  // A child element.
+  element(el: Element) {
+    if (el.isComplete) {
+      if (el.html == "") {
+        return;
+      }
+      if (!this.started) {
+        this.started = true;
+        this.curTextStart = el.textStart;
+      }
+      if (this.lastText && el.textStart) {
+        this.cur += "<!--t-->";
+      }
+      this.cur += el.html;
+      this.lastText = el.textEnd;
+      return;
+    }
+    this.flush();
+    this.parts.push(el);
+    // What the incomplete child ends with is known only when it is rendered: the renderer
+    // decides about separators between parts.
+    this.lastText = false;
+    this.started = false;
+  }
+
+  // Ends the current string run as a chunk.
+  flush() {
+    if (this.cur == "" && this.first != null) {
+      return;
+    }
+    const chunk = new Element(this.cur);
+    chunk.textStart = this.curTextStart;
+    chunk.textEnd = this.lastText;
+    if (this.first == null) {
+      this.first = chunk;
+    } else {
+      this.parts.push(chunk);
+    }
+    this.cur = "";
+    this.started = false;
+    this.curTextStart = false;
+  }
+
+  finish(): Element {
+    this.flush();
+    const head = this.first;
+    if (head == null) {
+      return new Element("");
+    }
+    if (this.parts.length > 0) {
+      head.parts = this.parts;
+    }
+    return head;
+  }
+}
+
+// Data that resolved during the render, for `window.__SIGX_ASYNC__`: the client's `useData`
+// restores it instead of fetching again. Entries are `"key":json`, removed once written.
+export class State {
+  entries: string[] = [];
+
+  add(key: string, json: string) {
+    this.entries.push(`${JSON.stringify(key)}:${json}`);
+  }
+
+  // The script that merges the unwritten entries into `window.__SIGX_ASYNC__` ("" for none).
+  script(): string {
+    if (this.entries.length == 0) {
+      return "";
+    }
+    const body = `{${this.entries.join(",")}}`;
+    this.entries = [];
+    return `window.__SIGX_ASYNC__=Object.assign(Object.create(null),window.__SIGX_ASYNC__,${escapeForScript(body)});`;
+  }
+}
+
+// JSON inside a <script>: `<`, `>`, U+2028 and U+2029 escaped (sigx's escapeJsonForScript).
+export function escapeForScript(json: string): string {
+  return json
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
+// A component whose data is still loading: streamed after the shell (`$SIGX_REPLACE`).
+class Pending {
+  id: number;
+  inst: Instance;
+
+  constructor(id: number, inst: Instance) {
+    this.id = id;
+    this.inst = inst;
+  }
+}
+
+async function runLoads(loads: Load[]): Promise<void> {
+  const running: Promise<void>[] = [];
+  for (const load of loads) {
+    running.push(load.run());
+  }
+  await Promise.all(running);
+}
+
+// Per-render state: the output, the next component id, the reactive runtime components create
+// their signals in, the data state, and (when streaming) the components still loading.
+export class Renderer {
+  // Output pieces, joined once at the end (measured the same as `+=` on one string, velt-lang/velt#379).
+  out: string[] = [];
+  nextId = 1;
+  lastText: bool = false;
+  rt: Runtime = new Runtime();
+  state: State = new State();
+  // Streaming: a component with loads renders its pending state in a placeholder, and its real
+  // content follows the shell. Otherwise the render waits for the loads (renderToString).
+  streaming: bool = false;
+  pending: Pending[] = [];
+
+  async render(el: Element): Promise<void> {
+    const setup = el.setup;
+    if (setup != null) {
+      // Pre-order ids: the component's id is taken before its children render.
+      const id = this.nextId;
+      this.nextId += 1;
+      const inst = setup(this);
+      if (inst.loads.length == 0) {
+        await this.render(inst.view());
+      } else if (this.streaming) {
+        this.out.push(`<div data-async-placeholder="${id}" style="display:contents;">`);
+        this.lastText = false;
+        await this.render(inst.view());
+        this.out.push("</div>");
+        this.pending.push(new Pending(id, inst));
+      } else {
+        await runLoads(inst.loads);
+        await this.render(inst.view());
+      }
+      this.out.push(`<!--$c:${id}-->`);
+      this.lastText = false;
+      return;
+    }
+    if (el.html != "") {
+      if (this.lastText && el.textStart) {
+        this.out.push("<!--t-->");
+      }
+      this.out.push(el.html);
+      this.lastText = el.textEnd;
+    }
+    const parts = el.parts;
+    if (parts != null) {
+      for (const p of parts) {
+        await this.render(p);
+      }
+    }
+  }
+
+  // The output so far, emptied.
+  take(): string {
+    const html = this.out.join("");
+    this.out = [];
+    return html;
+  }
+
+  // The next streamed component once its data has loaded: the `<script>` that puts its content
+  // in its placeholder (and its data in `__SIGX_ASYNC__`), or "" when none is left. Components it
+  // contains that load data of their own are queued after it; their ids follow the shell's.
+  async next(): Promise<string> {
+    const p = this.pending.shift();
+    if (p == null) {
+      return "";
+    }
+    await runLoads(p.inst.loads);
+    this.lastText = false;
+    await this.render(p.inst.view());
+    const html = escapeForScript(JSON.stringify(this.take()));
+    return `<script>${this.state.script()}$SIGX_REPLACE(${p.id}, ${html});</script>`;
+  }
+}
+
+// The HTML sigx's `renderToString` produces for `el`: components run parent-first, each
+// followed by its `<!--$c:N-->` marker; data loads are waited for.
+export async function renderToString(el: Element): Promise<string> {
+  const r = new Renderer();
+  await r.render(el);
+  return r.out.join("");
+}

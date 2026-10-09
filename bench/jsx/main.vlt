@@ -8,10 +8,24 @@
 //   rows-strings  only the rows, as strings (hand)
 //   rows          only the rows, as TSX elements
 //   rows-render   the rows in a fragment, rendered to a string
+//
+// The breakdown from `hand` to `precompiled` (hand-written code in the compiled page's shape):
+//   shape-no-doctype        the rows joined, then one template literal for the page
+//   shape-jsx-escape        that, with the messages escaped by `jsxEscape`
+//   precompiled-no-doctype  the TSX page rendered, without the doctype
+//   shape                   `shape-no-doctype` with the doctype prepended
 
 import { renderToStringSync } from "velt:jsx";
 import { args } from "velt:process";
-import { Fortune, fortunes, hand, handRows } from "./_data";
+import {
+  Fortune,
+  fortunes,
+  hand,
+  handRows,
+  shape,
+  shapeJsxEscape,
+  shapeNoDoctype,
+} from "./_data";
 import * as precompiled from "./_page";
 import * as generic from "./_page_generic";
 
@@ -29,6 +43,14 @@ function once(variant: string, fs: Fortune[]): number {
       return precompiled.rows(fs).length;
     case "rows-render":
       return renderToStringSync(precompiled.rowsFragment(fs)).length;
+    case "shape-no-doctype":
+      return shapeNoDoctype(fs).length;
+    case "shape-jsx-escape":
+      return shapeJsxEscape(fs).length;
+    case "precompiled-no-doctype":
+      return renderToStringSync(precompiled.page(fs)).length;
+    case "shape":
+      return shape(fs).length;
   }
   throw new Error(`unknown variant ${variant}`);
 }
@@ -45,6 +67,9 @@ function main() {
     // std/jsx writes `'` as react-dom does (`&#x27;`), `escapeHtml` as `&#39;`.
     const same = a.replaceAll("&#39;", "&#x27;") == b;
     console.log(`precompiled == generic: ${b == c}, == hand (apostrophes aside): ${same}`);
+    if (shape(fs) != a) {
+      throw new Error("the breakdown's page differs from hand's");
+    }
     if (b != c || !same) {
       throw new Error("the variants render different pages");
     }

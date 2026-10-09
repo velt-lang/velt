@@ -1,0 +1,16 @@
+// `#x in o` on a value that may be null: test for null first, as TypeScript requires.
+class B {
+  y: number = 2;
+}
+class A {
+  #x: number = 1;
+  static has(o: A | null): boolean {
+    return o !== null && #x in o;
+  }
+  static either(o: A | B | null): string {
+    if (o === null) return "null";
+    return #x in o ? "an A" : "not an A";
+  }
+}
+console.log(A.has(new A()), A.has(null));
+console.log(A.either(new A()), A.either(new B()), A.either(null));

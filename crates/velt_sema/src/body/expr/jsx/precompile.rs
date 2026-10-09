@@ -6,7 +6,7 @@
 //! Only `Element` parts are slots: components, fragments, elements that are not precompiled (a
 //! spread or a `key`), `Element`-typed expressions as they are, and any other child as
 //! `Fragment([v], null)`. A tree without slots is `jsxTemplateString(html)` when the runtime
-//! exports it.
+//! exports it, and a `string` child is `jsxEscapeString(x)` when it exports that.
 //!
 //! With a `jsxTextSeparator` export, text children are collected as runs (`text_run`); with a
 //! `jsxSoleEmpty` export, an element's only `{expr}` child may render differently (`sole_child`);
@@ -22,8 +22,9 @@ use super::intrinsic_tag;
 use super::key::is_key;
 use super::provider::{Precompile, Provider};
 use super::text_run::{TextPart, Textness};
+use crate::body::places::set_place_mode;
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H};
+use crate::hir::{self, ExprKind as H, UseMode};
 
 /// HTML void elements: written without a closing tag, unless the provider lists its own
 /// (`jsxVoidElements`, [`Provider::is_void`]).
@@ -182,7 +183,6 @@ impl FnCx<'_, '_> {
                 // The provider escapes `'` its own way (`&#39;`, `&#x27;`): `jsxEscape`, one text
                 // part like static text.
                 let h = self.str_lit(value, *span);
-                let h = self.coerce(h, pc.text);
                 if t.sep.is_some() {
                     t.run.push(TextPart::Value(h, Textness::Always, false));
                 } else {
@@ -252,7 +252,14 @@ impl FnCx<'_, '_> {
             Some(_) => (self.textness(&h), self.may_be_empty(&h)),
             None => (Textness::Always, false),
         };
-        match self.try_coerce(h, pc.text) {
+        // With `jsxEscapeString`, a `string` stays one until it is escaped (`escape_call`);
+        // without it, it is a `Text` like any other text, or a slot if `Text` has no strings.
+        let text = if h.ty == self.cx.ty.str_ && pc.escape_string.is_some() {
+            Ok(h)
+        } else {
+            self.try_coerce(h, pc.text)
+        };
+        match text {
             Ok(h) if t.sep.is_some() => t.run.push(TextPart::Value(h, textness, may_be_empty)),
             Ok(h) => {
                 let s = self.escape_call(p, pc, h, span);
@@ -324,7 +331,9 @@ impl FnCx<'_, '_> {
         self.intrinsic(hir::Intrinsic::ToString, vec![h], str_, span)
     }
 
-    /// `jsxEscape(h)`.
+    /// `jsxEscape(h)` for a `JSX.Text` (or a `string`) `h`, or `jsxEscapeString(h)` for a
+    /// `string` when the provider exports it: the same text, without converting the string to
+    /// the `Text` union and testing which member it holds.
     pub(super) fn escape_call(
         &mut self,
         p: &Provider,
@@ -332,6 +341,22 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         span: Span,
     ) -> hir::Expr {
+        if h.ty == self.cx.ty.str_ {
+            if let Some(f) = pc.escape_string {
+                let mut h = h;
+                let moves_out = match &h.kind {
+                    H::Field { mode, .. } | H::Index { mode, .. } => *mode == UseMode::Move,
+                    _ => false,
+                };
+                if moves_out {
+                    // `{f.message}`: borrowed where it is rather than copied out of `f`; the
+                    // ownership pass makes it a move again if the parameter takes ownership.
+                    set_place_mode(&mut h, UseMode::Borrow);
+                }
+                return self.jsx_call(p, f, "jsxEscapeString", vec![h], span);
+            }
+        }
+        let h = self.coerce(h, pc.text);
         self.jsx_call(p, pc.escape, "jsxEscape", vec![h], span)
     }
 }

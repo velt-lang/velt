@@ -54,12 +54,14 @@ mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod property_pattern;
 pub(crate) mod pure_init;
 pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;
+mod untyped_let;
 mod using;
 
 use std::collections::HashMap;
@@ -71,7 +73,8 @@ use crate::defs::{Bound, FnKind, ThrowSrc};
 use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
-pub(crate) use driver::{check_bodies, ensure_body, field_defaults};
+pub(crate) use defaults::param_defaults;
+pub(crate) use driver::{check_bodies, ensure_body, field_defaults, printable};
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,6 +234,12 @@ pub(crate) struct Frame {
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
+    /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
+    /// selects like the literal itself (TypeScript gives the constant the literal type).
+    pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
+    /// first assignment gives it its type (`untyped_let`).
+    pub untyped_lets: HashMap<LocalId, Span>,
 }
 
 impl Frame {
@@ -271,6 +280,8 @@ impl Frame {
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
             int_returns_number: false,
+            const_lits: HashMap::new(),
+            untyped_lets: HashMap::new(),
         }
     }
 }
@@ -286,6 +297,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
     /// its `private` members are accessible.
     pub owner: Option<DefId>,
+    /// The function whose body is being checked, if it is a declared function (for a nested
+    /// one, `Ctx::enclosing_class` gives the class whose body it is in).
+    pub body_def: Option<DefId>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
@@ -330,6 +344,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             bounds: vec![],
             fn_name: String::new(),
             owner: None,
+            body_def: None,
             enclosing_locals: vec![],
             generic_arrow: false,
             f: frame,

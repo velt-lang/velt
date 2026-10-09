@@ -40,6 +40,8 @@ impl Interp<'_> {
     pub(super) fn rt_strbuf(&mut self, sym: &str, a: &[u64]) -> Option<u64> {
         match sym {
             "velt_rt_strbuf_new" => self.write_bytes(a[1], &[0; 24]),
+            // Never reuses the part (the runtime may always refuse; the template then starts a builder).
+            "velt_rt_strbuf_adopt" => return Some(0),
             "velt_rt_strbuf_push_str" | "velt_rt_str_append" => {
                 let s = self.str_bytes(a[1]);
                 self.buf_push(a[0], &s);
@@ -109,6 +111,8 @@ impl Interp<'_> {
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
             "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
+            // Only line breaking reads these, and the interpreter does not break lines.
+            "velt_rt_strbuf_inspect_atom" => {}
             "velt_rt_strbuf_inspect_circular" => return Some(0),
             // Node's `maxArrayLength` (velt_rt's `inspect::push_more_items`).
             "velt_rt_strbuf_inspect_more" => {

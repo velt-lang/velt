@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "sigx",
+      "version": "0.0.1",
+      "source": "path+node_modules/@sigx/velt/velt"
+    }
+  ]
+}

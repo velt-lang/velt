@@ -15,7 +15,7 @@ The wording below is stable: tests, editors and tools rely on it.
 | conditions | `mismatched types` + note `expected boolean, found i64` + the comparison to write; ``` `\|\|` needs a `boolean` or nullable left side, found `T` ``` (+ "use `??` for a default") |
 | moves (promises, disposed values) | ``use of moved value `name` `` (+ where it moved) |
 | const | ``cannot assign twice to const `name` `` |
-| members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``property `#x` is not accessible outside class `A` because it has a private name``, `private names are only allowed in class bodies`, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |
+| members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``property `#x` is not accessible outside class `A` because it has a private name``, `private names are only allowed in class bodies`, ``the right operand of `in` may be null``, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |
 | unions | ``no field `r` on type `Shape` `` + "narrow it to one member first …" |
 | switch | ``` `"square"` is not a possible value of `s.kind` ``` + `possible values: …`, ``` `continue` cannot target a `switch` ``` |
 | exclusive access | ``cannot use `xs` here: this call may modify it through another argument`` |

@@ -189,15 +189,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let opt = self.cx.ty.option(payload);
+        let mut v = self.mk(H::Local(l, mode), payload, span);
         let (ty, d) = if d.ty == opt {
+            v = self.mk(H::WrapSome(Box::new(v)), opt, span);
             (opt, d)
         } else {
-            (payload, self.coerce(d, payload))
+            let (value, d, ty) = self.nullish_join(v, d, payload);
+            v = value;
+            (ty, d)
         };
-        let mut v = self.mk(H::Local(l, mode), payload, span);
-        if ty == opt {
-            v = self.mk(H::WrapSome(Box::new(v)), opt, span);
-        }
         let sty = s.ty;
         let some = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![
@@ -217,6 +217,34 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, ty, span)
+    }
+
+    /// The type of `s ?? d` with `v` the non-null payload of `s`: the payload's type when `d`
+    /// converts to it, else `d`'s when the payload converts to that, else their union, as in
+    /// TypeScript (`n ?? "none"` with `n: number | null` is a `number | string`).
+    fn nullish_join(
+        &mut self,
+        v: hir::Expr,
+        d: hir::Expr,
+        payload: TyId,
+    ) -> (hir::Expr, hir::Expr, TyId) {
+        let d = match self.try_coerce(d, payload) {
+            Ok(d) => return (v, d, payload),
+            Err(d) => d,
+        };
+        let dty = d.ty;
+        let v = match self.try_coerce(v, dty) {
+            Ok(v) => return (v, d, dty),
+            Err(v) => v,
+        };
+        let span = d.span;
+        let union = self.cx.union_of(&[payload, dty], false, span);
+        if union == self.cx.ty.error {
+            return (v, d, union);
+        }
+        let v = self.coerce(v, union);
+        let d = self.coerce(d, union);
+        (v, d, union)
     }
 
     /// `object?.<rest>`: apply `f` to the non-null payload; null short-circuits to `null`.

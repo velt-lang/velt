@@ -1,0 +1,79 @@
+# The lld that release archives bundle (docs/internals/linking.md), built from source for every
+# release target by scripts/build-lld.{sh,ps1} and kept in the Actions cache: a build takes 25-60
+# minutes, so it runs again only when those scripts change. release.yml calls this workflow and
+# packages the `lld-<target>` artifacts; a push to main that changes the scripts runs it too, so
+# the cache tag builds restore is already filled.
+name: lld
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build-lld.sh
+      - scripts/build-lld.ps1
+      - .github/workflows/lld.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lld:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Debian 11 like the toolchain builds (release.yml): lld then runs on glibc 2.31+.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            container: debian:bullseye
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            container: debian:bullseye
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/lld
+          key: lld-${{ matrix.target }}-${{ hashFiles('scripts/build-lld.sh', 'scripts/build-lld.ps1') }}
+      # Debian 11's CMake (3.18) is older than LLVM needs; pip has current CMake and Ninja.
+      - name: build tools (Debian container)
+        if: matrix.container && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          # Debian 11 is past its support: deb.debian.org no longer has the security updates the
+          # image was built with (404). The image lists the matching snapshot.debian.org sources
+          # (commented out); use those.
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            [ -f "$f" ] || continue
+            sed -i 's|^deb http://deb.debian.org|# deb http://deb.debian.org|; s|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' "$f"
+          done
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends build-essential curl ca-certificates xz-utils python3-pip
+          pip3 install --quiet cmake ninja
+      - name: build tools (macOS)
+        if: runner.os == 'macOS' && steps.cache.outputs.cache-hit != 'true'
+        run: brew install ninja >/dev/null
+      - name: build lld (Linux, macOS)
+        if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: scripts/build-lld.sh "$RUNNER_TEMP/lld"
+      - name: build lld (Windows)
+        if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/build-lld.ps1 -OutDir "$env:RUNNER_TEMP/lld"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lld-${{ matrix.target }}
+          path: ${{ runner.temp }}/lld
+          if-no-files-found: error

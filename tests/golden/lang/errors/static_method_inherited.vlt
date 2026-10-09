@@ -1,0 +1,10 @@
+// An inherited static keeps its visibility, and an instance method is not a static.
+class A {
+  private static secret(): number { return 7; }
+  m(): number { return 1; }
+}
+class B extends A {
+  static peek(): number { return B.secret(); }
+}
+console.log(B.secret());
+console.log(B.m());

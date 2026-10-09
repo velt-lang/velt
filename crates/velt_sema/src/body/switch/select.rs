@@ -65,13 +65,40 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// A local of a literal type (`const y = "y"`, `y: "y"`) used as a case value: like the
-    /// literal, as in TypeScript (it narrows and counts toward exhaustiveness).
+    /// A constant of a literal type used as a case value: a local or module-level `const`
+    /// initialized with a literal (`const y = "y"`) or a local of a literal type (`y: "y"`). It
+    /// selects like the literal, as in TypeScript (it narrows and counts toward exhaustiveness).
     fn literal_const(&mut self, test: &ast::Expr) -> Option<ast::SignedLit> {
         let ast::ExprKind::Ident(id) = &strip_parens(test).kind else {
             return None;
         };
-        let lit = match self.cx.lit_value(self.peek_local_ty(&id.name)?)? {
+        let lit = match self.const_lit(id) {
+            Some(l) => l,
+            None => self.typed_lit(self.peek_local_ty(&id.name)?)?,
+        };
+        // Checked as a value too, so the constant counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        Some(lit)
+    }
+
+    /// The literal a `const` named `id` was initialized with, when it has no type annotation.
+    fn const_lit(&mut self, id: &ast::Ident) -> Option<ast::SignedLit> {
+        if self.is_local_name(&id.name) {
+            return self.peek_const_lit(&id.name);
+        }
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
+            return None;
+        };
+        let src = &self.cx.global(d)?.src;
+        if src.ann.is_some() || src.owner.is_some() {
+            return None;
+        }
+        literal_of(src.init?)
+    }
+
+    /// The value of literal type `t` as a pattern literal (not a float one).
+    fn typed_lit(&self, t: crate::hir::TyId) -> Option<ast::SignedLit> {
+        let lit = match self.cx.lit_value(t)? {
             LitValue::Str(v) => ast::SignedLit {
                 lit: ast::Lit::Str(v),
                 negative: false,
@@ -89,8 +116,6 @@ impl FnCx<'_, '_> {
             },
             LitValue::Float(..) => return None,
         };
-        // Checked as a value too, so the local counts as used (captures, editors).
-        self.expr(test, None, Want::Borrow);
         Some(lit)
     }
 
