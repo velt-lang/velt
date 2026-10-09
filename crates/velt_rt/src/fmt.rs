@@ -7,6 +7,7 @@
 /// Append the decimal representation of `v`.
 #[inline]
 pub fn push_i64(out: &mut Vec<u8>, v: i64) {
+    crate::debug_alloc::check_value(v as u64, "an integer read from a freed block");
     let mut b = itoa::Buffer::new();
     out.extend_from_slice(b.format(v).as_bytes());
 }
@@ -42,6 +43,7 @@ pub fn whole(v: f64) -> Option<i64> {
 
 /// Append `v` formatted like JavaScript's `String(v)`.
 pub fn push_f64(out: &mut Vec<u8>, v: f64) {
+    crate::debug_alloc::check_value(v.to_bits(), "a number read from a freed block");
     // A counter or an index (`${i}`): its integer digits, which is what the general path below
     // prints for it, without the shortest-digits search. `-0` prints `0` as JS does.
     if let Some(i) = whole(v) {

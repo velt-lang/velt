@@ -4,11 +4,13 @@
 //! Every block gets a header (`LIVE` magic + size) and canary bytes before and after the user
 //! area, which starts out filled with `ALLOC_FILL`. A free checks the header (double free,
 //! freeing a pointer that was never allocated, wrong size) and the canaries (buffer overflow /
-//! underflow), fills the block with `FREE_FILL` and parks it in a quarantine instead of
-//! releasing it, so a use after free reads the poison pattern (and does not corrupt a reused
-//! block); when a block leaves the quarantine, and for the blocks still in it when the program
-//! ends ([`check_quarantine`]), its poison is checked (write after free). The first violation
-//! prints `velt debug-alloc: <what>` to stderr and aborts.
+//! underflow), fills the block with the poison word ([`guard`]) and parks it in a quarantine
+//! instead of releasing it, so a use after free reads the poison (and does not corrupt a reused
+//! block): following a pointer read from it, printing a number read from it, or retaining or
+//! releasing a string whose buffer it was aborts with `use after free` ([`guard`]); when a block
+//! leaves the quarantine, and for the blocks still in it when the program ends
+//! ([`check_quarantine`]), its poison is checked (write after free). The first violation prints
+//! `velt debug-alloc: <what>` to stderr and aborts.
 //!
 //! The mode is read once, on the first allocation, without allocating (the environment is read
 //! through the OS directly). With the variable unset every call goes straight to the inner
@@ -20,15 +22,17 @@ use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
+mod guard;
+pub use guard::check_value;
+
 /// Header magic of a live block, and of a block already freed (in quarantine).
 const LIVE: u64 = 0x5641_4953_4c49_5645;
 const FREED: u64 = 0x5641_4953_4652_4545;
-/// Fill bytes: fresh allocation, freed block, canaries. A freed block reads as a tiny number
-/// (`-1.5e-130` as an `f64`), so arithmetic written back into it changes its bytes and is
-/// caught (`0xDD` read as a huge `f64`, and `x + 7` wrote the same bits back, #580); as a pointer
-/// it is non-canonical, so following one faults.
+/// Fill bytes: fresh allocation, canaries. Freed blocks are filled with the poison word
+/// ([`guard::poison`]), which reads as a tiny number (a subnormal `f64`), so arithmetic written
+/// back into it changes its bytes and is caught (`0xDD` read as a huge `f64`, and `x + 7` wrote
+/// the same bits back, #580); as a pointer it points into memory nobody can access.
 const ALLOC_FILL: u8 = 0xCD;
-const FREE_FILL: u8 = 0xA5;
 const CANARY: u8 = 0xFD;
 /// Header size (magic + size) and trailing canary size.
 const HEADER: usize = 16;
@@ -88,6 +92,11 @@ fn enabled() -> bool {
         2 => true,
         _ => {
             let on = env_flag_set();
+            if on {
+                // Before the first block is freed: blocks are poisoned with one word throughout.
+                static GUARD: std::sync::Once = std::sync::Once::new();
+                GUARD.call_once(guard::init);
+            }
             MODE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
             on
         }
@@ -174,6 +183,24 @@ unsafe fn all_are(p: *const u8, byte: u8, n: usize) -> bool {
     std::slice::from_raw_parts(p, n).iter().all(|&b| b == byte)
 }
 
+/// Fill the `n` bytes at `p` with the poison word `word` (repeated from `p`; a shorter tail gets
+/// its first bytes).
+unsafe fn poison_fill(p: *mut u8, word: u64, n: usize) {
+    let words = n / 8;
+    for k in 0..words {
+        (p.add(8 * k) as *mut u64).write_unaligned(word);
+    }
+    let tail = word.to_le_bytes();
+    std::ptr::copy_nonoverlapping(tail.as_ptr(), p.add(8 * words), n % 8);
+}
+
+/// Do the `n` bytes at `p` still hold the poison word `word`, as [`poison_fill`] wrote it?
+unsafe fn is_poisoned(p: *const u8, word: u64, n: usize) -> bool {
+    let words = n / 8;
+    (0..words).all(|k| (p.add(8 * k) as *const u64).read_unaligned() == word)
+        && std::slice::from_raw_parts(p.add(8 * words), n % 8) == &word.to_le_bytes()[..n % 8]
+}
+
 impl<A: GlobalAlloc> DebugAlloc<A> {
     unsafe fn checked_alloc(&self, layout: Layout) -> *mut u8 {
         let base = self.inner.alloc(outer(layout));
@@ -223,7 +250,7 @@ impl<A: GlobalAlloc> DebugAlloc<A> {
             );
         }
         (user.sub(HEADER) as *mut u64).write_unaligned(FREED);
-        fill(user, FREE_FILL, size);
+        poison_fill(user, guard::poison(), size);
         // At exit the block is left alone: the quarantine's lock may belong to a thread the OS
         // has already ended (see `exit_in_progress`), and the memory goes away with the process.
         if exit_in_progress() {
@@ -241,7 +268,7 @@ impl<A: GlobalAlloc> DebugAlloc<A> {
             q.head = (q.head + 1) % QUARANTINE_BLOCKS;
             q.len -= 1;
             q.bytes -= osize;
-            if !all_are(op as *const u8, FREE_FILL, osize) {
+            if !is_poisoned(op as *const u8, guard::poison(), osize) {
                 fail("write after free: a freed block was modified", op, osize);
             }
             let l = Layout::from_size_align_unchecked(osize, oalign);
@@ -278,7 +305,7 @@ fn modified_in_quarantine(quarantine: &Quarantine) -> Option<(usize, usize)> {
     (0..q.len)
         .map(|k| q.blocks[(q.head + k) % QUARANTINE_BLOCKS])
         // SAFETY: quarantined blocks stay allocated (and poisoned) until they are evicted.
-        .find(|&(p, size, _)| !unsafe { all_are(p as *const u8, FREE_FILL, size) })
+        .find(|&(p, size, _)| !unsafe { is_poisoned(p as *const u8, guard::poison(), size) })
         .map(|(p, size, _)| (p, size))
 }
 
@@ -347,7 +374,7 @@ mod tests {
             p.write(7);
             a.checked_free(p, l);
             // The freed block stays poisoned in quarantine.
-            assert!(all_are(p, FREE_FILL, 24));
+            assert!(is_poisoned(p, guard::poison(), 24));
             let big = Layout::from_size_align(64, 64).unwrap();
             let b = a.checked_alloc(big);
             assert_eq!(b as usize % 64, 0);
@@ -373,7 +400,7 @@ mod tests {
             let skipped = modified_in_quarantine(&QUARANTINE);
             drop(held);
             // Put the poison back before anything else looks at the quarantine.
-            p.add(3).write(FREE_FILL);
+            p.add(3).write(guard::poison().to_le_bytes()[3]);
             assert_eq!(hit, Some((p as usize, 40)));
             assert_eq!(skipped, None);
         }
