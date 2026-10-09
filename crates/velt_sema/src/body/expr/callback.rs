@@ -3,8 +3,10 @@
 //! expected type, so the closure's own rules (captures, ownership, async) apply to the wrapper
 //! as to any arrow.
 //!
-//! A **function value** (a named function, or a local holding a function value) is wrapped as
-//! `(p0, …) => f(p0, …)` ([`FnCx::callback_adapter`]) when
+//! A **function value** is wrapped as `(p0, …) => f(p0, …)` ([`FnCx::callback_adapter`]): a
+//! module-level function is called by its name, any other value is read once into a hidden
+//! local where it is passed (a later assignment to its variable doesn't change the callback,
+//! as in JS). It is wrapped when
 //! - the expected type passes more parameters (`xs.map(double)`, `map` passes `(x, i)`): `f`
 //!   gets the leading ones;
 //! - it takes more parameters than the expected type passes, all of them optional or with
@@ -13,7 +15,9 @@
 //! - the expected type returns a union with `f`'s result as a member (`(x) => Resp` for
 //!   `(x) => Resp | Promise<Resp>`): it converts;
 //! - a standard timer expects the promise to run (`() => Promise<void>`) and `f` is not `async`
-//!   (`setTimeout(tick, 10)`): the wrapper is checked as an `async` arrow ([`void task`]).
+//!   (`setTimeout(tick, 10)`): the wrapper is checked as an `async` arrow ([`void task`]);
+//! - it is the handler of a server that runs it on several threads (`serve`): always, by an
+//!   `async` wrapper, so each request copies what it captured.
 //!
 //! An **arrow** is checked against the expected type itself; the cases that need more are
 //! - an `async` arrow where the function type returns `void` (`onClick: () => void`) or a union
@@ -23,6 +27,10 @@
 //!   runs to completion on its own, as in JS). Wrapping the closure value, rather than nesting
 //!   its body in another arrow, keeps its capture rules: each call of an async closure that may
 //!   run on another thread copies what it captured;
+//! - an arrow that is not `async` whose declared result type is a member of the expected union
+//!   (`(req): Response => …`): checked against that member, then wrapped;
+//! - an arrow that is not `async` passed to `serve` ([`FnCx::thread_arrow`]): checked as an
+//!   `async` arrow, its expression body awaited when it is a promise;
 //! - an arrow that is not `async` passed to a standard timer, which takes the promise to run
 //!   (#501): it is checked as an `async` arrow ([void task]), its expression body as a
 //!   statement, awaited when it is a promise (`() => save(doc)` runs `save` to completion).
@@ -48,6 +56,14 @@ pub(crate) enum CallbackMode {
     Task,
     /// `serve`: runs it on several threads at once.
     Thread,
+}
+
+/// What a wrapper calls.
+enum Callee {
+    /// A module-level function, by name.
+    Named(ast::Expr),
+    /// A function value, read once (and the closure a closure `const` holds).
+    Value(hir::Expr, Option<DefId>),
 }
 
 /// How a wrapper calls the function it wraps.
@@ -187,12 +203,24 @@ impl FnCx<'_, '_> {
         if mode == CallbackMode::Thread {
             // Any function value for a handler that runs on several threads: an async wrapper,
             // so each call copies what it captured like any async closure.
+            if let Some(sig) = self.named_fn_sig(arg, false) {
+                if sig.required <= n {
+                    let callee = self.callback_callee(arg);
+                    return Some(self.wrap(callee, n, sig.params.min(n), Wrap::Thread, Some(exp)));
+                }
+            }
             let value = self.callback_value(arg);
             let passed = match self.cx.ty.kind(value.ty) {
                 TyKind::FnPtr { params, .. } => params.len().min(n),
                 _ => return Some(value),
             };
-            return Some(self.bind_and_wrap(value, n, passed, Wrap::Thread, Some(exp)));
+            return Some(self.wrap(
+                Callee::Value(value, None),
+                n,
+                passed,
+                Wrap::Thread,
+                Some(exp),
+            ));
         }
         let task = mode == CallbackMode::Task;
         let to_void = want_ret == self.cx.ty.unit;
@@ -225,8 +253,22 @@ impl FnCx<'_, '_> {
         } else {
             Wrap::Call
         };
-        let value = self.callback_value(arg);
-        Some(self.bind_and_wrap(value, n, passed, wrap, Some(exp)))
+        let callee = self.callback_callee(arg);
+        Some(self.wrap(callee, n, passed, wrap, Some(exp)))
+    }
+
+    /// What a wrapper of the function `arg` names calls: a module-level function by its name
+    /// (it can't be reassigned, and a call by name fills in defaults), a local's value read
+    /// once (a closure `const` keeps filling in its parameters' defaults).
+    fn callback_callee(&mut self, arg: &ast::Expr) -> Callee {
+        if let ast::ExprKind::Ident(id) = &arg.kind {
+            if !self.is_local_name(&id.name) {
+                return Callee::Named(arg.clone());
+            }
+            let closure = self.local_closure_const(&id.name);
+            return Callee::Value(self.callback_value(arg), closure);
+        }
+        Callee::Value(self.callback_value(arg), None)
     }
 
     /// The function value `arg` names, read once for a wrapper: a variable still used
@@ -239,29 +281,42 @@ impl FnCx<'_, '_> {
         v
     }
 
-    /// `value` (a function taking at least `passed` parameters) held in a hidden local, and the
-    /// wrapper arrow calling it with `n` parameters, checked against `exp`:
-    /// `{ const f = value; (p0, …) => f(p0, …) }`. The wrapper owns `f` (it outlives the
-    /// block).
-    fn bind_and_wrap(
+    /// The wrapper arrow calling `callee` with `passed` of its `n` parameters, checked against
+    /// `exp`. A value is held in a hidden local first: `{ const f = value; (p0, …) => f(p0, …) }`;
+    /// the wrapper owns `f` (it outlives the block).
+    fn wrap(
         &mut self,
-        value: hir::Expr,
+        callee: Callee,
         n: usize,
         passed: usize,
         wrap: Wrap,
         exp: Option<TyId>,
     ) -> hir::Expr {
-        let span = value.span;
-        let name = ast::Ident {
-            name: format!("#callback{}", self.f.locals.len()),
-            span,
+        let (value, closure, call) = match callee {
+            Callee::Named(e) => (None, None, e),
+            Callee::Value(v, closure) => {
+                let name = ast::Ident {
+                    name: format!("#callback{}", self.f.locals.len()),
+                    span: v.span,
+                };
+                let span = v.span;
+                (
+                    Some((v, name.clone())),
+                    closure,
+                    synth(ast::ExprKind::Ident(name), span),
+                )
+            }
         };
-        let inner_ty = value.ty;
-        let async_inner = matches!(&value.kind, H::Closure(c) if self.cx.fn_info(*c).is_async);
+        let span = call.span;
         self.push_scope();
-        let local = self.declare_local(&name, value.ty, LocalKind::Const);
-        let callee = synth(ast::ExprKind::Ident(name), span);
-        let arrow = wrapper(callee, n, passed, wrap == Wrap::Discard, span);
+        let bound = value.map(|(v, name)| {
+            let local = self.declare_local(&name, v.ty, LocalKind::Const);
+            if let Some(c) = closure {
+                self.f.closure_consts.insert(local, c);
+            }
+            (local, v)
+        });
+        let arrow = wrapper(call, n, passed, wrap == Wrap::Discard, span);
         match wrap {
             Wrap::Task => self.void_task = Some(arrow.span),
             Wrap::Thread => self.thread_task = Some(arrow.span),
@@ -269,8 +324,13 @@ impl FnCx<'_, '_> {
         }
         let w = self.closure(&arrow, exp, true);
         self.pop_scope();
-        if let (H::Closure(c), true) = (&w.kind, async_inner) {
-            self.cx.callback_wrappers.insert(*c, inner_ty);
+        let Some((local, value)) = bound else {
+            return w;
+        };
+        if let H::Closure(c) = &w.kind {
+            if matches!(&value.kind, H::Closure(inner) if self.cx.fn_info(*inner).is_async) {
+                self.cx.callback_wrappers.insert(*c, value.ty);
+            }
         }
         let ty = w.ty;
         let block = hir::Block {
@@ -402,7 +462,7 @@ impl FnCx<'_, '_> {
         };
         let wrap = if discard { Wrap::Discard } else { Wrap::Call };
         let _ = span;
-        Some(self.bind_and_wrap(f, n, n, wrap, exp))
+        Some(self.wrap(Callee::Value(f, None), n, n, wrap, exp))
     }
 
     /// An arrow that is not `async` whose declared result type is a member of the union the
@@ -459,7 +519,7 @@ impl FnCx<'_, '_> {
             TyKind::FnPtr { params, .. } => params.len().min(n),
             _ => n,
         };
-        Some(self.bind_and_wrap(f, n, passed, Wrap::Call, exp))
+        Some(self.wrap(Callee::Value(f, None), n, passed, Wrap::Call, exp))
     }
 
     /// An arrow that is not `async`, passed as the handler of a server that runs it on several
