@@ -136,10 +136,10 @@ fn elf_common_args(req: &LinkRequest) -> Vec<OsString> {
 /// to its `.tbd` stubs. lld signs arm64 executables (ad hoc) itself.
 fn macho_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     let requested = std::env::var("MACOSX_DEPLOYMENT_TARGET").ok();
-    let version = crate::macos_min_version(req.target, requested.as_deref());
+    let version = crate::system::macos_min_version(req.target, requested.as_deref());
     let mut args: Vec<OsString> = vec![
         "-arch".into(),
-        crate::macos_arch(req.target).into(),
+        crate::system::macos_arch(req.target).into(),
         "-platform_version".into(),
         "macos".into(),
         version.clone().into(),
