@@ -206,17 +206,20 @@ fn wasi_shard(shard: usize) {
     // crashed earlier run may still hold is never reused.
     let work = work_dir::work_dir(&root, "golden-work-wasi")
         .join(format!("shard{shard}-{}", std::process::id()));
-    let failures = run_all(&files, "wasm32-wasip1", &[None, Some("--release")], &work, 2);
+    let failures = run_all(
+        &files,
+        "wasm32-wasip1",
+        &[None, Some("--release")],
+        &work,
+        2,
+    );
     let _ = std::fs::remove_dir_all(&work);
     println!(
         "wasm32-wasip1 goldens, shard {shard} of {SHARDS}: {} files, {} failures",
         files.len(),
         failures.len()
     );
-    assert!(failures.is_empty(), "
-{}", failures.join("
-
-"));
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
 macro_rules! wasi_shards {
