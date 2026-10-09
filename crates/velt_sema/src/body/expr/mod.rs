@@ -37,6 +37,7 @@ mod names;
 mod namespaces;
 mod numbers;
 mod object;
+mod object_copy;
 mod object_keys;
 mod object_method;
 mod ops;

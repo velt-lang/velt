@@ -50,10 +50,12 @@ mod json;
 mod known;
 mod literals;
 mod moves;
+mod object_copies;
 mod ownership;
 mod promise_copies;
 mod readonly;
 mod record_keys;
+mod recursive_aliases;
 mod resolve;
 mod suggest;
 mod throws;
@@ -165,6 +167,8 @@ fn check_on_current_thread(
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
+    let rewritten = recursive_aliases::rewrite(modules);
+    let modules = rewritten.as_deref().unwrap_or(modules);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
@@ -256,6 +260,8 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     let before = error_count(cx);
     ownership_passes(cx);
     cx.borrow_pass_errors = error_count(cx) > before;
+    // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
+    object_copies::check(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held

@@ -20,8 +20,10 @@
 
 Types are required on function parameters. A missing return type is inferred from the
 function's `return`s ([Return types](functions.md#return-types)), and everything else is
-inferred too. `type Name = …` declares an alias; an
-alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
+inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
+alias may refer to itself only when it is an object type, or an intersection of object types,
+written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
+fields ([Intersection types](#intersection-types)). There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
 ## Booleans
@@ -482,7 +484,8 @@ for (const s of shapes) {
   reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
   the union.
 - Recursive discriminated unions need a nominal member (a class or struct:
-  `class Node { kind: "node"; kids: Tree[] }`), because an alias cannot refer to itself.
+  `class Node { kind: "node"; kids: Tree[] }`), because an alias that is a union cannot refer
+  to itself.
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
@@ -525,14 +528,48 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   [discriminated union](#discriminated-unions) that narrows as usual; `Shape & { kind: "circle" }`
   keeps only the circle member, and `(A | null) & B` is `A & B`.
 - The result is an ordinary object type: there is no cost at run time, and `A & B` is the same
-  type as the object type with those fields written out *in the same order*. Object types are
-  told apart by their field order for now, so `B & A` (or `{ b; a }`) is a different type from
-  `A & B`, and converting between them takes a copy, `{ ...ba }` (#651).
-- `A & B` does not convert to `A` (object types don't convert by dropping fields, #650). Copy
-  the fields with `{ ...ab }` where an `A` is expected (`ab` stays usable), or write the
-  function generically over a field-only interface (`<T extends I>(x: T)`), which takes either.
-- An alias can't refer to itself through `&` either (`type T = { kids: T[] } & { v: number }`):
-  give a recursive type a nominal member, as for [discriminated unions](#discriminated-unions).
+  type as the object type with those fields written out in the same order.
+- **Conversions**: a value converts to an object type whose fields it has, by name, as in
+  TypeScript: `A & B` where an `A` or a `B` is expected, `B & A` (or `{ b; a }`) where `A & B`
+  is expected, and to a type with an optional field the value lacks (it is absent). Object
+  types have fixed layouts, so the conversion builds a new object of the expected type holding
+  the same field values: one allocation and a copy of each field, paid where a program converts
+  (nested objects and arrays are shared, not copied). TypeScript passes the same object, so
+  where the program could tell the difference, the conversion is an error with the fix (build
+  the object from its fields, `{ a: ab.a }`, or take the wider type): when the program assigns
+  a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
+  value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
+  expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
+  expected type, or spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
+  or copy the original's fields, in its order), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  converts element by element only when fresh, like [wider element
+  types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
+  that returns a new `(Named & Scored)[]`; copy another one with
+  `xs.map((p) => ({ name: p.name }))`.
+- An alias may refer to itself through `&` when its parts are object types written out:
+  `type Tree = { kids: Tree[] } & { v: number }` is the interface with the fields `kids` and
+  `v` (an alias that names itself otherwise is an error, as is one whose parts share a field
+  name).
+
+```ts
+type Named = { name: string };
+type Scored = { score: number };
+
+function greet(n: Named): string {
+  return `hi ${n.name}`;
+}
+
+function rank(p: Scored & Named): string {
+  return `${p.name}: ${p.score}`;
+}
+
+type Tree = { kids: Tree[] } & { v: number };
+
+const ken: Named & Scored = { name: "Ken", score: 7 };
+console.log(greet(ken), rank(ken)); // hi Ken Ken: 7
+const t: Tree = { kids: [{ kids: [], v: 2 }], v: 1 };
+console.log(t.kids[0].v); // 2
+```
 
 Differences from TypeScript, each a compile error with a note on what to write instead:
 
