@@ -427,6 +427,10 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
     console.log(seen); // [ 'a', 'b' ]
   }
   ```
+- A function returning `T` is also accepted where the function type returns a union with `T`
+  as a member (`(x: number) => Resp` for `(x: number) => Resp | Promise<Resp>`), as in TS; its
+  result converts to the union. An error type parameter that nothing fixes
+  (`<E>(h: (x: number) => Resp | Promise<Resp, E>)` called with a sync function) is `never`.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
   spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
   with typed parameters; it is then a generic function. Without a return type it returns the

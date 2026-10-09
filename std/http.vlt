@@ -153,13 +153,14 @@ function failure(raw: u64): u64 {
 
 /**
  * Binds `host:port` (default host 127.0.0.1; port 0 = any free port) and serves `handler` in the
- * background. Handlers run concurrently, so like spawned tasks they must not mutate captured
+ * background. The handler returns a `Response`, or a promise of one (an `async` handler), as in
+ * Deno and Bun. Handlers run concurrently, so like spawned tasks they must not mutate captured
  * variables (use `shared`). A handler that throws (rejects with `E`) gets a 500 response, and
  * the error is printed to stderr (like Deno's and Bun's `serve`).
  */
 export async function serve<E>(
   opts: ServeOptions,
-  handler: (req: Request, info: ServeInfo) => Promise<Response, E>,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws E,
 ): Promise<Server> {
   const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
   const h: RtHandler = __intrinsic_http_handler(async (raw: u64): Promise<u64> => {

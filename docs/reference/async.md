@@ -13,6 +13,10 @@ promise, which runs to completion on its own (a [dropped promise](#promises) is 
 Against a union of function types (`(() => void) | (() => Promise<void>)`) an arrow takes the
 member that fits: an async arrow the one returning a promise, a sync arrow the other.
 
+`await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
+callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
 TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`

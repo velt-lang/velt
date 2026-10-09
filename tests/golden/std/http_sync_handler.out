@@ -1,0 +1,5 @@
+200 sync /x
+200 named /y
+200 local GET
+200 async ok
+500 Internal Server Error

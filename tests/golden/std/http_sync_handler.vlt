@@ -1,0 +1,37 @@
+// check: no leaks
+// A handler may return a `Response` directly, as in Deno and Bun: a sync arrow, a named
+// function, or a function value. An async handler that throws still gets a 500.
+import { serve } from "velt:http";
+
+class NotAllowed extends Error {}
+
+function hello(req: Request): Response {
+  return new Response(`named ${new URL(req.url).pathname}`);
+}
+
+async function get(port: i64, path: string): Promise<string> {
+  const r = await fetch(`http://127.0.0.1:${port}${path}`);
+  return `${r.status} ${await r.text()}`;
+}
+
+async function main() {
+  const a = await serve({ port: 0 }, (req) => new Response(`sync ${new URL(req.url).pathname}`));
+  const b = await serve({ port: 0 }, hello);
+  const local = (req: Request): Response => new Response(`local ${req.method}`);
+  const c = await serve({ port: 0 }, local);
+  const d = await serve({ port: 0 }, async (req) => {
+    if (new URL(req.url).pathname == "/admin") {
+      throw new NotAllowed("admins only");
+    }
+    return new Response("async ok");
+  });
+  console.log(await get(a.port, "/x"));
+  console.log(await get(b.port, "/y"));
+  console.log(await get(c.port, "/z"));
+  console.log(await get(d.port, "/home"));
+  console.log(await get(d.port, "/admin"));
+  await a.shutdown();
+  await b.shutdown();
+  await c.shutdown();
+  await d.shutdown();
+}

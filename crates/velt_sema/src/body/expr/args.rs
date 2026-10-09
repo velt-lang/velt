@@ -274,8 +274,11 @@ impl FnCx<'_, '_> {
                 self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
-            let known: Vec<Option<TyId>> =
+            let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
+            if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
+                known[k] = slots[k];
+            }
             let expected = self.cx.subst_known(p.ty, &known);
             let adapter = self.fewer_params_adapter(&args[i], expected);
             let arrow = adapter.as_ref().or(as_arrow(&args[i]));
@@ -505,8 +508,111 @@ impl FnCx<'_, '_> {
         out
     }
 
-    /// Slots nothing inferred take their defaults (while the slots before them are known).
+    /// A function passed for `(…) => T | Promise<T, E>` (possibly `throws E`) with `E` still
+    /// unknown: the arguments' types can't fix `E` before the function is checked against the
+    /// union, so a trial check against one member finds it, and is rolled back. An async arrow
+    /// is tried as `(…) => Promise<T, E>` (`E`: what it rejects with), a sync arrow as
+    /// `(…) => T throws E` (`E`: what it throws), a named function by its own type. Returns the
+    /// slot it fixed; one nothing fixes is `never` (`default_slots`).
+    fn infer_union_error(
+        &mut self,
+        arg: &ast::Expr,
+        pty: TyId,
+        known: &[Option<TyId>],
+        slots: &mut [Option<TyId>],
+    ) -> Option<usize> {
+        let arrow = as_arrow(arg);
+        let is_async = matches!(
+            arrow.map(|a| &a.kind),
+            Some(ast::ExprKind::Arrow { is_async: true, .. })
+        );
+        if arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_)) {
+            return None;
+        }
+        let fn_ty = self.cx.ty.opt_payload(pty).unwrap_or(pty);
+        let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+        } = self.cx.ty.kind(fn_ty).clone()
+        else {
+            return None;
+        };
+        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let members = self.cx.union_members(inner)?;
+        let (promises, values): (Vec<TyId>, Vec<TyId>) = members
+            .iter()
+            .partition(|m| self.cx.ty.promise_payload(**m).is_some());
+        let ([promise], [value]) = (promises.as_slice(), values.as_slice()) else {
+            return None;
+        };
+        let k = (0..slots.len()).find(|&k| {
+            known[k].is_none() && error_only(self.cx, fn_ty, k as u32)
+        })?;
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = (
+            self.f.clone(),
+            self.outer.clone(),
+            self.refused_reads.clone(),
+            self.literal.clone(),
+        );
+        let (trial, found) = match arrow {
+            Some(a) => {
+                // An async arrow's errors are its promise's: it throws nothing itself.
+                let (ret, throws) = if is_async {
+                    (*promise, self.cx.ty.never)
+                } else {
+                    (*value, throws)
+                };
+                let trial = self.cx.ty.intern(TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                });
+                let expected = self.cx.subst_known(trial, known);
+                (trial, self.closure(a, Some(expected), false).ty)
+            }
+            None => {
+                let h = self.expr(arg, None, Want::Borrow);
+                let (ret, throws) = match self.cx.ty.kind(h.ty) {
+                    TyKind::FnPtr { ret, .. } if self.cx.ty.promise_payload(*ret).is_some() => {
+                        (*promise, self.cx.ty.never)
+                    }
+                    _ => (*value, throws),
+                };
+                let trial = self.cx.ty.intern(TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                });
+                (trial, h.ty)
+            }
+        };
+        let mut fixed: Vec<Option<TyId>> = slots.to_vec();
+        self.cx.match_ty(trial, found, &mut fixed);
+        mark.rollback(self.cx);
+        (self.f, self.outer, self.refused_reads, self.literal) = frames;
+        // Nothing the function throws or rejects with: `E` is `never`.
+        let e = fixed.get(k).copied().flatten().unwrap_or(self.cx.ty.never);
+        slots[k] = Some(e);
+        Some(k)
+    }
+
+    /// Slots nothing inferred take their defaults (while the slots before them are known); an
+    /// error type parameter nothing fixed (it appears only as a promise's or function's error
+    /// type) is `never`.
     fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
+        for k in 0..slots.len() {
+            if slots[k].is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
+                continue;
+            }
+            let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
+            let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
+                && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
+            if unconstrained_error {
+                slots[k] = Some(self.cx.ty.never);
+            }
+        }
         for k in 0..slots.len() {
             let Some(Some(d)) = c.defaults.get(k) else {
                 continue;
@@ -612,4 +718,66 @@ fn uninferred_note(c: &Callable) -> String {
             .to_string();
     }
     "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result".to_string()
+}
+
+/// Whether type parameter `k` occurs in `t`, and only as an error type (`Promise<T, E>`'s `E`,
+/// a function type's `throws`).
+fn error_only(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> bool {
+    let (in_error, plain) = param_uses(cx, t, k);
+    in_error && !plain
+}
+
+/// Whether type parameter `k` occurs in `t` other than as an error type.
+fn occurs_plain(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> bool {
+    param_uses(cx, t, k).1
+}
+
+/// (occurs as an error type, occurs elsewhere) for type parameter `k` in `t`. A union is
+/// looked at through its members (its type arguments don't say where `k` sits).
+fn param_uses(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> (bool, bool) {
+    let mut acc = (false, false);
+    let mut add = |(e, p): (bool, bool)| {
+        acc.0 |= e;
+        acc.1 |= p;
+    };
+    let error_pos = |cx: &mut crate::ctx::Ctx, e: TyId| match cx.ty.kind(e) {
+        TyKind::Param(n) if *n == k => (true, false),
+        _ => param_uses(cx, e, k),
+    };
+    if let Some(members) = cx.union_def(t).and_then(|_| cx.union_members(t)) {
+        for m in members {
+            add(param_uses(cx, m, k));
+        }
+        return acc;
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::Param(n) => add((false, n == k)),
+        TyKind::Promise(v, e) => {
+            add(param_uses(cx, v, k));
+            add(error_pos(cx, e));
+        }
+        TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+        } => {
+            for p in params {
+                add(param_uses(cx, p, k));
+            }
+            add(param_uses(cx, ret, k));
+            add(error_pos(cx, throws));
+        }
+        TyKind::Adt(_, xs) | TyKind::Dyn(_, xs) | TyKind::Tuple(xs) => {
+            for x in xs {
+                add(param_uses(cx, x, k));
+            }
+        }
+        TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => add(param_uses(cx, x, k)),
+        TyKind::Map(a, b) | TyKind::Result(a, b) => {
+            add(param_uses(cx, a, k));
+            add(param_uses(cx, b, k));
+        }
+        _ => {}
+    }
+    acc
 }

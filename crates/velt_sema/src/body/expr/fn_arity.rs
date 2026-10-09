@@ -32,12 +32,18 @@ impl FnCx<'_, '_> {
             return None;
         };
         let to_void = want_ret == self.cx.ty.unit;
-        let (have, ret) = self.named_fn_sig(arg, to_void)?;
+        // The result matters only for `void` (dropped) and union results (widened).
+        let widening = {
+            let inner = self.cx.ty.opt_payload(want_ret).unwrap_or(want_ret);
+            inner != want_ret || self.cx.union_def(inner).is_some()
+        };
+        let (have, ret) = self.named_fn_sig(arg, to_void || widening)?;
         let drops_result = to_void
             && ret.is_some_and(|ret| {
                 ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) && !self.cx.ty.has_error(ret)
             });
-        if have > want.len() || (have == want.len() && !drops_result) {
+        let widens_result = ret.is_some_and(|ret| self.result_widens(ret, want_ret));
+        if have > want.len() || (have == want.len() && !drops_result && !widens_result) {
             return None;
         }
         let span = arg.span;
@@ -74,6 +80,22 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(call)),
             is_async: false,
         }))
+    }
+
+    /// Whether a function returning `ret` fits where one returning `want` is expected only
+    /// through its result: `want` is a union (or `T | null`) with `ret` as a member
+    /// (`(x) => Resp` where `(x) => Resp | Promise<Resp>` is expected). The wrapper converts the
+    /// result.
+    fn result_widens(&mut self, ret: TyId, want: TyId) -> bool {
+        if ret == want || self.cx.ty.is_bottom(ret) || self.cx.ty.has_error(ret) {
+            return false;
+        }
+        let inner = self.cx.ty.opt_payload(want).unwrap_or(want);
+        inner == ret
+            || self
+                .cx
+                .union_members(inner)
+                .is_some_and(|ms| ms.contains(&ret))
     }
 
     /// How many parameters the function `arg` names takes, and its result type when `with_ret`

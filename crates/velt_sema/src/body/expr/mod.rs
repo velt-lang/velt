@@ -7,6 +7,7 @@ mod args;
 mod array_ctor;
 mod assign;
 mod attempt;
+mod await_union;
 mod builtins;
 mod call;
 mod chain;
