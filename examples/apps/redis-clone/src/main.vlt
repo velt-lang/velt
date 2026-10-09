@@ -1,0 +1,12 @@
+// `velt run [-- port]`: a Redis-compatible server on 127.0.0.1 (default port 6380).
+import { args } from "velt:process";
+import { Db } from "./db";
+import { serve, start } from "./server";
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? argv[0] : "6380";
+  const listener = await start(`127.0.0.1:${port}`);
+  console.log(`redis-clone listening on 127.0.0.1:${listener.port}`);
+  await serve(listener, shared(new Mutex<Db>(new Db())));
+}

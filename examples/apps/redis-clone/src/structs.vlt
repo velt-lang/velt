@@ -1,0 +1,285 @@
+// The data structures behind sorted sets, sets and expiry, chosen for Redis's complexities:
+// O(log n) sorted-set insert/remove/rank (a skip list with spans, as in Redis's t_zset.c),
+// O(1) random set members (SPOP), and an expiry index the sweep can walk without copying.
+
+/// One member of a sorted set, ordered by score, then member.
+export type Scored = { score: f64; member: string };
+
+const MAX_LEVEL: i64 = 32;
+
+class Node {
+  member: string;
+  score: f64;
+  next: (Node | null)[] = [];
+  span: i64[] = []; // span[i]: how many level-0 steps next[i] skips
+
+  constructor(member: string, score: f64, level: i64) {
+    this.member = member;
+    this.score = score;
+    for (let i: i64 = 0; i < level; i++) {
+      this.next.push(null);
+      this.span.push(0);
+    }
+  }
+}
+
+function before(n: Node, score: f64, member: string): bool {
+  return n.score < score || (n.score === score && n.member < member);
+}
+
+/// Members ordered by (score, member). Without Redis's backward links: ranges walk forward.
+class SkipList {
+  private head: Node = new Node("", 0.0, MAX_LEVEL);
+  private level: i64 = 1;
+  length: i64 = 0;
+
+  /// 1 with probability 3/4, 2 with 3/16, … (p = 1/4, as Redis).
+  private randomLevel(): i64 {
+    let level: i64 = 1;
+    while (level < MAX_LEVEL && Math.random() < 0.25) {
+      level++;
+    }
+    return level;
+  }
+
+  /// Adds (score, member), which must not be present.
+  insert(score: f64, member: string) {
+    const update: Node[] = [];
+    const rank: i64[] = [];
+    let x = this.head;
+    for (let i: i64 = 0; i < MAX_LEVEL; i++) {
+      update.push(this.head);
+      rank.push(0);
+    }
+    for (let i = this.level - 1; i >= 0; i--) {
+      rank[i] = i === this.level - 1 ? 0 : rank[i + 1];
+      let next = x.next[i];
+      while (next != null && before(next, score, member)) {
+        rank[i] += x.span[i];
+        x = next;
+        next = x.next[i];
+      }
+      update[i] = x;
+    }
+    const level = this.randomLevel();
+    if (level > this.level) {
+      for (let i = this.level; i < level; i++) {
+        rank[i] = 0;
+        update[i] = this.head;
+        this.head.span[i] = this.length;
+      }
+      this.level = level;
+    }
+    const node = new Node(member, score, level);
+    for (let i: i64 = 0; i < level; i++) {
+      const u = update[i];
+      node.next[i] = u.next[i];
+      u.next[i] = node;
+      node.span[i] = u.span[i] - (rank[0] - rank[i]);
+      u.span[i] = rank[0] - rank[i] + 1;
+    }
+    for (let i = level; i < this.level; i++) {
+      update[i].span[i]++;
+    }
+    this.length++;
+  }
+
+  /// Removes (score, member); false if it isn't there.
+  delete(score: f64, member: string): bool {
+    const update: Node[] = [];
+    let x = this.head;
+    for (let i: i64 = 0; i < MAX_LEVEL; i++) {
+      update.push(this.head);
+    }
+    for (let i = this.level - 1; i >= 0; i--) {
+      let next = x.next[i];
+      while (next != null && before(next, score, member)) {
+        x = next;
+        next = x.next[i];
+      }
+      update[i] = x;
+    }
+    const target = x.next[0];
+    if (target == null || target.score !== score || target.member !== member) {
+      return false;
+    }
+    for (let i: i64 = 0; i < this.level; i++) {
+      const u = update[i];
+      if (u.next[i] === target) {
+        u.span[i] += target.span[i] - 1;
+        u.next[i] = target.next[i];
+      } else {
+        u.span[i] -= 1;
+      }
+    }
+    while (this.level > 1 && this.head.next[this.level - 1] == null) {
+      this.level--;
+    }
+    this.length--;
+    return true;
+  }
+
+  /// The node at 0-based `rank`, or null.
+  at(rank: i64): Node | null {
+    if (rank < 0 || rank >= this.length) {
+      return null;
+    }
+    let traversed: i64 = 0;
+    let x = this.head;
+    for (let i = this.level - 1; i >= 0; i--) {
+      let next = x.next[i];
+      while (next != null && traversed + x.span[i] <= rank + 1) {
+        traversed += x.span[i];
+        x = next;
+        next = x.next[i];
+      }
+      if (traversed === rank + 1) {
+        return x;
+      }
+    }
+    return null;
+  }
+}
+
+/// A sorted set: member → score, plus the members in order.
+export class ZSet {
+  scores: Map<string, f64> = new Map<string, f64>();
+  private list: SkipList = new SkipList();
+
+  get size(): i64 {
+    return this.list.length;
+  }
+
+  /// Adds or moves `member`; true if it is new.
+  add(score: f64, member: string): bool {
+    const old = this.scores.get(member);
+    if (old != null) {
+      if (old === score) {
+        return false;
+      }
+      this.list.delete(old, member);
+    }
+    this.scores.set(member, score);
+    this.list.insert(score, member);
+    return old == null;
+  }
+
+  remove(member: string): bool {
+    const old = this.scores.get(member);
+    if (old == null) {
+      return false;
+    }
+    this.scores.delete(member);
+    this.list.delete(old, member);
+    return true;
+  }
+
+  /// The members at 0-based ranks `from` to `to` (inclusive, already clamped), in order:
+  /// O(log n) to find the first, then one step each.
+  range(from: i64, to: i64): Scored[] {
+    const out: Scored[] = [];
+    let x = this.list.at(from);
+    for (let r = from; r <= to && x != null; r++) {
+      out.push({ score: x.score, member: x.member });
+      x = x.next[0];
+    }
+    return out;
+  }
+
+  first(): Scored | null {
+    const x = this.list.at(0);
+    return x == null ? null : { score: x.score, member: x.member };
+  }
+}
+
+/// A set of strings with O(1) add, delete and random member (SPOP, SRANDMEMBER): an array of the
+/// members plus each one's index; deleting moves the last member into the gap.
+export class MemberSet {
+  private index: Map<string, i64> = new Map<string, i64>();
+  items: string[] = []; // the members, in no particular order
+
+  get size(): i64 {
+    return this.items.length as i64;
+  }
+
+  has(m: string): bool {
+    return this.index.has(m);
+  }
+
+  add(m: string): bool {
+    if (this.index.has(m)) {
+      return false;
+    }
+    this.index.set(m, this.items.length as i64);
+    this.items.push(m);
+    return true;
+  }
+
+  delete(m: string): bool {
+    const i = this.index.get(m);
+    if (i == null) {
+      return false;
+    }
+    const last = this.items.pop()!;
+    if (last !== m) {
+      this.items[i] = last;
+      this.index.set(last, i);
+    }
+    this.index.delete(m);
+    return true;
+  }
+
+  random(): string {
+    return this.items[Math.floor(Math.random() * this.items.length) as i64];
+  }
+}
+
+/// Expiry times (key → ms since the epoch), plus the keys in an array so the active-expiry sweep
+/// can walk them with a cursor, without copying; deleting moves the last key into the gap.
+export class Expires {
+  private at: Map<string, i64> = new Map<string, i64>();
+  private keys: string[] = [];
+  private pos: Map<string, i64> = new Map<string, i64>();
+
+  get size(): i64 {
+    return this.keys.length as i64;
+  }
+
+  get(k: string): i64 | null {
+    return this.at.get(k);
+  }
+
+  set(k: string, when: i64) {
+    if (!this.at.has(k)) {
+      this.pos.set(k, this.keys.length as i64);
+      this.keys.push(k);
+    }
+    this.at.set(k, when);
+  }
+
+  delete(k: string): bool {
+    const i = this.pos.get(k);
+    if (i == null) {
+      return false;
+    }
+    const last = this.keys.pop()!;
+    if (last !== k) {
+      this.keys[i] = last;
+      this.pos.set(last, i);
+    }
+    this.pos.delete(k);
+    this.at.delete(k);
+    return true;
+  }
+
+  clear() {
+    this.at.clear();
+    this.pos.clear();
+    this.keys = [];
+  }
+
+  /// The key at position `i` (0 ≤ i < size).
+  keyAt(i: i64): string {
+    return this.keys[i];
+  }
+}
