@@ -1,0 +1,37 @@
+// What else a call-initialized module constant rejects: a call through a function value, an
+// argument that is not constant, a result that is an object, and a cycle through a function.
+
+class Cache {
+  size: number = 0;
+}
+
+function cache(): Cache {
+  return new Cache();
+}
+
+function names(): string[] {
+  return ["a"];
+}
+
+function getOne(): number {
+  return 1;
+}
+
+function id(n: number): number {
+  return n;
+}
+
+function readA(): number {
+  return A + 1;
+}
+
+const ONE = getOne;
+const B = ONE();
+const C = cache();
+const N = names();
+const A: number = readA();
+
+function main() {
+  const x = 1;
+  console.log(B, C.size, N.length, A, id(x));
+}

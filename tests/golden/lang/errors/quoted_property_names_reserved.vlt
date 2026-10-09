@@ -1,0 +1,12 @@
+// Quoted property names whose text Velt uses internally (`#` private names, `[Symbol.` keys) are
+// rejected, as are quoted interface method names.
+
+type T = { "#x": number };
+
+interface I {
+  "go"(): void;
+}
+
+function main() {
+  const o = { "[Symbol.iterator]": 1 };
+}

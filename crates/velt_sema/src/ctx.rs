@@ -128,6 +128,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Memoized purity of functions that initialize module constants (`body::pure_init`).
+    pub pure_fns: crate::body::pure_init::PurityMemo,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
     /// Function bodies being checked, outermost first (a return type inferred from a body that
@@ -228,6 +230,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            pure_fns: HashMap::new(),
             matching_context: false,
             checking: vec![],
             ret_checks: vec![],
@@ -669,10 +672,11 @@ impl<'m> Ctx<'m> {
                         .fields
                         .iter()
                         .map(|f| {
+                            let name = display_key(&f.name);
                             if f.optional {
-                                format!("{}?: {}", f.name, self.display_in(f.declared, &bound))
+                                format!("{name}?: {}", self.display_in(f.declared, &bound))
                             } else {
-                                format!("{}: {}", f.name, self.display_in(f.ty, &bound))
+                                format!("{name}: {}", self.display_in(f.ty, &bound))
                             }
                         })
                         .collect();
@@ -712,5 +716,20 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

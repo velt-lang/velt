@@ -227,6 +227,7 @@ impl<'a> Parser<'a> {
                     span: self.cur_span(),
                 };
                 self.bump();
+                self.check_quoted_key(&key);
                 key
             }
             t if Self::is_name(t) => self.take_ident(),

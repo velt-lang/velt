@@ -6,12 +6,13 @@
 
 use std::collections::HashSet;
 
-use lsp_types::{CompletionItem, CompletionItemKind};
+use lsp_types::{CompletionItem, CompletionItemKind, CompletionTextEdit, TextEdit};
 use velt_syntax::ast;
 
 use crate::analysis::Analysis;
 use crate::index::scope;
 use crate::index::{self, Decl, DeclKind};
+use crate::line_index::LineIndex;
 use crate::signature;
 use crate::{definition, jsx_completion, sema_query};
 
@@ -83,11 +84,14 @@ pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Completion 
         return other(vec![]);
     }
     if let Some(receiver) = receiver_before(&text[..word_start]) {
-        if let Some(items) = sema_query::member_items(analysis, receiver, at) {
-            return other(items);
-        }
-        let info = scope::at_offset(analysis, at);
-        return other(member_items(analysis, receiver, &info, at));
+        let items = match sema_query::member_items(analysis, receiver, at) {
+            Some(items) => items,
+            None => {
+                let info = scope::at_offset(analysis, at);
+                member_items(analysis, receiver, &info, at)
+            }
+        };
+        return other(quoted_members(analysis, items, &text[..word_start], offset));
     }
     let mut from_sema = sema_query::scope_items(analysis, at);
     let items = if from_sema.is_empty() {
@@ -133,6 +137,41 @@ fn with_builtins(mut out: Vec<CompletionItem>) -> Vec<CompletionItem> {
         out.push(item(kw, CompletionItemKind::KEYWORD, ""));
     }
     out
+}
+
+/// Members whose names are not identifiers (`"content-type"`) are written as `o["content-type"]`
+/// (`o?.["content-type"]` after `?.`), as TypeScript's editors do: the item replaces the `.` and
+/// what was typed after it.
+fn quoted_members(
+    analysis: &Analysis,
+    mut items: Vec<CompletionItem>,
+    before_word: &str,
+    offset: usize,
+) -> Vec<CompletionItem> {
+    let dot = before_word.trim_end().len().saturating_sub(1);
+    let optional = before_word[..dot].ends_with('?');
+    let index = LineIndex::new(analysis.text());
+    for i in &mut items {
+        if is_identifier(&i.label) {
+            continue;
+        }
+        // After `?.` the `?` stays: `o?.` becomes `o?.["a-b"]`.
+        let key = format!("[{:?}]", i.label);
+        let insert = if optional { format!(".{key}") } else { key };
+        i.filter_text = Some(format!(".{}", i.label));
+        let range = index.range(dot as u32, offset as u32);
+        i.text_edit = Some(CompletionTextEdit::Edit(TextEdit::new(range, insert)));
+    }
+    items
+}
+
+/// Can `name` be written after a `.` (an identifier)?
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Is `word` a keyword (or built-in type name)?

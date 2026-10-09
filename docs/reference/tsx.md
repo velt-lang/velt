@@ -187,7 +187,7 @@ An element becomes calls of the provider's functions, chosen by what it exports
 - `velt:jsx` has no event-handler attributes: it renders on the server, so `onClick` is a
   compile error (a client-side provider declares its own handlers).
 - `{...xs}` as a child passes the array `xs` as one child.
-- Numbers are `i64` or `f64`, so a provider's `JSX.Child` and `JSX.AttrValue` spell `number`
-  as `i64 | f64`.
+- `number` is JavaScript's number (`f64`). A provider whose `JSX.Child` and `JSX.AttrValue`
+  should also take Velt's integer types writes `i64 | f64`, as `velt:jsx` does.
 - Class components and `ref` are not supported (compile errors); `JSX.LibraryManagedAttributes`
   and `JSX.IntrinsicAttributes` are ignored.

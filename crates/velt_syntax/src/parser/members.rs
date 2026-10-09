@@ -307,7 +307,18 @@ impl<'a> Parser<'a> {
             );
             self.bump();
         }
-        let name = self.parse_member_name()?;
+        let quoted = matches!(self.peek(), Tok::Str(_));
+        let name = if quoted {
+            self.parse_prop_key()?
+        } else {
+            self.parse_member_name()?
+        };
+        if quoted && self.at_method_start() {
+            self.error(
+                "a quoted name is supported for interface fields, not methods",
+                name.span,
+            );
+        }
         self.reject_protected(&mods, &name);
         self.reject_private_name(&name);
         if !self.at_method_start() {

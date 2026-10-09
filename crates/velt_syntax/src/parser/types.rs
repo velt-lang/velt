@@ -212,7 +212,7 @@ impl<'a> Parser<'a> {
             if readonly {
                 self.bump();
             }
-            let name = self.parse_prop_name()?;
+            let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
             self.expect(Tok::Colon)?;
             let mut ty = self.parse_type()?;

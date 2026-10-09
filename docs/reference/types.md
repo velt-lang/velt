@@ -401,7 +401,9 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
-- Printing and template literals show the active member's value. `JSON.stringify` works on
+- Printing and template literals show the active member's value. A union with a member that
+  cannot be printed (a closure) prints once a test has narrowed it to members that can
+  (`typeof v !== "function"`). `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
@@ -596,6 +598,12 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **Quoted property names** work as in TypeScript, for names that are not identifiers:
+  `type Headers = { "content-type": string }`, `{ "a-b": 1 }`, `interface A { "data-id": string }`
+  and `const { "a-b": n } = o`. `o["a-b"]` (or `` o[`a-b`] ``) reads the field; with any string
+  literal, `o["name"]` is the same as `o.name`. `console.log` quotes the names that are not
+  identifiers, as Node does (`{ 'a-b': 1 }`), and `JSON.stringify` writes them as given. Names
+  beginning with `#` or `[Symbol.` are not supported, and nor are quoted method names.
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
   the instance of a generic interface with only fields.
