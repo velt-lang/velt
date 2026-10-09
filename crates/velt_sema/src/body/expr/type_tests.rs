@@ -133,6 +133,21 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if let Some(p) = self.primitive_member(&s) {
+            // TypeScript rejects it (TS2322: not assignable to `object`), and JavaScript throws
+            // a `TypeError` for a primitive.
+            let (tn, pn) = (self.cx.display(s.ty), self.cx.display(p));
+            self.cx.error(
+                Diagnostic::error(
+                    format!("the right operand of `in` may be a primitive: its type is `{tn}`"),
+                    rhs.span,
+                )
+                .with_note(format!(
+                    "`in` needs an object; JavaScript throws a `TypeError` for a `{pn}`: narrow it to an object first"
+                )),
+            );
+            return self.error_expr(span);
+        }
         if !self.testable_instance(s.ty) {
             let tn = self.cx.display(s.ty);
             self.cx.err(
@@ -178,6 +193,26 @@ impl FnCx<'_, '_> {
 
     /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
     /// union with class members)?
+    /// A primitive member (string, number, boolean, ...) that union value `h` may hold here
+    /// (members a narrowing ruled out don't count).
+    fn primitive_member(&mut self, h: &hir::Expr) -> Option<TyId> {
+        let members = self.cx.union_members(h.ty)?;
+        let allowed = self.narrowed_variants(h);
+        let may_hold = |i: usize| allowed.as_ref().is_none_or(|vs| vs.contains(&(i as u32)));
+        let members = members.into_iter().enumerate().filter(|(i, _)| may_hold(*i));
+        members.map(|(_, m)| m).find(|m| {
+            matches!(
+                self.cx.ty.kind(*m),
+                TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Str
+                    | TyKind::Unit
+                    | TyKind::Literal(_)
+            )
+        })
+    }
+
     fn testable_instance(&mut self, t: TyId) -> bool {
         let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);

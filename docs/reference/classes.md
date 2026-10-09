@@ -150,7 +150,9 @@ hidden classes and no runtime shape checks.
   nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
   the class declaring `#x`, and narrows like `instanceof`. As in TypeScript, `o` must not be
   possibly null (``the right operand of `in` may be null``; JavaScript throws a `TypeError` for
-  `null`): test `o !== null && #x in o`. Private names exist only in class
+  `null`): test `o !== null && #x in o`. Nor may it possibly be a primitive (`A | string`: ``the
+  right operand of `in` may be a primitive``, TypeScript's TS2322); narrow it first
+  (`typeof o !== "string" && #x in o`). A union of objects (`A | number[]`) is fine. Private names exist only in class
   bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
   with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
   slot, a direct call); they differ where Node differs:
