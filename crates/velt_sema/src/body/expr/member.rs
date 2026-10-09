@@ -262,6 +262,9 @@ impl FnCx<'_, '_> {
             return self.optional_chain(object, span, |s, v| s.member_of(v, prop, want, span));
         }
         let obj = self.expr(object, None, Want::Borrow);
+        if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
+            return self.method_value(obj, object, prop, exp, span);
+        }
         let h = self.member_of(obj, prop, want, span);
         let h = self.narrowed_field(object, prop, h, want);
         self.downcast_field(object, prop, h)

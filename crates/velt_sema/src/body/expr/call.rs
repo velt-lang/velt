@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.bound_method_call(callee, args, exp, span) {
+            return h;
+        }
         match &callee.kind {
             ast::ExprKind::Paren(inner) if !matches!(inner.kind, ast::ExprKind::Arrow { .. }) => {
                 self.call(inner, type_args, args, false, exp, span)

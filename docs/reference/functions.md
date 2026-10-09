@@ -431,6 +431,35 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   }
   ```
 
+- **Methods as values**: `obj.method` read without calling it, and `obj.method.bind(obj)`, are
+  function values bound to `obj`: `xs.forEach(log.write)`, `const add = counter.add.bind(counter)`.
+  The object is evaluated once, where the method is read, so a later assignment to the
+  variable does not change which object it calls, as with `bind` in JS. The method dispatches
+  like a call (an override in the object's class runs). An unbound read is a deliberate
+  difference from JavaScript: there `this` is lost (calling the value with a method that uses
+  `this` throws a `TypeError`); Velt binds it to the object it was read from, so the two differ
+  only where JavaScript would throw. `bind` takes exactly the object the method is read from
+  (`a.m.bind(b)` is an error: write `(x) => b.m(x)`). A generic method, or one with a rest
+  parameter, has no single function type: wrap it in an arrow.
+
+  ```ts
+  class Log {
+    lines: string[] = [];
+    write(s: string): void {
+      this.lines.push(s);
+    }
+  }
+
+  function main() {
+    const log = new Log();
+    const words: string[] = ["a", "b"];
+    words.forEach(log.write.bind(log));
+    const write = log.write;
+    write("c");
+    console.log(log.lines.join(",")); // a,b,c
+  }
+  ```
+
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
   throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
   function through a value behaves like calling it directly: an object it keeps or modifies is

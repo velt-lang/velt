@@ -352,10 +352,9 @@ impl FnCx<'_, '_> {
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }
-        if let (LocalKind::Const, Some(hir::ExprKind::Closure(d))) =
-            (kind, init.as_ref().map(|h| &h.kind))
-        {
-            self.f.closure_consts.insert(local, *d);
+        // A closure, or a method value (`const f = o.greet`, a block ending in its closure).
+        if let (LocalKind::Const, Some(d)) = (kind, init.as_ref().and_then(closure_def)) {
+            self.f.closure_consts.insert(local, d);
         }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
@@ -486,4 +485,13 @@ pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
         return false;
     };
     matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
+}
+
+/// The closure `h` creates: a closure expression, or a block whose value is one.
+fn closure_def(h: &hir::Expr) -> Option<crate::hir::DefId> {
+    match &h.kind {
+        hir::ExprKind::Closure(d) => Some(*d),
+        hir::ExprKind::Block(b) => b.value.as_deref().and_then(closure_def),
+        _ => None,
+    }
 }

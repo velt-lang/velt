@@ -32,6 +32,7 @@ mod matching;
 mod member;
 mod method;
 mod method_call;
+mod method_value;
 mod names;
 mod namespaces;
 mod numbers;
