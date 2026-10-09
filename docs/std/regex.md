@@ -51,8 +51,6 @@ number of groups isn't known when compiling) every parameter after the match is 
 without it panics like JS's `TypeError`.
 
 ```ts
-import { RegExp } from "velt:regex";
-
 function main() {
   console.log("banana".replace(/a/g, "o"), "a-b_c".split(/[-_]/)); // bonono [ 'a', 'b', 'c' ]
   const title = "hello world".replace(/\b(\w)(\w*)/g, (_m, first: string, rest: string) =>

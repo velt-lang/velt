@@ -1,5 +1,4 @@
 // String methods with a regex argument, as in Node (#793).
-import { RegExp } from "velt:regex";
 
 function show(label: string, v: string[] | null) {
   console.log(label, v);

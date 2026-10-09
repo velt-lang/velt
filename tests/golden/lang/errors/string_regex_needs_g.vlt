@@ -1,5 +1,4 @@
 // `matchAll` and `replaceAll` with a regex literal without the `g` flag (JS: TypeError).
-import { RegExp } from "velt:regex";
 
 function main() {
   console.log("a1b2".matchAll(/\d/).length);

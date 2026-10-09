@@ -45,7 +45,7 @@ impl FnCx<'_, '_> {
             return None;
         }
         let literal = match args.first() {
-            Some(a) if self.is_regexp(a) => regex_literal(a),
+            Some(a) if self.is_regexp_arg(a) => regex_literal(a),
             _ => return None,
         };
         let needs_g = matches!(prop.name.as_str(), "matchAll" | "replaceAll");
@@ -76,7 +76,7 @@ impl FnCx<'_, '_> {
 
     /// Is `e` a `RegExp`: `new RegExp(…)` (a regex literal is one) or a variable or field path
     /// of that type? Other expressions take the string method (and its type errors).
-    fn is_regexp(&mut self, e: &ast::Expr) -> bool {
+    fn is_regexp_arg(&mut self, e: &ast::Expr) -> bool {
         let ty = match &strip_parens(e).kind {
             E::New { class, .. } => {
                 let mark = self.cx.diags.len();

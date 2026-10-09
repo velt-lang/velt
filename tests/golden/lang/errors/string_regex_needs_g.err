@@ -1,3 +1,3 @@
-string_regex_needs_g.vlt:5:31: error: `matchAll` needs a regex with the `g` flag
-string_regex_needs_g.vlt:6:31: error: `replaceAll` needs a regex with the `g` flag
-string_regex_needs_g.vlt:7:36: error: this function takes more than the 4 arguments it is given
+string_regex_needs_g.vlt:4:31: error: `matchAll` needs a regex with the `g` flag
+string_regex_needs_g.vlt:5:31: error: `replaceAll` needs a regex with the `g` flag
+string_regex_needs_g.vlt:6:36: error: this function takes more than the 4 arguments it is given
