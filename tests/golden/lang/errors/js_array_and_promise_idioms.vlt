@@ -1,5 +1,5 @@
-// JS idioms that Velt spells differently get an error with the fix: assigning an array's
-// `length`, using the result of an in-place array method (`toSorted`/`toReversed` for `sort` and
+// JS idioms that Velt spells differently get an error with the fix (`xs.length = 0` compiles):
+// using the result of an in-place array method (`toSorted`/`toReversed` for `sort` and
 // `reverse`; for `fill`, the variable or a variable to store a temporary in; other types' `sort`
 // get no array hint), `then`/`catch` on a promise, and the `process` members that are not
 // values, can only be called, or can't be assigned or deleted, and changing `process.argv` in
