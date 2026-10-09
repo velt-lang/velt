@@ -29,7 +29,9 @@ through one channel.
   - `closed` and `length` (the number of queued values).
 - A sent value crosses to the receiver like a `spawn` argument: it moves when the sender no
   longer uses it, and is deep-copied otherwise, so tasks never share an object. Changing an
-  object after sending it doesn't affect the receiver's copy.
+  object after sending it doesn't affect the receiver's copy. A resource is copied with its
+  class's `clone()` (a `RegExp` compiles its pattern again); sending one without `clone()`
+  while still using it is a compile error ([Promises](../reference/async.md#promises)).
 - `Channel<T>` is a handle struct, like `TcpStream` ([Handles](README.md#conventions)). Copies
   share one channel, so pass it to producers and consumers, `spawn`ed tasks included, without
   `shared(...)`.
