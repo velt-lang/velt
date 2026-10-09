@@ -125,15 +125,18 @@ one too.
 ## macOS (`*-apple-darwin`)
 
 `ld64.lld` with the kit as the SDK (`-syslibroot`): `usr/lib/libSystem.tbd` and the
-`CoreFoundation` and `SystemConfiguration` frameworks' `.tbd`, TAPI text stubs listing the
-symbols the runtime imports from them (`kit/macos.txt`: about 270 names, merged from arm64 and
-x86_64 by `velt-kit lists macos`, which links the whole runtime against the SDK and reads the
-binds). The stubs are written by Velt from those names; no file of Apple's SDK is copied. lld
-signs arm64 executables ad hoc, as Apple's `ld` does. `-platform_version macos <min> <min>`
+`CoreFoundation` and `SystemConfiguration` frameworks' `.tbd`, TAPI text stubs that Velt writes
+from `kit/macos.txt`: the names of every symbol those libraries export (`libSystem` with the
+libraries it re-exports, about 9 500 names; the frameworks, about 4 100), which
+`velt-kit lists macos` reads from the SDK's stubs. Programs need more than the runtime imports:
+compiled code calls `libSystem` directly (`fmod` and the other math functions, `memcpy`, …). The
+stubs hold names only (no code, no other content of Apple's SDK files); whether the list of names
+may be shipped is the same question as for Zig, which ships Apple's `.tbd` files themselves.
+lld signs arm64 executables ad hoc, as Apple's `ld` does. `-platform_version macos <min> <min>`
 with the same minimums as before (11.0 arm64, 10.12 x86_64, or `MACOSX_DEPLOYMENT_TARGET`).
 
-A native package's library that calls a `libSystem` function the runtime does not use fails to
-link with the bundled linker; `VELT_LINKER=system` links it with Xcode's tools.
+A native package's library that needs another system library or framework fails to link with
+the bundled linker; `VELT_LINKER=system` links it with Xcode's tools.
 
 ## Refreshing the lists
 
@@ -141,10 +144,11 @@ link with the bundled linker; `VELT_LINKER=system` links it with Xcode's tools.
 |---|---|---|
 | `kit/windows/*.def` | `cargo run -p velt_link --bin velt-kit -- lists windows` | Windows |
 | `kit/linux/<arch>.txt` | `velt-kit lists linux [--root <unpacked debian:bullseye>] [--arch …]` | Debian 11 |
-| `kit/macos.txt` | `velt-kit lists macos --runtime target/release/libvelt_rt.a` | macOS, on arm64 and x86_64 |
+| `kit/macos.txt` | `velt-kit lists macos` | macOS with Xcode or its command line tools |
 
-Refresh `macos.txt` when the runtime starts using a new system function (links of programs then
-fail with an undefined `_name`); the others list every export and change only with the baseline.
+Every list holds all exports of its libraries, so it changes only with the baseline (glibc 2.31,
+the Windows and macOS versions the lists were read from), or when the runtime starts using
+another system library.
 
 ## Testing
 

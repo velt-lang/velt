@@ -8,12 +8,56 @@ on:
       script:
         default: windows.ps1
 jobs:
+  winpkg:
+    if: contains(github.event.head_commit.message, '[winpkg]')
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+          save-cache: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: lld-windows-2025
+          path: ${{ runner.temp }}/lld
+          run-id: 37907209278
+          github-token: ${{ github.token }}
+      - name: package
+        shell: pwsh
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          pwsh -NoProfile -File scripts/package.ps1 -Lld "$env:RUNNER_TEMP/lld/lld.exe" 2>&1 | Select-String -NotMatch "Compiling" | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1 -ExpandProperty FullName
+          Get-ChildItem dist/*/bin/velt.exe, dist/*/lib/velt_rt_shared.dll | ForEach-Object { Write-Host "$($_.Name): $(& $dumpbin /nologo /dependents $_.FullName | Select-String '\.dll' | ForEach-Object { $_.Line.Trim() })" }
+          Get-ChildItem dist/*.zip | Select-Object Name, Length | Format-Table | Out-Host
+      - name: clean machine (servercore)
+        shell: pwsh
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          $dist = (Get-ChildItem dist -Directory | Select-Object -First 1).FullName
+          docker run --rm -v "${dist}:C:\velt" -v "${PWD}:C:\repo" mcr.microsoft.com/windows/servercore:ltsc2025 powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: bench (system vs bundled)
+        shell: pwsh
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          $velt = (Get-ChildItem dist/*/bin/velt.exe | Select-Object -First 1).FullName
+          Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name
+          foreach ($l in "system", "bundled") {
+            Write-Host "### $l"
+            $env:VELT_LINKER = $l
+            pwsh -NoProfile -File bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt $velt 2>&1 | Out-Host
+          }
   lists:
     if: contains(github.event.head_commit.message, '[lists]')
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, macos-15, macos-15-intel]
+        os: [windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:

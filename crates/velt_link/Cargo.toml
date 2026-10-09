@@ -5,7 +5,6 @@ edition.workspace = true
 
 [[bin]]
 name = "velt-kit"
-test = false
 
 [dependencies]
 # Link kits: stub objects for glibc's libraries (write) and the DLL export lists (read, `velt-kit`).

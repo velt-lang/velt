@@ -38,5 +38,5 @@ lib/targets/; docs/internals/linking.md):
 
   The other link kits are written by Velt: Windows import libraries generated from lists of the
   system DLLs' exported names, Linux stub libraries generated from lists of glibc's exported
-  symbol names and versions, and macOS .tbd stubs listing system library symbol names. They
-  contain no code from Microsoft, the GNU C Library or Apple.
+  symbol names and versions, and macOS .tbd stubs listing the system libraries' exported symbol
+  names. They contain no code from Microsoft, the GNU C Library or Apple.
