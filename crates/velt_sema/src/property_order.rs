@@ -14,7 +14,7 @@ pub fn array_index(name: &str) -> Option<u32> {
         return None;
     }
     let n: u64 = name.parse().ok()?;
-    (n <= u64::from(u32::MAX) - 1).then_some(n as u32)
+    (n < u64::from(u32::MAX)).then_some(n as u32)
 }
 
 /// The positions of `names` in JavaScript's key order: array indices first, ascending, then the
