@@ -177,12 +177,12 @@ pub extern "C" fn velt_rt_xfer_defer(object: *mut u8, drop: DropFn) -> u8 {
 /// copied, given up once the copy has cells of its own). Counts are not atomic, so those copies
 /// take turns: `copy_lock` / `copy_unlock` bracket one request's copies (nested pairs on one
 /// thread take the lock once).
-static COPY_LOCK: parking_lot::Mutex<()> = parking_lot::const_mutex(());
+static COPY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 thread_local! {
     /// The `copy_lock`s this thread holds (the guard lives in `COPY_GUARD`).
     static COPY_DEPTH: Cell<u32> = const { Cell::new(0) };
-    static COPY_GUARD: RefCell<Option<parking_lot::MutexGuard<'static, ()>>> =
+    static COPY_GUARD: RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
         const { RefCell::new(None) };
     /// Set by the many-threads check of a closure environment with captured variables' cells
     /// (`saw_cells`), read and cleared by `take_cells`.
@@ -194,7 +194,10 @@ thread_local! {
 pub extern "C" fn velt_rt_copy_lock() {
     let depth = COPY_DEPTH.with(|d| d.replace(d.get() + 1));
     if depth == 0 {
-        let guard = COPY_LOCK.lock();
+        // A panic while copying stops the program, so a poisoned lock guards nothing torn.
+        let guard = COPY_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         COPY_GUARD.with(|g| *g.borrow_mut() = Some(guard));
     }
 }
@@ -273,9 +276,12 @@ mod tests {
         velt_rt_copy_lock();
         velt_rt_copy_lock();
         velt_rt_copy_unlock();
-        assert!(COPY_LOCK.is_locked(), "held until the outermost unlock");
+        assert!(
+            COPY_LOCK.try_lock().is_err(),
+            "held until the outermost unlock"
+        );
         velt_rt_copy_unlock();
-        assert!(!COPY_LOCK.is_locked());
+        assert!(COPY_LOCK.try_lock().is_ok());
         assert_eq!(velt_rt_take_cells(), 0);
         velt_rt_saw_cells();
         assert_eq!(velt_rt_take_cells(), 1);
