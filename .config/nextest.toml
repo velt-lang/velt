@@ -18,6 +18,15 @@ slow-timeout = { period = "60s", terminate-after = 20 }
 # (`velt dev` reloads, the debug adapter): two at a time, so they don't starve each other.
 end-to-end = { max-threads = 2 }
 
+# The wasm32-wasip1 goldens are eight shards of two threads each, outside that group: they run
+# alongside everything else, each counts as the two test threads it keeps busy, and they start
+# right after the slowest tests below.
+[[profile.default.overrides]]
+filter = "binary(wasm_goldens) & test(/^goldens_under_wasmtime_shard_/)"
+test-group = "@global"
+threads-required = 2
+priority = 50
+
 [[profile.default.overrides]]
 filter = """
 binary(wasm_goldens) | binary(native_packages) | binary(reload) | binary(debugger) \
