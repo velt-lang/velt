@@ -133,7 +133,11 @@ impl FnCx<'_, '_> {
                             }
                         }
                     }
-                    if seen && !out.iter().any(|f| matches!(f, Fact::Members(m, _) if m == l)) {
+                    if seen
+                        && !out
+                            .iter()
+                            .any(|f| matches!(f, Fact::Members(m, _) if m == l))
+                    {
                         vs.sort_unstable();
                         vs.dedup();
                         out.push(Fact::Members(*l, vs));

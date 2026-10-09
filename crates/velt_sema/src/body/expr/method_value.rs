@@ -136,7 +136,9 @@ impl FnCx<'_, '_> {
                 format!("method `{}` cannot be used as a function value", prop.name),
                 prop.span,
             )
-            .with_note("a generic method, or one with a rest parameter, has no single function type")
+            .with_note(
+                "a generic method, or one with a rest parameter, has no single function type",
+            )
             .with_note(format!(
                 "wrap it in an arrow function: `{}`",
                 self.arrow_fix(object, object, prop)
@@ -241,7 +243,10 @@ impl FnCx<'_, '_> {
                 if !method.generics.names.is_empty() {
                     return None;
                 }
-                let params = method.params.iter().map(|p| self.cx.subst(p.ty, &iface_args));
+                let params = method
+                    .params
+                    .iter()
+                    .map(|p| self.cx.subst(p.ty, &iface_args));
                 let params: Vec<TyId> = params.collect();
                 let ret = self.cx.subst(method.ret, &iface_args);
                 let generic = |s: &Self, t: TyId| s.cx.mentions_params(t);
