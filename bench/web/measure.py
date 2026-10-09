@@ -107,7 +107,11 @@ class Checker:
     def fortunes(self):
         _, h, body = self.get("/fortunes")
         self.headers("/fortunes", h, "text/html; charset=utf-8")
-        self.check(body == expected_fortunes(), "/fortunes: HTML differs:\n%s" % body)
+        # Byte for byte, with `'` as `&#39;` (escapeHtml, Node, Go, Rust) or as `&#x27;` (react-dom
+        # and std/jsx: the velt-tsx server): the same character, both valid escapes.
+        want = expected_fortunes()
+        ok = body in (want, want.replace("&#39;", "&#x27;"))
+        self.check(ok, "/fortunes: HTML differs:\n%s" % body)
 
     def persisted(self, rows, db_url):
         """The ids that appear once in an /updates response hold the returned numbers."""
