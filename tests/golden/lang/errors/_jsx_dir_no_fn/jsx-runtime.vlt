@@ -1,5 +1,0 @@
-// A JSX runtime that declares directive prefixes but has no `jsxComponentDirectives`.
-
-export * from "velt:jsx/jsx-runtime";
-
-export const jsxDirectivePrefixes = "client";

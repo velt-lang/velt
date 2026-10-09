@@ -1,5 +1,0 @@
-// A JSX runtime whose `jsxDirectivePrefixes` is not a string constant.
-
-export * from "../../_jsx_directives/jsx-runtime";
-
-export const jsxDirectivePrefixes = 8;

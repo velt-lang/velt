@@ -1,7 +1,0 @@
-// @jsxImportSource ./_jsx_dir_bad
-
-// A provider's `jsxDirectivePrefixes` is read at compile time, so it must be a string constant.
-
-function main() {
-  const a = <p>one</p>;
-}

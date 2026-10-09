@@ -1,3 +1,0 @@
-jsx_directives_misuse.vlt:15:19: error: directives are not supported on async components (<Slow>)
-jsx_directives_misuse.vlt:16:31: error: JSX elements cannot have multiple attributes with the same name.
-jsx_directives_misuse.vlt:17:19: error: Property 'server:only' does not exist on type '{ n: i64 }'.

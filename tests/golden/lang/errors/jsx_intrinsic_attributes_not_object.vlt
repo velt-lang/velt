@@ -1,0 +1,7 @@
+// @jsxImportSource ./_jsx_attrs_bad
+
+// A provider's `IntrinsicAttributes` must be an object type.
+
+function main() {
+  const a = <p>one</p>;
+}

@@ -1,2 +1,0 @@
-jsx_directives_not_string.vlt:6:13: error: `jsxDirectivePrefixes` of the JSX provider '_jsx_dir_bad' must be a string constant
-write it as `export const jsxDirectivePrefixes = "client";`

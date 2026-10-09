@@ -1,2 +1,0 @@
-jsx_directives_no_function.vlt:7:10: error: the JSX provider '_jsx_dir_no_fn' declares `jsxDirectivePrefixes` but has no `jsxComponentDirectives`
-is passed to `jsxComponentDirectives(component, props, key, name, names, values)`

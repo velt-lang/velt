@@ -1,9 +1,10 @@
-// @jsxImportSource ./_jsx_directives
+// @jsxImportSource ./_jsx_attrs_precompile
 
-// The page of `jsx_directives`. `_jsx_dir_page_generic.vlt` and `_jsx_dir_page_precompile.vlt`
+// The page of `jsx_intrinsic_attributes`. `_jsx_attrs_page_generic.vlt` and
+// `_jsx_attrs_page_precompile.vlt`
 // are the same source under the generic and the precompiling runtime.
 
-function Counter(props: { start: i64; label: string }): JSX.Element {
+function Counter(props: { start: number; label: string }): JSX.Element {
   return (
     <p>
       {props.label} {props.start}
@@ -11,7 +12,7 @@ function Counter(props: { start: i64; label: string }): JSX.Element {
   );
 }
 
-export function page(n: i64): JSX.Element {
+export function page(n: number): JSX.Element {
   const media = "(min-width: 768px)";
   return (
     <main>

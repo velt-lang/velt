@@ -1,7 +1,8 @@
-// A JSX provider with component directives (docs/internals/contracts/jsx.md "Component
-// directives"), the way sigx marks islands: `<Counter client:load />` passes `client:load` to
-// `jsxComponentDirectives`, not into the props. This one wraps the component in comments naming
-// its directives; std/jsx renders everything else. The generic lowering (no precompile exports).
+// A JSX provider with attributes on every component (docs/internals/contracts/jsx.md
+// "Attributes of every component"), the way sigx marks islands: `<Counter client:load />`
+// checks `client:load` against `IntrinsicAttributes` and passes it to `jsxComponentAttributes`,
+// not into the props. This one wraps the component in comments naming them; std/jsx renders
+// everything else. The generic lowering (no precompile exports).
 
 import { Element } from "velt:jsx/node";
 import type { AttrValue } from "velt:jsx/node";
@@ -9,7 +10,14 @@ import { Fragment, jsxComponent, raw } from "velt:jsx/factory";
 
 export * from "velt:jsx/generic/jsx-runtime";
 
-export const jsxDirectivePrefixes = "client";
+// Attributes every component accepts besides its props, as TypeScript's
+// `JSX.IntrinsicAttributes`: checked against these types, passed to `jsxComponentAttributes`.
+export type IntrinsicAttributes = {
+  "client:load"?: boolean;
+  "client:visible"?: boolean;
+  "client:idle"?: boolean;
+  "client:media"?: string;
+};
 
 function describe(v: AttrValue): string {
   if (typeof v === "string") {
@@ -22,7 +30,7 @@ function describe(v: AttrValue): string {
   return "null";
 }
 
-export function jsxComponentDirectives<P, E>(
+export function jsxComponentAttributes<P, E>(
   component: (props: P) => Element throws E,
   props: P,
   key: string | null,
@@ -31,7 +39,7 @@ export function jsxComponentDirectives<P, E>(
   values: AttrValue[],
 ): Element {
   let open = "<!--island";
-  for (let i: usize = 0; i < names.length; i++) {
+  for (let i = 0; i < names.length; i++) {
     open += ` ${names[i]}=${describe(values[i])}`;
   }
   open += ` ${name.slice(name.indexOf("#") + 1)}-->`;

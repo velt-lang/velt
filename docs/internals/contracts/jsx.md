@@ -98,8 +98,9 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   `"src/components/card#Card"`. Providers use it for hydration/island/resumability markers.
 - `key`: `key={k}` is removed from the attributes/props and passed separately (`string` or
   `number`, numbers converted to their decimal string). Missing → `null`.
-- A provider may declare **component directives** (`client:load`), attributes passed to it
-  rather than in the props: see "Component directives" below.
+- A provider may declare attributes that **every component** accepts besides its props
+  (`JSX.IntrinsicAttributes`, e.g. sigx's `client:load`): see "Attributes of every component"
+  below.
 
 ## How the compiler lowers each construct
 - **Tag kind:** a lower-case simple name (`div`, `my-widget`) or a namespaced name (`svg:rect`)
@@ -260,41 +261,54 @@ of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `fa
 Without the export nothing changes, and the generic lowering ignores it. The golden
 `lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
 
-## Component directives (optional exports)
-A provider may give component elements attributes that are not props: instructions to the
-provider about the component, such as sigx's island directives (`<Counter client:load />`,
-`client:visible`, `client:media="(min-width: 768px)"`). It declares their namespace prefixes, as a
-string constant of space-separated prefixes (an error otherwise), and the function that
-receives them:
+## Attributes of every component (optional exports)
+TypeScript checks a component element's attributes against `Props & JSX.IntrinsicAttributes`:
+`IntrinsicAttributes` lists attributes that every component accepts besides its own props. Velt
+does the same. sigx's island directives are the use case (`<Counter client:load />`,
+`client:visible`, `client:media="(min-width: 768px)"`):
 
 ```ts ignore
-export const jsxDirectivePrefixes = "client";
-// <Counter client:load start={1} /> → jsxComponentDirectives(Counter, { start: 1 }, null,
+export type IntrinsicAttributes = {
+  "client:load"?: boolean;
+  "client:media"?: string;
+};
+// <Counter client:load start={1} /> → jsxComponentAttributes(Counter, { start: 1 }, null,
 //   "src/counter#Counter", ["client:load"], [true])
-function jsxComponentDirectives<P>(component: (props: P) => Element, props: P,
+function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
                                    key: string | null, name: string,
                                    names: string[], values: AttrValue[]): Element;
 ```
-- An attribute `prefix:name` of a **component** element whose prefix is declared is a directive.
-  It is left out of the props, which are checked without it. Its value is converted to
-  `AttrValue` like an intrinsic attribute's, and a bare one is `true`. `names` and `values`
-  are in source order; the same directive twice is an error.
-- A component element with at least one directive calls `jsxComponentDirectives`, with the
-  directives evaluated after the props. One without directives calls `jsxComponent` as before.
-- An async component with a directive is an error ("directives are not supported on async
-  components"). Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
-  namespaced names on them are ordinary attributes.
-- **Precompile:** component calls are template slots, so a directive works the same in both
-  lowerings.
-- **Errors:** a provider that exports `jsxDirectivePrefixes` without `jsxComponentDirectives`
-  is an error. Without the prefix export nothing changes, and `client:load` on a component is
-  then an unknown prop.
-- **The same source under `tsc`:** the TypeScript runtime declares the directives as optional
-  component attributes, e.g. sigx's `ComponentAttributeExtensions` augmentation
-  (`'client:load'?: boolean`), so `tsc` accepts the same `.tsx`. Nothing extra is needed on the
-  Velt side.
+- **Typing is TypeScript's.** An attribute of a component element that is not one of its props is
+  looked up in `IntrinsicAttributes`. Its value is checked against the declared type, with the
+  same errors as `tsc`:
+  - `Property 'client:lod' does not exist on type 'IntrinsicAttributes & CounterProps'. Did you
+    mean 'client:load'?`;
+  - a value of the wrong type;
+  - a required field that is missing;
+  - the same attribute twice.
 
-The golden `lang/jsx_directives` renders directives through a provider in both lowerings.
+  `key` keeps its own handling. The names are usually quoted property names, since they hold a
+  `:`.
+- **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
+  component element with at least one of them calls `jsxComponentAttributes`, with the names and
+  the values converted to `AttrValue` (a bare attribute is `true`), in source order. The values
+  are evaluated after the props, where TypeScript evaluates every attribute in source order;
+  `key` differs the same way. An element without them calls `jsxComponent` as before.
+- **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
+  `jsxComponentAttributes` with these six parameters. `IntrinsicAttributes` must be an object
+  type.
+- **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
+  synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
+  namespaced names on them are ordinary attributes.
+- **Precompile.** Component calls are template slots, so these attributes work the same in both
+  lowerings.
+- **The same source under `tsc`.** The TypeScript runtime declares the same
+  `JSX.IntrinsicAttributes`, as sigx does through its `ComponentAttributeExtensions`
+  augmentation, so `tsc` and Velt accept and reject the same `.tsx`.
+- **Editors.** Velt's language server completes these attributes after a component's props,
+  shows their type and docs on hover, and reports the errors above as diagnostics.
+
+The golden `lang/jsx_intrinsic_attributes` renders them through a provider in both lowerings.
 
 ## Escaping (all providers that render HTML)
 - Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
@@ -348,6 +362,6 @@ definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provid
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async
   element are rejected until then.
-- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes`/`IntrinsicAttributes` are
-  not supported.
+- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes` are not supported.
+  `JSX.IntrinsicAttributes` is supported (above).
 

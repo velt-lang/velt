@@ -8,7 +8,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::attrs::attr_name;
+use super::props::ElementProps;
 use super::provider::Provider;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
@@ -62,13 +62,40 @@ impl FnCx<'_, '_> {
             return self.error_expr(el.span);
         };
         let mut lets = vec![];
-        let Some((props, type_args)) = self.component_props(p, el, &c, &tag, &mut lets) else {
+        let Some(ElementProps {
+            props,
+            type_args,
+            extra,
+        }) = self.component_props(p, el, &c, &tag, &mut lets)
+        else {
             self.jsx_loose(p, el);
             return self.error_expr(el.span);
         };
         if type_args.contains(&self.cx.ty.error) {
             return self.error_expr(el.span);
         }
+        // With attributes from `JSX.IntrinsicAttributes` the element calls
+        // `jsxComponentAttributes`, whose component parameter gives the expected type.
+        let (d, f) = match (&p.component_attrs, extra.is_empty()) {
+            (Some(attrs), false) => {
+                if c.is_async {
+                    let span = extra[0].1;
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("`{}` is not supported on an async component (<{tag}>)", extra[0].0),
+                            span,
+                        )
+                        .with_note(format!(
+                            "the JSX provider '{}' receives it through `jsxComponentAttributes`, which takes a synchronous component",
+                            p.source
+                        )),
+                    );
+                    return self.error_expr(el.span);
+                }
+                (attrs.call, "jsxComponentAttributes")
+            }
+            _ => (d, f),
+        };
         let ret = self.cx.subst(c.ret, &type_args);
         let natural = self.cx.ty.fn_ptr(vec![props.ty], ret);
         let expected = self.runtime_component_type(d, props.ty, natural);
@@ -80,86 +107,41 @@ impl FnCx<'_, '_> {
             self.not_component(&tag, name.span(), why);
             return self.error_expr(el.span);
         }
-        let is_async = c.is_async;
         let Some(value) = self.component_value(c.func, expected, props.ty, el, &tag) else {
             return self.error_expr(el.span);
         };
         let key = self.jsx_key(p, el);
         let identity = self.str_lit(&c.identity, name.span());
         let mut args = vec![value, props, key, identity];
-        let (d, f) = match self.component_directives(p, el, is_async, &tag) {
-            None => (d, f),
-            Some(None) => return self.error_expr(el.span),
-            Some(Some((names, values, call))) => {
-                args.push(names);
-                args.push(values);
-                (call, "jsxComponentDirectives")
-            }
-        };
+        if !extra.is_empty() {
+            let (names, values) = self.attr_arrays(p, extra, el.span);
+            args.push(names);
+            args.push(values);
+        }
         let call = self.jsx_call(p, d, f, args, el.span);
         self.with_lets(lets, call)
     }
 
-    /// The directives of component element `el` (`client:load`, `client:media="…"`) as the
-    /// arrays `names` and `values` (each converted to `JSX.AttrValue`, a bare one `true`), with
-    /// `jsxComponentDirectives`: `None` when it has none (the call stays `jsxComponent`),
-    /// `Some(None)` after an error.
-    #[allow(clippy::type_complexity)]
-    fn component_directives(
+    /// `names` and `values` of the attributes from `JSX.IntrinsicAttributes` (in source order,
+    /// values already converted to `JSX.AttrValue`).
+    fn attr_arrays(
         &mut self,
         p: &Provider,
-        el: &ast::JsxElement,
-        is_async: bool,
-        tag: &str,
-    ) -> Option<Option<(hir::Expr, hir::Expr, DefId)>> {
-        let dir = p.directives.as_ref()?;
-        let written: Vec<&ast::JsxAttr> = el.attrs.iter().filter(|a| p.is_directive(a)).collect();
-        let first = written.first()?;
-        if is_async {
-            let span = match first {
-                ast::JsxAttr::Named { span, .. } | ast::JsxAttr::Spread { span, .. } => *span,
-            };
-            self.cx.error(
-                Diagnostic::error(
-                    format!("directives are not supported on async components (<{tag}>)"),
-                    span,
-                )
-                .with_note(format!(
-                    "the JSX provider '{}' receives directives through `jsxComponentDirectives`, which takes a synchronous component",
-                    p.source
-                )),
-            );
-            return Some(None);
-        }
+        extra: Vec<(String, Span, hir::Expr)>,
+        span: Span,
+    ) -> (hir::Expr, hir::Expr) {
         let mut names = vec![];
         let mut values = vec![];
-        for a in written {
-            let ast::JsxAttr::Named { name, value, span } = a else {
-                continue;
-            };
-            let (n, name_span) = attr_name(name);
-            if names.iter().any(
-                |h: &hir::Expr| matches!(&h.kind, hir::ExprKind::Lit(hir::Lit::Str(s)) if *s == n),
-            ) {
-                self.cx.err(
-                    "JSX elements cannot have multiple attributes with the same name.",
-                    name_span,
-                );
-            }
-            let (h, _) = self.attr_value(p, value, Some(p.attr_value), *span);
-            let note = format!(
-                "directive values are passed to the JSX provider '{}' as `JSX.AttrValue`",
-                p.source
-            );
-            values.push(self.jsx_coerce(h, p.attr_value, &note));
-            names.push(self.str_lit(&n, name_span));
+        for (n, at, h) in extra {
+            names.push(self.str_lit(&n, at));
+            values.push(h);
         }
         let str_ = self.cx.ty.str_;
         let names_ty = self.cx.ty.array(str_);
-        let names = self.mk(hir::ExprKind::ArrayLit(names), names_ty, el.span);
+        let names = self.mk(hir::ExprKind::ArrayLit(names), names_ty, span);
         let values_ty = self.cx.ty.array(p.attr_value);
-        let values = self.mk(hir::ExprKind::ArrayLit(values), values_ty, el.span);
-        Some(Some((names, values, dir.call)))
+        let values = self.mk(hir::ExprKind::ArrayLit(values), values_ty, span);
+        (names, values)
     }
 
     /// The runtime function for component `c`.

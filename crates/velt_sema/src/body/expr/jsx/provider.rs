@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use crate::body::FnCx;
 use crate::collect::export_of;
 use crate::ctx::{Ctx, Item};
-use crate::hir::{DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
+use crate::hir::{AdtKind, DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The SSR precompile exports (docs/internals/contracts/jsx.md "SSR precompile"); a runtime has all
@@ -46,9 +46,9 @@ pub(crate) struct Provider {
     /// `jsxVoidElements`: the tags whose children are an error (they have no end tag), and that
     /// templates write without one; `None` without the export (templates use HTML's list).
     pub void_elements: Option<Vec<String>>,
-    /// `jsxDirectivePrefixes` with `jsxComponentDirectives`: attributes `prefix:name` on a
-    /// component element are directives for the provider, not props (sigx's `client:load`).
-    pub directives: Option<Directives>,
+    /// `JSX.IntrinsicAttributes`: attributes every component element accepts besides its props
+    /// (sigx's `client:load`), passed to `jsxComponentAttributes`.
+    pub component_attrs: Option<ComponentAttrs>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -61,28 +61,13 @@ pub(crate) struct Provider {
     pub children_field: String,
 }
 
-/// Component directives (docs/internals/contracts/jsx.md "Component directives").
-pub(crate) struct Directives {
-    /// The namespace prefixes (`client` for `client:load`).
-    pub prefixes: Vec<String>,
-    /// `jsxComponentDirectives(C, props, key, name, names, values)`.
+/// `JSX.IntrinsicAttributes` with fields besides `key` (docs/internals/contracts/jsx.md
+/// "Attributes of every component").
+pub(crate) struct ComponentAttrs {
+    /// The exported type (an object type).
+    pub ty: TyId,
+    /// `jsxComponentAttributes(C, props, key, name, names, values)`.
     pub call: DefId,
-}
-
-impl Provider {
-    /// Is `a` a directive of this provider (`client:load` with the prefix `client` declared)?
-    pub(crate) fn is_directive(&self, a: &ast::JsxAttr) -> bool {
-        let Some(d) = &self.directives else {
-            return false;
-        };
-        match a {
-            ast::JsxAttr::Named {
-                name: ast::JsxAttrName::Namespaced(ns, _),
-                ..
-            } => d.prefixes.contains(&ns.name),
-            _ => false,
-        }
-    }
 }
 
 /// The children field when the runtime has no `ElementChildrenAttribute`.
@@ -164,9 +149,9 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         "the compiler reads the tags at compile time",
     )?
     .map(|list| list.split_whitespace().map(str::to_string).collect());
-    let directives = directives(cx, t, &source, at)?;
+    let component_attrs = component_attrs(cx, t, &source, at)?;
     Some(Provider {
-        directives,
+        component_attrs,
         async_component: function(cx, t, "jsxAsyncComponent"),
         precompile,
         text_separator,
@@ -184,33 +169,56 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
     })
 }
 
-/// `jsxDirectivePrefixes` and `jsxComponentDirectives`: `Some(None)` without the prefixes, `None`
-/// once a malformed export was reported.
-fn directives(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Option<Directives>> {
-    let Some(list) = string_const(
-        cx,
-        t,
-        source,
-        at,
-        "jsxDirectivePrefixes",
-        "client",
-        "the compiler reads the prefixes at compile time",
-    )?
-    else {
+/// `IntrinsicAttributes` and `jsxComponentAttributes`: `Some(None)` without the type (or with only
+/// `key`), `None` once a malformed export was reported.
+fn component_attrs(
+    cx: &mut Ctx,
+    t: usize,
+    source: &str,
+    at: Span,
+) -> Option<Option<ComponentAttrs>> {
+    if export_of(cx, t, "IntrinsicAttributes").is_none() {
         return Some(None);
+    }
+    let ty = type_export(cx, t, "IntrinsicAttributes", at)?;
+    let fields = match cx.ty.kind(ty).clone() {
+        TyKind::Adt(d, _) => cx
+            .adt(d)
+            .filter(|a| matches!(a.kind, AdtKind::Anon | AdtKind::Struct))
+            .map(|a| a.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>()),
+        _ => None,
     };
-    let Some(call) = function(cx, t, "jsxComponentDirectives") else {
+    let Some(fields) = fields else {
+        cx.error(Diagnostic::error(
+            format!(
+                "`JSX.IntrinsicAttributes` of the JSX provider '{source}' must be an object type"
+            ),
+            at,
+        ));
+        return None;
+    };
+    if fields.iter().all(|f| f == "key") {
+        return Some(None);
+    }
+    let Some(call) = function(cx, t, "jsxComponentAttributes") else {
         cx.error(
             Diagnostic::error(
-                format!("the JSX provider '{source}' declares `jsxDirectivePrefixes` but has no `jsxComponentDirectives`"),
+                format!("the JSX provider '{source}' declares `IntrinsicAttributes` but has no `jsxComponentAttributes`"),
                 at,
             )
-            .with_note("a component element with a directive (`<Card client:load />`) is passed to `jsxComponentDirectives(component, props, key, name, names, values)` (docs/internals/contracts/jsx.md)"),
+            .with_note("a component element with such an attribute (`<Card client:load />`) is passed to `jsxComponentAttributes(component, props, key, name, names, values)` (docs/internals/contracts/jsx.md)"),
         );
         return None;
     };
-    let prefixes = list.split_whitespace().map(str::to_string).collect();
-    Some(Some(Directives { prefixes, call }))
+    let arity = cx.try_fn(call).map_or(0, |f| f.params.len());
+    if arity != 6 {
+        cx.error(Diagnostic::error(
+            format!("`jsxComponentAttributes` of the JSX provider '{source}' must take 6 parameters (component, props, key, name, names, values), not {arity}"),
+            at,
+        ));
+        return None;
+    }
+    Some(Some(ComponentAttrs { ty, call }))
 }
 
 /// Exported function `name` of module `t`.
