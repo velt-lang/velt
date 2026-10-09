@@ -1,0 +1,15 @@
+// An argument of a call that initializes a module constant must be constant.
+
+function id(n: number): number {
+  return n;
+}
+
+function pick(xs: number[]): number {
+  return xs.length;
+}
+
+const A = pick([1, 2]);
+
+function main() {
+  console.log(A, id(1));
+}

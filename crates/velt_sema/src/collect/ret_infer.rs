@@ -22,7 +22,7 @@ pub(super) fn returns_value(source: Option<FnSource>) -> bool {
     }
 }
 
-fn stmt_returns_value(s: &ast::Stmt) -> bool {
+pub(crate) fn stmt_returns_value(s: &ast::Stmt) -> bool {
     use ast::StmtKind as K;
     let block = |b: &ast::Block| b.stmts.iter().any(stmt_returns_value);
     match &s.kind {

@@ -92,10 +92,12 @@ impl FnCx<'_, '_> {
             }
             None => args,
         };
+        // Trailing `void` parameters may be left out, as in TS: `resolve()` for a
+        // `Promise<void>`'s `resolve: (value: void) => void`.
         let min = c
             .params
             .iter()
-            .rposition(|p| p.default.is_none())
+            .rposition(|p| p.default.is_none() && p.ty != self.cx.ty.unit)
             .map_or(0, |i| i + 1);
         if args.len() < min || args.len() > c.params.len() {
             self.arg_count_error(&c.what, min, c.params.len(), args.len(), span);
@@ -151,7 +153,11 @@ impl FnCx<'_, '_> {
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let mut d = p.default.clone().expect("ICE: default checked by arity");
+            let Some(mut d) = p.default.clone() else {
+                // A left-out `void` parameter (checked by arity).
+                hargs.push(self.unit_expr(span));
+                continue;
+            };
             crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
             d.span = span;
             hargs.push(d);

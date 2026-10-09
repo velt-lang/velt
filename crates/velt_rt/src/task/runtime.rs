@@ -28,7 +28,12 @@ pub fn keep_alive_acquire() {
 }
 
 /// Release a keep-alive reference taken with [`keep_alive_acquire`].
+///
+/// A hand-off point: releasing the last reference lets the program's exit path continue on the
+/// main thread, which flushes stdout and ends the process; what this thread printed (a timer
+/// callback's last line) must be published before that.
 pub fn keep_alive_release() {
+    crate::io::publish_before_handoff();
     if KEEP_ALIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
         KEEP_ALIVE_RELEASED.notify_waiters();
     }
@@ -133,4 +138,18 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         Err(_) => crate::panic::fatal("async main was cancelled"),
     }
     crate::io::flush_stdout();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn releasing_a_keep_alive_publishes_this_threads_output_first() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        keep_alive_acquire();
+        buffer_output();
+        keep_alive_release();
+        assert!(published());
+    }
 }
