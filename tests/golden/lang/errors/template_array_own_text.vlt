@@ -1,29 +1,22 @@
-// An array whose elements JS writes with their own method (a declared or inherited
-// `toString()`, a `Date`, an `Error`, a `RegExp`) cannot be written by a template literal,
+// An array whose elements JS writes with their own method that lowering has no hook for (a
+// struct's `toString()`, an `Error`, a `RegExp`) cannot be written by a template literal,
 // `join` or `toString()`: the error says what JS writes and gives the `.map(...).join(",")`
-// that writes it.
-class P {
+// that writes it. A class's `toString()` is called (template_array_tostring.vlt).
+struct S {
   x: number;
-  constructor(x: number) {
-    this.x = x;
-  }
   toString(): string {
-    return "P!";
+    return "S!";
   }
 }
-
-class Q extends P {}
 
 class Oops extends Error {}
 
 function main() {
-  const ps = [new P(1), new P(2)];
-  console.log(`${ps}`);
-  console.log(ps.join(","));
-  console.log([new Q(3)].toString());
-  console.log(`${[[new Date(0)]]}`);
+  const ss: S[] = [{ x: 1 }];
+  console.log(`${ss}`);
+  console.log(ss.join(","));
   console.log(`${[new Oops("m")]}`);
   console.log([/a/g].join());
-  const t: [number, P | null] = [1, null];
+  const t: [number, S | null] = [1, null];
   console.log(`${t}`);
 }

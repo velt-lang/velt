@@ -1,0 +1,52 @@
+// An array of class instances whose class declares or inherits `toString()` is written by a
+// template literal, `join` and `toString()` through each element's `toString()` (a subclass's
+// override too), as JS does, also when it reaches them through a type parameter (#818); a class
+// without one, or an object, is written `[object Object]`. The output is Node's.
+class P {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+  toString(): string {
+    return `P${this.x}`;
+  }
+}
+class Q extends P {}
+class R extends P {
+  override toString(): string {
+    return "R!";
+  }
+}
+class Plain {
+  y: number;
+  constructor(y: number) {
+    this.y = y;
+  }
+}
+function show<T>(x: T): string {
+  return `${x}`;
+}
+function join<T>(label: string, xs: T[]) {
+  console.log(`${label}: ${xs.join("/")}`);
+}
+
+function main() {
+  const ps = [new P(1), new P(2)];
+  console.log(`${ps}`);
+  console.log(ps.join(","));
+  console.log(ps.join(" - "));
+  console.log([new Q(3)].toString());
+  const bs: P[] = [new P(4), new R(5)];
+  console.log(`${bs}`);
+  console.log(`${[new Plain(1), new Plain(2)]}`);
+  console.log(`${[{ a: 1 }, { a: 2 }]}`);
+  const nested: (P | null)[][] = [[new P(6)], [new P(7), null]];
+  console.log(`${nested}`);
+  const t: [number, P | null] = [1, new P(8)];
+  console.log(`${t}`);
+  console.log(show([new P(1), new P(2)]));
+  console.log(show([new Plain(1)]));
+  console.log(show(new P(9)));
+  console.log(show(new Plain(9)));
+  join("generic join", [new P(10), new R(11)]);
+}

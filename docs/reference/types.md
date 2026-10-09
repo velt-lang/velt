@@ -172,11 +172,11 @@ usable and no copy method is needed.
   error; build that text with a template literal (`` `Total: ${xs}` ``).
 - A template literal writes `${x}` as JS's `String(x)` does ([Lexical structure](lexical.md)):
   an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays the same way, `null`
-  elements as empty text, an object as `[object Object]`, a map as `[object Map]`, a set as
-  `[object Set]`), and a class instance through its `toString()`, else as `[object Object]`. An
-  array whose elements JS writes with their own method (a class with a `toString()`, a `Date`,
-  an `Error`, a `RegExp`) is a compile error in a template literal, in `join` and in
-  `toString()`: write
+  elements as empty text, a class instance through its `toString()`, another object as
+  `[object Object]`, a map as `[object Map]`, a set as `[object Set]`), and a class instance
+  through its `toString()`, else as `[object Object]`. An array whose elements JS writes with a
+  method Velt cannot call there (a struct's `toString()`, an `Error`, a `RegExp`) is a compile
+  error in a template literal, in `join` and in `toString()`: write
   `` `${xs.map((x) => x.toString()).join(",")}` ``.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a

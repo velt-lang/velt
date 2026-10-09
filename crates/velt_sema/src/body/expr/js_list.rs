@@ -1,11 +1,13 @@
 //! Arrays written as text (`${xs}`, `xs.join()`, `xs.toString()`), as JS's
 //! `Array.prototype.toString` writes them: each element as `String(x)`, joined with ",".
-//! Lowering writes numbers, strings, booleans, `null` and nested arrays exactly, and every other
-//! object as JS's default `Object.prototype.toString` does (`[object Object]`, `[object Map]`,
-//! `[object Set]`). What it cannot write is an element whose JS text comes from its own method:
-//! a class or struct with a `toString()` (JS calls it for each element), an `Error`
-//! (`Error: message`) or a `RegExp` (`/source/flags`). Such an array is rejected here, with the
-//! `.map(...).join(",")` that writes the same text.
+//! Lowering writes numbers, strings, booleans, `null` and nested arrays exactly, a class
+//! instance through its `toString()` (the class's `to_string` hook, `crate::hooks`), and every
+//! other object as JS's default `Object.prototype.toString` does (`[object Object]`,
+//! `[object Map]`, `[object Set]`). What it cannot write is an element whose JS text comes from
+//! a method it has no hook for: a struct's `toString()` or a class's that is not a plain
+//! `toString(): string` (JS calls it for each element), an `Error` (`Error: message`) or a
+//! `RegExp` (`/source/flags`). Such an array is rejected here, with the `.map(...).join(",")`
+//! that writes the same text.
 
 use velt_common::{Diagnostic, Span};
 
@@ -68,7 +70,9 @@ impl FnCx<'_, '_> {
                         .into_iter()
                         .find_map(|m| self.js_list_blocker(m, depth + 1, true));
                 }
-                let own = self.has_to_string(t) || self.is_error_class(t) || self.is_regexp(t);
+                let own = self.is_error_class(t)
+                    || self.is_regexp(t)
+                    || (self.has_to_string(t) && !self.has_to_string_hook(t));
                 own.then_some(t)
             }
         }
@@ -87,6 +91,14 @@ impl FnCx<'_, '_> {
         }
         let f = self.cx.fn_info(found.def());
         f.params.is_empty() && f.ret == self.cx.ty.str_
+    }
+
+    /// Does class `t` have a `toString()` lowering calls through the class's `to_string` hook?
+    fn has_to_string_hook(&mut self, t: TyId) -> bool {
+        let Some((d, args)) = self.adt_of(t) else {
+            return false;
+        };
+        crate::hooks::hook(self.cx, d, &args, crate::hooks::TO_STRING).is_some()
     }
 
     /// Is `t` the prelude's `Error` class or a subclass of it?

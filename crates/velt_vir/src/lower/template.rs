@@ -186,11 +186,15 @@ impl FnLower<'_, '_> {
     }
 
     /// An element of an array being written by [`push_js_string`](Self::push_js_string):
-    /// `null` is empty text, a union member is written as itself, and an object as JS's default
-    /// `Object.prototype.toString` writes it (`[object Object]`, `[object Map]`, ...). Sema
-    /// rejects element types whose JS text comes from their own method (`toString()`, `Error`,
+    /// `null` is empty text, a union member is written as itself, a class instance through its
+    /// `toString()` (#818), and any other object as JS's default `Object.prototype.toString`
+    /// writes it (`[object Object]`, `[object Map]`, ...). Sema rejects the element types whose
+    /// JS text comes from a method lowering cannot call (a struct's `toString()`, `Error`,
     /// `RegExp`; velt_sema's js_list.rs), except through a type parameter.
     fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        if self.push_to_string(buf, place, ty) {
+            return;
+        }
         if let Some(tag) = self.object_tag(ty) {
             return self.push_text(buf, tag);
         }

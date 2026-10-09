@@ -530,9 +530,10 @@ extend<T> Array<T> {
 
   /**
    * `join` for element types without their own (string enums, literal unions, objects): each
-   * element as JS's `String(x)` writes an array element (`[object Object]` for an object,
-   * `[object Map]` for a map). An element type with its own `toString()` is a compile error:
-   * write `xs.map((x) => x.toString()).join(sep)`. Strings, numbers and bools have exact ones
+   * element as JS's `String(x)` writes an array element (a class instance through its
+   * `toString()`, `[object Object]` for another object, `[object Map]` for a map). A struct
+   * with its own `toString()`, an `Error` or a `RegExp` element is a compile error: write
+   * `xs.map((x) => x.toString()).join(sep)`. Strings, numbers and bools have exact ones
    * below; arrays of arrays and of nullable elements have JS's in array_nested.vlt.
    */
   join(sep: string = ","): string {
