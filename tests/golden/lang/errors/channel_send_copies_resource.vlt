@@ -1,0 +1,58 @@
+// A value sent on a channel while the program still uses it is copied for the receiving task,
+// like a `spawn` argument (#690): a resource without `clone()` cannot be, so it is an error.
+import { channel, Channel } from "velt:channel";
+
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Holder {
+  conn: Conn;
+
+  constructor(conn: Conn) {
+    this.conn = conn;
+  }
+}
+
+type Job = { conns: Conn[] };
+
+async function enqueue(ch: Channel<Conn>, c: Conn) {
+  await ch.send(c);
+}
+
+async function serve(j: { c: Conn }): Promise<i64> {
+  return j.c.id;
+}
+
+async function main() {
+  const ch = channel<Conn>();
+  const c = new Conn(1);
+  await ch.send(c);
+  console.log(c.id);
+  const jobs = channel<Job>();
+  const conns = [new Conn(2)];
+  await jobs.send({ conns });
+  console.log(conns.length);
+  const d = new Conn(3);
+  ch.trySend(d);
+  console.log(d.id);
+  const h = new Holder(new Conn(4));
+  await ch.send(h.conn);
+  const e = new Conn(5);
+  await enqueue(ch, e);
+  console.log(e.id);
+  const f = new Conn(6);
+  const t = spawn(serve({ c: f }));
+  console.log(f.id, await t);
+  await ch.send(new Conn(7));
+  const g = new Conn(8);
+  await ch.send(g);
+}

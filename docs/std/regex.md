@@ -17,7 +17,8 @@ pair (JavaScript without the `u` flag stops between its halves; #401).
 - `replaceWith(s, f: (m) => string)`.
 - `split(s, limit = 0)`: captured groups are included in the result (`""` for a group that did
   not take part, where JS gives `undefined`); `limit` 0 means no limit.
-- `RegExp.escape(s)`, `clone()`.
+- `RegExp.escape(s)`, `clone()` (compiles the pattern again; it never throws, so a value
+  holding a `RegExp` can be copied for another task, `spawn` or a channel).
 - `RegExpMatch { index; end; value; captures: (string | null)[]; names }`, with `group(n)` and
   `named(name)`.
 

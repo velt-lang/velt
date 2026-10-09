@@ -4,9 +4,15 @@
 //! resource without one cannot be copied, so passing it to `spawn` while it is still in use is
 //! an error here, where it is visible: an argument of `spawn(f(…))` that became a share
 //! (`Intrinsic::Share`, the variable is used again) and a shared capture of a spawned async
-//! closure literal (or of one called at once). Values that only turn out to be shared at run time (another reference made
+//! closure literal (or of one called at once). A value sent on a channel crosses the same way
+//! (`ch.send(x)`, `ch.trySend(x)`: a function that hands its parameter to
+//! `Intrinsic::ChanSend` / `ChanTrySend`), so the same rule applies to the value it is given.
+//! A share inside an object, array, tuple or union literal built for the crossing is copied
+//! too. Values that only turn out to be shared at run time (another reference made
 //! earlier) are checked by the transfer itself, which panics instead of releasing the
 //! resource twice.
+
+use std::collections::HashMap;
 
 use velt_common::{Diagnostic, Span};
 
@@ -19,7 +25,17 @@ use crate::visit;
 
 use super::validate::place_text;
 
-/// Why `spawn` copies a value.
+/// Where a value crosses to another task.
+#[derive(Clone, Copy)]
+enum Site {
+    /// The operand of `spawn`.
+    Spawn,
+    /// The value given to a channel's `send` / `trySend`, or to a function that passes it on
+    /// to one (the function called).
+    Send(DefId),
+}
+
+/// Why `spawn` (or a channel send) copies a value.
 enum Copied {
     /// The variable (its name) is used again after the `spawn`.
     UsedAgain(String),
@@ -38,20 +54,32 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
+    let senders = channel_senders(cx, &fns);
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
         let locals = f.body.locals.clone();
-        let mut found: Vec<(Span, TyId, Copied)> = vec![];
+        let mut found: Vec<(Span, TyId, Copied, Site)> = vec![];
         let mut kept: Vec<(Span, String, bool, TyId)> = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            let E::Call {
-                callee: Callee::Intrinsic(i),
-                args,
-            } = &e.kind
-            else {
-                return;
+            let (i, args) = match &e.kind {
+                E::Call {
+                    callee: Callee::Intrinsic(i),
+                    args,
+                } => (i, args),
+                E::Call {
+                    callee: Callee::Def(g, _),
+                    args,
+                } => {
+                    for &p in senders.get(g).into_iter().flatten() {
+                        if let Some(a) = args.get(p) {
+                            crossing_copies(cx, a, &locals, Site::Send(*g), &mut found);
+                        }
+                    }
+                    return;
+                }
+                _ => return,
             };
             match (i, args.as_slice()) {
                 (Intrinsic::Spawn | Intrinsic::SpawnHandled, [p]) => {
@@ -62,12 +90,126 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
-        for (span, ty, why) in found {
-            report(cx, span, ty, why);
+        // A sender call that is itself the operand of `spawn` (`spawn(producer(ch, x))`) is
+        // reported once, for the `spawn`.
+        let spawned: Vec<Span> = found
+            .iter()
+            .filter(|f| matches!(f.3, Site::Spawn))
+            .map(|f| f.0)
+            .collect();
+        found.retain(|f| matches!(f.3, Site::Spawn) || !spawned.contains(&f.0));
+        for (span, ty, why, site) in found {
+            report(cx, span, ty, why, site);
         }
         for (span, name, local, ty) in kept {
             report_shared(cx, span, &name, local, ty);
         }
+    }
+}
+
+/// The functions among `fns` that hand a parameter to a channel, with the indices of those
+/// parameters (`this` is parameter 0, as in the call's arguments): `Channel.send` and
+/// `Channel.trySend` pass it to `Intrinsic::ChanSend` / `ChanTrySend`, and a function that
+/// passes its parameter on to one of those (`enqueue(ch, x)` calling `ch.send(x)`) hands it
+/// over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
+/// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
+fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> HashMap<DefId, Vec<usize>> {
+    let mut out: HashMap<DefId, Vec<usize>> = HashMap::new();
+    // (function, callee, argument index, parameter index): the parameter is passed on as is.
+    let mut passes: Vec<(DefId, DefId, usize, usize)> = vec![];
+    for &d in fns {
+        let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+            continue;
+        };
+        let n = f.params.len();
+        let param = |a: Option<&Expr>| match a.map(|v| &v.kind) {
+            Some(E::Local(l, _)) if (l.0 as usize) < n => Some(l.0 as usize),
+            _ => None,
+        };
+        let mut sent: Vec<usize> = vec![];
+        let mut assigned: Vec<usize> = vec![];
+        let from = passes.len();
+        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
+                assigned.extend(param(Some(place)));
+            }
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::ChanSend | Intrinsic::ChanTrySend),
+                args,
+            } => sent.extend(param(args.get(1))),
+            E::Call {
+                callee: Callee::Def(g, _),
+                args,
+            } => {
+                for (i, a) in args.iter().enumerate() {
+                    if let Some(p) = param(Some(a)) {
+                        passes.push((d, *g, i, p));
+                    }
+                }
+            }
+            _ => {}
+        });
+        cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        sent.retain(|p| !assigned.contains(p));
+        let kept: Vec<_> = passes
+            .drain(from..)
+            .filter(|x| !assigned.contains(&x.3))
+            .collect();
+        passes.extend(kept);
+        if !sent.is_empty() {
+            out.insert(d, sent);
+        }
+    }
+    loop {
+        let mut grew = false;
+        for &(d, g, i, p) in &passes {
+            let forwards = out.get(&g).is_some_and(|ps| ps.contains(&i));
+            if forwards && !out.get(&d).is_some_and(|ps| ps.contains(&p)) {
+                out.entry(d).or_default().push(p);
+                grew = true;
+            }
+        }
+        if !grew {
+            return out;
+        }
+    }
+}
+
+/// The values `a` (an argument that crosses to another task at `site`) copies there although
+/// they own a resource that cannot be copied: `a` itself when it is a share
+/// (`Intrinsic::Share`: the program still uses the value), and the shares an object, array,
+/// tuple or union literal is built from in place.
+fn crossing_copies(
+    cx: &mut Ctx,
+    a: &Expr,
+    locals: &[LocalDef],
+    site: Site,
+    out: &mut Vec<(Span, TyId, Copied, Site)>,
+) {
+    let parts: Vec<&Expr> = match &a.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share),
+            args: place,
+        } => {
+            if cx.owns_uncopyable(a.ty) {
+                let why = match place.first().map(|x| &x.kind) {
+                    Some(E::Local(l, _)) => Copied::UsedAgain(locals[l.0 as usize].name.clone()),
+                    Some(_) => Copied::Held(Some(place_text(cx, locals, &place[0]))),
+                    None => Copied::Held(None),
+                };
+                out.push((a.span, a.ty, why, site));
+            }
+            return;
+        }
+        E::AdtLit { fields: args, .. }
+        | E::Variant { args, .. }
+        | E::ArrayLit(args)
+        | E::Tuple(args) => args.iter().collect(),
+        E::WrapSome(e) | E::Upcast(e) | E::ToDyn { expr: e, .. } => vec![e],
+        _ => return,
+    };
+    for p in parts {
+        crossing_copies(cx, p, locals, site, out);
     }
 }
 
@@ -77,7 +219,7 @@ fn spawned_copies(
     cx: &mut Ctx,
     p: &Expr,
     locals: &[LocalDef],
-    out: &mut Vec<(Span, TyId, Copied)>,
+    out: &mut Vec<(Span, TyId, Copied, Site)>,
 ) {
     match &p.kind {
         E::If { then, els, .. } => {
@@ -94,22 +236,7 @@ fn spawned_copies(
             args,
         } => {
             for a in args {
-                if let E::Call {
-                    callee: Callee::Intrinsic(Intrinsic::Share),
-                    args: place,
-                } = &a.kind
-                {
-                    if cx.owns_uncopyable(a.ty) {
-                        let why = match place.first().map(|x| &x.kind) {
-                            Some(E::Local(l, _)) => {
-                                Copied::UsedAgain(locals[l.0 as usize].name.clone())
-                            }
-                            Some(_) => Copied::Held(Some(place_text(cx, locals, &place[0]))),
-                            None => Copied::Held(None),
-                        };
-                        out.push((a.span, a.ty, why));
-                    }
-                }
+                crossing_copies(cx, a, locals, Site::Spawn, out);
             }
         }
         // An async closure literal called at once is spawned like the literal itself (its
@@ -128,7 +255,7 @@ fn spawned_copies(
         } => {
             for a in args {
                 if cx.owns_uncopyable(a.ty) {
-                    out.push((a.span, a.ty, Copied::Borrowed));
+                    out.push((a.span, a.ty, Copied::Borrowed, Site::Spawn));
                 }
             }
         }
@@ -145,7 +272,12 @@ fn spawned_copies(
             for l in shared {
                 let local = &locals[l.0 as usize];
                 if cx.owns_uncopyable(local.ty) {
-                    out.push((p.span, local.ty, Copied::UsedAgain(local.name.clone())));
+                    out.push((
+                        p.span,
+                        local.ty,
+                        Copied::UsedAgain(local.name.clone()),
+                        Site::Spawn,
+                    ));
                 }
             }
         }
@@ -153,7 +285,17 @@ fn spawned_copies(
     }
 }
 
-fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied) {
+fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied, site: Site) {
+    let (op, task) = match site {
+        Site::Spawn => ("spawn".to_string(), "the task"),
+        Site::Send(g) => {
+            let name = match &cx.defs[g.0 as usize] {
+                Some(Def::Fn(f)) => f.name.rsplit(['.', ':']).next().unwrap_or("send"),
+                _ => "send",
+            };
+            (name.to_string(), "the receiving task")
+        }
+    };
     let what = cx.uncopyable_why(ty);
     let part = cx.uncopyable_part(ty).unwrap_or(ty);
     let share = "or share it instead of copying: `shared(new Mutex(…))`";
@@ -171,11 +313,11 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied) {
         )
         .with_note(format!("call a function directly to hand the value over (`spawn(f(x))`), {clone}, {share}")),
         Copied::UsedAgain(name) => Diagnostic::error(
-            format!("`{name}` is still used after `spawn`, so the task would get a copy, but {what}"),
+            format!("`{name}` is still used after `{op}`, so {task} would get a copy, but {what}"),
             span,
         )
         .with_note(format!(
-            "pass the last reference (don't use `{name}` after the `spawn`), {clone}, {share}"
+            "pass the last reference (don't use `{name}` after the `{op}`), {clone}, {share}"
         )),
         Copied::Held(place) => {
             let held = place.map_or_else(
@@ -183,11 +325,11 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied) {
                 |p| format!("`{p}` stays where it is held"),
             );
             Diagnostic::error(
-                format!("{held}, so the task would get a copy, but {what}"),
+                format!("{held}, so {task} would get a copy, but {what}"),
                 span,
             )
             .with_note(format!(
-                "the task cannot take it from where it is held; {clone}, {share}"
+                "{task} cannot take it from where it is held; {clone}, {share}"
             ))
         }
     };
