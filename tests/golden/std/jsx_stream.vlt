@@ -1,13 +1,16 @@
 // check: no leaks
-// `renderToStream` into a std/http `Response.stream` body: the markup before a pending async
-// component is flushed before the component finishes loading (a raw TCP client sees the page
+// `renderToStream` as a std/http response body: the markup before a pending async component
+// is sent before the component finishes loading (a raw TCP client sees the page
 // head first), and the streamed body is byte-identical to `renderToString` of the same tree.
 // In the logged run the components load only when told to: `second` once the client has seen
 // the head, `first` once `second` has loaded, and the server reports its lines over a channel
 // that `main` prints from, so the order of the lines doesn't depend on timing.
 import { jsx, Fragment, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
 import { Element, renderToString, renderToStream } from "velt:jsx";
-import { serve, Request, Response, ResponseWriter } from "velt:http";
+import { BodyStream } from "velt:fetch";
+import { serve } from "velt:http";
+import { IoError } from "velt:io";
+import { AbortError } from "velt:task";
 import { connect } from "velt:net";
 import { channel, Channel } from "velt:channel";
 
@@ -92,6 +95,17 @@ function page(delay: i64, cues: Cues | null): Element {
   );
 }
 
+// `body`'s chunks, then a server line saying it ended.
+async function* reportEnd(
+  body: BodyStream,
+  lines: Channel<string>,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  for await (const chunk of body) {
+    yield chunk;
+  }
+  await report(lines, "server: stream done");
+}
+
 // Reads a raw HTTP/1.1 response and reports whether the page head arrived before the posts;
 // then lets the posts load.
 async function rawClient(
@@ -129,16 +143,14 @@ async function main() {
   const lines = channel<string>();
   const cues: Cues = { headSeen: headSeen, secondLoaded: secondLoaded, lines: lines };
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-    const delay = parseInt(req.query) as i64;
-    const logged: Cues | null = req.path == "/log" ? cues : null;
-    const res = Response.stream(async (w: ResponseWriter) => {
-      const ok = await renderToStream(page(delay, logged), w);
-      if (logged != null) {
-        await report(logged.lines, `server: stream done ${ok}`);
-      }
-    });
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    return res;
+    const url = new URL(req.url);
+    const delay = parseInt(url.search.slice(1)) as i64;
+    const logged: Cues | null = url.pathname == "/log" ? cues : null;
+    let body = renderToStream(page(delay, logged));
+    if (logged != null) {
+      body = BodyStream.from(reportEnd(body, logged.lines));
+    }
+    return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
   });
   await rawClient(server.port, headSeen, lines);
   const res = await fetch(`http://127.0.0.1:${server.port}/?10`);

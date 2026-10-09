@@ -63,6 +63,7 @@ pub mod prng;
 pub mod process;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
+pub mod server_request;
 pub mod shared;
 #[path = "../../velt_rt/src/str/mod.rs"]
 pub mod str;

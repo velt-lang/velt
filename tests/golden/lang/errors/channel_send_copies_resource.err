@@ -1,0 +1,12 @@
+  = note: pass the last reference (don't use `c` after the `send`), give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+  = note: pass the last reference (don't use `conns` after the `send`), give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+  = note: pass the last reference (don't use `d` after the `trySend`), give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+  = note: pass the last reference (don't use `e` after the `enqueue`), give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+  = note: pass the last reference (don't use `f` after the `spawn`), give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+  = note: the receiving task cannot take it from where it is held; give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`
+channel_send_copies_resource.vlt:38:17: error: `c` is still used after `send`, so the receiving task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+channel_send_copies_resource.vlt:42:21: error: `conns` is still used after `send`, so the receiving task would get a copy, but `Conn[]` holds a `Conn`, which owns a resource (`[Symbol.dispose]`) and has no `clone()`
+channel_send_copies_resource.vlt:45:14: error: `d` is still used after `trySend`, so the receiving task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+channel_send_copies_resource.vlt:48:17: error: `h.conn` stays where it is held, so the receiving task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+channel_send_copies_resource.vlt:50:21: error: `e` is still used after `enqueue`, so the receiving task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+channel_send_copies_resource.vlt:53:30: error: `f` is still used after `spawn`, so the task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
