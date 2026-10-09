@@ -75,7 +75,12 @@ impl FnCx<'_, '_> {
             written: vec![],
             slots,
         };
-        let attrs: Vec<&ast::JsxAttr> = el.attrs.iter().filter(|a| !is_key(a)).collect();
+        // Directives (`client:load`) go to the provider, not into the props.
+        let attrs: Vec<&ast::JsxAttr> = el
+            .attrs
+            .iter()
+            .filter(|a| !is_key(a) && !p.is_directive(a))
+            .collect();
         // Arrow functions last, as in TypeScript: their parameter types come from the other
         // props and the children (unless a child is an arrow function too).
         let arrow_child = el.children.iter().any(is_arrow_child);

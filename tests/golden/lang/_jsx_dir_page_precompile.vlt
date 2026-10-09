@@ -1,0 +1,25 @@
+// @jsxImportSource ./_jsx_dir_precompile
+
+// The page of `jsx_directives`. `_jsx_dir_page_generic.vlt` and `_jsx_dir_page_precompile.vlt`
+// are the same source under the generic and the precompiling runtime.
+
+function Counter(props: { start: i64; label: string }): JSX.Element {
+  return (
+    <p>
+      {props.label} {props.start}
+    </p>
+  );
+}
+
+export function page(n: i64): JSX.Element {
+  const media = "(min-width: 768px)";
+  return (
+    <main>
+      <h1>Static</h1>
+      <Counter client:load start={1} label="load" />
+      <Counter label="visible" client:visible start={n} />
+      <Counter client:media={media} client:idle start={3} label="media" />
+      <Counter start={4} label="plain" />
+    </main>
+  );
+}

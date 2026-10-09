@@ -98,6 +98,8 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   `"src/components/card#Card"`. Providers use it for hydration/island/resumability markers.
 - `key`: `key={k}` is removed from the attributes/props and passed separately (`string` or
   `number`, numbers converted to their decimal string). Missing → `null`.
+- A provider may declare **component directives** (`client:load`), attributes passed to it
+  rather than in the props: see "Component directives" below.
 
 ## How the compiler lowers each construct
 - **Tag kind:** a lower-case simple name (`div`, `my-widget`) or a namespaced name (`svg:rect`)
@@ -257,6 +259,42 @@ of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `fa
 
 Without the export nothing changes, and the generic lowering ignores it. The golden
 `lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
+
+## Component directives (optional exports)
+A provider may give component elements attributes that are not props: instructions to the
+provider about the component, such as sigx's island directives (`<Counter client:load />`,
+`client:visible`, `client:media="(min-width: 768px)"`). It declares their namespace prefixes, as a
+string constant of space-separated prefixes (an error otherwise), and the function that
+receives them:
+
+```ts ignore
+export const jsxDirectivePrefixes = "client";
+// <Counter client:load start={1} /> → jsxComponentDirectives(Counter, { start: 1 }, null,
+//   "src/counter#Counter", ["client:load"], [true])
+function jsxComponentDirectives<P>(component: (props: P) => Element, props: P,
+                                   key: string | null, name: string,
+                                   names: string[], values: AttrValue[]): Element;
+```
+- An attribute `prefix:name` of a **component** element whose prefix is declared is a directive.
+  It is left out of the props, which are checked without it. Its value is converted to
+  `AttrValue` like an intrinsic attribute's, and a bare one is `true`. `names` and `values`
+  are in source order; the same directive twice is an error.
+- A component element with at least one directive calls `jsxComponentDirectives`, with the
+  directives evaluated after the props. One without directives calls `jsxComponent` as before.
+- An async component with a directive is an error ("directives are not supported on async
+  components"). Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
+  namespaced names on them are ordinary attributes.
+- **Precompile:** component calls are template slots, so a directive works the same in both
+  lowerings.
+- **Errors:** a provider that exports `jsxDirectivePrefixes` without `jsxComponentDirectives`
+  is an error. Without the prefix export nothing changes, and `client:load` on a component is
+  then an unknown prop.
+- **The same source under `tsc`:** the TypeScript runtime declares the directives as optional
+  component attributes, e.g. sigx's `ComponentAttributeExtensions` augmentation
+  (`'client:load'?: boolean`), so `tsc` accepts the same `.tsx`. Nothing extra is needed on the
+  Velt side.
+
+The golden `lang/jsx_directives` renders directives through a provider in both lowerings.
 
 ## Escaping (all providers that render HTML)
 - Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the

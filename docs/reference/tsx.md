@@ -149,6 +149,10 @@ const s = <Section />;
   reports an error.
 - **Generic components** infer their type arguments from the props and the children, as in
   TypeScript, or take them on the tag.
+- A provider may declare **directives**: namespaced attributes such as `client:load` that go
+  to the provider rather than into the props (sigx marks islands this way: `<Counter client:load
+  start={1} />`). With a provider that doesn't declare them (`velt:jsx`), `client:load` on a
+  component is an unknown prop. See [the contract](../internals/contracts/jsx.md#component-directives-optional-exports).
 - Until objects are shared references, a component that takes ownership of its props (one that
   uses an element from them, such as `<main>{props.children}</main>`) is called with a copy of
   them, and props holding an element can't be copied yet: an element may hold a pending async

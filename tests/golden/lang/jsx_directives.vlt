@@ -1,0 +1,15 @@
+// Component directives (docs/internals/contracts/jsx.md "Component directives"): a provider that
+// exports `jsxDirectivePrefixes = "client"` receives `client:*` attributes of component elements
+// through `jsxComponentDirectives` (bare ones as `true`, values as written), not as props. Both
+// lowerings render byte-identically; a component without directives is a plain `jsxComponent`.
+
+import { renderToStringSync } from "velt:jsx";
+import * as generic from "./_jsx_dir_page_generic";
+import * as precompiled from "./_jsx_dir_page_precompile";
+
+function main() {
+  const a = renderToStringSync(generic.page(2));
+  const b = renderToStringSync(precompiled.page(2));
+  console.log(a);
+  console.log(a == b ? "same in both lowerings" : `different: ${b}`);
+}

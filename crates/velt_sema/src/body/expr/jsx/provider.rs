@@ -46,6 +46,9 @@ pub(crate) struct Provider {
     /// `jsxVoidElements`: the tags whose children are an error (they have no end tag), and that
     /// templates write without one; `None` without the export (templates use HTML's list).
     pub void_elements: Option<Vec<String>>,
+    /// `jsxDirectivePrefixes` with `jsxComponentDirectives`: attributes `prefix:name` on a
+    /// component element are directives for the provider, not props (sigx's `client:load`).
+    pub directives: Option<Directives>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -56,6 +59,30 @@ pub(crate) struct Provider {
     pub intrinsics: TyId,
     /// The props field receiving component children (`JSX.ElementChildrenAttribute`).
     pub children_field: String,
+}
+
+/// Component directives (docs/internals/contracts/jsx.md "Component directives").
+pub(crate) struct Directives {
+    /// The namespace prefixes (`client` for `client:load`).
+    pub prefixes: Vec<String>,
+    /// `jsxComponentDirectives(C, props, key, name, names, values)`.
+    pub call: DefId,
+}
+
+impl Provider {
+    /// Is `a` a directive of this provider (`client:load` with the prefix `client` declared)?
+    pub(crate) fn is_directive(&self, a: &ast::JsxAttr) -> bool {
+        let Some(d) = &self.directives else {
+            return false;
+        };
+        match a {
+            ast::JsxAttr::Named {
+                name: ast::JsxAttrName::Namespaced(ns, _),
+                ..
+            } => d.prefixes.contains(&ns.name),
+            _ => false,
+        }
+    }
 }
 
 /// The children field when the runtime has no `ElementChildrenAttribute`.
@@ -137,7 +164,9 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         "the compiler reads the tags at compile time",
     )?
     .map(|list| list.split_whitespace().map(str::to_string).collect());
+    let directives = directives(cx, t, &source, at)?;
     Some(Provider {
+        directives,
         async_component: function(cx, t, "jsxAsyncComponent"),
         precompile,
         text_separator,
@@ -153,6 +182,35 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         intrinsics: intrinsics?,
         children_field,
     })
+}
+
+/// `jsxDirectivePrefixes` and `jsxComponentDirectives`: `Some(None)` without the prefixes, `None`
+/// once a malformed export was reported.
+fn directives(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Option<Directives>> {
+    let Some(list) = string_const(
+        cx,
+        t,
+        source,
+        at,
+        "jsxDirectivePrefixes",
+        "client",
+        "the compiler reads the prefixes at compile time",
+    )?
+    else {
+        return Some(None);
+    };
+    let Some(call) = function(cx, t, "jsxComponentDirectives") else {
+        cx.error(
+            Diagnostic::error(
+                format!("the JSX provider '{source}' declares `jsxDirectivePrefixes` but has no `jsxComponentDirectives`"),
+                at,
+            )
+            .with_note("a component element with a directive (`<Card client:load />`) is passed to `jsxComponentDirectives(component, props, key, name, names, values)` (docs/internals/contracts/jsx.md)"),
+        );
+        return None;
+    };
+    let prefixes = list.split_whitespace().map(str::to_string).collect();
+    Some(Some(Directives { prefixes, call }))
 }
 
 /// Exported function `name` of module `t`.

@@ -1,0 +1,41 @@
+// A JSX provider with component directives (docs/internals/contracts/jsx.md "Component
+// directives"), the way sigx marks islands: `<Counter client:load />` passes `client:load` to
+// `jsxComponentDirectives`, not into the props. This one wraps the component in comments naming
+// its directives; std/jsx renders everything else. The precompile lowering: component calls are
+// template slots, lowered the same way.
+
+import { Element } from "velt:jsx/node";
+import type { AttrValue } from "velt:jsx/node";
+import { Fragment, jsxComponent, raw } from "velt:jsx/factory";
+
+export * from "velt:jsx/jsx-runtime";
+
+export const jsxDirectivePrefixes = "client";
+
+function describe(v: AttrValue): string {
+  if (typeof v === "string") {
+    return JSON.stringify(v);
+  } else if (typeof v === "boolean") {
+    return `${v}`;
+  } else if (typeof v === "number") {
+    return `${v}`;
+  }
+  return "null";
+}
+
+export function jsxComponentDirectives<P, E>(
+  component: (props: P) => Element throws E,
+  props: P,
+  key: string | null,
+  name: string,
+  names: string[],
+  values: AttrValue[],
+): Element {
+  let open = "<!--island";
+  for (let i: usize = 0; i < names.length; i++) {
+    open += ` ${names[i]}=${describe(values[i])}`;
+  }
+  open += ` ${name.slice(name.indexOf("#") + 1)}-->`;
+  const inner = jsxComponent(component, props, key, name);
+  return Fragment([raw(open), inner, raw("<!--/island-->")], null);
+}
