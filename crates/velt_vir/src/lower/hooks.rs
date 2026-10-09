@@ -11,6 +11,7 @@ use crate::vir::{self, Operand, Place, Ty};
 /// Which hook of a class.
 #[derive(Clone, Copy)]
 pub(super) enum Hook {
+    ToString,
     ToJson,
     Inspect,
 }
@@ -26,6 +27,7 @@ impl FnLower<'_, '_> {
         }
         let a = self.cx.adt_def(d);
         match hook {
+            Hook::ToString => a.to_string,
             Hook::ToJson => a.to_json,
             Hook::Inspect => a.inspect,
         }

@@ -130,8 +130,8 @@ usable and no copy method is needed.
   time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
   copies of `s` never change.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
-  with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
-  does.
+  with a template literal (`` `Total: ${n}` ``), which writes any value as `String(x)` does
+  ([Lexical structure](lexical.md)).
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two

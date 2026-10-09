@@ -1,0 +1,31 @@
+// ${x} of an object writes it as JS's String(x) does: through toString() (own or inherited,
+// also in generic code), else [object Object], or [object Name] for std's classes (#613).
+class B {
+  x = 1;
+}
+
+class Named {
+  toString(): string {
+    return "named";
+  }
+}
+
+class Sub extends Named {}
+
+function show<T>(v: T): string {
+  return `${v}`;
+}
+
+const maybe: B | null = new B();
+const none: B | null = null;
+console.log(`${new B()}|${{ a: 1 }}|${new Named()}|${new Sub()}|${maybe}|${none}`);
+console.log(show(new B()), show(new Sub()));
+console.log(`${new Map<string, number>()}|${new Headers()}|${new Response("x")}`);
+const r: Record<string, number> = { a: 1 };
+console.log(`${r}`, "x" + `${new Date(0).getTime()}`);
+console.log(new B(), [new B()]);
+type Shape = { kind: "rect"; w: number } | { kind: "circle"; r: number };
+const s: Shape = { kind: "rect", w: 1 };
+const n: number | string = 5;
+const l: "a" | "b" = "b";
+console.log(`${s}|${n}|${l}`);

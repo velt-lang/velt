@@ -48,6 +48,7 @@ mod frame_envs;
 mod glue;
 mod hooks;
 mod intrinsics;
+mod js_string;
 mod json;
 mod keys;
 mod layout;
