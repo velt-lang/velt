@@ -697,7 +697,7 @@ fn custom_elements_and_dashed_attributes_are_not_checked() {
 
 #[test]
 fn jsx_without_a_runtime_is_one_error() {
-    let r = err("function main() { const n = 1; const e = <p>{n + \"x\"}</p>; }");
+    let r = err("function main() { const n = 1; const e = <p>{n + true}</p>; }");
     assert_eq!(r.matches("no JSX runtime was loaded").count(), 1, "{r}");
     assert!(
         r.contains("mismatched types"),
