@@ -693,20 +693,28 @@ noise.
 The shared-runtime link with the system linker is mostly the `cc` driver (a process that starts
 `ld`); lld runs directly.
 
-**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V45, 4 vCPUs), Windows Server 2025; system
-linker: `link.exe` of Visual Studio 18 (MSVC 14.51). Only the link columns (the script's first
-table runs out of memory on `long_main_4000` there, linker or not), measured as the script does:
-the `link` stage of `velt build -v`, best of 5, ms.
+**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V74, 4 vCPUs), Windows Server 2025, the
+toolchain archive of the release workflow; system linker: `link.exe` of Visual Studio 18 (MSVC
+14.51). `pwsh bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt <prefix>\bin\velt.exe -LinkOnly`
+(the front-end table needs more memory for `long_main_4000` than the runner has).
 
-| program | linker | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
-|---|---|---|---|---|
-| http_hello | system | 38.4 | 200.3 | 0.3 |
-| http_hello | **bundled** | **35.0** | **156.9** | 0.6 |
-| all_std | system | 41.4 | 214.3 | 0.2 |
-| all_std | **bundled** | **32.8** | **149.1** | 0.5 |
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 72.6 | 94.3 | 55.6 | 230.8 | 0.3 |
+| http_hello | **bundled** | 63.6 | 80.0 | **38.0** | **169.3** | 0.7 |
+| all_std | system | 72.0 | 89.4 | 42.4 | 229.2 | 0.2 |
+| all_std | **bundled** | 69.4 | 86.0 | **37.1** | **165.8** | 0.6 |
+| units_1000 | system | 452.8 | 501.6 | 76.9 | 261.1 | 2.3 |
+| units_1000 | **bundled** | 438.2 | 488.6 | **71.5** | **198.0** | 2.9 |
 
 A rebuild with nothing changed checks which linker would link (the link stamp includes it); with
-the bundled one that opens the kit, a fraction of a millisecond.
+the bundled one that opens the kit, a fraction of a millisecond. **Defender:** real-time
+protection is off on the runners, so the table does not show what scanning costs on a desktop.
+There, Defender scans `lld.exe` (56 MB) when it is new: on the runner its first start after a
+fresh copy took 216 ms, later ones 9–10 ms. On a desktop with real-time protection, a debug
+link with `rust-lld` (122 MB) in a checkout took 1.6–2.5 s against 0.4–0.5 s with `link.exe`
+(#853 review): measure the bundled `lld.exe` there too, and link with `VELT_LINKER=system`
+when Build Tools are installed and that is faster.
 
 ## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
 
