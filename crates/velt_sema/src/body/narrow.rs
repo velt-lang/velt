@@ -89,6 +89,9 @@ impl FnCx<'_, '_> {
             // `if (r.done)` on a union discriminated by a `bool` literal field.
             ast::ExprKind::Member {
                 optional: false, ..
+            }
+            | ast::ExprKind::Index {
+                optional: false, ..
             } if self.bool_discriminant(cond) => {
                 let t = ast::SignedLit {
                     lit: ast::Lit::Bool(true),
@@ -98,6 +101,9 @@ impl FnCx<'_, '_> {
             }
             ast::ExprKind::Ident(_)
             | ast::ExprKind::Member {
+                optional: false, ..
+            }
+            | ast::ExprKind::Index {
                 optional: false, ..
             }
             | ast::ExprKind::Assign { op: None, .. } => (self.truthy_facts(cond), vec![]),
@@ -149,7 +155,7 @@ impl FnCx<'_, '_> {
         if let Some(l) = self.nullable_local(e) {
             return vec![Fact::NonNull(l)];
         }
-        if matches!(e.kind, ast::ExprKind::Member { .. }) {
+        if super::expr::member::member_view(e).is_some() {
             return self.field_token(e).map(Fact::NonNull).into_iter().collect();
         }
         vec![]
@@ -198,14 +204,7 @@ impl FnCx<'_, '_> {
         e: &ast::Expr,
         lit: &ast::SignedLit,
     ) -> Option<(Vec<Fact>, Vec<Fact>)> {
-        let ast::ExprKind::Member {
-            object,
-            prop,
-            optional: false,
-        } = &e.kind
-        else {
-            return None;
-        };
+        let (object, prop) = super::expr::member::member_view(e)?;
         let l = self.named_local(object)?;
         let ty = self.local_ty(l);
         let nullable = self.cx.ty.opt_payload(ty).is_some();
@@ -223,7 +222,7 @@ impl FnCx<'_, '_> {
 
     /// Is `e` (`x.done`) a discriminant of a union local whose values are `bool` literals?
     fn bool_discriminant(&mut self, e: &ast::Expr) -> bool {
-        let ast::ExprKind::Member { object, prop, .. } = &e.kind else {
+        let Some((object, prop)) = super::expr::member::member_view(e) else {
             return false;
         };
         let Some(l) = self.named_local(object) else {

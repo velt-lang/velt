@@ -330,7 +330,19 @@ impl FnCx<'_, '_> {
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = self.index_of(r.recv, index, want, span);
-        self.after_receiver(r.before, h)
+        let h = self.after_receiver(r.before, h);
+        // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
+        match literal_key(index) {
+            Some(name) => {
+                let prop = ast::Ident {
+                    name,
+                    span: index.span,
+                };
+                let h = self.narrowed_field(object, &prop, h, want);
+                self.downcast_field(object, &prop, h)
+            }
+            None => h,
+        }
     }
 
     pub(super) fn index_of(
@@ -603,9 +615,33 @@ pub(super) fn untyped_int(e: &ast::Expr) -> bool {
     }
 }
 
+/// `o.name` or `o["name"]` (a constant key, which reads the same field): the object and the
+/// name. `None` for `?.` and other expressions.
+pub(crate) fn member_view(e: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
+    match &e.kind {
+        ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } => Some((object, prop.clone())),
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } => Some((
+            object,
+            ast::Ident {
+                name: literal_key(index)?,
+                span: index.span,
+            },
+        )),
+        _ => None,
+    }
+}
+
 /// The key of `o["name"]` / `` o[`name`] ``: a string literal (a template without
 /// substitutions).
-fn literal_key(index: &ast::Expr) -> Option<String> {
+pub(crate) fn literal_key(index: &ast::Expr) -> Option<String> {
     match &index.kind {
         ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
         ast::ExprKind::Template { quasis, exprs } if exprs.is_empty() => quasis.first().cloned(),
