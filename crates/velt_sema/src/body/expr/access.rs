@@ -51,9 +51,13 @@ impl FnCx<'_, '_> {
     /// TS18013: an ES private name `#x` declared by class `owner` is usable only in that class's
     /// body (not in subclasses, and with no exemption for std).
     fn check_private_name(&mut self, owner: DefId, name: &str, span: Span) {
-        if self.in_body_of(owner) {
-            return;
+        if !self.in_body_of(owner) {
+            self.private_name_error(owner, name, "a public getter", span);
         }
+    }
+
+    /// TS18013 for `#x` of class `owner`; `instead`: what to add to use it elsewhere.
+    fn private_name_error(&mut self, owner: DefId, name: &str, instead: &str, span: Span) {
         let tn = self
             .cx
             .adt(owner)
@@ -66,9 +70,40 @@ impl FnCx<'_, '_> {
                 span,
             )
             .with_note(format!(
-                "declare it `private {plain}` or add a public getter to use it elsewhere"
+                "declare it `private {plain}` or add {instead} to use it elsewhere"
             )),
         );
+    }
+
+    /// `o.#v` naming a private accessor (`get #v` / `set #v`) of a class whose body this is not
+    /// in: reports TS18013 once for the whole read, write or read-modify-write (`write`: it
+    /// assigns), and returns true.
+    pub(crate) fn private_accessor_outside(
+        &mut self,
+        t: TyId,
+        prop: &ast::Ident,
+        write: bool,
+    ) -> bool {
+        if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return false;
+        }
+        let setter = crate::defs::member_key(&prop.name, true);
+        let owner = [setter.as_str(), prop.name.as_str()]
+            .into_iter()
+            .find_map(|key| {
+                let r = self.resolve_method(t, key)?;
+                self.method_private_to(&r)
+            });
+        let Some(owner) = owner.filter(|&o| !self.in_body_of(o)) else {
+            return false;
+        };
+        let instead = if write {
+            "a public setter"
+        } else {
+            "a public getter"
+        };
+        self.private_name_error(owner, &prop.name, instead, prop.span);
+        true
     }
 
     /// `new` of a class whose constructor `ctor` is `private` or `protected`, outside the bodies

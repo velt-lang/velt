@@ -142,7 +142,8 @@ hidden classes and no runtime shape checks.
   names the member that the class whose body the code is in declares, on any instance of that
   class or a subclass, not only `this` (a function or class declared in a method is in the body
   too; where class bodies nest, the innermost one declaring `#x`); elsewhere, also in a subclass, it is an error (``
-  property `#x` is not accessible outside class `A` because it has a private name ``). A
+  property `#x` is not accessible outside class `A` because it has a private name ``, also for
+  an accessor: reading `o.#v`, assigning `o.#v = 1` or updating `o.#v += 1` reports it once). A
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
   method keeps using the base's. A `#m` method is never virtual (a direct call) and overrides
   nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`

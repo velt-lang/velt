@@ -153,6 +153,9 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
+        if self.private_accessor_outside(t, prop, false) {
+            return;
+        }
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
                 format!("cannot read `{}`: it has a setter but no getter", prop.name),

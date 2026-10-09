@@ -1,0 +1,9 @@
+private_names_accessors_outside.vlt:10:23: error: property `#v` is not accessible outside class `A` because it has a private name
+private_names_accessors_outside.vlt:13:5: error: property `#v` is not accessible outside class `A` because it has a private name
+declare it `private v` or add a public setter to use it elsewhere
+private_names_accessors_outside.vlt:14:5: error: property `#w` is not accessible outside class `A` because it has a private name
+private_names_accessors_outside.vlt:15:5: error: property `#w` is not accessible outside class `A` because it has a private name
+private_names_accessors_outside.vlt:16:5: error: property `#v` is not accessible outside class `A` because it has a private name
+private_names_accessors_outside.vlt:17:5: error: property `#w` is not accessible outside class `A` because it has a private name
+private_names_accessors_outside.vlt:18:12: error: property `#v` is not accessible outside class `A` because it has a private name
+declare it `private v` or add a public getter to use it elsewhere
