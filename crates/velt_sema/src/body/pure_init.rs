@@ -66,6 +66,16 @@ pub(crate) fn has_call(e: &Expr) -> bool {
     }
 }
 
+/// Is a use by value of module constant `d` another reference to a function it computes? Only
+/// functions: a struct or object constant moved into a variable would be a copy that the
+/// constant doesn't see changes to (TypeScript aliases it), so those keep the move error.
+pub(crate) fn shares_on_move(cx: &mut Ctx, d: DefId) -> bool {
+    let Some(g) = cx.global(d) else { return false };
+    let ty = g.ty;
+    let fresh = g.init.as_ref().is_some_and(has_call);
+    fresh && matches!(cx.ty.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_)) && !cx.is_copy(ty)
+}
+
 /// Report what in `e` is not allowed; false when something was reported.
 fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
     match &e.kind {
@@ -271,13 +281,20 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         return Ok(());
     };
     let mut body = def.body.block.clone();
+    let locals = def.body.locals.clone();
     let mut walk = Walk {
         found: None,
         calls: vec![],
+        closures: vec![],
     };
     visit::block(&mut body, &mut walk);
     if let Some(imp) = walk.found {
         return Err(imp);
+    }
+    for (c, span) in walk.closures {
+        if let Some(what) = kept_state(cx, c, &locals) {
+            return at(&what, span);
+        }
     }
     for (g, span) in walk.calls {
         if let Err(mut imp) = purity(cx, g) {
@@ -294,10 +311,35 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     Ok(())
 }
 
-/// The first effect found in a body, and the named functions it calls.
+/// A closure created while the initializer runs is kept in the constant, and Node keeps one
+/// closure for the whole program: one that captures a variable it or its creator assigns, or an
+/// object, would keep state that a new closure at each use loses.
+fn kept_state(cx: &Ctx, c: DefId, locals: &[hir::LocalDef]) -> Option<String> {
+    let Some(hir::Def::Fn(def)) = cx.defs[c.0 as usize].as_ref() else {
+        return None;
+    };
+    for cap in &def.captures {
+        let outer = locals.get(cap.outer.0 as usize)?;
+        let inner_mut = def
+            .body
+            .locals
+            .get(cap.inner.0 as usize)
+            .is_some_and(|l| l.mutable || l.boxed);
+        if outer.mutable || outer.boxed || inner_mut || reference_part(cx, outer.ty, 0).is_some() {
+            return Some(format!(
+                "returns a closure that keeps mutable state (`{}`)",
+                outer.name
+            ));
+        }
+    }
+    None
+}
+
+/// The first effect found in a body, the named functions it calls and the closures it creates.
 struct Walk {
     found: Option<Impure>,
     calls: Vec<(DefId, Span)>,
+    closures: Vec<(DefId, Span)>,
 }
 
 impl Walk {
@@ -333,6 +375,7 @@ impl VisitMut for Walk {
                     }
                 }
             },
+            H::Closure(c) => self.closures.push((*c, e.span)),
             H::Await(_) => self.set("awaits", e.span),
             H::Throw(_) => self.set("may throw", e.span),
             _ => {}
@@ -452,7 +495,7 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
         let fresh = g
             .init
             .as_ref()
-            .is_some_and(|i| !matches!(i.kind, H::Lit(_)));
+            .is_some_and(|i| !matches!(i.kind, H::Lit(_) | H::FnRef(..)));
         if !fresh || !identity_compared(cx, g.ty, 0) {
             continue;
         }

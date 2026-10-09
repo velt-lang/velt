@@ -1,0 +1,41 @@
+// A function-valued module constant initialized by a call is a new closure at each use. Passing
+// the constant itself twice gives two different values (Node: the same one); the workaround is
+// to copy it into a local once and pass the local (docs/reference/variables.md).
+
+type Handler = (x: number) => number;
+
+function adder(n: number): Handler {
+  return (x: number): number => x + n;
+}
+
+const ADD = adder(1);
+
+class Emitter {
+  hs: Handler[] = [];
+
+  on(h: Handler) {
+    this.hs.push(h);
+  }
+
+  off(h: Handler) {
+    const i = this.hs.indexOf(h);
+    if (i >= 0) {
+      this.hs.splice(i, 1);
+    }
+  }
+}
+
+function main() {
+  // Known difference: Node prints 0 and 0, Velt prints 1 and -1.
+  const e = new Emitter();
+  e.on(ADD);
+  e.off(ADD);
+  console.log(e.hs.length, [ADD].indexOf(ADD));
+
+  // The workaround: one local, passed on.
+  const add = ADD;
+  const f = new Emitter();
+  f.on(add);
+  f.off(add);
+  console.log(f.hs.length, [add].indexOf(add), add(41));
+}

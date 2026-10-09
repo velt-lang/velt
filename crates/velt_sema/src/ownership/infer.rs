@@ -304,18 +304,12 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
         E::Upcast(inner) | E::Downcast(inner) | E::WrapSome(inner) => force_move(cx, inner, errors),
         E::Closure(def) => super::fn_values::escape_closure(cx, *def),
         E::Global(d) => {
-            let (ty, name, fresh) = cx
+            let (ty, name) = cx
                 .global(*d)
-                .map(|g| {
-                    let fresh = g
-                        .init
-                        .as_ref()
-                        .is_some_and(crate::body::pure_init::has_call);
-                    (g.ty, g.name.clone(), fresh)
-                })
-                .unwrap_or((cx.ty.error, String::new(), false));
-            if fresh && !cx.is_copy(ty) {
-                // A call computes a new value at each use: another reference to it is owned.
+                .map(|g| (g.ty, g.name.clone()))
+                .unwrap_or((cx.ty.error, String::new()));
+            if crate::body::pure_init::shares_on_move(cx, *d) {
+                // A function computed at each use: another reference to it is owned.
                 let read = std::mem::replace(&mut e.kind, E::Lit(crate::hir::Lit::Null));
                 let read = Expr {
                     kind: read,

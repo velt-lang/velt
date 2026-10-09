@@ -506,7 +506,10 @@ fn imports_exports_and_intrinsics() {
     let r = err_src(
         "const X: i64 = 1 + f(); function f(): i64 { console.log(1); return 1; } function main() {}",
     );
-    assert!(r.contains("`f` cannot initialize module constant `X`"), "{r}");
+    assert!(
+        r.contains("`f` cannot initialize module constant `X`"),
+        "{r}"
+    );
     let r = err_src("const X: i64[] = [1]; function main() {}");
     assert!(r.contains("constant expressions or pure calls"), "{r}");
 }

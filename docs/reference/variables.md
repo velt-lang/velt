@@ -90,8 +90,15 @@ TypeScript's single evaluation at load gives:
   calls through function values, and no effects (I/O, time, randomness, `console`, `shared`,
   `spawn`, external functions). It may allocate, construct objects and create closures, as
   `component` does below: the closures it returns run later as ordinary code;
+- a closure it creates keeps no mutable state: it captures no variable that is assigned, and no
+  object, array or class instance (``it returns a closure that keeps mutable state (`n`)``).
+  In Node the constant is one closure whose state carries over from call to call; a new
+  closure at each use would start over each time;
 - the result is a value: a number, string, struct, tuple, enum or function. Class instances,
   arrays and maps are rejected (a new array at each use would change what `X.push(1)` does).
+  An object or struct constant can't be moved into a variable or a field (``cannot move out of
+  module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
+  so a change through the copy would show in the constant.
 
 ```ts
 type Props = { start: number };
@@ -152,8 +159,29 @@ function main() {
 }
 ```
 
-**Known difference.** A copy of such a constant in a local is one value, and compares equal to
-itself, but two copies are two values: after `const a = ADD_ONE; const b = ADD_ONE;`, `a === b`
-is `false` (TypeScript: `true`). The compiler cannot see this case. A panic (an integer overflow,
+**Known difference.** A function-valued constant passed on is a new closure at each use: after
+`const a = ADD_ONE; const b = ADD_ONE;`, `a === b` is `false` (TypeScript: `true`), and so is
+any identity comparison the constant reaches by being passed, which the compiler cannot see:
+`[ADD_ONE].indexOf(ADD_ONE)` is `-1`, and an event emitter's `off(ADD_ONE)` does not find the
+handler that `on(ADD_ONE)` added. Copy the constant into a local once and pass the local:
+
+```ts
+type Handler = (x: number) => number;
+
+function adder(n: number): Handler {
+  return (x: number): number => x + n;
+}
+
+const ADD_ONE = adder(1);
+
+function main() {
+  const handlers: Handler[] = [];
+  const h = ADD_ONE;                    // one value, passed on
+  handlers.push(h);
+  console.log(handlers.indexOf(h));     // 0 (`handlers.indexOf(ADD_ONE)` would be -1)
+}
+```
+
+A panic (an integer overflow,
 an index out of bounds) in an initializer happens at the use, where TypeScript would throw at
 module load.

@@ -93,13 +93,22 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         BodyState::Done => return,
         BodyState::InProgress => {
             let span = g.span;
-            let msg = match cx.checking.last() {
-                Some(&f) => format!(
-                    "module constant `{}` depends on itself through `{}`",
+            // The function bodies being checked lead from the initializer back to the constant.
+            let chain: Vec<String> = cx
+                .checking
+                .iter()
+                .map(|&f| {
+                    let n = &cx.fn_info(f).name;
+                    format!("`{}`", n.rsplit("::").next().unwrap_or(n))
+                })
+                .collect();
+            let msg = match chain.is_empty() {
+                false => format!(
+                    "module constant `{}` depends on itself through {}",
                     g.name,
-                    cx.fn_info(f).name.rsplit("::").next().unwrap_or_default()
+                    chain.join(" -> ")
                 ),
-                None => "module-level constant refers to itself".to_string(),
+                true => "module-level constant refers to itself".to_string(),
             };
             cx.err(msg, span);
             return;
