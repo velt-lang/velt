@@ -558,7 +558,8 @@ interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, Async
   `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map place (or its
   `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
   finds its place again by sequence number when a compaction, a pop or a clear renumbers them
-  (std/prelude/map.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`).
+  (std/prelude/map.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`). The loop
+  holds the map in a hidden local from its start, so reassigning the source does not redirect it.
 - `IterableIterator<T>` / `IteratorObject<T>` declare `[Symbol.iterator]()` as returning
   `Iterator<T, E>` (no covariant returns), and are two separate interfaces: a value of one does
   not convert to the other.

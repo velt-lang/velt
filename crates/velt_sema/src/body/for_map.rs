@@ -5,18 +5,20 @@
 //!
 //! ```text
 //! {
-//!   let <cursor@N> = m.__cursor();             // a struct: no allocation
-//!   label: while (m.__advance(<cursor@N>)) {
-//!     kind pattern = m.__entryAt(<cursor@N>);   // __keyAt, __valueAt
+//!   const <map@N> = m;                          // the map object, as JS holds it
+//!   let <cursor@N> = <map@N>.__cursor();        // a struct: no allocation
+//!   label: while (<map@N>.__advance(<cursor@N>)) {
+//!     kind pattern = <map@N>.__entryAt(<cursor@N>);   // __keyAt, __valueAt
 //!     { body }
 //!   }
 //! }
 //! ```
 //!
-//! `m` is evaluated at every step, so only a place written without calls qualifies (a
-//! variable, `this`, fields of those; no getter); the body may change the map, since nothing
-//! borrows it between steps. Any other source iterates the array `entries()`, `keys()` or
-//! `values()` returns (`loops.rs`).
+//! `m` is evaluated once, at loop entry, into a hidden local referring to the same map: a body
+//! that assigns another map to `m` goes on iterating the original one, as in JS. Only a place
+//! written without calls qualifies (a variable, `this`, fields of those; no getter); the body
+//! may change the map, since nothing borrows it between steps. Any other source iterates the
+//! array `entries()`, `keys()` or `values()` returns (`loops.rs`).
 
 use velt_syntax::ast;
 
@@ -103,6 +105,8 @@ fn pure_place(e: &ast::Expr) -> bool {
 /// The synthesized pieces of one live map loop.
 struct CursorLoop<'e> {
     cursor: String,
+    /// The hidden local holding the map for the whole loop.
+    held: String,
     map: &'e ast::Expr,
     /// The iterated expression: where the value reads point (a diagnostic about them is one
     /// about iterating the map).
@@ -116,6 +120,7 @@ impl<'e> CursorLoop<'e> {
     fn new(span: velt_common::Span, map: &'e ast::Expr, iter: velt_common::Span) -> Self {
         CursorLoop {
             cursor: format!("<cursor@{}>", span.lo),
+            held: format!("<map@{}>", span.lo),
             map,
             iter,
             span,
@@ -125,6 +130,11 @@ impl<'e> CursorLoop<'e> {
 
     /// The block of the module docs; `read` is the cursor method giving each value.
     fn desugar(&self, p: &ForOfParts<'_>, read: &str) -> ast::Block {
+        let held = self.var(
+            ast::VarKind::Const,
+            self.ident_pat(&self.held),
+            self.map.clone(),
+        );
         let cursor = self.var(
             ast::VarKind::Let,
             self.ident_pat(&self.cursor),
@@ -149,13 +159,14 @@ impl<'e> CursorLoop<'e> {
                 body: Box::new(lp),
             });
         }
-        self.block(vec![cursor, lp])
+        self.block(vec![held, cursor, lp])
     }
 
-    /// `map.method(args)`, with the map expression as written.
+    /// `<map@N>.method(args)`.
     fn on_map(&self, method: &str, args: Vec<ast::Expr>) -> ast::Expr {
+        let held = self.expr(ast::ExprKind::Ident(self.ident(&self.held)));
         let callee = self.expr(ast::ExprKind::Member {
-            object: Box::new(self.map.clone()),
+            object: Box::new(held),
             prop: self.ident(method),
             optional: false,
         });

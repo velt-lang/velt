@@ -6,3 +6,6 @@ labels 1/20,1/40,1/60,1/70,3/20 4
 captures p10,q20,p!,q!,r!
 churn 5188 978805581 1266
 this a=1 a+=2 a++=3
+local 1,2,3 4
+entries 101,202,303,404,505 2
+field 1,2,3 4
