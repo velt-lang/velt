@@ -1,0 +1,186 @@
+// The protocol layer: incremental parsing, inline commands, errors, and reply encoding.
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { protocolErrorReply, RespParser, Writer } from "../src/resp";
+
+function all(p: RespParser): string[] {
+  const out: string[] = [];
+  let args = p.next();
+  while (args != null) {
+    out.push(args.map((a) => utf8DecodeLossy(a)).join(" "));
+    args = p.next();
+  }
+  return out;
+}
+
+export function test_whole_and_pipelined_commands() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*2\r\n$3\r\nGET\r\n$1\r\nk\r\n*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$0\r\n\r\n"));
+  assertEq(all(p), ["GET k", "SET k "]);
+}
+
+export function test_commands_split_across_reads() {
+  const p = new RespParser();
+  const wire = "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n";
+  let seen: string[] = [];
+  for (let i = 0; i < wire.length; i++) {
+    p.feed(utf8Encode(wire[i]));
+    seen = [...seen, ...all(p)];
+  }
+  assertEq(seen, ["SET hello world"]);
+}
+
+export function test_binary_safe_values() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*2\r\n$4\r\na\r\nb\r\n$1\r\n\u0000\r\n"));
+  const args = p.next()!;
+  assertEq(args[0].length, 4);
+  assertEq(args[1][0], 0u8);
+}
+
+export function test_inline_commands() {
+  const p = new RespParser();
+  p.feed(utf8Encode("PING\r\nSET  a   b\nECHO"));
+  assertEq(all(p), ["PING", "SET a b"]);
+  p.feed(utf8Encode(" hi\r\n"));
+  assertEq(all(p), ["ECHO hi"]);
+}
+
+export function test_protocol_errors_quote_the_raw_byte() {
+  const cases: [string, u8][] = [
+    ["*1\r\n+PING\r\n", 43u8],
+    ["*1\r\n\r\n", 13u8],
+  ];
+  for (const [wire, got] of cases) {
+    const p = new RespParser();
+    p.feed(utf8Encode(wire));
+    let detail: u8[] = [];
+    try {
+      p.next();
+    } catch (e) {
+      detail = e.detail;
+    }
+    assertEq(detail[detail.length - 2], got);
+  }
+  // A non-UTF-8 byte goes back as itself, and CR/LF become spaces in the reply.
+  const p = new RespParser();
+  p.feed([42u8, 49u8, 13u8, 10u8, 255u8, 13u8, 10u8]);
+  let reply: u8[] = [];
+  try {
+    p.next();
+  } catch (e) {
+    reply = protocolErrorReply(e.detail);
+  }
+  assertEq(reply.slice(reply.length - 5), [39u8, 255u8, 39u8, 13u8, 10u8]);
+  assertEq(
+    utf8DecodeLossy(protocolErrorReply(utf8Encode("got '\r'"))),
+    "-ERR Protocol error: got ' '\r\n",
+  );
+}
+
+export function test_writer_grows_and_encodes() {
+  const w = new Writer();
+  w.simple("OK");
+  w.integer(-7);
+  w.bulk(utf8Encode("x".repeat(10000)));
+  w.nil();
+  w.array(0);
+  const text = utf8DecodeLossy(w.take());
+  assert(text.startsWith("+OK\r\n:-7\r\n$10000\r\nxxx"));
+  assert(text.endsWith("\r\n$-1\r\n*0\r\n"));
+  assertEq(w.take().length, 0);
+}
+
+function protocolError(wire: string): string {
+  const p = new RespParser();
+  p.feed(utf8Encode(wire));
+  try {
+    p.next();
+  } catch (e) {
+    return e.message;
+  }
+  return "";
+}
+
+export function test_lengths_that_overflow_or_run_on() {
+  assertEq(protocolError("*18446744073709551617\r\n"), "invalid multibulk length");
+  assertEq(protocolError("*1\r\n$99999999999999999999\r\n"), "invalid bulk length");
+  assertEq(protocolError("*1\r\n$-5\r\n"), "invalid bulk length");
+  assertEq(protocolError(`*${"1".repeat(70000)}`), "too big mbulk count string");
+  assertEq(protocolError(`*1\r\n$${"1".repeat(70000)}`), "too big bulk count string");
+  assertEq(protocolError("a".repeat(70000)), "too big inline request");
+}
+
+export function test_negative_count_is_skipped() {
+  const p = new RespParser();
+  p.feed(utf8Encode("*-1\r\n*1\r\n$4\r\nPING\r\n"));
+  assertEq(p.next()!.length, 0);
+  assertEq(all(p), ["PING"]);
+}
+
+export function test_large_value_in_many_reads() {
+  const p = new RespParser();
+  const value = "v".repeat(300000);
+  const wire = `*2\r\n$3\r\nSET\r\n$${value.length}\r\n${value}\r\n`;
+  for (let i = 0; i < wire.length; i += 1000) {
+    p.feed(utf8Encode(wire.slice(i, i + 1000)));
+    if (i + 1000 < wire.length) {
+      assert(p.next() == null);
+    }
+  }
+  assertEq(p.next()![1].length, 300000);
+}
+
+export function test_integer_extremes_and_sanitized_errors() {
+  const w = new Writer();
+  w.integer(-9223372036854775807 - 1);
+  w.integer(9223372036854775807);
+  w.integer(0);
+  w.error("ERR bad\r\n+OK");
+  assertEq(
+    utf8DecodeLossy(w.take()),
+    ":-9223372036854775808\r\n:9223372036854775807\r\n:0\r\n-ERR bad  +OK\r\n",
+  );
+}
+
+export function test_many_arguments_in_small_reads() {
+  const p = new RespParser();
+  let wire = "*10001\r\n$5\r\nRPUSH\r\n";
+  for (let i = 0; i < 10000; i++) {
+    wire += `$${`${i}`.length}\r\n${i}\r\n`;
+  }
+  let got: u8[][] | null = null;
+  for (let i = 0; i < wire.length; i += 7) {
+    p.feed(utf8Encode(wire.slice(i, i + 7)));
+    const c = p.next();
+    if (c != null) {
+      got = c;
+    }
+  }
+  assertEq(got!.length, 10001);
+  assertEq(utf8DecodeLossy(got![10000]), "9999");
+}
+
+export function test_query_buffer_limit() {
+  const p = new RespParser(1000);
+  p.feed(utf8Encode("*1\r\n$2000\r\n"));
+  let closed = false;
+  try {
+    p.feed(utf8Encode("x".repeat(1000)));
+  } catch (e) {
+    closed = true;
+  }
+  assert(closed);
+}
+
+export function test_stale_bytes_after_a_large_command_are_never_parsed() {
+  const p = new RespParser();
+  // A large value leaves its bytes (and CRLFs) in the buffer's capacity.
+  const big = "a\r\n".repeat(100000);
+  p.feed(utf8Encode(`*1\r\n$${big.length}\r\n${big}\r\n`));
+  assertEq(p.next()![0].length, big.length);
+  // Then a partial command: its header line isn't complete, whatever lies in old capacity.
+  p.feed(utf8Encode("*1\r\n$3"));
+  assert(p.next() == null);
+  p.feed(utf8Encode("\r\nabc\r\n"));
+  assertEq(utf8DecodeLossy(p.next()![0]), "abc");
+}
