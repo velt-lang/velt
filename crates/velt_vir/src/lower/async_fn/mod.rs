@@ -385,7 +385,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 // after the capture): release the state's reference to the cell, as the
                 // started paths do, not the value inside it.
                 self.release_cell(p.local);
-            } else if info.flag.is_some() {
+            } else if self.handler_copies.contains(&p.local) {
                 // A handler's copied capture: owned only when `init` copied it.
                 self.drop_local(p.local);
             } else if info.droppable {
