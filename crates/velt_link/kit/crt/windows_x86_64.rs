@@ -3,8 +3,8 @@
 //! `vcruntime.lib`) provide when `link.exe` links. The C runtime itself is the Universal CRT
 //! that ships with Windows 10 and later (`ucrtbase.dll`, imported through the kit's `ucrt.lib`).
 //!
-//! Compiled once per toolchain by `cargo xtask link-kit` into `velt_crt.obj` (executables) and,
-//! with `--cfg velt_crt_dll`, `velt_crt_dll.obj` (DLLs):
+//! Compiled once per toolchain by `velt-kit build` (`cargo run -p velt_link --bin velt-kit`) into
+//! `velt_crt.obj` (executables) and, with `--cfg velt_crt_dll`, `velt_crt_dll.obj` (DLLs):
 //! `rustc --crate-type lib --emit obj -C panic=abort -C opt-level=2 -C overflow-checks=off`.
 //! It must not reference anything but the Windows DLL imports below: the object is linked on
 //! its own, without `core` (no panic handler either: the runtime's `std` defines one, and

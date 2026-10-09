@@ -3,7 +3,8 @@
 //! `cc` links. The C library itself is the system's glibc, linked through the kit's stub shared
 //! libraries (glibc 2.31 and later).
 //!
-//! Compiled once per toolchain by `cargo xtask link-kit` into `crt1.o`:
+//! Compiled once per toolchain into `crt1.o` by `velt-kit build`
+//! (`cargo run -p velt_link --bin velt-kit`):
 //! `rustc --crate-type lib --emit obj -C panic=abort -C opt-level=2 -C relocation-model=pic`.
 //! It must not reference anything but glibc: the object is linked on its own, without `core` (no
 //! panic handler either: the runtime's `std` defines one, and nothing here can panic). See
