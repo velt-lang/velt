@@ -77,7 +77,6 @@ jobs:
               Write-Host "| $([IO.Path]::GetFileNameWithoutExtension($p)) | $l | $shared | $static | $relink |"
             }
           }
-          }
   lists:
     if: contains(github.event.head_commit.message, '[lists]')
     strategy:
