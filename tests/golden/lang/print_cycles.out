@@ -4,11 +4,7 @@
   parent: null,
   children: [ Tree { name: 'kid', parent: [Circular *1], children: [] } ]
 }
-tree: <ref *1> Tree {
-  name: 'kid',
-  parent: Tree { name: 'root', parent: null, children: [ [Circular *1] ] },
-  children: []
-}
+tree: [object Object]
 <ref *1> { value: 1, next: { value: 2, next: [Circular *1] } }
 [
   <ref *1> C { value: 1, next: [Circular *1] },

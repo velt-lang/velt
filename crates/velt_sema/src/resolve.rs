@@ -370,10 +370,12 @@ impl Ctx<'_> {
         let info = &self.aliases[a as usize];
         let (module, decl) = (info.module, info.decl);
         if info.expanding {
-            self.err(
+            let d = velt_common::Diagnostic::error(
                 format!("type alias `{}` refers to itself", decl.name.name),
                 t.span,
-            );
+            )
+            .with_note("an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class");
+            self.error(d);
             return self.ty.error;
         }
         let args = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
@@ -441,7 +443,7 @@ pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
 /// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
 /// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
 /// that already admits `null` (`name?: T | null`) is kept as written.
-fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
+pub(crate) fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
     let ast::TypeExprKind::Union(ms) = &ty.kind else {
         return ty.clone();
     };

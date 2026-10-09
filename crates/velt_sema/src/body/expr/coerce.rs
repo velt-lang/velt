@@ -5,8 +5,9 @@
 //! moves the value), `i8`..`i32`, `u8`..`u32` and `f32` → `number` (`expr::numbers`), `never`
 //! → anything, and `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1`
 //! (`never` included: `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` →
-//! `U | null` when `T` converts to `U`, and a fresh array or object to a wider one
-//! (`widen_fresh`).
+//! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
+//! and an object type to one with some of its fields, or the same ones in another order
+//! (`object_copy`).
 
 use velt_common::Diagnostic;
 
@@ -119,6 +120,10 @@ impl FnCx<'_, '_> {
         if exp == self.cx.ty.f64 && self.exact_in_number(h.ty) {
             return Ok(self.int_to_float(h, exp));
         }
+        let h = match self.copy_object(h, exp) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         self.widen_fresh(h, exp)
     }
 
@@ -262,9 +267,6 @@ impl FnCx<'_, '_> {
                 "`{e}` is a branded `{b}`: {from} does not convert to it; brand a value with `x as {e}`"
             ));
         }
-        if let Some(note) = self.wider_object_note(expected, found) {
-            d = d.with_note(note);
-        }
         if let Some(note) = self.class_to_data_note(expected, found) {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
@@ -282,55 +284,6 @@ impl FnCx<'_, '_> {
             );
         }
         self.cx.error(d);
-    }
-
-    /// For an object type with more fields than the expected one (an intersection `A & B` where
-    /// `A` is expected): object types don't convert by dropping fields, so how to get an `A`.
-    fn wider_object_note(&mut self, expected: TyId, found: &hir::Expr) -> Option<String> {
-        if !self.cx.is_object_type(expected) || !self.cx.is_object_type(found.ty) {
-            return None;
-        }
-        let (TyKind::Adt(ed, eargs), TyKind::Adt(fd, fargs)) = (
-            self.cx.ty.kind(expected).clone(),
-            self.cx.ty.kind(found.ty).clone(),
-        ) else {
-            return None;
-        };
-        let field_tys = |cx: &mut crate::ctx::Ctx, d, args: &[TyId]| -> Vec<(String, TyId)> {
-            let fields = cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
-            fields
-                .into_iter()
-                .map(|f| (f.name, cx.subst(f.ty, args)))
-                .collect()
-        };
-        let want = field_tys(self.cx, ed, &eargs);
-        let have = field_tys(self.cx, fd, &fargs);
-        if want.is_empty() || !want.iter().all(|w| have.contains(w)) {
-            return None;
-        }
-        let extra: Vec<String> = have
-            .iter()
-            .filter(|h| !want.iter().any(|w| w.0 == h.0))
-            .map(|h| format!("`{}`", h.0))
-            .collect();
-        let (e, f) = (self.cx.display(expected), self.cx.display(found.ty));
-        let src = match &found.kind {
-            H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
-            _ => "value".into(),
-        };
-        if extra.is_empty() {
-            // The same fields in another order (`Aged & Named` for `Named & Aged`): object types
-            // are keyed by their field order (#651). In the same order, they differ in which
-            // fields are optional, and `only_optional_differs` explains that.
-            let reordered = have.iter().zip(&want).any(|(h, w)| h.0 != w.0);
-            return (have.len() == want.len() && reordered).then(|| format!(
-                "`{f}` has the same fields as `{e}` in another order, and object types with their fields in different orders are different types (#651); copy it with `{{ ...{src} }}` where a `{e}` is expected"
-            ));
-        }
-        Some(format!(
-            "`{f}` has fields `{e}` does not ({}), and object types don't convert by dropping fields; copy the fields `{e}` has with `{{ ...{src} }}`, or make the function generic over a field-only interface (`<T extends I>(x: T)`), which takes either type",
-            extra.join(", ")
-        ))
     }
 
     /// For an interface value where an interface it extends is expected (`IterableIterator<T>`

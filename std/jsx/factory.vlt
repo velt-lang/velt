@@ -321,6 +321,14 @@ export function jsxEscape(value: Text): string {
 }
 
 /**
+ * `jsxEscape` of a `string` child: the compiler calls it when the child's type is `string`, so
+ * the text is escaped without going through the `Text` union.
+ */
+export function jsxEscapeString(value: string): string {
+  return escapeText(value);
+}
+
+/**
  * A dynamic attribute of a template: ` name="value"`, ` name` or nothing (folded into the
  * template's strings like `jsxEscape`).
  */

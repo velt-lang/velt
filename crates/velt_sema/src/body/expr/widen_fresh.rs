@@ -6,7 +6,9 @@
 //! value or a union is laid out differently from a `C`):
 //! - an array is consumed into a new array, each element converted;
 //! - an object type or a generic class without base class, subclasses or drop hook becomes a new
-//!   object whose fields are shares of the old one's, each converted.
+//!   object whose fields are shares of the old one's, each converted;
+//! - elements of an object type convert to an object type with some of their fields, or the
+//!   same ones in another order, by copying (`object_copy`).
 //!
 //! Anything else (a variable, a field) stays an error with a fix: copy it (`[...xs]`, `map`).
 //! The conversion costs one pass over the value, paid only where a program writes it.
@@ -78,7 +80,9 @@ impl FnCx<'_, '_> {
         }
         let both = (self.cx.ty.kind(from).clone(), self.cx.ty.kind(to).clone());
         match both {
-            (TyKind::Array(a), TyKind::Array(b)) => self.converts_to(a, b) || self.widens(a, b),
+            (TyKind::Array(a), TyKind::Array(b)) => {
+                self.converts_to(a, b) || self.widens(a, b) || self.copies_to(a, b)
+            }
             (TyKind::Adt(..), TyKind::Adt(..)) => self.widened_fields(from, to).is_some(),
             _ => false,
         }
@@ -323,7 +327,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The source text of a local or a field path (`h.items`).
-    fn place_text(&self, h: &hir::Expr) -> Option<String> {
+    pub(super) fn place_text(&self, h: &hir::Expr) -> Option<String> {
         match &h.kind {
             H::Local(l, _) => Some(self.f.locals[l.0 as usize].name.clone()),
             H::Field { base, index, .. } => {

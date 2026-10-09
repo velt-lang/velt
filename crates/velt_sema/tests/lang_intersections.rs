@@ -148,19 +148,99 @@ fn parts_that_are_not_object_types_are_errors_with_a_fix() {
 }
 
 #[test]
-fn a_wider_object_does_not_convert_and_the_note_offers_the_copy() {
-    let e = err_src(
-        "type A = { a: f64 }; type AB = A & { b: f64 };
+fn a_wider_object_converts_by_copying_its_fields() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64; c?: string };
+         type AC = { a: f64; c?: string };
          function g(a: A): f64 { return a.a; }
-         function main() { const ab: AB = { a: 1, b: 2 }; g(ab); }",
-    );
-    assert!(e.contains("`AB` has fields `A` does not (`b`)"), "{e}");
-    assert!(e.contains("{ ...ab }"), "{e}");
-    ok_src(
-        "type A = { a: f64 }; type AB = A & { b: f64 };
-         function g(a: A): f64 { return a.a; }
-         function main() { const ab: AB = { a: 1, b: 2 }; console.log(g({ ...ab })); }",
-    );
+         function h(a: AC): f64 { return a.a; }";
+    ok_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; console.log(g(ab), h(ab), ab.b); }}"
+    ));
+    // An optional field of the expected type may be missing; a required one may not.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; console.log(h(a)); }}"
+    ));
+    let e = err_src(&format!(
+        "{src} function main() {{ const ac: AC = {{ a: 1 }}; const ab: AB = ac; }}"
+    ));
+    assert!(e.contains("mismatched types"), "{e}");
+    // An assignment to a copied field would tell the copy from the original.
+    let e = err_src(&format!(
+        "{src} function bump(a: A) {{ a.a += 1; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; bump(ab); }}"
+    ));
+    assert!(e.contains("assigns field `a`"), "{e}");
+    assert!(e.contains("`{ a: ab.a }`"), "{e}");
+}
+
+#[test]
+fn identity_through_a_union_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 }; type B = { b: f64 };";
+    for cmp in [
+        "const x: A | null = ab; const y: A | null = ab; console.log(x === y);",
+        "const x: A | null = ab; const y: A = ab; console.log(y === x);",
+        "const x: A | null = ab; console.log(x === ab);",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.includes(ab));",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.indexOf(ab));",
+        "const u: A | string = ab; const v: A | string = ab; console.log(u === v);",
+    ] {
+        let e = err_src(&format!(
+            "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; {cmp} }}"
+        ));
+        assert!(e.contains("values with `===`"), "{cmp}: {e}");
+    }
+    // `===` on unions with no conversion anywhere, or on a union of other object types only.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: A | null = a;
+           const y: A | null = null; const u: A | string = a; const v: A | string = \"s\";
+           console.log(x === a, a === x, x === y, u === v, [x, y].includes(a), [x, y].indexOf(null)); }}"
+    ));
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const b: B = {{ b: 1 }};
+           const x: B | null = b; const xs: (B | null)[] = [b];
+           console.log(g(ab), x === b, xs.includes(b)); }}"
+    ));
+    // A fresh literal has no original to compare with.
+    ok_src(&format!(
+        "{src} function main() {{ const x: A | null = {{ a: 1 }}; const y = x; console.log(x === y); }}"
+    ));
+}
+
+#[test]
+fn a_write_to_an_absent_optional_field_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AC = { a: f64; c?: string };";
+    // In Node `a` gains `c`; in Velt only the copy would.
+    let e = err_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: AC = a; x.c = \"s\"; }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    let e = err_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ const a: A = {{ a: 1 }}; setC(a); }}"
+    ));
+    assert!(e.contains("assigns field `c`"), "{e}");
+    // A fresh source has no other name to see the write through.
+    ok_src(&format!(
+        "{src} function setC(x: AC) {{ x.c = \"s\"; }}
+           function main() {{ setC({{ a: 1 }}); }}"
+    ));
+}
+
+#[test]
+fn spreading_the_copy_tells_it_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 };";
+    let e = err_src(&format!(
+        "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const x: A = ab;
+           const y = {{ ...x, c: 3 }}; console.log(y.c); }}"
+    ));
+    assert!(e.contains("spreads a `A`"), "{e}");
+    // Spreading the source keeps all its fields, as in Node.
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const y = {{ ...ab, c: 3 }};
+           console.log(g(ab), y.c); }}"
+    ));
 }
 
 #[test]
@@ -216,23 +296,40 @@ fn interfaces_do_not_merge_and_the_note_says_so() {
 }
 
 #[test]
-fn reordered_parts_are_another_type_and_the_note_says_so() {
-    let src = "type Named = { name: string }; type Aged = { age: f64 };
-         function show(p: Named & Aged): string { return p.name; }";
-    let e = err_src(&format!(
-        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
-    ));
-    assert!(e.contains("has the same fields as"), "{e}");
-    assert!(e.contains("{ ...an }") && e.contains("#651"), "{e}");
-    assert!(!e.contains("does not ()"), "{e}");
+fn reordered_parts_convert_by_copying_unless_printed() {
+    let src = "type Named = { name: string }; type Aged = { age: f64 };";
+    let show = "function show(p: Named & Aged): string { return p.name; }";
     ok_src(&format!(
-        "{src} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
-           console.log(show({{ ...an }})); }}"
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; console.log(show(an)); }}"
     ));
+    // Node prints the original object's keys in its order: printing the copy's type is an error.
+    let e = err_src(&format!(
+        "{src} function show(p: Named & Aged) {{ console.log(p); }}
+           function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }}; show(an); }}"
+    ));
+    assert!(e.contains("prints a `{ name: string; age: f64 }`"), "{e}");
+    let e = err_src(&format!(
+        "{src} {show} function main() {{ const an: Aged & Named = {{ age: 3, name: \"x\" }};
+           const xs: (Named & Aged)[] = [an]; console.log(JSON.stringify(xs)); }}"
+    ));
+    assert!(e.contains("serializes a"), "{e}");
 }
 
 #[test]
-fn an_alias_cannot_refer_to_itself_through_an_intersection() {
-    let e = err_src("type T = { kids: T[] } & { v: f64 }; function main() {}");
+fn an_alias_may_refer_to_itself_through_written_object_types() {
+    let p = ok_src(
+        "type T = { kids: T[] } & { v: f64 }; function f(x: T): f64 { return x.kids.length + x.v; }
+         function main() { const t: T = { kids: [{ kids: [], v: 2 }], v: 1 }; console.log(f(t)); }",
+    );
+    assert_eq!(
+        show(&p, func(&p, "f").params[0].ty)
+            .matches("v: f64")
+            .count(),
+        1
+    );
+    // Parts that are not written out, or that share a field, still can't.
+    let e = err_src("type A = { v: f64 }; type T = A & { kids: T[] }; function main() {}");
     assert!(e.contains("type alias `T` refers to itself"), "{e}");
+    let e = err_src("type T = { kids: T[] } & { kids: T[] }; function main() {}");
+    assert!(e.contains("an alias may refer to itself when"), "{e}");
 }

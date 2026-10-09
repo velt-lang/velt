@@ -8,7 +8,7 @@ use super::ops::{hir_binop, untyped};
 use crate::body::narrow::is_null;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
+use crate::hir::{self, BinOp, ExprKind as H, TyId, TyKind, UseMode};
 
 /// What an assignment writes to.
 enum AssignTarget {
@@ -41,6 +41,7 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
+                self.note_field_write(obj.ty, prop);
                 if self.has_setter(obj.ty, &prop.name) {
                     return Some(AssignTarget::Setter(obj));
                 }
@@ -82,6 +83,9 @@ impl FnCx<'_, '_> {
     }
 
     fn assign_local(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {
+        if self.untyped_use(id, true) {
+            return None;
+        }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
             if self.lookup_item(&id.name, id.span).is_some() {
                 self.cx.err(
@@ -149,6 +153,24 @@ impl FnCx<'_, '_> {
             prop.span,
         );
         true
+    }
+
+    /// Remember an assignment to field `prop` of an object type (or of a type parameter, which
+    /// may be one) for the copies of `crate::object_copies`.
+    fn note_field_write(&mut self, ty: TyId, prop: &ast::Ident) {
+        let ty = match self.cx.ty.kind(ty) {
+            TyKind::Param(_) => None,
+            _ if self.cx.is_object_type(ty) => Some(ty),
+            _ => return,
+        };
+        self.cx
+            .object_copies
+            .writes
+            .push(crate::object_copies::Write {
+                ty,
+                name: prop.name.clone(),
+                span: prop.span,
+            });
     }
 
     fn check_readonly(&mut self, place: &hir::Expr, prop: &ast::Ident) {
@@ -328,25 +350,38 @@ impl FnCx<'_, '_> {
     /// `place = value` / `place op= value` on a writable place.
     fn place_assign(
         &mut self,
-        place: hir::Expr,
+        mut place: hir::Expr,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
+        if op.is_some() && self.untyped_update(&place, span) {
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        let first = match op {
+            None => self.first_assign(&mut place, value),
+            Some(_) => None,
+        };
         let lty = place.ty;
         let Some(op) = op else {
-            let v = self.expr(value, Some(lty), Want::Move);
-            // A local declared from a literal takes the type of what it is assigned
-            // (`literal_locals`); other places are a typed position.
-            let v = if self.literal_assign(&place, &v) {
-                self.try_coerce(v, lty).unwrap_or_else(|v| {
-                    self.report_mismatch(lty, &v);
-                    v
-                })
-            } else {
-                self.coerce(v, lty)
+            let v = match first {
+                Some(v) => v,
+                None => {
+                    let v = self.expr(value, Some(lty), Want::Move);
+                    // A local declared from a literal takes the type of what it is assigned
+                    // (`literal_locals`); other places are a typed position.
+                    if self.literal_assign(&place, &v) {
+                        self.try_coerce(v, lty).unwrap_or_else(|v| {
+                            self.report_mismatch(lty, &v);
+                            v
+                        })
+                    } else {
+                        self.coerce(v, lty)
+                    }
+                }
             };
             self.unnarrow_fields(target);
             if let H::Local(l, _) = place.kind {
@@ -451,6 +486,9 @@ impl FnCx<'_, '_> {
             }
             None => return self.error_expr(span),
         };
+        if self.untyped_update(&place, span) {
+            return self.error_expr(span);
+        }
         let lty = place.ty;
         self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };

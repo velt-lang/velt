@@ -1,0 +1,14 @@
+class G {
+  id<T>(x: T): T {
+    return x;
+  }
+  sum(...xs: number[]): number {
+    return xs.length;
+  }
+}
+
+function main() {
+  const g = new G();
+  const a = g.id;
+  const b = g.sum;
+}

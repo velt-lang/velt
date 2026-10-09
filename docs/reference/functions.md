@@ -14,11 +14,30 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
+- A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
+  not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
+  parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
+  `resolve()`.
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
-  array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`. A
-  spread argument must land in the rest parameter (in JS `f(...xs)` would bind `xs[0]` to the
-  first parameter); the standard library's variadic functions (`Math.max`, `Math.min`,
-  `Math.hypot`) accept a spread anywhere.
+  array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
+  The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`) accept a
+  spread anywhere.
+- A **spread into fixed parameters** passes the elements of a value whose length is known when
+  compiling, as in TypeScript: a variable or field of a tuple type (`f(...t)` with
+  `t: [number, string]` is `f(t[0], t[1])`) or an array literal (`f(...[1, 2])`). Too few or
+  too many elements are the usual arity error, and a missing optional parameter takes its
+  default. A spread of an array type (`T[]`) into fixed parameters is an error, as in
+  TypeScript (JS would bind `undefined` to the parameters its elements do not fill); a tuple
+  returned by a call or a getter is stored in a variable first (`const t = pair(); f(...t);`),
+  since JS reads it once.
+
+  ```ts
+  function label(name: string, n: number, suffix?: string): string {
+    return `${name}=${n}${suffix ?? ""}`;
+  }
+  const p: [string, number] = ["x", 4];
+  console.log(label(...p), label(...p, "!")); // x=4 x=4!
+  ```
 - There are no overloads.
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
@@ -448,6 +467,45 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
     const id = <T>(x: T) => x;
     const n: i64 = id(41) + 1;
     console.log(n); // 42
+  }
+  ```
+
+- **Methods as values**: `obj.method` read without calling it, and `obj.method.bind(obj)`, are
+  function values bound to `obj`: `xs.forEach(log.write)`, `const add = counter.add.bind(counter)`.
+  The object is evaluated once, where the method is read, so a later assignment to the
+  variable does not change which object it calls, as with `bind` in JS. The method dispatches
+  like a call (an override in the object's class runs), and converts its arguments as a named
+  function does (`[1, 2].forEach(p.log)` with `log(x: number)`). Read from `this` or a
+  `const` or `using` local, it is the arrow `(x) => obj.method(x)` itself: it captures the
+  object as that arrow would, and costs no allocation where such an arrow costs none. Two
+  deliberate differences from JavaScript:
+  - An unbound read: there `this` is lost (calling the value with a method that uses `this`
+    throws a `TypeError`); Velt binds it to the object it was read from, so the two differ
+    only where JavaScript would throw.
+  - Identity: each read is a new function value, as each `bind` is in JavaScript, where an
+    unbound read returns the one function of the prototype (`o.get === o.get` is `true`).
+    So `===` and `!==` on a method read are errors: store it in a `const` first and use that,
+    e.g. to register and remove a handler (`const tick = w.tick; e.on(tick); e.off(tick)`).
+
+  `bind` takes exactly the object the method is read from
+  (`a.m.bind(b)` is an error: write `(x) => b.m(x)`). A generic method, or one with a rest
+  parameter, has no single function type: wrap it in an arrow.
+
+  ```ts
+  class Log {
+    lines: string[] = [];
+    write(s: string): void {
+      this.lines.push(s);
+    }
+  }
+
+  function main() {
+    const log = new Log();
+    const words: string[] = ["a", "b"];
+    words.forEach(log.write.bind(log));
+    const write = log.write;
+    write("c");
+    console.log(log.lines.join(",")); // a,b,c
   }
   ```
 

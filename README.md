@@ -69,12 +69,12 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 velt doctor                       # checks the toolchain, builds and runs a hello world
 ```
 
-Velt needs a system linker (the Visual Studio Build Tools on Windows, `build-essential` on Linux,
-the Xcode command line tools on macOS); LLVM/clang 16 or newer is optional, for optimized release
-builds. Options, other platforms and manual installation:
-[Platforms and installation](docs/tooling/platforms.md).
+The toolchain brings its own linker: no Visual Studio Build Tools, Xcode or C compiler needed.
+LLVM/clang 16 or newer is optional, for optimized release builds. Options, other platforms and
+manual installation: [Platforms and installation](docs/tooling/platforms.md).
 
-To build from source instead, you also need Rust (stable):
+To build from source instead, you need Rust (stable) and a system linker (the Visual Studio Build
+Tools on Windows, `build-essential` on Linux, the Xcode command line tools on macOS):
 
 ```sh
 git clone https://github.com/velt-lang/velt
