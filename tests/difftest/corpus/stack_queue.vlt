@@ -7,7 +7,7 @@ class Stack {
   pop(): string {
     return this.items.pop() ?? "";
   }
-  get size(): usize {
+  get size(): number {
     return this.items.length;
   }
 }
@@ -16,7 +16,7 @@ function balanced(s: string): bool {
   const st = new Stack();
   const open = "([{";
   const close = ")]}";
-  for (let i = 0; i < (s.length as i64); i++) {
+  for (let i = 0; i < (s.length as number); i++) {
     const c = s.slice(i, i + 1);
     if (open.includes(c)) {
       st.push(c);

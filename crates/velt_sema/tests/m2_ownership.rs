@@ -46,7 +46,7 @@ fn shares(f: &velt_sema::hir::FnDef) -> usize {
 fn use_after_passing_to_owned_param_shares() {
     let p = ok_src(
         "function take(s: i64[]): i64[] { return s; }
-         function main() { const a = [1]; take(a); console.log(a); }",
+         function main() { const a: i64[] = [1]; take(a); console.log(a); }",
     );
     assert_eq!(shares(func(&p, "main")), 1);
     let p = ok_src(
@@ -81,10 +81,10 @@ fn array_elements_and_for_of_bindings_are_shared() {
     let p = ok_src("function main() { const xs = [[1]]; const s = xs[0]; console.log(s); }");
     assert_eq!(shares(func(&p, "main")), 0);
     let p = ok_src(
-        "function main() { const xs = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s); } }",
+        "function main() { const xs: i64[][] = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s); } }",
     );
     assert_eq!(shares(func(&p, "main")), 1);
-    ok_src("function main() { const xs = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s.clone()); } }");
+    ok_src("function main() { const xs: i64[][] = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s.clone()); } }");
     ok_src("function main() { const xs = [\"a\"]; const s = xs[0]; const out: string[] = []; for (const t of xs) { out.push(t); } console.log(s, xs, out); }");
 }
 
@@ -178,7 +178,7 @@ fn narrowed_members_move_from_places_when_moved() {
     let p = ok_src(
         "type T = { kind: \"w\"; s: i64[] } | { kind: \"n\" };
          function take(t: T): i64[] { switch (t.kind) { case \"w\": return t.s; default: return []; } }
-         function peek(t: T): usize { switch (t.kind) { case \"w\": return t.s.length; default: return 0; } }
+         function peek(t: T): number { switch (t.kind) { case \"w\": return t.s.length; default: return 0; } }
          function main() { console.log(take({ kind: \"w\", s: [1] }), peek({ kind: \"n\" })); }",
     );
     assert_eq!(func(&p, "take").params[0].mode, PassMode::Owned);
@@ -237,7 +237,7 @@ fn owned_params_can_be_function_values() {
 #[test]
 fn closures_share_their_params_and_captures() {
     ok_src(
-        "function main() { const out: i64[][] = []; const xs = [[1]]; xs.forEach((x) => { out.push(x); }); }",
+        "function main() { const out: i64[][] = []; const xs: i64[][] = [[1]]; xs.forEach((x) => { out.push(x); }); }",
     );
     ok_src("function main() { const s = [1]; const f = () => { const t = s; return t; }; console.log(f()); }");
     // Strings are copied instead.
@@ -281,12 +281,12 @@ fn owned_arg_through_upcast_and_wrap() {
 fn moves_in_loops_and_branches() {
     let p = ok_src(
         "function take(s: i64[]): i64[] { return s; }
-         function main() { const s = [1]; for (let i = 0; i < 2; i++) { take(s); } }",
+         function main() { const s: i64[] = [1]; for (let i = 0; i < 2; i++) { take(s); } }",
     );
     assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "function take(s: i64[]): i64[] { return s; }
-         function main() { let s = [1]; for (let i = 0; i < 2; i++) { take(s); s = [2]; } }",
+         function main() { let s: i64[] = [1]; for (let i = 0; i < 2; i++) { take(s); s = [2]; } }",
     );
 }
 
@@ -296,7 +296,7 @@ fn try_catch_moves_are_joined() {
         "class E { m: string = \"e\"; }
          function take(s: i64[]): i64[] { return s; }
          function risky(): i64 { throw new E(); }
-         function main() { const s = [1]; try { take(s); risky(); } catch (e) { console.log(s); } }",
+         function main() { const s: i64[] = [1]; try { take(s); risky(); } catch (e) { console.log(s); } }",
     );
     assert_eq!(shares(func(&p, "main")), 1);
 }

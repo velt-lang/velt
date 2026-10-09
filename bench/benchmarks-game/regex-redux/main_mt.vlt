@@ -23,7 +23,7 @@ async function substitutedLength(sequence: string): Promise<usize> {
   for (const s of substitutions) {
     replaced = new RegExp(s.pattern, "g").replace(replaced, s.replacement);
   }
-  return replaced.length;
+  return replaced.length as usize;
 }
 
 async function main() {

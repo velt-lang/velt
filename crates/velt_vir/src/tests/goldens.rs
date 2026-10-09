@@ -43,7 +43,7 @@ pub(super) fn arith() -> Program {
                 bin(B::Add, f.cp(a), f.cp(b)),
                 bin(B::Sub, f.cp(a), f.cp(b)),
                 bin(B::Mul, f.cp(a), f.cp(b)),
-                // `/` on inferred integers is float division (sema casts both sides).
+                // `/` on numbers is float division (sema casts integer operands).
                 bin(B::Div, cast(f.cp(a), t.f64), cast(f.cp(b), t.f64)),
                 bin(B::Rem, f.cp(a), f.cp(b)),
             ],

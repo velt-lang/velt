@@ -81,6 +81,8 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
+            // A number is `String(x)` (`${-0}` is `0`); `console.log` prints `-0` itself.
+            TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             _ => {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
@@ -125,7 +127,8 @@ impl FnLower<'_, '_> {
         depth: &Operand,
     ) {
         match self.cx.kind(ty) {
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
+            TyKind::Float(_) => self.push_inspect_float(buf, Operand::Copy(place.clone()), ty),
+            TyKind::Int(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Str => {

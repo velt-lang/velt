@@ -83,8 +83,13 @@ impl FnLower<'_, '_> {
             if k > 0 {
                 self.push_text(&bp, " ");
             }
-            if matches!(self.cx.kind(t), TyKind::Never) {
-                continue;
+            match self.cx.kind(t) {
+                TyKind::Never => continue,
+                TyKind::Float(_) => {
+                    self.push_inspect_float(&bp, v, t);
+                    continue;
+                }
+                _ => {}
             }
             let p = self.place_of(v, t);
             self.format_top(&bp, &p, t);

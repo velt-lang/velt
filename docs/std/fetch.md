@@ -217,7 +217,7 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
 - **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
 
 ```ts
-async function download(url: string): Promise<i64> {
+async function download(url: string): Promise<number> {
   const res = await fetch(url);
   let size = 0;
   const body = res.body;

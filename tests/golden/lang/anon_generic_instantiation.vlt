@@ -61,7 +61,7 @@ function main(): void {
   console.log(b);
 
   const p = pair("k", 2);
-  const q: { a: string; b: i64 } = p;
+  const q: { a: string; b: number } = p;
   console.log(q.b);
 
   const root: Tree<string> = { value: "root", kids: [leaf("a"), leaf("b")] };

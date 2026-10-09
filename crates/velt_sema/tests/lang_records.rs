@@ -63,7 +63,7 @@ fn written_key_types_are_checked_where_resolved() {
 #[test]
 fn generic_keys_are_checked_per_instantiation() {
     let src = "function dec<K>(s: string): Record<K, i64> { return JSON.parse<Record<K, i64>>(s); }
-       function via<T>(): usize { return Object.keys(dec<T>(\"{}\")).length; }
+       function via<T>(): number { return Object.keys(dec<T>(\"{}\")).length; }
        class Box<K> { r: Record<K, i64> = dec<K>(\"{}\"); }";
     ok_src(&format!(
         "{src} {RES} function main() {{ via<string>(); via<Res>(); new Box<\"a\" | \"b\">(); }}"

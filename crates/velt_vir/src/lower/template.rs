@@ -98,9 +98,10 @@ impl FnLower<'_, '_> {
                 Part::Format(e) => {
                     let t = self.sub(e.ty);
                     match self.cx.kind(t) {
-                        TyKind::Int(_) => 8,
+                        // A number is most often a count or an index (`${x},${y}`): as short as
+                        // an integer, so a short template stays inline.
+                        TyKind::Int(_) | TyKind::Float(_) => 8,
                         TyKind::Bool => 5,
-                        TyKind::Float(_) => 12,
                         _ => 32,
                     }
                 }

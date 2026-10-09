@@ -56,7 +56,7 @@ function main() {
   show("array of maps", maps);
 
   // A container in a longer template, and string concatenation around it.
-  const xs = [10, 20];
+  const xs: i64[] = [10, 20];
   console.log(`xs=${xs} len=${xs.length} nested=${nested}!`);
   console.log("xs: " + `${xs}` + " done");
 

@@ -1,4 +1,5 @@
-// `/` gives a float unless both operands are declared integers.
+// `/` on numbers gives a float, also where an integer is expected (`total /= 4` on a number is
+// fine: `total` is 2.5, #437).
 function main() {
   let total = 10;
   total /= 4;

@@ -1,7 +1,7 @@
 //! Emulated string builder (rt_abi_async.md §12.1) and `velt_rt_str_eq`. A builder is an owned
 //! `VeltStr`; every push reallocates (simple, and leak/double-free checked like any string).
 
-use super::rt::js_num;
+use super::rt::{inspect_num, js_num};
 use super::Interp;
 
 /// `JSON.stringify` of a string: quotes and the escapes of §12.1.
@@ -58,6 +58,10 @@ impl Interp<'_> {
             "velt_rt_strbuf_push_u64" => self.buf_push(a[0], a[1].to_string().as_bytes()),
             "velt_rt_strbuf_push_f64" => {
                 let text = js_num(f64::from_bits(a[1]));
+                self.buf_push(a[0], text.as_bytes());
+            }
+            "velt_rt_strbuf_push_inspect_f64" => {
+                let text = inspect_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
             }
             "velt_rt_strbuf_drop" => {

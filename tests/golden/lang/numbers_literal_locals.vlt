@@ -1,0 +1,52 @@
+// A local declared from an integer literal that the function uses only with one integer type
+// is of that type (#525, `literal_locals`): `steps` is returned as an `i64`, `i` is compared with
+// and passed as one, `acc` is stored into an `i64[]` and `best` takes a `Map<string, i64>`
+// value. Others stay numbers: `half` is divided, `ratio` meets a float. Expected output is
+// Node's (with the integer types erased).
+function collatz(start: i64): i64 {
+  let n = start;
+  let steps = 0;
+  while (n != 1) {
+    n = n % 2 == 0 ? n / 2 : 3 * n + 1;
+    steps++;
+  }
+  return steps;
+}
+
+function longest(limit: i64): i64 {
+  let best = 0;
+  let at = 0;
+  for (let i = 1; i < limit; i++) {
+    const s = collatz(i);
+    if (s > best) {
+      best = s;
+      at = i;
+    }
+  }
+  return at;
+}
+
+function main() {
+  console.log(collatz(27), longest(1000));
+  const out: i64[] = [];
+  let acc = 1;
+  for (let i = 0; i < 5; i++) {
+    acc = acc * 3 + i;
+    out.push(acc);
+  }
+  console.log(out);
+  const counts = new Map<string, i64>();
+  counts.set("a", 4);
+  counts.set("b", 9);
+  let best = 0;
+  for (const [k, v] of counts) {
+    if (v > best) {
+      best = v;
+    }
+  }
+  let half = 7;
+  half = half / 2;
+  let ratio = 1;
+  ratio = ratio * 0.75;
+  console.log(best, half, ratio);
+}

@@ -1,7 +1,7 @@
 branded_types.vlt:7:25: error: mismatched types
   = note: expected UserId, found string
   = note: `UserId` is a branded `string`: a plain `string` does not convert to it; brand a value with `x as UserId`
-branded_types.vlt:8:17: error: cannot cast `i64` as `UserId`
+branded_types.vlt:8:17: error: cannot cast `f64` as `UserId`
   = note: `UserId` is a branded `string`: only a `string` can be branded
 branded_types.vlt:10:26: error: mismatched types
   = note: expected OrderId, found UserId
