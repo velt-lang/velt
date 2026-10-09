@@ -242,6 +242,11 @@ pub extern "C" fn get_new_handler() -> *const c_void {
     null()
 }
 
+/// MSVC's "this program uses floating point" marker, which objects using floats reference.
+#[no_mangle]
+#[used]
+static _fltused: c_int = 0x9875;
+
 // ---- atexit ------------------------------------------------------------------------------------
 
 #[repr(C)]

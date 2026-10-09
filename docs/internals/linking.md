@@ -62,7 +62,7 @@ libraries.
 whole runtime with lld-link and only generated import libraries on a GitHub runner, then
 running the results in a Windows Server Core container without Visual Studio or
 `vcruntime140.dll`). The runtime stays a `*-windows-msvc` build with the dynamic CRT (`/MD`).
-With `ucrtbase.dll` imported, eleven symbols were left; Rust's MSVC panics need nothing more,
+With `ucrtbase.dll` imported, eleven symbols were left (and `_fltused` when `velt.exe` itself is linked); Rust's MSVC panics need nothing more,
 since `ucrtbase.dll` exports `__CxxFrameHandler3` and `_CxxThrowException`. The eleven are what
 Visual Studio's CRT startup objects provide, and `kit/crt/windows_x86_64.rs` provides them
 (`rustc --emit obj` of a `no_std` file; `velt_crt.obj` for executables, `velt_crt_dll.obj` for
@@ -78,6 +78,7 @@ DLLs):
 | `` type_info::`vftable' `` | Rust's MSVC panic type descriptor | a vtable never called (exception matching compares names) |
 | `std::get_new_handler` | mimalloc's `operator new` | no handler |
 | `atexit` | the runtime's C code | `_crt_atexit` (executables), the module's table (DLLs) |
+| `_fltused` | Rust objects using floating point (`velt.exe`) | the marker value |
 
 `/MD` vs `/MT` (`crt-static`) was not needed: `crt-static` would have needed Visual Studio's
 static CRT libraries at every link. The `*-windows-gnullvm` target (mingw ABI) would have

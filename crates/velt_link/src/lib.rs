@@ -547,6 +547,11 @@ pub fn find_runtime_lib_in(
         .collect();
     let build = match flavor {
         Some(f) => format!("cargo build -p velt_rt_wasm --target {}", f.rust_triple()),
+        // A non-host target's runtime lives in its kit (`lib/targets/<triple>/`).
+        None if target.contains("musl") => format!(
+            "cargo build -p velt_rt --target {target}` plus `velt-kit build --target {target} \
+             --runtime <it> --out <prefix>/lib/targets/{target}"
+        ),
         None => "cargo build -p velt_rt".into(),
     };
     Err(format!(
@@ -800,6 +805,31 @@ mod tests {
         assert!(find_runtime_lib_in(target, Some(tmp.join("missing.a")), Some(&exe)).is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn musl_runtime_comes_from_its_target_directory() {
+        let tmp = std::env::temp_dir().join(format!("velt_link_musl_{}", std::process::id()));
+        let prefix = tmp.join("prefix");
+        let target = "x86_64-unknown-linux-musl";
+        std::fs::create_dir_all(prefix.join("bin")).unwrap();
+        std::fs::create_dir_all(prefix.join("lib/targets").join(target)).unwrap();
+        // The host's (glibc) runtime has the same name and must not be taken.
+        std::fs::write(prefix.join("lib/libvelt_rt.a"), b"").unwrap();
+        let exe = prefix.join("bin/velt");
+        let err = find_runtime_lib_in(target, None, Some(&exe)).unwrap_err();
+        assert!(err.contains("--target x86_64-unknown-linux-musl"), "{err}");
+        let own = prefix.join("lib/targets").join(target).join("libvelt_rt.a");
+        std::fs::write(&own, b"").unwrap();
+        assert_eq!(find_runtime_lib_in(target, None, Some(&exe)).unwrap(), own);
+        // Other targets prefer their own directory, then the host's.
+        let gnu = "x86_64-unknown-linux-gnu";
+        assert_eq!(
+            find_runtime_lib_in(gnu, None, Some(&exe)).unwrap(),
+            prefix.join("lib/libvelt_rt.a")
+        );
+        assert_eq!(find_shared_runtime_lib_in(target, Some(&exe)), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
