@@ -1,0 +1,7 @@
+// The builtin `process` is known by its name only, so importing it under another one is an error
+// whose note says what to write.
+import { process as proc } from "velt:process";
+
+function main() {
+  console.log(proc.argv.length);
+}

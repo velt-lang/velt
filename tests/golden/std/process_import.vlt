@@ -1,0 +1,11 @@
+// `process` is a global, and `velt:process` exports it by name too (Node's `node:process` has it
+// as its default export; Velt has named exports only): an explicit import reads the same builtin.
+import { process } from "velt:process";
+import { cwd } from "velt:process";
+
+function main() {
+  process.stdout.write("argv: ");
+  console.log(process.argv.slice(2).length, cwd().length > 0);
+  console.log(process.env.VELT_NO_SUCH_VARIABLE ?? "unset");
+  process.exit(0);
+}
