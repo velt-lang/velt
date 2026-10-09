@@ -32,7 +32,7 @@ pub(super) fn str_w1(text: &str) -> u64 {
 }
 
 impl FnLower<'_, '_> {
-    fn u64_op(&mut self, op: BinOp, a: Operand, b: Operand) -> Operand {
+    pub(super) fn u64_op(&mut self, op: BinOp, a: Operand, b: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Binary(op, a, b))
     }
 
@@ -80,6 +80,22 @@ impl FnLower<'_, '_> {
     fn tag_bits(&mut self, w2: Operand, mask: i128) -> Operand {
         let top = self.u64_op(BinOp::UShr, w2, cint(56, Ty::U64));
         self.u64_op(BinOp::BitAnd, top, cint(mask, Ty::U64))
+    }
+
+    /// The byte length (a `u64`) of the string at `p`: the low half of `w1` for a static or heap
+    /// string, byte 23's length bits for an inline one. No branch.
+    pub(super) fn str_bytes(&mut self, p: &Place) -> Operand {
+        let w1 = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(1)))));
+        let w2 = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(2)))));
+        let inline_len = self.tag_bits(w2.clone(), 0x1f);
+        let heap_len = self.u64_op(BinOp::BitAnd, w1, cint(0xffff_ffff, Ty::U64));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(w2, Ty::I64));
+        let fill = self.rvalue_temp(
+            Ty::I64,
+            Rvalue::Binary(BinOp::Shr, signed, cint(63, Ty::I64)),
+        );
+        let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
+        self.select(inline, inline_len, heap_len)
     }
 
     /// `s.length` (a `u64`): UTF-16 code units. Inline: byte 22 when bit 0x40 of byte 23 says

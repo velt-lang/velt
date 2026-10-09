@@ -15,6 +15,39 @@ ref=<branch>`): the fortunes test for `velt` and `velt-tsx` on a GitHub `ubuntu-
 the run and the raw `.jsonl`/`.md` as the `bench-web-arm64` artifact. Its req/s compare the
 servers within one run; they are not comparable with the tables below.
 
+## Fortunes in TSX (`velt-tsx`, #78)
+
+The `velt-tsx` server is `velt` with the fortunes page written in TSX (`velt-tsx/fortunes.tsx`,
+precompiled by `velt:jsx`, with the list fold of #682) instead of template literals. Both pass
+`measure.py`'s byte-exact fortunes check (the TSX page writes `'` as `&#x27;`, as react-dom
+does). Run 1: `SERVERS="velt velt-tsx" TESTS=fortunes bench/web/run.sh`; run 2:
+`SERVERS="velt-tsx velt" TESTS=fortunes bench/web/run.sh`; against the local Homebrew Postgres 17
+(not Docker), Apple M-series, 10 cores; measured on 2026-10-08 at 12:52 and 12:55 on the branch
+as it was then, before `app.ts` took #671's `Request`/`Response` and #685's numbers (first
+committed in 69ebe90b); best req/s over the levels 16/64/256/512:
+
+| run | velt (template literals) | velt-tsx (TSX) | velt-tsx / velt |
+|---|---:|---:|---:|
+| 1 (velt first) | 91 427 (64 conn) | 90 273 (256 conn) | 0.99 |
+| 2 (velt-tsx first) | 88 296 (512 conn) | 91 150 (64 conn) | 1.03 |
+
+Within noise of each other: the server that runs second is a little slower either way. The test
+is bound by the database (rendering the page takes about 1.3 µs of about 110 µs per request per
+core), so it shows that TSX costs nothing measurable here, not how fast it renders:
+[bench/jsx](../jsx/README.md) measures the rendering itself. The `velt` server now also goes
+through `startApp(render)`; its rows in the tables below predate that. Raw data:
+`results/macos-tsx-2026-10-08-*.jsonl`.
+
+**Linux arm64** (the bench-arm workflow, run 37930235610 of be741dcd: `gh workflow run bench-arm
+-f suite=web -f ref=bench-web-tsx`; GitHub `ubuntu-24.04-arm`, 4 cores shared by Postgres 17, the
+servers and wrk; both servers verified), best req/s over the levels 16/64/256/512:
+
+| velt (template literals) | velt-tsx (TSX) | velt-tsx / velt |
+|---:|---:|---:|
+| 16 515 (16 conn) | 16 284 (16 conn) | 0.99 |
+
+Within noise on a shared runner. Raw data: `results/linux-arm64-tsx-2026-10-09-1232.jsonl`.
+
 ## Lazy `Request` and Postgres batches — not re-run yet
 
 The lazy Request and Postgres batch changes were measured while they were written, but the full suite has

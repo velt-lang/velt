@@ -18,10 +18,15 @@ use crate::str::{Summary, VeltStr};
 pub type VeltStrBuf = VeltStr;
 
 /// `new StrBuf(cap)`: empty builder with room for `cap` bytes (a hint of at most 23 starts
-/// inline, larger ones allocate up front: appending to a heap buffer is the fastest path).
+/// inline, larger ones allocate up front: appending to a heap buffer is the fastest path). The
+/// hint is clamped to the largest string: a template sized from its parts adds the widest a
+/// number can be, which may exceed it for a result that still fits.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
-    out.write(VeltStr::with_capacity(cap as usize));
+    let cap = usize::try_from(cap)
+        .unwrap_or(usize::MAX)
+        .min(crate::str::MAX_CAPACITY);
+    out.write(VeltStr::with_capacity(cap));
 }
 
 /// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or

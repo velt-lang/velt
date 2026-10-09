@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # TechEmpower Framework Benchmarks tests (JSON, plaintext, db, queries, fortunes, updates) for
-# the Velt, Node, Node-cluster, Bun, Go and Rust servers in bench/web. See bench/web/README.md.
+# the Velt (template literals and TSX), Node, Node-cluster, Bun, Go and Rust servers in bench/web.
+# See bench/web/README.md.
 #
 # Usage: bench/web/run.sh   (needs wrk, python3, the toolchains of the chosen SERVERS and a
 #                            database from bench/web/db/db.sh up)
 # Knobs (environment):
-#   SERVERS         velt node node-cluster bun go rust
+#   SERVERS         velt velt-tsx node node-cluster bun go rust
 #   TESTS           json plaintext db queries fortunes updates
 #   QUICK=1         5 s runs, 2 s warm-up and fewer levels (a smoke run; numbers mean little)
 #   DURATION        seconds per measurement (15; QUICK 5)      WARMUP  seconds (5; QUICK 2)
@@ -40,7 +41,7 @@ else
   CONC_PLAINTEXT="${CONC_PLAINTEXT:-256 1024}"
   QUERY_COUNTS="${QUERY_COUNTS:-1 5 10 15 20}"
 fi
-SERVERS="${SERVERS:-velt node node-cluster bun go rust}"
+SERVERS="${SERVERS:-velt velt-tsx node node-cluster bun go rust}"
 TESTS="${TESTS:-json plaintext db queries fortunes updates}"
 QUERY_CONNS="${QUERY_CONNS:-512}"
 PIPELINE="${PIPELINE:-16}"
@@ -83,6 +84,7 @@ find_velt() {
 build() {
   case "$1" in
     velt) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
+    velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.vlt" -o "$WORK/velt-tsx-server" ;;
     node | node-cluster)
       [ -d "$HERE/node/node_modules" ] || (cd "$HERE/node" && npm ci --no-audit --no-fund) ;;
     bun) ;;
@@ -97,6 +99,7 @@ start() {
   local log="$WORK/$1.log"
   case "$1" in
     velt) "$WORK/velt-server" "$2" >"$log" 2>&1 & ;;
+    velt-tsx) "$WORK/velt-tsx-server" "$2" >"$log" 2>&1 & ;;
     node) node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
     node-cluster) CLUSTER=1 node "$HERE/node/server.mjs" "$2" >"$log" 2>&1 & ;;
     bun) bun "$HERE/bun/server.ts" "$2" >"$log" 2>&1 & ;;
