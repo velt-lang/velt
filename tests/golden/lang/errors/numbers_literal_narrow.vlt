@@ -1,5 +1,5 @@
 // A local declared from a literal that takes part in arithmetic stays a number when the other
-// uses want an integer type narrower than 64 bits, which would wrap (#525, review of #685):
+// uses want an integer type narrower than 64 bits, which would wrap (#525):
 // the use as `u8` is an error whose note says why and gives the fix.
 function takeU8(b: u8): u8 {
   return b;

@@ -71,6 +71,18 @@ pub(crate) struct Mark {
     /// The body's function and how many of its closures were numbered then (`None`: a mark
     /// inside a body, which only `rollback` uses).
     closures: Option<(String, Option<u32>)>,
+    /// How many segments the frame that `rollback` finds had then: 0 for a body's start (its
+    /// frame is entered after the mark), the current frame's count for a mark inside a body.
+    segments: usize,
+}
+
+impl Frame {
+    /// Drops the segments recorded after the first `n`: bodies checked since a mark, which its
+    /// rollback has undone. (A segment's end can't tell: it is read before the body itself is
+    /// recorded as completed, so a body that checked nothing ends where the mark started.)
+    fn truncate_segments(&mut self, n: usize) {
+        self.segments.truncate(n);
+    }
 }
 
 /// Keep, of `v`'s elements from `from` on, those inside `keep` (index ranges), in order; returns
@@ -96,6 +108,7 @@ impl Mark {
         Mark {
             lens: Lens::now(cx),
             closures: Some((name, count)),
+            segments: 0,
         }
     }
 
@@ -105,6 +118,7 @@ impl Mark {
         Mark {
             lens: Lens::now(cx),
             closures: None,
+            segments: cx.rechecks.last().map_or(0, |f| f.segments.len()),
         }
     }
 
@@ -146,9 +160,7 @@ impl Mark {
         // Bodies checked since the mark are unchecked again; those checked before it keep
         // their segments.
         if let Some(frame) = cx.rechecks.last_mut() {
-            frame
-                .segments
-                .retain(|(_, e)| e.completed <= m.completed && e.diags <= m.diags);
+            frame.truncate_segments(self.segments);
         }
     }
 
@@ -247,5 +259,43 @@ pub(crate) fn leave(cx: &mut Ctx, start: Lens) {
     let end = Lens::now(cx);
     if let Some(outer) = cx.rechecks.last_mut() {
         outer.segments.push((start, end));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lens(completed: usize) -> Lens {
+        Lens {
+            diags: 0,
+            throw_checks: 0,
+            fresh_checks: 0,
+            jsx_adapters: 0,
+            fn_values: 0,
+            fn_defs: 0,
+            closures: 0,
+            reported: 0,
+            completed,
+            ide: None,
+        }
+    }
+
+    /// A body checked after a mark inside the body (`Mark::here`) that checks nothing else ends
+    /// with as many completed bodies as the mark saw: its rollback still drops its segment, and
+    /// keeps the one recorded before the mark.
+    #[test]
+    fn rollback_drops_the_segments_after_a_mark_inside_a_body() {
+        let mut frame = Frame::default();
+        frame.segments.push((lens(0), lens(0)));
+        // Mark::here: one segment so far, one completed body (the first one's).
+        let at = frame.segments.len();
+        let mark = lens(1);
+        // A body checked during the try: its segment ends before it is completed.
+        frame.segments.push((lens(1), lens(1)));
+        assert_eq!(frame.segments[1].1.completed, mark.completed);
+        frame.truncate_segments(at);
+        assert_eq!(frame.segments.len(), 1);
+        assert_eq!(frame.segments[0].1.completed, 0);
     }
 }

@@ -1,4 +1,4 @@
 numbers_literal_narrow.vlt:10:10: error: mismatched types
 = note: expected u8, found f64
 = note: `n` is a `number`: it is declared from a literal without a type, and used in arithmetic, which would wrap at the width of `u8`
-= note: declare it with the type it needs (`let n: u8 = …`; `/` on it is then integer division), or convert here with `as u8`
+= note: convert here with `as u8`

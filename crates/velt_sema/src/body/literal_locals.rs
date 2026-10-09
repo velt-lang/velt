@@ -40,7 +40,7 @@ use crate::ctx::Ctx;
 use crate::hir::{self, BinOp, DefId, ExprKind as H, LocalId, TyId, UnOp};
 
 /// The candidates of one check of a body and their uses.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct LiteralLocals {
     /// Types decided by an earlier check of this body, by the local's declaration span.
     pub decided: HashMap<Span, TyId>,
@@ -207,6 +207,9 @@ pub(crate) fn finish(cx: &mut Ctx, def: DefId, diags_from: usize) {
             if d.notes.iter().any(|n| n.contains("is a `number`")) {
                 continue;
             }
+            // Declaring the local `T` would wrap its arithmetic or reject its negative value:
+            // only the conversion is offered then.
+            let mut convert_only = false;
             let why = match uses.number {
                 Some(number) => {
                     d.labels.push(velt_common::Label {
@@ -216,9 +219,11 @@ pub(crate) fn finish(cx: &mut Ctx, def: DefId, diags_from: usize) {
                     "and also used as a `number`".to_string()
                 }
                 None if uses.negative && !cx.ty.int_ty(*ty).is_some_and(|i| i.is_signed()) => {
+                    convert_only = true;
                     format!("and holds a negative value, which `{shown}` cannot")
                 }
                 None if uses.arith && !cx.ty.int_ty(*ty).is_some_and(|i| i.bits() == 64) => {
+                    convert_only = true;
                     format!("and used in arithmetic, which would wrap at the width of `{shown}`")
                 }
                 None => "and used with different integer types".to_string(),
@@ -227,10 +232,14 @@ pub(crate) fn finish(cx: &mut Ctx, def: DefId, diags_from: usize) {
                 "`{}` is a `number`: it is declared from a literal without a type, {why}",
                 uses.name
             ));
-            d.notes.push(format!(
-                "declare it with the type it needs (`let {}: {shown} = …`; `/` on it is then integer division), or convert here with `as {shown}`",
-                uses.name
-            ));
+            d.notes.push(if convert_only {
+                format!("convert here with `as {shown}`")
+            } else {
+                format!(
+                    "declare it with the type it needs (`let {}: {shown} = …`; `/` on it is then integer division), or convert here with `as {shown}`",
+                    uses.name
+                )
+            });
         }
     }
     cx.literal_types.remove(&def);

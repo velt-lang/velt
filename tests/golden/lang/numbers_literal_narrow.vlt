@@ -1,5 +1,5 @@
 // A local declared from a literal takes a declared integer type narrower than 64 bits only
-// when it takes part in no arithmetic (#525, review of #685): `u8` arithmetic would wrap where
+// when it takes part in no arithmetic (#525): `u8` arithmetic would wrap where
 // a number does not. `c` is only passed as a `u8`, so it is one; `n` is added, so it stays a
 // number and converts with `as u8` (without it, the call is an error). Expected output is
 // Node's (with the integer types erased).
