@@ -97,7 +97,7 @@ function main() {
     "nearly",
     "alternating",
   ];
-  const sizes = [0, 1, 2, 3, 5, 16, 20, 21, 22, 50, 128, 129, 130, 1000, 4099, 30000];
+  const sizes: i64[] = [0, 1, 2, 3, 5, 16, 20, 21, 22, 50, 128, 129, 130, 1000, 4099, 30000];
   for (const shape of shapes) {
     let ok = 0;
     for (const n of sizes) {

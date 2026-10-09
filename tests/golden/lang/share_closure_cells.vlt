@@ -43,7 +43,7 @@ function main() {
   fs[0]();
   fs[0]();
   console.log(fs[1]());
-  let items = [1];
+  let items: i64[] = [1];
   const add = (x: i64) => {
     items.push(x);
   };

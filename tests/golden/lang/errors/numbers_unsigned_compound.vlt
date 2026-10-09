@@ -1,5 +1,5 @@
-// A signed JS number never converts into an unsigned place in a compound assignment: the result
-// could be negative and would wrap (#421).
+// A number never converts into a declared integer place in a compound assignment (#421, #525):
+// `i` stays a number because it holds a negative value, which a `usize` cannot.
 function main() {
   let i = -1;
   let k: usize = 3;

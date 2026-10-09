@@ -2,7 +2,7 @@
 //! ([`velt_sema::ide::Analysis`]: `type_of`, `view`, `fields`, `def_of`) about the nodes one
 //! walk over each module ([`velt_syntax::visit`]) hands them.
 //!
-//! - [`numbers`] for `int-division`, `unsigned-arith`, `default-sort`;
+//! - [`numbers`] for `int-division`, `default-sort`;
 //! - [`nulls`] for `strict-null-eq` and `undefined-into-null` (and which expressions are
 //!   `undefined` in JavaScript);
 //! - [`slots`] for `null-into-optional` and `undefined-into-null` in arguments and fields;
@@ -281,7 +281,6 @@ impl<'a> Visit<'a> for Walk<'a> {
                 numbers::assign(e, *op, target, value, t);
                 slots::assign(target, value, t);
             }
-            E::Update { op, target, .. } => numbers::update(e, *op, target, t),
             E::Template { exprs, .. } => templates::template(exprs, t),
             E::Call {
                 callee,

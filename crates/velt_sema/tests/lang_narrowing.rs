@@ -55,7 +55,7 @@ fn narrowing_applies_to_captures() {
     ok_src(
         "function keep(want: bool | null, xs: bool[]): bool[] {
            return xs.filter((x) => want == null || x === want); }
-         function f(u: string | null): usize[] {
+         function f(u: string | null): number[] {
            if (u != null) { return [1].map((x) => u.length); } return []; }
          function main() { console.log(keep(true, [true]), f(\"a\")); }",
     );

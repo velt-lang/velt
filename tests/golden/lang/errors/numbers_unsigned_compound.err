@@ -1,2 +1,3 @@
 numbers_unsigned_compound.vlt:6:8: error: mismatched types
-expected usize, found i64
+expected usize, found f64
+`i` is a `number`: it is declared from a literal without a type, and holds a negative value, which `usize` cannot

@@ -274,8 +274,9 @@ impl FnCx<'_, '_> {
         let split = self.split_nested(&v.pattern, init.ty);
         let pattern = split.as_ref().map_or(&v.pattern, |(p, _)| p);
         let pat = self.pattern(pattern, init.ty, ctx);
-        self.note_inferred_bindings(&pat, &init);
+        let numbers = self.std_number_bindings(&pat, &init, false);
         Self::push(out, S::LetPat { pat, init }, span);
+        out.extend(numbers);
         if let Some((_, nested)) = split {
             self.nested_decls(v.kind, nested, out);
         }
@@ -289,6 +290,12 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
+        // Declared from a literal and used as one integer type: that type (`literal_locals`).
+        let decided = ann
+            .is_none()
+            .then(|| self.literal_decided(name.span))
+            .flatten();
+        let ann = ann.or(decided);
         if let Some(e) = v
             .init
             .as_ref()
@@ -304,10 +311,7 @@ impl FnCx<'_, '_> {
             Err(Some(h)) => Some(h),
             Err(None) => v.init.as_ref().map(|e| match ann {
                 Some(t) => self.expr_coerce(e, t, Want::Move),
-                None => {
-                    let h = self.expr(e, None, Want::Move);
-                    self.inferred_local_init(h)
-                }
+                None => self.expr(e, None, Want::Move),
             }),
         };
         let ty = match (ann, &init) {
@@ -349,7 +353,7 @@ impl FnCx<'_, '_> {
             self.f.await_using.insert(local);
         }
         if let (None, Some(h)) = (ann, &init) {
-            self.note_inferred_local(local, h);
+            self.literal_decl(local, &name.name, h);
         }
         if let (LocalKind::Const, Some(hir::ExprKind::Closure(d))) =
             (kind, init.as_ref().map(|h| &h.kind))
@@ -405,7 +409,7 @@ impl FnCx<'_, '_> {
                 Self::push(out, S::Return(None), span);
             }
             Some(e) => {
-                let h = self.expr_coerce(e, ret, Want::Move);
+                let h = self.returned(e, ret);
                 Self::push(out, S::Return(Some(h)), span);
             }
         }

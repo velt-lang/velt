@@ -31,7 +31,7 @@ async function caller(
     if (t0 >= until) {
       break;
     }
-    const k = i % keys.length;
+    const k = i % (keys.length as usize);
     const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
     if (r.status != 200) {
       panic(`bench call failed: ${r.body}`);
@@ -104,7 +104,8 @@ function fmtMs(x: f64): string {
 // Throughput pass, then a separate latency pass (like the sigx loop's `sweepConcurrency`).
 async function sweepConcurrency(host: Host, name: string, keys: string[], ms: f64) {
   console.log(`▸ ${name}`);
-  for (const c of [1, 64, 512]) {
+  const callers: i64[] = [1, 64, 512];
+  for (const c of callers) {
     const t = await closedLoop(host.router, keys, c, ms, false);
     const l = await closedLoop(host.router, keys, c, ms / 2.0, true);
     l.samples.sort();
@@ -183,7 +184,8 @@ export async function runBenchmarks(host: Host, ms: f64, only: string) {
   }
   if (only == "" || only.includes("mem")) {
     await host.stats("clear");
-    for (const n of [20000, 100000]) {
+    const counts: i64[] = [20000, 100000];
+    for (const n of counts) {
       const before = rssBytes();
       const rate = await activateMany(host, `mem${n}`, n, 64);
       const s = await host.stats();
@@ -241,7 +243,7 @@ async function fixedCaller(
   calls: i64,
 ): Promise<i64> {
   for (let i: i64 = 0; i < calls; i++) {
-    const k = (offset + (i as usize)) % keys.length;
+    const k = (offset + (i as usize)) % (keys.length as usize);
     const r = await router.send("Tiny", keys[k], "noop", args[k], [], 0.0);
     if (r.status != 200) {
       panic(r.body);
