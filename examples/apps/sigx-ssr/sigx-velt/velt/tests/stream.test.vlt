@@ -1,0 +1,52 @@
+// Streaming with `useData`: expected strings taken from @sigx/server-renderer 1.0.1's
+// renderToStream / renderDocumentToWebStream for the same tree.
+
+import { component, Renderer, renderToString } from "../src/lib";
+import { useData } from "../src/data";
+import { delay } from "velt:timers";
+
+type Box = { n: number };
+
+async function load(): Promise<Box> {
+  await delay(5);
+  return { n: 42 };
+}
+
+const Slow = component<{}>((ctx) => {
+  const data = useData(ctx, "n", () => load());
+  return () => data.match({ pending: () => <p>loading</p>, ready: (v: Box) => <p>{v.n}</p> });
+});
+
+const Page = component<{}>((ctx) => {
+  return () => (
+    <div id="root">
+      <h1>Hi</h1>
+      <Slow />
+      <footer>end</footer>
+    </div>
+  );
+});
+
+export async function test_blocking_render_waits_for_data() {
+  assertEq(
+    await renderToString(<Page />),
+    "<div id=\"root\"><h1>Hi</h1><p>42</p><!--$c:2--><footer>end</footer></div><!--$c:1-->",
+  );
+}
+
+export async function test_streaming_writes_placeholder_then_replacement() {
+  const r = new Renderer();
+  r.streaming = true;
+  await r.render(<Page />);
+  assertEq(
+    r.take(),
+    "<div id=\"root\"><h1>Hi</h1><div data-async-placeholder=\"2\" style=\"display:contents;\"><p>loading</p></div>" +
+      "<!--$c:2--><footer>end</footer></div><!--$c:1-->",
+  );
+  assertEq(
+    await r.next(),
+    "<script>window.__SIGX_ASYNC__=Object.assign(Object.create(null),window.__SIGX_ASYNC__,{\"n\":{\"n\":42}});" +
+      "$SIGX_REPLACE(2, \"\\u003cp\\u003e42\\u003c/p\\u003e\");</script>",
+  );
+  assertEq(await r.next(), "");
+}
