@@ -46,6 +46,10 @@ fi
 # sleeps, the HTTP and database benchmarks need servers and load generators).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
   "$ROOT"/bench/strings_utf16/*.vlt)
+# NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
+for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
+  BENCHES+=("$ROOT/bench/$dir"/*.vlt)
+done
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
   spawn_many channel_pipeline; do
   BENCHES+=("$ROOT/bench/async/$name.vlt")

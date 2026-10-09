@@ -2,6 +2,7 @@
 // renderer): the baseline the TSX pages are measured against.
 
 import { escapeHtml } from "velt:html";
+import { jsxEscape } from "velt:jsx/factory";
 
 export class Fortune {
   constructor(public id: i64, public message: string) {}
@@ -47,4 +48,27 @@ export function hand(fortunes: Fortune[]): string {
 // Only the rows of `hand`, as strings (the breakdown's floor).
 export function handRows(fortunes: Fortune[]): string[] {
   return fortunes.map((f) => `<tr><td>${f.id}</td><td>${escapeHtml(f.message)}</td></tr>`);
+}
+
+// The breakdown between `hand` and the precompiled page: hand-written code in the shape the
+// compiler gives the TSX page, one step at a time.
+
+const PAGE_HEAD =
+  "<html><head><title>Fortunes</title></head><body><table><tr><th>id</th><th>message</th></tr>";
+
+// The rows joined (`jsxList`), then one template literal for the page around them.
+export function shapeNoDoctype(fortunes: Fortune[]): string {
+  return `${PAGE_HEAD}${handRows(fortunes).join("")}</table></body></html>`;
+}
+
+// `shapeNoDoctype` with the doctype prepended by another template literal, as `main.vlt` does
+// to the TSX page.
+export function shape(fortunes: Fortune[]): string {
+  return `<!DOCTYPE html>${shapeNoDoctype(fortunes)}`;
+}
+
+// `shapeNoDoctype` with the messages escaped by `jsxEscape`, as the precompiled rows are.
+export function shapeJsxEscape(fortunes: Fortune[]): string {
+  const rows = fortunes.map((f) => `<tr><td>${f.id}</td><td>${jsxEscape(f.message)}</td></tr>`);
+  return `${PAGE_HEAD}${rows.join("")}</table></body></html>`;
 }
