@@ -1,0 +1,18 @@
+import { component } from "sigx";
+import { Counter } from "./Counter";
+import { Todos } from "./Todos";
+
+export const Home = component<{}>(() => {
+  return () => (
+    <section>
+      <Counter start={1} label="Counter" />
+      <Todos
+        items={[
+          { title: "Render on Velt", done: true },
+          { title: "Hydrate with sigx", done: true },
+          { title: "Ship one package", done: false },
+        ]}
+      />
+    </section>
+  );
+});

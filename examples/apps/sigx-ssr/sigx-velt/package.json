@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
+    },
+    "./router": {
+      "types": "./src/router.d.ts",
+      "default": "./src/router.js"
     }
   },
   "files": [

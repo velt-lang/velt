@@ -88,6 +88,23 @@ try {
     "prod: hydrated, two clicks give Count: 3",
   );
   check(messages.length === 0, `prod: no console warnings or errors${messages.length ? `: ${messages.join(" | ")}` : ""}`);
+
+  // The router: a link click navigates in the browser (no page load), the back button returns.
+  await page.evaluate(() => (window.__marker = 1));
+  await page.click('a[href="/about"]');
+  check(
+    await until(async () => page.url().endsWith("/about") && (await page.textContent("section h2")) === "About"),
+    "prod: a link click shows /about",
+  );
+  check(await page.evaluate(() => window.__marker === 1), "prod: ... without a page load");
+  check((await page.getAttribute('a[href="/about"]', "class")) === "active", "prod: ... and marks its link active");
+  await page.goBack();
+  check(await until(async () => (await page.textContent(".card p")).startsWith("Count:")), "prod: the back button shows / again");
+  const direct = await browser.newPage();
+  await direct.goto(`http://127.0.0.1:${port}/about`, { waitUntil: "networkidle" });
+  await direct.click('a[href="/"]');
+  check(await until(async () => (await direct.textContent(".card p")).startsWith("Count: 1")), "prod: /about loaded directly hydrates and navigates to /");
+  await direct.close();
   await page.close();
 } finally {
   prod.kill();

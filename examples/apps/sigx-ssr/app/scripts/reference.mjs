@@ -14,7 +14,8 @@ const vite = await createServer({
   server: { middlewareMode: true, hmr: false },
   oxc: { jsx: { runtime: "automatic", importSource: "sigx" } },
   optimizeDeps: { noDiscovery: true },
-  ssr: { noExternal: ["sigx", "@sigx/server-renderer"] },
+  resolve: { dedupe: ["sigx", "@sigx/server-renderer"] },
+  ssr: { noExternal: ["sigx", "@sigx/server-renderer", "@sigx/velt"] },
 });
 try {
   const { App } = await vite.ssrLoadModule("/src/shared/App.tsx");

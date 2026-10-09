@@ -1,20 +1,19 @@
 import { component } from "sigx";
-import { Counter } from "./Counter";
-import { Todos } from "./Todos";
+import { createRouter, Link } from "@sigx/velt/router";
+import { Home } from "./Home";
+import { About } from "./About";
 
 export const App = component<{ path: string }>((ctx) => {
+  const router = createRouter(ctx, ctx.props.path);
   return () => (
     <main>
       <h1>sigx on Velt</h1>
+      <nav>
+        <Link router={router} href="/" label="Home" />
+        <Link router={router} href="/about" label="About" />
+      </nav>
       <p class="path">Rendered for {ctx.props.path}</p>
-      <Counter start={1} label="Counter" />
-      <Todos
-        items={[
-          { title: "Render on Velt", done: true },
-          { title: "Hydrate with sigx", done: true },
-          { title: "Ship one package", done: false },
-        ]}
-      />
+      {router.path.value === "/about" ? <About /> : <Home />}
     </main>
   );
 });

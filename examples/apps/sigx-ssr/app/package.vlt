@@ -7,6 +7,9 @@ export const pkg: Package = {
   version: "0.1.0",
   entry: "src/server.vlt",
   dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
+  // Modules @sigx/velt provides for both sides: Vite resolves "@sigx/velt/router" through the
+  // npm package's exports, Velt through this alias to the same package's Velt half.
+  paths: { "@sigx/velt/*": "node_modules/@sigx/velt/velt/src/*" },
   jsx: { importSource: "sigx" },
   // Compiled by Vite for the browser too: the subset both compilers accept.
   tsCompat: ["src/shared"],

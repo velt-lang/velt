@@ -6,4 +6,6 @@ import velt from "@sigx/velt";
 export default defineConfig({
   plugins: [sigx(), velt()],
   oxc: { jsx: { runtime: "automatic", importSource: "sigx" } },
+  // One sigx for the app and @sigx/velt's browser modules (here linked from ../sigx-velt).
+  resolve: { dedupe: ["sigx", "@sigx/server-renderer"] },
 });
