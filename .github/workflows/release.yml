@@ -234,8 +234,8 @@ jobs:
             echo "irm $base/get-velt.ps1 | iex"
             echo '```'
             echo
-            echo "Then run \`velt doctor\`. Velt needs the system linker: the Build Tools for Visual Studio on"
-            echo "Windows, \`build-essential\` on Linux, the Xcode command line tools on macOS"
+            echo "Then run \`velt doctor\`. The toolchain brings its own linker: no Visual Studio Build Tools,"
+            echo "Xcode or C compiler needed"
             echo "([Platforms and installation](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/tooling/platforms.md))."
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body

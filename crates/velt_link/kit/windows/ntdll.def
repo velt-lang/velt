@@ -101,7 +101,7 @@ EXPORTS
   KiUserApcDispatcher
   KiUserCallbackDispatcher
   KiUserExceptionDispatcher
-  KiUserInvertedFunctionTable
+  KiUserInvertedFunctionTable DATA
   LdrAccessResource
   LdrAddDllDirectory
   LdrAddLoadAsDataTable
@@ -173,7 +173,7 @@ EXPORTS
   LdrShutdownProcess
   LdrShutdownThread
   LdrStandardizeSystemPath
-  LdrSystemDllInitBlock
+  LdrSystemDllInitBlock DATA
   LdrUnloadAlternateResourceModule
   LdrUnloadAlternateResourceModuleEx
   LdrUnloadDll
@@ -191,9 +191,9 @@ EXPORTS
   MD5Init
   MD5Update
   MicrosoftTelemetryAssertTriggeredUM
-  NlsAnsiCodePage
-  NlsMbCodePageTag
-  NlsMbOemCodePageTag
+  NlsAnsiCodePage DATA
+  NlsMbCodePageTag DATA
+  NlsMbOemCodePageTag DATA
   NtAcceptConnectPort
   NtAccessCheck
   NtAccessCheckAndAuditAlarm
@@ -1338,7 +1338,7 @@ EXPORTS
   RtlNtPathNameToDosPathName
   RtlNtStatusToDosError
   RtlNtStatusToDosErrorNoTeb
-  RtlNtdllName
+  RtlNtdllName DATA
   RtlNumberGenericTableElements
   RtlNumberGenericTableElementsAvl
   RtlNumberOfClearBits
@@ -1719,7 +1719,7 @@ EXPORTS
   RtlpConvertRelativeToAbsoluteSecurityAttribute
   RtlpCreateProcessRegistryInfo
   RtlpEnsureBufferSize
-  RtlpFreezeTimeBias
+  RtlpFreezeTimeBias DATA
   RtlpGetDeviceFamilyInfoEnum
   RtlpGetLCIDFromLangInfoNode
   RtlpGetNameFromLangInfoNode
@@ -1745,7 +1745,7 @@ EXPORTS
   RtlpQueryProcessDebugInformationFromWow64
   RtlpQueryProcessDebugInformationRemote
   RtlpRefreshCachedUILanguage
-  RtlpScpCfgNtdllExports
+  RtlpScpCfgNtdllExports DATA
   RtlpSetInstallLanguage
   RtlpSetPreferredUILanguages
   RtlpSetUserPreferredUILanguages
@@ -2363,7 +2363,7 @@ EXPORTS
   __toascii
   _atoi64
   _errno
-  _fltused
+  _fltused DATA
   _i64toa
   _i64toa_s
   _i64tow

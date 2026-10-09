@@ -20,3 +20,23 @@ This product includes documentation text adapted from TypeScript
   THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
   EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OR CONDITIONS
   OF TITLE, FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABLITY OR NON-INFRINGEMENT.
+
+Release toolchains bundle third-party programs and libraries for linking (lib/velt/,
+lib/targets/; docs/internals/linking.md):
+
+  lib/velt/lld (lld.exe) is LLVM's linker, built from the LLVM project's sources
+  (https://github.com/llvm/llvm-project). Copyright (c) the LLVM project contributors. Licensed
+  under the Apache License 2.0 with LLVM Exceptions
+  (https://llvm.org/LICENSE.txt). The libunwind.a in the musl link kits
+  (lib/targets/*-linux-musl/) is LLVM's libunwind under the same license, as shipped with the
+  Rust toolchain.
+
+  The musl link kits (lib/targets/*-linux-musl/: crt1.o, crti.o, crtn.o, crtbegin.o,
+  crtend.o, libc.a) are musl libc (https://musl.libc.org) as shipped with the Rust toolchain.
+  Copyright (c) 2005-2020 Rich Felker, et al. Licensed under the MIT license
+  (https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT).
+
+  The other link kits are written by Velt: Windows import libraries generated from lists of the
+  system DLLs' exported names, Linux stub libraries generated from lists of glibc's exported
+  symbol names and versions, and macOS .tbd stubs listing system library symbol names. They
+  contain no code from Microsoft, the GNU C Library or Apple.

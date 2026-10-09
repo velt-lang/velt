@@ -137,6 +137,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         }
         let modes = opts.golden_modes.as_deref().unwrap_or("debug + release");
         gate.step(&format!("goldens ({modes})"), &mut goldens)?;
+        gate.bundled_linker_goldens(&ws, plan.golden_env(), opts.golden_modes.as_deref())?;
     }
     if part.has(Part::Test) && plan.vlt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
@@ -154,7 +155,47 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     Ok(())
 }
 
+/// The goldens [`Gate::bundled_linker_goldens`] runs when all of them are selected.
+const BUNDLED_LINKER_GOLDENS: &str = "m1/,m2/,m3/,m4/,async_dispatch/";
+
 impl Gate<'_> {
+    /// Some goldens again, linked with the bundled linker (`velt_link::bundled`: a link kit for
+    /// the host, written into `target/lib/targets/<host>` and removed afterwards, with the Rust
+    /// toolchain's `rust-lld`), so every OS the gate runs on checks it.
+    fn bundled_linker_goldens(
+        &mut self,
+        ws: &[String],
+        selected: Option<String>,
+        modes: Option<&str>,
+    ) -> Result<(), String> {
+        let host = host_triple()?;
+        let kit = target_dir(self.root).join("lib").join("targets").join(&host);
+        let velt_kit = target_dir(self.root).join("debug").join(exe("velt-kit"));
+        let mut build = Command::new(&velt_kit);
+        build.args(["build", "--target", &host, "--out"]).arg(&kit);
+        let result = self.step("link kit for the bundled linker", &mut build).and_then(|()| {
+            let mut goldens = cargo(&["test"]);
+            goldens
+                .args(ws)
+                .args(["--test", "golden", "--", "--nocapture", "--exact", "golden"]);
+            goldens.env("VELT_RT_PREBUILT", "1");
+            goldens.env("VELT_LINKER", "bundled");
+            goldens.env(
+                "VELT_GOLDEN",
+                selected.unwrap_or_else(|| BUNDLED_LINKER_GOLDENS.into()),
+            );
+            if let Some(modes) = modes {
+                goldens.env("VELT_GOLDEN_MODES", modes);
+            }
+            self.step("goldens (bundled linker)", &mut goldens)
+        });
+        // Without the kit, later builds in this checkout link with the system linker again.
+        if !self.dry_run {
+            let _ = std::fs::remove_dir_all(&kit);
+        }
+        result
+    }
+
     fn tests(&mut self, plan: &Plan, graph: &Graph, ws: &[String]) -> Result<(), String> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
@@ -288,6 +329,19 @@ pub fn target_dir(root: &Path) -> PathBuf {
         Some(dir) => root.join(dir),
         None => root.join("target"),
     }
+}
+
+/// `rustc -vV`'s host triple.
+fn host_triple() -> Result<String, String> {
+    let out = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|e| format!("cannot run rustc: {e}"))?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .map(|h| h.trim().to_string())
+        .ok_or_else(|| "rustc -vV printed no host".into())
 }
 
 fn exe(name: &str) -> String {

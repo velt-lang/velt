@@ -14,7 +14,9 @@ go through [SECURITY.md](SECURITY.md), not public issues.
 
 You need Rust (stable) and a system linker: the Visual Studio Build Tools ("Desktop development
 with C++") on Windows, `build-essential` on Linux, the Xcode command line tools on macOS. clang
-16 or newer enables the LLVM backend and the release-mode tests.
+16 or newer enables the LLVM backend and the release-mode tests. Programs built in a checkout
+link with the system linker; to try the bundled linker released toolchains use, see
+[Linking](docs/internals/linking.md).
 
 ```sh
 cargo build --workspace

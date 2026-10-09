@@ -1033,8 +1033,8 @@ EXPORTS
   WindowFromPhysicalPoint
   WindowFromPoint
   _UserTestTokenForInteractive
-  gSharedInfo
-  gapfnScSendMessage
+  gSharedInfo DATA
+  gapfnScSendMessage DATA
   keybd_event
   mouse_event
   wsprintfA

@@ -288,7 +288,9 @@ fn macos_list(runtime: &Path, existing: Option<String>) -> Result<String, String
     };
     let mut link = Command::new("cc");
     link.args(["-arch", arch, "-o"]).arg(&exe);
-    link.arg("-Wl,-all_load").arg(runtime);
+    // The program's own symbols (`velt_main`, …) stay undefined; the rest binds to the
+    // libraries `nm -m` then names.
+    link.arg("-Wl,-all_load").arg(runtime).arg("-Wl,-undefined,dynamic_lookup");
     link.args([
         "-framework",
         "SystemConfiguration",

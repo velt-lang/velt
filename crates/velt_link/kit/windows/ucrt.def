@@ -68,7 +68,7 @@ EXPORTS
   __current_exception_context
   __daylight
   __dcrt_get_wide_environment_from_os
-  __dcrt_initial_narrow_environment
+  __dcrt_initial_narrow_environment DATA
   __doserrno
   __dstbias
   __fpe_flt_rounds
@@ -526,7 +526,7 @@ EXPORTS
   _mbbtombc_l
   _mbbtype
   _mbbtype_l
-  _mbcasemap
+  _mbcasemap DATA
   _mbccpy
   _mbccpy_l
   _mbccpy_s
@@ -1950,7 +1950,7 @@ EXPORTS
   _wctime64_s
   _wctomb_l
   _wctomb_s_l
-  _wctype
+  _wctype DATA
   _wdupenv_s
   _wexecl
   _wexecle
