@@ -391,16 +391,12 @@ pub struct AdtDef {
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
     /// first, then drops the fields. Types with a dispose hook are never Copy.
     pub dispose: Option<DefId>,
-    /// Classes: the `toString()` method (own or inherited; no params, returns `string`, does
-    /// not throw). `String(x)` / `${x}` of a value of this static type calls it where sema could
-    /// not (generic code); a class without one is written `[object Object]`, as in JS.
+    /// Classes: the `toString()` hook. Hooks (also `toJSON()`, `__inspect()`), own or inherited,
+    /// that `String(x)`, `JSON.stringify` and `console.log` call from glue (hir_encodings.md).
     pub to_string: Option<DefId>,
-    /// Classes: the `toJSON()` method (own or inherited; no params, does not throw).
-    /// `JSON.stringify` writes what it returns instead of the fields, as in JS.
+    /// The `toJSON()` hook.
     pub to_json: Option<DefId>,
-    /// Classes: the `__inspect()` method (own or inherited; no params, does not throw).
-    /// `console.log` prints what it returns instead of the fields: a string raw, any other value
-    /// after the class name (`Headers { a: '1' }`), as Node prints a custom inspect.
+    /// The `__inspect()` hook.
     pub inspect: Option<DefId>,
     /// Classes: virtual method slots (only methods overridden somewhere), base slots first.
     /// For a subclass, the slot holds its own override or the inherited method.
