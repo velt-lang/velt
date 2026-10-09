@@ -1,0 +1,18 @@
+// Type-parameter defaults of functions are checked like those of types (TypeScript's TS2744):
+// a default may only use the parameters declared before it and must name known types; explicit
+// type arguments may leave out only the defaulted parameters (TS2558).
+function b<T = U, U = string>(): T[] {
+  return [];
+}
+
+function c<A, B = A>(a: A): B[] {
+  return [];
+}
+
+function d<T = Nope>(): T[] {
+  return [];
+}
+
+function main() {
+  console.log(c<number, string, boolean>(1));
+}

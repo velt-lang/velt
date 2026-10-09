@@ -113,7 +113,7 @@ pub struct GenericParam {
     pub name: Ident,
     /// `T extends A & B`
     pub bounds: Vec<TypeExpr>,
-    /// `T = Default` (classes, structs, interfaces and type aliases only).
+    /// `T = Default` (used where a call, `new` or type annotation leaves `T` out).
     pub default: Option<TypeExpr>,
 }
 

@@ -158,7 +158,7 @@ impl FnCx<'_, '_> {
         let c = self.fn_callable(def, format!("method `{name}`"), span);
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
-        self.explicit_type_args(&mut slots, own, type_args, span);
+        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
         let recv = self.receiver(
