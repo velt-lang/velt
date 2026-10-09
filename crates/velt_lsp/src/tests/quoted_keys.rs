@@ -1,6 +1,6 @@
 //! Quoted property names (#810) in the editor: completing `o.` offers a field named `a-b` and
 //! writes it as `o["a-b"]` (`o?.["a-b"]` after `?.`), as TypeScript's editors do; identifier
-//! names complete as before.
+//! names complete as before; a symbol-keyed member is written `c[Symbol.iterator]`.
 
 use serde_json::Value;
 
@@ -8,9 +8,17 @@ use super::client::{at, pos_of, uri, Client};
 
 const PAGE: &str = r#"type Headers = { "content-type": string; plain: boolean };
 
-function f(h: Headers, m: Headers | null): string {
+class Bag {
+  items: string[] = [];
+  *[Symbol.iterator](): Generator<string> {
+    yield* this.items;
+  }
+}
+
+function f(h: Headers, m: Headers | null, bag: Bag): string {
   const a = h.;
   const b = m?.;
+  const c = bag.;
   return "";
 }
 "#;
@@ -50,4 +58,12 @@ fn after_optional_chaining_the_question_mark_stays() {
     let items = items_after("const b = m?.");
     let quoted = find(&items, "content-type");
     assert_eq!(quoted["textEdit"]["newText"], ".[\"content-type\"]");
+}
+
+#[test]
+fn symbol_keyed_members_complete_with_their_key_not_a_string() {
+    let items = items_after("const c = bag.");
+    let symbol = find(&items, "[Symbol.iterator]");
+    assert_eq!(symbol["textEdit"]["newText"], "[Symbol.iterator]");
+    assert!(find(&items, "items").get("textEdit").is_none_or(Value::is_null));
 }
