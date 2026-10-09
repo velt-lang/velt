@@ -218,7 +218,7 @@ impl<'a> Printer<'a> {
             private,
             is_static,
             readonly,
-            f.name.name.clone(),
+            self.prop_key(&f.name),
             optional,
             ty
         ];

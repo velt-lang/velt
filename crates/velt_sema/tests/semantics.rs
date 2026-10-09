@@ -222,8 +222,11 @@ fn no_implicit_conversions() {
         es(log(vec![neg(var("u"))])),
     ]));
     assert!(has_err(&d, "cannot apply unary operator `-` to type `u8`"));
-    let d = errs(main_fn(vec![if_(int(1), vec![], None)]));
-    assert!(has_err(&d, "mismatched types") && d[0].notes[0] == "expected boolean, found f64");
+    let d = errs(main_fn(vec![es(log(vec![neg(str_("1"))]))]));
+    assert!(has_err(
+        &d,
+        "cannot apply unary operator `-` to type `string`"
+    ));
     let d = errs(main_fn(vec![es(log(vec![cast(str_("1"), "i64")]))]));
     assert!(has_err(&d, "cannot cast `string` as `i64`"));
 }

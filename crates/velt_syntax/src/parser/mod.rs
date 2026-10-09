@@ -438,6 +438,45 @@ impl<'a> Parser<'a> {
         Err(Fail)
     }
 
+    /// A property name that may be quoted, as in TypeScript: `name`, a keyword, or a string
+    /// literal (`"content-type"`, `"client:load"`) whose text becomes the name. Used where a
+    /// field is named (object types, interface fields, destructuring); object literals take
+    /// quoted keys themselves (`parse_object_prop`).
+    fn parse_prop_key(&mut self) -> PResult<Ident> {
+        if let Tok::Str(idx) = self.peek() {
+            let key = Ident {
+                name: self.payload_text(idx),
+                span: self.cur_span(),
+            };
+            self.bump();
+            self.check_quoted_key(&key);
+            return Ok(key);
+        }
+        self.parse_prop_name()
+    }
+
+    /// A quoted property name whose text Velt uses for something else: `"#x"` reads as an ES
+    /// private name and `"[Symbol.iterator]"` as a symbol key internally, so they are rejected
+    /// rather than silently taking that meaning; `"__proto__"` names the prototype in JS.
+    fn check_quoted_key(&mut self, key: &Ident) {
+        if key.name == "__proto__" {
+            self.error(
+                "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property",
+                key.span,
+            );
+        } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX)
+            || key.name.starts_with("[Symbol.")
+        {
+            self.error(
+                format!(
+                    "the property name {:?} is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys",
+                    key.name
+                ),
+                key.span,
+            );
+        }
+    }
+
     /// Consumes the current token as an identifier (the caller checked its kind).
     fn take_ident(&mut self) -> Ident {
         let t = self.tok(self.pos);

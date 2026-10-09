@@ -176,8 +176,8 @@ of doing things, even when ported code must change (with a precise error and a f
   `undefined` to `null` (one way of doing things; the `null`-vs-`undefined` bug class can't
   exist). Optional fields and parameters (`a?: T`) are `T | null`. JSON's "absent vs explicit
   null" is visible only through `JsonValue` (`has(key)` vs `isNull()`).
-- **Safe truthiness** (implemented). Conditions and `!`, `||`, `&&` accept `bool` and nullable
-  values (`if (!user) return;` is a null check; `a || b` and `a && b` return values on nullable
-  objects). Numbers and strings are rejected in conditions and in `||`/`&&`, with fixes
-  (`count !== 0`, `name !== ""`, `??` for defaults). This removes JavaScript's `0`/`""`/`NaN`
-  falsiness bugs.
+- **Truthiness** (implemented, #758). Conditions and `!`, `||`, `&&` test values of any type
+  with JavaScript's rules (`0`, `-0`, `NaN`, `""` and `null` are falsy; objects always truthy),
+  and `||` / `&&` return an operand typed like TypeScript (`n || 5` is a `number`). Valid
+  TypeScript depends on it everywhere, so compatibility wins over the stricter rule Velt had
+  before. Each test compiles to one comparison (`body/expr/truthiness.rs`).

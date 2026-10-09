@@ -1,0 +1,11 @@
+// `y["a"] = 3` writes field `a` like `y.a = 3`, so a value converted by copying its fields
+// (crates/velt_sema/src/object_copies.rs) is refused the same way.
+
+type A = { a: number; b: number };
+type B = { b: number; a: number };
+
+function main() {
+  const x: A = { a: 1, b: 2 };
+  const y: B = x;
+  y["a"] = 3;
+}

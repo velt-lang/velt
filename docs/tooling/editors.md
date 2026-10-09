@@ -65,8 +65,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   such as `push` are not marked), which you can style.
 - **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
   `"a" + xs` (a string and a value `+` does not convert, such as an array) into a template
-  literal, turn `if (count)` into `if (count !== 0)` (or `!== ""`, `!== null`, `!== 0.0`, by
-  type), replace `export default` with a named export, add `await`
+  literal, replace `export default` with a named export, add `await`
   or `spawn(...)` to a floating promise, add `async` to a method whose promise must carry
   its errors, and import a name the file uses without importing it ("Import `readFile` from
   `velt:fs`", one fix per module that exports it). A fix that applies in several places is

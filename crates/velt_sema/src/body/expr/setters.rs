@@ -13,16 +13,12 @@ use crate::body::FnCx;
 use crate::defs::member_key;
 use crate::hir::{self, TyId};
 
-/// `(object, prop)` of an assignment target `object.prop` (parentheses removed).
-fn member_parts(target: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
+/// `(object, prop)` of an assignment target `object.prop` or `object["prop"]` (parentheses
+/// removed).
+fn member_parts(target: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
     match &target.kind {
         ast::ExprKind::Paren(inner) => member_parts(inner),
-        ast::ExprKind::Member {
-            object,
-            prop,
-            optional: false,
-        } => Some((object, prop)),
-        _ => None,
+        _ => super::member::member_view(target),
     }
 }
 
@@ -36,6 +32,11 @@ pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
             optional: false,
             ..
         } => side_effect_free(object),
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } if super::member::literal_key(index).is_some() => side_effect_free(object),
         _ => false,
     }
 }
@@ -106,6 +107,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        let prop = &prop;
         if self.private_accessor_outside(obj.ty, prop, true) {
             self.check_args_loose(std::slice::from_ref(value));
             return self.error_expr(span);
@@ -140,6 +142,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        let prop = &prop;
         if self.private_accessor_outside(obj.ty, prop, true) || !self.readable(obj.ty, prop) {
             return self.error_expr(span);
         }
