@@ -65,8 +65,17 @@ members and in `#name in o` ([Classes](classes.md#classes)).
   [`velt:bigint`](../std/bigint.md).
 - **Strings**: `"..."` or `'...'`, with the escapes `\n \r \t \\ \" \' \0 \xHH \uHHHH \u{H…}`.
 - **Template literals**: `` `a ${expr} b` `` may span lines and also escape `` \` `` and `\$`.
-  `${expr}` writes strings, numbers, booleans and arrays as JS does (`${[1, 2]}` is `1,2`) and
-  other values the way `console.log` does ([Strings](types.md#strings)).
+  `${expr}` writes a value as JS's `String(x)` does: numbers, strings and booleans as JS writes
+  them, an array as its elements joined with `,` (`${[1, 2]}` is `1,2`), a class instance
+  through its `toString()` (its own or inherited, a subclass's override also through a
+  base-class value), and an object without one as `[object Object]` (std's classes as
+  `[object Map]`, `[object Headers]`, …). Errors, unions and other values are written the way
+  `console.log` prints them ([Strings](types.md#strings)).
+  - A `toString` parameter takes its default value (`toString(radix: number = 10)`), and a
+    result that is not a `string` is written with `String(result)`, as JavaScript does.
+  - A `toString` that cannot be called that way is a compile error, never silently left out: a
+    parameter without a default, an `async` one or a generator, a `void` result, type
+    parameters of its own, or one that can throw.
 - **Regular expressions**: `/ab+c/gi` is `new RegExp("ab+c", "gi")` from
   [`velt:regex`](../std/regex.md) (a global, like `RegExp` itself). A `/` after an operand is
   division.

@@ -11,12 +11,12 @@
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
-use crate::lower::{Cx, FnLower, Glue, VtableKey};
+use crate::lower::{Cx, FnLower, VtableKey};
 use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
 
 impl Cx<'_> {
     /// Concrete strict descendants of class type `cls` that can be written as JSON.
-    fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
+    pub(super) fn json_descendants(&mut self, cls: TyId) -> Vec<TyId> {
         let TyKind::Adt(target, args) = self.kind(cls) else {
             return vec![];
         };
@@ -118,6 +118,16 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
+            // A class with `toJSON()` is written as what it returns.
+            hir::Def::Adt(hir::AdtDef {
+                to_json: Some(m), ..
+            }) => {
+                let m = *m;
+                let cls = self.intern(TyKind::Adt(d, args.to_vec()));
+                let targs = self.method_targs(m, cls);
+                let ret = self.fn_def(m).ret;
+                return Some(vec![self.subst(ret, &targs)]);
+            }
             // std's private state (runtime handles) has no JSON form.
             hir::Def::Adt(a) if a.opaque => return None,
             // ES private fields (`#x`) are never written; `private x` is, as in Node.
@@ -157,6 +167,7 @@ impl FnLower<'_, '_> {
         buf: &Operand,
         place: &Place,
         ty: TyId,
+        key: Option<&Place>,
         write_static: impl FnOnce(&mut Self),
     ) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
@@ -180,8 +191,7 @@ impl FnLower<'_, '_> {
             self.branch(hit, then, next);
             self.switch_to(then);
             // A class value is its object pointer, so `place` is also a `sub`-typed place.
-            let a = self.addr(place.clone());
-            self.call_glue(Glue::JsonWrite, sub, vec![buf.clone(), a]);
+            self.json_write_with(buf, place, sub, key);
             self.goto(done);
             self.switch_to(next);
         }

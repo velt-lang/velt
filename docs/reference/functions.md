@@ -14,11 +14,30 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
+- A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
+  not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
+  parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
+  `resolve()`.
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
-  array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`. A
-  spread argument must land in the rest parameter (in JS `f(...xs)` would bind `xs[0]` to the
-  first parameter); the standard library's variadic functions (`Math.max`, `Math.min`,
-  `Math.hypot`) accept a spread anywhere.
+  array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
+  The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`) accept a
+  spread anywhere.
+- A **spread into fixed parameters** passes the elements of a value whose length is known when
+  compiling, as in TypeScript: a variable or field of a tuple type (`f(...t)` with
+  `t: [number, string]` is `f(t[0], t[1])`) or an array literal (`f(...[1, 2])`). Too few or
+  too many elements are the usual arity error, and a missing optional parameter takes its
+  default. A spread of an array type (`T[]`) into fixed parameters is an error, as in
+  TypeScript (JS would bind `undefined` to the parameters its elements do not fill); a tuple
+  returned by a call or a getter is stored in a variable first (`const t = pair(); f(...t);`),
+  since JS reads it once.
+
+  ```ts
+  function label(name: string, n: number, suffix?: string): string {
+    return `${name}=${n}${suffix ?? ""}`;
+  }
+  const p: [string, number] = ["x", 4];
+  console.log(label(...p), label(...p, "!")); // x=4 x=4!
+  ```
 - There are no overloads.
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.

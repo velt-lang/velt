@@ -1,0 +1,1 @@
+module_const_cycle.vlt:13:7: error: module constant `A` depends on itself through `g` -> `h`

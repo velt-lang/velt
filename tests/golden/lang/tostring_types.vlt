@@ -1,7 +1,7 @@
-// `${x}` of structs, anonymous objects, classes (also through a base-class reference),
-// discriminated unions, numeric and string enums, literal types and errors as values is exactly
-// what `console.log(x)` prints; in an array, an object is written `[object Object]`, as JS's
-// `String(x)` writes it (#757).
+// `${x}` of structs, anonymous objects, classes (also through a base-class reference) and
+// discriminated unions of objects is `[object Object]`, as JS's `String(x)` writes it (#613),
+// also in an array (#757); numeric and string enums, literal types and errors as values are
+// what `console.log(x)` prints.
 struct Point {
   x: i64;
   y: f64;

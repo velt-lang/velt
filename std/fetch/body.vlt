@@ -81,11 +81,17 @@ export async function collect(stream: BodyStream): Promise<u8[], IoError | Abort
  */
 export class BodyStream {
   #chunks: AsyncIterator<u8[], IoError | AbortError> | null = null;
+  // Whether its body was read when it was made (what `console.log` shows).
+  #used: bool = false;
 
-  // A stream over `chunks` (std only: `res.body`, `req.body`).
-  private static adopt(chunks: AsyncIterator<u8[], IoError | AbortError>): BodyStream {
+  // A stream over `chunks` (std only: `res.body`, `req.body`), whose body was `used` already.
+  private static adopt(
+    chunks: AsyncIterator<u8[], IoError | AbortError>,
+    used: bool = false,
+  ): BodyStream {
     const s = new BodyStream();
     s.#chunks = chunks;
+    s.#used = used;
     return s;
   }
 
@@ -105,6 +111,13 @@ export class BodyStream {
       return nothing();
     }
     return c;
+  }
+
+  /** How `console.log` shows the stream: as Node shows a body's `ReadableStream`. */
+  __inspect(): string {
+    return this.#used
+      ? "ReadableStream { locked: true, state: 'closed', supportsBYOB: true }"
+      : "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";
   }
 }
 

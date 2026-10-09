@@ -170,14 +170,14 @@ usable and no copy method is needed.
   `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
   `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
   error; build that text with a template literal (`` `Total: ${xs}` ``).
-- A template literal writes `${x}` as JS's `String(x)` does for strings, numbers, booleans,
-  `null` and arrays: an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays
-  the same way, `null` elements as empty text, an object in the array as `[object Object]`, a
-  map as `[object Map]`, a set as `[object Set]`). It calls a class's own `toString()`; other
-  values (objects, maps) are formatted the way `console.log` formats them, where JS writes
-  `[object Object]`. An array whose elements JS writes with their own method (a class with a
-  `toString()`, a `Date`, an `Error`, a `RegExp`) is a compile error in a template literal, in
-  `join` and in `toString()`: write `` `${xs.map((x) => x.toString()).join(",")}` ``.
+- A template literal writes `${x}` as JS's `String(x)` does ([Lexical structure](lexical.md)):
+  an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays the same way, `null`
+  elements as empty text, an object as `[object Object]`, a map as `[object Map]`, a set as
+  `[object Set]`), and a class instance through its `toString()`, else as `[object Object]`. An
+  array whose elements JS writes with their own method (a class with a `toString()`, a `Date`,
+  an `Error`, a `RegExp`) is a compile error in a template literal, in `join` and in
+  `toString()`: write
+  `` `${xs.map((x) => x.toString()).join(",")}` ``.
 - A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
   every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
   code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
@@ -274,7 +274,10 @@ has type `T | null`, stored without an extra allocation where possible.
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`.
+  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
+  when `d` converts to it, else `d`'s type when `x`'s non-null type converts to that, else
+  their union, as in TypeScript: with `n: number | null`, `n ?? "none"` is a
+  `number | string`.
 - `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
@@ -411,7 +414,9 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
-- Printing and template literals show the active member's value. `JSON.stringify` works on
+- Printing and template literals show the active member's value. A union with a member that
+  cannot be printed (a closure) prints once a test has narrowed it to members that can
+  (`typeof v !== "function"`). `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
@@ -707,7 +712,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
   `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
   panics like a short array, unless the pattern gives defaults. Nested patterns work too
-  (`const [[a, b], [c]] = [gen(), gen()]`).
+  (`const [[a, b], [c]] = [gen(), gen()]`). An object pattern reads properties, as in JS:
+  `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
+  is called (`const { area } = rect;`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns

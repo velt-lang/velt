@@ -54,11 +54,14 @@ mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod property_pattern;
+pub(crate) mod pure_init;
 pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;
+mod untyped_let;
 mod using;
 
 use std::collections::HashMap;
@@ -70,7 +73,8 @@ use crate::defs::{Bound, FnKind, ThrowSrc};
 use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
-pub(crate) use driver::{check_bodies, ensure_body, field_defaults};
+pub(crate) use defaults::param_defaults;
+pub(crate) use driver::{check_bodies, ensure_body, field_defaults, printable};
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,6 +234,12 @@ pub(crate) struct Frame {
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
+    /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
+    /// selects like the literal itself (TypeScript gives the constant the literal type).
+    pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
+    /// first assignment gives it its type (`untyped_let`).
+    pub untyped_lets: HashMap<LocalId, Span>,
 }
 
 impl Frame {
@@ -270,6 +280,8 @@ impl Frame {
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
             int_returns_number: false,
+            const_lits: HashMap::new(),
+            untyped_lets: HashMap::new(),
         }
     }
 }
@@ -298,6 +310,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
+    /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
+    pub void_task: Option<Span>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -332,6 +347,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: None,
+            void_task: None,
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],

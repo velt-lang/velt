@@ -1,0 +1,54 @@
+// A call initializes a module constant only when it is pure: evaluated at each use, it must
+// have no effects, no loops or recursion, and must not throw or await.
+
+function sum(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += i;
+  }
+  return s;
+}
+
+function viaSum(): number {
+  return sum(3) + 1;
+}
+
+function fact(n: number): number {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+function logged(): number {
+  console.log("hi");
+  return 1;
+}
+
+function risky(n: number): number {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return n;
+}
+
+async function later(): Promise<number> {
+  return 1;
+}
+
+function apply(f: (n: number) => number): number {
+  return f(1);
+}
+
+function id(n: number): number {
+  return n;
+}
+
+const A = viaSum();
+const B = fact(3);
+const C = logged();
+const D = risky(1);
+const E = later();
+const G = apply((n: number) => n);
+const H = id(Date.now());
+
+function main() {
+  console.log(A, B, C, D, G, H);
+}

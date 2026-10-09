@@ -4,8 +4,8 @@
 //! (JS order — later parts cannot change what an earlier part contributed), and the filled
 //! builder is the result (same layout as `VeltStr`, no `finish` call). Non-string parts are
 //! appended by the shared format glue, so `${x}` is what `console.log(x)` prints, except for
-//! arrays and tuples, which are written as JS's `String(x)` writes them (`1,2`; an object in
-//! them as `[object Object]`).
+//! arrays, tuples and objects, which are written as JS's `String(x)` writes them (`1,2`; an
+//! object as its class's `toString()` or `[object Object]`, js_string.rs).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -121,7 +121,9 @@ impl FnLower<'_, '_> {
             TyKind::Never => {}
             _ => {
                 let p = self.place_of(v, t);
-                self.push_js_string(buf, &p, t);
+                if !self.push_js_object(buf, &p, t) {
+                    self.push_js_string(buf, &p, t);
+                }
             }
         }
     }

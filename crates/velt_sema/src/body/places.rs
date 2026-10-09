@@ -16,6 +16,16 @@ pub(crate) fn is_place(e: &hir::Expr) -> bool {
     ) || matches!(&e.kind, H::Downcast(x) if is_place(x))
 }
 
+/// A variable, constant or field path of one: reading it again has no effect (unlike a getter,
+/// which is a call).
+pub(crate) fn is_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) | H::Global(_) => true,
+        H::Field { base, .. } => is_path(base),
+        _ => false,
+    }
+}
+
 /// The local a place is rooted at (through projections), if any.
 pub(crate) fn place_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {

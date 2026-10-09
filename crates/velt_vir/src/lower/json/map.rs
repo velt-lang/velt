@@ -62,7 +62,7 @@ impl FnLower<'_, '_> {
             lw.json_write(buf, &kp, kt);
             lw.push_text(buf, ":");
             let vp = lw.some_payload(&slot, slot_t);
-            lw.json_write(buf, &vp, vt);
+            lw.json_write_at(buf, &vp, vt, super::key::JsonKey::Str(&kp));
             lw.goto(skip);
             lw.switch_to(skip);
         });

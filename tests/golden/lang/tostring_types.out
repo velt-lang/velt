@@ -1,22 +1,22 @@
+struct: [object Object]
 struct: Point { x: 1, y: 2.5 }
-struct: Point { x: 1, y: 2.5 }
+nested struct: [object Object]
 nested struct: Named { name: 'Zoë', at: Point { x: -1, y: 0 }, tags: [ 'a' ] }
-nested struct: Named { name: 'Zoë', at: Point { x: -1, y: 0 }, tags: [ 'a' ] }
+empty struct: [object Object]
 empty struct: Unit {}
-empty struct: Unit {}
+anonymous: [object Object]
 anonymous: { id: 7, label: 'seven' }
-anonymous: { id: 7, label: 'seven' }
+class: [object Object]
 class: Animal { name: 'cat' }
-class: Animal { name: 'cat' }
-subclass via base: Dog { name: 'rex', tricks: 2 }
+subclass via base: [object Object]
 subclass via base: Dog { name: 'rex', tricks: 2 }
 class array: [object Object],[object Object]
 class array: [ Animal { name: 'a' }, Animal { name: 'b' } ]
+union member: [object Object]
 union member: { kind: 'rect', w: 1, h: 2.5 }
-union member: { kind: 'rect', w: 1, h: 2.5 }
+union string: [object Object]
 union string: { kind: 'label', text: 'hi' }
-union string: { kind: 'label', text: 'hi' }
-union unit: { kind: 'empty' }
+union unit: [object Object]
 union unit: { kind: 'empty' }
 union array: [object Object],[object Object]
 union array: [ { kind: 'circle', r: 1 }, { kind: 'empty' } ]
@@ -36,4 +36,4 @@ value err: ParseError { message: 'bad input x' }
 value err: ParseError { message: 'bad input x' }
 optional union: { kind: 'circle', r: 0.5 }
 optional union: { kind: 'circle', r: 0.5 }
-p=Point { x: 1, y: 2.5 } c=5 m=FAST s={ kind: 'empty' } d=down a=Dog { name: 'rex', tricks: 2 } n=Point { x: -1, y: 0 }
+p=[object Object] c=5 m=FAST s=[object Object] d=down a=[object Object] n=[object Object]

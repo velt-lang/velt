@@ -375,6 +375,28 @@ export class Headers {
     }
   }
 
+  /**
+   * How `console.log` shows the headers, like Node: `Headers { 'content-type': 'text/plain' }`,
+   * in insertion order with repeats joined (Node keeps the case a name was first added with;
+   * Velt's names are lowercase).
+   */
+  __inspect(): Record<string, string> {
+    // A body's implied `content-type` comes last, as in Node (`items` puts it first).
+    const implied = this.implied != 0;
+    const list = this.items();
+    const out: Record<string, string> = {};
+    for (let i: usize = implied ? 2 : 0; i < list.length; i += 2) {
+      const n = list[i];
+      if (out[n] == null) {
+        out[n.clone()] = this.get(n) ?? "";
+      }
+    }
+    if (implied && list.length >= 2) {
+      out["content-type"] = list[1].clone();
+    }
+    return out;
+  }
+
   private change() {
     if (this.frozen) {
       panic("TypeError: immutable");

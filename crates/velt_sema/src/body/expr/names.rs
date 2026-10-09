@@ -166,6 +166,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         want: Want,
     ) -> hir::Expr {
+        if self.untyped_use(id, false) {
+            return self.error_expr(id.span);
+        }
         if let Some(l) = self.lookup_local(&id.name, id.span) {
             self.rec_local(id.span, l);
             return self.local_expr(l, want, id.span);
@@ -266,6 +269,11 @@ impl FnCx<'_, '_> {
         crate::body::driver::ensure_global(self.cx, d);
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, name) = (g.ty, g.name.clone());
+        if want == Want::Move && crate::body::pure_init::shares_on_move(self.cx, d) {
+            // A function computed at each use: another reference to it is owned.
+            let read = self.mk(H::Global(d), ty, span);
+            return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
+        }
         if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)

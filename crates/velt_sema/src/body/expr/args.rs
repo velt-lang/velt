@@ -81,6 +81,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let expanded;
+        let args = match self.expand_spreads(c, args) {
+            Ok(Some(a)) => {
+                expanded = a;
+                &expanded[..]
+            }
+            Ok(None) => args,
+            Err(()) => return self.failed_call(c, &slots),
+        };
         let packed;
         let args = match self.pack_rest(c, args) {
             Some((p, skip)) if !skip.is_empty() => {
@@ -92,24 +101,17 @@ impl FnCx<'_, '_> {
             }
             None => args,
         };
+        // Trailing `void` parameters may be left out, as in TS: `resolve()` for a
+        // `Promise<void>`'s `resolve: (value: void) => void`.
         let min = c
             .params
             .iter()
-            .rposition(|p| p.default.is_none())
+            .rposition(|p| p.default.is_none() && p.ty != self.cx.ty.unit)
             .map_or(0, |i| i + 1);
         if args.len() < min || args.len() > c.params.len() {
             self.arg_count_error(&c.what, min, c.params.len(), args.len(), span);
             self.check_args_loose(args);
-            let type_args: Vec<TyId> = slots
-                .iter()
-                .map(|s| s.unwrap_or(self.cx.ty.error))
-                .collect();
-            let ret = self.cx.subst(c.ret, &type_args);
-            return Checked {
-                args: vec![],
-                ret,
-                type_args,
-            };
+            return self.failed_call(c, &slots);
         }
         // The expected result type is a lower-priority inference source, as in TS: it types
         // the arguments of slots no argument has fixed yet (`const y: i32 = id(1)` checks `1`
@@ -151,7 +153,11 @@ impl FnCx<'_, '_> {
             hargs.push(h);
         }
         for p in &c.params[args.len()..] {
-            let mut d = p.default.clone().expect("ICE: default checked by arity");
+            let Some(mut d) = p.default.clone() else {
+                // A left-out `void` parameter (checked by arity).
+                hargs.push(self.unit_expr(span));
+                continue;
+            };
             crate::visit::map_expr_types(&mut d, &mut |t| self.cx.subst(t, &type_args));
             d.span = span;
             hargs.push(d);
@@ -159,6 +165,20 @@ impl FnCx<'_, '_> {
         let ret = self.cx.subst(c.ret, &type_args);
         Checked {
             args: hargs,
+            ret,
+            type_args,
+        }
+    }
+
+    /// A call whose arguments were reported: no arguments, the result with what is known.
+    fn failed_call(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Checked {
+        let type_args: Vec<TyId> = slots
+            .iter()
+            .map(|s| s.unwrap_or(self.cx.ty.error))
+            .collect();
+        let ret = self.cx.subst(c.ret, &type_args);
+        Checked {
+            args: vec![],
             ret,
             type_args,
         }
@@ -188,7 +208,7 @@ impl FnCx<'_, '_> {
                 from = k;
             } else {
                 self.cx.err(
-                    "a spread argument can only fill the rest parameter (`...xs: T[]`)",
+                    "a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)",
                     args[k].span,
                 );
             }
