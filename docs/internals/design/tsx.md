@@ -170,7 +170,6 @@ Accepted by `tsc`, but behaves differently:
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
 | `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
 | `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
-| `unsigned-arith` | `-`, `-=`, `--` with an unsigned result (`xs.length - 1` wraps at zero) | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
 

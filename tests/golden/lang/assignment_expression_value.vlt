@@ -19,7 +19,7 @@ function main() {
   let line: string | null = null;
   let total: usize = 0;
   while ((line = input.next()) != null) {
-    total += line.length;
+    total += line.length as usize;
   }
   let x = 0;
   const y = (x = 5) + 1;

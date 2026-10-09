@@ -23,7 +23,7 @@ async function main() {
   xs[f("index", 1)] = f("rhs", 5);
   xs[f("index2", 0)] += f("rhs2", 1);
   console.log(xs[0], xs[1]);
-  let i = 0;
+  let i: i64 = 0;
   xs[i] = i++;
   xs[f("idx", 1)] = await g(7);
   const b = new Box();

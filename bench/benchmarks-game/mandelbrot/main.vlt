@@ -27,7 +27,7 @@ function inSet(cr: f64, ci: f64): i64 {
 // Row y of the bitmap: `size` pixels, most significant bit first, the last byte padded with 0s.
 function renderRow(y: i64, size: i64, out: u8[]) {
   const ci = (2.0 * (y as f64)) / (size as f64) - 1.0;
-  let bits = 0;
+  let bits: i64 = 0;
   for (let x = 0; x < size; x++) {
     const cr = (2.0 * (x as f64)) / (size as f64) - 1.5;
     bits = (bits << 1) | inSet(cr, ci);

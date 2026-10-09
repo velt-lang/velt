@@ -75,19 +75,19 @@ export class RespParser {
         this.buf = Buffer.alloc(INITIAL as usize);
       }
     }
-    if (this.end - this.pos + data.length > this.limit) {
+    if (this.end - this.pos + (data.length as i64) > this.limit) {
       throw new QueryBufferFull("query buffer limit");
     }
-    if (this.end + data.length + 2 > this.buf.length) {
+    if (this.end + (data.length as i64) + 2 > this.buf.length) {
       // Make room: drop the parsed prefix, then grow if that isn't enough.
       if (this.pos > 0) {
         this.buf.copyWithin(0, this.pos, this.end);
         this.end -= this.pos;
         this.pos = 0;
       }
-      if (this.end + data.length + 2 > this.buf.length) {
+      if (this.end + (data.length as i64) + 2 > this.buf.length) {
         let size = this.buf.length * 2;
-        while (size < this.end + data.length + 2) {
+        while (size < this.end + (data.length as i64) + 2) {
           size *= 2;
         }
         const grown = Buffer.alloc(size);
@@ -96,7 +96,7 @@ export class RespParser {
       }
     }
     this.buf.set(data, this.end as usize);
-    this.end += data.length;
+    this.end += data.length as i64;
     this.buf[this.end] = CR;
     this.buf[this.end + 1] = LF;
   }
@@ -104,7 +104,7 @@ export class RespParser {
   /// The CR that ends the line starting at `from`, or -1 if it hasn't arrived. The sentinel CR
   /// at `end` stops the search there.
   private lineEnd(from: i64): i64 {
-    const cr = this.buf.indexOf(CR, from);
+    const cr = this.buf.indexOf(CR, from) as i64;
     return cr < 0 || cr + 1 >= this.end ? -1 : cr;
   }
 
@@ -203,7 +203,7 @@ export class RespParser {
 
   /// An inline command: one line, arguments separated by spaces (what `telnet` users type).
   private inline(): u8[][] | null {
-    const eol = this.buf.indexOf(LF, this.pos); // the sentinel LF at end + 1 stops it
+    const eol = this.buf.indexOf(LF, this.pos) as i64; // the sentinel LF at end + 1 stops it
     if (eol < 0 || eol >= this.end) {
       if (this.end - this.pos > MAX_LINE) {
         throw new ProtocolError("too big inline request");
@@ -249,9 +249,9 @@ export class Writer {
   }
 
   bytes(data: u8[]) {
-    this.reserve(data.length);
+    this.reserve(data.length as i64);
     this.buf.set(data, this.length as usize);
-    this.length += data.length;
+    this.length += data.length as i64;
   }
 
   private byte(b: u8) {
@@ -318,7 +318,7 @@ export class Writer {
   /// An error reply from raw bytes (they may quote request bytes that aren't UTF-8), with CR
   /// and LF turned into spaces.
   errorBytes(message: u8[]) {
-    this.reserve(message.length + 3);
+    this.reserve((message.length as i64) + 3);
     this.byte(45);
     for (let i = 0; i < message.length; i++) {
       const b = message[i];
@@ -332,10 +332,10 @@ export class Writer {
   }
 
   bulk(data: u8[]) {
-    this.header(36, data.length);
-    this.reserve(data.length + 2);
+    this.header(36, data.length as i64);
+    this.reserve((data.length as i64) + 2);
     this.buf.set(data, this.length as usize);
-    this.length += data.length;
+    this.length += data.length as i64;
     this.crlf();
   }
 

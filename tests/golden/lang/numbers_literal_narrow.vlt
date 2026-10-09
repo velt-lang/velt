@@ -1,0 +1,19 @@
+// A local declared from a literal takes a declared integer type narrower than 64 bits only
+// when it takes part in no arithmetic (#525): `u8` arithmetic would wrap where
+// a number does not. `c` is only passed as a `u8`, so it is one; `n` is added, so it stays a
+// number and converts with `as u8` (without it, the call is an error). Expected output is
+// Node's (with the integer types erased).
+function takeU8(b: u8): u8 {
+  return b;
+}
+
+function main() {
+  let c = 7;
+  console.log(takeU8(c));
+  let n = 200;
+  console.log(takeU8(n as u8));
+  console.log(n + n);
+  let m = 100;
+  m++;
+  console.log(takeU8(m as u8), m * 3);
+}

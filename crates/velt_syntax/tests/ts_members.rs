@@ -22,12 +22,12 @@ fn field_types_come_from_initializers() {
         tys,
         [
             "boolean",
-            "i64",
-            "f64",
+            "number",
+            "number",
             "string",
             "string",
             "Map<string, i64>",
-            "i64[]"
+            "number[]"
         ]
     );
     let e = errors("class P { x = f(); } function f(): i64 { return 1; }");

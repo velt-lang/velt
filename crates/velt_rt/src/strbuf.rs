@@ -83,7 +83,22 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u64(buf: *mut VeltStrBuf, v: u64) {
 /// Append an `f64` formatted like JS `String(v)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
+    // A whole number below 2^53 (`${i}`) is its integer digits, as fast as an integer's.
+    if let Some(i) = fmt::whole(v) {
+        return velt_rt_strbuf_push_i64(buf, i);
+    }
     (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
+}
+
+/// Append an `f64` the way `console.log` prints it (node's `util.inspect`: `-0` is `-0`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_f64(buf: *mut VeltStrBuf, v: f64) {
+    if v != 0.0 {
+        if let Some(i) = fmt::whole(v) {
+            return velt_rt_strbuf_push_i64(buf, i);
+        }
+    }
+    (*buf).push_with_summary(|b| fmt::push_inspect_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append an `f64` the way `JSON.stringify` does: JS formatting, `null` for NaN/±Infinity.

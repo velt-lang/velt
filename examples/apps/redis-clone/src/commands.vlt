@@ -123,7 +123,7 @@ export function parseScore(b: u8[]): f64 {
     }
     return negative ? -v : v;
   }
-  if (!isDecimal(s, body)) {
+  if (!isDecimal(s, body as i64)) {
     throw notFloat();
   }
   const v = Number(s);
@@ -454,13 +454,13 @@ function pop(db: Db, name: string, args: u8[][], out: Writer, front: bool) {
   if (count < 0) {
     out.bulk((front ? l.popFront() : l.popBack())!);
   } else {
-    const n = count < l.length ? count : l.length;
+    const n = count < (l.length as i64) ? count : (l.length as i64);
     out.array(n);
     for (let i: i64 = 0; i < n; i++) {
       out.bulk((front ? l.popFront() : l.popBack())!);
     }
   }
-  dropIfEmpty(db, key, l.length);
+  dropIfEmpty(db, key, l.length as i64);
 }
 
 function ttl(db: Db, key: string, ms: bool, out: Writer) {
@@ -593,7 +593,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         out.ok();
         return;
       }
-      out.array(2 * (args.length - 2));
+      out.array(2 * ((args.length as i64) - 2));
       for (let i = 2; i < args.length; i++) {
         const p = text(args[i]).toLowerCase();
         out.bulkString(p);
@@ -664,7 +664,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     }
     case "mget":
       arity(name, args, -2);
-      out.array(args.length - 1);
+      out.array((args.length as i64) - 1);
       for (let i = 1; i < args.length; i++) {
         const key = text(args[i]);
         const v = db.kind(key) === "string" ? db.strings.get(key) : null;
@@ -690,20 +690,20 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       const cur = db.getString(key);
       if (cur == null) {
         db.setString(key, args[2], true);
-        out.integer(args[2].length);
+        out.integer(args[2].length as i64);
       } else {
         const joined = Buffer.alloc(cur.length + args[2].length);
         joined.set(cur, 0);
         joined.set(args[2], cur.length as usize);
         db.setString(key, joined, true);
-        out.integer(joined.length);
+        out.integer(joined.length as i64);
       }
       return;
     }
     case "strlen": {
       arity(name, args, 2);
       const v = db.getString(text(args[1]));
-      out.integer(v == null ? 0 : v.length);
+      out.integer(v == null ? 0 : (v.length as i64));
       return;
     }
     case "incr":
@@ -761,7 +761,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       arity(name, args, 2);
       const pattern = text(args[1]);
       const hits = db.keys().filter((k) => globMatch(pattern, k));
-      out.array(hits.length);
+      out.array(hits.length as i64);
       for (const k of hits) {
         out.bulkString(k);
       }
@@ -797,7 +797,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
           l.pushBack(args[i]);
         }
       }
-      out.integer(l.length);
+      out.integer(l.length as i64);
       return;
     }
     case "lpop":
@@ -811,7 +811,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "llen": {
       arity(name, args, 2);
       const l = list(db, text(args[1]), false);
-      out.integer(l == null ? 0 : l.length);
+      out.integer(l == null ? 0 : (l.length as i64));
       return;
     }
     case "lindex": {
@@ -834,7 +834,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         out.array(0);
         return;
       }
-      const [a, b] = range(start, stop, l.length);
+      const [a, b] = range(start, stop, l.length as i64);
       if (a > b) {
         out.array(0);
         return;
@@ -880,7 +880,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
     case "hmget": {
       arity(name, args, -3);
       const h = hash(db, text(args[1]), false);
-      out.array(args.length - 2);
+      out.array((args.length as i64) - 2);
       for (let i = 2; i < args.length; i++) {
         const v = h == null ? null : h.get(text(args[i]));
         if (v == null) {
@@ -1165,18 +1165,18 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
       parts.push(utf8Encode("'"));
       parts.push(arg);
       parts.push(utf8Encode("' "));
-      shown += arg.length + 3;
+      shown += (arg.length as i64) + 3;
     }
   }
   let total: i64 = 0;
   for (const p of parts) {
-    total += p.length;
+    total += p.length as i64;
   }
   const detail = Buffer.alloc(total as usize);
   let at: i64 = 0;
   for (const p of parts) {
     detail.set(p, at as usize);
-    at += p.length;
+    at += p.length as i64;
   }
   throw new CommandError(utf8DecodeLossy(detail), detail);
 }
