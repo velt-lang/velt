@@ -263,6 +263,11 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
+            if self.reads_properties(init.ty, fields) {
+                return self.property_decls(v.kind, fields, init, out);
+            }
+        }
         // `const [a, b] = gen()`: the values the pattern needs, as an array.
         let init = self.destructured(&v.pattern, init);
         let place = super::places::is_place(&init);
