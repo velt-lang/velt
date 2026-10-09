@@ -14,8 +14,13 @@ import { spawn, execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { realpathSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve, relative, sep, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const STATUS = /^velt dev: (started|hot-swapped|restarted|build failed|program exited|exited)/;
+// This package's Velt half (the provider), which velt dev also rebuilds for.
+const PROVIDER_DIR = fileURLToPath(new URL("../velt", import.meta.url));
+
+const HOP_BY_HOP = new Set(["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "accept-encoding"]);
+const STATUS = /^velt dev: (started|reloaded|hot-swapped|restarted|build failed|program exited)/;
 const LISTENING = /^sigx: listening on /;
 
 /** A free TCP port on 127.0.0.1. */
@@ -56,7 +61,9 @@ const STUB_PREFIX = "\0sigx-velt-fns:";
 const EXPORTED_FN = /^export\s+async\s+function\s+([A-Za-z_$][\w$]*)/gm;
 
 function serverFnStubs(file, root) {
-  const module = relative(root, file).replace(/\\/g, "/").replace(/\.vlt$/, "");
+  // Real paths on both sides, so a project under a symlink (/tmp → /private/tmp) gets the keys
+  // its server registers.
+  const module = relative(realpathSync(root), realpathSync(file)).replace(/\\/g, "/").replace(/\.vlt$/, "");
   const names = [...readFileSync(file, "utf8").matchAll(EXPORTED_FN)].map((m) => m[1]);
   return [
     `import { __serverFnStub } from "@sigx/server/client";`,
@@ -107,17 +114,20 @@ export default function velt(opts = {}) {
       const args = ["dev", ...(opts.entry ? [opts.entry] : []), "--", "--dev", "--port", String(port), "--template", "index.html"];
       const child = spawn(bin, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
 
-      // The server is "settled" when it has answered the last change. Document requests wait for
-      // that (up to holdMs), so a refresh right after a save never gets the old server's HTML.
-      let settled = null; // null: settled; else { promise, resolve }
+      // The server is "settled" when it has answered the last change. Requests wait for that, so
+      // a refresh right after a save never gets the old server's HTML; a change velt dev doesn't
+      // answer (a file its build doesn't read) settles after holdMs.
+      let settled = null; // null: settled; else { promise, resolve, timer }
       const unsettle = () => {
         if (settled) return;
         let done;
         const promise = new Promise((r) => (done = r));
-        settled = { promise, resolve: done };
+        settled = { promise, resolve: done, timer: setTimeout(() => settle(), holdMs) };
       };
       const settle = () => {
-        settled?.resolve();
+        if (!settled) return;
+        clearTimeout(settled.timer);
+        settled.resolve();
         settled = null;
       };
       unsettle(); // until the first "listening"
@@ -145,13 +155,20 @@ export default function velt(opts = {}) {
             err: { message: output.join("\n").trim() || line, stack: "", plugin: "sigx-velt", id: changed ?? undefined },
           });
           settle(); // the previous version keeps serving
-        } else if (what === "hot-swapped" || what === "restarted") {
+        } else if (what === "program exited") {
+          overlay = true;
+          server.ws.send({
+            type: "error",
+            err: { message: [...output, line].join("\n").trim(), stack: "", plugin: "sigx-velt" },
+          });
+          settle(); // velt dev waits for the next change
+        } else if (what === "hot-swapped" || what === "restarted" || what === "reloaded") {
           // A file Vite also serves updates the browser through Vite's HMR; anything else (server
           // code, the provider) changes only what the server renders: reload the page.
           const clientModule = changed && server.moduleGraph.getModulesByFile(changed)?.size;
           if (overlay || !clientModule) server.ws.send({ type: "full-reload" });
           overlay = false;
-          if (what === "hot-swapped") settle(); // a restart settles on its "listening" line
+          if (what === "hot-swapped") settle(); // a new process settles on its "listening" line
         }
         output = [];
         changed = null;
@@ -172,13 +189,13 @@ export default function velt(opts = {}) {
         log.error(e.code === "ENOENT" ? missingVelt(bin).message : String(e));
         settle();
       });
-      server.httpServer?.on("close", () => child.kill("SIGTERM"));
+      const stop = () => child.kill("SIGTERM");
+      server.httpServer?.on("close", stop);
+      process.on("exit", stop);
 
       // Which saves velt dev rebuilds for: Velt sources and the shared component folders. (A
       // machine-readable `velt dev` event stream would name the files it watches instead.)
-      const provider = existsSync(resolve(root, "node_modules/@sigx/velt/velt"))
-        ? realpathSync(resolve(root, "node_modules/@sigx/velt/velt"))
-        : null;
+      const provider = existsSync(PROVIDER_DIR) ? realpathSync(PROVIDER_DIR) : null;
       if (provider) server.watcher.add(provider);
       const isServerFile = (file) =>
         file.endsWith(".vlt") ||
@@ -191,37 +208,56 @@ export default function velt(opts = {}) {
         unsettle();
       });
 
+      // A request as the Velt server answers it: headers (cookies, auth) both ways, redirects
+      // passed on, not followed.
+      const forward = async (req) => {
+        if (settled) await settled.promise;
+        const headers = {};
+        for (const [k, v] of Object.entries(req.headers)) {
+          if (!HOP_BY_HOP.has(k) && v !== undefined) headers[k] = Array.isArray(v) ? v.join(", ") : v;
+        }
+        const chunks = [];
+        if (req.method !== "GET" && req.method !== "HEAD") for await (const c of req) chunks.push(c);
+        return fetch(`http://127.0.0.1:${port}${req.url}`, {
+          method: req.method,
+          headers,
+          body: chunks.length ? Buffer.concat(chunks) : undefined,
+          redirect: "manual",
+        });
+      };
+      const copyHeaders = (r, res) => {
+        for (const [k, v] of r.headers) {
+          if (!HOP_BY_HOP.has(k) && k !== "content-length" && k !== "content-encoding" && k !== "set-cookie") res.setHeader(k, v);
+        }
+        const cookies = r.headers.getSetCookie?.() ?? [];
+        if (cookies.length) res.setHeader("set-cookie", cookies);
+        res.statusCode = r.status;
+      };
+
       // Server-function calls go to the Velt server as they are.
       server.middlewares.use(async (req, res, next) => {
         if (!(req.url ?? "").startsWith("/_sigx/fn/")) return next();
         try {
-          if (settled) await Promise.race([settled.promise, new Promise((r) => setTimeout(r, holdMs))]);
-          const chunks = [];
-          for await (const c of req) chunks.push(c);
-          const r = await fetch(`http://127.0.0.1:${port}${req.url}`, {
-            method: req.method,
-            headers: { "content-type": req.headers["content-type"] ?? "", origin: req.headers.origin ?? "" },
-            body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
-          });
-          res.statusCode = r.status;
-          res.setHeader("content-type", r.headers.get("content-type") ?? "application/json");
+          const r = await forward(req);
+          copyHeaders(r, res);
           res.end(Buffer.from(await r.arrayBuffer()));
         } catch (e) {
           next(e);
         }
       });
 
+      // Documents: Velt renders, Vite adds its client and HMR (transformIndexHtml). Dev buffers
+      // the document; production streams it.
       server.middlewares.use(async (req, res, next) => {
         if (!isDocument(req)) return next();
         try {
-          if (settled) await Promise.race([settled.promise, new Promise((r) => setTimeout(r, holdMs))]);
-          const r = await fetch(`http://127.0.0.1:${port}${req.url}`, {
-            headers: { accept: req.headers.accept ?? "text/html" },
-          });
-          const html = await server.transformIndexHtml(req.url, await r.text(), req.originalUrl);
-          res.statusCode = r.status;
-          res.setHeader("content-type", "text/html; charset=utf-8");
-          res.end(html);
+          const r = await forward(req);
+          copyHeaders(r, res);
+          if (!(r.headers.get("content-type") ?? "").startsWith("text/html")) {
+            res.end(Buffer.from(await r.arrayBuffer()));
+            return;
+          }
+          res.end(await server.transformIndexHtml(req.url, await r.text(), req.originalUrl));
         } catch (e) {
           next(e);
         }

@@ -214,7 +214,7 @@ async function runLoads(loads: Load[]): Promise<void> {
 // Per-render state: the output, the next component id, the reactive runtime components create
 // their signals in, the data state, and (when streaming) the components still loading.
 export class Renderer {
-  // Output pieces, joined once at the end (measured the same as `+=` on one string, #379).
+  // Output pieces, joined once at the end (measured the same as `+=` on one string, velt-lang/velt#379).
   out: string[] = [];
   nextId = 1;
   lastText: bool = false;

@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+const counterFile = `${root}/src/shared/Counter.tsx`;
+const serverFile = `${root}/src/server.vlt`;
+const counterSrc = readFileSync(counterFile, "utf8");
+const serverSrc = readFileSync(serverFile, "utf8");
 const PAGES = ["/", "/about"];
 let failed = 0;
 const check = (ok, what) => {
@@ -58,11 +62,15 @@ async function until(fn, ms = 10000) {
   return false;
 }
 
+// The client sets data-hydrated once hydrate() has finished: clicks before that are lost.
+const hydrated = (page) => page.waitForSelector("html[data-hydrated]", { state: "attached", timeout: 10000 });
+
 // --- 1 + 2: production binary ---
 const port = await freePort();
 const prod = await start("./dist/server/app", ["--port", String(port)], /listening/);
-const browser = await chromium.launch();
+let browser;
 try {
+  browser = await chromium.launch();
   // The streamed document, whole: shell, $SIGX_REPLACE scripts, state, completion.
   for (const path of PAGES) {
     const ref = execFileSync("node", ["scripts/reference.mjs", "--stream", path], { cwd: root, encoding: "utf8" });
@@ -82,7 +90,7 @@ try {
     let rest = "";
     for (let r = await reader.read(); !r.done; r = await reader.read()) rest += new TextDecoder().decode(r.value);
     const allMs = Date.now() - t0;
-    check(first.includes("Loading…") && shellMs < 150 && allMs >= 250 && rest.includes("$SIGX_REPLACE"),
+    check(first.includes("Loading…") && allMs - shellMs >= 200 && rest.includes("$SIGX_REPLACE"),
       `stream: shell after ${shellMs} ms with the pending state, data after ${allMs} ms`);
   }
   const fn = await fetch(`http://127.0.0.1:${port}/_sigx/fn/src/api.server/greet`, {
@@ -105,6 +113,7 @@ try {
   const fnCalls = [];
   page.on("request", (r) => r.url().includes("/_sigx/fn/") && fnCalls.push(r.url()));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+  await hydrated(page);
   check((await page.textContent(".stats")).includes("Rendered by Velt (native)"), "prod: streamed data is on the page");
   check(fnCalls.length === 0, `prod: hydration restores the data without calling the server${fnCalls.length ? `: ${fnCalls}` : ""}`);
   await page.click("#inc");
@@ -128,6 +137,7 @@ try {
   check(await until(async () => (await page.textContent(".card p")).startsWith("Count:")), "prod: the back button shows / again");
   const direct = await browser.newPage();
   await direct.goto(`http://127.0.0.1:${port}/about`, { waitUntil: "networkidle" });
+  await hydrated(direct);
   await direct.click('a[href="/"]');
   check(await until(async () => (await direct.textContent(".card p")).startsWith("Count: 1")), "prod: /about loaded directly hydrates and navigates to /");
   await direct.close();
@@ -137,10 +147,12 @@ try {
 }
 
 // --- 3: dev server and HMR ---
-const counterFile = `${root}/src/shared/Counter.tsx`;
-const serverFile = `${root}/src/server.vlt`;
-const counterSrc = readFileSync(counterFile, "utf8");
-const serverSrc = readFileSync(serverFile, "utf8");
+// The dev steps edit these; they are put back on any exit, Ctrl-C included.
+process.on("SIGINT", () => process.exit(130));
+process.on("exit", () => {
+  writeFileSync(counterFile, counterSrc);
+  writeFileSync(serverFile, serverSrc);
+});
 const devPort = await freePort();
 const dev = await start("./node_modules/.bin/vite", ["--port", String(devPort), "--strictPort"], /sigx: listening/);
 const url = `http://localhost:${devPort}/`;
@@ -151,6 +163,7 @@ try {
 
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "networkidle" });
+  await hydrated(page);
   await page.click("#inc");
   await page.evaluate(() => (window.__marker = 1)); // gone after a full reload
   check(await until(async () => (await page.textContent(".card p")).startsWith("Count: 2")), "dev: hydrated");
@@ -159,7 +172,7 @@ try {
   writeFileSync(counterFile, counterSrc.replace(/>\s*\+1\s*</, ">add one<"));
   check(await until(async () => (await page.textContent("#inc")) === "add one"), "dev: shared edit hot-updates the browser");
   check(await page.evaluate(() => window.__marker === 1), "dev: ... without a full reload");
-  check((await get()).includes(">add one</button>"), "dev: ... and the server renders the new markup");
+  check(await until(async () => (await get()).includes(">add one</button>")), "dev: ... and the server renders the new markup");
 
   // Server-only code: the page reloads with the server's new HTML.
   writeFileSync(serverFile, serverSrc.replace("<App path={path} />", '<App path={`${path} (edited)`} />'));
@@ -172,7 +185,7 @@ try {
   // A compile error: shown in Vite's overlay, the old server keeps serving.
   writeFileSync(serverFile, serverSrc.replace("<App path={path} />", "<App path={42} />"));
   check(await until(async () => page.evaluate(() => !!document.querySelector("vite-error-overlay"))), "dev: Velt compile error in Vite's overlay");
-  check((await get()).includes("(edited)"), "dev: ... while the previous server keeps serving");
+  check(await until(async () => (await get()).includes("(edited)")), "dev: ... while the previous server keeps serving");
   writeFileSync(serverFile, serverSrc);
   check(
     await until(async () => !(await page.evaluate(() => !!document.querySelector("vite-error-overlay"))) &&

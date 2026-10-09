@@ -19,14 +19,14 @@ sigx-velt/                 the npm package @sigx/velt: both halves in one packag
                            server (streaming documents, static files, server functions)
   velt/tests/*.test.vlt    provider unit tests (expected strings taken from real sigx output)
 app/                       what a user's app looks like
-  package.json             sigx, @sigx/vite, @sigx/velt from npm
+  package.json             sigx, @sigx/vite and @sigx/velt (here linked from ../sigx-velt)
   package.vlt              dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
                            paths: { "@sigx/velt/*": "node_modules/@sigx/velt/velt/src/*" }
   vite.config.ts           plugins: [sigx(), velt()]
   index.html               <!--ssr-outlet--> and the client entry
   src/shared/*.tsx         components, compiled by Vite (JS sigx) and by Velt (the provider)
-  src/client.tsx           hydrate
-  src/entry-client.js      the browser entry (works around a sigx HMR ordering issue, below)
+  src/entry-client.js      the browser entry: hydrates (plain JS, which Velt's tools skip; it
+                           also works around a sigx HMR ordering issue, below)
   src/api.server.vlt       server functions, written in Velt (api.server.d.ts types them for TS)
   src/server.vlt           the native server: serveApp(options(), render, serverFns)
   scripts/reference.mjs    renders the same components with JavaScript sigx (api.reference.js
@@ -103,10 +103,11 @@ Both take `ctx` where JavaScript sigx finds the component itself (`useRouter()`,
 ## Develop, build, run
 
 ```sh
-cd app && pnpm install         # needs `velt` on PATH, or VELT=/path/to/velt
-pnpm dev                       # vite: http://localhost:5173
+cd app && pnpm install
+pnpm dev                       # vite: http://localhost:5173 (needs `velt` on PATH, or VELT=…)
 pnpm build                     # dist/client (Vite) + dist/server/app (velt build --release)
 ./dist/server/app --port 3000  # serves dist/client and renders the pages
+# deploy: HOST=0.0.0.0 PORT=8080 ./dist/server/app (default 127.0.0.1:3000)
 pnpm e2e                       # after pnpm build
 ```
 
@@ -125,11 +126,12 @@ The `velt()` plugin:
 | You edit | Browser | Velt server (`velt dev`) | What the plugin does |
 |---|---|---|---|
 | `src/shared/*.tsx` | sigx HMR swaps the component in place and keeps its state | hot-swaps the changed functions (~150 ms); the next load renders the new markup | nothing more |
-| `src/client.tsx`, CSS | Vite HMR | not involved | nothing |
-| `src/server.vlt`, the provider | Vite doesn't see it | hot-swap, or a restart when a layout or signature changed (the port is kept) | a full reload once Velt reports the swap |
-| a Velt compile error | Vite's error overlay shows the diagnostics | the previous version keeps serving | clears the overlay once the error is fixed |
+| `src/entry-client.js`, CSS | Vite HMR | not involved | nothing |
+| `src/server.vlt`, the provider | not in Vite's module graph | hot-swap, or a restart when a layout or signature changed (the port is kept) | a full reload once Velt reports the swap |
+| a Velt compile error | Vite's error overlay shows the diagnostics | the previous version keeps serving | shows the diagnostics; reloads (clearing it) once a build succeeds |
 
-Between a save and Velt's status line, document requests wait (up to 2 s), so a refresh never
+Between a save and Velt's status line, document and server-function requests wait (up to 2 s),
+so a refresh never
 gets the old server's HTML.
 
 ## Checked by `scripts/e2e.mjs`
@@ -151,6 +153,17 @@ gets the old server's HTML.
 type-checks the shared components against JavaScript sigx. This example has no `package.vlt` at
 its top level, so the gate's example-apps test skips it: it needs `pnpm install` first.
 
+## Known limits
+
+- Components that load data are streamed one after another, in page order. sigx starts all
+  loads at once and streams them as they arrive.
+- A load that fails ends the stream without sigx's error state.
+- Two `useData` calls with the same key fetch twice.
+- In dev, documents are buffered, not streamed, because Vite's `transformIndexHtml` needs the
+  whole page.
+- The stub generator finds server functions with a regular expression
+  (`export async function name`). Ideas 8 and 3 below would replace it.
+
 ## What this found
 
 **Velt**
@@ -164,7 +177,6 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
 - Not supported yet:
   - type parameter defaults (`component<P = {}>`); shared code writes `component<{}>`;
   - quoted property names in object types (`{ "client:load"?: bool }`);
-  - `decodeURIComponent`;
   - `setTimeout` with a sync callback, and `resolve()` with no argument for `Promise<void>`;
   - `paths` targets as arrays, as in TypeScript.
 - After #685, std's `Response` `status` and `serve`'s `port` still take `i64`, so a `number`

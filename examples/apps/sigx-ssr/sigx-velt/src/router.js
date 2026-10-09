@@ -29,6 +29,8 @@ export const Link = component((ctx) => {
       href: ctx.props.href,
       class: ctx.props.router.path.value === ctx.props.href ? "active" : "",
       onClick: (e) => {
+        // New tab, new window, download: the browser's.
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
         e.preventDefault();
         ctx.props.router.navigate(ctx.props.href);
       },

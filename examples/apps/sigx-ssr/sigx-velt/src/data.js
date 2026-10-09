@@ -4,5 +4,6 @@
 import { useData as sigxUseData } from "sigx";
 
 export function useData(ctx, key, fetcher) {
-  return sigxUseData(key, fetcher);
+  // sigx calls a fetcher with `{ signal }`; the shared signature passes the key, as on the server.
+  return sigxUseData(key, () => fetcher(key));
 }

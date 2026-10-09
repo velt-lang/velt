@@ -50,3 +50,28 @@ export async function test_streaming_writes_placeholder_then_replacement() {
   );
   assertEq(await r.next(), "");
 }
+
+type Note = { text: string };
+
+async function loadNote(): Promise<Note> {
+  return { text: "</script><b>&" };
+}
+
+const Unsafe = component<{}>((ctx) => {
+  const note = useData(ctx, "k</script>", () => loadNote());
+  return () => note.match({ pending: () => <i>wait</i>, ready: (v: Note) => <em>{v.text}</em> });
+});
+
+// Data and HTML that contain `</script>` cannot end the replacement script early.
+export async function test_streamed_script_escapes_closing_tags() {
+  const r = new Renderer();
+  r.streaming = true;
+  await r.render(<Unsafe />);
+  r.take();
+  assertEq(
+    await r.next(),
+    "<script>window.__SIGX_ASYNC__=Object.assign(Object.create(null),window.__SIGX_ASYNC__," +
+      "{\"k\\u003c/script\\u003e\":{\"text\":\"\\u003c/script\\u003e\\u003cb\\u003e&\"}});" +
+      "$SIGX_REPLACE(1, \"\\u003cem\\u003e&lt;/script&gt;&lt;b&gt;&amp;\\u003c/em\\u003e\");</script>",
+  );
+}

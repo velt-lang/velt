@@ -2,8 +2,8 @@
 // @sigx/server-renderer's `createFetchHandler`, in sigx's composition order: static assets
 // first, then the document render.
 //
-//   main(): const opts = options();               // --port, --template, --static (see below)
-//           await serveApp(opts, (url) => <App />);
+//   main(): const opts = options();     // --host, --port, --template, --static (see below)
+//           await serveApp(opts, (url) => <App />, serverFns);
 //
 // In development the @sigx/velt Vite plugin starts the program with `--dev`: it then serves
 // only documents (Vite serves the client modules and assets) and reads the template on each
@@ -11,7 +11,8 @@
 
 import { serve, Server } from "velt:http";
 import { readFile, readFileBytes, exists } from "velt:fs";
-import { args } from "velt:process";
+import { args, exit } from "velt:process";
+import { decodeURIComponent } from "velt:url";
 import { BodyStream } from "velt:fetch";
 import { utf8Encode } from "velt:encoding";
 import { IoError } from "velt:io";
@@ -19,6 +20,8 @@ import { AbortError } from "velt:task";
 import { Element, Renderer } from "./node";
 
 export struct Options {
+  // Where to listen: 127.0.0.1 unless set (a container or a host's proxy needs 0.0.0.0).
+  host: string;
   port: number;
   // The HTML shell with `<!--ssr-outlet-->` where the app goes (Vite's built index.html).
   template: string;
@@ -27,11 +30,13 @@ export struct Options {
   dev: bool;
 }
 
-// Options from the command line: `--port N` (default 3000), `--template FILE` (default
-// dist/client/index.html), `--static DIR` (default dist/client), `--dev`.
+// Options from the command line, then the environment: `--host H` (`HOST`, default 127.0.0.1),
+// `--port N` (`PORT`, default 3000), `--template FILE` (default dist/client/index.html),
+// `--static DIR` (default dist/client), `--dev`. Paths are relative to the working directory.
 export function options(): Options {
   const argv = args();
-  let port = 3000;
+  let host = process.env.HOST ?? "127.0.0.1";
+  let port = parseInt(process.env.PORT ?? "3000");
   let template = "dist/client/index.html";
   let staticDir = "dist/client";
   let dev = false;
@@ -41,6 +46,9 @@ export function options(): Options {
     if (a == "--dev") {
       dev = true;
       staticDir = "";
+    } else if (a == "--host" && i + 1 < argv.length) {
+      host = argv[i + 1];
+      i += 1;
     } else if (a == "--port" && i + 1 < argv.length) {
       port = parseInt(argv[i + 1]);
       i += 1;
@@ -50,10 +58,17 @@ export function options(): Options {
     } else if (a == "--static" && i + 1 < argv.length) {
       staticDir = argv[i + 1];
       i += 1;
+    } else {
+      console.error(`unknown option ${a} (expected --host, --port, --template, --static, --dev)`);
+      exit(2);
     }
     i += 1;
   }
-  return Options { port: port, template: template, staticDir: staticDir, dev: dev };
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    console.error(`invalid port: ${port}`);
+    exit(2);
+  }
+  return Options { host: host, port: port, template: template, staticDir: staticDir, dev: dev };
 }
 
 const OUTLET = "<!--ssr-outlet-->";
@@ -139,10 +154,11 @@ export class ServerFn {
 }
 
 type Args<I> = { args: I[] };
+type ErrorEnvelope = { error: { status: number } };
 
-// The error envelope; `callServerFn` answers it with status 500.
-function failure(message: string): string {
-  return `{"error":{"message":${JSON.stringify(message)},"status":500}}`;
+// The error envelope; `callServerFn` answers with its status.
+function failure(status: number, message: string): string {
+  return `{"error":{"message":${JSON.stringify(message)},"status":${status}}}`;
 }
 
 // A server function without input, under `key` (`<module>/<export>`, e.g. "api.server/getStats").
@@ -152,7 +168,8 @@ export function serverFn<O>(key: string, handler: () => Promise<O>): ServerFn {
       const result = await handler();
       return `{"data":${JSON.stringify(result)}}`;
     } catch (e) {
-      return failure(`${e}`);
+      console.error(`server function ${key} failed: ${e}`);
+      return failure(500, "Internal error");
     }
   });
 }
@@ -160,21 +177,31 @@ export function serverFn<O>(key: string, handler: () => Promise<O>): ServerFn {
 // A server function with one input.
 export function serverFnWith<I, O>(key: string, handler: (input: I) => Promise<O>): ServerFn {
   return new ServerFn(key, async (body: string): Promise<string> => {
+    let input: Args<I> | null = null;
     try {
-      const req = JSON.parse<Args<I>>(body);
-      if (req.args.length != 1) {
-        return failure("server functions take a single input argument");
-      }
+      input = JSON.parse<Args<I>>(body);
+    } catch (e) {
+      return failure(400, "Malformed body: expected {\"args\": [input]}");
+    }
+    const req = input!;
+    if (req.args.length != 1) {
+      return failure(400, "server functions take a single input argument");
+    }
+    try {
       const result = await handler(req.args[0]);
       return `{"data":${JSON.stringify(result)}}`;
     } catch (e) {
-      return failure(`${e}`);
+      console.error(`server function ${key} failed: ${e}`);
+      return failure(500, "Internal error");
     }
   });
 }
 
 function jsonResponse(status: number, body: string): Response {
-  return new Response(body, { status: status as i64, headers: { "content-type": "application/json" } });
+  return new Response(body, {
+    status: status as i64,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 function errorResponse(status: number, message: string): Response {
@@ -188,17 +215,24 @@ async function callServerFn(fns: ServerFn[], req: Request, pathname: string): Pr
   if (req.method != "POST") {
     return errorResponse(405, "Method not allowed");
   }
-  if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) {
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
     return errorResponse(415, "Unsupported media type");
   }
-  // Keys are `<module>/<export>`: nothing in them is percent-encoded (Velt has no
-  // `decodeURIComponent` yet).
-  const key = pathname.slice(SERVER_FN_BASE.length + 1);
+  // sigx's client percent-encodes each segment of the key.
+  let key = "";
+  try {
+    key = decodeURIComponent(pathname.slice(SERVER_FN_BASE.length + 1));
+  } catch (e) {
+    return errorResponse(400, "Malformed server function path");
+  }
   for (const fn of fns) {
     if (fn.key == key) {
       const call = fn.call;
       const out = await call(await req.text());
-      return jsonResponse(out.startsWith(`{"error"`) ? 500 : 200, out);
+      if (out.startsWith(`{"error"`)) {
+        return jsonResponse(JSON.parse<ErrorEnvelope>(out).error.status, out);
+      }
+      return jsonResponse(200, out);
     }
   }
   return errorResponse(404, `Unknown server function "${key}"`);
@@ -267,15 +301,21 @@ async function staticFile(dir: string, pathname: string): Promise<Response | nul
 }
 
 // Serves the app in sigx's order: static files from `opts.staticDir`, server functions under
-// /_sigx/fn, then every other GET as a document rendered by `render(pathname)` into the
-// template and streamed.
+// /_sigx/fn, then every other request as a document rendered by `render(pathname)` into the
+// template and streamed. Exits if the template has no `<!--ssr-outlet-->`.
 export async function serveApp(
   opts: Options,
   render: (pathname: string) => Element,
   fns: ServerFn[] = [],
 ): Promise<Server> {
-  const cached = opts.dev ? "" : await readFile(opts.template);
-  const server = await serve({ port: opts.port as i64 }, async (req: Request): Promise<Response> => {
+  const cached = await readFile(opts.template);
+  if (!cached.includes(OUTLET)) {
+    console.error(`${opts.template} has no ${OUTLET}: nowhere to render the app`);
+    exit(1);
+  }
+  const server = await serve({ host: opts.host, port: opts.port as i64 }, async (
+    req: Request,
+  ): Promise<Response> => {
     const url = new URL(req.url);
     const file = await staticFile(opts.staticDir, url.pathname);
     if (file != null) {
@@ -289,6 +329,6 @@ export async function serveApp(
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   });
-  console.log(`sigx: listening on http://127.0.0.1:${server.port}${opts.dev ? " (dev)" : ""}`);
+  console.log(`sigx: listening on http://${opts.host}:${server.port}${opts.dev ? " (dev)" : ""}`);
   return server;
 }
