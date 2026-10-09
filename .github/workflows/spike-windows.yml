@@ -8,6 +8,24 @@ on:
       script:
         default: windows.ps1
 jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+          save-cache: "true"
+      - name: spike
+        shell: bash
+        run: scripts/spike/linux.sh "$RUNNER_TEMP/spike" 2>&1 | tee "$RUNNER_TEMP/spike.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-linux
+          path: ${{ runner.temp }}/spike
+          if-no-files-found: ignore
   windows:
     runs-on: windows-2025
     timeout-minutes: 90
