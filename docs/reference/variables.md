@@ -27,8 +27,9 @@ test values of any type as JavaScript does.
 - `void` values are not conditions (``an expression of type `void` cannot be tested for
   truthiness``), and neither are values of a generic type, whose test would depend on the type
   argument.
-- A test is one comparison in the compiled code: `n != 0` on an integer, `x != 0 && x == x` on
-  a `number` (one compare once optimized), `s.length != 0` on a string.
+- A test is one comparison in the compiled code: `n != 0` on an integer (also on a `number` the
+  compiler stores as an integer), `x != 0 && x == x` on any other `number` (one compare once
+  optimized), `s.length != 0` on a string.
 - `||` and `&&` return an operand, as in JavaScript: `a || b` is `a` when `a` is truthy and
   `b` otherwise; `a && b` is `b` when `a` is truthy and `a` otherwise. `b` runs only when it is
   the result. The type is TypeScript's: when both sides have the same type, that type
