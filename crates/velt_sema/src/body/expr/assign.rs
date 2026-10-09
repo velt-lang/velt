@@ -61,6 +61,20 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
+                // `c["v"] = x` with a constant key is `c.v = x`: a setter or a getter-only
+                // accessor is handled the same way.
+                if let Some(name) = super::member::literal_key(index) {
+                    let prop = ast::Ident {
+                        name,
+                        span: index.span,
+                    };
+                    if self.has_setter(obj.ty, &prop.name) {
+                        return Some(AssignTarget::Setter(obj));
+                    }
+                    if self.reject_getter_assign(obj.ty, &prop) {
+                        return None;
+                    }
+                }
                 let place = self.index_of(obj, index, Want::BorrowMut, target.span);
                 if self.cx.ty.is_bottom(place.ty) {
                     return None;

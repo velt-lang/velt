@@ -373,3 +373,9 @@ fn check_main(
     }
     ok.then_some(id)
 }
+
+/// Is `name` a property name Velt reserves for its encodings of ES private names (`#x`) and
+/// well-known symbol keys (`[Symbol.iterator]`), so a quoted key may not use it?
+pub(crate) fn reserved_key(name: &str) -> bool {
+    name.starts_with('#') || name.starts_with("[Symbol.")
+}

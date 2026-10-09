@@ -330,7 +330,36 @@ impl FnCx<'_, '_> {
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = self.index_of(r.recv, index, want, span);
-        self.after_receiver(r.before, h)
+        let h = self.after_receiver(r.before, h);
+        // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
+        match literal_key(index) {
+            Some(name) => {
+                let prop = ast::Ident {
+                    name,
+                    span: index.span,
+                };
+                let h = self.narrowed_field(object, &prop, h, want);
+                self.downcast_field(object, &prop, h)
+            }
+            None => h,
+        }
+    }
+
+    /// Does `o[name]` on a value of type `t` name a field (an object type, struct, interface,
+    /// union or type parameter, possibly nullable or shared; a class only for one of its fields,
+    /// getters or setters, so `m["k"]` on a `Map` keeps the indexing error)?
+    fn has_fields(&mut self, t: TyId, name: &str) -> bool {
+        if self.cx.class_of(t).is_some() {
+            return crate::reserved_key(name)
+                || self.field_of(t, name).is_some()
+                || self.has_getter(t, name)
+                || self.has_setter(t, name);
+        }
+        match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
+            TyKind::Option(inner) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            _ => false,
+        }
     }
 
     pub(super) fn index_of(
@@ -360,12 +389,24 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
-            // same property either way; the quoted form allows any name).
-            _ if literal_key(index).is_some() => {
+            // same property either way; the quoted form allows any name). Only on a type with
+            // fields: a `Map` keeps its "use a method" error.
+            _ if literal_key(index).is_some_and(|k| self.has_fields(t, &k)) => {
                 let prop = ast::Ident {
                     name: literal_key(index).unwrap_or_default(),
                     span: index.span,
                 };
+                if crate::reserved_key(&prop.name) {
+                    // Not the private field `#x` or a symbol-keyed member.
+                    self.cx.err(
+                        format!(
+                            "the property name {:?} is not supported: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys",
+                            prop.name
+                        ),
+                        index.span,
+                    );
+                    return self.error_expr(span);
+                }
                 if matches!(want, Want::BorrowMut) {
                     let Some(place) = self.field_access(obj, &prop, want, span) else {
                         return self.error_expr(span);
@@ -603,9 +644,33 @@ pub(super) fn untyped_int(e: &ast::Expr) -> bool {
     }
 }
 
+/// `o.name` or `o["name"]` (a constant key, which reads the same field): the object and the
+/// name. `None` for `?.` and other expressions.
+pub(crate) fn member_view(e: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
+    match &e.kind {
+        ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } => Some((object, prop.clone())),
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } => Some((
+            object,
+            ast::Ident {
+                name: literal_key(index)?,
+                span: index.span,
+            },
+        )),
+        _ => None,
+    }
+}
+
 /// The key of `o["name"]` / `` o[`name`] ``: a string literal (a template without
 /// substitutions).
-fn literal_key(index: &ast::Expr) -> Option<String> {
+pub(crate) fn literal_key(index: &ast::Expr) -> Option<String> {
     match &index.kind {
         ast::ExprKind::Lit(ast::Lit::Str(s)) => Some(s.clone()),
         ast::ExprKind::Template { quasis, exprs } if exprs.is_empty() => quasis.first().cloned(),

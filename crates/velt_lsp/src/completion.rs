@@ -155,8 +155,13 @@ fn quoted_members(
         if is_identifier(&i.label) {
             continue;
         }
-        // After `?.` the `?` stays: `o?.` becomes `o?.["a-b"]`.
-        let key = format!("[{:?}]", i.label);
+        // After `?.` the `?` stays: `o?.` becomes `o?.["a-b"]`. A symbol-keyed member is
+        // written with its key as is (`bag[Symbol.iterator]`), not as a string.
+        let key = if i.label.starts_with("[Symbol.") {
+            i.label.clone()
+        } else {
+            format!("[{:?}]", i.label)
+        };
         let insert = if optional { format!(".{key}") } else { key };
         i.filter_text = Some(format!(".{}", i.label));
         let range = index.range(dot as u32, offset as u32);
