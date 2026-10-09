@@ -133,7 +133,11 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
    `swapped {files}`, `restarted {reason}`, `failed {diagnostics}`, `listening {port}`, plus the
    list of files the build reads. The plugin then needs no text parsing and no `shared` option.
 4. **The toolchain on npm.** Per-platform binaries with a small JS API (`dev()`, `build()`), so
-   `pnpm install` installs a pinned `velt` and the plugin needs no PATH.
+   `pnpm install` installs a pinned `velt` and the plugin needs no PATH. Today a released
+   toolchain is one download: dev (`velt dev`, JIT) needs nothing else, a deployed binary needs
+   nothing at all, and only `velt build` needs the system linker (`cc` / Xcode command line
+   tools / MSVC). Bundling a linker (lld) with the toolchain would remove that last step, which
+   is mostly a Windows hurdle (Visual Studio Build Tools).
 5. **Embedded assets.** For example `import assets from "../dist/client" with { type: "dir" }`
    with a `velt:http` `serveStatic`, so production is one file. `sigx/server` has a small static
    server today.
