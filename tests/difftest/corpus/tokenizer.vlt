@@ -8,18 +8,18 @@ class Token {
   }
 }
 
-function isDigit(c: i64): bool {
+function isDigit(c: number): bool {
   return c >= 48 && c <= 57;
 }
 
-function isAlpha(c: i64): bool {
+function isAlpha(c: number): bool {
   return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
 }
 
 function tokenize(src: string): Token[] {
   const out: Token[] = [];
   let i = 0;
-  const n = src.length as i64;
+  const n = src.length as number;
   while (i < n) {
     const c = src.charCodeAt(i);
     if (c == 32) {
@@ -61,7 +61,7 @@ function tokenize(src: string): Token[] {
 function main() {
   const toks = tokenize('let x1 = 42 + y_2 * (7 >= 3) => "hi there" == z');
   console.log(toks.map((t) => `${t.kind}:${t.text}`).join(" "));
-  const counts = new Map<string, i64>();
+  const counts = new Map<string, number>();
   for (const t of toks) {
     counts.set(`${t.kind}`, (counts.get(t.kind) ?? 0) + 1);
   }

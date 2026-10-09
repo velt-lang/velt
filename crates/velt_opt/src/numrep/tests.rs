@@ -2,13 +2,14 @@
 //! and a property test that runs random `f64` programs in the reference interpreter before and
 //! after the pass (`random.rs`).
 
+mod context;
 mod random;
 
 use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, Program, UnOp};
+use velt_vir::vir::{BinOp, BlockId, LocalDecl, Place, Program, UnOp};
 
 /// Runs the math externs like the runtime.
 pub(super) struct MathHost;
@@ -94,12 +95,13 @@ fn counter_program(start: f64, bound: f64) -> (Program, Local, Local) {
 }
 
 #[test]
-fn bounded_counters_become_i32_and_sums_stay_doubles() {
+fn bounded_counters_and_their_sums_become_integers() {
     let (p, s, k) = counter_program(0.0, 1000.0);
     let q = narrowed(&p);
     let f = &q.funcs[0];
     assert!(!assigned(f, k), "the counter is narrowed");
-    assert!(assigned(f, s), "the unbounded sum stays a double");
+    // `s` adds `k` in [0, 999] at most 1001 times (`counter`).
+    assert!(!assigned(f, s), "the bounded sum is narrowed");
     assert!(
         local_ty_count(f, Ty::I32) >= 2,
         "counter and its increment are i32"
@@ -264,10 +266,18 @@ fn facts_fold_rounding_calls_and_decided_branches() {
 }
 
 #[test]
+fn sums_that_may_pass_2_53_stay_doubles() {
+    // 10^9 additions of up to 10^9 - 1.
+    let (p, s, _) = counter_program(0.0, 1e9);
+    let q = narrowed(&p);
+    assert!(assigned(&q.funcs[0], s), "the sum stays a double");
+}
+
+#[test]
 fn report_lists_unnarrowed_named_locals_in_loops() {
-    let (mut p, s, _) = counter_program(0.0, 1000.0);
+    let (mut p, s, _) = counter_program(0.0, 1e9);
     p.funcs[0].locals[s.0 as usize].name = Some("s".into());
-    let env = Env::of(&p.externs, &p.funcs);
+    let env = Env::of(&p.externs, &p.funcs, &p.aggs, &p.statics);
     let r = unnarrowed(&env, &p.funcs[0]);
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].name, "s");
@@ -372,4 +382,230 @@ fn a_conversion_bounded_by_2_53_does_not_bound_the_integer() {
         call(&q, &[(two_53 as i64 + 1) as u64]),
         Ok(2.0f64.to_bits())
     );
+}
+
+/// `f(a)`: `((a >> 2) as f64) % 7.0` for `a: u64` (whole, up to 2^62: past 2^53), or with
+/// `a: i64` (`a as f64`, which may be negative).
+fn remainder_of_whole_program(signed: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let ty = if signed { Ty::I64 } else { Ty::U64 };
+    let mut fb = FuncBuilder::export("f", &[ty], Ty::F64);
+    let a = fb.param(0);
+    let (s, af, x) = (fb.local(ty), fb.local(Ty::F64), fb.local(Ty::F64));
+    let b = fb.block();
+    if signed {
+        fb.assign(b, s, Rvalue::Use(copy_local(a)));
+    } else {
+        fb.assign(b, s, bin(BinOp::UShr, copy_local(a), int(2, Ty::U64)));
+    }
+    fb.assign(b, af, Rvalue::Cast(copy_local(s), Ty::F64));
+    fb.assign(b, x, bin(BinOp::Rem, copy_local(af), float(7.0, Ty::F64)));
+    fb.ret(b, copy_local(x));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+fn float_remainders(f: &Function) -> usize {
+    f.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .filter(|s| {
+            matches!(s, Stmt::Assign(d, Rvalue::Binary(BinOp::Rem, ..))
+                if f.locals[d.local.0 as usize].ty == Ty::F64)
+        })
+        .count()
+}
+
+#[test]
+fn remainders_of_whole_non_negative_doubles_use_integers() {
+    let p = remainder_of_whole_program(false);
+    let q = narrowed(&p);
+    assert_eq!(float_remainders(&q.funcs[0]), 0);
+    for a in [
+        0u64,
+        1,
+        6,
+        7,
+        29,
+        1 << 55,
+        u64::MAX,
+        u64::MAX - 5,
+        (1 << 54) + 3,
+    ] {
+        assert_eq!(call(&p, &[a]), call(&q, &[a]), "f({a})");
+    }
+}
+
+#[test]
+fn remainders_of_doubles_that_may_be_negative_stay_doubles() {
+    // -7 % 7 is -0, which the integer remainder is not.
+    let p = remainder_of_whole_program(true);
+    let q = narrowed(&p);
+    assert_eq!(float_remainders(&q.funcs[0]), 1);
+    for a in [-7i64, -8, 0, 7, i64::MIN] {
+        assert_eq!(call(&p, &[a as u64]), call(&q, &[a as u64]), "f({a})");
+    }
+}
+
+/// `f(a: i32, out: ptr)`: `x.toString()` and `` `${x}` `` of `x = a as f64` (or of `x * 0.5`).
+fn formatted_program(half: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let from = pb.ext("velt_rt_str_from_f64", &[Ty::F64, Ty::Ptr], Ty::Unit, false);
+    let push = pb.ext(
+        "velt_rt_strbuf_push_f64",
+        &[Ty::Ptr, Ty::F64],
+        Ty::Unit,
+        false,
+    );
+    let mut fb = FuncBuilder::export("f", &[Ty::I32, Ty::Ptr], Ty::Unit);
+    let (a, out) = (fb.param(0), fb.param(1));
+    let (af, x) = (fb.local(Ty::F64), fb.local(Ty::F64));
+    let b0 = fb.block();
+    fb.assign(b0, af, Rvalue::Cast(copy_local(a), Ty::F64));
+    let factor = if half { 0.5 } else { 1.0 };
+    fb.assign(
+        b0,
+        x,
+        bin(BinOp::Mul, copy_local(af), float(factor, Ty::F64)),
+    );
+    let args = vec![copy_local(x), copy_local(out)];
+    let b1 = fb.call(b0, Callee::Extern(from), args, None);
+    let args = vec![copy_local(out), copy_local(x)];
+    let b2 = fb.call(b1, Callee::Extern(push), args, None);
+    fb.ret(b2, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+    pb.add(fb.finish());
+    let mut p = pb.finish();
+    print::declare(&mut p.externs);
+    p
+}
+
+fn callees(p: &Program) -> Vec<String> {
+    p.funcs[0]
+        .blocks
+        .iter()
+        .filter_map(|b| match &b.term {
+            Terminator::Call {
+                callee: Callee::Extern(id),
+                ..
+            } => Some(p.externs[id.0 as usize].symbol.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn whole_numbers_format_through_the_integer_formatters() {
+    let q = narrowed(&formatted_program(false));
+    assert_eq!(
+        callees(&q),
+        ["velt_rt_str_from_i64", "velt_rt_strbuf_push_i64"]
+    );
+    let q = narrowed(&formatted_program(true));
+    assert_eq!(
+        callees(&q),
+        ["velt_rt_str_from_f64", "velt_rt_strbuf_push_f64"]
+    );
+}
+
+/// `f(p: f64, n: u32 or u64)`: `k = 0; while (p < 1e18) { i = k as u64; t = i; if (!(t < n))
+/// return -1; k = k + 1; p = p + 1 }; return k`. The loop runs any number of times; only the
+/// index test bounds `k`.
+fn index_bounded_program(len_ty: Ty) -> (Program, Local) {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::F64, len_ty], Ty::F64);
+    let (p, n) = (fb.param(0), fb.param(1));
+    let (len, k, c, i, t, ok, u, q) = (
+        fb.local(Ty::U64),
+        fb.local(Ty::F64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::U64),
+        fb.local(Ty::U64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::F64),
+        fb.local(Ty::F64),
+    );
+    let (entry, head, check, body, fail, exit) = (
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+    );
+    if len_ty == Ty::U64 {
+        fb.assign(entry, len, Rvalue::Use(copy_local(n)));
+    } else {
+        fb.assign(entry, len, Rvalue::Cast(copy_local(n), Ty::U64));
+    }
+    fb.assign(entry, k, Rvalue::Use(float(0.0, Ty::F64)));
+    fb.goto(entry, head);
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(p), float(1e18, Ty::F64)));
+    fb.branch(head, c, check, exit);
+    fb.assign(check, i, Rvalue::Cast(copy_local(k), Ty::U64));
+    // The test is a block later, through a copy, as lowering leaves an index.
+    let mid = fb.block();
+    fb.goto(check, mid);
+    fb.assign(mid, t, Rvalue::Use(copy_local(i)));
+    fb.assign(mid, ok, bin(BinOp::Lt, copy_local(t), copy_local(len)));
+    fb.branch(mid, ok, body, fail);
+    fb.assign(body, u, bin(BinOp::Add, copy_local(k), float(1.0, Ty::F64)));
+    fb.assign(body, k, Rvalue::Use(copy_local(u)));
+    fb.assign(body, q, bin(BinOp::Add, copy_local(p), float(1.0, Ty::F64)));
+    fb.assign(body, p, Rvalue::Use(copy_local(q)));
+    fb.goto(body, head);
+    fb.ret(fail, float(-1.0, Ty::F64));
+    fb.ret(exit, copy_local(k));
+    pb.add(fb.finish());
+    (pb.finish(), k)
+}
+
+#[test]
+fn an_index_test_bounds_the_double_it_converts() {
+    // `k as u64 < n` with `n < 2^32`: `k` stays below 2^32, so `k + 1` is an integer.
+    let (p, k) = index_bounded_program(Ty::U32);
+    let q = narrowed(&p);
+    assert!(!assigned(&q.funcs[0], k), "k is narrowed");
+    for (x, n) in [(0.0, 5u64), (1e18 - 3.0, 10), (-20.0, 7), (f64::NAN, 3)] {
+        let args = [x.to_bits(), n];
+        assert_eq!(call(&p, &args), call(&q, &args), "f({x}, {n})");
+    }
+    // A `u64` length bounds nothing below 2^53.
+    let (p, k) = index_bounded_program(Ty::U64);
+    let q = narrowed(&p);
+    assert!(assigned(&q.funcs[0], k), "k stays a double");
+}
+
+#[test]
+fn a_counter_used_as_an_index_is_64_bits() {
+    // `k as u64` at every access: an `i64` `k` needs no sign extension there.
+    let (mut p, _, k) = counter_program(0.0, 1000.0);
+    let f = &mut p.funcs[0];
+    let idx = Local(f.locals.len() as u32);
+    f.locals.push(LocalDecl {
+        ty: Ty::U64,
+        name: None,
+    });
+    let body = f
+        .blocks
+        .iter()
+        .position(|b| {
+            b.stmts.iter().any(
+                |s| matches!(s, Stmt::Assign(d, Rvalue::Use(Operand::Copy(_))) if d.local == k),
+            )
+        })
+        .expect("the step");
+    f.blocks[body].stmts.insert(
+        0,
+        Stmt::Assign(Place::local(idx), Rvalue::Cast(copy_local(k), Ty::U64)),
+    );
+    f.locs.clear();
+    f.locals[k.0 as usize].name = Some("k".into());
+    let q = narrowed(&p);
+    let twins: Vec<Ty> = q.funcs[0]
+        .locals
+        .iter()
+        .filter(|l| l.name.as_deref() == Some("k") && l.ty != Ty::F64)
+        .map(|l| l.ty)
+        .collect();
+    assert_eq!(twins, [Ty::I64]);
 }

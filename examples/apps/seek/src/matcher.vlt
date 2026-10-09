@@ -6,7 +6,7 @@ import { RegExp } from "velt:regex";
 export type MatchOptions = { fixed: bool; ignoreCase: bool; word: bool };
 
 /// A matched span within a line, in UTF-16 units from the line's start.
-export type Span = { start: i64; end: i64 };
+export type Span = { start: number; end: number };
 
 /// One matching line.
 export type LineMatch = { line: i64; text: string; spans: Span[] };
@@ -41,7 +41,7 @@ export class Matcher {
   }
 
   /// The first match at or after `from` in `s`, as a span, or null.
-  find(s: string, from: i64): Span | null {
+  find(s: string, from: number): Span | null {
     const lit = this.literal;
     if (lit != null) {
       const at = s.indexOf(lit, from);
@@ -49,10 +49,10 @@ export class Matcher {
     }
     const re = this.re;
     if (re != null) {
-      // RegExp offsets are `usize`, string positions `i64` (#214).
+      // RegExp offsets are `usize`, string positions numbers (#214).
       const m = re.exec(s, from as usize);
       if (m != null) {
-        return { start: m.index as i64, end: m.end as i64 };
+        return { start: m.index as number, end: m.end as number };
       }
     }
     return null;
@@ -71,7 +71,7 @@ export class Matcher {
       return out;
     }
     let lineNo: i64 = 1;
-    let counted: i64 = 0; // newlines before `counted` are included in lineNo
+    let counted = 0; // newlines before `counted` are included in lineNo
     let hit: Span | null = first;
     while (hit != null) {
       // An empty match at the very end is not on a line: the text is empty or its last line
@@ -115,7 +115,7 @@ export class Matcher {
   /// The matched spans within one line (non-overlapping, left to right).
   spans(line: string): Span[] {
     const out: Span[] = [];
-    let from: i64 = 0;
+    let from = 0;
     while (from <= line.length) {
       const m = this.find(line, from);
       if (m == null) {

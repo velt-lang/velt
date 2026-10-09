@@ -1,11 +1,11 @@
 boolean_type_errors.vlt:3:10: error: mismatched types
-expected boolean, found i64
+expected boolean, found f64
 boolean_type_errors.vlt:7:22: error: mismatched types
 expected boolean, found string
 boolean_type_errors.vlt:8:23: error: mismatched types
-expected boolean, found i64
+expected boolean, found f64
 boolean_type_errors.vlt:9:35: error: mismatched types
 expected (boolean) => boolean, found (string) => boolean
 boolean_type_errors.vlt:10:7: error: mismatched types
-expected boolean, found i64
+expected boolean, found f64
 boolean_type_errors.vlt:12:30: error: cannot print a value of type `(boolean) => boolean`

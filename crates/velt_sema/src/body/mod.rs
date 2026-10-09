@@ -45,6 +45,7 @@ mod field_narrow;
 mod for_await;
 mod for_iter;
 mod generators;
+pub(crate) mod literal_locals;
 pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
@@ -53,6 +54,7 @@ mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
@@ -193,8 +195,6 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: std::collections::HashSet<LocalId>,
-    /// Locals holding inferred integers (`expr::numbers`).
-    pub inferred_ints: std::collections::HashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: std::collections::HashMap<LocalId, DefId>,
@@ -227,6 +227,9 @@ pub(crate) struct Frame {
     /// Names of the variables that closures created in this function's body assign, with
     /// where (`closure_assigned`): they are not narrowed.
     pub closure_assigned: HashMap<String, Span>,
+    /// A callback of the JS API returning a number: an integer it returns converts
+    /// (`returns::returned`).
+    pub int_returns_number: bool,
 }
 
 impl Frame {
@@ -252,7 +255,6 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
-            inferred_ints: Default::default(),
             closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],
@@ -267,6 +269,7 @@ impl Frame {
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
+            int_returns_number: false,
         }
     }
 }
@@ -294,9 +297,10 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
-    /// The arrow being checked is an argument of a `std/` function called from user code: its
-    /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
-    pub std_callback: bool,
+    /// The arrow being checked is an argument of a JS API function called from user code
+    /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
+    /// index), which makes it a number in the arrow's body when unannotated.
+    pub std_callback: Option<Vec<bool>>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -305,6 +309,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub collect_iterable_args: bool,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
+    /// Locals declared from integer literals and their uses (`literal_locals`).
+    pub literal: literal_locals::LiteralLocals,
     /// The span of the JSX element whose template may be its string (`expr/jsx/list_fold.rs`),
     /// and whether it was.
     pub jsx_list_fold: Option<Span>,
@@ -329,10 +335,11 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
-            std_callback: false,
+            std_callback: None,
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],
+            literal: Default::default(),
             jsx_list_fold: None,
             jsx_list_folded: false,
             jsx_list_trial: false,

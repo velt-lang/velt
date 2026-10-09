@@ -83,7 +83,8 @@ async function main() {
   // reject after `main` saw the join fail (tasks have no order among themselves otherwise).
   const gate = channel<bool>(1);
   const tasks: Promise<i64, Timeout | Refused>[] = [spawn(fetchAfter(gate, 500))];
-  for (const ms of [20, 40]) {
+  const delays: i64[] = [20, 40];
+  for (const ms of delays) {
     tasks.push(spawn(fetchValue(ms)));
   }
   try {

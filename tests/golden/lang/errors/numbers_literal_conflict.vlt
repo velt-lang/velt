@@ -1,0 +1,18 @@
+// A local declared from a literal and used both as an integer type and as a number stays a
+// number, and the use as the integer type says why (#525); a number needs `as` to become a
+// declared integer (#468).
+function takes(n: i64): i64 {
+  return n * 2;
+}
+
+function main() {
+  let a = 0;
+  console.log(takes(a));
+  console.log(a / 2);
+  const xs = [1, 2];
+  let total: usize = 0;
+  total += xs.length;
+  let n = xs.length;
+  total = n;
+  console.log(total);
+}

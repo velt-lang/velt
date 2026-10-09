@@ -1,14 +1,14 @@
 // Merge sort (recursive, new arrays) on ints and strings via a generic merge.
-function mergeSort(xs: i64[]): i64[] {
+function mergeSort(xs: number[]): number[] {
   if (xs.length <= 1) {
     return xs.slice(0);
   }
   const mid = (xs.length - (xs.length % 2)) / 2;
-  const a = mergeSort(xs.slice(0, mid as i64));
-  const b = mergeSort(xs.slice(mid as i64));
-  const out: i64[] = [];
-  let i: usize = 0;
-  let j: usize = 0;
+  const a = mergeSort(xs.slice(0, mid as number));
+  const b = mergeSort(xs.slice(mid as number));
+  const out: number[] = [];
+  let i: number = 0;
+  let j: number = 0;
   while (i < a.length && j < b.length) {
     if (a[i] <= b[j]) {
       out.push(a[i]);

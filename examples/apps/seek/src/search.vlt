@@ -24,7 +24,7 @@ function highlight(m: LineMatch, color: bool): string {
     return m.text;
   }
   let out = "";
-  let at: i64 = 0;
+  let at = 0;
   for (const sp of m.spans) {
     out += m.text.slice(at, sp.start);
     out += paint(true, HIT, m.text.slice(sp.start, sp.end));
