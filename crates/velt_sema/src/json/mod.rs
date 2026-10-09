@@ -382,6 +382,18 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                     _ => Some(t),
                 };
             }
+            // A class with `toJSON()` is written as what it returns, as in JS (std's `Date` and
+            // `URL`, and their subclasses).
+            if !parse {
+                if let Some((_, ret)) =
+                    crate::hooks::final_hook(cx, d, &args, crate::hooks::TO_JSON)
+                {
+                    stack.push(t);
+                    let bad = unserializable(cx, ret, stack, parse);
+                    stack.pop();
+                    return bad;
+                }
+            }
             // Decoding would create an instance without running its non-public constructor.
             if parse && cx.ctor_visibility(d) != ast::CtorVisibility::Public {
                 return Some(t);

@@ -82,6 +82,9 @@ impl FnCx<'_, '_> {
     }
 
     fn assign_local(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {
+        if self.untyped_use(id, true) {
+            return None;
+        }
         let Some(l) = self.lookup_local(&id.name, id.span) else {
             if self.lookup_item(&id.name, id.span).is_some() {
                 self.cx.err(
@@ -328,25 +331,38 @@ impl FnCx<'_, '_> {
     /// `place = value` / `place op= value` on a writable place.
     fn place_assign(
         &mut self,
-        place: hir::Expr,
+        mut place: hir::Expr,
         op: Option<ast::BinaryOp>,
         target: &ast::Expr,
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
         let unit = self.cx.ty.unit;
+        if op.is_some() && self.untyped_update(&place, span) {
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        let first = match op {
+            None => self.first_assign(&mut place, value),
+            Some(_) => None,
+        };
         let lty = place.ty;
         let Some(op) = op else {
-            let v = self.expr(value, Some(lty), Want::Move);
-            // A local declared from a literal takes the type of what it is assigned
-            // (`literal_locals`); other places are a typed position.
-            let v = if self.literal_assign(&place, &v) {
-                self.try_coerce(v, lty).unwrap_or_else(|v| {
-                    self.report_mismatch(lty, &v);
-                    v
-                })
-            } else {
-                self.coerce(v, lty)
+            let v = match first {
+                Some(v) => v,
+                None => {
+                    let v = self.expr(value, Some(lty), Want::Move);
+                    // A local declared from a literal takes the type of what it is assigned
+                    // (`literal_locals`); other places are a typed position.
+                    if self.literal_assign(&place, &v) {
+                        self.try_coerce(v, lty).unwrap_or_else(|v| {
+                            self.report_mismatch(lty, &v);
+                            v
+                        })
+                    } else {
+                        self.coerce(v, lty)
+                    }
+                }
             };
             self.unnarrow_fields(target);
             if let H::Local(l, _) = place.kind {
@@ -451,6 +467,9 @@ impl FnCx<'_, '_> {
             }
             None => return self.error_expr(span),
         };
+        if self.untyped_update(&place, span) {
+            return self.error_expr(span);
+        }
         let lty = place.ty;
         self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };

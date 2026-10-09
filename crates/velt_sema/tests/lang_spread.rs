@@ -110,5 +110,8 @@ fn array_spread_builds_with_capacity_and_pushes() {
         "{r}"
     );
     let r = err_src("function f(a: i64) {} function main() { const xs = [1]; f(...xs); }");
-    assert!(r.contains("spread arguments"), "{r}");
+    assert!(
+        r.contains("a spread argument must have a tuple type"),
+        "{r}"
+    );
 }
