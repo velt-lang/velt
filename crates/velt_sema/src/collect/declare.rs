@@ -64,7 +64,6 @@ pub(crate) fn fn_placeholder<'m>(
         ret: crate::hir::TyId(0),
         ret_span: None,
         ret_source: crate::defs::RetSource::Known,
-        ret_inferred_int: false,
         fixed_modes: matches!(
             kind,
             FnKind::Extern | FnKind::Closure | FnKind::IfaceDefault

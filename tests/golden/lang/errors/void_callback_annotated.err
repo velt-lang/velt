@@ -1,6 +1,6 @@
 void_callback_annotated.vlt:10:10: error: mismatched types
-  = note: expected void, found i64
+  = note: expected void, found f64
 void_callback_annotated.vlt:14:28: error: mismatched types
-  = note: expected void, found usize
+  = note: expected void, found f64
 void_callback_annotated.vlt:16:12: error: mismatched types
-  = note: expected void, found i64
+  = note: expected void, found f64

@@ -52,7 +52,7 @@ fn for_of_borrows_or_copies_elements() {
     assert!(r.contains("cannot assign to `s`"), "{r}");
     let r = err_src("function main() { for (const s of 5) { } }");
     assert!(
-        r.contains("cannot iterate over a value of type `i64`"),
+        r.contains("cannot iterate over a value of type `f64`"),
         "{r}"
     );
 }
@@ -122,7 +122,7 @@ fn narrowing_by_null_tests() {
     let p = ok_src(
         "function f(x: i64 | null): i64 { if (x == null) return 0; return x + 1; }
          function g(x: i64 | null): i64 { if (x != null && x > 2) { return x; } return x != null ? x : 0; }
-         function h(s: string | null): usize { while (s != null) { return s.length; } return 0; }
+         function h(s: string | null): number { while (s != null) { return s.length; } return 0; }
          function main() { console.log(f(1), g(null), h(\"a\")); }",
     );
     for name in ["f", "g", "h"] {
@@ -205,11 +205,11 @@ fn closure_capture_rules() {
     assert!(r.contains("cannot assign twice to const `total`"), "{r}");
     // A closure modifying a param makes the param modified (inferred `BorrowMut`).
     let p = ok_src(
-        "function f(n: i64[]) { [1].forEach((x) => { n.push(x); }); } function main() { f([]); }",
+        "function f(n: number[]) { [1].forEach((x) => { n.push(x); }); } function main() { f([]); }",
     );
     assert_eq!(func(&p, "f").params[0].mode, PassMode::BorrowMut);
     let p = ok_src(
-        "class C { n: i64 = 0; bump() { [1, 2].forEach((x) => { this.n += x; }); } } function main() { let c = new C(); c.bump(); }",
+        "class C { n: number = 0; bump() { [1, 2].forEach((x) => { this.n += x; }); } } function main() { let c = new C(); c.bump(); }",
     );
     let bump = func(&p, "C.bump");
     let closure = p
@@ -262,7 +262,7 @@ fn nested_closures_capture_through_the_middle() {
 fn named_functions_as_values() {
     let p = ok_src(
         "function dbl(x: i64): i64 { return x * 2; } function show<T>(x: T): string { return `${x}`; }
-         function main() { const f = dbl; const g: (x: string) => string = show; console.log([1].map(dbl).length, f(2), g(\"a\")); }",
+         function main() { const f = dbl; const g: (x: string) => string = show; const ones: i64[] = [1]; console.log(ones.map(dbl).length, f(2), g(\"a\")); }",
     );
     assert!(exprs(func(&p, "main"))
         .iter()
@@ -393,7 +393,7 @@ fn shared_values() {
 fn array_constructors() {
     common::programs::ok_src(
         "function main() { const z: f64[] = new Array<f64>(4).fill(0.0);
-           const sq: i64[] = Array.from({ length: 5 }, (_, i) => i * i); console.log(z, sq); }",
+           const sq: number[] = Array.from({ length: 5 }, (_, i) => i * i); console.log(z, sq); }",
     );
     let r = common::programs::err_src("function main() { const a = new Array<i64>(3); }");
     assert!(

@@ -20,7 +20,7 @@ class BlockResult {
 }
 
 function factorials(n: i64): i64[] {
-  const f = [1];
+  const f: i64[] = [1];
   for (let i = 1; i <= n; i++) {
     f.push(f[i - 1] * i);
   }

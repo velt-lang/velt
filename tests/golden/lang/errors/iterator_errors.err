@@ -1,5 +1,5 @@
 iterator_errors.vlt:5:21: error: mismatched types
-expected string, found i64
+expected string, found f64
 iterator_errors.vlt:27:3: error: `total` throws `Read`, which its `throws` clause does not allow
 add `Read` to the `throws` clause, or catch it
 iterator_errors.vlt:35:5: error: `Quiet.next` throws `Read`, but `Iterator.next` does not allow it

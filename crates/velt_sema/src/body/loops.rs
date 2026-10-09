@@ -297,9 +297,10 @@ impl FnCx<'_, '_> {
             false => BindCtx::Elem { mutable },
         };
         let binding = self.pattern(p.pattern, elem, ctx);
-        self.note_inferred_bindings(&binding, &it);
+        let numbers = self.std_number_bindings(&binding, &it, true);
         self.enter_loop(p.label, false);
-        let b = self.block(p.body);
+        let mut b = self.block(p.body);
+        b.stmts.splice(0..0, numbers);
         let label = self.exit_loop().hir_label();
         self.pop_scope();
         let f = S::ForOf {

@@ -13,7 +13,7 @@ function numbers(): i64 {
   };
   add(1);
   add(2);
-  return pending.length;
+  return pending.length as i64;
 }
 
 async function names(): Promise<string> {
@@ -44,7 +44,7 @@ async function main() {
   console.log(jobs.length, jobs[0].n);
   const m = shared(new Mutex<i64[]>([4, 5]));
   m.with((v) => {
-    add(v.length);
+    add(v.length as i64);
   });
   add(3);
   console.log(pending.join(","));

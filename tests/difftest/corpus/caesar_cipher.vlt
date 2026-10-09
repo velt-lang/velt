@@ -1,7 +1,7 @@
 // Caesar cipher and ROT13 over ASCII letters.
-function shift(s: string, k: i64): string {
+function shift(s: string, k: number): string {
   let out = "";
-  for (let i = 0; i < (s.length as i64); i++) {
+  for (let i = 0; i < (s.length as number); i++) {
     const c = s.charCodeAt(i);
     if (c >= 65 && c <= 90) {
       out += String.fromCharCode(((c - 65 + k) % 26 + 26) % 26 + 65);

@@ -33,31 +33,32 @@ The differences come from three rules:
 
 ## Numbers
 
-`number` is `f64`, and number literals behave like JavaScript numbers:
+`number` is a JavaScript number, exactly: a double, with `-0`, `NaN` and rounding past 2^53.
 
 ```ts
 const a = 7;
-console.log(a / 2, 0.1 + 0.2);    // 3.5 0.30000000000000004
+console.log(a / 2, 0.1 + 0.2, -a * 0);    // 3.5 0.30000000000000004 -0
 ```
 
-Numbers the standard library gives you behave the same: lengths, `indexOf`, `size`, indexes.
+Numbers the standard library gives you are numbers too: lengths, `indexOf`, `size`, indexes.
 `for (let i = 0; i < xs.length; i++)` works, `xs.length / 2` is `1.5` for three elements, and
 `xs[i]` takes a `number` (a non-whole index panics).
 
 The difference: integer types (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) exist, and you
-opt into them by writing them. Declared integers do integer arithmetic: `/` truncates when both
-sides are declared integers, values wrap at their width instead of losing precision past 2^53,
-and integer division by zero panics. *Why*: integer loops and indexes run at integer speed
-either way (numbers that hold whole values are stored as integers), and you decide where
-integer semantics apply ([Numbers](../reference/types.md#numbers)).
+opt into them by writing them. Declared integers do integer arithmetic: `/` truncates, values
+wrap at their width instead of losing precision past 2^53, and integer division by zero panics.
+*Why*: the compiler already stores a `number` as an integer wherever it proves that gives the
+same result (loop counters, indexes), so integer types are for when you want integer semantics
+or a fixed width ([Numbers](../reference/types.md#numbers)).
 
-Declared types don't convert implicitly; `as` converts between number types:
+`i8` … `i32`, `u8` … `u32` and `f32` convert to `number` implicitly (exactly); the 64-bit types
+need `as number`, and a `number` needs `as T` to become an integer:
 
 ```ts
 const xs = [1, 2, 3];
 console.log(xs.length / 2);       // 1.5
 const n: i64 = 7;
-console.log(n / 2, n as f64 / 2, 300 as u8); // 3 3.5 44 (integers wrap)
+console.log(n / 2, n as number / 2, 300 as u8); // 3 3.5 44 (integers wrap)
 ```
 
 ## Booleans
@@ -283,7 +284,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 
 | TypeScript / JavaScript | Velt today | Coming |
 |---|---|---|
-| `number` is always a float | `number` is `f64`; integer literals are stored as integers but `/` still gives `3.5`; `i64`, `u8`, … are opt-in | — |
+| `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | compile error: use a template literal | — |
 | `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
 | `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |

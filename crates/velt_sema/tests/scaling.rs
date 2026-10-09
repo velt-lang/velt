@@ -57,7 +57,7 @@ fn generic_chains(n: usize) -> String {
             ),
         };
         out += &format!(
-            "function k{i}<K>(s: string): usize {{\n  return {keys};\n}}\n\
+            "function k{i}<K>(s: string): number {{\n  return {keys};\n}}\n\
              function p{i}<T>(xs: T[]): T | null {{\n  return {first};\n}}\n"
         );
     }
