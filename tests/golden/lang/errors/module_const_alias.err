@@ -1,0 +1,3 @@
+module_const_alias.vlt:21:13: error: cannot move out of module constant `UNIT`
+use `UNIT.clone()` for an owned copy
+module_const_alias.vlt:23:24: error: cannot move out of module constant `UNIT`

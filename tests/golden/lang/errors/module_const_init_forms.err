@@ -1,0 +1,6 @@
+module_const_init_forms.vlt:29:11: error: cannot initialize module constant `B` from a function value: only named functions can be called here
+compute it in `main` and pass it on, or make `B` a function: `function B() { return ...; }`
+module_const_init_forms.vlt:30:11: error: module constant `C` has type `Cache` (a class): initialized by a call, it would be a new object at each use
+create it in `main` and pass it where it is needed
+module_const_init_forms.vlt:31:11: error: module constant `N` has type `string[]` (an array): initialized by a call, it would be a new object at each use
+module_const_init_forms.vlt:32:7: error: module constant `A` depends on itself through `readA`

@@ -27,6 +27,11 @@ The differences come from three rules:
   constant, and a module-level `let` that a function uses is an error ("mutable module-level
   state is not allowed"). *Why*: no hidden global state means request handlers can't race on
   it, and `velt dev` can hot-swap code without migrating globals.
+- A module constant may be initialized by a call of a function without effects
+  (`const Counter = component(...)`): it is evaluated at each use, with the same result as
+  TypeScript's evaluation at load. Its identity is the one difference: `Counter === Counter` is
+  an error, and two copies of it in locals compare unequal
+  ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
 - Semicolons are required (no automatic semicolon insertion).
