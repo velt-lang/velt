@@ -1,0 +1,20 @@
+eval label
+eval 1
+eval key
+<p>label 1</p>
+eval media
+eval 2
+eval label
+<!--island client:media="media" Counter--><p>label 2</p><!--/island-->
+eval first
+eval spread o
+eval after
+<!--island client:media="after" Counter--><p>first 5</p><!--/island-->
+eval spread k
+eval key
+eval label
+<p>label 5</p>
+eval title
+eval child
+eval box key
+<section>title child</section>

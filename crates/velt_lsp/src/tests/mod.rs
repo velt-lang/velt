@@ -8,6 +8,7 @@ mod doc_surfaces;
 mod effects;
 mod imports;
 mod jsx;
+mod jsx_attrs;
 mod jsx_more;
 mod jsx_tags;
 mod loader;

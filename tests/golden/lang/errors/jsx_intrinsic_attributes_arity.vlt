@@ -1,0 +1,7 @@
+// @jsxImportSource ./_jsx_attrs_arity
+
+// `jsxComponentAttributes` takes the component, props, key, name, names and values.
+
+function main() {
+  const a = <p>one</p>;
+}
