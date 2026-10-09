@@ -412,6 +412,8 @@ async function main() {
   `spawn` or `setTimeout`, and call them later from any task.
 - The first `resolve(value)` or `reject(reason)` settles the promise; later calls do nothing.
   An error the executor throws rejects it.
+- For a `Promise<void>`, `resolve()` takes no argument (a trailing `void` parameter may be
+  left out, as in TypeScript): `await new Promise<void>((resolve) => resolve())`.
 - A value settled on the promise's own task is the same object the awaiter gets (like JS); one
   settled from another task is transferred like a `spawn` argument, once the settling task has
   finished its current step: moved when that task no longer references it (a value made for the
