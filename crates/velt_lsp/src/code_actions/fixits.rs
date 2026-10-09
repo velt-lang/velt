@@ -1,14 +1,9 @@
 //! Fixes recognized by a diagnostic's message and notes alone: `mut` removal, `undefined` (and
-//! `void 0`) → `null`, a non-`bool` condition (`if (count)`) or negation (`!count`) → an explicit
-//! comparison (`count !== 0`, `name !== ""`, `user !== null`, `count === 0`), and `async` for a
-//! method whose promise must carry its errors.
+//! `void 0`) → `null`, and `async` for a method whose promise must carry its errors.
 
 use velt_common::{Diagnostic, Span};
-use velt_syntax::ast::{self, ExprKind as E};
 
-use super::char_before;
 use crate::analysis::Analysis;
-use velt_syntax::visit::{self, Visit};
 
 /// Note of the parser's `undefined` / `void expr` diagnostics.
 const USE_NULL_NOTE: &str = "use `null`";
@@ -41,22 +36,6 @@ pub fn for_diagnostic(
         let title = format!("Replace `{text}` with `null`");
         return Some((title, vec![(span, "null".into())]));
     }
-    if d.message == "mismatched types" {
-        let found = d
-            .notes
-            .iter()
-            .find_map(|n| n.strip_prefix("expected boolean, found "))?;
-        return compare_to_zero_value(analysis, span, span, found, "!==");
-    }
-    let negated = d
-        .message
-        .strip_prefix("cannot apply unary operator `!` to type `")
-        .and_then(|rest| rest.strip_suffix('`'));
-    if let (Some(found), Some(operand)) = (negated, text.strip_prefix('!')) {
-        let skipped = text.len() - operand.trim_start().len();
-        let operand = Span::new(span.file, span.lo + skipped as u32, span.hi);
-        return compare_to_zero_value(analysis, span, operand, found, "===");
-    }
     None
 }
 
@@ -65,76 +44,4 @@ fn remove_mut(analysis: &Analysis, span: Span) -> Span {
     let rest = &analysis.text()[span.hi as usize..];
     let ws = rest.len() - rest.trim_start_matches([' ', '\t']).len();
     Span::new(span.file, span.lo, span.hi + ws as u32)
-}
-
-/// Replace `whole` by `operand <op> <zero value of type found>`: `count` → `count !== 0` for a
-/// condition, `!count` → `count === 0` for a negation.
-fn compare_to_zero_value(
-    analysis: &Analysis,
-    whole: Span,
-    operand: Span,
-    found: &str,
-    op: &str,
-) -> Option<(String, Vec<(Span, String)>)> {
-    let zero = if found.ends_with("| null") || found.starts_with("null |") {
-        "null"
-    } else if found == "string" {
-        "\"\""
-    } else if matches!(found, "f32" | "f64") {
-        "0.0"
-    } else if is_integer(found) {
-        "0"
-    } else {
-        return None;
-    };
-    let text = analysis.snippet(operand);
-    let operand = if binds_tighter_than_equality(analysis, operand) {
-        text.to_string()
-    } else {
-        format!("({text})")
-    };
-    let mut replacement = format!("{operand} {op} {zero}");
-    if char_before(analysis.text(), whole.lo) == Some(b'!') {
-        replacement = format!("({replacement})");
-    }
-    let title = format!("Compare with `{zero}`");
-    Some((title, vec![(whole, replacement)]))
-}
-
-fn is_integer(ty: &str) -> bool {
-    matches!(
-        ty,
-        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" | "number"
-    )
-}
-
-/// Whether the expression at exactly `span` can be an operand of `!==` without parentheses.
-fn binds_tighter_than_equality(analysis: &Analysis, span: Span) -> bool {
-    struct Find {
-        span: Span,
-        found: Option<bool>,
-    }
-    impl<'a> Visit<'a> for Find {
-        fn expr(&mut self, e: &'a ast::Expr) {
-            if e.span != self.span || self.found.is_some() {
-                return;
-            }
-            let tight = match &e.kind {
-                E::Binary { op, .. } => {
-                    use ast::BinaryOp as B;
-                    matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Pow)
-                }
-                E::Assign { .. }
-                | E::Cond { .. }
-                | E::Arrow { .. }
-                | E::InstanceOf { .. }
-                | E::Cast { .. } => false,
-                _ => true,
-            };
-            self.found = Some(tight);
-        }
-    }
-    let mut find = Find { span, found: None };
-    visit::walk_module(&analysis.module().ast, &mut find);
-    find.found.unwrap_or(false)
 }

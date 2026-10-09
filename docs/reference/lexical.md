@@ -115,8 +115,8 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `&` | |
 | `^` | |
 | `\|` | |
-| `&&` | |
-| `\|\|` `??` | |
+| `&&` | returns an operand, as in JS ([truthiness](variables.md#conditions-truthiness)) |
+| `\|\|` `??` | `\|\|` returns an operand; `??` replaces only `null` |
 | `?:` | |
 | `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |

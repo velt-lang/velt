@@ -18,10 +18,9 @@ console.log(n as number / 2, 300 as u8); // 3.5 44: 64-bit integers convert only
 const s = `a=${a} x=${x}`;               // template literals; "a=" + a is a compile error
 ```
 
-Types are required on function signatures and inferred everywhere else. Conditions take `bool`
-and nullable values (`if (!user) return;` is a null check), never numbers or strings (write
-`if (count !== 0)`, not `if (count)`), and `null` is the only "nothing": there is no
-`undefined`. See [Types](../reference/types.md) and
+Types are required on function signatures and inferred everywhere else. Conditions work as in
+JavaScript (`0`, `NaN`, `""` and `null` are falsy; `if (!user) return;` is a null check that
+narrows `user`), and `null` is the only "nothing": there is no `undefined`. See [Types](../reference/types.md) and
 [Variables and conditions](../reference/variables.md).
 
 ## Functions and errors
