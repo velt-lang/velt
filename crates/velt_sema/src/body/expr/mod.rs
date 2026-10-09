@@ -29,6 +29,7 @@ mod intrinsics;
 mod js_list;
 pub(crate) mod jsx;
 mod lit;
+mod literal_keys;
 mod literal_types;
 mod matching;
 pub(crate) mod member;

@@ -1,0 +1,15 @@
+class Doc {
+  title = "t";
+  count = 0;
+  tags: string[] = [];
+  notes: string[] = [];
+}
+function main() {
+  const d = new Doc();
+  const k = "count" as "title" | "count";
+  d[k] = 5;
+  const w = "tags" as "tags" | "notes";
+  d[w].push("x");
+  const s: string = "title";
+  console.log(d[s as "title" | "count"]);
+}

@@ -334,12 +334,15 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
         }
+        if let Some(h) = self.keyed_read(object, index, want, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = self.index_of(r.recv, index, want, span);
         let h = self.after_receiver(r.before, h);
         // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
-        match literal_key(index) {
+        match self.single_key(index) {
             Some(name) => {
                 let prop = ast::Ident {
                     name,
@@ -398,11 +401,18 @@ impl FnCx<'_, '_> {
             // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
             // same property either way; the quoted form allows any name). Only on a type with
             // fields: a `Map` keeps its "use a method" error.
-            _ if literal_key(index).is_some_and(|k| self.has_fields(t, &k)) => {
+            _ if self
+                .single_key(index)
+                .is_some_and(|k| self.has_fields(t, &k)) =>
+            {
                 let prop = ast::Ident {
-                    name: literal_key(index).unwrap_or_default(),
+                    name: self.single_key(index).unwrap_or_default(),
                     span: index.span,
                 };
+                if literal_key(index).is_none() {
+                    // `o[k]` with `const k = "a"`: `k` counts as used.
+                    self.expr(index, None, Want::Borrow);
+                }
                 if crate::reserved_key(&prop.name) {
                     // Not the private field `#x`, a symbol-keyed member or the prototype.
                     self.cx
@@ -521,6 +531,9 @@ impl FnCx<'_, '_> {
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
+        if self.cx.has_literal_member(target) {
+            return self.literal_cast(expr, target, want, span);
+        }
         // An integer literal cast to an integer type is an exact integer first, so the cast
         // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
@@ -554,6 +567,32 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.mk(H::Cast(Box::new(inner)), target, span)
+    }
+
+    /// `"c" as "a" | "c"`: a value that converts to the literal type (or union) `target` as it
+    /// is, as in TypeScript. A wider value (a `string` as `"a" | "b"`) would need a test.
+    fn literal_cast(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let inner = self.expr(expr, Some(target), want);
+        match self.try_coerce(inner, target) {
+            Ok(h) => h,
+            Err(h) => {
+                let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                if !self.cx.ty.is_bottom(h.ty) {
+                    self.cx.error(
+                        Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span).with_note(
+                            "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
+                        ),
+                    );
+                }
+                self.error_expr(span)
+            }
+        }
     }
 
     /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to

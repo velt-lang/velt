@@ -111,7 +111,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The type `e` (a variable, `this` or a path of fields) has, without checking it.
-    fn peek_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+    pub(super) fn peek_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
         if !is_path(e) {
             return None;
         }

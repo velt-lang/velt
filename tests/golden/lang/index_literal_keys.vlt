@@ -1,0 +1,90 @@
+// Indexing with a key whose type is a string literal or a union of them, as in TypeScript: a
+// constant names one field, a union key reads the field it holds when it runs (typed as the
+// union of the fields' types), and assigning through it works when the fields have one type.
+type H = { "a-b": number; c: number; name: string };
+type Key = "a-b" | "c";
+
+class Counter {
+  hits = 0;
+  misses = 0;
+
+  bump(which: "hits" | "misses"): number {
+    this[which] += 1;
+    return this[which];
+  }
+}
+
+class Doc {
+  title = "t";
+  body = "b";
+  tags: string[] = [];
+  notes: string[] = [];
+}
+
+type Part = "title" | "body";
+
+class Mixed {
+  title = "t";
+  count = 0;
+}
+
+// A key narrowed to one member assigns that field's type.
+function set(m: Mixed, k: "title" | "count") {
+  if (k === "title") {
+    m[k] = "x";
+  } else if (k === "count") {
+    m[k] = 3;
+  }
+}
+
+function read(h: H, k: Key): number {
+  return h[k];
+}
+
+function either(h: H, k: "c" | "name"): string {
+  const v = h[k];
+  return `${v}`;
+}
+
+function show(d: Doc, p: Part): string {
+  const s = d[p];
+  return s + "!";
+}
+
+const h: H = { "a-b": 1, c: 2, name: "n" };
+const k = "a-b";
+console.log(h[k]);
+const j = "c" as ("a-b" | "c");
+console.log(h[j]);
+console.log(read(h, "a-b"), read(h, "c"));
+console.log(either(h, "c"), either(h, "name"));
+let key: Key = "a-b";
+h[key] = 10;
+h[key] += 5;
+key = "c";
+h[key] = 20;
+console.log(h["a-b"], h.c);
+const name = "name";
+h[name] = "m";
+console.log(h.name);
+const ctr = new Counter();
+ctr.bump("hits");
+ctr.bump("misses");
+console.log(ctr.bump("hits"), ctr.hits, ctr.misses);
+const d = new Doc();
+console.log(show(d, "title"), show(d, "body"));
+let p: Part = "body";
+d[p] = "changed";
+console.log(d.body, d[p], `${d[p]}`);
+const which = "tags" as ("tags" | "notes");
+console.log(d[which].length);
+d[which].push("x");
+d[which].push("y");
+console.log(d.tags, d.notes);
+const mixed = { a: 1, b: "x" };
+const mk = "b" as ("a" | "b");
+console.log(mixed[mk]);
+const mx = new Mixed();
+set(mx, "title");
+set(mx, "count");
+console.log(mx.title, mx.count);

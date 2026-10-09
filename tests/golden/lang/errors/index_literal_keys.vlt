@@ -1,0 +1,14 @@
+// Assigning through a key that may name fields of different types is an error, and so is
+// casting a `string` value to a union of string literals (TypeScript accepts the cast unchecked).
+class Doc {
+  title = "t";
+  count = 0;
+}
+
+function main() {
+  const d = new Doc();
+  const k = "count" as "title" | "count";
+  d[k] = 5;
+  const s: string = "title";
+  console.log(d[s as "title" | "count"]);
+}

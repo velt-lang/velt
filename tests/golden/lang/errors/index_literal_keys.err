@@ -1,0 +1,5 @@
+index_literal_keys.vlt:11:5: error: cannot assign through this key: the fields it may name have different types
+  = note: the fields: `title`: string, `count`: f64
+  = note: narrow the key first (`if (k === "a")`), or assign to the field
+index_literal_keys.vlt:13:17: error: cannot cast `string` as `"title" | "count"`
+  = note: a value takes a literal type after a test that narrows it (`if (k === "a")`)
