@@ -21,6 +21,7 @@ mod division;
 pub(crate) mod downcast;
 mod errors;
 mod fn_arity;
+mod fn_union_call;
 mod gen_closure;
 mod hoist;
 mod iface_call;

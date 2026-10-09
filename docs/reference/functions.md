@@ -431,6 +431,23 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   as a member (`(x: number) => Resp` for `(x: number) => Resp | Promise<Resp>`), as in TS; its
   result converts to the union. An error type parameter that nothing fixes
   (`<E>(h: (x: number) => Resp | Promise<Resp, E>)` called with a sync function) is `never`.
+- A value whose type is a **union of function types** with the same parameters can be called:
+  the call runs whichever function the value holds, and its result is the union of their
+  results (a `void` member makes it `T | null`; `await` on that gives `void`). An arrow passed
+  as such a union is typed by the member it fits, the first in order where several do.
+
+  ```ts
+  type Format = ((n: number) => string) | ((n: number) => number);
+
+  function show(f: Format, n: number): string {
+    const v = f(n);
+    return typeof v === "string" ? `text ${v}` : `number ${v}`;
+  }
+
+  function main() {
+    console.log(show((n) => `#${n}`, 3), show((n) => n * 2, 3)); // text #3 number 6
+  }
+  ```
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
   spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
   with typed parameters; it is then a generic function. Without a return type it returns the

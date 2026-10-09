@@ -188,6 +188,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
             _ => {
+                let f = match self.call_fn_union(f, args, span) {
+                    Ok(h) => return h,
+                    Err(f) => f,
+                };
                 let tn = self.cx.display(f.ty);
                 self.cx.err(
                     format!("this expression is not callable (it has type `{tn}`)"),
