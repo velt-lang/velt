@@ -169,26 +169,36 @@ impl Gate<'_> {
         modes: Option<&str>,
     ) -> Result<(), String> {
         let host = host_triple()?;
-        let kit = target_dir(self.root).join("lib").join("targets").join(&host);
+        let kit = target_dir(self.root)
+            .join("lib")
+            .join("targets")
+            .join(&host);
         let velt_kit = target_dir(self.root).join("debug").join(exe("velt-kit"));
         let mut build = Command::new(&velt_kit);
         build.args(["build", "--target", &host, "--out"]).arg(&kit);
-        let result = self.step("link kit for the bundled linker", &mut build).and_then(|()| {
-            let mut goldens = cargo(&["test"]);
-            goldens
-                .args(ws)
-                .args(["--test", "golden", "--", "--nocapture", "--exact", "golden"]);
-            goldens.env("VELT_RT_PREBUILT", "1");
-            goldens.env("VELT_LINKER", "bundled");
-            goldens.env(
-                "VELT_GOLDEN",
-                selected.unwrap_or_else(|| BUNDLED_LINKER_GOLDENS.into()),
-            );
-            if let Some(modes) = modes {
-                goldens.env("VELT_GOLDEN_MODES", modes);
-            }
-            self.step("goldens (bundled linker)", &mut goldens)
-        });
+        let result = self
+            .step("link kit for the bundled linker", &mut build)
+            .and_then(|()| {
+                let mut goldens = cargo(&["test"]);
+                goldens.args(ws).args([
+                    "--test",
+                    "golden",
+                    "--",
+                    "--nocapture",
+                    "--exact",
+                    "golden",
+                ]);
+                goldens.env("VELT_RT_PREBUILT", "1");
+                goldens.env("VELT_LINKER", "bundled");
+                goldens.env(
+                    "VELT_GOLDEN",
+                    selected.unwrap_or_else(|| BUNDLED_LINKER_GOLDENS.into()),
+                );
+                if let Some(modes) = modes {
+                    goldens.env("VELT_GOLDEN_MODES", modes);
+                }
+                self.step("goldens (bundled linker)", &mut goldens)
+            });
         // Without the kit, later builds in this checkout link with the system linker again.
         if !self.dry_run {
             let _ = std::fs::remove_dir_all(&kit);

@@ -134,11 +134,20 @@ extern "C" {
     fn __xstat64(ver: c_int, path: *const c_char, buf: *mut c_void) -> c_int;
     fn __lxstat64(ver: c_int, path: *const c_char, buf: *mut c_void) -> c_int;
     fn __fxstat64(ver: c_int, fd: c_int, buf: *mut c_void) -> c_int;
-    fn __fxstatat64(ver: c_int, dirfd: c_int, path: *const c_char, buf: *mut c_void, flags: c_int)
+    fn __fxstatat64(
+        ver: c_int,
+        dirfd: c_int,
+        path: *const c_char,
+        buf: *mut c_void,
+        flags: c_int,
+    ) -> c_int;
+    fn __xmknodat(ver: c_int, dirfd: c_int, path: *const c_char, mode: u32, dev: *mut u64)
         -> c_int;
-    fn __xmknodat(ver: c_int, dirfd: c_int, path: *const c_char, mode: u32, dev: *mut u64) -> c_int;
-    fn __cxa_atexit(f: unsafe extern "C" fn(*mut c_void), arg: *mut c_void, dso: *mut c_void)
-        -> c_int;
+    fn __cxa_atexit(
+        f: unsafe extern "C" fn(*mut c_void),
+        arg: *mut c_void,
+        dso: *mut c_void,
+    ) -> c_int;
     fn __register_atfork(
         prepare: Option<unsafe extern "C" fn()>,
         parent: Option<unsafe extern "C" fn()>,

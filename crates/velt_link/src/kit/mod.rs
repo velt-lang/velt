@@ -186,10 +186,12 @@ impl Kit {
         let stamp = dir.join(STAMP);
         match std::fs::read_to_string(&stamp) {
             Ok(text) if stamp_format(&text) == Some(FORMAT) => {}
-            Ok(_) => return Err(format!(
+            Ok(_) => {
+                return Err(format!(
                 "the link kit in {} has another format than this velt (reinstall the toolchain)",
                 dir.display()
-            )),
+            ))
+            }
             Err(_) => return Err(format!("no link kit in {}", dir.display())),
         }
         let kit = Kit {

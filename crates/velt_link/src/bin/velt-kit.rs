@@ -87,8 +87,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
             let f = flags(&args[2..])?;
             match args.get(1).map(String::as_str) {
                 Some("linux") => {
-                    let arch = Arch::from_triple(f.arch.as_deref().unwrap_or(std::env::consts::ARCH))
-                        .ok_or("unsupported architecture")?;
+                    let arch =
+                        Arch::from_triple(f.arch.as_deref().unwrap_or(std::env::consts::ARCH))
+                            .ok_or("unsupported architecture")?;
                     let out = f
                         .out
                         .unwrap_or_else(|| repo_kit.join(format!("linux/{}.txt", arch.name())));
@@ -155,8 +156,13 @@ fn linux_list(arch: Arch, root: &Path) -> Result<String, String> {
         .position(|w| w == marker)
         .map(|at| {
             let rest = &bytes[at..];
-            let end = rest.iter().position(|&b| b == b'\n' || b == 0).unwrap_or(rest.len());
-            String::from_utf8_lossy(&rest[..end]).trim_end_matches('.').to_string()
+            let end = rest
+                .iter()
+                .position(|&b| b == b'\n' || b == 0)
+                .unwrap_or(rest.len());
+            String::from_utf8_lossy(&rest[..end])
+                .trim_end_matches('.')
+                .to_string()
         })
         .unwrap_or_else(|| "glibc (version unknown)".into());
     let mut out = format!(
@@ -285,7 +291,8 @@ fn macos_list() -> Result<String, String> {
     );
     for (lib, path, _) in kit::MACOS_LIBS {
         let stub = sdk.join(path.replace("libSystem.tbd", "libSystem.B.tbd"));
-        let text = std::fs::read_to_string(&stub).map_err(|e| format!("{}: {e}", stub.display()))?;
+        let text =
+            std::fs::read_to_string(&stub).map_err(|e| format!("{}: {e}", stub.display()))?;
         for sym in tbd_exports(&text) {
             out.push_str(&format!("{lib} {sym}\n"));
         }

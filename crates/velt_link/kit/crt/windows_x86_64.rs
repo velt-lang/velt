@@ -14,9 +14,9 @@
 #![allow(non_upper_case_globals, non_snake_case, clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_void};
-use core::ptr::{addr_of, null};
 #[cfg(velt_crt_dll)]
 use core::ptr::addr_of_mut;
+use core::ptr::{addr_of, null};
 
 unsafe fn fastfail(code: u32) -> ! {
     unsafe { core::arch::asm!("int 0x29", in("ecx") code, options(noreturn, nostack)) }
@@ -311,7 +311,11 @@ pub unsafe extern "C" fn mainCRTStartup() -> u32 {
         if !initialize() {
             return 255;
         }
-        let code = main(*__p___argc(), *__p___argv(), _get_initial_narrow_environment());
+        let code = main(
+            *__p___argc(),
+            *__p___argv(),
+            _get_initial_narrow_environment(),
+        );
         exit(code)
     }
 }
