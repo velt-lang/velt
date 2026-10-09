@@ -55,13 +55,16 @@ fn local_order(frame: &Frame, captures: &[hir::Capture], declared: &[LocalId]) -
 }
 
 /// `async (params) => body` as `(params) => (async () => body)()`: a sync arrow whose value is
-/// the promise the inner async arrow returns (`FnCx::async_into_union`).
+/// the promise the inner async arrow returns (`FnCx::async_into_union`). `discard`: as
+/// `(params) => { const p = (async () => body)(); }` instead, for a `void` function type
+/// (`FnCx::async_into_void`): the started promise is dropped and runs to completion, as in JS.
 fn async_in_sync_arrow(
     e: &ast::Expr,
     params: &[ast::ArrowParam],
     ret: &Option<ast::TypeExpr>,
     throws: &Option<ast::TypeExpr>,
     body: &ast::ArrowBody,
+    discard: bool,
 ) -> ast::Expr {
     let mk = |kind| ast::Expr {
         id: ast::NodeId(u32::MAX),
@@ -82,12 +85,40 @@ fn async_in_sync_arrow(
         args: vec![],
         optional: false,
     });
+    let body = if discard {
+        let span = e.span;
+        let pattern = ast::Pattern {
+            id: ast::NodeId(u32::MAX),
+            // Not a valid identifier, so the body cannot name it.
+            kind: ast::PatternKind::Ident(ast::Ident {
+                name: "#started".into(),
+                span,
+            }),
+            span,
+        };
+        let decl = ast::Stmt {
+            kind: ast::StmtKind::Var(ast::VarDecl {
+                kind: ast::VarKind::Const,
+                pattern,
+                ty: None,
+                init: Some(call),
+                span,
+            }),
+            span,
+        };
+        ast::ArrowBody::Block(ast::Block {
+            stmts: vec![decl],
+            span,
+        })
+    } else {
+        ast::ArrowBody::Expr(Box::new(call))
+    };
     mk(ast::ExprKind::Arrow {
         type_params: vec![],
         params: params.to_vec(),
         ret: None,
         throws: None,
-        body: ast::ArrowBody::Expr(Box::new(call)),
+        body,
         is_async: false,
     })
 }
@@ -122,8 +153,15 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
+        // Against a union of function types, the arrow is typed by one member; the caller
+        // converts the closure to the union.
+        let exp = self.arrow_member(exp, *is_async, params.len()).or(exp);
         if *is_async && self.async_into_union(exp) {
-            let wrapped = async_in_sync_arrow(e, params, ret, throws, body);
+            let wrapped = async_in_sync_arrow(e, params, ret, throws, body, false);
+            return self.closure(&wrapped, exp, escaping);
+        }
+        if *is_async && self.async_into_void(exp) {
+            let wrapped = async_in_sync_arrow(e, params, ret, throws, body, true);
             return self.closure(&wrapped, exp, escaping);
         }
         let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);

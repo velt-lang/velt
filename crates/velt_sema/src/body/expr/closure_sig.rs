@@ -68,6 +68,58 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Whether an async arrow is expected to be a `void` function (`onClick: () => void`): TS
+    /// accepts it, and the promise each call starts runs to completion on its own. It is
+    /// checked as `(params) => { const p = (async () => body)(); }` (`closure`).
+    pub(super) fn async_into_void(&mut self, exp: Option<TyId>) -> bool {
+        matches!(
+            self.hint(exp).map(|t| self.cx.ty.kind(t).clone()),
+            Some(TyKind::FnPtr { ret, .. }) if ret == self.cx.ty.unit
+        )
+    }
+
+    /// The member of a union of function types (`(() => void) | (() => Promise<void>)`) that
+    /// an arrow with `n_params` parameters is typed by, as TS's contextual typing picks one: an
+    /// async arrow takes a member returning a promise (or a union with one), else a `void` one;
+    /// a sync arrow the first member not returning a promise.
+    pub(super) fn arrow_member(
+        &mut self,
+        exp: Option<TyId>,
+        is_async: bool,
+        n_params: usize,
+    ) -> Option<TyId> {
+        let u = self.hint(exp)?;
+        let members = self.cx.union_members(u)?;
+        let fns: Vec<(TyId, TyId)> = members
+            .iter()
+            .filter_map(|m| match self.cx.ty.kind(*m) {
+                TyKind::FnPtr { params, ret, .. } if params.len() >= n_params => Some((*m, *ret)),
+                _ => None,
+            })
+            .collect();
+        let promise = |s: &mut Self, ret: TyId| {
+            s.cx.ty.promise_payload(ret).is_some()
+                || s.cx
+                    .union_members(ret)
+                    .is_some_and(|ms| ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some()))
+        };
+        let unit = self.cx.ty.unit;
+        if is_async {
+            for &(m, ret) in &fns {
+                if promise(self, ret) {
+                    return Some(m);
+                }
+            }
+            return fns.iter().find(|(_, ret)| *ret == unit).map(|(m, _)| *m);
+        }
+        for &(m, ret) in &fns {
+            if !promise(self, ret) {
+                return Some(m);
+            }
+        }
+        None
+    }
+
     /// The closure's error type: written or expected (`declared`), else what its body is known
     /// to throw now (re-checked once every error type is inferred, `crate::throws`).
     pub(super) fn closure_error(

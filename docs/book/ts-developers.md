@@ -231,7 +231,9 @@ surprise ([Error handling](errors.md)).
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - A value that may or may not be a promise (`View | Promise<View>`) is told apart with
   `x instanceof Promise` (a thenable check like `typeof x.then === "function"` doesn't apply).
-  An async arrow passed where such a union is returned returns the promise, as in TS.
+  An async arrow passed where such a union is returned returns the promise, as in TS, and one
+  passed as a `() => void` callback (an `onClick` handler) starts a promise that runs to
+  completion on its own.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
   their `clear` functions are globals; the callback returns the promise to run

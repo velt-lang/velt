@@ -7,6 +7,12 @@
 methods and async arrows work the same way. `async function main()` runs on the runtime, a
 multi-threaded tokio executor with one worker per core.
 
+An async arrow passed where a `void` function is expected (`onClick?: () => void`, a
+`(() => void) | null` parameter) is accepted, as in TypeScript: each call starts the arrow's
+promise, which runs to completion on its own (a [dropped promise](#promises) is not cancelled).
+Against a union of function types (`(() => void) | (() => Promise<void>)`) an arrow takes the
+member that fits: an async arrow the one returning a promise, a sync arrow the other.
+
 An async arrow passed where the function type returns a union with one promise member
 (`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
 TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
