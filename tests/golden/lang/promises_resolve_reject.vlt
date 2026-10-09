@@ -29,6 +29,10 @@ async function main() {
 
   // A promise passed to `Promise.resolve` is the promise itself.
   console.log("flattened", await Promise.resolve(seven()));
+  // At an expected type and with a type argument too.
+  const q: Promise<number> = Promise.resolve(Promise.resolve(4));
+  console.log("expected", await q);
+  console.log("type argument", await Promise.resolve<number>(Promise.resolve(6)));
 
   const all = await Promise.all([Promise.resolve(1), Promise.resolve(2)]);
   console.log("all", all.length, all[0] + all[1]);

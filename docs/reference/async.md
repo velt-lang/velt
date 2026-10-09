@@ -105,7 +105,8 @@ Promises behave like JavaScript's, at Rust's cost:
 - `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
   ([below](#promisewithresolvers)).
 - `Promise.resolve(value): Promise<T>`: a promise fulfilled with `value` (`Promise.resolve()`
-  is a `Promise<void>`; a promise passed in is returned as it is, as in JS).
+  is a `Promise<void>`; a promise passed in is returned as it is, as in JS). `T` comes from the
+  argument, the type argument (`Promise.resolve<number>(p)`) or the expected type.
 - `Promise.reject(reason: E): Promise<T, E>`: a promise rejected with `reason`. `T` comes from
   the type argument (`Promise.reject<string>(e)`) or the expected type, else it is `never`.
 
