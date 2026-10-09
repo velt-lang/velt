@@ -39,6 +39,8 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |
           # Containers cannot mount the Dev Drive: copy to the runner's temp drive.
+          # Some runner images leave the Docker service stopped.
+          if ((Get-Service docker -ErrorAction SilentlyContinue).Status -ne "Running") { Start-Service docker }
           $dist = (Get-ChildItem dist -Directory | Select-Object -First 1).FullName
           $t = Join-Path $env:RUNNER_TEMP "clean"
           New-Item -ItemType Directory -Force "$t/repo/tests/golden/m1", "$t/repo/examples", "$t/repo/scripts" | Out-Null
@@ -49,6 +51,7 @@ jobs:
           docker run --rm -v "$t\velt:C:\velt" -v "$t\repo:C:\repo" mcr.microsoft.com/windows/servercore:ltsc2025 powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: bench links (system vs bundled)
+        if: always()
         shell: pwsh
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |

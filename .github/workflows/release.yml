@@ -198,6 +198,8 @@ jobs:
         run: |
           $Name = "velt-${{ needs.version.outputs.version }}-${{ matrix.target }}"
           Expand-Archive "dist/$Name.zip" -DestinationPath $env:RUNNER_TEMP
+          # Some runner images leave the Docker service stopped.
+          if ((Get-Service docker -ErrorAction SilentlyContinue).Status -ne "Running") { Start-Service docker }
           docker run --rm -v "$env:RUNNER_TEMP\${Name}:C:\velt" -v "${PWD}:C:\repo" `
             mcr.microsoft.com/windows/servercore:ltsc2025 `
             powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
