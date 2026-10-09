@@ -47,7 +47,8 @@ impl FnCx<'_, '_> {
     /// The members of a union of function types (`(() => void) | (() => Promise<void>)`) that
     /// an arrow with `n_params` parameters may be typed by, in order of preference, as TS's
     /// contextual typing picks one: for an async arrow the members returning a promise (or a
-    /// union with one), then the `void` ones; for a sync arrow those not returning a promise.
+    /// union with one), then the `void` ones; for a sync arrow those not returning a promise,
+    /// then the others.
     /// Empty when `exp` is not such a union.
     pub(super) fn arrow_members(
         &mut self,
@@ -84,11 +85,16 @@ impl FnCx<'_, '_> {
             }
             out.extend(fns.iter().filter(|(_, r)| *r == unit).map(|(m, _)| *m));
         } else {
+            // A sync arrow may return a promise too (`() => save()`): those members come last.
+            let mut later = vec![];
             for &(m, ret) in &fns {
-                if !promise(self, ret) {
+                if promise(self, ret) {
+                    later.push(m);
+                } else {
                     out.push(m);
                 }
             }
+            out.extend(later);
         }
         out
     }
