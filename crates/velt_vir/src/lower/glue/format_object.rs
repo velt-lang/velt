@@ -5,6 +5,7 @@
 
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
+use crate::lower::glue::literals::inspect_key;
 use crate::lower::FnLower;
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 
@@ -198,28 +199,4 @@ impl FnLower<'_, '_> {
             if matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(a)
                 if a.kind == AdtKind::Struct && a.fields.is_empty()))
     }
-}
-
-/// A field name as Node's `util.inspect` writes it: bare when it matches
-/// `/^[a-zA-Z_][a-zA-Z_0-9]*$/`, otherwise in single quotes (`'content-type'`, `'$x'`).
-fn inspect_key(n: &str) -> String {
-    let mut chars = n.chars();
-    let bare = chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if bare {
-        return n.to_string();
-    }
-    let mut out = String::from("'");
-    for c in n.chars() {
-        match c {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
 }
