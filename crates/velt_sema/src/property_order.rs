@@ -38,7 +38,17 @@ mod tests {
         assert_eq!(array_index("0"), Some(0));
         assert_eq!(array_index("404"), Some(404));
         assert_eq!(array_index("4294967294"), Some(4294967294));
-        for not in ["", "01", "-1", "1.5", "3d", "4294967295", "99999999999", " 1", "+1"] {
+        for not in [
+            "",
+            "01",
+            "-1",
+            "1.5",
+            "3d",
+            "4294967295",
+            "99999999999",
+            " 1",
+            "+1",
+        ] {
             assert_eq!(array_index(not), None, "{not:?}");
         }
     }
