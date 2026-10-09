@@ -89,7 +89,7 @@ jobs:
       - name: bench/jsx/run.sh
         env:
           COUNT: valgrind
-          VARIANTS: hand precompiled generic
+          VARIANTS: hand precompiled generic shape-no-doctype shape-jsx-escape precompiled-no-doctype shape
         run: |
           set -o pipefail
           out="$RUNNER_TEMP/bench-jsx"
