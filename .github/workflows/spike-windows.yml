@@ -1,0 +1,37 @@
+# TEMPORARY (bundled-linker spike, #803): runs scripts/spike/*.ps1 on Windows. Removed before the PR.
+name: spike
+on:
+  push:
+    branches: ["spike/**"]
+  workflow_dispatch:
+    inputs:
+      script:
+        default: windows.ps1
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+      - name: spike
+        shell: pwsh
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          $script = "${{ inputs.script }}"
+          if (-not $script) { $script = "windows.ps1" }
+          pwsh -NoProfile -File "scripts/spike/$script" -Out "$env:RUNNER_TEMP/spike" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/spike.log"
+          exit $LASTEXITCODE
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          { echo '```'; tail -n 300 "$RUNNER_TEMP/spike.log" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-windows
+          path: ${{ runner.temp }}/spike
+          if-no-files-found: ignore
