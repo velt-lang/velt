@@ -56,7 +56,11 @@ fn layout(cap: usize, header: bool) -> Layout {
 }
 
 unsafe fn count<'a>(data: *mut u8) -> &'a AtomicU64 {
-    &*(data.sub(COUNT) as *const AtomicU64)
+    let c = &*(data.sub(COUNT) as *const AtomicU64);
+    // A string kept after its buffer was freed (debug runtime, `VELT_RT_DEBUG_ALLOC=1`, #872).
+    #[cfg(debug_assertions)]
+    crate::freed::check_value(c.load(Ordering::Relaxed), "a string whose buffer was freed");
+    c
 }
 
 /// The `lone` field of a non-ASCII buffer. Atomic (relaxed: a plain load or store) because a

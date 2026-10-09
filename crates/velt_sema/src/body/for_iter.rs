@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` the prelude's `Map<K, V>` (iterated through `entries()`)?
-    fn is_prelude_map(&self, t: TyId) -> bool {
+    pub(super) fn is_prelude_map(&self, t: TyId) -> bool {
         matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if Some(*d) == self.cx.prelude_adt("Map"))
     }
 

@@ -34,7 +34,8 @@ impl Later {
         self.locals || self.memory
     }
 
-    fn or(self, o: Later) -> Later {
+    /// Both effects.
+    pub(super) fn or(self, o: Later) -> Later {
         Later {
             locals: self.locals || o.locals,
             memory: self.memory || o.memory,

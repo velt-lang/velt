@@ -36,6 +36,8 @@ pub mod fetch;
 pub mod fmt;
 #[path = "../../velt_rt/src/fnv.rs"]
 pub mod fnv;
+#[path = "../../velt_rt/src/freed.rs"]
+pub mod freed;
 pub mod fs;
 #[path = "../../velt_rt/src/handle.rs"]
 pub mod handle;
