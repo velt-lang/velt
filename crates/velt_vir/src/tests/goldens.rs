@@ -466,19 +466,45 @@ fn snapshot_greet() {
     let expected = r#"fn#2 internal _V5greet(ptr, ptr) -> unit {
   param _0: ptr [nonnull dereferenceable(24)] // name
   param _1: ptr [noalias nonnull dereferenceable(24)] // ret.out
-  let _2: agg#0
-  let _3: ptr
+  let _2: u64
+  let _3: u64
+  let _4: u64
+  let _5: u64
+  let _6: u64
+  let _7: i64
+  let _8: i64
+  let _9: u64
+  let _10: u64
+  let _11: u64
+  let _12: u64
+  let _13: u64
+  let _14: u64
+  let _15: agg#0
+  let _16: ptr
   bb0:
-    _3 = &_2
-    call extern#3 velt_rt_strbuf_new(24_u64, _3) -> bb1
+    _2 = (*_0 as agg#0).1
+    _3 = (*_0 as agg#0).2
+    _4 = ushr _3, 56_u64
+    _5 = bitand _4, 31_u64
+    _6 = bitand _2, 4294967295_u64
+    _7 = cast _3 as i64
+    _8 = shr _7, 63_i64
+    _9 = cast _8 as u64
+    _10 = bitnot _9
+    _11 = bitand _5, _9
+    _12 = bitand _6, _10
+    _13 = bitor _11, _12
+    _14 = add _13, 8_u64
+    _16 = &_15
+    call extern#3 velt_rt_strbuf_new(_14, _16) -> bb1
   bb1:
-    call extern#4 velt_rt_strbuf_push_bytes(_3, static#15, 30064771079_u64) -> bb2
+    call extern#4 velt_rt_strbuf_push_bytes(_16, static#15, 30064771079_u64) -> bb2
   bb2:
-    call extern#13 velt_rt_strbuf_push_str(_3, _0) -> bb3
+    call extern#13 velt_rt_strbuf_push_str(_16, _0) -> bb3
   bb3:
-    call extern#14 velt_rt_strbuf_push_byte(_3, 33_u8) -> bb4
+    call extern#14 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
   bb4:
-    (*_1 as agg#0) = _2
+    (*_1 as agg#0) = _15
     return ()
 }
 "#;

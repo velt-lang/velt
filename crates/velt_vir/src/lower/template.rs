@@ -1,17 +1,20 @@
 //! `ToString` and string concatenation chains. Sema lowers a template literal (and `a + b + c`)
 //! to a left fold of `StrConcat` with `ToString` around non-string parts; here the whole tree is
-//! flattened into one builder: reserve an estimate, push every part as soon as it is evaluated
-//! (JS order — later parts cannot change what an earlier part contributed), and the filled
-//! builder is the result (same layout as `VeltStr`, no `finish` call). Non-string parts are
-//! appended by the shared format glue, so `${x}` is what `console.log(x)` prints, except for
-//! arrays, tuples and objects, which are written as JS's `String(x)` writes them (`1,2`; an
-//! object as its class's `toString()` or `[object Object]`, js_string.rs).
+//! flattened into one builder, and the filled builder is the result (same layout as `VeltStr`,
+//! no `finish` call). With string parts and only scalar formatted ones, every part is evaluated
+//! first (JS order; each held against the parts after it) and the builder is sized once from
+//! their byte lengths: one allocation, however long a part is. Otherwise it reserves an
+//! estimate and pushes every part as soon as it is evaluated (later parts cannot change what an
+//! earlier part contributed). Non-string parts are appended by the shared format glue, so `${x}`
+//! is what `console.log(x)` prints, except for arrays, tuples and objects, which are written as
+//! JS's `String(x)` writes them (`1,2`; an object as its class's `toString()` or
+//! `[object Object]`, js_string.rs).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::sequence::Later;
+use super::sequence::{may_move_local, root_local, Later};
 use super::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -66,11 +69,127 @@ impl FnLower<'_, '_> {
 
     /// Evaluate `parts` in order into one fresh builder: an owned string of type `ty`.
     pub(super) fn build_parts(&mut self, parts: &[Part], ty: TyId) -> Operand {
+        if self.sized_once(parts) {
+            return self.build_sized(parts, ty);
+        }
         let cap = self.estimate_all(parts);
         let (buf, bp) = self.new_strbuf(cap);
         // Owned from the start: a part that throws or returns early frees the partial text.
         self.own_temp(buf, ty);
         self.push_parts(&bp, parts);
+        Operand::Copy(Place::local(buf))
+    }
+
+    /// Can the builder be sized once from the parts' values: is there a string part (whose
+    /// length is known only once it is evaluated), and is every formatted part a number or a
+    /// boolean (a copy, so it can be formatted after the parts after it ran)?
+    fn sized_once(&mut self, parts: &[Part]) -> bool {
+        let mut strings = false;
+        for p in parts {
+            match p {
+                Part::Text(_) => {}
+                Part::Str(e) => {
+                    // A part that never finishes (`fail()`) has no string to measure.
+                    let t = self.sub(e.ty);
+                    if matches!(self.cx.kind(t), TyKind::Never) {
+                        return false;
+                    }
+                    strings = true;
+                }
+                Part::Format(e) => {
+                    let t = self.sub(e.ty);
+                    if !matches!(
+                        self.cx.kind(t),
+                        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+                    ) {
+                        return false;
+                    }
+                }
+            }
+        }
+        strings
+    }
+
+    /// [`build_parts`](Self::build_parts) with one allocation: every part is evaluated first, in
+    /// order (each held against what the parts after it may do), then the builder gets the
+    /// static text's length plus the strings' byte lengths plus the widest a number can be, and
+    /// the parts are appended. A long string part (a list of rows) no longer regrows the builder.
+    fn build_sized(&mut self, parts: &[Part], ty: TyId) -> Operand {
+        let mut later = vec![Later::default(); parts.len()];
+        let mut acc = Later::default();
+        for (i, p) in parts.iter().enumerate().rev() {
+            later[i] = acc;
+            if let Part::Str(e) | Part::Format(e) = p {
+                let l = Later::of(e);
+                acc.locals |= l.locals;
+                acc.memory |= l.memory;
+            }
+        }
+        // A string part is read only when the builder is filled, after every later part ran: if
+        // a later part may move the variable it reads (`${s}|${take(s)}`, which frees `s`), it is
+        // held as if that part wrote the variable.
+        for i in 0..parts.len() {
+            let Part::Str(e) = &parts[i] else { continue };
+            let Some(root) = root_local(e) else { continue };
+            let moved = parts[i + 1..].iter().any(|p| match p {
+                Part::Str(x) | Part::Format(x) => may_move_local(x, root),
+                Part::Text(_) => false,
+            });
+            later[i].locals |= moved;
+        }
+        let mut values = Vec::with_capacity(parts.len());
+        for (i, p) in parts.iter().enumerate() {
+            values.push(match p {
+                Part::Text(_) => None,
+                Part::Str(e) | Part::Format(e) => Some(self.expr_held(e, later[i])),
+            });
+        }
+        let mut fixed = 0u64;
+        let mut cap: Option<Operand> = None;
+        for (p, v) in parts.iter().zip(&values) {
+            match (p, v) {
+                (Part::Text(s), _) => fixed += s.len() as u64,
+                (Part::Format(e), _) => {
+                    let t = self.sub(e.ty);
+                    fixed += match self.cx.kind(t) {
+                        TyKind::Bool => 5,
+                        // `-0.0000032851837118293624`: JS's longest numbers are 25 bytes.
+                        TyKind::Float(_) => 25,
+                        _ => 20,
+                    };
+                }
+                (Part::Str(_), Some(v)) => {
+                    let place = self.operand_place(v.clone(), STR);
+                    let n = self.str_bytes(&place);
+                    cap = Some(match cap {
+                        Some(c) => self.u64_op(BinOp::Add, c, n),
+                        None => n,
+                    });
+                }
+                (Part::Str(_), None) => {}
+            }
+        }
+        let fixed = cint(fixed as i128, Ty::U64);
+        let cap = match cap {
+            Some(c) => self.u64_op(BinOp::Add, c, fixed),
+            None => fixed,
+        };
+        let (buf, bp) = self.new_strbuf_sized(cap);
+        self.own_temp(buf, ty);
+        for (p, v) in parts.iter().zip(values) {
+            match (p, v) {
+                (Part::Text(s), _) => self.push_text(&bp, s),
+                (Part::Format(e), Some(v)) => {
+                    let t = self.sub(e.ty);
+                    self.push_scalar(&bp, v, t);
+                }
+                (Part::Str(_), Some(v)) => {
+                    let a = self.operand_addr(v, STR);
+                    self.push_str(&bp, a);
+                }
+                _ => {}
+            }
+        }
         Operand::Copy(Place::local(buf))
     }
 
