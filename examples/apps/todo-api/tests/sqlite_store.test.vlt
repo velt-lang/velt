@@ -49,13 +49,17 @@ function fill(path: string) {
 export function test_data_survives_reopening() {
   const path = tempDb();
   fill(path);
-  const store = new SqliteTodoStore(path);
-  const todos = store.list(null, "a");
-  assertEq(todos.length, 2);
-  assertEq(todos[1].title, "two");
-  assertEq(todos[1].done, true);
-  assertEq(todos[1].tags, ["b", "a"]);
-  assertEq(store.create(body("three", [])).id, 3);
+  // In a block, so the store closes the file before it is removed (Windows can't remove an
+  // open file).
+  {
+    const store = new SqliteTodoStore(path);
+    const todos = store.list(null, "a");
+    assertEq(todos.length, 2);
+    assertEq(todos[1].title, "two");
+    assertEq(todos[1].done, true);
+    assertEq(todos[1].tags, ["b", "a"]);
+    assertEq(store.create(body("three", [])).id, 3);
+  }
   removeDb(path);
 }
 
@@ -75,12 +79,14 @@ export function test_uses_wal_and_one_schema() {
 
 export function test_bad_rows_are_server_errors() {
   const path = tempDb();
-  const store = new SqliteTodoStore(path);
-  store.create(body("one", []));
-  const db = open(path);
-  db.exec("UPDATE todos SET tags = 'not json'");
-  db.close();
-  assertEq(getError(store, 1), "500 db_error: todo 1 has malformed tags: expected array at $");
-  assertEq(getError(store, 2), "404 not_found: todo 2 not found");
+  {
+    const store = new SqliteTodoStore(path);
+    store.create(body("one", []));
+    const db = open(path);
+    db.exec("UPDATE todos SET tags = 'not json'");
+    db.close();
+    assertEq(getError(store, 1), "500 db_error: todo 1 has malformed tags: expected array at $");
+    assertEq(getError(store, 2), "404 not_found: todo 2 not found");
+  }
   removeDb(path);
 }
