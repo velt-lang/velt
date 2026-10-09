@@ -40,7 +40,7 @@ use std::collections::{HashMap, HashSet};
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, TyId};
+use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
 
@@ -204,8 +204,9 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
     out
 }
 
-/// A sync closure `c` that an HTTP handler calls (`serve`'s handler, or a closure it reaches)
-/// runs on several threads at once with a copy of what it captured, like an async handler:
+/// A sync closure `c` that an HTTP handler runs (`serve`'s handler, or a function value the
+/// handler calls) runs on several threads at once with a copy of what it captured, like an
+/// async handler:
 /// modifying a capture is the same error, wherever the closure was written (a variable, a
 /// field, a function's result). Other crossings keep their copy semantics (a sync closure
 /// handed to a spawned task counts on its own copy, `spawn_fn_value_copied_per_task`), and
@@ -214,8 +215,16 @@ fn sync_crossing(cx: &mut Ctx, c: DefId, crosses: bool, why: Option<Why>) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    let handler = why.is_some_and(|w| w.boundary == Boundary::Handler);
-    if f.is_async || f.is_generator || !crosses || !handler {
+    // The handler runs it: the handler itself, a function value it calls or passes on (read
+    // from a variable, a field or a function's result). A closure only stored in an object the
+    // handler captured (`w.onClick` of a captured `w`, never called there) keeps the copy
+    // semantics it has on main.
+    let runs = why.is_some_and(|w| {
+        w.boundary == Boundary::Handler
+            && w.via
+                .is_none_or(|t| matches!(cx.ty.kind(t), crate::hir::TyKind::FnPtr { .. }))
+    });
+    if f.is_async || f.is_generator || !crosses || !runs {
         return;
     }
     report_mutated(cx, c, why, "closure");
@@ -250,7 +259,14 @@ fn reaches(cx: &Ctx, w: &Why) -> String {
         }
     };
     match w.via {
-        Some(t) => format!("but it is stored in a `{}`, which {place}", cx.display(t)),
+        Some(t) => {
+            let shown = cx.display(t);
+            let article = match shown.chars().next() {
+                Some(c) if "AEIOUaeiou".contains(c) => "an",
+                _ => "a",
+            };
+            format!("but it is stored in {article} `{shown}`, which {place}")
+        }
         None => format!("but it {place}"),
     }
 }
@@ -343,7 +359,12 @@ impl Propagation {
 /// boundary `why` it reaches.
 fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
     let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
+    let closure = cx.def_spans.get(c.0 as usize).copied();
     for (name, at) in mutated {
+        // The capture is then moved into the closure: no second error for a later use of it.
+        if let Some(span) = closure {
+            cx.reported_captures.push((name.clone(), span));
+        }
         let mut d = Diagnostic::error(
             format!("this {what} modifies captured `{name}`, so it must stay on the task that created it"),
             at,
@@ -364,8 +385,33 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
                 "the function it is passed to may keep it and run it on another thread"
             }
         };
+        // `shared` holds a number (`add`) or any value (`get`/`set`); a collection or an object
+        // is changed in place, which needs a `Mutex`.
+        let share = match capture_ty(cx, c, &name).map(|t| cx.ty.kind(t).clone()) {
+            Some(TyKind::Int(_) | TyKind::Float(_)) => format!(
+                "share it with `shared`: `const {name} = shared(...)` and `{name}.add(1)` / `{name}.set(v)`"
+            ),
+            Some(TyKind::Str | TyKind::Bool | TyKind::Literal(_)) => format!(
+                "share it with `shared`: `const {name} = shared(...)` and `{name}.get()` / `{name}.set(v)`"
+            ),
+            _ => format!(
+                "share it in a `Mutex`: `const {name} = shared(new Mutex(...))`, changed with `{name}.with(...)`"
+            ),
+        };
         cx.error(d.with_note(format!(
-            "{runs}, with its own copy of what it captured: pass `{name}` as a parameter instead, or share it with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
+            "{runs}, with its own copy of what it captured: pass `{name}` as a parameter instead, or {share}"
         )));
     }
+}
+
+/// The type closure `c` captured the variable `name` with.
+fn capture_ty(cx: &Ctx, c: DefId, name: &str) -> Option<TyId> {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return None;
+    };
+    f.captures
+        .iter()
+        .map(|cap| &f.body.locals[cap.inner.0 as usize])
+        .find(|l| l.name == name)
+        .map(|l| l.ty)
 }

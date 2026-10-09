@@ -46,10 +46,11 @@ it throws.
   (its result, awaited when it is a promise, is the response), and any other function is
   called from an `async` wrapper; so every handler follows the rules below. `E` is what it
   throws (or its promise rejects with).
-- Like spawned tasks, handlers, sync or `async` (and the closures they reach), must not
+- Like spawned tasks, handlers, sync or `async` (and the async closures they reach), must not
   modify captured variables (use `shared`): `(req) => { count++; … }` is a compile error,
   however the handler gets to `serve` (a variable, a field, a function's result, a wrapper of
-  `serve`). Changing an object's fields through a captured variable is not modifying the
+  `serve`). A sync closure only stored in an object the handler captured (`w.onClick` of a
+  captured `w`) is not checked: on the handler's threads it modifies its own copy. Changing an object's fields through a captured variable is not modifying the
   variable: each request works on its own copy of the object (unlike Node, which shares it; #854). Requests run on several threads at once and each gets its own copy
   of what the handler captured, so a captured resource (`[Symbol.dispose]`) needs a `clone()`, or
   capture it as `shared(new Mutex(…))` ([Async](../reference/async.md#thread-safety)).

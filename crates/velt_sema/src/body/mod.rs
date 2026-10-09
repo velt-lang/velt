@@ -49,7 +49,6 @@ pub(crate) mod literal_locals;
 pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
-pub(crate) mod mentions;
 pub(crate) mod narrow;
 mod nested_pattern;
 mod pattern;
@@ -325,11 +324,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// a promise.
     pub await_body: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
-    /// members it was tried against (`expr/closure.rs`).
-    pub member_choices: HashMap<(Span, Vec<TyId>), TyId>,
-    /// Parameter names of the arrows whose union member is being tried (`member_choices` is
-    /// not used for an arrow that mentions one).
-    pub trial_params: Vec<String>,
+    /// members it was tried against and the types it could see (`expr/closure.rs`).
+    pub member_choices: HashMap<(Span, Vec<TyId>, u64), TyId>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -370,7 +366,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             thread_callback: None,
             await_body: None,
             member_choices: HashMap::new(),
-            trial_params: vec![],
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],

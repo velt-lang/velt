@@ -6,7 +6,8 @@
 // - a sync arrow that returns a promise fits a promise member of a union of function types;
 // - a sync arrow for `(n) => T | Promise<T, E> throws E` that returns a promise;
 // - an arrow typed by a member of a union of function types whose nested arrow uses its
-//   parameter (the nested arrow's member is chosen again for each try of the outer one);
+//   parameter, directly or through a local (the nested arrow's member is chosen again for
+//   each try of the outer one);
 // - a function of a namespace import, with a defaulted parameter, as a `void` callback.
 
 import * as lib from "./_callback_lib";
@@ -109,6 +110,16 @@ async function main() {
   run((x) => {
     const s: string = x;
     show(() => x);
+  });
+  run((x) => {
+    const y = x;
+    const s: string = y;
+    show(() => y);
+  });
+  run((x) => {
+    const y = x;
+    show(() => y);
+    const s: string = y;
   });
   eachName(["ns"], lib.greet);
 }

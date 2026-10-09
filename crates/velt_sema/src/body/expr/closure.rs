@@ -97,34 +97,32 @@ impl FnCx<'_, '_> {
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
     /// the first one, whose errors the real check then reports.
     fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // Remembered per arrow and members: an arrow nested in one being tried is tried once,
-        // not once per try of each enclosing arrow (which would be exponential in the nesting).
-        // Not when the arrow uses a parameter of an enclosing arrow being tried: its type
-        // differs between those tries (`(x) => show(() => x)` with `x` a number, then a string).
-        let key = (e.span, members.to_vec());
-        let cacheable = !crate::body::mentions::mentions(e, &self.trial_params);
-        if let Some(&m) = self.member_choices.get(&key).filter(|_| cacheable) {
+        // Remembered per arrow, members and the types of every local visible where it is
+        // checked: an arrow nested in one being tried is tried once, not once per try of each
+        // enclosing arrow (exponential in the nesting), unless something it can see has another
+        // type in this try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a
+        // string).
+        let key = (e.span, members.to_vec(), self.visible_types());
+        if let Some(&m) = self.member_choices.get(&key) {
             return m;
         }
-        let m = self.try_members(e, members, escaping);
-        if cacheable {
-            self.member_choices.insert(key, m);
-        }
+        let m = self.first_fitting(e, members, escaping);
+        self.member_choices.insert(key, m);
         m
     }
 
-    fn try_members(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        let names: Vec<String> = match &e.kind {
-            ast::ExprKind::Arrow { params, .. } => {
-                params.iter().map(|p| p.name.name.clone()).collect()
+    /// A fingerprint of the types of the locals of this function and of the functions it is
+    /// nested in.
+    fn visible_types(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for f in self.outer.iter().chain(std::iter::once(&self.f)) {
+            f.locals.len().hash(&mut h);
+            for l in &f.locals {
+                l.ty.hash(&mut h);
             }
-            _ => vec![],
-        };
-        let outer = self.trial_params.len();
-        self.trial_params.extend(names);
-        let m = self.first_fitting(e, members, escaping);
-        self.trial_params.truncate(outer);
-        m
+        }
+        h.finish()
     }
 
     fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {

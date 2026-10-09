@@ -130,6 +130,9 @@ pub(crate) struct Ctx<'m> {
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
     pub callback_wrappers: std::collections::HashMap<DefId, TyId>,
+    /// Captured variables reported as modified by a closure that crosses threads, with the
+    /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
+    pub reported_captures: Vec<(String, velt_common::Span)>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -236,6 +239,7 @@ impl<'m> Ctx<'m> {
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             callback_wrappers: Default::default(),
+            reported_captures: vec![],
             ide: None,
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),
