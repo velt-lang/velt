@@ -147,7 +147,8 @@ hidden classes and no runtime shape checks.
   statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
   nearest first. A static method of a generic class is called without type arguments
   (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
-  the static's signature doesn't use (in TypeScript statics can't use them) needs no inference.
+  the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
+  also a bounded one (`class Box<T extends Named>`).
   In a static method, `this` is the class the method was called on, as in TypeScript: with
   `class A { static kind() { return "A"; } static hello() { return "hello " + this.kind(); } }`
   and `class B extends A { static kind() { return "B"; } }`, `B.hello()` is `"hello B"`.
@@ -156,7 +157,15 @@ hidden classes and no runtime shape checks.
   be used to call or read its class's static members ```). `super.f()` in a static method calls
   the base class's static `f`, with `this` unchanged. These calls are resolved at compile time:
   a static method using `this` or `super` is compiled once per class below its own that can
-  run it, so there is no dispatch at run time.
+  run it, so there is no dispatch at run time. As in TypeScript, the body is typed once, with
+  the declaring class's members: when `class DogShelter extends Shelter` overrides
+  `static create(): Animal` with `static create(): Dog`, `this.create()` in `Shelter`'s statics
+  is an `Animal` also when they run for `DogShelter` (which calls `DogShelter.create`), and a
+  `static kind(): 2` overriding `static kind(): number` gives a `number` there. A subclass
+  static whose type doesn't convert to the one it overrides is an error naming the subclass
+  (``` `B.kind` has type `string`, which does not convert to `f64` of the member it
+  overrides ```, noted ``in `B`'s copy of `A.run` ``). `this.f` passed where a function with
+  more parameters is expected is wrapped like `C.f` (`["a"].map(this.plain)`).
   A static method is also a value: `const f = C.kind`, `xs.map(C.double)` (passing it where a
   function with more parameters is expected calls it with the leading arguments, as for any
   named function). One using `this` or `super` is not (``` `C.hello` uses `this` or `super`, so

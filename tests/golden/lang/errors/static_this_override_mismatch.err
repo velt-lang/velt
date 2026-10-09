@@ -1,0 +1,2 @@
+static_this_override_mismatch.vlt:6:33: error: `B.kind` has type `string`, which does not convert to `f64` of the member it overrides
+in `B`'s copy of `A.run` (`this` is `B` there)

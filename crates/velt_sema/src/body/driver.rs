@@ -205,7 +205,7 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     }
     literal_locals::finish(cx, def, mark.lens().diags());
     if copy_of.is_some() {
-        drop_repeated_diags(cx, diags_before);
+        drop_repeated_diags(cx, def, diags_before);
     }
     recheck::leave(cx, mark.lens());
     cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
@@ -215,11 +215,16 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
 
 /// Drops the diagnostics from `from` on at a place reported before (a static method's copy
 /// repeats the method's errors, naming the subclass where the method names its own class).
-fn drop_repeated_diags(cx: &mut Ctx, from: usize) {
+/// The ones kept say which copy they come from.
+fn drop_repeated_diags(cx: &mut Ctx, def: DefId, from: usize) {
     let new = cx.diags.split_off(from.min(cx.diags.len()));
     let place = |e: &Diagnostic| e.labels.first().map(|l| l.span);
-    for d in new {
+    let note = super::expr::static_copy::copy_note(cx, def);
+    for mut d in new {
         if !cx.diags.iter().any(|e| place(e) == place(&d)) {
+            if let Some(n) = note.as_ref().filter(|n| !d.notes.contains(n)) {
+                d.notes.push(n.clone());
+            }
             cx.diags.push(d);
         }
     }

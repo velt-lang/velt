@@ -323,9 +323,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
-        if let (ast::ExprKind::This, Some((this, _))) = (&object.kind, self.static_this) {
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
             // `this.f()` in a static method: the class it was called on.
-            return Some(self.static_call_as(this, this, prop, type_args, args, exp, span));
+            return Some(self.this_static_call(this, declaring, prop, type_args, args, exp, span));
         }
         let ast::ExprKind::Ident(id) = &object.kind else {
             return None;
@@ -469,30 +469,29 @@ impl FnCx<'_, '_> {
 
     /// The class's type parameters that a static method's signature doesn't use (always the
     /// case in TypeScript, where statics can't use them) default to `void`, so `Box.wrap(4)`
-    /// needs no type arguments. A parameter with a bound keeps being inferred.
+    /// needs no type arguments, bounded (`class Box<T extends Named>`) or not: nothing of the
+    /// call depends on it, so its bound isn't checked.
     fn default_unused_owner_slots(&mut self, c: &mut Callable, owner_generics: usize) {
         let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).chain([c.ret]).collect();
-        let unused = self.unused_owner_slots(&tys, &c.bounds, owner_generics);
+        let unused = self.unused_owner_slots(&tys, owner_generics);
         let n = c.slot_names.len();
         for i in unused {
             c.defaults.resize(n, None);
             c.defaults[i].get_or_insert(self.cx.ty.unit);
+            if let Some(b) = c.bounds.get_mut(i) {
+                b.clear();
+            }
         }
     }
 
-    /// The slots below `owner_generics` that no type of `tys` uses and that have no bound.
-    pub(super) fn unused_owner_slots(
-        &self,
-        tys: &[TyId],
-        bounds: &[Vec<crate::defs::Bound>],
-        owner_generics: usize,
-    ) -> Vec<usize> {
+    /// The slots below `owner_generics` that no type of `tys` uses.
+    pub(super) fn unused_owner_slots(&self, tys: &[TyId], owner_generics: usize) -> Vec<usize> {
         let mut used = vec![];
         for &t in tys {
             crate::types::collect_params(&self.cx.ty, t, &mut used);
         }
         (0..owner_generics)
-            .filter(|&i| bounds.get(i).is_none_or(|b| b.is_empty()) && !used.contains(&(i as u32)))
+            .filter(|&i| !used.contains(&(i as u32)))
             .collect()
     }
 

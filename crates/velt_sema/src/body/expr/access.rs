@@ -406,12 +406,12 @@ impl FnCx<'_, '_> {
         let ret = crate::body::returns::ret_of(self.cx, def, span);
         let f = self.cx.fn_info(def);
         let tys: Vec<TyId> = f.params.iter().map(|p| p.ty).chain([ret]).collect();
-        let (n, bounds) = (f.generics.len(), f.generics.bounds.clone());
+        let n = f.generics.len();
         let mut slots = vec![None; n];
         for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
             *slot = Some(a);
         }
-        for i in self.unused_owner_slots(&tys, &bounds, owner_generics) {
+        for i in self.unused_owner_slots(&tys, owner_generics) {
             slots[i].get_or_insert(self.cx.ty.unit);
         }
         Some(self.fn_ref_slots(def, &what, slots, exp, span))

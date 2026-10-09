@@ -191,8 +191,6 @@ impl FnCx<'_, '_> {
         declared.then_some(owner)
     }
 
-    /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
-    /// union with class members)?
     /// A primitive member (string, number, boolean, ...) that union value `h` may hold here
     /// (members a narrowing ruled out don't count).
     fn primitive_member(&mut self, h: &hir::Expr) -> Option<TyId> {
@@ -216,6 +214,8 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
+    /// union with class members)?
     fn testable_instance(&mut self, t: TyId) -> bool {
         let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
         let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);

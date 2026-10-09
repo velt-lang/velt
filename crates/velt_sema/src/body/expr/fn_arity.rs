@@ -112,26 +112,32 @@ impl FnCx<'_, '_> {
     }
 
     /// `C.f` naming a static method without type parameters of its own that doesn't use `this`
-    /// (which can't be a value): like a module-level function in `named_fn_sig`.
+    /// (which can't be a value): like a module-level function in `named_fn_sig`. Also `this.f`
+    /// in a static method, as the declaring class sees `f` (the wrapper calls `this.f(…)`).
     fn static_method_sig(
         &mut self,
         object: &ast::Expr,
         prop: &ast::Ident,
         with_ret: bool,
     ) -> Option<(usize, Option<TyId>)> {
-        let ast::ExprKind::Ident(id) = &object.kind else {
-            return None;
-        };
-        if self.peek_local_ty(&id.name).is_some() {
-            return None;
-        }
-        let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
-            return None;
+        let (d, via_this) = match (&object.kind, self.static_this) {
+            (ast::ExprKind::This, Some((_, declaring))) => (declaring, true),
+            (ast::ExprKind::Ident(id), _) => {
+                if self.peek_local_ty(&id.name).is_some() {
+                    return None;
+                }
+                let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
+                    return None;
+                };
+                (d, false)
+            }
+            _ => return None,
         };
         self.cx.adt(d)?;
         let (m, owner_generics, _) = self.find_static(d, &prop.name).ok()?;
         let f = self.cx.fn_info(m.def);
-        if f.generics.len() != owner_generics || self.cx.static_this.contains_key(&m.def) {
+        let uses_this = !via_this && self.cx.static_this.contains_key(&m.def);
+        if f.generics.len() != owner_generics || uses_this {
             return None;
         }
         let n = f.params.len();

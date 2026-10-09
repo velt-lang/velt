@@ -211,9 +211,9 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
-        if let (ast::ExprKind::This, Some((this, _))) = (&object.kind, self.static_this) {
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
             // `this.NAME` / `this.f` in a static method: the class it was called on.
-            if let Some(h) = self.inherited_static_field(this, prop, want, span) {
+            if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
                 return h;
             }
             if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
