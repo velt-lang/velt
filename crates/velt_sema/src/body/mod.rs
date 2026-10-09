@@ -44,6 +44,7 @@ pub(crate) mod expr;
 mod field_narrow;
 mod for_await;
 mod for_iter;
+mod for_map;
 mod generators;
 pub(crate) use generators::GenCopy;
 mod locals;

@@ -1,0 +1,176 @@
+// `for...of` over a map and its `keys()`, `values()` and `entries()` iterates live, as in JS:
+// entries the body adds are visited, entries it deletes before reaching them are not, and a
+// value set before the loop reaches it is the one it sees (#624).
+class Registry {
+  items: Map<string, number> = new Map<string, number>();
+
+  grow(): string {
+    const seen: string[] = [];
+    for (const [name, n] of this.items) {
+      seen.push(`${name}=${n}`);
+      if (n < 3) {
+        this.items.set(`${name}+`, n + 1);
+      }
+    }
+    return seen.join(" ");
+  }
+}
+
+function keysGrow() {
+  const m = new Map<number, number>([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+  ]);
+  let n = 0;
+  for (const k of m.keys()) {
+    n += 1;
+    if (m.size < 8) {
+      m.set(k + 10, k);
+    }
+  }
+  console.log("keys", m.size, n);
+}
+
+function deleteAhead() {
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+    ["d", 4],
+  ]);
+  const seen: string[] = [];
+  for (const [k, v] of m) {
+    seen.push(`${k}${v}`);
+    if (k === "a") {
+      m.delete("b");
+      m.set("c", 30);
+    }
+    if (k === "c") {
+      m.delete("c");
+      m.set("b", 20);
+    }
+  }
+  console.log("entries", seen.join(","), [...m.keys()].join(","));
+}
+
+function valuesAndClear() {
+  const m = new Map<number, string>([
+    [1, "x"],
+    [2, "y"],
+  ]);
+  const seen: string[] = [];
+  for (const v of m.values()) {
+    seen.push(v);
+    if (v === "x") {
+      m.clear();
+      m.set(5, "z");
+      m.set(6, "w");
+    }
+  }
+  console.log("values", seen.join(","), m.size);
+  const pairs: string[] = [];
+  for (const e of m.entries()) {
+    pairs.push(`${e[0]}:${e[1]}`);
+    if (e[0] === 6) {
+      m.delete(5);
+      m.delete(6);
+      m.set(7, "v");
+    }
+  }
+  console.log("pairs", pairs.join(","), m.size);
+}
+
+function labels() {
+  const a = new Map<number, number>([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+    [4, 4],
+  ]);
+  const b = new Map<number, number>([
+    [10, 10],
+    [20, 20],
+    [30, 30],
+  ]);
+  const seen: string[] = [];
+  outer: for (const x of a.keys()) {
+    if (x === 2) {
+      continue;
+    }
+    for (const [y, w] of b) {
+      if (y === 20 && x === 3) {
+        continue outer;
+      }
+      if (x === 4) {
+        break outer;
+      }
+      seen.push(`${x}/${y + w}`);
+      if (y === 30 && b.size < 5) {
+        b.set(y + 10, y);
+      }
+    }
+  }
+  console.log("labels", seen.join(","), b.size);
+}
+
+function captures() {
+  const m = new Map<string, number>([
+    ["p", 1],
+    ["q", 2],
+  ]);
+  const fs: (() => string)[] = [];
+  for (const [k, v] of m) {
+    fs.push(() => `${k}${v * 10}`);
+  }
+  for (let k of m.keys()) {
+    k = `${k}!`;
+    fs.push(() => k);
+    if (k === "p!") {
+      m.set("r", 3);
+    }
+  }
+  console.log("captures", fs.map((f) => f()).join(","));
+}
+
+// Deletes and inserts in the body, with many compactions: the visited keys match JS.
+function churn() {
+  const m = new Map<number, number>();
+  for (let i: number = 0; i < 300; i++) {
+    m.set(i, i);
+  }
+  let x: number = 777;
+  let next: number = 300;
+  let visits = 0;
+  let digest: number = 0;
+  for (const [k, v] of m) {
+    visits++;
+    digest = (digest * 31 + k + v) % 1000000007;
+    for (let j = 0; j < 4; j++) {
+      x = (x * 1103515245 + 12345) % 2147483648;
+      const op = x % 7;
+      const key = x % (next + 1);
+      if (op < 4) {
+        m.delete(key);
+      } else if (op < 6 && next < 3000) {
+        m.set(next, next);
+        next++;
+      } else {
+        m.set(key, key + 1);
+      }
+    }
+  }
+  console.log("churn", visits, digest, m.size);
+}
+
+function main() {
+  keysGrow();
+  deleteAhead();
+  valuesAndClear();
+  labels();
+  captures();
+  churn();
+  const r = new Registry();
+  r.items.set("a", 1);
+  console.log("this", r.grow());
+}

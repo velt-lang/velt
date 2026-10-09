@@ -134,7 +134,9 @@ impl FnCx<'_, '_> {
                     true => self.for_await(iter, parts, out),
                     false => {
                         let it = self.for_of_source(iter);
-                        self.for_of(it, parts, out)
+                        if !self.for_of_map(iter, &it, parts, out) {
+                            self.for_of(it, parts, out)
+                        }
                     }
                 }
             }

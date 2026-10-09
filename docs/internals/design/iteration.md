@@ -554,10 +554,11 @@ interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, Async
   `MapIterator<T>` / `SetIterator<T>` / `StringIterator<T>` (an `Iterable` implementation must
   return exactly `Iterator<T, E>`), so its result is not itself iterable; the prelude classes
   `ArrayIterator<T>` and `StringIterator` are the implementations.
-- `Map` and `Set` iterators see the entries as of the call (like `for...of` over a map, which
-  iterates `entries()`); JS's are live. A live map iterator would have to survive the map's
-  compaction of deleted entries, which renumbers them; `Map.keys()` / `values()` / `entries()`
-  stay arrays.
+- `Map` and `Set` iterators see the entries as of the call; JS's are live. `Map.keys()` /
+  `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map place (or its
+  `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
+  finds its place again by sequence number when a compaction, a pop or a clear renumbers them
+  (std/prelude/map.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`).
 - `IterableIterator<T>` / `IteratorObject<T>` declare `[Symbol.iterator]()` as returning
   `Iterator<T, E>` (no covariant returns), and are two separate interfaces: a value of one does
   not convert to the other.
@@ -719,7 +720,7 @@ closest workable form is a literal whose *one* member is the iterator method: se
 - Keeping an embedded async generator's state in registers across steps (section 4, Cost).
 - Generators cannot cross tasks; stored `Iterable<T>` values backed by one are checked at run
   time.
-- Live `Map` / `Set` iterators (section 6), and `keys()` / `values()` / `entries()` returning
-  iterators.
+- Live `Map` / `Set` iterator objects (section 6; `for...of` over a map place is live), and
+  `keys()` / `values()` / `entries()` returning iterators.
 - Interface values converting to the interfaces they extend (section 6), which would also let
   an `IterableIterator<T>` value be an `Iterator<T>`.
