@@ -53,7 +53,7 @@ export struct TlsOptions {
 }
 
 export struct ServeOptions {
-  port: i64;
+  port: number;
   host?: string;
   /** Serve HTTPS (HTTP/2 and HTTP/1.1, negotiated with ALPN) instead of plain HTTP. */
   tls?: TlsOptions;
@@ -65,7 +65,7 @@ export struct NetAddr {
   transport: string;
   /** The IP address, e.g. "127.0.0.1" or "::1". */
   hostname: string;
-  port: i64;
+  port: number;
 }
 
 /**
@@ -80,7 +80,7 @@ export struct ServeInfo {
     return {
       transport: "tcp",
       hostname: velt_rt_http_req_remote_host(this.raw),
-      port: velt_rt_http_req_remote_port(this.raw) as i64,
+      port: velt_rt_http_req_remote_port(this.raw),
     };
   }
 }
@@ -88,13 +88,13 @@ export struct ServeInfo {
 /** A running server; requests are handled concurrently on the runtime's workers. */
 export class Server {
   /** The real port (useful after `port: 0`). */
-  port: i64 = 0;
+  port: number = 0;
   #handle: u64 = 0;
 
   // The server behind runtime key `handle` (std only).
   private static adopt(handle: u64): Server {
     const s = new Server();
-    s.port = velt_rt_http_server_port(handle) as i64;
+    s.port = velt_rt_http_server_port(handle);
     s.#handle = handle;
     return s;
   }

@@ -25,7 +25,7 @@ async function handle(req: Request, gate: Channel<i64> | null): Promise<Response
   const url = new URL(req.url);
   const r = route(url.pathname, url.search.slice(1));
   return new Response(BodyStream.from(page(r, gate)), {
-    status: r.status,
+    status: r.status as number,
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
@@ -35,5 +35,8 @@ async function handle(req: Request, gate: Channel<i64> | null): Promise<Response
  * value arrives on it (for demo.vlt).
  */
 export async function startServer(port: i64, gate: Channel<i64> | null = null): Promise<Server> {
-  return await serve({ port }, async (req: Request): Promise<Response> => await handle(req, gate));
+  return await serve(
+    { port: port as number },
+    async (req: Request): Promise<Response> => await handle(req, gate),
+  );
 }

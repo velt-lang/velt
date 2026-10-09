@@ -10,7 +10,7 @@ export const BASE = "/_sigx/actor/";
 
 function respond(r: Reply): Response {
   return new Response(r.body, {
-    status: r.status,
+    status: r.status as number,
     headers: { "content-type": "application/json" },
   });
 }
@@ -69,7 +69,9 @@ export async function handleActorRequest(
 }
 
 export async function serveActors(router: Router, port: i64, host: string): Promise<Server> {
-  return await serve({ port: port, host: host }, async (req: Request): Promise<Response> => {
+  return await serve({ port: port as number, host: host }, async (
+    req: Request,
+  ): Promise<Response> => {
     return await handleActorRequest(router, req, 30000.0);
   });
 }

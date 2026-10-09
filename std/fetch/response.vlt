@@ -75,7 +75,7 @@ declare function velt_rt_http_req_respond_list(
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
 export struct ResponseInit {
-  status?: i64;
+  status?: number;
   statusText?: string;
   headers?: HeadersInit;
 }
@@ -163,7 +163,7 @@ export class Response {
 
   // The status, status text and headers of `init`.
   private init(init: ResponseInit) {
-    const status = init.status ?? 200;
+    const status = (init.status ?? 200) as i64;
     if (status < 200 || status > 599) {
       panic(`RangeError: init["status"] must be in the range of 200 to 599, inclusive.`);
     }
@@ -226,7 +226,7 @@ export class Response {
     if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) {
       panic(`RangeError: Invalid status code ${status}`);
     }
-    const r = new Response(null, { status: status });
+    const r = new Response(null, { status: status as number });
     r.headers.set("location", url);
     return r;
   }
