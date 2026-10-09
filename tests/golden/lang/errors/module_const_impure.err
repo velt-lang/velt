@@ -1,0 +1,14 @@
+module_const_impure.vlt:44:11: error: `viaSum` cannot initialize module constant `A`: it has a loop
+module_const_impure.vlt:6:3: has a loop
+through `viaSum` -> `sum`
+compute it in `main` and pass it on, or make `A` a function: `function A() { return ...; }`
+module_const_impure.vlt:45:11: error: `fact` cannot initialize module constant `B`: it calls itself
+module_const_impure.vlt:17:27: calls itself
+module_const_impure.vlt:46:11: error: `logged` cannot initialize module constant `C`: it calls `console.log`, which has effects
+module_const_impure.vlt:21:3: calls `console.log`, which has effects
+module_const_impure.vlt:47:11: error: `risky` cannot initialize module constant `D`: it may throw
+module_const_impure.vlt:27:5: may throw
+module_const_impure.vlt:48:11: error: `later` cannot initialize module constant `E`: it is async
+module_const_impure.vlt:49:11: error: `apply` cannot initialize module constant `G`: it calls a function value
+module_const_impure.vlt:37:10: calls a function value
+module_const_impure.vlt:50:14: error: `Date.now` cannot initialize module constant `H`: it calls an external function, which may have effects

@@ -1,0 +1,27 @@
+// `setInterval` keeps Node's fixed schedule: the next run is due while an earlier run's promise
+// is still pending. Run 1 waits until run 2 has started, which happens only if runs overlap;
+// the overlapping runs interleave on the timer's task, never in parallel.
+async function main() {
+  const runs = shared(0);
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const t = setInterval(
+    async () => {
+      const k = runs.add(1);
+      if (k > 2) {
+        return;
+      }
+      console.log("start", k);
+      while (runs.get() < 2) {
+        await sleep(1);
+      }
+      console.log("end", k);
+      if (k == 1) {
+        resolve();
+      }
+    },
+    5,
+  );
+  await promise;
+  t.clear();
+  console.log("cleared");
+}
