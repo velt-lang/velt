@@ -1,6 +1,6 @@
 //! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, linker
-//! (bundled or system), WebAssembly linker, clang and the vpm home directory. Each returns a
-//! [`Check`] with a fix hint when something is missing.
+//! (bundled or system), installed target packs, WebAssembly linker, clang and the vpm home
+//! directory. Each returns a [`Check`] with a fix hint when something is missing.
 
 use std::path::Path;
 
@@ -19,6 +19,7 @@ pub fn environment() -> Vec<Check> {
         shared_runtime_lib(&host),
         std_lib(),
         linker(&host),
+        targets(&host),
         wasm_linker(),
         clang(),
         velt_home(),
@@ -117,6 +118,30 @@ fn linker(host: &str) -> Check {
             ),
         ),
         Err(msg) => Check::bad("linker", Status::Fail, "no usable linker", msg),
+    }
+}
+
+/// The other targets `velt build --target` can build for (installed target packs).
+fn targets(host: &str) -> Check {
+    const LABEL: &str = "other targets";
+    let installed: Vec<String> = velt_link::kit::targets_dir()
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .map(|entries| {
+            let mut names: Vec<String> = entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().join(velt_link::kit::STAMP).is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                // `.<triple>.<pid>`: a `velt target add` in progress.
+                .filter(|t| !t.starts_with('.') && !velt_link::same_target(t, host))
+                .collect();
+            names.sort();
+            names
+        })
+        .unwrap_or_default();
+    if installed.is_empty() {
+        Check::ok(LABEL, "none (`velt target add <triple>` to cross-compile)")
+    } else {
+        Check::ok(LABEL, installed.join(", "))
     }
 }
 
