@@ -32,11 +32,16 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `fetch(input, init)`, `Request`, `Response`, `Headers` | the WHATWG Fetch API, as in Node ([fetch](../std/fetch.md)) |
 | `AbortController`, `AbortSignal` | cancellation, e.g. of a `fetch` ([velt:task](../std/task.md)) |
 | `URL`, `URLSearchParams` | WHATWG URLs ([velt:url](../std/url.md)) |
+| `Set<T>` | insertion-ordered hash set ([velt:collections/set](../std/collections/set.md)) |
+| `RegExp`, `/ab+c/gi` | regular expressions ([velt:regex](../std/regex.md)) |
+| `TextEncoder`, `TextDecoder` | UTF-8 text to bytes and back ([velt:encoding](../std/encoding.md)) |
+| `structuredClone(x)` | an independent deep copy, `x.clone()` ([Memory model](memory.md)); a function (at any depth) or an instance of a class of your own is a compile error, as JS throws or drops the class: write `x.clone()` |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 | `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
-The modules behind `fetch` and the names after it are loaded only by programs that mention
-one of those names, so the others don't pay for compiling them; a module that imports or
+The modules behind `fetch`, `AbortController`, `URL`, `Set`, `RegExp` and `TextEncoder`
+(and the names next to them) are loaded only by programs that mention one of those names (or
+hold a regex literal), so the others don't pay for compiling them; a module that imports or
 declares such a name itself (`import { Response } from "./api"`) uses its own and
 doesn't load the global. Integer helpers (`gcd`,
 `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is imported from the

@@ -1,7 +1,7 @@
-// Prelude: `flat` and `join` on arrays of arrays, and `join` on arrays of nullable elements,
-// one level deep like JS: inner arrays join with ",", `null` joins as "". Deeper levels use
-// `extend<T> Array<T>`'s `${x}` form, because the inner `join` is resolved once for any `T`.
-// These targets are more specific than `extend<T> Array<T>` (array.vlt), so their `join` wins.
+// Prelude: `flat` on arrays of arrays, and `join` on arrays of arrays and of nullable elements,
+// like JS: inner arrays are written as `${x}` writes them (their elements joined with ",", at
+// any depth, `null` as ""), and `null` elements join as "". These targets are more specific
+// than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
 extend<T> Array<T[]> {
   /** The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported). */
@@ -21,8 +21,8 @@ extend<T> Array<T[]> {
   }
 
   /**
-   * Each inner array joined with "," and the results with `sep`, like JS when the inner
-   * elements are strings, numbers or booleans.
+   * Each inner array joined with "," (as `${x}` writes it) and the results with `sep`, like JS
+   * when the innermost elements are strings, numbers, booleans or `null`.
    */
   join(sep: string = ","): string {
     let s = "";
@@ -30,24 +30,23 @@ extend<T> Array<T[]> {
       if (i > 0) {
         s += sep;
       }
-      s += this[i].join(",");
+      s += `${this[i]}`;
     }
     return s;
   }
 }
 
 extend<T> Array<T | null> {
-  /** `null` elements join as empty text, like JS; the others as `${x}`. */
+  /** `null` elements join as empty text, like JS; the others as `join` writes them. */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
       if (i > 0) {
         s += sep;
       }
-      const x = this[i];
-      if (x != null) {
-        s += `${x}`;
-      }
+      // A one-element tuple is written as its element is written in an array: `null` as "".
+      const one: [T | null] = [__intrinsic_share(this[i])];
+      s += `${one}`;
     }
     return s;
   }

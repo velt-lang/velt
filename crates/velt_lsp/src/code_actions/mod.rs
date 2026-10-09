@@ -6,7 +6,7 @@
 //! the replacement from the AST and sema's types:
 //! - [`fixits`]: `mut` removal, `undefined` → `null`, a non-`bool` condition → an explicit comparison,
 //!   `async` for a method whose promise must carry its errors;
-//! - [`concat`]: `"a" + n` → a template literal;
+//! - [`concat`]: `"a" + xs` → a template literal;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
 //!   `await` it or `spawn` it;

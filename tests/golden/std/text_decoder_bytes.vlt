@@ -1,0 +1,14 @@
+// `TextDecoder` on invalid UTF-8: U+FFFD per maximal invalid subpart, or an error with `fatal`;
+// the messages are Node's (`new Uint8Array([0x61, 0xff, 0x62])` there).
+function main() {
+  const bad: u8[] = [0x61, 0xff, 0x62, 0xe2, 0x82];
+  console.log(new TextDecoder().decode(bad));
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bad);
+  } catch (e) {
+    console.log(e.message);
+  }
+  const bom: u8[] = [0xef, 0xbb, 0xbf, 0x68, 0x69];
+  console.log(new TextDecoder().decode(bom), new TextDecoder("utf-8", { fatal: true }).decode(bom));
+  console.log(new TextDecoder().decode(), new TextEncoder().encode().length);
+}

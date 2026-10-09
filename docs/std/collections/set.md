@@ -1,7 +1,7 @@
 # velt:collections/set
 
-`import { Set } from "velt:collections/set"`. An insertion-ordered hash set with JS `Set`
-semantics plus the ES2025 set algebra. It is built on the prelude `Map`, so elements can be
+`Set` is a global, as in Node (or `import { Set } from "velt:collections/set"`). An
+insertion-ordered hash set with JS `Set` semantics plus the ES2025 set algebra. It is built on the prelude `Map`, so elements can be
 anything a map key can be: numbers, bool, string, class instances (by identity), and structs,
 object types, tuples and arrays (by content).
 

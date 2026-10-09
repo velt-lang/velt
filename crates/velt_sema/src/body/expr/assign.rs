@@ -426,7 +426,10 @@ impl FnCx<'_, '_> {
             let mut place = place;
             let mut stmts = Vec::new();
             self.hoist_indices(&mut place, &mut stmts);
-            let v = self.expr_coerce(value, lty, Want::Borrow);
+            // `s += n`: the number is appended as `String(n)` writes it (#740).
+            let v = self.expr(value, Some(lty), Want::Borrow);
+            let v = self.concat_operand(v);
+            let v = self.coerce(v, lty);
             let mut cur = self.place_read(&place, Want::Borrow);
             if crate::effects::may_change_memory(&v) && Self::through_element(&place) {
                 // The right-hand side may change or move what holds the string (`rows[0].out +=

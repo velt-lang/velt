@@ -9,8 +9,9 @@
 //! `<!DOCTYPE html>${…}` or `${…}</body>` allocates nothing. Otherwise it reserves an
 //! estimate and pushes every part as soon as it is evaluated (later parts cannot change what an
 //! earlier part contributed). Non-string parts are appended by the shared format glue, so `${x}`
-//! is what `console.log(x)` prints, except for objects, which are written as JS's `String(x)`
-//! writes them (`[object Object]`, js_string.rs).
+//! is what `console.log(x)` prints, except for arrays, tuples and objects, which are written as
+//! JS's `String(x)` writes them (`1,2`; an object as its class's `toString()` or
+//! `[object Object]`, js_string.rs).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -553,9 +554,130 @@ impl FnLower<'_, '_> {
             _ => {
                 let p = self.place_of(v, t);
                 if !self.push_js_object(buf, &p, t) {
-                    self.format_top(buf, &p, t);
+                    self.push_js_string(buf, &p, t);
                 }
             }
+        }
+    }
+
+    /// Append `String(x)` of the value at `place` (#757): JS's `Array.prototype.toString` for
+    /// arrays and tuples (the elements joined with ",", nested arrays the same way, `null` as
+    /// empty text), the `console.log` text for everything else.
+    fn push_js_string(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        match self.cx.kind(ty) {
+            TyKind::Array(e) => {
+                let arr = self.content(place, ty);
+                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
+                let k = self.temp(Ty::U64);
+                self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                self.count_loop(k, len, |lw, k| {
+                    let first = lw.rvalue_temp(
+                        Ty::Bool,
+                        Rvalue::Binary(BinOp::Eq, k.clone(), cint(0, Ty::U64)),
+                    );
+                    let (sep_bb, elem_bb) = (lw.new_block(), lw.new_block());
+                    lw.branch(first, elem_bb, sep_bb);
+                    lw.switch_to(sep_bb);
+                    lw.push_text(buf, ",");
+                    lw.goto(elem_bb);
+                    lw.switch_to(elem_bb);
+                    let p = lw.elem_place(&arr, k, e);
+                    lw.push_js_element(buf, &p, e);
+                });
+            }
+            TyKind::Tuple(tys) => {
+                for (i, &t) in tys.iter().enumerate() {
+                    if i > 0 {
+                        self.push_text(buf, ",");
+                    }
+                    let p = self.field_place(place, ty, i as u32);
+                    self.push_js_element(buf, &p, t);
+                }
+            }
+            TyKind::Option(e) if self.writes_js_list(e) => {
+                let (some_bb, none_bb, done) =
+                    (self.new_block(), self.new_block(), self.new_block());
+                let some = self.option_is_some(place, ty);
+                self.branch(some, some_bb, none_bb);
+                self.switch_to(none_bb);
+                self.push_text(buf, "null");
+                self.goto(done);
+                self.switch_to(some_bb);
+                let payload = self.some_payload(place, ty);
+                self.push_js_string(buf, &payload, e);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            _ => self.format_top(buf, place, ty),
+        }
+    }
+
+    /// Whether [`push_js_string`](Self::push_js_string) writes values of `ty` as a JS list.
+    fn writes_js_list(&self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Array(_) | TyKind::Tuple(_))
+    }
+
+    /// An element of an array being written by [`push_js_string`](Self::push_js_string):
+    /// `null` is empty text, a union member is written as itself, a class instance through its
+    /// `toString()` (#818), and any other object as JS's default `Object.prototype.toString`
+    /// writes it (`[object Object]`, `[object Map]`, ...). Sema rejects the element types whose
+    /// JS text comes from a method lowering cannot call (a struct's `toString()`, `Error`,
+    /// `RegExp`; velt_sema's js_list.rs), except through a type parameter.
+    fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        if self.push_to_string(buf, place, ty) {
+            return;
+        }
+        if let Some(tag) = self.object_tag(ty) {
+            return self.push_text(buf, tag);
+        }
+        match self.cx.kind(ty) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
+                self.push_scalar(buf, Operand::Copy(place.clone()), ty)
+            }
+            TyKind::Option(e) => {
+                let (some_bb, done) = (self.new_block(), self.new_block());
+                let some = self.option_is_some(place, ty);
+                self.branch(some, some_bb, done);
+                self.switch_to(some_bb);
+                let payload = self.some_payload(place, ty);
+                self.push_js_element(buf, &payload, e);
+                self.goto(done);
+                self.switch_to(done);
+            }
+            TyKind::Shared(e) => {
+                let bx = self.cx.shared_box(e);
+                let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
+                self.push_js_element(buf, &inner, e);
+            }
+            TyKind::Adt(..) if self.cx.is_union(ty) => {
+                self.for_each_variant(place, ty, |lw, v, parts| {
+                    if let Some(l) = lw.variant_literal(ty, v) {
+                        lw.push_literal(buf, &l, false);
+                    }
+                    for (pp, pt) in parts {
+                        lw.push_js_element(buf, &pp, pt);
+                    }
+                });
+            }
+            _ => self.push_js_string(buf, place, ty),
+        }
+    }
+
+    /// What JS's `Object.prototype.toString` writes for an array element of type `ty` when it
+    /// is an object (a class, struct or object literal, a `Map`, `Set` or promise); `None` for
+    /// everything else (numbers, strings, enums, unions, arrays, ...).
+    fn object_tag(&mut self, ty: TyId) -> Option<&'static str> {
+        match self.cx.kind(ty) {
+            TyKind::Promise(..) => Some("[object Promise]"),
+            TyKind::Adt(..)
+                if self.cx.is_json_value(ty) || self.cx.is_union(ty) || self.is_enum(ty) =>
+            {
+                None
+            }
+            TyKind::Adt(..) if self.prelude_map(ty).is_some() => Some("[object Map]"),
+            TyKind::Adt(..) if self.std_set(ty).is_some() => Some("[object Set]"),
+            TyKind::Adt(..) => Some("[object Object]"),
+            _ => None,
         }
     }
 
