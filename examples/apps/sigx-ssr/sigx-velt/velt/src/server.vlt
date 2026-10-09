@@ -1,0 +1,148 @@
+// sigx/server: serving a sigx app from a Velt binary. The counterpart of
+// @sigx/server-renderer's `createFetchHandler`, in sigx's composition order: static assets
+// first, then the document render.
+//
+//   main(): const opts = options();               // --port, --template, --static (see below)
+//           await serveApp(opts, (url) => <App />);
+//
+// In development the @sigx/velt Vite plugin starts the program with `--dev`: it then serves
+// only documents (Vite serves the client modules and assets) and reads the template on each
+// request, so edits to index.html show up without a restart.
+
+import { serve, Server } from "velt:http";
+import { readFile, readFileBytes, exists } from "velt:fs";
+import { args } from "velt:process";
+import { Element, renderToString } from "./node";
+
+export struct Options {
+  port: i64;
+  // The HTML shell with `<!--ssr-outlet-->` where the app goes (Vite's built index.html).
+  template: string;
+  // The client build to serve, or "" for none (dev).
+  staticDir: string;
+  dev: bool;
+}
+
+// Options from the command line: `--port N` (default 3000), `--template FILE` (default
+// dist/client/index.html), `--static DIR` (default dist/client), `--dev`.
+export function options(): Options {
+  const argv = args();
+  let port: i64 = 3000;
+  let template = "dist/client/index.html";
+  let staticDir = "dist/client";
+  let dev = false;
+  let i: usize = 0;
+  while (i < argv.length) {
+    const a = argv[i];
+    if (a == "--dev") {
+      dev = true;
+      staticDir = "";
+    } else if (a == "--port" && i + 1 < argv.length) {
+      port = parseInt(argv[i + 1]) as i64;
+      i += 1;
+    } else if (a == "--template" && i + 1 < argv.length) {
+      template = argv[i + 1];
+      i += 1;
+    } else if (a == "--static" && i + 1 < argv.length) {
+      staticDir = argv[i + 1];
+      i += 1;
+    }
+    i += 1;
+  }
+  return Options { port: port, template: template, staticDir: staticDir, dev: dev };
+}
+
+const OUTLET = "<!--ssr-outlet-->";
+
+// The template with the rendered app in place of `<!--ssr-outlet-->`.
+export function renderDocument(template: string, app: Element): string {
+  const at = template.indexOf(OUTLET);
+  if (at < 0) {
+    return template;
+  }
+  return template.slice(0, at) + renderToString(app) + template.slice(at + OUTLET.length);
+}
+
+function contentType(path: string): string {
+  const dot = path.lastIndexOf(".");
+  const ext = dot < 0 ? "" : path.slice(dot + 1).toLowerCase();
+  if (ext == "js" || ext == "mjs") {
+    return "text/javascript; charset=utf-8";
+  }
+  if (ext == "css") {
+    return "text/css; charset=utf-8";
+  }
+  if (ext == "html") {
+    return "text/html; charset=utf-8";
+  }
+  if (ext == "json" || ext == "map") {
+    return "application/json";
+  }
+  if (ext == "svg") {
+    return "image/svg+xml";
+  }
+  if (ext == "png") {
+    return "image/png";
+  }
+  if (ext == "jpg" || ext == "jpeg") {
+    return "image/jpeg";
+  }
+  if (ext == "ico") {
+    return "image/x-icon";
+  }
+  if (ext == "woff2") {
+    return "font/woff2";
+  }
+  if (ext == "wasm") {
+    return "application/wasm";
+  }
+  return "application/octet-stream";
+}
+
+// The file under `dir` that `pathname` names, or null: no `..`, no directories, and never the
+// template (documents are rendered, not served raw).
+async function staticFile(dir: string, pathname: string): Promise<Response | null> {
+  if (dir == "" || pathname == "/" || pathname.includes("..") || pathname.endsWith("/")) {
+    return null;
+  }
+  if (pathname == "/index.html") {
+    return null;
+  }
+  const path = `${dir}${pathname}`;
+  if (!(await exists(path))) {
+    return null;
+  }
+  try {
+    const body = await readFileBytes(path);
+    // Vite's hashed output under /assets/ never changes; everything else revalidates.
+    const cache =
+      pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    return new Response(body, {
+      headers: { "content-type": contentType(path), "cache-control": cache },
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+// Serves the app: static files from `opts.staticDir`, then every other GET as a document
+// rendered by `render(pathname)` into the template.
+export async function serveApp(
+  opts: Options,
+  render: (pathname: string) => Element,
+): Promise<Server> {
+  const cached = opts.dev ? "" : await readFile(opts.template);
+  const server = await serve({ port: opts.port }, async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    const file = await staticFile(opts.staticDir, url.pathname);
+    if (file != null) {
+      return file;
+    }
+    const template = opts.dev ? await readFile(opts.template) : cached;
+    return new Response(renderDocument(template, render(url.pathname)), {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  });
+  console.log(`sigx: listening on http://127.0.0.1:${server.port}${opts.dev ? " (dev)" : ""}`);
+  return server;
+}

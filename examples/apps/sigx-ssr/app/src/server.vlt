@@ -1,0 +1,9 @@
+// The native server: static files from the client build, every other page rendered by Velt.
+// `vite` (dev) starts it with `--dev`; `vite build` compiles it to dist/server/app.
+
+import { options, serveApp } from "sigx/server";
+import { App } from "./shared/App";
+
+async function main() {
+  await serveApp(options(), (path: string) => <App path={path} />);
+}

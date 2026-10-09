@@ -1,0 +1,49 @@
+// sigx/component: sigx's component model, `setup` once, then a render function.
+//
+// The definition has JavaScript sigx's form, so one source file compiles with both:
+//
+//   export const Counter = component<{ start: number }>((ctx) => {
+//     const count = ctx.signal(ctx.props.start);
+//     return () => <button>Count: {count.value}</button>;
+//   });
+//
+// `component` is pure (it only builds a closure), so it may initialize a module constant.
+
+import { Element, Renderer, componentNode } from "./node";
+import { Runtime, Signal, Computed } from "./reactivity";
+
+// What `setup` receives (sigx's ComponentSetupContext, the parts the server needs). Signals are
+// created through `ctx.signal`: the render's runtime is per request, and Velt has no module-level
+// "current runtime" that a free `signal()` could find.
+export class SetupContext<P> {
+  props: P;
+  rt: Runtime;
+
+  constructor(props: P, rt: Runtime) {
+    this.props = props;
+    this.rt = rt;
+  }
+
+  signal<T>(v: T): Signal<T> {
+    return this.rt.signal(v);
+  }
+
+  computed<T>(fn: () => T, initial: T): Computed<T> {
+    return this.rt.computed(fn, initial);
+  }
+
+  // Client-only lifecycle hooks: on the server they never run (sigx's SSR does the same).
+  onMounted(fn: () => void) {}
+  onUnmounted(fn: () => void) {}
+}
+
+export type Setup<P> = (ctx: SetupContext<P>) => () => Element;
+
+// A sigx component. Its element runs `setup` when the renderer reaches it (parent first, so the
+// `<!--$c:N-->` ids are pre-order), with the render's reactive runtime.
+export function component<P>(setup: Setup<P>): (props: P) => Element {
+  return (props: P): Element => componentNode((r: Renderer): Element => {
+    const render = setup(new SetupContext<P>(props, r.rt));
+    return render();
+  });
+}

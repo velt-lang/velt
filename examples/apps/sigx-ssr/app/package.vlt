@@ -1,0 +1,13 @@
+import type { Package } from "velt:package";
+
+// The server half of the app. `sigx` is the Velt provider shipped inside the npm package
+// @sigx/velt, so `pnpm install` brings both halves at one version.
+export const pkg: Package = {
+  name: "sigx-velt-app",
+  version: "0.1.0",
+  entry: "src/server.vlt",
+  dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
+  jsx: { importSource: "sigx" },
+  // Compiled by Vite for the browser too: the subset both compilers accept.
+  tsCompat: ["src/shared"],
+};
