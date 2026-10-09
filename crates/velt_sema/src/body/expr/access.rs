@@ -186,6 +186,53 @@ impl FnCx<'_, '_> {
             .or_else(|| classes.first().copied())
     }
 
+    /// TS18014: `o.#x` where `o`'s class declares `#x` and this code is in its body, but a class
+    /// nested in it declares its own `#x`, which the name means here. Reports it and returns
+    /// true.
+    pub(crate) fn shadowed_private_name(&mut self, t: TyId, prop: &ast::Ident) -> bool {
+        if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return false;
+        }
+        let Some(inner) = self.name_owner(&prop.name) else {
+            return false;
+        };
+        let classes = self.lexical_classes();
+        let mut cur = self.cx.class_of(t).map(|(c, _)| c);
+        let mut shadowed = None;
+        for _ in 0..64 {
+            let Some(c) = cur else { break };
+            if c != inner && classes.contains(&c) && self.cx.declares_private_name(c, &prop.name) {
+                shadowed = Some(c);
+                break;
+            }
+            cur = self
+                .cx
+                .adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| self.cx.class_of(b))
+                .map(|(c, _)| c);
+        }
+        let Some(outer) = shadowed else {
+            return false;
+        };
+        let name = |s: &Self, d: DefId| s.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        let (tn, inner_name, outer_name) = (self.cx.display(t), name(self, inner), name(self, outer));
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "property `{}` cannot be accessed on type `{tn}` within this class because it is shadowed by another private identifier with the same spelling",
+                    prop.name
+                ),
+                prop.span,
+            )
+            .with_note(format!(
+                "`{inner_name}` declares its own `{}`, which is what the name means in its body; rename one of them to use `{outer_name}`'s",
+                prop.name
+            )),
+        );
+        true
+    }
+
     /// `private` check for field `index` of struct/class values of type `t`.
     pub(crate) fn check_field_private(&mut self, t: TyId, index: u32, name: &ast::Ident) {
         let private_to = self.field_private_to(t, index);

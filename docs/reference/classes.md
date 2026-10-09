@@ -146,7 +146,10 @@ hidden classes and no runtime shape checks.
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
   names the member that the class whose body the code is in declares, on any instance of that
   class or a subclass, not only `this` (a function or class declared in a method is in the body
-  too; where class bodies nest, the innermost one declaring `#x`); elsewhere, also in a subclass, it is an error (``
+  too; where class bodies nest, the innermost one declaring `#x`, so a nested class's own `#x`
+  shadows the outer one's: `o.#x` on an outer-class value there is ``property `#x` cannot be
+  accessed on type `Outer` within this class because it is shadowed by another private
+  identifier with the same spelling``, TypeScript's TS18014); elsewhere, also in a subclass, it is an error (``
   property `#x` is not accessible outside class `A` because it has a private name ``, also for
   an accessor: reading `o.#v`, assigning `o.#v = 1` or updating `o.#v += 1` reports it once). A
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class

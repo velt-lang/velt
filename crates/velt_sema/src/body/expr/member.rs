@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
-        if self.private_accessor_outside(t, prop, false) {
+        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
         }
         if self.has_setter(t, &prop.name) {
