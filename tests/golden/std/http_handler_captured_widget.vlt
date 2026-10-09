@@ -1,7 +1,6 @@
 // check: no leaks
-// A handler that captures an object holding a sync callback which modifies its own capture:
-// the handler never calls the callback, so this is valid, as on main (the callback keeps its
-// copy semantics on the handler's threads).
+// A handler that captures an object holding a sync callback which modifies its own capture,
+// and never calls it: valid, as on main (no type-based rule rejects it).
 import { serve } from "velt:http";
 
 class Widget {
