@@ -7,7 +7,8 @@
 # the base tree, then RUNS times (default 2) in the head tree with `--baseline` set to the base
 # counts, so a difference that shows in every run is the change, not noise. Each tree builds in
 # its own target directory under WORK_DIR. The Markdown tables are WORK_DIR/head-run<N>.md, the
-# counts WORK_DIR/{base,head-run<N>}.tsv. Run it from inside the repository.
+# counts WORK_DIR/{base,head-run<N>}.tsv. Run it from inside the repository, or with GIT_DIR set
+# (a worktree checked out on another OS: GIT_DIR=<main checkout>/.git).
 set -euo pipefail
 if [ $# -lt 3 ]; then
   echo "usage: bench/compare_refs.sh BASE_REF HEAD_REF WORK_DIR [RUNS]" >&2
@@ -17,7 +18,6 @@ BASE_REF=$1
 HEAD_REF=$2
 WORK=$3
 RUNS=${4:-2}
-REPO=$(git rev-parse --show-toplevel)
 mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
 
@@ -26,8 +26,8 @@ for side in base head; do
   [ "$side" = head ] && ref=$HEAD_REF
   rm -rf "${WORK:?}/$side"
   mkdir -p "$WORK/$side"
-  git -C "$REPO" archive "$ref" | tar -x -C "$WORK/$side"
-  echo "$side: $(git -C "$REPO" rev-parse "$ref")" >&2
+  git archive "$ref" | tar -x -C "$WORK/$side"
+  echo "$side: $(git rev-parse "$ref")" >&2
 done
 
 CARGO_TARGET_DIR="$WORK/target-base" "$WORK/base/bench/nightly.sh" --out "$WORK/base.tsv" \
