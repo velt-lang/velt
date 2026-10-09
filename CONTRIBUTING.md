@@ -232,8 +232,11 @@ A release is a tag `v<version>` on `main`, where `<version>` is the workspace ve
 
 The tag starts the `release` workflow (`.github/workflows/release.yml`). It builds the toolchain
 for Linux x86_64 and arm64 (in Debian 11, so it runs on glibc 2.31 and newer), macOS arm64 and
-x86_64 and Windows x64 with `scripts/package.*`, installs every archive with
-`scripts/get-velt.*` and smoke-tests it, publishes a GitHub release with the archives,
+x86_64 and Windows x64 with `scripts/package.*`, bundling the lld that `lld.yml` builds (from
+source, kept in the Actions cache; a cold build takes up to an hour), installs every archive with
+`scripts/get-velt.*` and smoke-tests it, also on machines without a C toolchain
+(`scripts/smoke-clean.*` in Debian slim and Windows Server Core containers), publishes a GitHub
+release with the archives,
 `SHA256SUMS` and the two installers, and finally installs the published release on every platform
 the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
 built. Versions with a suffix (`0.2.0-rc.1`) become pre-releases; they are not "latest", so the

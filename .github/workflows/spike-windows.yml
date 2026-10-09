@@ -48,16 +48,32 @@ jobs:
           Copy-Item scripts/smoke-clean.ps1 "$t/repo/scripts/"
           docker run --rm -v "$t\velt:C:\velt" -v "$t\repo:C:\repo" mcr.microsoft.com/windows/servercore:ltsc2025 powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: bench (system vs bundled)
+      - name: bench links (system vs bundled)
         shell: pwsh
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: |
           $velt = (Get-ChildItem dist/*/bin/velt.exe | Select-Object -First 1).FullName
           Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name
+          $out = Join-Path $env:RUNNER_TEMP "bl"; New-Item -ItemType Directory -Force $out | Out-Null
+          function LinkMs($file, $exe, $relink) {
+            if (-not $relink) { Remove-Item -ErrorAction SilentlyContinue "$exe.exe.link-stamp" }
+            $log = & $velt build -v $file -o $exe 2>&1 | Out-String
+            if ($LASTEXITCODE) { throw $log }
+            [double]([regex]::Match($log, 'velt: link\s+([\d.]+) ms').Groups[1].Value)
+          }
           foreach ($l in "system", "bundled") {
-            Write-Host "### $l"
             $env:VELT_LINKER = $l
-            pwsh -NoProfile -File bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt $velt 2>&1 | Out-Host
+            foreach ($p in @("examples/http_hello.vlt", "bench/compile/all_std.vlt")) {
+              $exe = Join-Path $out ([IO.Path]::GetFileNameWithoutExtension($p) + "_$l")
+              Remove-Item Env:VELT_RT_LINK -ErrorAction SilentlyContinue
+              $shared = (1..5 | ForEach-Object { LinkMs $p $exe $false } | Measure-Object -Minimum).Minimum
+              $env:VELT_RT_LINK = "static"
+              $static = (1..5 | ForEach-Object { LinkMs $p $exe $false } | Measure-Object -Minimum).Minimum
+              $relink = (1..5 | ForEach-Object { LinkMs $p $exe $true } | Measure-Object -Minimum).Minimum
+              Remove-Item Env:VELT_RT_LINK
+              Write-Host "| $([IO.Path]::GetFileNameWithoutExtension($p)) | $l | $shared | $static | $relink |"
+            }
+          }
           }
   lists:
     if: contains(github.event.head_commit.message, '[lists]')
