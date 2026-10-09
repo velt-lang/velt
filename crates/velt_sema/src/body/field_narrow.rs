@@ -110,7 +110,8 @@ impl FnCx<'_, '_> {
             let (d, _) = self.cx.class_of(t)?;
             // The field this code names (`#x` lexically: a subclass's own `#x` is another
             // field than the base's), then whether that one is `readonly`.
-            let (i, fty) = self.cx.field_seen_from(t, &path[k], self.owner)?;
+            let owner = self.name_owner(&path[k]);
+            let (i, fty) = self.cx.field_seen_from(t, &path[k], owner)?;
             let a = self.cx.adt(d)?;
             if !a.fields.get(i as usize).is_some_and(|f| f.readonly) {
                 return None;

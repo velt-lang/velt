@@ -106,6 +106,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        if self.private_accessor_outside(obj.ty, prop, true) {
+            self.check_args_loose(std::slice::from_ref(value));
+            return self.error_expr(span);
+        }
         let Some(op) = op else {
             if as_value {
                 return self.accessor_assign_value(obj, object, prop, value, span);
@@ -136,7 +140,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
-        if !self.readable(obj.ty, prop) {
+        if self.private_accessor_outside(obj.ty, prop, true) || !self.readable(obj.ty, prop) {
             return self.error_expr(span);
         }
         let rmw = Rmw::Update(op, prefix);
