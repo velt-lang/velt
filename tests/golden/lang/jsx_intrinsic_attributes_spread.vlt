@@ -1,8 +1,11 @@
 // @jsxImportSource ./_jsx_attrs
 
 // Attributes of `JSX.IntrinsicAttributes` given by a spread source reach the provider like written
-// ones (TypeScript accepts them in a spread); a later attribute of the same name replaces one
-// from a spread, as in an object.
+// ones (TypeScript accepts them in a spread). A later value of the same name replaces an earlier
+// one, as in an object, whether it comes from a spread or is written; an optional field that a
+// spread source does not have keeps the earlier value, and without one is not passed. A
+// forwarded optional prop that was not given reaches the provider as `null` (`undefined` in
+// JavaScript). The output is Node's for the same source.
 
 import { renderToStringSync } from "velt:jsx";
 
@@ -20,4 +23,27 @@ function main() {
   console.log(renderToStringSync(<Counter {...extra} client:load={false} label="later" />));
   const media = { "client:media": "(min-width: 768px)", start: 2, label: "media" };
   console.log(renderToStringSync(<Counter client:idle {...media} />));
+  // A spread source after the attribute: its value wins while it has the field, and the name is
+  // passed once.
+  const absent: { "client:load"?: boolean; start: number; label: string } = {
+    start: 3,
+    label: "absent",
+  };
+  console.log(renderToStringSync(<Counter client:load={false} {...absent} />));
+  // Not passed at all, as the props object has no such key.
+  console.log(renderToStringSync(<Counter {...absent} />));
+  const present: { "client:load"?: boolean; start: number; label: string } = {
+    "client:load": true,
+    start: 4,
+    label: "present",
+  };
+  console.log(renderToStringSync(<Counter client:load={false} {...present} />));
+  console.log(renderToStringSync(<Counter client:idle {...absent} {...present} />));
+  console.log(renderToStringSync(<Counter {...present} {...absent} />));
+  console.log(renderToStringSync(<Island media="print" label="forwarded" />));
+  console.log(renderToStringSync(<Island label="not given" />));
+}
+
+function Island(props: { media?: string; label: string }): JSX.Element {
+  return <Counter client:media={props.media} start={0} label={props.label} />;
 }

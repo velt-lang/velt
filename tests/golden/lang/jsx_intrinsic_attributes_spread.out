@@ -1,3 +1,10 @@
 <!--island client:load=true Counter--><p>spread 1</p><!--/island-->
 <!--island client:load=false Counter--><p>later 1</p><!--/island-->
 <!--island client:idle=true client:media="(min-width: 768px)" Counter--><p>media 2</p><!--/island-->
+<!--island client:load=false Counter--><p>absent 3</p><!--/island-->
+<p>absent 3</p>
+<!--island client:load=true Counter--><p>present 4</p><!--/island-->
+<!--island client:idle=true client:load=true Counter--><p>present 4</p><!--/island-->
+<!--island client:load=true Counter--><p>absent 3</p><!--/island-->
+<!--island client:media="print" Counter--><p>forwarded 0</p><!--/island-->
+<!--island client:media=null Counter--><p>not given 0</p><!--/island-->

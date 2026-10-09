@@ -134,12 +134,14 @@ impl FnCx<'_, '_> {
             if name == "key" {
                 continue;
             }
-            let ty = match optional.get(i).copied().unwrap_or(false) {
+            // An optional field's value is passed as is (`null` when absent); the message names
+            // the type as written.
+            let shown = match optional.get(i).copied().unwrap_or(false) {
                 true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
                 false => ty,
             };
             if !self.fits(ty, p.attr_value) {
-                let (t, v) = (self.cx.display(ty), self.cx.display(p.attr_value));
+                let (t, v) = (self.cx.display(shown), self.cx.display(p.attr_value));
                 self.cx.err(
                     format!("`JSX.IntrinsicAttributes` field {name:?} of the JSX provider '{source}' has type `{t}`, which does not convert to `JSX.AttrValue` (`{v}`)"),
                     at,

@@ -39,11 +39,15 @@ export function jsxComponentAttributes<P, E>(
   names: string[],
   values: AttrValue[],
 ): Element {
+  const inner = jsxComponent(component, props, key, name);
+  // None given (an optional field a spread source did not have): no island.
+  if (names.length === 0) {
+    return inner;
+  }
   let open = "<!--island";
   for (let i = 0; i < names.length; i++) {
     open += ` ${names[i]}=${describe(values[i])}`;
   }
   open += ` ${name.slice(name.indexOf("#") + 1)}-->`;
-  const inner = jsxComponent(component, props, key, name);
   return Fragment([raw(open), inner, raw("<!--/island-->")], null);
 }

@@ -146,15 +146,16 @@ impl FnCx<'_, '_> {
         self.mk(H::Local(l, UseMode::Borrow), ty, span)
     }
 
-    /// The accessible fields of spread source `e`, each read per the module docs.
+    /// The accessible fields of spread source `e`, each read per the module docs, with whether
+    /// the field is optional (`a?: T`: absent when null).
     pub(super) fn spread_source(
         &mut self,
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
-    ) -> Vec<(String, hir::Expr)> {
+    ) -> Vec<(String, hir::Expr, bool)> {
         self.spread_fields(e, lets)
             .into_iter()
-            .map(|(n, h, _)| (n, h))
+            .map(|(n, h, src)| (n, h, src.optional && !src.presence))
             .collect()
     }
 

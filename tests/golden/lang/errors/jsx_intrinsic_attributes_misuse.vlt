@@ -3,8 +3,9 @@
 // Attributes of every component are checked as TypeScript checks `Props & IntrinsicAttributes`:
 // a misspelled one is an unknown property (with a suggestion), a value of the wrong type is an
 // error (TypeScript's wording: `string`, not the optional field's `string | null`), a prop that
-// `IntrinsicAttributes` also declares must fit both types, the same one twice is an error, and
-// `jsxComponentAttributes` takes no async component.
+// `IntrinsicAttributes` also declares must fit both types, the same one twice is an error,
+// `jsxComponentAttributes` takes no async component, and a missing prop names what was given
+// with quoted keys.
 
 async function Slow(props: { n: number }): Promise<JSX.Element> {
   return <p>{props.n}</p>;
@@ -25,4 +26,5 @@ function main() {
   const d = <Card client:media={42} n={1} />;
   const e = <Card server:only n={1} />;
   const f = <Clash client:media={5} />;
+  const g = <Card client:load />;
 }

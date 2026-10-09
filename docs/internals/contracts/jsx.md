@@ -83,8 +83,13 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   and the call is then checked against its signature like any call.
 - The compiler never calls a component itself, so evaluation order is TS's: the props object
   (including already-built child elements) is evaluated, and the component runs when the
-  provider calls it. A provider may call it at once (`std/jsx`, no context) or store it and call
-  it while rendering parent-first (a provider with `provide`/`inject`).
+  provider calls it. Within the element, as in TS's `jsx(C, { ... }, key)`, the attributes
+  (props, spread sources, attributes of every component) are evaluated in source order, then
+  the children, then the key; a key after a spread source is evaluated in its place, as TS's
+  `createElement(C, { ...o, key })`. Where the call's own order differs (props are passed in
+  field order), the compiler binds the values to temporaries first. A provider may call it at
+  once (`std/jsx`, no context) or store it and call it while rendering parent-first (a provider
+  with `provide`/`inject`).
 - A component that `throw`s: its error type must be accepted by the provider's signature;
   `std/jsx` reports errors from rendering.
 - **Until semantics stage 2** (shared object references) a component passed as a value takes
@@ -296,21 +301,27 @@ function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
   - a required field that is missing;
   - the same attribute twice.
 
-  An optional field's value is checked against its type without `| null`, as `tsc` reports
-  it. A spread source may give these attributes, and a prop of the same name counts as given
-  (its value must fit both types, as `tsc` intersects them). `key` keeps its own handling. The
-  names are usually quoted property names, since they hold a `:`.
+  An optional field's value is checked against its declared type, so an optional value (a
+  forwarded optional prop, an optional field of a spread source) is accepted, as `tsc` accepts
+  it; a mismatch names the type without `| null`, as `tsc` reports it
+  (`not assignable to type 'string'`). A spread source may give these attributes, and a prop of
+  the same name counts as given (its value must fit both types, as `tsc` intersects them).
+  `key` keeps its own handling. The names are usually quoted property names, since they hold a
+  `:`.
 - **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
   component element with at least one of them calls `jsxComponentAttributes`, with the names and
-  the values converted to `AttrValue` (a bare attribute is `true`), in source order. The values
-  are evaluated after the props, where TypeScript evaluates every attribute in source order;
-  `key` differs the same way. An attribute given by a spread source is passed too, and a later
-  attribute of the same name replaces it, as in an object. An element without any calls
-  `jsxComponent` as before.
+  the values converted to `AttrValue` (a bare attribute is `true`, a written optional value that
+  is absent is `null`), in source order and evaluated in source order with the props (above).
+  An attribute given by a spread source is passed too. Each name is passed once: a later value
+  replaces an earlier one in its place, as in an object, whether it is written or comes from a
+  spread source. An optional field that a spread source does not have keeps the earlier value,
+  and without one is not passed, as the props object has no such key (the arrays may then be
+  empty). An element without any calls `jsxComponent` as before.
 - **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
   `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
   take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
-  an object type whose fields convert to `AttrValue`. All of this is checked once, when the
+  an object type whose fields convert to `AttrValue` (an optional field's `T | null`, so
+  `AttrValue` includes `null` when a field is optional). All of this is checked once, when the
   provider is loaded: a mismatch is one error, not one per element.
 - **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
   synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
