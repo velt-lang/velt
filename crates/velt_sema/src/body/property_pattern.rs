@@ -53,15 +53,11 @@ impl FnCx<'_, '_> {
         let mutable = kind == ast::VarKind::Let;
         for (key, sub) in fields {
             let value = self.member_of(obj.clone(), key, Want::Borrow, key.span);
-            let value = self.inferred_local_init(value);
             let ctx = BindCtx::Let {
                 mutable,
                 place: is_place(&value),
             };
             let pat = self.pattern(sub, value.ty, ctx);
-            if let hir::PatKind::Binding(l, _) = pat.kind {
-                self.note_inferred_local(l, &value);
-            }
             out.push(hir::Stmt {
                 kind: S::LetPat { pat, init: value },
                 span: sub.span,

@@ -67,7 +67,7 @@ fn object_spread_typed_and_errors() {
     );
     let r = err_src("function main() { const xs = [1]; const o = { ...xs }; }");
     assert!(
-        r.contains("cannot spread a value of type `i64[]` into an object"),
+        r.contains("cannot spread a value of type `f64[]` into an object"),
         "{r}"
     );
     let r =
@@ -106,7 +106,7 @@ fn array_spread_builds_with_capacity_and_pushes() {
     );
     let r = err_src("function main() { const n = 1; const ys = [...n]; }");
     assert!(
-        r.contains("cannot spread a value of type `i64` into an array"),
+        r.contains("cannot spread a value of type `f64` into an array"),
         "{r}"
     );
     let r = err_src("function f(a: i64) {} function main() { const xs = [1]; f(...xs); }");

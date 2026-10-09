@@ -348,12 +348,20 @@ impl FnCx<'_, '_> {
         };
         let lty = place.ty;
         let Some(op) = op else {
-            let v = match (first, self.value_hint(&place, value)) {
-                (Some(v), _) => v,
-                (None, Some(t)) => self.expr_coerce(value, t, Want::Move),
-                (None, None) => {
-                    let v = self.expr(value, None, Want::Move);
-                    self.coerce(v, lty)
+            let v = match first {
+                Some(v) => v,
+                None => {
+                    let v = self.expr(value, Some(lty), Want::Move);
+                    // A local declared from a literal takes the type of what it is assigned
+                    // (`literal_locals`); other places are a typed position.
+                    if self.literal_assign(&place, &v) {
+                        self.try_coerce(v, lty).unwrap_or_else(|v| {
+                            self.report_mismatch(lty, &v);
+                            v
+                        })
+                    } else {
+                        self.coerce(v, lty)
+                    }
                 }
             };
             self.unnarrow_fields(target);
@@ -400,9 +408,9 @@ impl FnCx<'_, '_> {
             let assign = self.mk(kind, unit, span);
             return self.with_temps(stmts, assign);
         }
-        let hint = self.value_hint(&place, value);
-        let v = self.expr(value, hint, Want::Borrow);
+        let v = self.expr(value, Some(lty), Want::Borrow);
         let v = self.unbrand(v);
+        self.literal_operands(op, &place, &v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
             Ok(v) => {
@@ -411,7 +419,7 @@ impl FnCx<'_, '_> {
                 let mut stmts = Vec::new();
                 self.hoist_indices(&mut place, &mut stmts);
                 let cur = self.place_read(&place, Want::Borrow);
-                let value = self.js_bitwise_assign(op, &place, cur, v, span);
+                let value = self.js_bitwise_assign(op, cur, v, span);
                 let kind = H::Assign {
                     place: Box::new(place),
                     value: Box::new(value),
@@ -424,9 +432,6 @@ impl FnCx<'_, '_> {
         let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);
-        }
-        if op == ast::BinaryOp::Div {
-            self.check_int_div_assign(&place, &v, span);
         }
         let bop = hir_binop(op).expect("ICE: logical compound op");
         let mut place = place;
@@ -466,6 +471,7 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let lty = place.ty;
+        self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
         if !self.cx.ty.is_numeric(lty) {
             if !self.cx.ty.is_bottom(lty) {

@@ -176,19 +176,19 @@ no generator object, and stopping early closes the iterator):
   ([Iterable object literals](types.md#iterable-object-literals)).
 
 ```ts
-function* countTo(n: i64): Generator<i64> {
+function* countTo(n: number): Generator<number> {
   for (let i = 1; i <= n; i++) {
     yield i;
   }
 }
 
-function* squares(n: i64): Generator<[i64, i64]> {
+function* squares(n: number): Generator<[number, number]> {
   for (const v of countTo(n)) {
     yield [v, v * v];
   }
 }
 
-function sum(...xs: i64[]): i64 {
+function sum(...xs: number[]): number {
   let total = 0;
   for (const x of xs) {
     total += x;

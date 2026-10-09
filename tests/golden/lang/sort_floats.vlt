@@ -82,7 +82,7 @@ function make(rng: Rng, shape: string, n: i64): f64[] {
 function main() {
   const rng = new Rng();
   const shapes = ["random", "special", "nanfirst", "sorted_nans"];
-  const sizes = [0, 1, 2, 7, 21, 100, 129, 1000, 20000];
+  const sizes: i64[] = [0, 1, 2, 7, 21, 100, 129, 1000, 20000];
   for (const shape of shapes) {
     let ok = 0;
     for (const n of sizes) {

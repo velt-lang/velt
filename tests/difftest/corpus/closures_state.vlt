@@ -1,9 +1,9 @@
 // Closures reading captured constants; callbacks accumulating into captured lets.
-function makeScaler(factor: i64, offset: i64): (x: i64) => i64 {
-  return (x: i64): i64 => x * factor + offset;
+function makeScaler(factor: number, offset: number): (x: number) => number {
+  return (x: number): number => x * factor + offset;
 }
 
-function applyAll(xs: i64[], f: (x: i64) => i64): i64[] {
+function applyAll(xs: number[], f: (x: number) => number): number[] {
   return xs.map((x) => f(x));
 }
 

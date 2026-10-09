@@ -15,7 +15,7 @@ import { Fortune, fortunes, hand, handRows } from "./_data";
 import * as precompiled from "./_page";
 import * as generic from "./_page_generic";
 
-function once(variant: string, fs: Fortune[]): i64 {
+function once(variant: string, fs: Fortune[]): number {
   switch (variant) {
     case "hand":
       return hand(fs).length;

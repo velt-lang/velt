@@ -1,9 +1,9 @@
 // Euclid's GCD (recursive and iterative) and LCM.
-function gcd(a: i64, b: i64): i64 {
+function gcd(a: number, b: number): number {
   return b == 0 ? a : gcd(b, a % b);
 }
 
-function gcdLoop(a: i64, b: i64): i64 {
+function gcdLoop(a: number, b: number): number {
   while (b != 0) {
     const t = a % b;
     a = b;
@@ -12,7 +12,7 @@ function gcdLoop(a: i64, b: i64): i64 {
   return a;
 }
 
-function lcm(a: i64, b: i64): i64 {
+function lcm(a: number, b: number): number {
   return (a / gcd(a, b)) * b;
 }
 

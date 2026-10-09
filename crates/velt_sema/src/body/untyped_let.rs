@@ -32,7 +32,6 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(value.span));
         }
         let v = self.expr(value, None, Want::Move);
-        let v = self.inferred_local_init(v);
         if self.cx.ty.is_bottom(v.ty) || v.ty == self.cx.ty.unit {
             if v.ty == self.cx.ty.never {
                 // `x = fail()` does not finish: the next assignment decides.
@@ -46,7 +45,6 @@ impl FnCx<'_, '_> {
         }
         self.f.locals[l.0 as usize].ty = v.ty;
         place.ty = v.ty;
-        self.note_inferred_local(l, &v);
         Some(v)
     }
 

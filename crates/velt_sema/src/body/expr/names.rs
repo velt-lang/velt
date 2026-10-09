@@ -247,6 +247,15 @@ impl FnCx<'_, '_> {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
             DefInfo::Fn(_) => self.fn_ref(d, id, exp),
+            // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
+            // compares integers, `N / 3` divides numbers.
+            DefInfo::Global(g)
+                if g.src.ann.is_none() && g.src.init.is_some_and(super::member::untyped_int) =>
+            {
+                let init = g.src.init.expect("ICE: checked above");
+                let h = self.expr(init, exp, want);
+                self.literal_at(h, span)
+            }
             DefInfo::Global(_) => self.global_read(d, want, span),
             _ => {
                 self.cx

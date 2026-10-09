@@ -1,8 +1,9 @@
 //! CFG simplification: degenerate branches become jumps, jumps are threaded through empty
-//! blocks, straight-line chains are merged, unreachable blocks are dropped, and blocks are
-//! renumbered so that block 0 is the (possibly new) entry. Cheap enough for debug builds.
+//! blocks (and through branches the edge into them decides), straight-line chains are merged,
+//! unreachable blocks are dropped, and blocks are renumbered so that block 0 is the (possibly
+//! new) entry. Cheap enough for debug builds.
 
-use velt_vir::vir::{BlockId, Function, Terminator};
+use velt_vir::vir::{BlockId, Const, Function, Local, Operand, Rvalue, Stmt, Terminator};
 
 use crate::srclocs::{append_block, reorder_blocks, replace_block};
 use crate::visit::{successors, successors_mut};
@@ -13,10 +14,99 @@ pub(crate) fn run(func: &mut Function) -> bool {
         return false;
     }
     let mut changed = simplify_terminators(func);
+    changed |= thread_known_branches(func);
     let entry = thread_jumps(func, &mut changed);
     changed |= merge_chains(func, entry);
     changed |= compact(func, entry);
     changed
+}
+
+/// An edge into an empty block that only branches on a flag the edge decides goes to that
+/// branch's target directly: `a && b`'s false path sets the flag to `false` (a constant, or a
+/// copy of the condition it just branched on). The values tested on the way keep their facts
+/// on each path (`numrep`: `while (i < s.length && f(s[i])) i++` bounds `i`).
+fn thread_known_branches(func: &mut Function) -> bool {
+    let mut changed = false;
+    for p in 0..func.blocks.len() {
+        let edges: Vec<(BlockId, Option<bool>)> = match &func.blocks[p].term {
+            Terminator::Goto(b) => vec![(*b, None)],
+            Terminator::Branch { then, els, .. } => vec![(*then, Some(true)), (*els, Some(false))],
+            _ => continue,
+        };
+        for (k, (b, taken)) in edges.into_iter().enumerate() {
+            let Some((flag, then, els)) = flag_branch(func, b) else {
+                continue;
+            };
+            let Some(v) = flag_on_edge(func, p, flag, taken) else {
+                continue;
+            };
+            let to = if v { then } else { els };
+            match (&mut func.blocks[p].term, k) {
+                (Terminator::Goto(t), _) | (Terminator::Branch { then: t, .. }, 0) => *t = to,
+                (Terminator::Branch { els: t, .. }, _) => *t = to,
+                _ => continue,
+            }
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Block `b` holds only `branch flag, then, els`.
+fn flag_branch(func: &Function, b: BlockId) -> Option<(Local, BlockId, BlockId)> {
+    let block = &func.blocks[b.0 as usize];
+    match (&block.term, block.stmts.is_empty()) {
+        (
+            Terminator::Branch {
+                cond: Operand::Copy(c),
+                then,
+                els,
+            },
+            true,
+        ) if c.proj.is_empty() => Some((c.local, *then, *els)),
+        _ => None,
+    }
+}
+
+/// The value of `flag` at the end of block `p` on its edge `taken` (`None`: a jump): a constant
+/// last assigned in `p`, or the condition `p` branches on (or a copy of it made after the
+/// condition's last assignment).
+fn flag_on_edge(func: &Function, p: usize, flag: Local, taken: Option<bool>) -> Option<bool> {
+    let block = &func.blocks[p];
+    let cond = match &block.term {
+        Terminator::Branch {
+            cond: Operand::Copy(c),
+            ..
+        } if c.proj.is_empty() => Some(c.local),
+        _ => None,
+    };
+    if cond == Some(flag) {
+        return taken;
+    }
+    let last = |l: Local| {
+        block
+            .stmts
+            .iter()
+            .rposition(|s| matches!(s, Stmt::Assign(d, _) if d.local == l))
+    };
+    let at = last(flag)?;
+    let Stmt::Assign(d, rv) = &block.stmts[at] else {
+        return None;
+    };
+    if !d.proj.is_empty() {
+        return None;
+    }
+    match rv {
+        Rvalue::Use(Operand::Const(Const::Bool(v), _)) => Some(*v),
+        Rvalue::Use(Operand::Copy(q))
+            if q.proj.is_empty()
+                && Some(q.local) == cond
+                && last(q.local).is_none_or(|i| i < at) =>
+        {
+            taken
+        }
+        _ => None,
+    }
 }
 
 /// Branches/switches whose targets all coincide become `Goto`; switch cases that go to the
@@ -228,5 +318,37 @@ mod tests {
         assert!(run(&mut f));
         assert_eq!(f.blocks.len(), 1);
         assert!(matches!(f.blocks[0].term, Terminator::Return(_)));
+    }
+
+    #[test]
+    fn a_branch_the_edge_decides_is_skipped() {
+        // `while (n > 0 && p) n--`: bb1 tests `n > 0` and copies it into the flag `f`; its false
+        // edge reaches bb2 (`branch f`) knowing `f` is false, so it goes to the exit directly.
+        let mut fb = FuncBuilder::internal("f", &[Ty::I64, Ty::Bool], Ty::I64);
+        let (n, p) = (fb.param(0), fb.param(1));
+        let (c, f) = (fb.local(Ty::Bool), fb.local(Ty::Bool));
+        let (b0, b1, b2, b3, b4, b5) = (
+            fb.block(),
+            fb.block(),
+            fb.block(),
+            fb.block(),
+            fb.block(),
+            fb.block(),
+        );
+        fb.goto(b0, b1);
+        fb.assign(b1, c, bin(BinOp::Gt, copy_local(n), int(0, Ty::I64)));
+        fb.assign(b1, f, Rvalue::Use(copy_local(c)));
+        fb.branch(b1, c, b3, b2);
+        fb.branch(b2, f, b4, b5);
+        fb.assign(b3, f, Rvalue::Use(copy_local(p)));
+        fb.goto(b3, b2);
+        fb.assign(b4, n, bin(BinOp::Sub, copy_local(n), int(1, Ty::I64)));
+        fb.goto(b4, b1);
+        fb.ret(b5, copy_local(n));
+        let mut func = fb.finish();
+        assert!(thread_known_branches(&mut func));
+        assert!(matches!(func.blocks[1].term, Terminator::Branch { els, .. } if els == b5));
+        // The flag set from `p` is not known: that path still branches on it.
+        assert!(matches!(func.blocks[3].term, Terminator::Goto(t) if t == b2));
     }
 }

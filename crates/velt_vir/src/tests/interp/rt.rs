@@ -3,6 +3,14 @@
 
 use super::Interp;
 
+/// What `console.log` prints for a number: `-0` is `-0`, else [`js_num`].
+pub(super) fn inspect_num(v: f64) -> String {
+    if v == 0.0 && v.is_sign_negative() {
+        return "-0".into();
+    }
+    js_num(v)
+}
+
 /// JS `Number.prototype.toString` (enough for the tests: shortest round-trip, exponent form
 /// outside `[1e-6, 1e21)`).
 pub(super) fn js_num(v: f64) -> String {
@@ -141,7 +149,7 @@ impl Interp<'_> {
             }
             "velt_rt_write_i64" => self.out(a[0], &(a[1] as i64).to_string()),
             "velt_rt_write_u64" => self.out(a[0], &a[1].to_string()),
-            "velt_rt_write_f64" => self.out(a[0], &js_num(f64::from_bits(a[1]))),
+            "velt_rt_write_f64" => self.out(a[0], &inspect_num(f64::from_bits(a[1]))),
             "velt_rt_write_bool" => self.out(a[0], if a[1] & 1 == 1 { "true" } else { "false" }),
             "velt_rt_write_byte" => self.out(a[0], &((a[1] as u8) as char).to_string()),
             "velt_rt_flush" => {}
