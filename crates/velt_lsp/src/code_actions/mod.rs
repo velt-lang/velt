@@ -114,15 +114,6 @@ fn merged(fixes: &[&Fix]) -> Vec<(Span, String)> {
     out
 }
 
-/// The first non-whitespace byte of `text` before `offset`.
-fn char_before(text: &str, offset: u32) -> Option<u8> {
-    text.as_bytes()[..(offset as usize).min(text.len())]
-        .iter()
-        .rev()
-        .copied()
-        .find(|b| !b.is_ascii_whitespace())
-}
-
 #[cfg(test)]
 mod tests {
     use velt_common::{FileId, Span};

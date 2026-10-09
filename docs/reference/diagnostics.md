@@ -12,7 +12,7 @@ The wording below is stable: tests, editors and tools rely on it.
 | parse | `expected expression`, ``expected `;` ``, `expected <token>, found <token>` |
 | unknown name or type | ``cannot find `name` in this scope``, ``cannot find type `T` in this scope`` |
 | types | `mismatched types` + note `expected i64, found string` |
-| conditions | `mismatched types` + note `expected boolean, found i64` + the comparison to write; ``` `\|\|` needs a `boolean` or nullable left side, found `T` ``` (+ "use `??` for a default") |
+| conditions | ``an expression of type `void` cannot be tested for truthiness`` (also for a value of a generic type) |
 | moves (promises, disposed values) | ``use of moved value `name` `` (+ where it moved) |
 | const | ``cannot assign twice to const `name` `` |
 | members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``property `#x` is not accessible outside class `A` because it has a private name``, `private names are only allowed in class bodies`, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |
@@ -33,6 +33,6 @@ At run time:
 | uncaught error | `Uncaught <Type>: <message> at file:line:col` | 1 |
 
 The language server turns many of these diagnostics into quick fixes: removing `mut`,
-replacing `undefined` with `null`, converting a `+` chain to a template literal, writing the
-comparison a condition needs, and adding `await` or `spawn(...)` to a floating promise
+replacing `undefined` with `null`, converting a `+` chain to a template literal, and adding
+`await` or `spawn(...)` to a floating promise
 ([Editors](../tooling/editors.md)).

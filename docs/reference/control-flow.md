@@ -7,7 +7,8 @@
   [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
   (optionally labeled: `outer: for (…)` … `continue outer;`), `return`, blocks, and the
   ternary `?:`. A body without braces (`if (c) return x;`) is a one-statement block.
-- Conditions take `bool` or nullable values ([safe truthiness](variables.md#conditions-safe-truthiness)).
+- Conditions take values of any type and test them as JavaScript does: `0`, `NaN`, `""` and
+  `null` are falsy ([truthiness](variables.md#conditions-truthiness)).
 
 ## `for...of`
 

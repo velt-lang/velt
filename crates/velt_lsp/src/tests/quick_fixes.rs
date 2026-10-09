@@ -222,32 +222,6 @@ fn converts_string_concatenation_to_a_template_literal() {
 }
 
 #[test]
-fn makes_non_bool_conditions_explicit() {
-    let text = "function a(count: i64) {\n  if (count) {\n    console.log(\"n\");\n  }\n}\n\nfunction b(name: string) {\n  while (name) {\n    break;\n  }\n}\n\nfunction c(user: string | null) {\n  if (user) {\n    console.log(\"u\");\n  }\n}\n\nfunction d(x: f64) {\n  if (x + 1.0) {\n    console.log(\"x\");\n  }\n}\n\nfunction e(n: i64): bool {\n  return !n;\n}\n\nfunction main() {\n  a(1);\n  b(\"\");\n  c(null);\n  d(0.0);\n  console.log(e(0));\n}\n";
-    let (mut client, doc, diags) = open("fix_cond.vlt", text);
-    let cases = [
-        ("(count)", "Compare with `0`", "(count !== 0)"),
-        ("(name)", "Compare with `\"\"`", "(name !== \"\")"),
-        ("(user)", "Compare with `null`", "(user !== null)"),
-        ("(x + 1.0)", "Compare with `0.0`", "(x + 1.0 !== 0.0)"),
-        (" !n", "Compare with `0`", " n === 0"),
-    ];
-    let mut all_fixed = text.to_string();
-    for (needle, title, expected) in cases {
-        let offered = actions(&mut client, &doc, text, &needle[1..], &diags);
-        let one = apply(text, find(&offered, title), &doc);
-        assert!(one.contains(expected), "{one}");
-        all_fixed = all_fixed.replace(needle, expected);
-    }
-    assert_eq!(
-        errors_after(&mut client, &doc, &all_fixed),
-        [] as [Value; 0],
-        "{all_fixed}"
-    );
-    client.shutdown();
-}
-
-#[test]
 fn floating_promise_can_be_awaited_or_spawned() {
     let text = "async function load(): Promise<i64> {\n  return 1;\n}\n\nasync function main() {\n  load();\n}\n";
     let (mut client, doc, _) = open("fix_promise.vlt", text);

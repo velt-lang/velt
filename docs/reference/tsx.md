@@ -82,10 +82,10 @@ const link = <a hreff="/docs">Docs</a>;
 - A provider that writes some tags without an end tag lists them (`jsxVoidElements`;
   `velt:jsx`: HTML's void elements `br`, `img`, `input`, …), and children of those tags are an
   error. `{}`, comments and an explicit end tag (`<br></br>`) are allowed.
-- `&&` follows Velt's conditions ([Variables and conditions](variables.md)). With a nullable
-  object on the left, `{user && <p>{user.name}</p>}` is the element or `null`. With a
-  `boolean` on the left, the right side must be a condition too, so `{flag && <b>new</b>}` is
-  an error: write `{flag ? <b>new</b> : null}`.
+- `&&` returns an operand, as in JavaScript ([truthiness](variables.md#conditions-truthiness)):
+  `{flag && <b>new</b>}` is the element or `false` (which `velt:jsx` renders as nothing), and
+  `{user && <p>{user.name}</p>}` on a nullable object is the element or `null`. As in React,
+  `{count && <b>n</b>}` renders `0` when `count` is `0`.
 
 ```ts
 import { renderToStringSync } from "velt:jsx";
@@ -96,9 +96,10 @@ console.log(renderToStringSync(
   <ul class="list">
     {items.map((x) => <li>{x}</li>)}
     {flag ? <li>new</li> : null}
+    {flag && <li>also new</li>}
   </ul>,
 ));
-// <ul class="list"><li>a</li><li>b</li><li>new</li></ul>
+// <ul class="list"><li>a</li><li>b</li><li>new</li><li>also new</li></ul>
 ```
 
 ```ts error

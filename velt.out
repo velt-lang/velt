@@ -1,0 +1,7 @@
+D:/velt-build/ts-truthiness/t/truthy.vlt:30:24: error: mismatched types
+  = note: expected string, found string | f64
+  = note: use a template literal to combine strings with other values: `${a}${b}`
+
+D:/velt-build/ts-truthiness/t/truthy.vlt:86:22: error: `Object.is` is not a static method
+
+D:/velt-build/ts-truthiness/t/truthy.vlt:86:47: error: `Object.is` is not a static method
