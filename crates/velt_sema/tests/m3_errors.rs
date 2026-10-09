@@ -214,3 +214,67 @@ fn values_owning_resources_have_no_automatic_clone() {
     );
     assert!(r.contains("has no automatic `clone()`"), "{r}");
 }
+
+#[test]
+fn with_summaries_reach_through_call_chains_declared_callers_first() {
+    // Each function is declared before the one it calls, and `even` and `odd` call each other:
+    // what `last` does (start a promise, store into its other argument) only reaches `first`
+    // after several rounds of the summaries' fixpoint, each re-summarizing only the callers of
+    // what changed.
+    let src = |body: &str| {
+        format!(
+            "class Inner {{ n: i64 = 0; }}
+             class Outer {{ n: i64 = 0; inner: Inner = new Inner(); }}
+             function first(o: Outer, xs: Inner[]) {{ even(o, xs, 4); }}
+             function even(o: Outer, xs: Inner[], k: i64) {{ if (k > 0) {{ odd(o, xs, k - 1); }} else {{ middle(o, xs); }} }}
+             function odd(o: Outer, xs: Inner[], k: i64) {{ even(o, xs, k - 1); }}
+             function middle(o: Outer, xs: Inner[]) {{ last(o, xs); }}
+             function last(o: Outer, xs: Inner[]) {{ {body} }}
+             async function bump(o: Outer): Promise<i64> {{ await yieldNow(); o.n += 1; return o.n; }}
+             function main() {{
+               const m = new Mutex<Outer>(new Outer());
+               const out: Inner[] = [];
+               m.with((v) => first(v, out));
+               m.with((v) => {{ const ys: Inner[] = []; first(v, ys); }});
+             }}"
+        )
+    };
+    ok_src(&src("o.n += 1;"));
+    let r = err_src(&src("const p = bump(o);"));
+    assert!(
+        r.contains("`first` starts a promise with the locked value"),
+        "{r}"
+    );
+    // A store from the value into the outside array is transferred (copied), not an error.
+    ok_src(&src("xs.push(o.inner);"));
+    let r = err_src(&src("o.n += 1; xs.push(o.inner);"));
+    assert!(r.contains("also changes that argument"), "{r}");
+}
+
+#[test]
+fn with_summaries_follow_a_self_recursive_call_that_swaps_its_arguments() {
+    // `sw` makes a promise from its first parameter directly, and from its second only through
+    // the recursive call that swaps them: that needs `sw` summarized again after its own
+    // summary changed.
+    let src = |call: &str| {
+        format!(
+            "class Outer {{ n: i64 = 0; }}
+             async function bump(o: Outer): Promise<i64> {{ await yieldNow(); o.n += 1; return o.n; }}
+             function sw(a: Outer, b: Outer, k: i64) {{
+               if (k > 0) {{ sw(b, a, k - 1); }} else {{ const p = bump(a); }}
+             }}
+             function main() {{
+               const m = new Mutex<Outer>(new Outer());
+               const other = new Outer();
+               m.with((v) => {call});
+             }}"
+        )
+    };
+    for call in ["sw(v, other, 0)", "sw(other, v, 1)"] {
+        let r = err_src(&src(call));
+        assert!(
+            r.contains("`sw` starts a promise with the locked value"),
+            "{call}: {r}"
+        );
+    }
+}
