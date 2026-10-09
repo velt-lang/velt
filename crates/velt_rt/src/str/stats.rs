@@ -13,7 +13,7 @@
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
-//! once no task is left that could make them so, which [`settle`] waits for. `channel
+//! once no task is left that could make them so ([`freeze`]). `channel
 //! leftovers=<n>`: values still queued in channels when `main` returned normally, which the
 //! runtime dropped then (docs/std/channel.md); a leak check passes with them, so the count keeps
 //! them visible.
@@ -74,7 +74,7 @@ pub(crate) fn block_free() {
     }
 }
 
-/// The `blocks=<allocated>/<freed>` counts, which [`settle`] freezes at exit.
+/// The `blocks=<allocated>/<freed>` counts, which [`freeze`] freezes at exit.
 ///
 /// Tasks still running when `main` returns go on allocating and freeing while the count is
 /// taken, so allocated and freed numbers read one after the other were no count of any one
@@ -129,21 +129,26 @@ impl BlockCount {
     }
 
     /// Wait until every block allocated so far is freed, or no task that could free one is
-    /// alive (`tasks_alive`), or `deadline` passed; then freeze the counts. The equal counts
-    /// are checked and frozen in one step, so no straggler's allocation slips in between.
-    pub(crate) fn settle(&self, tasks_alive: impl Fn() -> bool, deadline: std::time::Instant) {
+    /// alive (`tasks_alive`), or `deadline` passed. With `freeze`, then freeze the counts: equal
+    /// counts are checked and frozen in one step, so no straggler's allocation slips in between.
+    pub(crate) fn settle(
+        &self,
+        tasks_alive: impl Fn() -> bool,
+        deadline: std::time::Instant,
+        freeze: bool,
+    ) {
         loop {
             {
                 let mut b = self.lock();
                 if b.allocated == b.freed {
-                    b.frozen = true;
+                    b.frozen |= freeze;
                     return;
                 }
             }
             // Unfreed blocks: only a task still alive can free them (checked without the lock,
             // which the tasks need to count).
             if !tasks_alive() || std::time::Instant::now() >= deadline {
-                self.lock().frozen = true;
+                self.lock().frozen |= freeze;
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -162,21 +167,31 @@ pub(crate) fn channel_leftovers(n: u64) {
     let _ = n;
 }
 
-/// Before [`report`] when `main` returned normally (debug runtime with `VELT_RC_STATS=1` only):
-/// tasks still running then (a task whose handle was dropped, the loser of a race) free their
-/// blocks when they finish, so wait while blocks are unfreed and tasks are alive, instead of
-/// counting a straggler as a leak. Up to a minute: a hang guard, which a real leak waits out.
-/// Then the block counts are frozen ([`BlockCount`]): what tasks still running allocate after
-/// that is not counted. `tasks_alive`: whether any task is still alive.
+/// After `main` returned normally (debug runtime with `VELT_RC_STATS=1` only): tasks still
+/// running then (a task whose handle was dropped, the loser of a race) free their blocks when
+/// they finish, so wait while blocks are unfreed and tasks are alive, instead of counting a
+/// straggler as a leak. Up to a minute: a hang guard, which a real leak waits out.
+/// `tasks_alive`: whether any task is still alive. [`freeze`] takes the final count.
 pub fn settle(tasks_alive: impl Fn() -> bool) {
+    settle_blocks(tasks_alive, false);
+}
+
+/// Before [`report`]: [`settle`] again (after the runtime dropped what was left in channels),
+/// then freeze the block counts ([`BlockCount`]): what tasks still running allocate after that
+/// is not counted.
+pub fn freeze(tasks_alive: impl Fn() -> bool) {
+    settle_blocks(tasks_alive, true);
+}
+
+fn settle_blocks(tasks_alive: impl Fn() -> bool, freeze: bool) {
     #[cfg(debug_assertions)]
     if counters::enabled() {
         use std::time::{Duration, Instant};
         let deadline = Instant::now() + Duration::from_secs(60);
-        counters::BLOCKS.settle(tasks_alive, deadline);
+        counters::BLOCKS.settle(tasks_alive, deadline, freeze);
     }
     #[cfg(not(debug_assertions))]
-    let _ = tasks_alive;
+    let _ = (tasks_alive, freeze);
 }
 
 /// Print the counters (debug runtime with `VELT_RC_STATS=1` only). Called at process exit.
@@ -218,11 +233,22 @@ mod tests {
         c.alloc();
         c.free();
         let far = Instant::now() + Duration::from_secs(60);
-        c.settle(|| true, far);
+        c.settle(|| true, far, true);
         // The straggler finishes now: it allocates its result, and the process exits before
         // anything frees it.
         c.alloc();
         assert_eq!(counts(&c), (1, 1));
+        c.free();
+        assert_eq!(counts(&c), (1, 1));
+    }
+
+    /// Waiting before the runtime drops what is left in channels must not freeze the counts:
+    /// those frees still count.
+    #[test]
+    fn waiting_without_freezing_keeps_counting() {
+        let c = BlockCount::new();
+        c.settle(|| true, Instant::now() + Duration::from_secs(60), false);
+        c.alloc();
         c.free();
         assert_eq!(counts(&c), (1, 1));
     }
@@ -242,7 +268,7 @@ mod tests {
             }
             looks.get() < 3
         };
-        c.settle(alive, Instant::now() + Duration::from_secs(60));
+        c.settle(alive, Instant::now() + Duration::from_secs(60), true);
         assert_eq!(counts(&c), (2, 2));
         assert_eq!(looks.get(), 3);
     }
@@ -251,7 +277,7 @@ mod tests {
     fn a_leak_with_no_task_left_is_counted_and_frozen() {
         let c = BlockCount::new();
         c.alloc();
-        c.settle(|| false, Instant::now() + Duration::from_secs(60));
+        c.settle(|| false, Instant::now() + Duration::from_secs(60), true);
         c.alloc();
         c.free();
         assert_eq!(counts(&c), (1, 0));
