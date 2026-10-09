@@ -84,7 +84,11 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
-        let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);
+        let void_task = self.void_task == Some(e.span) && self.is_void_task(params, ret, body);
+        if void_task {
+            self.void_task = None;
+        }
+        let (ret, is_async, span) = (ret.as_ref(), *is_async || void_task, e.span);
         let Expected {
             params: exp_params,
             ret: exp_ret,
@@ -155,7 +159,10 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
-        let mut block = self.closure_body(body, span);
+        let mut block = match body {
+            ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
+            _ => self.closure_body(body, span),
+        };
         block.stmts.splice(0..0, locals);
         let ptys: Vec<TyId> = ptys
             .iter()

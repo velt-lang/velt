@@ -231,8 +231,8 @@ surprise ([Error handling](errors.md)).
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
-  their `clear` functions are globals; the callback returns the promise to run
-  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  their `clear` functions are globals and take any callback (`() => console.log("x")`,
+  `() => save(doc)`, `async () => { … }`), and a pending timer keeps the
   process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:

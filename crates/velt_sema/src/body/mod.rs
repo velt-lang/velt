@@ -289,6 +289,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The arrow being checked is an argument of a `std/` function called from user code: its
     /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
     pub std_callback: bool,
+    /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
+    /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
+    pub void_task: Option<Span>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -321,6 +324,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: false,
+            void_task: None,
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],

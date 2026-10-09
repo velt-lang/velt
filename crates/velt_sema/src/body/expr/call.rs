@@ -163,7 +163,10 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, span);
+        let wrapped = self.timer_callback(d, args);
+        let args = wrapped.as_deref().unwrap_or(args);
         let ck = self.check_call(&c, slots, args, exp, span);
+        self.void_task = None;
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);
         let kind = H::Call {
