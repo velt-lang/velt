@@ -35,6 +35,7 @@ set `CARGO_PROFILE_DEV_DEBUG=full` when you want to inspect local variables in a
 | `cargo test -p <crate>` | one crate's unit and integration tests |
 | `cargo test -p veltc --test golden` | the end-to-end tests: every `tests/golden/**/*.vlt` with an expected `.out`, built and run in debug and release mode (filter with `VELT_GOLDEN=m1/strings`) |
 | `cargo test -p veltc --test docs` | the documentation tests: every `ts` code block under `README.md`, `docs/book`, `docs/reference`, `docs/std` and `docs/tooling` must compile (filter with `VELT_DOCS=<file:line>`) |
+| `cargo test -p veltc --test example_apps` | `velt test --locked` for every example application with tests (`examples/apps/<app>/tests/`), each in a copy of the app (filter with `VELT_EXAMPLE_APPS=chat,seek`) |
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
 
@@ -145,7 +146,9 @@ proposal for a Velt-only feature is welcome when it shows the speed it buys.
 3. **Show the performance impact** on `bench/` for anything that touches code generation or the
    runtime: the gate for semantic changes is every benchmark within 3% of the previous compiler.
    `bench/nightly.sh` counts instructions with cachegrind; for a runtime change,
-   `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours.
+   `bench/runtime_ab.sh` links the same programs against `origin/main`'s runtime and yours; for
+   a compiler or std change, `bench/compiler_ab.sh BASE HEAD` builds them with each commit's
+   toolchain.
 4. Once the design is accepted, the implementation lands with end-to-end tests, documentation
    updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
    breaks.

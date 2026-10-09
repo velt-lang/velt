@@ -18,7 +18,8 @@
 // Elements are never copied or cloned: pdqsort swaps them, the stable sort moves them between
 // the array and its buffer, so every algorithm here works for any `T`.
 // There is no generic ordering bound yet, so `sort()` is provided per element type. The
-// comparator returns `i64` (like `compareTo`), except on `f64[]`, where it returns `f64`.
+// comparator returns a `number` as in JS, except on arrays of a declared integer type, where it
+// returns an `i64` (`(a, b) => a - b` on `i64[]`, or `a.compareTo(b)`).
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -157,16 +158,16 @@ extend Array<string> {
    * @example
    * names.sort((a, b) => a.localeCompare(b));
    */
-  sort(cmp: ((x: string, y: string) => i64) | null = null) {
+  sort(cmp: ((x: string, y: string) => number) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp, (c) => c < 0);
+      stableSort(this, cmp, (c) => c < 0.0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
-  toSorted(cmp: ((x: string, y: string) => i64) | null = null): string[] {
+  toSorted(cmp: ((x: string, y: string) => number) | null = null): string[] {
     const out = this.slice();
     out.sort(cmp);
     return out;
@@ -175,12 +176,12 @@ extend Array<string> {
 
 extend<T> Array<T> {
   /** Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`). */
-  sort(cmp: (x: T, y: T) => i64) {
-    stableSort(this, cmp, (c) => c < 0);
+  sort(cmp: (x: T, y: T) => number) {
+    stableSort(this, cmp, (c) => c < 0.0);
   }
 
   /** A copy sorted by `cmp` (ES2023); the receiver is unchanged. */
-  toSorted(cmp: (x: T, y: T) => i64): T[] {
+  toSorted(cmp: (x: T, y: T) => number): T[] {
     const out = this.slice();
     out.sort(cmp);
     return out;

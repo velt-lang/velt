@@ -1,12 +1,9 @@
 //! ToInt32 of sums the facts cannot bound: an integer add behind a cheap range check.
 //!
-//! - **`velt_rt_math_add_int32(a, x)`** (ToInt32 of `a + x`, sema's `(y + i) | 0` with a float
-//!   `i`) where `x` converts an `i64` `c`: when |c| <= 2^52 the double sum is exact, so it is
-//!   the 32-bit sum `a + (c as i32)`; other values keep the call.
-//! - **`velt_rt_math_to_int32(x ± y)`** where `x` and `y` convert `i64`s (or are whole
-//!   constants), sema's `(a + b) | 0` of two inferred integers, which JS adds as doubles: when
-//!   both are within ±2^52 the double sum is exact, so it is the `i64` sum truncated; other
-//!   values add as doubles (an `a` at 2^53 rounds, #561).
+//! **`velt_rt_math_to_int32(x ± y)`** where `x` and `y` convert `i64`s (or are whole constants),
+//! sema's `(a + b) | 0` of two numbers held as integers, which JS adds as doubles: when both are
+//! within ±2^52 the double sum is exact, so it is the `i64` sum truncated; other values add as
+//! doubles (an `a` at 2^53 rounds, #561).
 //!
 //! `narrow` already turned the sums it can bound into integer operations; these are the rest
 //! (a counter compared with an unknown bound).
@@ -16,9 +13,8 @@ use velt_vir::vir::{
     Stmt, Terminator, Ty,
 };
 
-use super::{Env, ADD_INT32, TO_INT32};
-use crate::locals::Usage;
-use crate::srclocs::{push_stmt, rewrite_stmts};
+use super::{Env, TO_INT32};
+use crate::srclocs::push_stmt;
 
 pub(super) fn small_int(ty: Ty) -> bool {
     matches!(ty, Ty::I32 | Ty::I16 | Ty::I8 | Ty::U16 | Ty::U8)
@@ -36,10 +32,7 @@ pub(super) fn from_small_int(func: &Function, rv: &Rvalue) -> bool {
 pub(super) fn guarded_sums(env: &Env, func: &mut Function) -> bool {
     let mut changed = false;
     for bi in 0..func.blocks.len() {
-        if let Some(conv) = converted_sum(env, func, bi) {
-            let c = converted_operand(func, conv);
-            changed |= split_converted_sum(func, bi, c);
-        } else if let Some(sum) = double_sum(env, func, bi) {
+        if let Some(sum) = double_sum(env, func, bi) {
             split_double_sum(func, bi, sum);
             changed = true;
         }
@@ -187,39 +180,6 @@ fn both(func: &mut Function, bi: usize, p: Local, q: Local) -> Local {
     r
 }
 
-/// Block `bi` ends in the call `velt_rt_math_add_int32(a, x)` with `x` converted from `c`:
-/// branch on |c| <= 2^52 to a block with the integer sum, and to one with the call.
-fn split_converted_sum(func: &mut Function, bi: usize, c: Operand) -> bool {
-    let Terminator::Call {
-        args, dest, next, ..
-    } = &func.blocks[bi].term
-    else {
-        return false;
-    };
-    let (a, dest, next) = (args[0].clone(), dest.clone(), *next);
-    let c32 = new_temp(func, Ty::I32);
-    let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
-    let mut fast_stmts = vec![Stmt::Assign(
-        Place::local(c32),
-        Rvalue::Cast(c.clone(), Ty::I32),
-    )];
-    if let Some(d) = dest {
-        fast_stmts.push(Stmt::Assign(
-            d,
-            Rvalue::Binary(BinOp::Add, a, Operand::Copy(Place::local(c32))),
-        ));
-    }
-    let fast = add_block(func, fast_stmts, Terminator::Goto(next));
-    let slow = add_block(func, vec![], call);
-    let ok = push_within_2_52(func, bi, c);
-    func.blocks[bi].term = Terminator::Branch {
-        cond: Operand::Copy(Place::local(ok)),
-        then: fast,
-        els: slow,
-    };
-    true
-}
-
 /// Appends to block `bi` the test |c| <= 2^52 of the `i64` `c`, as
 /// `(c + 2^52) as u64 <= 2^53`; returns the `bool` local holding it.
 fn push_within_2_52(func: &mut Function, bi: usize, c: Operand) -> Local {
@@ -248,70 +208,6 @@ fn add_block(func: &mut Function, stmts: Vec<Stmt>, term: Terminator) -> BlockId
     }
     func.blocks.push(BasicBlock { stmts, term });
     BlockId(func.blocks.len() as u32 - 1)
-}
-
-/// The `i64` operand `c` when block `bi` ends in `velt_rt_math_add_int32(a, x)` and `x` was last
-/// set in the block by converting `c`, which is unchanged since.
-fn converted_sum(env: &Env, func: &Function, bi: usize) -> Option<Converted> {
-    let [_, Operand::Copy(x)] = calls(env, func, bi, ADD_INT32)? else {
-        return None;
-    };
-    let block = &func.blocks[bi];
-    if let Some((j, rv)) = last_def(&block.stmts, x, block.stmts.len()) {
-        let Rvalue::Cast(c @ Operand::Copy(cp), Ty::F64) = rv else {
-            return None;
-        };
-        let ok = is_i64(func, cp) && !assigned(&block.stmts[j..], cp.local);
-        return ok.then(|| Converted::Here(c.clone()));
-    }
-    // Set once, elsewhere (a loop counter converted at the loop head): the value converted can be
-    // kept next to it.
-    let usage = Usage::of(func);
-    let single = x.proj.is_empty()
-        && x.local.0 as usize >= func.params.len()
-        && usage.is_register(x.local)
-        && usage.get(x.local).defs == 1;
-    if !single {
-        return None;
-    }
-    func.blocks.iter().enumerate().find_map(|(b, blk)| {
-        blk.stmts.iter().enumerate().find_map(|(j, st)| match st {
-            Stmt::Assign(d, Rvalue::Cast(c @ Operand::Copy(cp), Ty::F64))
-                if d.local == x.local && d.proj.is_empty() && is_i64(func, cp) =>
-            {
-                Some(Converted::At(b, j, c.clone()))
-            }
-            _ => None,
-        })
-    })
-}
-
-/// Where the `i64` behind a converted operand is found (`converted_sum`).
-enum Converted {
-    /// This operand, unchanged since the conversion in the same block.
-    Here(Operand),
-    /// Converted by statement `.1` of block `.0`, the only definition of the converted local.
-    At(usize, usize, Operand),
-}
-
-/// The `i64` operand behind a `Converted`: for `At`, a new local set right after the conversion
-/// (so it always holds the value the converted local was made from).
-fn converted_operand(func: &mut Function, conv: Converted) -> Operand {
-    match conv {
-        Converted::Here(c) => c,
-        Converted::At(b, j, c) => {
-            let snap = new_temp(func, Ty::I64);
-            let mut k = 0;
-            rewrite_stmts(func, b, |st, out| {
-                out.push(st);
-                if k == j {
-                    out.push(Stmt::Assign(Place::local(snap), Rvalue::Use(c.clone())));
-                }
-                k += 1;
-            });
-            Operand::Copy(Place::local(snap))
-        }
-    }
 }
 
 #[cfg(test)]

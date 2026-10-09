@@ -1,0 +1,10 @@
+// A `number` that is not a whole number is not a valid array length.
+// Node throws `RangeError: Invalid array length`; Velt panics with the same text, and the
+// array is unchanged (array_length_invalid_*.vlt: a fraction, a `number` variable, `NaN`).
+function main() {
+  const ys = ["a", "b", "c"];
+  const n: number = 2.7;
+  console.log(ys);
+  ys.length = n;
+  console.log(ys);
+}

@@ -1,8 +1,8 @@
 // Fill an n x n matrix in spiral order and print it.
-function spiral(n: i64): i64[][] {
-  const m: i64[][] = [];
+function spiral(n: number): number[][] {
+  const m: number[][] = [];
   for (let i = 0; i < n; i++) {
-    const row: i64[] = [];
+    const row: number[] = [];
     for (let j = 0; j < n; j++) {
       row.push(0);
     }

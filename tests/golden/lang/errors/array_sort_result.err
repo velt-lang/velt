@@ -1,0 +1,8 @@
+array_sort_result.vlt:4:10: error: expected `string[]`, found `void`
+  = note: `sort` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.sort();` on its own line, then use `xs`; for a sorted copy that leaves the array unchanged, call `toSorted`; a chained call such as `.sort().join()` works as in TypeScript
+array_sort_result.vlt:13:8: error: expected `f64[]`, found `void`
+  = note: `reverse` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.reverse();` on its own line, then use `xs`; for a reversed copy that leaves the array unchanged, call `toReversed`; a chained call such as `.reverse().join()` works as in TypeScript
+array_sort_result.vlt:14:15: error: cannot print a value of type `void`
+  = note: `sort` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.sort();` on its own line, then use `xs`; for a sorted copy that leaves the array unchanged, call `toSorted`; a chained call such as `.sort().join()` works as in TypeScript
+array_sort_result.vlt:15:30: error: cannot print a value of type `void`
+  = note: `reverse` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): store the array in a variable first (`const a = …; a.reverse();`), then use `a`; for a reversed copy that leaves the array unchanged, call `toReversed`; a chained call such as `.reverse().join()` works as in TypeScript

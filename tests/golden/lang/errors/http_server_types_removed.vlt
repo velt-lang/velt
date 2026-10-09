@@ -1,0 +1,5 @@
+// velt:http's own `Request`, `Response` and `ResponseWriter` were removed: handlers take and
+// return the global `Request` and `Response`, and the errors say so.
+import { serve, Request, Response, ResponseWriter } from "velt:http";
+
+function main() {}

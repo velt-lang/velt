@@ -417,3 +417,26 @@ fn crates_reading_other_crates_sources_run_with_them() {
     let p = plan(&["crates/velt_rt/src/str/mod.rs"]);
     assert!(p.packages.contains("velt_rt_wasm") && p.packages.contains("velt_rt_host"));
 }
+
+#[test]
+fn example_apps_run_their_velt_tests() {
+    // An app's tests or sources: its tests (`velt test`) and its goldens (`demo.vlt`).
+    let p = plan(&["examples/apps/chat/tests/room.test.vlt"]);
+    assert_eq!(p.veltc, Veltc::Some(set(&["templates", "example_apps"])));
+    assert_eq!(p.goldens, Goldens::Matching(set(&["examples/apps/"])));
+    assert!(p.filterset().unwrap().contains("binary(example_apps)"));
+    // The compiler, the runtime and the standard library run every `veltc` test binary,
+    // `example_apps` with them.
+    for path in [
+        "crates/velt_sema/src/lib.rs",
+        "crates/velt_rt/src/lib.rs",
+        "std/fs.vlt",
+    ] {
+        assert_eq!(plan(&[path]).veltc, Veltc::All, "{path}");
+    }
+    // Package resolution: `velt test --locked` resolves each app as a package.
+    match plan(&["crates/vpm/src/lib.rs"]).veltc {
+        Veltc::Some(binaries) => assert!(binaries.contains("example_apps")),
+        other => panic!("vpm: {other:?}"),
+    }
+}

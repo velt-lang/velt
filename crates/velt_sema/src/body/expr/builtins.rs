@@ -29,6 +29,18 @@ impl FnCx<'_, '_> {
         match name {
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
             "shared" => {
+                // `shared<i64>(0)`: the written type argument types the value. Without one, an
+                // integer literal is an `i64` (`shared(0)` is an atomic counter).
+                let exp = match (type_args, args) {
+                    ([t], _) => {
+                        let t = self.resolve(t);
+                        Some(self.cx.ty.intern(TyKind::Shared(t)))
+                    }
+                    ([], [a]) if exp.is_none() && super::member::untyped_int(a) => {
+                        Some(self.cx.ty.intern(TyKind::Shared(self.cx.ty.i64)))
+                    }
+                    _ => exp,
+                };
                 let e = self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span);
                 if let H::Call { args: a, .. } = &e.kind {
                     if let [x] = a.as_slice() {
@@ -190,8 +202,12 @@ impl FnCx<'_, '_> {
             let h = self.own_to_string(h, "__inspect");
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
-                self.cx
-                    .err(format!("cannot print a value of type `{tn}`"), h.span);
+                let mut d =
+                    Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
+                if let Some(note) = self.in_place_note(a, &h) {
+                    d = d.with_note(note);
+                }
+                self.cx.error(d);
             }
             out.push(h);
         }
@@ -237,6 +253,7 @@ impl FnCx<'_, '_> {
             slot_names: names,
             bounds: vec![vec![]; n],
             js_numbers: false,
+            js_api: false,
             rest: false,
             defaults: vec![],
         };

@@ -17,7 +17,7 @@ export class Random {
   }
 
   pick(xs: string[]): string {
-    return xs[this.next(xs.length)];
+    return xs[this.next(xs.length as i64)];
   }
 }
 
@@ -102,7 +102,7 @@ const BASE_MS = 1767225600000; // 2026-01-01T00:00:00Z
 
 /// The ISO time `seconds` after BASE_MS.
 export function isoAt(seconds: i64): string {
-  return new Date((BASE_MS + seconds * 1000) as f64).toISOString();
+  return new Date(BASE_MS + ((seconds * 1000) as number)).toISOString();
 }
 
 export function slugify(name: string): string {
@@ -182,8 +182,8 @@ export function seedOrders(r: Random, products: Product[], count: i64): Order[] 
     const items: OrderItem[] = [];
     const lines = 1 + r.next(4);
     for (let l = 0; l < lines; l++) {
-      const p = products[r.next(products.length)];
-      const v = p.variants[r.next(p.variants.length)];
+      const p = products[r.next(products.length as i64)];
+      const v = p.variants[r.next(p.variants.length as i64)];
       const quantity = 1 + r.next(3);
       items.push({
         productId: p.id,

@@ -3,11 +3,13 @@
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
 connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
-HTTPS, and redirects followed as the standard says. The option types of their signatures
-(`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are global too, as
-in TypeScript, so an init object can be built before the call:
+HTTPS, and redirects followed as the standard says. A [`velt:http`](http.md) server's handlers
+take and return the same `Request` and `Response`, as in Deno and Bun. The option types of their
+signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
+global too, as in TypeScript, so an init object can be built before the call:
 `const init: RequestInit = { method: "POST" }; if (body != null) { init.body = body; }`.
-`velt:fetch` exports the same names and `BodyStream`, the type of `res.body`.
+`velt:fetch` exports the same names and [`BodyStream`](#bodystream), the type of `res.body` and
+`req.body`.
 
 ```ts
 type User = { id: number; name: string };
@@ -93,18 +95,49 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
   costs nothing for them. `headers` is read-only, as in JS (a getter): change the `Headers` it
   returns, not the property. Dropping a response whose body was not read closes its
   connection.
-- `new Response(body?: string | u8[] | URLSearchParams | null, init?: ResponseInit { status?;
-  statusText?; headers? })`, `Response.json(data, init?)` (`content-type: application/json`),
-  `Response.error()` and `Response.redirect(url, status = 302)` build responses, e.g. for
-  tests.
+- `new Response(body?: string | u8[] | URLSearchParams | BodyStream | null, init?:
+  ResponseInit { status?; statusText?; headers? })`, `Response.json(data, init?)`
+  (`content-type: application/json`), `Response.error()` and `Response.redirect(url, status =
+  302)` build responses: what a [server](http.md#the-response) handler returns, or a stand-in
+  in tests. A string body implies `content-type: text/plain;charset=UTF-8` and form fields
+  `application/x-www-form-urlencoded;charset=UTF-8`, unless `headers` set one; a constructed
+  response makes no `Headers` until you read `headers`.
 
 ## `Request`
 
 `new Request(input: string | URL | Request, init?: RequestInit)` holds what `fetch` takes:
 `url`, `method`, `headers`, `redirect`, `signal` (`AbortSignal | null`: JS gives every request
-a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`.
-`fetch(request)` sends it (its body counts as read afterwards); `fetch(request, init)`
-overrides fields of it.
+a signal), `bodyUsed`, and the body readers `text()`, `json<T>()`, `bytes()`, `arrayBuffer()`
+and `body` (a [`BodyStream`](#bodystream), `null` without a body). `fetch(request)` sends it
+(its body counts as read afterwards); `fetch(request, init)` overrides fields of it. A body that is
+a `BodyStream` is read whole before the request is sent (**Planned**: streamed uploads).
+
+A [server](http.md#the-request) hands its handler a `Request` for what it received: its `url`
+is absolute, its headers are immutable, and its body is received while it is read.
+
+## `BodyStream`
+
+A body read chunk by chunk: `for await (const chunk of stream)` yields `u8[]` chunks (JS: a
+`ReadableStream` of `Uint8Array`s). `res.body` and `req.body` are one, and
+`BodyStream.from(chunks: AsyncIterable<u8[], E>)` makes one from an async iterable, such as an
+async generator (JS: `ReadableStream.from`), for `new Response(stream)`: a server sends each
+chunk as it is made. A stream is read once. An error the iterable throws reaches the reader as
+an `IoError` (`"EIO"`) carrying its text.
+
+```ts
+import { BodyStream } from "velt:fetch";
+import { utf8Encode } from "velt:encoding";
+
+async function* lines(): AsyncGenerator<u8[]> {
+  yield utf8Encode("one ");
+  yield utf8Encode("two");
+}
+
+async function main() {
+  const res = new Response(BodyStream.from(lines()));
+  console.log(await res.text()); // one two
+}
+```
 
 ## `Headers`
 
@@ -157,19 +190,21 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
 - `res.json()` needs the type of the data (above).
 - Bodies are `u8[]` (Velt has no `ArrayBuffer`, `Blob` or `FormData`), and a `Request`
   without a signal has `signal == null`.
-- `res.body` is an async iterable of `u8[]`, not a `ReadableStream` (no `getReader()`,
-  `pipeTo()`).
+- `res.body` and `req.body` are a `BodyStream`, an async iterable of `u8[]`, not a
+  `ReadableStream` (no `getReader()`, `pipeTo()`); `BodyStream.from` stands for
+  `ReadableStream.from`.
 - Mistakes JS reports with a catchable `RangeError` or `TypeError` stop the program instead,
   like an index out of bounds: `new Response(body, { status })` outside 200–599,
-  `Response.redirect(url, status)` with a status other than 301, 302, 303, 307 or 308, and
-  changing a fetched response's (immutable) headers.
+  a body with a status that has none (204, 205, 304), `Response.redirect(url, status)` with a
+  status other than 301, 302, 303, 307 or 308, and changing the (immutable) headers of a
+  fetched response or a received request.
 - A compressed body cut off before its stream ends fails the read with `IoError`; Node returns
   the part that decoded. Silently truncated data is a bug source Velt does not copy.
 - WebAssembly programs have no network: `fetch` rejects with `IoError` `ENOTSUP`.
 - **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
 
 ```ts
-async function download(url: string): Promise<i64> {
+async function download(url: string): Promise<number> {
   const res = await fetch(url);
   let size = 0;
   const body = res.body;

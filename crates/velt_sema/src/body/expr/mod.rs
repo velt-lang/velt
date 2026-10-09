@@ -23,6 +23,7 @@ mod fn_arity;
 mod gen_closure;
 mod hoist;
 mod iface_call;
+mod in_place_chain;
 mod int32;
 mod intrinsics;
 pub(crate) mod jsx;
@@ -63,13 +64,22 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
-use crate::hir::{self, TyId};
+use crate::hir::{self, TyId, TyKind};
 pub(crate) use args::deferred;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.
     pub fn expr_coerce(&mut self, e: &ast::Expr, exp: TyId, want: Want) -> hir::Expr {
-        let h = self.expr(e, Some(exp), want);
+        // `const f: (s: string) => void = count`: a named function adapted to the type.
+        let fn_ty = self.cx.ty.opt_payload(exp).unwrap_or(exp);
+        let adapter = match self.cx.ty.kind(fn_ty) {
+            TyKind::FnPtr { .. } => self.fewer_params_adapter(e, exp),
+            _ => None,
+        };
+        let h = self.expr(adapter.as_ref().unwrap_or(e), Some(exp), want);
+        if self.in_place_misuse(e, &h, exp) {
+            return self.error_expr(e.span);
+        }
         self.coerce(h, exp)
     }
 
@@ -85,6 +95,8 @@ impl FnCx<'_, '_> {
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
         let h = self.expr_kind(e, exp, want);
+        // An integer from the standard library is a number in user code (`numbers`).
+        let h = self.std_number(h);
         if self.cx.recording() {
             // Function values show their parameter names (`(x: i64) => string`).
             let shown = self.shown_ty(&h);

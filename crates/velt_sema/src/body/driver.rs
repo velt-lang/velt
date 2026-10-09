@@ -4,11 +4,15 @@
 
 use velt_common::{Diagnostic, Span};
 
-use super::{recursion, FnCx, Frame, LocalKind, Want};
+use super::{literal_locals, recheck, recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::{self, Def, DefId, ExprKind as H};
 use crate::resolve::TyEnv;
+
+/// How many times a body is checked again for the types of its locals declared from literals
+/// (`literal_locals`): one decision may let another local be decided.
+const LITERAL_PASSES: usize = 3;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
@@ -168,11 +172,27 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     };
     let inferred = f.ret_source == RetSource::Body;
     cx.fn_info_mut(def).state = BodyState::InProgress;
-    let mark = recursion::Mark::new(cx);
+    let mark = recheck::Mark::new(cx, def);
+    recheck::enter(cx);
     let mut fndef = check_body(cx, def, src);
-    if recursion::needs_second_pass(cx, def, &mark) {
+    let recursive = recursion::needs_second_pass(cx, def, &mark);
+    if recursive {
         fndef = check_body(cx, def, src);
     }
+    // Locals declared from literals that the body uses as one integer type: checked again
+    // with that type (`literal_locals`); each check may decide more of them.
+    for _ in 0..LITERAL_PASSES {
+        if !literal_locals::decide(cx, def) {
+            break;
+        }
+        mark.rollback_own(cx);
+        if inferred && !recursive {
+            cx.fn_info_mut(def).ret_source = RetSource::Body;
+        }
+        fndef = check_body(cx, def, src);
+    }
+    literal_locals::finish(cx, def, mark.lens().diags());
+    recheck::leave(cx, mark.lens());
     cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
     cx.fn_info_mut(def).state = BodyState::Done;
     recursion::completed(cx, def, inferred);
@@ -239,7 +259,9 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     };
     let assigned = super::assigned::assigned_by_closures(&body.stmts, defaults);
     frame.closure_assigned = super::closure_assigned::owned(assigned);
+    let decided = cx.literal_types.get(&def).cloned().unwrap_or_default();
     let mut fcx = FnCx::new(cx, f.module, env, frame);
+    fcx.literal.decided = decided;
     fcx.bounds = f.generics.bounds.clone();
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
@@ -269,6 +291,8 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.finish_using_shares();
     fcx.note_refused_facts(diags_before);
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
+    let found = fcx.literal_take();
+    cx.literal_found.insert(def, found);
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;
     info.throw_srcs = frame.uncaught;
@@ -324,13 +348,7 @@ impl FnCx<'_, '_> {
     fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
         let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
         let who = format!("`{short}`");
-        let (mut ret, mut inferred_int) = self.finish_inferred_ret(block, &who);
-        if inferred_int && self.cx.overridden.contains(&def) {
-            // `legs() { return 4; }` overridden by `legs() { return 2.5; }`: both are a
-            // TypeScript `number`, which a subclass may return a fraction in.
-            ret = self.returns_as(block, self.cx.ty.f64);
-            inferred_int = false;
-        }
+        let ret = self.finish_inferred_ret(block, &who);
         let sig = if self.f.is_async {
             self.cx.ty.promise(ret)
         } else {
@@ -339,7 +357,6 @@ impl FnCx<'_, '_> {
         let info = self.cx.fn_info_mut(def);
         info.ret = sig;
         info.ret_source = RetSource::Known;
-        info.ret_inferred_int = inferred_int;
         ret
     }
 
