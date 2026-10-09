@@ -9,6 +9,7 @@ text/html true
 { 'a-b': 1, c: 'two', '3d': false, '$x': 0 }
 x1/it's
 { 'data-id': 'x1', 'aria-label': "it's" }
+7
 4 false
 4
 4 true
