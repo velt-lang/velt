@@ -174,6 +174,40 @@ fn a_wider_object_converts_by_copying_its_fields() {
 }
 
 #[test]
+fn identity_through_a_union_tells_the_copy_apart() {
+    let src = "type A = { a: f64 }; type AB = A & { b: f64 }; type B = { b: f64 };";
+    for cmp in [
+        "const x: A | null = ab; const y: A | null = ab; console.log(x === y);",
+        "const x: A | null = ab; const y: A = ab; console.log(y === x);",
+        "const x: A | null = ab; console.log(x === ab);",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.includes(ab));",
+        "const xs: (A | null)[] = [ab, null]; console.log(xs.indexOf(ab));",
+        "const u: A | string = ab; const v: A | string = ab; console.log(u === v);",
+    ] {
+        let e = err_src(&format!(
+            "{src} function main() {{ const ab: AB = {{ a: 1, b: 2 }}; {cmp} }}"
+        ));
+        assert!(e.contains("values with `===`"), "{cmp}: {e}");
+    }
+    // `===` on unions with no conversion anywhere, or on a union of other object types only.
+    ok_src(&format!(
+        "{src} function main() {{ const a: A = {{ a: 1 }}; const x: A | null = a;
+           const y: A | null = null; const u: A | string = a; const v: A | string = \"s\";
+           console.log(x === a, a === x, x === y, u === v, [x, y].includes(a), [x, y].indexOf(null)); }}"
+    ));
+    ok_src(&format!(
+        "{src} function g(a: A): f64 {{ return a.a; }}
+           function main() {{ const ab: AB = {{ a: 1, b: 2 }}; const b: B = {{ b: 1 }};
+           const x: B | null = b; const xs: (B | null)[] = [b];
+           console.log(g(ab), x === b, xs.includes(b)); }}"
+    ));
+    // A fresh literal has no original to compare with.
+    ok_src(&format!(
+        "{src} function main() {{ const x: A | null = {{ a: 1 }}; const y = x; console.log(x === y); }}"
+    ));
+}
+
+#[test]
 fn a_write_to_an_absent_optional_field_tells_the_copy_apart() {
     let src = "type A = { a: f64 }; type AC = { a: f64; c?: string };";
     // In Node `a` gains `c`; in Velt only the copy would.

@@ -2,7 +2,7 @@
 // copying the fields (#650, #651). Where the program could tell the copy from the original, the
 // conversion is an error: a copied field, or an optional one the source doesn't have, is
 // assigned, the converted-to type is compared with `===`, or a value holding it is printed,
-// serialized or has its keys listed.
+// serialized or has its keys listed. A `===` counts through `T | null` and other unions too.
 type A = { a: number };
 type AB = A & { b: string };
 
@@ -39,6 +39,54 @@ function setD(x: KD) {
 type Id = { id: number };
 type Row = Id & { label: string };
 
+// `===` on unions holding the converted-to type: each pair is its own, so each error has one cause.
+type N1 = { n1: number };
+type N1M = N1 & { m: number };
+type N2 = { n2: number };
+type N2M = N2 & { m: number };
+type N3 = { n3: number };
+type N3M = N3 & { m: number };
+type N4 = { n4: number };
+type N4M = N4 & { m: number };
+type N5 = { n5: number };
+type N5M = N5 & { m: number };
+type Holder = { v: N5 | null };
+type N6 = { n6: number };
+type N6M = N6 & { m: number };
+type N7 = { n7: number };
+type N7M = N7 & { m: number };
+
+function sameN6(v: N6 | null, w: N6 | null): boolean {
+  return v === w;
+}
+
+function unions() {
+  const n1: N1M = { n1: 1, m: 2 };
+  const x1: N1 | null = n1;
+  const y1: N1 | null = n1;
+  console.log(x1 === y1);
+  const n2: N2M = { n2: 1, m: 2 };
+  const x2: N2 | null = n2;
+  const y2: N2 = n2;
+  console.log(x2 === y2, y2 === x2);
+  const n3: N3M = { n3: 1, m: 2 };
+  const x3: N3 | null = n3;
+  console.log(x3 === n3);
+  const n4: N4M = { n4: 1, m: 2 };
+  const xs: (N4 | null)[] = [n4, null];
+  console.log(xs.indexOf(n4), xs.includes(n4));
+  const n5: N5M = { n5: 1, m: 2 };
+  const h1: Holder = { v: n5 };
+  const h2: Holder = { v: n5 };
+  console.log(h1.v === h2.v);
+  const n6: N6M = { n6: 1, m: 2 };
+  console.log(sameN6(n6, n6));
+  const n7: N7M = { n7: 1, m: 2 };
+  const u: N7 | string = n7;
+  const v: N7 | string = n7;
+  console.log(u === v);
+}
+
 function main() {
   const ab: AB = { a: 1, b: "x" };
   bump(ab);
@@ -57,4 +105,5 @@ function main() {
   x.c = "s";
   const k2: K = { k: 2 };
   setD(k2);
+  unions();
 }

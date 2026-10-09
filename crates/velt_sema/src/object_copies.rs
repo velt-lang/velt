@@ -7,8 +7,8 @@
 //!
 //! - it assigns one of the copied fields, or an optional field the source doesn't have, on a
 //!   value of either type (one object would miss it);
-//! - it compares values of the converted-to type with `===` (two copies of one object are not
-//!   `===`);
+//! - it compares values of the converted-to type with `===`, also as a member of a union such
+//!   as `A | null` (two copies of one object are not `===`);
 //! - it prints, serializes (`JSON.stringify`) or lists the keys (`Object.keys`) of a value whose
 //!   type holds the converted-to type (Node shows the original's keys, in its order);
 //! - it spreads a value of the converted-to type into an object literal (Node copies the
@@ -119,7 +119,12 @@ fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write
 /// Does looking at a `t` (`how`) show that `c` made a copy?
 fn sees(cx: &mut Ctx, c: &Copy, t: TyId, how: Seen) -> bool {
     match how {
-        Seen::Identity => !c.fresh && related(cx, t, c.to),
+        Seen::Identity => {
+            !c.fresh
+                && compared(cx, t, &mut HashSet::new())
+                    .into_iter()
+                    .any(|m| related(cx, m, c.to))
+        }
         Seen::Spread => related(cx, t, c.to),
         _ => holds(cx, t, c.to, &mut HashSet::new()),
     }
@@ -128,6 +133,25 @@ fn sees(cx: &mut Ctx, c: &Copy, t: TyId, how: Seen) -> bool {
 /// Are `a` and `b` one object type, as conversions see it?
 fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
     a == b || cx.canon(a) == cx.canon(b) || cx.same_layout(a, b)
+}
+
+/// The object types a `===` operand of type `t` may be: `t` itself, the payload of `T | null`
+/// and the members of a union, but not their fields.
+fn compared(cx: &mut Ctx, t: TyId, seen: &mut HashSet<TyId>) -> Vec<TyId> {
+    if !seen.insert(t) {
+        return vec![];
+    }
+    let parts = match cx.ty.opt_payload(t) {
+        Some(p) => vec![p],
+        None => match cx.union_members(t) {
+            Some(members) => members,
+            None => return vec![t],
+        },
+    };
+    parts
+        .into_iter()
+        .flat_map(|p| compared(cx, p, seen))
+        .collect()
 }
 
 /// Can a value of type `t` hold a `target` (itself, an element, a field, …)?

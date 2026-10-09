@@ -1,36 +1,96 @@
-object_copies.vlt:44:8: error: a value of type `AB` converts to `A` by copying its fields, and this program assigns field `a`, which the other object would not see
+object_copies.vlt:65:25: error: a value of type `N1M` converts to `N1` by copying its fields, and this program compares `N1 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:67:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N1` made from a `N1M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n1: n1.n1 }` (a new object in TypeScript too), or declare the parameter or variable as `N1M`
+object_copies.vlt:66:25: error: a value of type `N1M` converts to `N1` by copying its fields, and this program compares `N1 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:67:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N1` made from a `N1M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n1: n1.n1 }` (a new object in TypeScript too), or declare the parameter or variable as `N1M`
+object_copies.vlt:69:25: error: a value of type `N2M` converts to `N2` by copying its fields, and this program compares `N2 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:71:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N2` made from a `N2M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n2: n2.n2 }` (a new object in TypeScript too), or declare the parameter or variable as `N2M`
+object_copies.vlt:70:18: error: a value of type `N2M` converts to `N2` by copying its fields, and this program compares `N2 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:71:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N2` made from a `N2M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n2: n2.n2 }` (a new object in TypeScript too), or declare the parameter or variable as `N2M`
+object_copies.vlt:73:25: error: a value of type `N3M` converts to `N3` by copying its fields, and this program compares `N3 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:74:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N3` made from a `N3M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n3: n3.n3 }` (a new object in TypeScript too), or declare the parameter or variable as `N3M`
+object_copies.vlt:74:22: error: a value of type `N3M` converts to `N3` by copying its fields, and this program compares `N3 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:74:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N3` made from a `N3M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n3: n3.n3 }` (a new object in TypeScript too), or declare the parameter or variable as `N3M`
+object_copies.vlt:76:30: error: a value of type `N4M` converts to `N4` by copying its fields, and this program compares `N4 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:77:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N4` made from a `N4M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n4: n4.n4 }` (a new object in TypeScript too), or declare the parameter or variable as `N4M`
+object_copies.vlt:77:26: error: a value of type `N4M` converts to `N4` by copying its fields, and this program compares `N4 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:77:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N4` made from a `N4M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n4: n4.n4 }` (a new object in TypeScript too), or declare the parameter or variable as `N4M`
+object_copies.vlt:77:43: error: a value of type `N4M` converts to `N4` by copying its fields, and this program compares `N4 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:77:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N4` made from a `N4M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n4: n4.n4 }` (a new object in TypeScript too), or declare the parameter or variable as `N4M`
+object_copies.vlt:79:27: error: a value of type `N5M` converts to `N5` by copying its fields, and this program compares `N5 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:81:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N5` made from a `N5M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n5: n5.n5 }` (a new object in TypeScript too), or declare the parameter or variable as `N5M`
+object_copies.vlt:80:27: error: a value of type `N5M` converts to `N5` by copying its fields, and this program compares `N5 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:81:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N5` made from a `N5M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n5: n5.n5 }` (a new object in TypeScript too), or declare the parameter or variable as `N5M`
+object_copies.vlt:83:22: error: a value of type `N6M` converts to `N6` by copying its fields, and this program compares `N6 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:60:10: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N6` made from a `N6M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n6: n6.n6 }` (a new object in TypeScript too), or declare the parameter or variable as `N6M`
+object_copies.vlt:83:26: error: a value of type `N6M` converts to `N6` by copying its fields, and this program compares `N6 | null` values with `===`: two copies of one object are not `===`
+object_copies.vlt:60:10: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N6` made from a `N6M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n6: n6.n6 }` (a new object in TypeScript too), or declare the parameter or variable as `N6M`
+object_copies.vlt:85:26: error: a value of type `N7M` converts to `N7` by copying its fields, and this program compares `string | N7` values with `===`: two copies of one object are not `===`
+object_copies.vlt:87:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N7` made from a `N7M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n7: n7.n7 }` (a new object in TypeScript too), or declare the parameter or variable as `N7M`
+object_copies.vlt:86:26: error: a value of type `N7M` converts to `N7` by copying its fields, and this program compares `string | N7` values with `===`: two copies of one object are not `===`
+object_copies.vlt:87:15: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `N7` made from a `N7M` value is a new object with the same field values
+  = note: build the new object explicitly, `{ n7: n7.n7 }` (a new object in TypeScript too), or declare the parameter or variable as `N7M`
+object_copies.vlt:92:8: error: a value of type `AB` converts to `A` by copying its fields, and this program assigns field `a`, which the other object would not see
 object_copies.vlt:10:5: `a` is assigned here
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
   = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
-object_copies.vlt:46:20: error: a value of type `Q` converts to `P` by copying its fields, and this program compares `P` values with `===`: two copies of one object are not `===`
+object_copies.vlt:94:20: error: a value of type `Q` converts to `P` by copying its fields, and this program compares `P` values with `===`: two copies of one object are not `===`
 object_copies.vlt:17:10: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `P` made from a `Q` value is a new object with the same field values
   = note: build the new object explicitly, `{ x: q.x, y: q.y }` (a new object in TypeScript too), or declare the parameter or variable as `Q`
-object_copies.vlt:46:23: error: a value of type `Q` converts to `P` by copying its fields, and this program compares `P` values with `===`: two copies of one object are not `===`
+object_copies.vlt:94:23: error: a value of type `Q` converts to `P` by copying its fields, and this program compares `P` values with `===`: two copies of one object are not `===`
 object_copies.vlt:17:10: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `P` made from a `Q` value is a new object with the same field values
   = note: build the new object explicitly, `{ x: q.x, y: q.y }` (a new object in TypeScript too), or declare the parameter or variable as `Q`
-object_copies.vlt:48:8: error: a value of type `{ name: string; age: f64 }` converts to `Named` by copying its fields, and this program prints a `Named`: Node would show the original object's fields, in its order
+object_copies.vlt:96:8: error: a value of type `{ name: string; age: f64 }` converts to `Named` by copying its fields, and this program prints a `Named`: Node would show the original object's fields, in its order
 object_copies.vlt:24:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Named` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ name: both.name }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
-object_copies.vlt:49:20: error: a value of type `{ name: string; age: f64 }` converts to `Aged` by copying its fields, and this program lists the keys of a `Aged`: Node would show the original object's fields, in its order
+object_copies.vlt:97:20: error: a value of type `{ name: string; age: f64 }` converts to `Aged` by copying its fields, and this program lists the keys of a `Aged`: Node would show the original object's fields, in its order
 object_copies.vlt:28:10: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Aged` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ age: both.age }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
-object_copies.vlt:50:26: error: a value of type `{ name: string; age: f64 }` converts to `Named` by copying its fields, and this program prints a `Named`: Node would show the original object's fields, in its order
+object_copies.vlt:98:26: error: a value of type `{ name: string; age: f64 }` converts to `Named` by copying its fields, and this program prints a `Named`: Node would show the original object's fields, in its order
 object_copies.vlt:24:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Named` made from a `{ name: string; age: f64 }` value is a new object with the same field values
   = note: build the new object explicitly, `{ name: both.name }` (a new object in TypeScript too), or declare the parameter or variable as `{ name: string; age: f64 }`
-object_copies.vlt:53:22: error: a value of type `Row` converts to `Id` by copying its fields, and this program serializes a `Id[]`: Node would show the original object's fields, in its order
-object_copies.vlt:54:15: here, or in the function this calls
+object_copies.vlt:101:22: error: a value of type `Row` converts to `Id` by copying its fields, and this program serializes a `Id[]`: Node would show the original object's fields, in its order
+object_copies.vlt:102:15: here, or in the function this calls
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `Id` made from a `Row` value is a new object with the same field values
   = note: build the new object explicitly, `{ id: row.id }` (a new object in TypeScript too), or declare the parameter or variable as `Row`
-object_copies.vlt:56:17: error: a value of type `K` converts to `KC` by copying its fields, and this program assigns field `c`, which the other object would not see
-object_copies.vlt:57:5: `c` is assigned here
+object_copies.vlt:104:17: error: a value of type `K` converts to `KC` by copying its fields, and this program assigns field `c`, which the other object would not see
+object_copies.vlt:105:5: `c` is assigned here
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `KC` made from a `K` value is a new object with the same field values
   = note: build the new object explicitly, `{ k: k1.k }` (a new object in TypeScript too), or declare the parameter or variable as `K`
-object_copies.vlt:59:8: error: a value of type `K` converts to `KD` by copying its fields, and this program assigns field `d`, which the other object would not see
+object_copies.vlt:107:8: error: a value of type `K` converts to `KD` by copying its fields, and this program assigns field `d`, which the other object would not see
 object_copies.vlt:36:5: `d` is assigned here
   = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `KD` made from a `K` value is a new object with the same field values
   = note: build the new object explicitly, `{ k: k2.k }` (a new object in TypeScript too), or declare the parameter or variable as `K`
