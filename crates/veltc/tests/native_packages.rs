@@ -262,7 +262,16 @@ fn sqlite_package_with_native_code() {
     assert_eq!(get(port, "/").unwrap(), "v1 2");
     let mark = dev.0.mark();
     std::fs::write(app.join("main.vlt"), server("v2")).unwrap();
-    dev.0.wait_stderr(mark, "velt dev: hot-swapped").unwrap();
+    // The swap that took the edit in: it compiled changed functions. A reload that started
+    // before the edit was saved (e.g. one more after the first build) reports
+    // `hot-swapped 0 functions` and leaves `v1` running.
+    dev.0
+        .wait_stderr_where(mark, "a hot swap of changed functions", |line| {
+            line.strip_prefix("velt dev: hot-swapped ")
+                .and_then(|rest| rest.split(' ').next()?.parse::<usize>().ok())
+                .is_some_and(|functions| functions > 0)
+        })
+        .unwrap();
     assert_eq!(get(port, "/").unwrap(), "v2 3");
     drop(served);
 }

@@ -1,8 +1,15 @@
 // The command layer: argv in, output lines out.
 import { execute } from "@notes/commands";
-import { removeSync } from "velt:fs";
+import { existsSync, removeSync } from "velt:fs";
 
 const DB = "notes-commands-test.json";
+
+// Every test starts from an empty store, even after an earlier one failed before cleaning up.
+function fresh() {
+  if (existsSync(DB)) {
+    removeSync(DB);
+  }
+}
 
 function run(argv: string[]): string[] {
   return execute(argv, DB, 1767225600000);
@@ -18,6 +25,7 @@ function error(argv: string[]): string {
 }
 
 export function test_add_list_show() {
+  fresh();
   assertEq(run(["add", "First", "-t", "a"]), ["added 1"]);
   assertEq(run(["add", "Second", "--body", "text", "--tag", "b"]), ["added 2"]);
   assertEq(run(["list"]), ["1  First  #a", "2  Second  #b"]);
@@ -28,12 +36,14 @@ export function test_add_list_show() {
 }
 
 export function test_color() {
+  fresh();
   assertEq(run(["add", "Hi", "-t", "x"]), ["added 1"]);
   assertEq(run(["list", "-c"]), ["\x1b[33m1\x1b[0m  Hi  \x1b[36m#x\x1b[0m"]);
   removeSync(DB);
 }
 
 export function test_usage_errors() {
+  fresh();
   assertEq(error(["frob"]), "unknown command 'frob' (try --help)");
   assertEq(error(["add"]), "'add' needs a title");
   assertEq(error(["show", "x"]), "'x' is not a note id");
@@ -42,5 +52,6 @@ export function test_usage_errors() {
 }
 
 export function test_help() {
+  fresh();
   assert(run([])[0].startsWith("Usage: notes [options] [command] [arg] [extra]"));
 }

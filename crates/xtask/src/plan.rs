@@ -46,6 +46,8 @@ const TOOLING: &[(&str, &[&str])] = &[
             "install_layout",
             // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.
             "ts_compat",
+            // `velt test --locked` resolves each example app as a package.
+            "example_apps",
         ],
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),
@@ -120,10 +122,12 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
+    // `example_apps` runs `velt test` for examples/apps/*/ (the compiler, runtime and std run
+    // it too: they select every `veltc` test).
     (
         "examples/",
         &["velt_syntax", "velt_codegen_llvm"],
-        &["templates"],
+        &["templates", "example_apps"],
     ),
     (
         "tests/golden/",
