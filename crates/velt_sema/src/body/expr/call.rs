@@ -433,6 +433,11 @@ impl FnCx<'_, '_> {
             if let Some(m) = m.filter(|m| m.is_static) {
                 return Some((*m, a.generics.len(), args));
             }
+            // Then the statics an `extend` block of that base adds.
+            let n = a.generics.len();
+            if let Some((m, k)) = self.extension_static(cur, name).filter(|(m, _)| m.is_static) {
+                return Some((m, k, args.filter(|_| k == n)));
+            }
         }
         None
     }

@@ -136,7 +136,9 @@ hidden classes and no runtime shape checks.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
   `A`'s `static f()` (unless `B` declares a `static f` of its own, in its body or in an
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
-  body).
+  body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
+  statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
+  nearest first.
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`

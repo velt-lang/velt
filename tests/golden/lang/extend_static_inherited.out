@@ -1,0 +1,3 @@
+A.f A.g (extend) B.h
+A.f C.g (extend) B.h B.k (extend)
+x 42
