@@ -221,14 +221,18 @@ impl FnCx<'_, '_> {
     }
 
     /// A union local read narrowed to printable members (`typeof v === "number"` on
-    /// `string | i64 | f64 | () => void`) as the union of just those members, so it can be
-    /// printed; `h` unchanged otherwise.
+    /// `string | i64 | f64 | () => void`, also with `| null`) as the union of just those members,
+    /// so it can be printed; `h` unchanged otherwise.
     pub(crate) fn narrowed_for_print(&mut self, h: hir::Expr) -> hir::Expr {
         if self.printable(h.ty) {
             return h;
         }
-        let (Some(vs), Some(members)) = (self.narrowed_variants(&h), self.cx.union_members(h.ty))
-        else {
+        let Some(vs) = self.narrowed_variants(&h) else {
+            return h;
+        };
+        // `T | null` with a narrowed union `T` keeps its `null` (`typeof v !== "function"`).
+        let payload = self.cx.ty.opt_payload(h.ty);
+        let Some(members) = self.cx.union_members(payload.unwrap_or(h.ty)) else {
             return h;
         };
         let sub: Vec<TyId> = vs.iter().map(|v| members[*v as usize]).collect();
@@ -236,6 +240,12 @@ impl FnCx<'_, '_> {
             return h;
         }
         let span = h.span;
+        if payload.is_some() {
+            let target = self.cx.union_of(&sub, true, span);
+            return self
+                .option_to_option_narrowed(h, target, Some(vs))
+                .unwrap_or_else(|h| h);
+        }
         let target = self.cx.union_of(&sub, false, span);
         let res = if self.cx.union_def(target).is_some() {
             self.coerce_to_union(h, target)

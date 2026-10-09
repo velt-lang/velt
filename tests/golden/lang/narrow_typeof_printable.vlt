@@ -28,6 +28,18 @@ function show(v: AttrValue): string {
   return `${v}`;
 }
 
+// The same with `number` (one type since #685) and `null` left in: `!== "function"` keeps
+// `string | number | boolean | null`, which prints.
+type Value = string | number | boolean | Handler | null;
+
+function describe(v: Value): string {
+  if (typeof v !== "function") {
+    console.log("value:", v);
+    return `${v}`;
+  }
+  return "a handler";
+}
+
 function main() {
   const values: AttrValue[] = ["a", 3, 2.5, true, false, null, () => {}];
   let out = "";
@@ -37,5 +49,9 @@ function main() {
   console.log(out);
   for (const v of values) {
     console.log(show(v));
+  }
+  const more: Value[] = ["b", 7, 1.5, false, null, () => {}];
+  for (const v of more) {
+    console.log(describe(v));
   }
 }
