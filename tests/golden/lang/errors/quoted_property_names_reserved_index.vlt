@@ -1,0 +1,14 @@
+// A constant key Velt reserves (`#…`, `[Symbol.…`) is an error, not access to an ES private field
+// or a symbol-keyed member.
+
+class C {
+  #x = 1;
+  get(): number {
+    return this["#x"];
+  }
+}
+
+function main() {
+  const o = { a: 1 };
+  const v = o["[Symbol.iterator]"];
+}

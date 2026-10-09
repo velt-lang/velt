@@ -1,0 +1,3 @@
+red x
+{ '#main': 'red', '[Symbol.foo]': 'x', plain: 'y' }
+{"#main":"red","[Symbol.foo]":"x","plain":"y"}

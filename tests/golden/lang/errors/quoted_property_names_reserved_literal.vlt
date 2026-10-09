@@ -1,0 +1,7 @@
+// An object literal that builds an object type cannot use a key Velt reserves (`#…`, `[Symbol.…`);
+// one that builds a `Record` can (quoted_property_names_record).
+
+function main() {
+  const o = { "#x": 1, ok: 2 };
+  const p = { "[Symbol.foo]": "x" };
+}

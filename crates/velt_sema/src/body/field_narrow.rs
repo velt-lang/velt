@@ -191,17 +191,15 @@ impl FnCx<'_, '_> {
             .map(|t| t.token)
     }
 
-    /// (root local, field names) of `x.a.b` (no `?.`, no calls or indexes; parentheses ok).
+    /// (root local, field names) of `x.a.b` or `x["a"].b` (no `?.`, no calls or other indexes;
+    /// parentheses ok).
     fn field_path(&mut self, e: &ast::Expr) -> Option<(LocalId, Vec<String>)> {
-        match &e.kind {
-            ast::ExprKind::Member {
-                object,
-                prop,
-                optional: false,
-            } => self.member_path(object, prop),
-            ast::ExprKind::Paren(inner) => self.field_path(inner),
-            _ => None,
+        if let ast::ExprKind::Paren(inner) = &e.kind {
+            return self.field_path(inner);
         }
+        // `x["a"]` (a constant key) is the same path as `x.a`.
+        let (object, prop) = super::expr::member::member_view(e)?;
+        self.member_path(object, &prop)
     }
 
     fn member_path(
@@ -210,7 +208,9 @@ impl FnCx<'_, '_> {
         prop: &ast::Ident,
     ) -> Option<(LocalId, Vec<String>)> {
         let (root, mut path) = match &object.kind {
-            ast::ExprKind::Member { .. } | ast::ExprKind::Paren(_) => self.field_path(object)?,
+            ast::ExprKind::Member { .. }
+            | ast::ExprKind::Index { .. }
+            | ast::ExprKind::Paren(_) => self.field_path(object)?,
             _ => (self.named_local(object)?, vec![]),
         };
         path.push(prop.name.clone());

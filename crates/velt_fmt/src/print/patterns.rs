@@ -27,13 +27,16 @@ impl<'a> Printer<'a> {
         let mut docs: Vec<Doc> = fields
             .iter()
             .map(|(key, pat)| match &pat.kind {
-                PatternKind::Ident(id) if id.name == key.name => text(key.name.clone()),
+                PatternKind::Ident(id) if id.name == key.name && !self.quoted(key) => {
+                    text(key.name.clone())
+                }
                 PatternKind::Default { pattern, value }
-                    if matches!(&pattern.kind, PatternKind::Ident(id) if id.name == key.name) =>
+                    if !self.quoted(key)
+                        && matches!(&pattern.kind, PatternKind::Ident(id) if id.name == key.name) =>
                 {
                     cat![key.name.clone(), " = ", self.expr(value)]
                 }
-                _ => cat![key.name.clone(), ": ", self.pattern(pat)],
+                _ => cat![self.prop_key(key), ": ", self.pattern(pat)],
             })
             .collect();
         docs.extend(rest.map(|r| text(format!("...{}", r.name))));

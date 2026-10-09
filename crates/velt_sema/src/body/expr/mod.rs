@@ -30,7 +30,7 @@ pub(crate) mod jsx;
 mod lit;
 mod literal_types;
 mod matching;
-mod member;
+pub(crate) mod member;
 mod method;
 mod method_call;
 mod method_value;

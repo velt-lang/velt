@@ -1,0 +1,1 @@
+quoted_property_names_object_copy.vlt:9:16: error: a value of type `A` converts to `B` by copying its fields, and this program assigns field `a`, which the other object would not see
