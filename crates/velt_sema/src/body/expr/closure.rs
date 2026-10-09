@@ -264,8 +264,7 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
                     Some(_) if self.f.discards_value => self.expr_stmt(e),
-                    Some(r) if self.f.int_returns_number => self.returned(e, r),
-                    Some(r) => self.expr_coerce(e, r, Want::Move),
+                    Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };
                 if self.f.ret.is_none() {

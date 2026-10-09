@@ -117,8 +117,7 @@ impl FnCx<'_, '_> {
             }
             return self.coerce(h, ret);
         }
-        let h = self.expr(e, Some(ret), Want::Move);
-        self.coerce(h, ret)
+        self.expr_coerce(e, ret, Want::Move)
     }
 
     /// `return e` / `return;` in a body whose result type is being inferred.
