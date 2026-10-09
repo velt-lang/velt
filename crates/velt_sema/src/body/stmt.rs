@@ -343,9 +343,8 @@ impl FnCx<'_, '_> {
                 format!("variable `{}` cannot have type `void`", name.name),
                 name.span,
             );
-            let receiver_ty = init.as_ref().and_then(method_receiver_ty);
-            let on_array = receiver_ty.is_some_and(|t| self.cx.ty.array_elem(t).is_some());
-            if let Some(note) = v.init.as_ref().filter(|_| on_array).and_then(in_place_note) {
+            let note = v.init.as_ref().zip(init.as_ref());
+            if let Some(note) = note.and_then(|(e, h)| self.in_place_note(e, h)) {
                 d = d.with_note(note);
             }
             self.cx.error(d);
@@ -422,6 +421,12 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
+            // `return value;` in an arrow whose `void` result comes from its expected type.
+            Some(e) if self.f.discards_value => {
+                let h = self.expr_stmt(e);
+                Self::push(out, S::Expr(h), span);
+                Self::push(out, S::Return(None), span);
+            }
             Some(e) => {
                 let h = self.expr_coerce(e, ret, Want::Move);
                 Self::push(out, S::Return(Some(h)), span);
@@ -440,65 +445,6 @@ fn is_empty_array(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Array(xs) => xs.is_empty(),
         ast::ExprKind::Paren(inner) => is_empty_array(inner),
-        _ => false,
-    }
-}
-
-/// The receiver type of a checked method call (its first argument).
-fn method_receiver_ty(call: &hir::Expr) -> Option<hir::TyId> {
-    match &call.kind {
-        hir::ExprKind::Call { args, .. } => args.first().map(|a| a.ty),
-        _ => None,
-    }
-}
-
-/// `xs.sort()`, `xs.reverse()` and `xs.fill(v)` on an array change it and return nothing
-/// (returning the array would share it, which makes every array of its type reference
-/// counted): the hint for code that uses their result as in JS (the copying `toSorted` and
-/// `toReversed` for the first two).
-fn in_place_note(init: &ast::Expr) -> Option<String> {
-    let ast::ExprKind::Call { callee, .. } = &init.kind else {
-        return None;
-    };
-    let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
-        return None;
-    };
-    let m = prop.name.as_str();
-    if !matches!(m, "sort" | "reverse" | "fill") {
-        return None;
-    }
-    let what = format!("`{m}` changes the array in place and returns nothing (unlike JS)");
-    let copy = match m {
-        "sort" => Some("toSorted"),
-        "reverse" => Some("toReversed"),
-        _ => None,
-    };
-    if let Some(copy) = copy {
-        return Some(format!(
-            "{what}: for a {} copy, call `{copy}` instead of `{m}`",
-            if m == "sort" { "sorted" } else { "reversed" }
-        ));
-    }
-    if is_place(object) {
-        let xs = crate::body::switch::cases::source_text(object);
-        return Some(format!("{what}: call it, then use `{xs}`"));
-    }
-    // Only `fill` is left here (`sort` and `reverse` have copying forms).
-    Some(format!(
-        "{what}: store the array in a variable first (`const a = …; a.fill(v);`), then use `a`"
-    ))
-}
-
-/// A variable or a field path of one (`xs`, `this.items`), as opposed to a temporary.
-fn is_place(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => is_place(object),
-        ast::ExprKind::Paren(inner) => is_place(inner),
         _ => false,
     }
 }

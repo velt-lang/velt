@@ -1,7 +1,7 @@
 // check: no leaks
 // The "fetch safely" pattern (#137): check the status, decode into a type (no schema step:
 // `json<T>()` checks the data), time out with a signal, and catch every failure by type.
-import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { serve } from "velt:http";
 import { IoError } from "velt:io";
 import { AbortError, TimeoutError } from "velt:task";
 
@@ -47,18 +47,19 @@ async function show(url: string, ms: i64 = 60000) {
 
 async function main() {
   const release = new AbortController();
-  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
-    if (req.path == "/ok") {
-      return ServerResponse.json({ id: 1, name: "Ada" });
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    if (path == "/ok") {
+      return Response.json({ id: 1, name: "Ada" });
     }
-    if (req.path == "/bad") {
-      return ServerResponse.json({ id: "one" });
+    if (path == "/bad") {
+      return Response.json({ id: "one" });
     }
-    if (req.path == "/slow") {
+    if (path == "/slow") {
       await release.signal.whenAborted();
-      return ServerResponse.text("late");
+      return new Response("late");
     }
-    return ServerResponse.text("no such user", 404);
+    return new Response("no such user", { status: 404 });
   });
   const base = `http://127.0.0.1:${server.port}`;
   await show(`${base}/ok`);

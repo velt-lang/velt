@@ -421,6 +421,26 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 - As in TS, a function may take **fewer parameters** than the function type it is passed as:
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
   `double`. An arrow may also take more, when the extra ones have defaults.
+- As in TS, a function that returns a value is accepted where a **`void`-returning** function
+  type is expected; the value is evaluated and dropped. This holds for an arrow without a
+  return type (its expression body, or a `return value;` in it) and for a named function or a
+  function value passed or assigned there. An arrow or function annotated `: void` still may
+  not return a value, as in TS.
+
+  ```ts
+  function each(xs: string[], f: (s: string) => void) {
+    for (const x of xs) {
+      f(x);
+    }
+  }
+
+  function main() {
+    const seen: string[] = [];
+    each(["a", "b"], (s) => seen.push(s));
+    each(["c\n"], (s) => process.stdout.write(s)); // c
+    console.log(seen); // [ 'a', 'b' ]
+  }
+  ```
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
   spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
   with typed parameters; it is then a generic function. Without a return type it returns the

@@ -1,0 +1,35 @@
+// A function whose result is not `void` is accepted where a `void`-returning function type is
+// expected, as in TypeScript: the result is evaluated and dropped. Arrows (an expression body or
+// `return value;`) and named functions alike; an arrow annotated `: void` still may not return a
+// value (lang/errors/void_callback_annotated.vlt). Same output as Node.
+function each(xs: string[], f: (s: string) => void) {
+  for (const x of xs) {
+    f(x);
+  }
+}
+
+function shout(s: string): number {
+  console.log(s.toUpperCase());
+  return s.length;
+}
+
+function main() {
+  const out: string[] = [];
+  each(["a", "b"], (s) => out.push(s));
+  each(["c\n"], (s) => process.stdout.write(s));
+  each(["dd"], (s: string) => s.length);
+  each(["eee", "f"], shout);
+  each(["g"], (s) => {
+    if (s == "g") {
+      return out.push(s.toUpperCase());
+    }
+    console.log("not reached");
+  });
+  const g: (s: string) => void = shout;
+  g("h");
+  const later: ((s: string) => void)[] = [(s) => out.length, shout];
+  for (const f of later) {
+    f("i");
+  }
+  console.log(out);
+}

@@ -184,9 +184,9 @@ fn http_server_handles_real_requests() {
         http_request(port, "GET", "/missing", ""),
     ];
     let expected = vec![
-        (200, "GET /a #1 ".to_string()),
-        (200, "POST /echo #2 hi".to_string()),
-        (404, "GET /missing #3 ".to_string()),
+        (200, "GET http://localhost/a #1".to_string()),
+        (200, "POST http://localhost/echo #2".to_string()),
+        (404, "GET http://localhost/missing #3".to_string()),
     ];
     assert_eq!(got, expected);
     let mut rest = String::new();

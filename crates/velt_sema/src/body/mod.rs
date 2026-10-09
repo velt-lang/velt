@@ -170,6 +170,10 @@ pub(crate) struct Frame {
     pub returns: returns::Returns,
     pub captures: Vec<CaptureCx>,
     pub escaping: bool,
+    /// An arrow function whose `void` result comes from the expected function type, not from an
+    /// annotation: as in TypeScript, the value its body or a `return` gives is evaluated and
+    /// dropped (`(s: string) => void` takes `(s) => out.push(s)` whatever `push` returns).
+    pub discards_value: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
@@ -246,6 +250,7 @@ impl Frame {
             returns: Default::default(),
             captures: vec![],
             escaping: false,
+            discards_value: false,
             is_async: false,
             yield_ty: None,
             fn_expr_name: None,

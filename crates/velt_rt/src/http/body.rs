@@ -1,5 +1,5 @@
-//! The body of a server response: either complete up front (`Response.text/json/html/bytes`) or
-//! streamed by a `ResponseWriter` (`Response.stream`, `stream.rs`).
+//! The body of a server response: either complete up front (a string or bytes) or streamed by
+//! a writer that std fills from a `BodyStream` (`stream.rs`).
 //!
 //! An enum rather than a boxed body keeps the full-body hot path as it was: no allocation, no
 //! dynamic dispatch, and hyper still sees the exact length (`Content-Length`). A streamed body
@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 pub enum RespBody {
     /// The whole body, known before the response is sent.
     Full(Full<Bytes>),
-    /// Chunks from a `ResponseWriter`, sent as they are flushed.
+    /// Chunks from a writer (`stream.rs`), sent as they are flushed.
     Stream(StreamBody),
 }
 
@@ -56,7 +56,7 @@ impl StreamBody {
     }
 }
 
-/// A streamed body whose producer failed (`ResponseWriter.abort()`).
+/// A streamed body whose source failed (`velt_rt_http_resp_stream_abort`).
 #[derive(Debug)]
 pub struct Aborted;
 

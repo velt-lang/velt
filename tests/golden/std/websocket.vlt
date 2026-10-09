@@ -1,5 +1,5 @@
 // check: no leaks
-import { serve, Request, Response } from "velt:http";
+import { serve } from "velt:http";
 import { channel, Channel } from "velt:channel";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
@@ -23,12 +23,12 @@ async function session(ws: WebSocket, done: Channel<i64>): Promise<void> {
 }
 
 async function handle(req: Request, done: Channel<i64>): Promise<Response> {
-  if (req.path == "/ws" && isWebSocketRequest(req)) {
+  if (new URL(req.url).pathname == "/ws" && isWebSocketRequest(req)) {
     const up = upgradeWebSocket(req);
     spawn(session(up.socket, done));
     return up.response;
   }
-  return Response.text(`plain ${isWebSocketRequest(req)}`);
+  return new Response(`plain ${isWebSocketRequest(req)}`);
 }
 
 async function talk(url: string, ca: string) {
