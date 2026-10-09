@@ -130,6 +130,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Memoized purity of functions that initialize module constants (`body::pure_init`).
+    pub pure_fns: crate::body::pure_init::PurityMemo,
     /// Set while [`Ctx::match_context`] runs (`crate::infer`).
     pub matching_context: bool,
     /// Function bodies being checked, outermost first (a return type inferred from a body that
@@ -231,6 +233,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            pure_fns: HashMap::new(),
             matching_context: false,
             checking: vec![],
             ret_checks: vec![],

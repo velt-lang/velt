@@ -102,7 +102,24 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         BodyState::Done => return,
         BodyState::InProgress => {
             let span = g.span;
-            cx.err("module-level constant refers to itself", span);
+            // The function bodies being checked lead from the initializer back to the constant.
+            let chain: Vec<String> = cx
+                .checking
+                .iter()
+                .map(|&f| {
+                    let n = &cx.fn_info(f).name;
+                    format!("`{}`", n.rsplit("::").next().unwrap_or(n))
+                })
+                .collect();
+            let msg = match chain.is_empty() {
+                false => format!(
+                    "module constant `{}` depends on itself through {}",
+                    g.name,
+                    chain.join(" -> ")
+                ),
+                true => "module-level constant refers to itself".to_string(),
+            };
+            cx.err(msg, span);
             return;
         }
         BodyState::Unchecked => {}
@@ -130,15 +147,8 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     };
     let ty = ann.or(init.as_ref().map(|i| i.ty)).unwrap_or(cx.ty.error);
     if let Some(i) = &init {
-        if !is_const_expr(i) {
-            cx.error(
-                Diagnostic::error(
-                    "module-level constants must be constant expressions",
-                    i.span,
-                )
-                .with_note("use literals, or struct literals of constants"),
-            );
-        }
+        let name = cx.global(d).map(|g| g.name.clone()).unwrap_or_default();
+        super::pure_init::check_init(cx, &name, i, ty);
     }
     cx.display_params = saved;
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
@@ -151,20 +161,6 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
 fn set_global_state(cx: &mut Ctx, d: DefId, s: BodyState) {
     if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
         g.state = s;
-    }
-}
-
-fn is_const_expr(e: &hir::Expr) -> bool {
-    match &e.kind {
-        H::Lit(_) | H::Global(_) => true,
-        H::Unary { expr, .. } | H::Cast(expr) | H::WrapSome(expr) => is_const_expr(expr),
-        H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
-            is_const_expr(lhs) && is_const_expr(rhs)
-        }
-        H::AdtLit { fields: xs, .. } | H::Variant { args: xs, .. } | H::Tuple(xs) => {
-            xs.iter().all(is_const_expr)
-        }
-        _ => false,
     }
 }
 

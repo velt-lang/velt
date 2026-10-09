@@ -457,6 +457,8 @@ pub struct EnumDef {
 pub struct GlobalDef {
     pub name: String,
     pub ty: TyId,
+    /// Evaluated at each use: a constant expression, or one with calls of pure functions and
+    /// closures (sema `body::pure_init`), whose result is a new value at each use.
     pub init: Expr,
     pub span: Span,
 }
