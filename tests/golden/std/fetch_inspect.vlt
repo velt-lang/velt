@@ -1,0 +1,48 @@
+// console.log of fetch's Request, Response and Headers (and AbortSignal) prints their state
+// as Node 22 does (#642).
+const r = new Response("hi");
+console.log(r);
+console.log(new Response());
+console.log(
+  new Response(null, { status: 404, statusText: "Not Found", headers: { "x-a": "1", "b": "two" } }),
+);
+console.log(Response.error());
+console.log(Response.redirect("http://example.com/x", 301));
+console.log(Response.json({ a: 1 }));
+const h = new Headers({
+  "content-type": "text/plain",
+  "x-long-header-name-number-one": "aaaaaaaaaaaaaaaaaaaaaaaa",
+  "x-long-header-name-number-two": "bbbbbbbbbbbbbbbbbbbbbbbbbbb",
+});
+console.log(h);
+console.log(new Headers());
+console.log(new Headers({ a: "it's" }));
+const h2 = new Headers();
+h2.append("set-cookie", "a=1");
+h2.append("set-cookie", "b=2");
+h2.append("x", "1");
+h2.append("x", "2");
+console.log(h2);
+console.log(new Request("http://example.com/a"));
+console.log(
+  new Request("http://example.com/a", { method: "POST", body: "x", headers: { a: "b" } }),
+);
+console.log([new Headers({ a: "1" })]);
+console.log("x", new Headers({ a: "1" }));
+console.log(h);
+const r3 = new Response("hi");
+await r3.text();
+console.log(r3.body, r3.bodyUsed);
+const r2 = new Response("hi");
+r2.body;
+console.log(r2.body);
+const ac = new AbortController();
+console.log(ac.signal, ac);
+ac.abort();
+console.log(ac.signal);
+console.log(new Request("http://a.com/", { redirect: "manual", signal: ac.signal }));
+console.log({
+  r: new Response(null, {
+    headers: { "a-very-long-header-name-to-force-a-break": "value value value value" },
+  }),
+});

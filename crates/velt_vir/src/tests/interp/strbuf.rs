@@ -105,6 +105,8 @@ impl Interp<'_> {
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
             "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
+            // Only line breaking reads these, and the interpreter does not break lines.
+            "velt_rt_strbuf_inspect_atom" => {}
             "velt_rt_strbuf_inspect_circular" => return Some(0),
             // Node's `maxArrayLength` (velt_rt's `inspect::push_more_items`).
             "velt_rt_strbuf_inspect_more" => {

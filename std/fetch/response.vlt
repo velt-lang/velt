@@ -295,6 +295,21 @@ export class Response {
     }
   }
 
+  /** How `console.log` shows the response, like Node: its public state. */
+  __inspect() {
+    return {
+      status: this.status,
+      statusText: this.statusText,
+      headers: this.headers,
+      body: this.body,
+      bodyUsed: this.bodyUsed,
+      ok: this.ok,
+      redirected: this.redirected,
+      type: this.type,
+      url: this.url,
+    };
+  }
+
   /** Drop hook: releases the runtime response. */
   [Symbol.dispose]() {
     if (this.#handle != 0) {
@@ -318,5 +333,12 @@ export class BodyStream {
 
   [Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
     return this.res.chunks();
+  }
+
+  /** How `console.log` shows the stream: as Node shows a response body's `ReadableStream`. */
+  __inspect(): string {
+    return this.res.bodyUsed
+      ? "ReadableStream { locked: true, state: 'closed', supportsBYOB: true }"
+      : "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";
   }
 }

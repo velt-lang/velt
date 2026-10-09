@@ -125,6 +125,15 @@ for (const [name, value] of h) {
 }
 ```
 
+`console.log` prints a `Response`, `Request`, `Headers`, `AbortSignal` or `AbortController` the
+way Node does, with its public state (never the runtime handle behind it):
+
+```ts
+const res = new Response("hi", { status: 201 });
+console.log(res.headers); // Headers { 'content-type': 'text/plain;charset=UTF-8' }
+console.log(res.status, new Headers({ a: "1" })); // 201 Headers { a: '1' }
+```
+
 ## Timeouts and cancellation
 
 ```ts
@@ -166,6 +175,10 @@ too; their error classes `AbortError` and `TimeoutError` come from [`velt:task`]
 - A compressed body cut off before its stream ends fails the read with `IoError`; Node returns
   the part that decoded. Silently truncated data is a bug source Velt does not copy.
 - WebAssembly programs have no network: `fetch` rejects with `IoError` `ENOTSUP`.
+- `console.log` shows header names in lowercase, where Node keeps the case a name was first
+  added with (`Headers { 'content-type': … }` for `"Content-Type"`). A printed `Request` shows
+  Node's values for the options Velt does not have (`mode: 'cors'`, `cache: 'default'`, …), and
+  its `url` as it was given (Node normalizes it: `http://a.com/` for `http://a.com`).
 - **Planned**: `clone()`, and header pairs as an array of `[name, value]` tuples.
 
 ```ts

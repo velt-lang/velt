@@ -177,6 +177,22 @@ export class Headers {
     }
   }
 
+  /**
+   * How `console.log` shows the headers, like Node: `Headers { 'content-type': 'text/plain' }`,
+   * in insertion order with repeats joined (Node keeps the case a name was first added with;
+   * Velt's names are lowercase).
+   */
+  __inspect(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      const n = this.list[i];
+      if (out[n] == null) {
+        out[n.clone()] = this.get(n) ?? "";
+      }
+    }
+    return out;
+  }
+
   private change() {
     if (this.frozen) {
       panic("TypeError: immutable");

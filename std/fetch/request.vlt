@@ -2,7 +2,7 @@
 // `fetch` can send, made from a URL and the same options `fetch` takes.
 
 import { IoError } from "velt:io";
-import { AbortSignal } from "velt:task";
+import { AbortController, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
 import { BodyInit, BodyParts, bodyParts } from "velt:fetch/body";
@@ -147,6 +147,30 @@ export class Request {
   /** The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`). */
   async arrayBuffer(): Promise<u8[], IoError> {
     return await this.bytes();
+  }
+
+  /**
+   * How `console.log` shows the request, like Node: its state, with Node's values for the
+   * options Velt's `fetch` does not have (`mode: 'cors'`, `cache: 'default'`, …).
+   */
+  __inspect() {
+    return {
+      method: this.#verb,
+      url: this.#target,
+      headers: this.headers,
+      destination: "",
+      referrer: "about:client",
+      referrerPolicy: "",
+      mode: "cors",
+      credentials: "same-origin",
+      cache: "default",
+      redirect: this.#follow,
+      integrity: "",
+      keepalive: false,
+      isReloadNavigation: false,
+      isHistoryNavigation: false,
+      signal: this.#abort ?? new AbortController().signal,
+    };
   }
 
   // What `fetch` sends (std only): marks the body used, as sending it does in JS.

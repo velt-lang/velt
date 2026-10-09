@@ -199,6 +199,11 @@ impl FnCx<'_, '_> {
                 .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
                 .collect(),
             TyKind::Adt(d, args) => {
+                // A class printed through its `__inspect()` shows what that returns.
+                if let Some((_, ret)) = crate::hooks::hook(self.cx, d, &args, crate::hooks::INSPECT)
+                {
+                    return self.printable_depth(ret, depth + 1);
+                }
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
                     crate::defs::DefInfo::Enum(e) => {
