@@ -228,7 +228,9 @@ has type `T | null`, stored without an extra allocation where possible.
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
-  see below); `switch` supports `case null`.
+  see below); `switch` supports `case null`. The type of `x ?? d` is `x`'s non-null type
+  when `d` converts to it, else their union, as in TypeScript: with `n: number | null`,
+  `n ?? "none"` is a `number | string`.
 - `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
