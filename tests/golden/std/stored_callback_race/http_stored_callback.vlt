@@ -2,7 +2,7 @@
 // callback modifies its own capture. Requests share the handler's environment (and the
 // object), so concurrent requests update the callback's captured-variable cell at once: in a
 // release build at the default thread count this crashes in about one run in five. Fixed when
-// each request gets cells of its own for such callbacks (the copy model of #813, step 1).
+// each request gets cells of its own for such callbacks (#873).
 import { serve } from "velt:http";
 
 class Input {
