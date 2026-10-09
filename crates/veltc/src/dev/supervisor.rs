@@ -81,7 +81,12 @@ impl Supervisor {
             dev_socket.name().to_os_string(),
         )];
         interrupt::install();
-        let watcher = first_watcher(Watcher::default(), args.build.input.as_deref());
+        let cache = vpm::Locations::from_env().ok().map(|loc| loc.cache);
+        let watcher = first_watcher(
+            Watcher::default(),
+            args.build.input.as_deref(),
+            cache.as_deref(),
+        );
         Ok(Supervisor {
             args,
             watcher,
@@ -431,26 +436,30 @@ fn host_args(args: &DevArgs) -> Vec<OsString> {
 }
 
 /// `watcher` before the first build of `input`: it covers the program's directories, manifest
-/// and lockfile, so the first build is compared with what they held when it started.
-fn first_watcher(mut watcher: Watcher, input: Option<&Path>) -> Watcher {
+/// and lockfile, so the first build is compared with what they held when it started. Files in
+/// the package `cache` are written once (`velt add`, `velt install`: checksum-verified registry
+/// packages) and compared from when the first build reports them, so a package fetched just
+/// before `velt dev` started doesn't count as saved during the build.
+fn first_watcher(mut watcher: Watcher, input: Option<&Path>, cache: Option<&Path>) -> Watcher {
     watcher.seed(program_dirs(input));
     watcher.seed_files(manifest_files(input));
+    if let Some(cache) = cache {
+        watcher.written_once(cache);
+    }
     watcher
 }
 
 /// The directories the program's own sources are in, watched from the first build on: the
-/// entry file's directory, or the package root and its `src/`.
+/// entry file's directory, and in a package its root (with the manifest) and `src/`.
 fn program_dirs(input: Option<&Path>) -> Vec<PathBuf> {
     let start = input
         .and_then(Path::parent)
         .filter(|d| !d.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let mut dirs = vec![start.clone()];
-    if input.is_none() {
-        if let Some(root) = vpm::manifest::find_package_root(&start) {
-            dirs.push(root.join("src"));
-            dirs.push(root);
-        }
+    if let Some(root) = vpm::manifest::find_package_root(&start) {
+        dirs.push(root.join("src"));
+        dirs.push(root);
     }
     dirs
 }
@@ -474,6 +483,46 @@ fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
 mod tests {
     use super::super::watch::SETTLE;
     use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The watcher reports no change for a while. It polls before each deadline check, so a
+    /// descheduled thread still polls once after a change would have settled.
+    fn stays_quiet(watcher: &mut Watcher) {
+        let deadline = Instant::now() + SETTLE * 3;
+        loop {
+            assert!(watcher.poll().is_none(), "nothing changed");
+            if Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// The watcher reports a change within a few seconds.
+    fn reports_a_change(watcher: &mut Watcher) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if watcher.poll().is_some() {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// Every file under `dir`.
+    fn files_in(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files_in(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
 
     /// A lockfile written just before `velt dev` started (`velt add`, `velt run`) was not saved
     /// during the first build: no second build follows it (#733: that build reported
@@ -484,33 +533,79 @@ mod tests {
         let root = dir.path();
         std::fs::write(
             root.join(vpm::manifest::MANIFEST_FILE),
-            "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };
-",
+            "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n",
         )
         .unwrap();
         let main = root.join("main.vlt");
-        std::fs::write(
-            &main,
-            "function main() {}
-",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join(vpm::lockfile::LOCK_FILE),
-            "{}
-",
-        )
-        .unwrap();
+        std::fs::write(&main, "function main() {}\n").unwrap();
+        std::fs::write(root.join(vpm::lockfile::LOCK_FILE), "{}\n").unwrap();
         let input = Some(main.as_path());
-        let mut watcher = first_watcher(Watcher::new(false), input);
+        let mut watcher = first_watcher(Watcher::new(false), input, None);
         let snapshot = watcher.snapshot();
         // What the first build read.
         let read = std::iter::once(main.clone()).chain(manifest_files(input));
         watcher.set(read, &snapshot);
-        let deadline = std::time::Instant::now() + SETTLE * 3;
-        while std::time::Instant::now() < deadline {
-            assert!(watcher.poll().is_none(), "nothing changed");
-            std::thread::sleep(POLL);
-        }
+        stays_quiet(&mut watcher);
+    }
+
+    /// `velt add util` and right away `velt dev`: the package fetched into the cache moments
+    /// before the first build was not saved during it, so no second build follows. An edit to a
+    /// cached file after the first build still counts.
+    #[test]
+    fn a_package_fetched_just_before_needs_no_second_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let loc = vpm::Locations::under(&dir.path().join("home"));
+        let util = vpm::scaffold::new_package(dir.path(), "util", true).unwrap();
+        vpm::registry::publish_local(&util, &loc).unwrap();
+        let app = vpm::scaffold::new_package(dir.path(), "app", false).unwrap();
+        let spec = vpm::edit::DependencySpec {
+            version: Some("0.1.0".into()),
+            path: None,
+        };
+        // `velt add util`: the manifest, the lockfile and the package in the cache.
+        vpm::edit::add_dependency(&app, "util", &spec).unwrap();
+        vpm::install(&app, &loc, vpm::InstallOptions::default()).unwrap();
+        let cached = loc.cache.join("util-0.1.0");
+        let mut fetched = vec![];
+        files_in(&cached, &mut fetched);
+        assert!(!fetched.is_empty(), "nothing in {}", cached.display());
+
+        // `velt dev`: the first build reads the program, the package and the manifest.
+        let main = app.join("src").join("main.vlt");
+        let input = Some(main.as_path());
+        let first_build = |watcher: &mut Watcher| {
+            let snapshot = watcher.snapshot();
+            let read = std::iter::once(main.clone())
+                .chain(fetched.iter().cloned())
+                .chain(manifest_files(input));
+            watcher.set(read, &snapshot);
+        };
+        let mut watcher = first_watcher(Watcher::new(false), input, Some(&loc.cache));
+        first_build(&mut watcher);
+        stays_quiet(&mut watcher);
+
+        // An edit there afterwards (another length, so any clock sees it) is a change.
+        let lib = fetched
+            .iter()
+            .find(|f| vpm::sources::is_source_file(f))
+            .unwrap();
+        std::fs::write(
+            lib,
+            "export function changed() {}\n// edited in the cache\n",
+        )
+        .unwrap();
+        assert!(
+            reports_a_change(&mut watcher),
+            "edited after the first build"
+        );
+
+        // Without the cache known as written once, a second build follows (the files are
+        // recent and the snapshot doesn't cover them): what this test guards against.
+        let mut watcher = first_watcher(Watcher::new(false), input, None);
+        first_build(&mut watcher);
+        assert!(
+            reports_a_change(&mut watcher),
+            "recent files count as saved"
+        );
     }
 }

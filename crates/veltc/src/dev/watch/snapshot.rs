@@ -125,10 +125,7 @@ impl Watcher {
     /// a later edit was saved, though it built the sources from before it).
     pub fn seed_files(&mut self, files: impl IntoIterator<Item = PathBuf>) {
         for file in files {
-            if let std::collections::btree_map::Entry::Vacant(e) = self.files.entry(file) {
-                let s = stamp(e.key());
-                e.insert(s);
-            }
+            self.files.entry(file).or_insert_with_key(|p| stamp(p));
         }
     }
 }
