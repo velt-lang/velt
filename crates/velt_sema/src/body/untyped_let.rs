@@ -27,6 +27,10 @@ impl FnCx<'_, '_> {
             return None;
         };
         let decl = self.f.untyped_lets.remove(&l)?;
+        if self.reject_untyped_init(value) {
+            // Reported once: the variable stays without a type.
+            return Some(self.error_expr(value.span));
+        }
         let v = self.expr(value, None, Want::Move);
         let v = self.inferred_local_init(v);
         if self.cx.ty.is_bottom(v.ty) || v.ty == self.cx.ty.unit {
@@ -50,6 +54,9 @@ impl FnCx<'_, '_> {
     /// assigned yet (also from a closure): reported. `assign`: the use assigns it, which is
     /// fine in the declaring function itself.
     pub(crate) fn untyped_use(&mut self, id: &ast::Ident, assign: bool) -> bool {
+        if self.f.untyped_lets.is_empty() && self.outer.iter().all(|f| f.untyped_lets.is_empty()) {
+            return false;
+        }
         let Some((f, l)) = self.peek_local(&id.name) else {
             return false;
         };
@@ -57,6 +64,12 @@ impl FnCx<'_, '_> {
         if !f.untyped_lets.contains_key(&l) || (assign && here) {
             return false;
         }
+        // Reported once: later uses and the end of its scope say nothing more.
+        let outer = self.outer.iter().position(|o| std::ptr::eq(o, f));
+        match outer {
+            Some(j) => self.outer[j].untyped_lets.remove(&l),
+            None => self.f.untyped_lets.remove(&l),
+        };
         let why = match here {
             true => format!("`{}` is read here before it is first assigned", id.name),
             false => format!(

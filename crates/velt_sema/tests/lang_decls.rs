@@ -186,6 +186,14 @@ fn untyped_let_takes_the_type_of_its_first_assignment() {
             "a closure uses `d` before the function first assigns it",
         ),
         ("let e;", "`e` is never assigned"),
+        (
+            "let x; const g = () => { x = 5; }; g(); console.log(x);",
+            "a closure uses `x` before the function first assigns it",
+        ),
+        (
+            "let a; console.log(a); console.log(a);",
+            "`a` is read here before it is first assigned",
+        ),
     ] {
         let r = err_src(&format!("function main() {{ {src} }}"));
         assert!(r.contains("type annotations needed for"), "{src}: {r}");
@@ -196,4 +204,7 @@ fn untyped_let_takes_the_type_of_its_first_assignment() {
             "{src}: {r}"
         );
     }
+    // `let x = []` and `let x; x = []` are rejected alike (the element type is unknown).
+    let r = err_src("function main() { let x; x = []; x.push(1); }");
+    assert!(r.contains("cannot infer the element type of `[]`"), "{r}");
 }

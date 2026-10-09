@@ -295,6 +295,19 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// An initializer of a variable without a type whose type cannot be inferred (`[]`):
+    /// reported. Shared by `let x = v` and the first assignment of `let x;` (`untyped_let`).
+    pub(super) fn reject_untyped_init(&mut self, e: &ast::Expr) -> bool {
+        if !is_empty_array(e) {
+            return false;
+        }
+        self.cx.error(
+            Diagnostic::error("cannot infer the element type of `[]`", e.span)
+                .with_note("annotate the variable, e.g. `const xs: i64[] = []`"),
+        );
+        true
+    }
+
     fn simple_decl(
         &mut self,
         v: &ast::VarDecl,
@@ -303,15 +316,8 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
-        if let Some(e) = v
-            .init
-            .as_ref()
-            .filter(|e| ann.is_none() && is_empty_array(e))
-        {
-            self.cx.error(
-                Diagnostic::error("cannot infer the element type of `[]`", e.span)
-                    .with_note("annotate the variable, e.g. `const xs: i64[] = []`"),
-            );
+        if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
+            self.reject_untyped_init(e);
         }
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,
