@@ -219,7 +219,11 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
                 return h;
             }
-            let cname = self.cx.adt(this).map(|a| a.name.clone()).unwrap_or_default();
+            let cname = self
+                .cx
+                .adt(this)
+                .map(|a| a.name.clone())
+                .unwrap_or_default();
             self.cx.err(
                 format!("`{cname}` has no static member `{}`", prop.name),
                 prop.span,

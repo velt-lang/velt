@@ -25,7 +25,11 @@ pub(crate) fn copy_statics(cx: &mut Ctx) {
     // The statics using `this` or `super`, per declaring class.
     let mut users: HashMap<DefId, Vec<DefId>> = HashMap::new();
     for &c in &classes {
-        let mut own: Vec<DefId> = cx.adt(c).expect("ICE: class").methods.values()
+        let mut own: Vec<DefId> = cx
+            .adt(c)
+            .expect("ICE: class")
+            .methods
+            .values()
             .filter(|m| m.is_static)
             .map(|m| m.def)
             .collect();
@@ -79,7 +83,11 @@ fn uses_this(cx: &Ctx, m: DefId) -> bool {
 fn ancestors(cx: &Ctx, c: DefId) -> Vec<DefId> {
     let mut out = vec![];
     let mut cur = c;
-    while let Some((b, _)) = cx.adt(cur).and_then(|a| a.base).and_then(|b| cx.class_of(b)) {
+    while let Some((b, _)) = cx
+        .adt(cur)
+        .and_then(|a| a.base)
+        .and_then(|b| cx.class_of(b))
+    {
         if b == c || out.contains(&b) {
             break;
         }

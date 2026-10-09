@@ -199,7 +199,10 @@ impl FnCx<'_, '_> {
         let members = self.cx.union_members(h.ty)?;
         let allowed = self.narrowed_variants(h);
         let may_hold = |i: usize| allowed.as_ref().is_none_or(|vs| vs.contains(&(i as u32)));
-        let members = members.into_iter().enumerate().filter(|(i, _)| may_hold(*i));
+        let members = members
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| may_hold(*i));
         members.map(|(_, m)| m).find(|m| {
             matches!(
                 self.cx.ty.kind(*m),

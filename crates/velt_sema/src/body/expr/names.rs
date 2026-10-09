@@ -319,7 +319,10 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let f = self.cx.fn_info(d);
-        let (params, is_async) = (f.params.iter().map(|p| p.ty).collect::<Vec<_>>(), f.is_async);
+        let (params, is_async) = (
+            f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
+            f.is_async,
+        );
         let ret = crate::body::returns::ret_of(self.cx, d, span);
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
         if let Some(e) = self.hint(exp) {

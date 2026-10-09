@@ -216,7 +216,8 @@ impl FnCx<'_, '_> {
             return false;
         };
         let name = |s: &Self, d: DefId| s.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
-        let (tn, inner_name, outer_name) = (self.cx.display(t), name(self, inner), name(self, outer));
+        let (tn, inner_name, outer_name) =
+            (self.cx.display(t), name(self, inner), name(self, outer));
         self.cx.error(
             Diagnostic::error(
                 format!(
