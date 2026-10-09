@@ -289,6 +289,14 @@ impl FnCx<'_, '_> {
             async_ty
         };
         let f = self.closure(e, Some(async_ty), true);
+        // An error type still unknown (`E` of a generic callee's `T | Promise<T, E>`) is what the
+        // async closure rejects with, now that it is checked: the wrapper is typed with it.
+        let exp = match self.cx.ty.kind(f.ty).clone() {
+            TyKind::FnPtr { ret: found, .. } if !discard && self.cx.ty.has_error(ret) => {
+                Some(self.with_promise_member(fn_ty, ret, promise, found, span))
+            }
+            _ => exp,
+        };
         let name = ast::Ident {
             name: format!("#async{}", self.f.locals.len()),
             span,
@@ -313,6 +321,40 @@ impl FnCx<'_, '_> {
             span,
         };
         Some(self.mk(H::Block(block), ty, span))
+    }
+
+    /// The function type `fn_ty` (returning `ret`) with `ret`'s promise member `old` replaced
+    /// by `new`, and an unknown error type it throws by `new`'s.
+    fn with_promise_member(
+        &mut self,
+        fn_ty: TyId,
+        ret: TyId,
+        old: TyId,
+        new: TyId,
+        span: velt_common::Span,
+    ) -> TyId {
+        let TyKind::FnPtr { params, throws, .. } = self.cx.ty.kind(fn_ty).clone() else {
+            return fn_ty;
+        };
+        let inner = self.cx.ty.opt_payload(ret).unwrap_or(ret);
+        let members: Vec<TyId> = match self.cx.union_members(inner) {
+            Some(ms) => ms
+                .into_iter()
+                .map(|m| if m == old { new } else { m })
+                .collect(),
+            None => vec![new],
+        };
+        let ret = self.cx.union_of(&members, inner != ret, span);
+        let throws = if self.cx.ty.has_error(throws) {
+            self.cx.ty.promise_error(new).unwrap_or(self.cx.ty.never)
+        } else {
+            throws
+        };
+        self.cx.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+        })
     }
 
     /// The promise member of `ret` when `ret` is not a promise but a union (or `T | null`) with

@@ -516,10 +516,11 @@ impl FnCx<'_, '_> {
 
     /// A function passed for `(…) => T | Promise<T, E>` (possibly `throws E`) with `E` still
     /// unknown: the arguments' types can't fix `E` before the function is checked against the
-    /// union, so a trial check against one member finds it, and is rolled back. An async arrow
-    /// is tried as `(…) => Promise<T, E>` (`E`: what it rejects with), a sync arrow as
-    /// `(…) => T throws E` (`E`: what it throws), a named function by its own type. Returns the
-    /// slot it fixed; one nothing fixes is `never` (`default_slots`).
+    /// union, so a trial check against one member finds it, and is rolled back. A sync arrow
+    /// is tried as `(…) => T throws E` (`E`: what it throws), a named function by its own type
+    /// (what it throws, or what its promise rejects with). An async arrow needs none: checked
+    /// first, it infers what it rejects with (`FnCx::async_arrow_callback`). Returns the slot it
+    /// fixed; one nothing fixes is `never`.
     fn infer_union_error(
         &mut self,
         arg: &ast::Expr,
@@ -532,7 +533,9 @@ impl FnCx<'_, '_> {
             arrow.map(|a| &a.kind),
             Some(ast::ExprKind::Arrow { is_async: true, .. })
         );
-        if arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_)) {
+        // An async arrow needs no trial: checked first, it infers what it rejects with
+        // (`FnCx::async_arrow_callback`).
+        if is_async || (arrow.is_none() && !matches!(arg.kind, ast::ExprKind::Ident(_))) {
             return None;
         }
         let fn_ty = self.cx.ty.opt_payload(pty).unwrap_or(pty);
@@ -563,15 +566,9 @@ impl FnCx<'_, '_> {
         );
         let (trial, found) = match arrow {
             Some(a) => {
-                // An async arrow's errors are its promise's: it throws nothing itself.
-                let (ret, throws) = if is_async {
-                    (*promise, self.cx.ty.never)
-                } else {
-                    (*value, throws)
-                };
                 let trial = self.cx.ty.intern(TyKind::FnPtr {
                     params,
-                    ret,
+                    ret: *value,
                     throws,
                 });
                 let expected = self.cx.subst_known(trial, known);
