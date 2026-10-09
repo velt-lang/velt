@@ -38,10 +38,17 @@ pub(super) fn declare_nested(cx: &mut Ctx, defs: &mut Vec<DefId>) {
     for m in 0..cx.modules.len() {
         let module = &cx.modules[m];
         for item in &module.ast.items {
-            let qual = item_name(item).map(|n| cx.qualify(m, n));
-            if let Some(qual) = qual {
-                item_bodies(cx, m, item, &qual, &[], defs, &mut used);
-            }
+            let Some(name) = item_name(item) else {
+                continue;
+            };
+            let qual = cx.qualify(m, name);
+            let class = match (&item.kind, cx.scopes[m].items.get(name)) {
+                (ast::ItemKind::Struct(_) | ast::ItemKind::Class(_), Some(Item::Def(d))) => {
+                    Some(*d)
+                }
+                _ => None,
+            };
+            item_bodies(cx, m, item, &qual, &[], class, defs, &mut used);
         }
     }
 }
@@ -56,13 +63,16 @@ fn item_name(item: &ast::Item) -> Option<&str> {
     })
 }
 
-/// Every function body of `item` (named `qual`), each checked for nested items.
+/// Every function body of `item` (named `qual`), each checked for nested items. `class`: the
+/// class or struct whose body the bodies are in (`item` itself, or one enclosing it).
+#[allow(clippy::too_many_arguments)] // the item, where it sits, and the shared collections
 fn item_bodies<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     item: &'m ast::Item,
     qual: &str,
     outer: &[String],
+    class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut HashSet<String>,
 ) {
@@ -104,7 +114,7 @@ fn item_bodies<'m>(
         _ => {}
     }
     for (q, params, body) in bodies {
-        fn_body(cx, m, &q, params, body, outer, defs, used);
+        fn_body(cx, m, &q, params, body, outer, class, defs, used);
     }
 }
 
@@ -116,6 +126,7 @@ fn fn_body<'m>(
     params: &'m [ast::Param],
     body: &'m ast::Block,
     outer: &[String],
+    class: Option<DefId>,
     defs: &mut Vec<DefId>,
     used: &mut HashSet<String>,
 ) {
@@ -147,9 +158,19 @@ fn fn_body<'m>(
         let Some((ident, it)) = new_def(cx, m, item, q.clone()) else {
             continue;
         };
+        let mut inner_class = class;
         if let Item::Def(d) = it {
             defs.push(d);
             cx.nested_locals.insert(d, locals.clone());
+            if let Some(c) = class {
+                cx.enclosing_class.insert(d, c);
+            }
+            if matches!(
+                item.kind,
+                ast::ItemKind::Struct(_) | ast::ItemKind::Class(_)
+            ) {
+                inner_class = Some(d);
+            }
         }
         cx.nested.push(NestedItem {
             module: m,
@@ -158,7 +179,7 @@ fn fn_body<'m>(
             name: ident.name.clone(),
             item: it,
         });
-        item_bodies(cx, m, item, &q, &locals, defs, used);
+        item_bodies(cx, m, item, &q, &locals, inner_class, defs, used);
     }
 }
 

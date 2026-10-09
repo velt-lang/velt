@@ -20,6 +20,8 @@ use crate::resolve::TyEnv;
 pub(crate) struct Precompile {
     pub template: DefId,
     pub escape: DefId,
+    /// `jsxEscapeString(s)` (optional): `jsxEscape` of a `string`, without the `Text` union.
+    pub escape_string: Option<DefId>,
     pub attr: DefId,
     /// `jsxTemplateString(html)` (optional): a template without slots, one string and no arrays.
     pub template_string: Option<DefId>,
@@ -321,6 +323,7 @@ fn precompile(cx: &mut Ctx, t: usize, at: Span) -> Option<Precompile> {
     Some(Precompile {
         template: function(cx, t, "jsxTemplate")?,
         escape: function(cx, t, "jsxEscape")?,
+        escape_string: function(cx, t, "jsxEscapeString"),
         attr: function(cx, t, "jsxAttr")?,
         template_string: function(cx, t, "jsxTemplateString"),
         list: function(cx, t, "jsxList"),

@@ -14,6 +14,7 @@ export {
   jsxTemplateString,
   jsxList,
   jsxEscape,
+  jsxEscapeString,
   jsxAttr,
 } from "velt:jsx/factory";
 export { jsxVoidElements } from "velt:jsx/void_elements";

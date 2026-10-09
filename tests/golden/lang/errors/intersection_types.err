@@ -1,21 +1,19 @@
-intersection_types.vlt:36:11: error: the name `Shape` is defined multiple times
+intersection_types.vlt:29:11: error: the name `Shape` is defined multiple times
   = note: Velt does not merge interface declarations: declare `Shape` once with every member, or name the combination with an intersection (`type More = Shape & { … }`)
-intersection_types.vlt:14:35: error: `&` needs concrete object types; `T` is a type parameter
+intersection_types.vlt:13:35: error: `&` needs concrete object types; `T` is a type parameter
   = note: intersections on type parameters are not supported yet (#350); write the concrete object types
-intersection_types.vlt:26:23: error: missing field `b` in `AB` literal
-intersection_types.vlt:27:35: error: no field `c` on type `AB`
+intersection_types.vlt:21:23: error: missing field `b` in `AB` literal
+intersection_types.vlt:22:35: error: no field `c` on type `AB`
   = note: objects have a fixed shape; use a `Map<string, V>` for dynamic keys
-intersection_types.vlt:29:22: error: mismatched types
-  = note: expected A, found AB
-  = note: `AB` has fields `A` does not (`b`), and object types don't convert by dropping fields; copy the fields `A` has with `{ ...ab }`, or make the function generic over a field-only interface (`<T extends I>(x: T)`), which takes either type
-intersection_types.vlt:4:17: error: no value has type `{ k: string } & { k: f64 }`: field `k` is `string` in one part and `f64` in another
+intersection_types.vlt:3:17: error: no value has type `{ k: string } & { k: f64 }`: field `k` is `string` in one part and `f64` in another
   = note: a value of an intersection has every part's fields at once
-intersection_types.vlt:5:14: error: no value has type `{ kind: "a"; x: f64 } & { kind: "b" }`: field `kind` is `"a"` in one part and `"b"` in another
+intersection_types.vlt:4:14: error: no value has type `{ kind: "a"; x: f64 } & { kind: "b" }`: field `kind` is `"a"` in one part and `"b"` in another
   = note: a value of an intersection has every part's fields at once
-intersection_types.vlt:10:16: error: `&` combines object types; `Point` is a class
+intersection_types.vlt:9:16: error: `&` combines object types; `Point` is a class
   = note: Velt classes are nominal: use `Pick<Point, …>` for its fields, or a field-only interface
-intersection_types.vlt:11:15: error: `&` combines object types; `string[]` is an array
+intersection_types.vlt:10:15: error: `&` combines object types; `string[]` is an array
   = note: write the fields as an object type `{ … }`
-intersection_types.vlt:12:18: error: intersections of function types (overloads) are not supported
+intersection_types.vlt:11:18: error: intersections of function types (overloads) are not supported
   = note: declare one function type with the parameter types every call needs
-intersection_types.vlt:41:21: error: type alias `Tree` refers to itself
+intersection_types.vlt:35:28: error: type alias `Tree` refers to itself
+  = note: an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class

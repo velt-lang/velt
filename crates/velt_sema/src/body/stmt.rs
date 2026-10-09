@@ -4,7 +4,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::narrow::Fact;
+use super::narrow::{literal_of, Fact};
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind, Want};
 use crate::defs::FnKind;
@@ -32,6 +32,15 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmts_into(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
+        self.stmts_in_scope(stmts, out);
+        // A function body's own scope is never popped: its `let x;` never assigned end here.
+        if self.f.scopes.len() == 1 {
+            let left: Vec<hir::LocalId> = self.f.untyped_lets.keys().copied().collect();
+            self.report_untyped_lets(left.into_iter());
+        }
+    }
+
+    fn stmts_in_scope(&mut self, stmts: &[ast::Stmt], out: &mut Vec<hir::Stmt>) {
         for (i, s) in stmts.iter().enumerate() {
             if let ast::StmtKind::Var(v) = &s.kind {
                 if v.kind == ast::VarKind::AwaitUsing {
@@ -263,6 +272,11 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        if let ast::PatternKind::Object { fields, rest: None } = &v.pattern.kind {
+            if self.reads_properties(init.ty, fields) {
+                return self.property_decls(v.kind, fields, init, out);
+            }
+        }
         // `const [a, b] = gen()`: the values the pattern needs, as an array.
         let init = self.destructured(&v.pattern, init);
         let place = super::places::is_place(&init);
@@ -282,6 +296,19 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// An initializer of a variable without a type whose type cannot be inferred (`[]`):
+    /// reported. Shared by `let x = v` and the first assignment of `let x;` (`untyped_let`).
+    pub(super) fn reject_untyped_init(&mut self, e: &ast::Expr) -> bool {
+        if !is_empty_array(e) {
+            return false;
+        }
+        self.cx.error(
+            Diagnostic::error("cannot infer the element type of `[]`", e.span)
+                .with_note("annotate the variable, e.g. `const xs: i64[] = []`"),
+        );
+        true
+    }
+
     fn simple_decl(
         &mut self,
         v: &ast::VarDecl,
@@ -296,15 +323,8 @@ impl FnCx<'_, '_> {
             .then(|| self.literal_decided(name.span))
             .flatten();
         let ann = ann.or(decided);
-        if let Some(e) = v
-            .init
-            .as_ref()
-            .filter(|e| ann.is_none() && is_empty_array(e))
-        {
-            self.cx.error(
-                Diagnostic::error("cannot infer the element type of `[]`", e.span)
-                    .with_note("annotate the variable, e.g. `const xs: i64[] = []`"),
-            );
+        if let Some(e) = v.init.as_ref().filter(|_| ann.is_none()) {
+            self.reject_untyped_init(e);
         }
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,
@@ -318,6 +338,8 @@ impl FnCx<'_, '_> {
             (Some(t), _) => t,
             (None, Some(h)) if h.ty == self.cx.ty.never => h.ty,
             (None, Some(h)) => h.ty,
+            // Typed by its first assignment (`untyped_let`).
+            (None, None) if v.kind == ast::VarKind::Let => self.cx.ty.error,
             (None, None) => {
                 self.cx.err(
                     format!("type annotations needed for `{}`", name.name),
@@ -351,6 +373,13 @@ impl FnCx<'_, '_> {
         let local = self.declare_local(name, ty, kind);
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
+        }
+        if ann.is_none() && init.is_none() && v.kind == ast::VarKind::Let {
+            self.f.untyped_lets.insert(local, name.span);
+        }
+        if let (LocalKind::Const, None, Some(l)) = (kind, ann, v.init.as_ref().and_then(literal_of))
+        {
+            self.f.const_lits.insert(local, l);
         }
         if let (None, Some(h)) = (ann, &init) {
             self.literal_decl(local, &name.name, h);

@@ -10,6 +10,7 @@ use crate::hir::{
     self, AdtDef, Def, DefId, EnumDef, ExternFnDef, FieldDef, GlobalDef, InterfaceDef,
     InterfaceMethodDef, VariantDef,
 };
+use crate::hooks;
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
     let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
@@ -213,6 +214,9 @@ fn adt_def(
         Some(f @ crate::collect::Found::Class { .. }) if !f.is_static() => Some(f.def()),
         _ => None,
     };
+    let to_string = hooks::final_hook(cx, d, &self_args, hooks::TO_STRING).map(|h| h.0);
+    let to_json = hooks::final_hook(cx, d, &self_args, hooks::TO_JSON).map(|h| h.0);
+    let inspect = hooks::final_hook(cx, d, &self_args, hooks::INSPECT).map(|h| h.0);
     AdtDef {
         name,
         kind,
@@ -225,6 +229,9 @@ fn adt_def(
         base,
         ctor,
         dispose,
+        to_string,
+        to_json,
+        inspect,
         vtable,
         span,
     }

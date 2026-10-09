@@ -18,10 +18,38 @@ use crate::str::{Summary, VeltStr};
 pub type VeltStrBuf = VeltStr;
 
 /// `new StrBuf(cap)`: empty builder with room for `cap` bytes (a hint of at most 23 starts
-/// inline, larger ones allocate up front: appending to a heap buffer is the fastest path).
+/// inline, larger ones allocate up front: appending to a heap buffer is the fastest path). The
+/// hint is clamped to the largest string: a template sized from its parts adds the widest a
+/// number can be, which may exceed it for a result that still fits.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
-    out.write(VeltStr::with_capacity(cap as usize));
+    let cap = usize::try_from(cap)
+        .unwrap_or(usize::MAX)
+        .min(crate::str::MAX_CAPACITY);
+    out.write(VeltStr::with_capacity(cap));
+}
+
+/// A builder made from `part`, an owned string the caller gives up, with `head` in front of it
+/// and room for `cap` bytes (clamped like `velt_rt_strbuf_new`'s hint): when `part` is the only
+/// reference to a heap buffer of its own, that buffer becomes the builder
+/// ([`VeltStr::prepend_in_place`]), `*out` gets it, `*part` is left empty and the result is 1.
+/// Otherwise the result is 0 and neither `*part` nor `*out` is touched. A template literal tries
+/// this with its longest part before allocating a builder (rt_abi_async.md §12.1).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_adopt(
+    part: *mut VeltStr,
+    head: *const VeltStr,
+    cap: u64,
+    out: *mut VeltStrBuf,
+) -> u8 {
+    let cap = usize::try_from(cap)
+        .unwrap_or(usize::MAX)
+        .min(crate::str::MAX_CAPACITY);
+    if !(*part).prepend_in_place(&*head, cap) {
+        return 0;
+    }
+    out.write(part.replace(VeltStr::empty()));
+    1
 }
 
 /// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
@@ -308,5 +336,126 @@ mod tests {
             velt_rt_strbuf_drop(&mut d);
         }
         assert!(d.is_static() && d.is_empty());
+    }
+
+    /// `velt_rt_strbuf_adopt(part, head, cap)`: the builder (taken over or not) and `part`.
+    fn adopt(part: &mut VeltStr, head: &VeltStr, cap: u64) -> Option<VeltStrBuf> {
+        let mut out = MaybeUninit::uninit();
+        match unsafe { velt_rt_strbuf_adopt(part, head, cap, out.as_mut_ptr()) } {
+            0 => None,
+            _ => Some(unsafe { out.assume_init() }),
+        }
+    }
+
+    fn long(text: &str) -> VeltStr {
+        let s = VeltStr::from_text(text);
+        assert!(s.is_heap(), "{text:?} must not fit inline");
+        s
+    }
+
+    #[test]
+    fn adopting_a_unique_part_reuses_its_buffer() {
+        let body = "<html><body>a page body longer than an inline string</body></html>";
+        let mut part = long(body);
+        let head = VeltStr::from_static(b"<!DOCTYPE html>");
+        let mut b = adopt(&mut part, &head, 200).expect("a unique heap part is reused");
+        assert!(
+            part.is_empty() && part.is_static(),
+            "the part is left empty"
+        );
+        unsafe { velt_rt_strbuf_push_bytes(&mut b, b"!".as_ptr(), 1) };
+        assert_eq!(finish(b), format!("<!DOCTYPE html>{body}!"));
+    }
+
+    #[test]
+    fn adopting_with_an_empty_head_only_grows() {
+        let body = "rows rows rows rows rows rows rows rows rows";
+        let mut part = long(body);
+        let mut b = adopt(&mut part, &VeltStr::empty(), 0).expect("reused");
+        unsafe { velt_rt_strbuf_push_bytes(&mut b, b"</table>".as_ptr(), 8) };
+        assert_eq!(finish(b), format!("{body}</table>"));
+    }
+
+    #[test]
+    fn a_shared_or_borrowed_part_is_not_adopted() {
+        let head = VeltStr::from_static(b"head:");
+        // Used twice: the buffer has two references.
+        let mut part = long("a string with a second reference to it");
+        let mut other = unsafe { part.share() };
+        assert!(adopt(&mut part, &head, 64).is_none());
+        assert_eq!(
+            unsafe { part.as_bytes() },
+            b"a string with a second reference to it"
+        );
+        unsafe { other.release() };
+        // A slice of another string's buffer (here the only reference to it).
+        let mut whole = long("0123456789 a slice in the middle of a buffer 0123456789");
+        let mut slice = unsafe { whole.substring(11, 44) };
+        unsafe { whole.release() };
+        assert!(slice.is_heap());
+        assert!(adopt(&mut slice, &head, 64).is_none());
+        assert_eq!(
+            unsafe { slice.as_bytes() },
+            b"a slice in the middle of a buffer"
+        );
+        unsafe { slice.release() };
+        // A literal and an inline string own no heap buffer.
+        let mut lit = VeltStr::from_static(b"a literal that is longer than twenty-three bytes");
+        assert!(adopt(&mut lit, &head, 64).is_none());
+        let mut short = VeltStr::from_text("short");
+        assert!(short.is_inline() && adopt(&mut short, &head, 64).is_none());
+    }
+
+    #[test]
+    fn adopting_keeps_utf16_counts() {
+        // A non-ASCII part has the header any head needs; its units add up.
+        let body = "フレームワークのベンチマーク, non-ASCII";
+        let mut part = long(body);
+        let head = VeltStr::from_text("é: ");
+        let b = adopt(&mut part, &head, 0).expect("reused");
+        let want = format!("é: {body}");
+        assert_eq!(b.units(), want.encode_utf16().count());
+        assert_eq!(finish(b), want);
+        // An ASCII part's buffer has no header, which a non-ASCII result needs: not reused.
+        let mut ascii = long("plain ASCII text past the inline limit");
+        assert!(adopt(&mut ascii, &head, 0).is_none());
+        unsafe { ascii.release() };
+        // A head with a lone surrogate could join the part's text: not reused.
+        let lone = VeltStr::from_bytes(&[0xED, 0xA0, 0x80]);
+        let mut part = long("ありがとうございます、もう一度");
+        assert!(adopt(&mut part, &lone, 0).is_none());
+        unsafe { part.release() };
+    }
+
+    #[test]
+    fn a_buffer_with_breadcrumbs_is_not_adopted() {
+        // A long non-ASCII string that has been indexed: its breadcrumbs locate the text where
+        // it is, so it must not move behind a head.
+        let text = "日本語のテキスト".repeat(3 * crate::str::STRIDE);
+        let mut part = long(&text);
+        let mid = unsafe { part.unit_to_byte(5 * crate::str::STRIDE) };
+        assert!(mid.byte > 0);
+        assert!(adopt(&mut part, &VeltStr::from_static(b"<p>"), 0).is_none());
+        assert_eq!(unsafe { part.as_bytes() }, text.as_bytes());
+        unsafe { part.release() };
+    }
+
+    #[test]
+    fn a_buffer_with_remembered_positions_is_not_adopted() {
+        // A position translated in a slice is remembered for the slice's buffer (`REMEMBERED`);
+        // once the slice is gone the buffer is unique again, and still must not move.
+        let text = "ありがとうございます、".repeat(2 * crate::str::STRIDE);
+        let mut whole = long(&text);
+        let mut slice = unsafe { whole.substring(3, text.len() - 3) };
+        assert!(
+            format!("{slice:?}").starts_with("VeltStr(slice"),
+            "{slice:?}"
+        );
+        let pos = unsafe { slice.unit_to_byte(3 * crate::str::STRIDE) };
+        assert!(pos.byte > 0);
+        unsafe { slice.release() };
+        assert!(adopt(&mut whole, &VeltStr::from_static(b"<p>"), 0).is_none());
+        assert_eq!(unsafe { whole.as_bytes() }, text.as_bytes());
+        unsafe { whole.release() };
     }
 }

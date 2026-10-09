@@ -494,7 +494,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_RT_LINK",
         "`static`: debug builds link the static runtime instead of the shared one",
     ),
-    ("VELT_LINKER", "linker program override"),
+    ("VELT_LINKER", "`bundled`, `system`, or a linker program"),
     (
         "VELT_LLVM_BIN",
         "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",

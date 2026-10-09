@@ -19,9 +19,10 @@
 //! (format_array.rs, format_map.rs, format_object.rs). Every format glue takes node's depth of
 //! its value (0 for a `console.log` argument) as its last parameter.
 
-use velt_sema::hir::{AdtKind, TyId, TyKind};
+use velt_sema::hir::{AdtKind, DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_FORMAT};
+use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower};
@@ -343,11 +344,36 @@ impl FnLower<'_, '_> {
             return;
         }
         let (place, p) = (Place::local(obj), Operand::Copy(Place::local(obj)));
-        if !self.format_collection(&buf, &place, ty, &depth) {
+        if let Some(m) = self.hook(ty, Hook::Inspect) {
+            self.format_inspect(&buf, p, ty, m, &depth);
+        } else if !self.format_collection(&buf, &place, ty, &depth) {
             let name = Some(self.cx.type_name(ty));
             self.format_object(&buf, name, &place, ty, Some(p), &depth);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// Print the class object `obj` through its `__inspect()` method `m`, as Node prints a custom
+    /// inspect: a string result raw, any other value after the class name, at the object's depth
+    /// (`Headers { a: '1' }`).
+    fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
+        let (res, rty) = self.call_hook(m, obj, ty, None);
+        // The string, or the name before the value, is kept as one piece when the value is
+        // broken across lines: node inserts a custom inspect's text as it is.
+        let start = self.temp(Ty::U64);
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = Operand::Copy(Place::local(start));
+        if matches!(self.cx.kind(rty), TyKind::Str) {
+            let a = self.addr(res.clone());
+            self.push_str(buf, a);
+            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        } else {
+            let name = self.cx.type_name(ty);
+            self.push_text(buf, &format!("{name} "));
+            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.format_nested(buf, &res, rty, depth);
+        }
+        self.drop_glue(res, rty);
     }
 
     /// Print the object at address `p` with `body`, unless it is already being printed: an

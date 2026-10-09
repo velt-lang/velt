@@ -159,7 +159,16 @@ shape of Deno's precompile transform, with text folded into the strings):
   the surrounding string with a template literal: `` `<td>${jsxEscape(f.message)}</td>` ``
   (template literals build in place, rt_abi_async.md §12.1, so a row costs what a hand-written
   template costs). A child whose type is `number` (`i64` or `f64`) is written `${n}` without
-  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings;
+  `jsxEscape`: a provider renders numbers like JavaScript's `String(n)` in both lowerings.
+  A child whose type is `string`, and static text with a `'` (below), goes to
+
+  ```ts
+  function jsxEscapeString(value: string): string;                   // optional: escaped string
+  ```
+  instead when the runtime exports it, so a string is not converted to `Text` to be escaped. It
+  must return what `jsxEscape` returns for the same string. Without it, every string part goes
+  to `jsxEscape` (or is a slot, when `Text` has no strings); so does a child of any other type
+  that holds a string at run time (`string | null`, a `Text`, a branded string);
 - every other dynamic part becomes an `Element` slot: components (`jsxComponent(C, props, …)`/
   `jsxAsyncComponent`), fragments, `Element`-typed expressions as they are, and any other
   `Child` (arrays, unions containing `Element`) as `Fragment([v], null)`;
@@ -323,8 +332,9 @@ The golden `lang/jsx_intrinsic_attributes` renders them through a provider in bo
 - `true` attributes render as the bare name, `false`/`null` attributes are omitted.
 - The precompile lowering escapes static text and attribute values at compile time with the four
   replacements every provider shares; static text or an attribute value that contains a `'` is
-  passed to `jsxEscape`/`jsxAttr` at run time instead (as one text part: no separator inside
-  it), so the provider's own apostrophe appears in both lowerings.
+  passed to `jsxEscape` (`jsxEscapeString` when exported) or `jsxAttr` at run time instead (as
+  one text part: no separator inside it), so the provider's own apostrophe appears in both
+  lowerings.
 - Raw HTML only through an explicit provider API (`std/jsx` `raw(html)`), never by default.
 
 ## `std/jsx` specifics

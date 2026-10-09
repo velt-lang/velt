@@ -1,0 +1,8 @@
+{"server":"velt","test":"fortunes","connections":16,"pipeline":1,"queries":null,"duration_s":15,"rps":16515,"avg_ms":0.96,"p99_ms":1.77,"errors":0,"non2xx":0,"peak_rss_mb":23.1}
+{"server":"velt","test":"fortunes","connections":64,"pipeline":1,"queries":null,"duration_s":15,"rps":15999,"avg_ms":3.97,"p99_ms":5.60,"errors":0,"non2xx":0,"peak_rss_mb":22.7}
+{"server":"velt","test":"fortunes","connections":256,"pipeline":1,"queries":null,"duration_s":15,"rps":16064,"avg_ms":15.91,"p99_ms":19.54,"errors":0,"non2xx":0,"peak_rss_mb":30.9}
+{"server":"velt","test":"fortunes","connections":512,"pipeline":1,"queries":null,"duration_s":15,"rps":15942,"avg_ms":31.69,"p99_ms":39.33,"errors":0,"non2xx":0,"peak_rss_mb":42.7}
+{"server":"velt-tsx","test":"fortunes","connections":16,"pipeline":1,"queries":null,"duration_s":15,"rps":16284,"avg_ms":0.97,"p99_ms":1.79,"errors":0,"non2xx":0,"peak_rss_mb":23.0}
+{"server":"velt-tsx","test":"fortunes","connections":64,"pipeline":1,"queries":null,"duration_s":15,"rps":16118,"avg_ms":3.95,"p99_ms":5.48,"errors":0,"non2xx":0,"peak_rss_mb":23.0}
+{"server":"velt-tsx","test":"fortunes","connections":256,"pipeline":1,"queries":null,"duration_s":15,"rps":16001,"avg_ms":15.97,"p99_ms":19.09,"errors":0,"non2xx":0,"peak_rss_mb":31.1}
+{"server":"velt-tsx","test":"fortunes","connections":512,"pipeline":1,"queries":null,"duration_s":15,"rps":15885,"avg_ms":31.93,"p99_ms":37.40,"errors":0,"non2xx":0,"peak_rss_mb":43.1}
