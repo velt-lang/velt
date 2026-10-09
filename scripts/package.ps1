@@ -133,12 +133,19 @@ if (-not $NoBundledLinker) {
     New-Item -ItemType Directory -Force $Packs | Out-Null
     Copy-Item -Recurse (Join-Path $Out "lib\targets\$HostTriple") $Pack
     Copy-Item $RtLib $Pack
-    $PackFile = Join-Path $Dist "velt-$Version-target-$HostTriple.tar.gz"
+    # The runtime bundles third-party crates: their notices and Velt's licenses go along.
+    Copy-Item (Join-Path $Repo "NOTICE"), (Join-Path $Repo "LICENSE-MIT"), (Join-Path $Repo "LICENSE-APACHE") $Pack
+    $PackName = "velt-$Version-target-$HostTriple.tar.gz"
+    $PackFile = Join-Path $Dist $PackName
     if (Test-Path $PackFile) { Remove-Item -Force $PackFile }
     tar.exe -czf $PackFile -C $Packs $HostTriple
     if ($LASTEXITCODE -ne 0) { throw "tar failed" }
     Remove-Item -Recurse -Force $Packs
     Write-Host "target pack: $PackFile ($([math]::Round((Get-Item $PackFile).Length / 1MB, 1)) MB)"
+    # The toolchain lists its pack's hash (`velt target add` checks packs against it); the
+    # release workflow replaces the list with every target's.
+    $Hash = (Get-FileHash -Algorithm SHA256 $PackFile).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText((Join-Path $Out "lib\targets\PACKS.sha256"), "$Hash  $PackName`n")
 }
 
 if (-not $NoArchive) {

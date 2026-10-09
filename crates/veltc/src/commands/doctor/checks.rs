@@ -131,7 +131,8 @@ fn targets(host: &str) -> Check {
                 .filter_map(Result::ok)
                 .filter(|e| e.path().join(velt_link::kit::STAMP).is_file())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|t| !velt_link::same_target(t, host))
+                // `.<triple>.<pid>`: a `velt target add` in progress.
+                .filter(|t| !t.starts_with('.') && !velt_link::same_target(t, host))
                 .collect();
             names.sort();
             names

@@ -152,11 +152,71 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  # Every toolchain archive gets the hashes of all target packs (lib/targets/PACKS.sha256):
+  # `velt target add` checks a pack against them, so a pack substituted on the download path is
+  # refused even with a matching SHA256SUMS beside it. Each build job wrote only its own packs'.
+  pack-hashes:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: velt-*
+          path: dist
+          merge-multiple: true
+      - run: (cd dist && sha256sum velt-*-target-*.tar.gz) | tee PACKS.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-hashes
+          path: PACKS.sha256
+
+  finalize:
+    needs: [version, pack-hashes]
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - x86_64-pc-windows-msvc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: pack-hashes
+          path: hashes
+      - name: put PACKS.sha256 into the toolchain archive
+        run: |
+          name="velt-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "x/$name/lib/targets"
+          cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+          if [ -f "dist/$name.zip" ]; then
+            (cd x && zip -q "../dist/$name.zip" "$name/lib/targets/PACKS.sha256")
+          else
+            tar -xzf "dist/$name.tar.gz" -C x
+            cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+            tar -czf "dist/$name.tar.gz" -C x "$name"
+          fi
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          overwrite: true
+
   # The archive on a machine without a C toolchain (#803): Debian slim (no build-essential), a
   # Windows Server Core container (no Visual Studio, SDK or Visual C++ runtime), and macOS with
   # the bundled linker forced (the runners' Xcode cannot be removed). scripts/smoke-clean.*.
   clean-machine:
-    needs: [version, build]
+    needs: [version, finalize]
     strategy:
       fail-fast: false
       matrix:
@@ -212,7 +272,7 @@ jobs:
   # (velt target add --from) builds hello and http_hello for those targets; cross-run then runs
   # them on each target's own machine. scripts/cross.sh.
   cross-build:
-    needs: [version, build]
+    needs: [version, finalize]
     strategy:
       fail-fast: false
       matrix:

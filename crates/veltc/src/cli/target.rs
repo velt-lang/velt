@@ -10,11 +10,13 @@ use super::{strings, Command};
 pub enum TargetAction {
     /// `velt target list`.
     List,
-    /// `velt target add <triple>... [--from <file>]`: install target packs, downloaded from the
-    /// release of this `velt`, or one read from a file.
+    /// `velt target add <triple>... [--from <file>] [--unverified]`: install target packs,
+    /// downloaded from the release of this `velt`, or one read from a file (`--unverified`: one
+    /// that cannot be checked, e.g. built locally).
     Add {
         targets: Vec<String>,
         from: Option<PathBuf>,
+        unverified: bool,
     },
     /// `velt target remove <triple>...`.
     Remove { targets: Vec<String> },
@@ -30,6 +32,7 @@ pub fn parse_target(rest: Vec<OsString>) -> Result<Command, String> {
     };
     let mut targets = vec![];
     let mut from = None;
+    let mut unverified = false;
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -39,6 +42,7 @@ pub fn parse_target(rest: Vec<OsString>) -> Result<Command, String> {
                     .ok_or("`--from` needs a file (a target pack .tar.gz)")?;
                 from = Some(PathBuf::from(file));
             }
+            "--unverified" if action == "add" => unverified = true,
             flag if flag.starts_with('-') => {
                 return Err(super::unknown_option(&format!("target {action}"), flag))
             }
@@ -61,7 +65,16 @@ pub fn parse_target(rest: Vec<OsString>) -> Result<Command, String> {
         "add" if from.is_some() && targets.len() > 1 => {
             return Err("`--from` installs one target pack: give one triple".into())
         }
-        "add" => TargetAction::Add { targets, from },
+        "add" if unverified && from.is_none() => {
+            return Err(
+                "`--unverified` goes with `--from <file>` (downloads are always checked)".into(),
+            )
+        }
+        "add" => TargetAction::Add {
+            targets,
+            from,
+            unverified,
+        },
         "remove" => TargetAction::Remove { targets },
         other => {
             return Err(format!(
@@ -90,14 +103,23 @@ mod tests {
                     "x86_64-pc-windows-msvc".into(),
                     "aarch64-apple-darwin".into()
                 ],
-                from: None
+                from: None,
+                unverified: false,
             })
         );
         assert_eq!(
-            p(&["add", "x86_64-unknown-linux-musl", "--from", "pack.tar.gz"]).unwrap(),
+            p(&[
+                "add",
+                "x86_64-unknown-linux-musl",
+                "--from",
+                "pack.tar.gz",
+                "--unverified"
+            ])
+            .unwrap(),
             Command::Target(TargetAction::Add {
                 targets: vec!["x86_64-unknown-linux-musl".into()],
-                from: Some("pack.tar.gz".into())
+                from: Some("pack.tar.gz".into()),
+                unverified: true,
             })
         );
         assert_eq!(
@@ -118,5 +140,8 @@ mod tests {
             .contains("one triple"));
         assert!(p(&["remove", "x", "--from", "f"]).is_err());
         assert!(p(&["install", "x"]).unwrap_err().contains("unknown action"));
+        assert!(p(&["add", "x", "--unverified"])
+            .unwrap_err()
+            .contains("--from"));
     }
 }

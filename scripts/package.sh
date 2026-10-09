@@ -132,12 +132,21 @@ if [ "$bundled" = 1 ]; then
         "$release/velt-kit" build --target "$musl_target" --lld "$out/lib/velt/lld" \
             --runtime "$target_dir/$musl_target/release/libvelt_rt.a" --out "$packs/$musl_target"
         cp "$repo/crates/velt_link/kit/licenses/musl-COPYRIGHT.txt" "$packs/$musl_target/COPYRIGHT"
+        # libunwind.a, crtbegin.o and crtend.o are LLVM's.
+        cp "$repo/crates/velt_link/kit/licenses/LLVM-LICENSE.txt" "$packs/$musl_target/LLVM-LICENSE.txt"
     fi
     for pack in "$packs"/*; do
         triple=$(basename "$pack")
+        # The runtime bundles third-party crates: their notices and Velt's licenses go along.
+        cp "$repo/NOTICE" "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$pack/"
+        file="velt-$version-target-$triple.tar.gz"
         # No macOS metadata (`._*` files) in the archive.
-        COPYFILE_DISABLE=1 tar -czf "$dist/velt-$version-target-$triple.tar.gz" -C "$packs" "$triple"
-        echo "target pack: $dist/velt-$version-target-$triple.tar.gz ($(du -sk "$dist/velt-$version-target-$triple.tar.gz" | cut -f1) KiB)"
+        COPYFILE_DISABLE=1 tar -czf "$dist/$file" -C "$packs" "$triple"
+        echo "target pack: $dist/$file ($(du -sk "$dist/$file" | cut -f1) KiB)"
+        # The toolchain lists its packs' hashes (`velt target add` checks packs against them);
+        # the release workflow replaces the list with every target's.
+        (cd "$dist" && { command -v sha256sum >/dev/null && sha256sum "$file" || shasum -a 256 "$file"; }) \
+            >> "$out/lib/targets/PACKS.sha256"
     done
     rm -rf "$packs"
 fi

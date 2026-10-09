@@ -309,14 +309,21 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "List, add or remove the targets velt builds for",
         usage: &[
             "target list",
-            "target add <triple>... [--from <pack.tar.gz>]",
+            "target add <triple>... [--from <pack.tar.gz> [--unverified]]",
             "target remove <triple>...",
         ],
         about: "`velt build --target <triple>` builds for another platform with the target's pack: \
                 its runtime and link kit, in <prefix>/lib/targets/<triple>/. `add` downloads the \
-                packs of this velt's release and checks them against its SHA256SUMS \
-                ($VELT_INSTALL_BASE_URL: another repository), or installs a pack from a file.",
-        options: &[("--from <file>", "install a target pack downloaded before")],
+                packs of this velt's release ($VELT_INSTALL_BASE_URL: another repository) and \
+                checks them against the hashes the toolchain carries, or installs a pack from a \
+                file.",
+        options: &[
+            ("--from <file>", "install a target pack downloaded before"),
+            (
+                "--unverified",
+                "with --from: install a pack no hash is known for (one you built)",
+            ),
+        ],
         examples: &[
             ("velt target list", "the targets this toolchain builds for, and the others"),
             (

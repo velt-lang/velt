@@ -104,7 +104,7 @@ are made: [Linking](../internals/linking.md).
 Any toolchain builds for every released target, whatever it runs on: a Mac builds Windows and
 Linux executables, Windows builds Linux and macOS ones, one CI runner builds them all. A target
 other than this machine's needs its **target pack** (its runtime library and link kit,
-downloaded from the same release and checked against its `SHA256SUMS`):
+downloaded from the same release):
 
 ```sh
 velt target add x86_64-pc-windows-msvc        # into <prefix>/lib/targets/<triple>/
@@ -127,10 +127,20 @@ velt target remove x86_64-pc-windows-msvc
   run under Rosetta 2 or QEMU); build the others and run them on their system.
 - `--release` uses the LLVM backend for any target when clang is installed (clang emits the
   object only; no SDK is involved), else Cranelift.
-- `velt target add --from <pack.tar.gz>` installs a pack downloaded before (checked against a
-  `SHA256SUMS` beside it, if there is one); `$VELT_INSTALL_BASE_URL` downloads from another
-  repository's releases. A toolchain built from source has no release to download from: its
-  packs come from `scripts/package.*` on each host (`dist/velt-<version>-target-<triple>.tar.gz`).
+- Packs are verified against the hashes the installed toolchain carries
+  (`lib/targets/PACKS.sha256`, every target's packs of that release), so a pack replaced on the
+  way is refused. A toolchain without that list (built from source) checks downloads against the
+  release's `SHA256SUMS` instead, which shows a pack is intact but not where it comes from, and
+  says so.
+- A pack holds a runtime built with one velt: `velt build` uses it only with that velt (version
+  and commit) and otherwise asks for `velt target add` again.
+- `velt target add --from <pack.tar.gz>` installs a pack downloaded before, verified the same
+  way (or against a `SHA256SUMS` beside it); one that cannot be verified, such as a pack you
+  built yourself with `scripts/package.*` (`dist/velt-<version>-target-<triple>.tar.gz`), needs
+  `--unverified`. `$VELT_INSTALL_BASE_URL` downloads from another repository's releases, for
+  `velt target add` as for the installers.
+- Each pack carries the licenses of what it contains (`NOTICE`, `LICENSE-MIT`, `LICENSE-APACHE`;
+  musl's packs also musl's `COPYRIGHT` and LLVM's license).
 - A package with a native library needs a prebuilt library for the target, which
   `velt build --target` fetches. Debug builds link it as a shared library from this machine's
   package cache, so for another machine build with `--release` (Linux and macOS link the
