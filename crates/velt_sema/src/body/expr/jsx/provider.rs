@@ -82,9 +82,76 @@ impl FnCx<'_, '_> {
         if let Some(p) = self.cx.jsx_providers.get(&self.module) {
             return p.clone();
         }
-        let p = load(self.cx, self.module, at).map(Rc::new);
+        let p = load(self.cx, self.module, at)
+            .filter(|p| self.component_attrs_fit(p, at))
+            .map(Rc::new);
         self.cx.jsx_providers.insert(self.module, p.clone());
         p
+    }
+
+    /// `jsxComponentAttributes` takes what the compiler passes (`key`, `name`, `names`,
+    /// `values`), and every field of `JSX.IntrinsicAttributes` converts to `JSX.AttrValue`:
+    /// checked once when the provider is loaded, so a mismatch is one error, not one per element.
+    fn component_attrs_fit(&mut self, p: &Provider, at: Span) -> bool {
+        let Some(attrs) = &p.component_attrs else {
+            return true;
+        };
+        let source = &p.source;
+        let mut ok = true;
+        let params: Vec<TyId> = self
+            .cx
+            .try_fn(attrs.call)
+            .map(|f| f.params.iter().map(|q| q.ty).collect())
+            .unwrap_or_default();
+        let str_ = self.cx.ty.str_;
+        let passed = [
+            ("key", self.cx.ty.option(str_)),
+            ("name", str_),
+            ("names", self.cx.ty.array(str_)),
+            ("values", self.cx.ty.array(p.attr_value)),
+        ];
+        for ((what, arg), param) in passed.into_iter().zip(params.iter().skip(2)) {
+            if !self.fits(arg, *param) {
+                let (a, t) = (self.cx.display(arg), self.cx.display(*param));
+                self.cx.err(
+                    format!("`jsxComponentAttributes` of the JSX provider '{source}' must take `{what}` as `{a}`, not `{t}`"),
+                    at,
+                );
+                ok = false;
+            }
+        }
+        let Some((d, fields)) = self.object_fields(attrs.ty) else {
+            return ok;
+        };
+        let optional: Vec<bool> = self
+            .cx
+            .adt(d)
+            .map(|a| a.fields.iter().map(|f| f.optional).collect())
+            .unwrap_or_default();
+        for (i, (name, ty)) in fields.into_iter().enumerate() {
+            if name == "key" {
+                continue;
+            }
+            let ty = match optional.get(i).copied().unwrap_or(false) {
+                true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                false => ty,
+            };
+            if !self.fits(ty, p.attr_value) {
+                let (t, v) = (self.cx.display(ty), self.cx.display(p.attr_value));
+                self.cx.err(
+                    format!("`JSX.IntrinsicAttributes` field {name:?} of the JSX provider '{source}' has type `{t}`, which does not convert to `JSX.AttrValue` (`{v}`)"),
+                    at,
+                );
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    /// Does a value of type `from` convert to `to`?
+    fn fits(&mut self, from: TyId, to: TyId) -> bool {
+        let probe = self.mk(H::Lit(Lit::Unit), from, Span::DUMMY);
+        self.try_coerce(probe, to).is_ok()
     }
 }
 
