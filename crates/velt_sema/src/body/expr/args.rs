@@ -315,10 +315,19 @@ impl FnCx<'_, '_> {
                 _ => None,
             };
             let adapted = self.callback_adapter(&args[i], expected, mode);
-            let h = match (adapted, arrow) {
-                (Some(h), _) => h,
-                (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.arrow_arg(a, expected, p.mode == PassMode::Owned)
+            // `xs.forEach(o.log)`: checked as the arrow it stands for.
+            let bound = match adapted {
+                None => self.method_value_arg(&args[i], expected),
+                Some(_) => None,
+            };
+            let owned = p.mode == PassMode::Owned;
+            let h = match (adapted, bound, arrow) {
+                (Some(h), _, _) => h,
+                (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, None, Some(a))
+                    if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) =>
+                {
+                    self.arrow_arg(a, expected, owned)
                 }
                 _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };

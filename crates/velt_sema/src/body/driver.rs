@@ -270,6 +270,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.bounds = f.generics.bounds.clone();
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
+    fcx.body_def = Some(def);
     fcx.enclosing_locals = enclosing_locals;
     fcx.generic_arrow = fcx.cx.generic_arrow_fns.contains(&f.name_span);
     let params = fcx.declare_params(&f);

@@ -1,6 +1,6 @@
-//! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, system
-//! linker, WebAssembly linker, clang and the vpm home directory. Each returns a [`Check`] with a
-//! fix hint when something is missing.
+//! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, linker
+//! (bundled or system), WebAssembly linker, clang and the vpm home directory. Each returns a
+//! [`Check`] with a fix hint when something is missing.
 
 use std::path::Path;
 
@@ -94,10 +94,29 @@ fn std_lib() -> Check {
     }
 }
 
+/// The bundled lld with its link kit when the toolchain has both, else the system linker (with
+/// why the bundled one is not used).
 fn linker(host: &str) -> Check {
-    match velt_link::find_linker(host) {
-        Ok(path) => Check::ok("linker", path.display().to_string()),
-        Err(msg) => Check::bad("linker", Status::Fail, "no usable system linker", msg),
+    match velt_link::linker_report(host) {
+        Ok(velt_link::LinkerReport::Bundled { lld, kit }) => Check::ok(
+            "linker",
+            format!("bundled {} (kit {})", lld.display(), kit.display()),
+        ),
+        Ok(velt_link::LinkerReport::System { program, why: None }) => {
+            Check::ok("linker", format!("system {}", program.display()))
+        }
+        Ok(velt_link::LinkerReport::System {
+            program,
+            why: Some(why),
+        }) => Check::ok(
+            "linker",
+            format!(
+                "system {} (bundled linker not used: {})",
+                program.display(),
+                why.lines().next().unwrap_or_default()
+            ),
+        ),
+        Err(msg) => Check::bad("linker", Status::Fail, "no usable linker", msg),
     }
 }
 

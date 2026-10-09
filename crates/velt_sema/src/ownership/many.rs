@@ -109,7 +109,7 @@ fn handler_params(cx: &Ctx, fns: &[DefId]) -> HashSet<(DefId, usize)> {
     out
 }
 
-/// `const` locals initialized with a closure literal.
+/// `const` locals initialized with a closure literal or a method value (`const h = o.handle`).
 fn closure_consts(b: &mut crate::hir::Block, locals: &[LocalDef]) -> HashMap<LocalId, DefId> {
     struct Lets<'a>(&'a [LocalDef], HashMap<LocalId, DefId>);
     impl VisitMut for Lets<'_> {
@@ -119,8 +119,11 @@ fn closure_consts(b: &mut crate::hir::Block, locals: &[LocalDef]) -> HashMap<Loc
                 init: Some(init),
             } = &s.kind
             {
-                if let (E::Closure(c), false) = (&init.kind, self.0[local.0 as usize].mutable) {
-                    self.1.insert(*local, *c);
+                if let (Some(c), false) = (
+                    crate::body::closure_def(init),
+                    self.0[local.0 as usize].mutable,
+                ) {
+                    self.1.insert(*local, c);
                 }
             }
         }

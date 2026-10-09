@@ -10,14 +10,18 @@
 # debug build: against the shared runtime (the default), the static one (VELT_RT_LINK=static),
 # and a rebuild with nothing changed (the link is skipped).
 #
-#   pwsh bench/compile/run.ps1 [-Runs 10] [-Units 1000] [-Velt <path to velt>]
+#   pwsh bench/compile/run.ps1 [-Runs 10] [-Units 1000] [-Velt <path to velt>] [-LinkOnly]
+#
+# -LinkOnly prints only the second table (check and link times), skipping the front-end runs
+# (which need several GB of memory for long_main).
 #
 # Without -Velt it builds velt (release) first. For an older velt, set $env:VELT_STD to that
 # version's std. `velt build --timings` breaks the optimizer down by pass.
 param(
     [int]$Runs = 10,
     [int]$Units = 1000,
-    [string]$Velt = ""
+    [string]$Velt = "",
+    [switch]$LinkOnly
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -79,6 +83,7 @@ $programs = [ordered]@{
 
 $stages = @("parse", "sema", "lower", "verify", "optimize")
 $front = @("parse", "sema", "lower")
+if (-not $LinkOnly) {
 Write-Output "| program | root file lines | load + parse | sema | lower | verify | optimize | front end |"
 Write-Output "|---|---|---|---|---|---|---|---|"
 foreach ($name in $programs.Keys) {
@@ -105,6 +110,7 @@ foreach ($name in $programs.Keys) {
 }
 Write-Output ""
 Write-Output "Best of $Runs runs per stage, milliseconds (``velt build -v --release --emit vir``); front end = best run's parse + sema + lower."
+}
 
 # Stage times (`velt: <stage> <ms> ms` lines) of one velt run, plus its wall time as "wall".
 function Measure-Velt([string[]]$VeltArgs) {

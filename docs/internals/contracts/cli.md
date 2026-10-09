@@ -157,10 +157,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   next to `velt`, its parent directory or `<prefix>/lib`, with an rpath to it (Windows: the DLL is
   copied next to the executable), plus a generated `<stem>.entry.<o|obj>` holding `main`.
   Release builds, `$VELT_RT_LIB` and `$VELT_RT_LINK=static` link the static runtime; so do debug
-  builds when no shared runtime is installed. Linux static links use `-fuse-ld=mold`/`lld` when
-  `mold`/`ld.lld` is on `PATH` (falling back to the default linker if that link fails). A link
-  whose inputs (objects, runtime library, settings, `$VELT_LINKER`) are unchanged since the
-  executable was last linked is skipped (`<exe>.link-stamp` beside it).
+  builds when no shared runtime is installed. The linker (additive, #803): the bundled lld
+  (`<prefix>/lib/velt/lld[.exe]`, in a checkout the Rust toolchain's `rust-lld`) with the
+  target's link kit (`<prefix>/lib/targets/<triple>/`, `kit.stamp` of the current format) when
+  both exist, else the system linker (`link.exe` / `cc`); `$VELT_LINKER=bundled` makes a missing
+  bundled linker an error, `$VELT_LINKER=system` uses the system linker, any other value is a
+  linker program run with the system linker's arguments. Cross-OS targets link only with the
+  bundled linker. `--target <arch>-unknown-linux-musl` links statically against the runtime in
+  `lib/targets/<triple>/`. Linux static links with the system linker use
+  `-fuse-ld=mold`/`lld` when `mold`/`ld.lld` is on `PATH` (falling back to the default linker if
+  that link fails). A link whose inputs (objects, runtime library, settings, the linker:
+  `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
+  (`<exe>.link-stamp` beside it).
 - `--emit vir` prints VIR (`Display`) to stdout and stops. `-v` prints per-stage timings;
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
@@ -287,7 +295,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

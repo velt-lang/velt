@@ -37,6 +37,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }
+        if let Some(h) = self.bound_method_call(callee, args, exp, span) {
+            return h;
+        }
         match &callee.kind {
             ast::ExprKind::Paren(inner) if !matches!(inner.kind, ast::ExprKind::Arrow { .. }) => {
                 self.call(inner, type_args, args, false, exp, span)
@@ -365,9 +368,17 @@ impl FnCx<'_, '_> {
             .get(&crate::defs::static_key(&prop.name))
             .or_else(|| a.methods.get(&prop.name))
             .copied();
+        let mut owner_args = None;
         if m.is_none() {
             if let Some((em, n)) = self.extension_static(d, &prop.name) {
                 (m, owner_generics) = (Some(em), n);
+            }
+        }
+        if !m.is_some_and(|m| m.is_static) {
+            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`,
+            // unless `B` has its own `static f` (in the class or an `extend B` block).
+            if let Some((im, n, args)) = self.inherited_static(d, &prop.name) {
+                (m, owner_generics, owner_args) = (Some(im), n, args);
             }
         }
         let Some(m) = m.filter(|m| m.is_static) else {
@@ -389,6 +400,9 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let own = n - owner_generics;
         let mut slots = vec![None; n];
+        for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
+            *slot = Some(a);
+        }
         self.explicit_type_args(&mut slots, own, type_args, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(m.def, &ck.args);
@@ -398,5 +412,34 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// The nearest base class of class `d` declaring a static method `name`: that method, the
+    /// number of generics of the class declaring it, and that class's type arguments in the
+    /// `extends` chain from `d` (when `d` is not generic, so they are known).
+    fn inherited_static(
+        &mut self,
+        d: DefId,
+        name: &str,
+    ) -> Option<(crate::defs::MethodRef, usize, Option<Vec<TyId>>)> {
+        let key = crate::defs::static_key(name);
+        let mut cur = d;
+        let mut args = (self.cx.adt(d)?.generics.len() == 0).then(Vec::new);
+        for _ in 0..64 {
+            let base = self.cx.adt(cur)?.base?;
+            let base = match &args {
+                Some(a) => self.cx.subst(base, a),
+                None => base,
+            };
+            let (c, base_args) = self.cx.class_of(base)?;
+            cur = c;
+            args = args.map(|_| base_args);
+            let a = self.cx.adt(cur)?;
+            let m = a.methods.get(&key).or_else(|| a.methods.get(name));
+            if let Some(m) = m.filter(|m| m.is_static) {
+                return Some((*m, a.generics.len(), args));
+            }
+        }
+        None
     }
 }

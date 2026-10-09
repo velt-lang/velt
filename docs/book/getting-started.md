@@ -2,13 +2,11 @@
 
 ## Install
 
-You need:
+A released toolchain brings its own linker, so you need nothing else: no Visual Studio Build
+Tools, Xcode or C compiler. Optionally, **LLVM/clang 16 or newer** makes `--release` builds
+faster programs.
 
-- a **system linker**: the *Build Tools for Visual Studio* ("Desktop development with C++") on
-  Windows, `build-essential` (or `gcc`) on Linux, the Xcode command line tools on macOS;
-- optionally **LLVM/clang 16 or newer**, for optimized `--release` builds.
-
-Then install the latest release. On Linux and macOS:
+Install the latest release. On Linux and macOS:
 
 ```sh
 curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
@@ -32,7 +30,10 @@ other platforms: [Platforms and installation](../tooling/platforms.md).
 
 ### From source
 
-Building Velt yourself also needs **Rust** (stable), from [rustup.rs](https://rustup.rs):
+Building Velt yourself needs **Rust** (stable), from [rustup.rs](https://rustup.rs), and a
+system linker, which a build from source uses: the *Build Tools for Visual Studio* ("Desktop
+development with C++") on Windows, `build-essential` (or `gcc`) on Linux, the Xcode command line
+tools on macOS.
 
 ```sh
 git clone https://github.com/velt-lang/velt
