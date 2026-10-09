@@ -1,7 +1,6 @@
 local
-optional none
-default 3
 local optional none
 local
 > a
 > b
+optional none

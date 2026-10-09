@@ -1,15 +1,14 @@
-// Function values as timer and `void` callbacks (#789): a local function value, functions
-// whose parameters are all optional or have defaults (called with none of them), and a
-// function with a defaulted second parameter where one argument is passed.
+// Function values as timer and `void` callbacks (#789): local function values, a function whose
+// parameters are all optional (called with none of them), and a function with a defaulted
+// second parameter where one argument is passed (`timers_function_default` has one with a
+// default). The local callbacks report each call on a channel, and `main` waits for it before
+// setting the next timer: timer callbacks run as their own tasks, so two that are due at once
+// may run in either order.
 
-import { delay } from "velt:timers";
+import { channel } from "velt:channel";
 
 function tick(n?: number) {
   console.log("optional", n == null ? "none" : `${n}`);
-}
-
-function withDefault(n: number = 3) {
-  console.log("default", n);
 }
 
 function show(s: string, prefix: string = ">") {
@@ -23,20 +22,24 @@ function each(xs: string[], f: (s: string) => void) {
 }
 
 async function main() {
-  const local = () => console.log("local");
-  const localOptional = (n?: number) => console.log("local optional", n == null ? "none" : `${n}`);
-  // Each timer fires before the next one is set: timer callbacks run as their own tasks, so
-  // two that are due at once may run in either order.
+  const calls = channel<string>();
+  const local = () => {
+    console.log("local");
+    calls.trySend("local");
+  };
+  const localOptional = (n?: number) => {
+    console.log("local optional", n == null ? "none" : `${n}`);
+    calls.trySend("local optional");
+  };
   setTimeout(local, 1);
-  await delay(20);
-  setTimeout(tick, 1);
-  await delay(20);
-  setTimeout(withDefault, 1);
-  await delay(20);
+  await calls.receive();
   setTimeout(localOptional, 1);
-  await delay(20);
+  await calls.receive();
+  // The interval may run again before it is cleared: only its first run is printed.
   const interval = setInterval(local, 30);
-  await delay(45);
+  await calls.receive();
   clearInterval(interval);
   each(["a", "b"], show);
+  // `tick` can't report back, so it is the last timer: the process waits for it after `main`.
+  setTimeout(tick, 1);
 }

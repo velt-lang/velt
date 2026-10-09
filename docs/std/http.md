@@ -57,7 +57,8 @@ it throws.
 - **Known problem:** a sync callback stored in an object the handler captured, which modifies
   what it captured itself (`i.onChange = (v) => { last = v; }`, then `i.onChange("x")` in the
   handler), is called by several requests at once on the same captured variables. It is not
-  rejected and can crash; until it is fixed, capture such state as `shared(...)`.
+  rejected and can crash ([#873](https://github.com/velt-lang/velt/issues/873)); until it is
+  fixed, capture such state as `shared(...)`.
 - A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 

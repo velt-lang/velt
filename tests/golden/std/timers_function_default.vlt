@@ -1,0 +1,11 @@
+// A function whose parameter has a default, as a timer callback (#789): it is called with none,
+// so the default is used. It is the only timer, so the process waits for it after `main`.
+
+function withDefault(n: number = 3) {
+  console.log("default", n);
+}
+
+async function main() {
+  console.log("set");
+  setTimeout(withDefault, 1);
+}
