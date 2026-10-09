@@ -1,12 +1,20 @@
 // @jsxImportSource ./_jsx_attrs_required
 
-// A required field of `JSX.IntrinsicAttributes` must be given on every component element.
+// A required field of `JSX.IntrinsicAttributes` must be given on every component element: as an
+// attribute, by a spread source, or as a prop of the same name (as in TypeScript).
 
 function Card(props: { n: number }): JSX.Element {
   return <p>{props.n}</p>;
 }
 
+function Named(props: { n: number; "data-island": string }): JSX.Element {
+  return <p>{props["data-island"]}</p>;
+}
+
 function main() {
   const a = <Card data-island="a" n={1} />;
   const b = <Card n={2} />;
+  const given = { n: 3, "data-island": "c" };
+  const c = <Card {...given} />;
+  const d = <Named n={4} data-island="d" />;
 }

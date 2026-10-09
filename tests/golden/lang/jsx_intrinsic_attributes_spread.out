@@ -1,0 +1,3 @@
+<!--island client:load=true Counter--><p>spread 1</p><!--/island-->
+<!--island client:load=false Counter--><p>later 1</p><!--/island-->
+<!--island client:idle=true client:media="(min-width: 768px)" Counter--><p>media 2</p><!--/island-->

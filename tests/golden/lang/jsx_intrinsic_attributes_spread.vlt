@@ -1,0 +1,23 @@
+// @jsxImportSource ./_jsx_attrs
+
+// Attributes of `JSX.IntrinsicAttributes` given by a spread source reach the provider like written
+// ones (TypeScript accepts them in a spread); a later attribute of the same name replaces one
+// from a spread, as in an object.
+
+import { renderToStringSync } from "velt:jsx";
+
+function Counter(props: { start: number; label: string }): JSX.Element {
+  return (
+    <p>
+      {props.label} {props.start}
+    </p>
+  );
+}
+
+function main() {
+  const extra = { "client:load": true, start: 1, label: "spread" };
+  console.log(renderToStringSync(<Counter {...extra} />));
+  console.log(renderToStringSync(<Counter {...extra} client:load={false} label="later" />));
+  const media = { "client:media": "(min-width: 768px)", start: 2, label: "media" };
+  console.log(renderToStringSync(<Counter client:idle {...media} />));
+}

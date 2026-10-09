@@ -30,11 +30,32 @@ struct Filled {
     written: Vec<usize>,
     /// The component's type arguments inferred so far.
     slots: Vec<Option<TyId>>,
-    /// `JSX.IntrinsicAttributes` (its def and fields besides `key`): attributes that are not
-    /// props are checked against these, as TypeScript checks `Props & IntrinsicAttributes`.
-    common: Option<(DefId, Vec<(String, TyId)>)>,
-    /// The attributes that matched `common`, in source order: name, where, checked value.
-    pub(super) extra: Vec<(String, Span, hir::Expr)>,
+    /// `JSX.IntrinsicAttributes` (its def and fields besides `key`): attributes are checked
+    /// against these too, as TypeScript checks `Props & IntrinsicAttributes`.
+    common: Option<(DefId, Vec<CommonField>)>,
+    /// The attributes that matched only `common`, in source order.
+    extra: Vec<Extra>,
+}
+
+/// A field of `JSX.IntrinsicAttributes`.
+struct CommonField {
+    /// Its index in the declared type (for hover and go to definition).
+    index: u32,
+    name: String,
+    /// What a value must be: the declared type, without the `| null` of an optional field
+    /// (TypeScript says `not assignable to type 'string'` for `"client:media"?: string`).
+    check: TyId,
+    optional: bool,
+}
+
+/// An attribute from `JSX.IntrinsicAttributes` for the provider.
+struct Extra {
+    name: String,
+    span: Span,
+    /// Converted to `JSX.AttrValue`.
+    value: hir::Expr,
+    /// Given by a spread source: a later attribute of the same name replaces it.
+    spread: bool,
 }
 
 /// A component element's props, and the attributes it was given from `JSX.IntrinsicAttributes`.
@@ -122,56 +143,105 @@ impl FnCx<'_, '_> {
             .into_iter()
             .map(|a| Some(self.cx.subst(a, &type_args)))
             .collect();
+        let extra = filled
+            .extra
+            .into_iter()
+            .map(|e| (e.name, e.span, e.value))
+            .collect();
         Some(ElementProps {
             props: self.finish_struct(d, slots, values, None, el.span),
             type_args,
-            extra: filled.extra,
+            extra,
         })
     }
 
     /// The fields of the provider's `JSX.IntrinsicAttributes` besides `key`, with its def.
-    fn common_attrs(&mut self, p: &Provider) -> Option<(DefId, Vec<(String, TyId)>)> {
+    fn common_attrs(&mut self, p: &Provider) -> Option<(DefId, Vec<CommonField>)> {
         let attrs = p.component_attrs.as_ref()?;
         let (d, fields) = self.object_fields(attrs.ty)?;
-        Some((d, fields.into_iter().filter(|(n, _)| n != "key").collect()))
+        let optional: Vec<bool> = self
+            .cx
+            .adt(d)
+            .map(|a| a.fields.iter().map(|f| f.optional).collect())
+            .unwrap_or_default();
+        let fields = fields
+            .into_iter()
+            .enumerate()
+            .filter(|(_, (n, _))| n != "key")
+            .map(|(i, (name, ty))| {
+                let optional = optional.get(i).copied().unwrap_or(false);
+                let check = match optional {
+                    true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                    false => ty,
+                };
+                CommonField {
+                    index: i as u32,
+                    name,
+                    check,
+                    optional,
+                }
+            })
+            .collect();
+        Some((d, fields))
     }
 
-    /// Attribute `n` of a component that is not one of its props: one of
-    /// `JSX.IntrinsicAttributes`, checked against its declared type and passed to the provider
-    /// as `JSX.AttrValue`; `false` if it is not one either.
-    fn common_attr(
+    /// The `JSX.IntrinsicAttributes` field named `n`: (def, index, type a value must have).
+    fn common_field(filled: &Filled, n: &str) -> Option<(DefId, u32, TyId)> {
+        let (d, fields) = filled.common.as_ref()?;
+        let f = fields.iter().find(|f| f.name == n)?;
+        Some((*d, f.index, f.check))
+    }
+
+    /// Value `h` of attribute `n` (from a written attribute or a spread source) for the provider:
+    /// checked against its `JSX.IntrinsicAttributes` type and converted to `JSX.AttrValue`.
+    fn push_extra(
         &mut self,
         p: &Provider,
-        n: &str,
-        name_span: Span,
-        value: &Option<ast::JsxAttrValue>,
-        span: Span,
         filled: &mut Filled,
-    ) -> bool {
-        let Some((d, fields)) = &filled.common else {
-            return false;
+        n: &str,
+        span: Span,
+        h: hir::Expr,
+        spread: bool,
+    ) {
+        let Some((_, _, check)) = Self::common_field(filled, n) else {
+            return;
         };
-        let Some(i) = fields.iter().position(|(f, _)| f == n) else {
-            return false;
-        };
-        let (d, ty) = (*d, fields[i].1);
-        self.cx.rec_ref(name_span, Target::Field(d, i as u32));
-        if filled.extra.iter().any(|(e, _, _)| e == n) {
-            self.cx.err(
-                "JSX elements cannot have multiple attributes with the same name.",
-                name_span,
-            );
-        }
-        let (h, _) = self.attr_value(p, value, Some(ty), span);
-        let what = "in the props of type 'IntrinsicAttributes'";
-        let h = self.jsx_coerce(h, ty, what);
+        let given = h.ty;
+        let h = self.jsx_coerce(h, check, COMMON_WHAT);
         let note = format!(
             "attributes of `JSX.IntrinsicAttributes` are passed to the JSX provider '{}' as `JSX.AttrValue`",
             p.source
         );
-        let h = self.jsx_coerce(h, p.attr_value, &note);
-        filled.extra.push((n.to_string(), name_span, h));
-        true
+        let value = self.jsx_coerce(h, p.attr_value, &note);
+        // A spread source's value is replaced by a later one of the same name, as in an object.
+        if let Some(i) = filled.extra.iter().position(|e| e.name == n && e.spread) {
+            filled.extra.remove(i);
+        } else if filled.extra.iter().any(|e| e.name == n) && !spread {
+            self.cx.err(
+                "JSX elements cannot have multiple attributes with the same name.",
+                span,
+            );
+        }
+        filled.given.push((n.to_string(), given));
+        filled.extra.push(Extra {
+            name: n.to_string(),
+            span,
+            value,
+            spread,
+        });
+    }
+
+    /// A prop that `JSX.IntrinsicAttributes` also declares: its value must fit both types, as
+    /// TypeScript intersects them.
+    fn check_common_too(&mut self, filled: &Filled, n: &str, ty: TyId, span: Span) {
+        let Some((_, _, check)) = Self::common_field(filled, n) else {
+            return;
+        };
+        let probe = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), ty, span);
+        if self.try_coerce(probe, check).is_err() {
+            let probe = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), ty, span);
+            self.not_assignable(check, &probe, COMMON_WHAT);
+        }
     }
 
     /// The component's type arguments; unknown ones are errors.
@@ -218,23 +288,32 @@ impl FnCx<'_, '_> {
     ) {
         match a {
             ast::JsxAttr::Spread { expr, .. } => {
-                // Fields the props type does not have are left out, as in an object spread.
+                // Fields the props type does not have go to the provider when
+                // `JSX.IntrinsicAttributes` declares them, else are left out, as in an object
+                // spread.
                 for (name, h) in self.spread_source(expr, lets) {
                     if let Some(i) = filled.fields.iter().position(|(n, _)| *n == name) {
+                        self.check_common_too(filled, &name, h.ty, h.span);
                         self.set_prop(filled, i, name, h);
+                    } else {
+                        let span = h.span;
+                        self.push_extra(p, filled, &name, span, h, true);
                     }
                 }
             }
             ast::JsxAttr::Named { name, value, span } => {
                 let (n, name_span) = attr_name(name);
                 let Some(i) = filled.fields.iter().position(|(f, _)| *f == n) else {
-                    if self.common_attr(p, &n, name_span, value, *span, filled) {
+                    if let Some((d, index, check)) = Self::common_field(filled, &n) {
+                        self.cx.rec_ref(name_span, Target::Field(d, index));
+                        let (h, _) = self.attr_value(p, value, Some(check), *span);
+                        self.push_extra(p, filled, &n, name_span, h, false);
                         return;
                     }
                     let mut names: Vec<String> =
                         filled.fields.iter().map(|(f, _)| f.clone()).collect();
                     if let Some((_, common)) = &filled.common {
-                        names.extend(common.iter().map(|(f, _)| f.clone()));
+                        names.extend(common.iter().map(|f| f.name.clone()));
                     }
                     self.no_property(&n, shown, &names, name_span, None);
                     self.attr_value(p, value, None, *span);
@@ -250,6 +329,7 @@ impl FnCx<'_, '_> {
                 filled.written.push(i);
                 let exp = self.cx.subst_known(filled.fields[i].1, &filled.slots);
                 let (h, _) = self.attr_value(p, value, Some(exp), *span);
+                self.check_common_too(filled, &n, h.ty, h.span);
                 self.set_prop(filled, i, n, h);
             }
         }
@@ -305,12 +385,12 @@ impl FnCx<'_, '_> {
         } else {
             format!("{{ {} }}", given.join("; "))
         };
-        for (name, ty) in common {
-            if self.cx.ty.opt_payload(*ty).is_some()
-                || filled.extra.iter().any(|(n, _, _)| n == name)
-            {
+        for f in common {
+            // Given as an attribute, by a spread source, or as a prop of the same name.
+            if f.optional || filled.given.iter().any(|(n, _)| *n == f.name) {
                 continue;
             }
+            let name = &f.name;
             self.cx.err(
                 format!("Property '{name}' is missing in type '{given}' but required in type 'IntrinsicAttributes'."),
                 span,
@@ -370,3 +450,6 @@ fn is_arrow_attr(a: &ast::JsxAttr) -> bool {
         } if as_arrow(expr).is_some()
     )
 }
+
+/// Where a `JSX.IntrinsicAttributes` mismatch is reported from.
+const COMMON_WHAT: &str = "in the props of type 'IntrinsicAttributes'";

@@ -12,6 +12,8 @@ fn runtime() -> String {
     format!(
         "{RUNTIME}
 export type IntrinsicAttributes = {{
+  /** The element's key. */
+  key?: string;
   /** Hydrate as soon as the page loads. */
   \"client:load\"?: bool;
   \"client:media\"?: string;
@@ -101,6 +103,20 @@ fn hover_shows_the_declared_type_and_docs() {
         text.contains("Hydrate as soon as the page loads."),
         "{text}"
     );
+}
+
+#[test]
+fn go_to_definition_finds_the_field_after_key() {
+    // `key` is declared first and is not one of these attributes: the field index still
+    // points at `client:load`, not at the field before it.
+    let (mut client, doc) = open(PAGE);
+    client.diagnostics(&doc);
+    let (line, col) = pos_of(PAGE, "client:load", 3);
+    let loc = client.request("textDocument/definition", at(&doc, line, col));
+    client.shutdown();
+    let runtime = runtime();
+    let (def_line, _) = pos_of(&runtime, "\"client:load\"?: bool", 0);
+    assert_eq!(loc["range"]["start"]["line"], def_line, "{loc}");
 }
 
 #[test]
