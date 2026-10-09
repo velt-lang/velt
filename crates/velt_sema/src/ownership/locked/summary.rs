@@ -77,7 +77,11 @@ impl Summaries {
         let mut last_run: HashMap<DefId, u64> = HashMap::new();
         let mut changed_at: HashMap<DefId, u64> = HashMap::new();
         let mut run = 0u64;
-        // Summaries only grow, and are bounded by the parameter pairs: this ends.
+        // Passes repeat until one changes no summary. A summary is bounded by the parameter pairs
+        // and bits, and grows with its callees' summaries; it is not monotone across passes,
+        // though: one computed while a callee had no summary yet (read as an unknown callee,
+        // which may store any argument into any argument it modifies) can shrink once that
+        // callee has its own. The pass order is fixed, so the result does not depend on hashing.
         loop {
             let mut changed = false;
             for &d in &fns {

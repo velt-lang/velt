@@ -250,3 +250,31 @@ fn with_summaries_reach_through_call_chains_declared_callers_first() {
     let r = err_src(&src("o.n += 1; xs.push(o.inner);"));
     assert!(r.contains("also changes that argument"), "{r}");
 }
+
+#[test]
+fn with_summaries_follow_a_self_recursive_call_that_swaps_its_arguments() {
+    // `sw` makes a promise from its first parameter directly, and from its second only through
+    // the recursive call that swaps them: that needs `sw` summarized again after its own
+    // summary changed.
+    let src = |call: &str| {
+        format!(
+            "class Outer {{ n: i64 = 0; }}
+             async function bump(o: Outer): Promise<i64> {{ await yieldNow(); o.n += 1; return o.n; }}
+             function sw(a: Outer, b: Outer, k: i64) {{
+               if (k > 0) {{ sw(b, a, k - 1); }} else {{ const p = bump(a); }}
+             }}
+             function main() {{
+               const m = new Mutex<Outer>(new Outer());
+               const other = new Outer();
+               m.with((v) => {call});
+             }}"
+        )
+    };
+    for call in ["sw(v, other, 0)", "sw(other, v, 1)"] {
+        let r = err_src(&src(call));
+        assert!(
+            r.contains("`sw` starts a promise with the locked value"),
+            "{call}: {r}"
+        );
+    }
+}
