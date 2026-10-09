@@ -457,9 +457,15 @@ impl<'a> Parser<'a> {
 
     /// A quoted property name whose text Velt uses for something else: `"#x"` reads as an ES
     /// private name and `"[Symbol.iterator]"` as a symbol key internally, so they are rejected
-    /// rather than silently taking that meaning.
+    /// rather than silently taking that meaning; `"__proto__"` names the prototype in JS.
     fn check_quoted_key(&mut self, key: &Ident) {
-        if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX) || key.name.starts_with("[Symbol.")
+        if key.name == "__proto__" {
+            self.error(
+                "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property",
+                key.span,
+            );
+        } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX)
+            || key.name.starts_with("[Symbol.")
         {
             self.error(
                 format!(
