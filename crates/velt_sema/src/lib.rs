@@ -41,6 +41,7 @@ mod finalize;
 mod flow;
 mod fresh_returns;
 mod generic_arrows;
+mod hooks;
 pub mod ide;
 mod infer;
 mod instantiation_cycles;

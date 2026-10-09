@@ -261,9 +261,9 @@ variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-f
   getHours getMinutes getSeconds getMilliseconds` and the `getUTC…` ones; the matching `set…`
   and `setUTC…` setters (with JS's optional extra fields), and `setTime`.
 - `toISOString()` (an invalid date panics), `toJSON()` (the ISO string, or `null` when
-  invalid; `JSON.stringify` does not take a `Date`, so call it first), `toUTCString()`,
-  `toString()`, `toDateString()`, `toTimeString()`, and `toLocaleString()`,
-  `toLocaleDateString()`, `toLocaleTimeString()` (always `en-US`).
+  invalid; `JSON.stringify` writes a date, or a subclass of `Date`, through it, as Node
+  does), `toUTCString()`, `toString()`, `toDateString()`, `toTimeString()`, and
+  `toLocaleString()`, `toLocaleDateString()`, `toLocaleTimeString()` (always `en-US`).
 - Dates compare with `<` (`Date` implements `Comparable`); `console.log` prints one as its ISO
   string, as Node does.
 

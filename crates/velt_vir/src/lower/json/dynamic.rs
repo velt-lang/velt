@@ -118,6 +118,16 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
+            // A class with `toJSON()` is written as what it returns.
+            hir::Def::Adt(hir::AdtDef {
+                to_json: Some(m), ..
+            }) => {
+                let m = *m;
+                let cls = self.intern(TyKind::Adt(d, args.to_vec()));
+                let targs = self.method_targs(m, cls);
+                let ret = self.fn_def(m).ret;
+                return Some(vec![self.subst(ret, &targs)]);
+            }
             // std's private state (runtime handles) has no JSON form.
             hir::Def::Adt(a) if a.opaque => return None,
             // ES private fields (`#x`) are never written; `private x` is, as in Node.

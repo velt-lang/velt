@@ -2,6 +2,7 @@
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, unit, FnLower, Glue};
@@ -117,11 +118,7 @@ impl FnLower<'_, '_> {
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
-                // Sema rejects these; writing one would leak std's runtime handles.
-                if self.cx.adt_def(d).opaque {
-                    ice("JSON of a type holding std's private state");
-                }
-                self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
+                self.json_write_class(buf, place, ty, |lw| lw.json_write_static(buf, place, ty, d))
             }
             // A union is written as its active member.
             TyKind::Adt(..) if self.cx.is_union(ty) => {
@@ -138,6 +135,27 @@ impl FnLower<'_, '_> {
                 "JSON.stringify of a non-serializable type {k:?}"
             )),
         }
+    }
+
+    /// A struct, class or object written as its static type `ty`: what its `toJSON()` returns,
+    /// as in JS, else its fields.
+    fn json_write_static(&mut self, buf: &Operand, place: &Place, ty: TyId, d: hir::DefId) {
+        if let Some(m) = self.hook(ty, Hook::ToJson) {
+            let (res, rty) = self.call_hook(m, Operand::Copy(place.clone()), ty);
+            if rty == ty {
+                // `toJSON() { return this; }`: JS writes the fields of the result.
+                self.json_write_object(buf, &res, ty);
+            } else {
+                self.json_write(buf, &res, rty);
+            }
+            self.drop_glue(res, rty);
+            return;
+        }
+        // Sema rejects these; writing one would leak std's runtime handles.
+        if self.cx.adt_def(d).opaque {
+            ice("JSON of a type holding std's private state");
+        }
+        self.json_write_object(buf, place, ty)
     }
 
     /// Run `then` if the option at `place` is non-null, else `els`.

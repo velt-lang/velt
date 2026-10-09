@@ -46,6 +46,7 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod glue;
+mod hooks;
 mod intrinsics;
 mod json;
 mod keys;

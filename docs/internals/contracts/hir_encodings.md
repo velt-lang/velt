@@ -445,6 +445,15 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   an internal error, and a base class value whose dynamic class is opaque (or holds an opaque
   value) is written as its static class (`json/dynamic.rs`). Other `private` fields are
   written, as in Node.
+- `AdtDef::to_string`, `to_json`, `inspect` (additive): a class's `toString()`, `toJSON()` and
+  `__inspect()` methods, own or inherited (sema's `hooks.rs`): instance methods without
+  parameters or type parameters of their own, neither async nor generators, that cannot throw
+  (`toString` returns `string`). Lowering calls them from glue with the object as `this` and
+  drops the result: `String(x)` / `${x}` in code sema could not resolve (generic code) calls
+  `to_string`; `JSON.stringify` writes what `to_json` returns instead of the fields (an
+  opaque class with one has a JSON form); `console.log` prints what `inspect` returns instead
+  of the fields (a string raw, another value after the class name). Each is called on the
+  static class of the value (after `JSON.stringify`'s dynamic class switch).
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
