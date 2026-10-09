@@ -1,0 +1,34 @@
+// Spreading a value whose type a conversion copied to (#650, #651) shows the copy: Node's
+// spread copies all the original object's fields, in its order.
+type A = { a: number };
+type AB = A & { b: number };
+
+function wider(ab: AB) {
+  const x: A = ab;
+  const y = { ...x, c: 3 };
+  console.log(y.c);
+}
+
+type B = { b: number };
+type BC = B & { c: number };
+
+function mapped(bc: BC) {
+  const xs: B[] = [bc];
+  const ys = xs.map((x) => ({ ...x, d: 1 }));
+  console.log(ys.length);
+}
+
+type P = { x: number; y: number };
+type Q = { y: number; x: number };
+
+function reordered(q: Q) {
+  const p: P = q;
+  const w = { ...p, w: 0 };
+  console.log(w.w);
+}
+
+function main() {
+  wider({ a: 1, b: 2 });
+  mapped({ b: 1, c: 2 });
+  reordered({ y: 1, x: 2 });
+}

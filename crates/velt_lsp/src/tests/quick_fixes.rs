@@ -212,38 +212,13 @@ async function main() {
 
 #[test]
 fn converts_string_concatenation_to_a_template_literal() {
-    let text = "function main() {\n  const n = 3;\n  const s = 1 + n + \"a`\" + n + \"!\";\n  console.log(s);\n}\n";
+    // A number next to a string concatenates as in JS (#740); an array is still an error.
+    let text = "function main() {\n  const n = 3;\n  const xs = [1];\n  const s = 1 + n + \"a`\" + xs + \"!\";\n  console.log(s);\n}\n";
     let (mut client, doc, diags) = open("fix_concat.vlt", text);
-    let offered = actions(&mut client, &doc, text, "\"a", &diags);
+    let offered = actions(&mut client, &doc, text, "xs +", &diags);
     let fixed = apply(text, find(&offered, "Convert to a template literal"), &doc);
-    assert!(fixed.contains("const s = `${1 + n}a\\`${n}!`;"), "{fixed}");
+    assert!(fixed.contains("const s = `${1 + n}a\\`${xs}!`;"), "{fixed}");
     assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
-    client.shutdown();
-}
-
-#[test]
-fn makes_non_bool_conditions_explicit() {
-    let text = "function a(count: i64) {\n  if (count) {\n    console.log(\"n\");\n  }\n}\n\nfunction b(name: string) {\n  while (name) {\n    break;\n  }\n}\n\nfunction c(user: string | null) {\n  if (user) {\n    console.log(\"u\");\n  }\n}\n\nfunction d(x: f64) {\n  if (x + 1.0) {\n    console.log(\"x\");\n  }\n}\n\nfunction e(n: i64): bool {\n  return !n;\n}\n\nfunction main() {\n  a(1);\n  b(\"\");\n  c(null);\n  d(0.0);\n  console.log(e(0));\n}\n";
-    let (mut client, doc, diags) = open("fix_cond.vlt", text);
-    let cases = [
-        ("(count)", "Compare with `0`", "(count !== 0)"),
-        ("(name)", "Compare with `\"\"`", "(name !== \"\")"),
-        ("(user)", "Compare with `null`", "(user !== null)"),
-        ("(x + 1.0)", "Compare with `0.0`", "(x + 1.0 !== 0.0)"),
-        (" !n", "Compare with `0`", " n === 0"),
-    ];
-    let mut all_fixed = text.to_string();
-    for (needle, title, expected) in cases {
-        let offered = actions(&mut client, &doc, text, &needle[1..], &diags);
-        let one = apply(text, find(&offered, title), &doc);
-        assert!(one.contains(expected), "{one}");
-        all_fixed = all_fixed.replace(needle, expected);
-    }
-    assert_eq!(
-        errors_after(&mut client, &doc, &all_fixed),
-        [] as [Value; 0],
-        "{all_fixed}"
-    );
     client.shutdown();
 }
 

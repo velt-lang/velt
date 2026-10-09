@@ -671,6 +671,51 @@ debug runtime) to 34 KB.
 command incl. process start, std and the prelude, best of 5): chat 24 ms, log-pipeline 24 ms,
 notes-cli 25 ms, todo-api 30 ms (target < 100 ms).
 
+## Debug links on macOS and Windows; the bundled linker (#45, #803, 2026-10-09)
+
+The installed toolchain (`scripts/package.*`: release `velt` and runtimes, the bundled lld 23.1.3
+and the host's link kit), `bench/compile/run.sh 5 1000 <prefix>/bin/velt` (`run.ps1 -Runs 5 -Units
+1000 -Velt …` on Windows) once with `VELT_LINKER=system` and once with `VELT_LINKER=bundled`.
+Second table of the script, best of 5, ms; the "check" columns do not link and differ only by
+noise.
+
+**macOS**: Apple M4 (10 cores), macOS 27.0.1; system linker: `cc` → Apple `ld` (ld-1267).
+
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 30.1 | 39.3 | 38.8 | 85.5 | 0.2 |
+| http_hello | **bundled** | 25.6 | 32.7 | **7.1** | **53.1** | 0.2 |
+| all_std | system | 32.3 | 42.4 | 38.7 | 83.6 | 0.1 |
+| all_std | **bundled** | 29.2 | 38.1 | **6.4** | **42.2** | 0.1 |
+| units_1000 | system | 171.2 | 188.9 | 58.9 | 91.8 | 3.1 |
+| units_1000 | **bundled** | 194.2 | 218.3 | **47.5** | **72.7** | 2.9 |
+
+The shared-runtime link with the system linker is mostly the `cc` driver (a process that starts
+`ld`); lld runs directly.
+
+**Windows**: GitHub `windows-2025` runner (AMD EPYC 9V74, 4 vCPUs), Windows Server 2025, the
+toolchain archive of the release workflow; system linker: `link.exe` of Visual Studio 18 (MSVC
+14.51). `pwsh bench/compile/run.ps1 -Runs 5 -Units 1000 -Velt <prefix>\bin\velt.exe -LinkOnly`
+(the front-end table needs more memory for `long_main_4000` than the runner has).
+
+| program | linker | `velt check`: parse + sema | `velt check`: whole command | debug link: shared runtime | debug link: static runtime | rebuild, nothing changed: link |
+|---|---|---|---|---|---|---|
+| http_hello | system | 72.6 | 94.3 | 55.6 | 230.8 | 0.3 |
+| http_hello | **bundled** | 63.6 | 80.0 | **38.0** | **169.3** | 0.7 |
+| all_std | system | 72.0 | 89.4 | 42.4 | 229.2 | 0.2 |
+| all_std | **bundled** | 69.4 | 86.0 | **37.1** | **165.8** | 0.6 |
+| units_1000 | system | 452.8 | 501.6 | 76.9 | 261.1 | 2.3 |
+| units_1000 | **bundled** | 438.2 | 488.6 | **71.5** | **198.0** | 2.9 |
+
+A rebuild with nothing changed checks which linker would link (the link stamp includes it); with
+the bundled one that opens the kit, a fraction of a millisecond. **Defender:** real-time
+protection is off on the runners, so the table does not show what scanning costs on a desktop.
+There, Defender scans `lld.exe` (56 MB) when it is new: on the runner its first start after a
+fresh copy took 216 ms, later ones 9–10 ms. On a desktop with real-time protection, a debug
+link with `rust-lld` (122 MB) in a checkout took 1.6–2.5 s against 0.4–0.5 s with `link.exe`
+(#853 review): measure the bundled `lld.exe` there too, and link with `VELT_LINKER=system`
+when Build Tools are installed and that is faster.
+
 ## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
 
 Machine: cloud VM, x86_64 Linux (Ubuntu 24.04), 4 × Intel Xeon @ 2.10 GHz, 15 GB; clang 18.1.3

@@ -1,0 +1,12 @@
+object_copies_spread.vlt:7:16: error: a value of type `AB` converts to `A` by copying its fields, and this program spreads a `A`: Node would copy all the original object's fields, in its order
+object_copies_spread.vlt:8:18: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `A` made from a `AB` value is a new object with the same field values
+  = note: build the new object explicitly, `{ a: ab.a }` (a new object in TypeScript too), or declare the parameter or variable as `AB`
+object_copies_spread.vlt:16:20: error: a value of type `BC` converts to `B` by copying its fields, and this program spreads a `B`: Node would copy all the original object's fields, in its order
+object_copies_spread.vlt:17:34: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `B` made from a `BC` value is a new object with the same field values
+  = note: build the new object explicitly, `{ b: bc.b }` (a new object in TypeScript too), or declare the parameter or variable as `BC`
+object_copies_spread.vlt:25:16: error: a value of type `Q` converts to `P` by copying its fields, and this program spreads a `P`: Node would copy all the original object's fields, in its order
+object_copies_spread.vlt:26:18: here, or in the function this calls
+  = note: TypeScript allows this and passes the same object; Velt's object types have fixed layouts, so the `P` made from a `Q` value is a new object with the same field values
+  = note: build the new object explicitly, `{ x: q.x, y: q.y }` (a new object in TypeScript too), or declare the parameter or variable as `Q`

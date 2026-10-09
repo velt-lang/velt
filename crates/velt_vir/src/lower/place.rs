@@ -9,7 +9,7 @@ use velt_sema::effects::may_change_memory;
 use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
-use super::sequence::may_write;
+use super::sequence::{may_write, Later};
 use super::types::VariantAt;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
@@ -273,10 +273,10 @@ impl FnLower<'_, '_> {
         self.place_expr_with(e, &mut VecDeque::new())
     }
 
-    /// Evaluate the index expressions of place `e` (outermost base first) into temporaries, so
-    /// they run before an assignment's right-hand side as in JS (`xs[f()] = g()` calls `f`
-    /// first) while the element places themselves are formed only after it (the right-hand
-    /// side may grow the array).
+    /// Evaluate the root of place `e` when it is not a place, then its index expressions
+    /// (outermost base first), into temporaries, so they run before an assignment's right-hand
+    /// side as in JS (`xs[f()] = g()` calls `f` first) while the element places themselves are
+    /// formed only after it (the right-hand side may grow the array).
     fn place_indices(&mut self, e: &hir::Expr, out: &mut VecDeque<Operand>) {
         use hir::ExprKind as K;
         match &e.kind {
@@ -289,12 +289,19 @@ impl FnLower<'_, '_> {
                 let i = self.expr(index);
                 out.push_back(self.freeze(i, index.ty));
             }
-            _ => {}
+            K::Local(..) => {}
+            // A root that is not a place (`get().v = r()`, `m.get(k)!.v = r()`) is evaluated
+            // once, before the right-hand side; every later forming of the place reuses it.
+            _ => {
+                let v = self.expr(e);
+                out.push_back(self.freeze(v, e.ty));
+            }
         }
     }
 
-    /// `place_expr` with the index operands `pre` already evaluated by `place_indices`.
-    fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
+    /// `place_expr` with the root and index operands `pre` already evaluated by
+    /// `place_indices`.
+    pub(super) fn place_expr_with(&mut self, e: &hir::Expr, pre: &mut VecDeque<Operand>) -> Place {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(id, _) => self
@@ -342,7 +349,10 @@ impl FnLower<'_, '_> {
                 self.downcast_place(p, inner.ty)
             }
             _ => {
-                let v = self.expr(e);
+                let v = match pre.pop_front() {
+                    Some(v) => v,
+                    None => self.expr(e),
+                };
                 let ty = self.sub(e.ty);
                 self.place_of(v, ty)
             }
@@ -357,6 +367,10 @@ impl FnLower<'_, '_> {
         }
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
+        let pin = match place.kind {
+            hir::ExprKind::Local(..) => None,
+            _ => self.pin_target(place, &pre, Later::of(value)),
+        };
         let v = self.consume(value);
         if self.dead() {
             return unit();
@@ -374,17 +388,40 @@ impl FnLower<'_, '_> {
         let ty = self.sub(place.ty);
         let shared = self.through_counted(place, ty);
         let p = self.place_expr_with(place, &mut pre);
+        let v = match self.cx.needs_drop(ty) {
+            true => self.detach(v, place.ty),
+            false => v,
+        };
+        let drops = refill.is_none() && self.cx.needs_drop(ty);
+        let unstored = v.clone();
+        self.write_pinned(
+            pin,
+            p,
+            |this, p| this.store_assigned(place, p, v, ty, shared, drops),
+            |this| this.drop_unstored(&unstored, ty),
+        );
+        unit()
+    }
+
+    /// The store of `place = v` into `p`, dropping the old value when `drops`.
+    fn store_assigned(
+        &mut self,
+        place: &hir::Expr,
+        p: Place,
+        v: Operand,
+        ty: TyId,
+        shared: bool,
+        drops: bool,
+    ) {
         let flag = self.presence_place(place, &p);
-        if shared && self.cx.needs_drop(ty) {
+        if shared && drops {
             // Other owners see the place: store first, then drop the old value (its `dispose`
             // may reach the place's container and must find it consistent).
             let vt = self.cx.ty(ty);
-            let v = self.detach(v, place.ty);
             let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
             self.store(p, v);
             self.drop_glue(Place::local(old), ty);
-        } else if refill.is_none() && self.cx.needs_drop(ty) {
-            let v = self.detach(v, place.ty);
+        } else if drops {
             self.drop_glue(p.clone(), ty);
             self.store(p, v);
         } else {
@@ -394,7 +431,6 @@ impl FnLower<'_, '_> {
         if let Some(fp) = flag {
             self.assign(fp, Rvalue::Use(FnLower::ctrue()));
         }
-        unit()
     }
 
     /// The presence flag of the `presence` field the HIR `place` (at VIR place `p`) names.
@@ -511,6 +547,7 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
+        let pin = self.pin_target(place, &pre, Later::of(value));
         let first = self.place_expr_with(place, &mut pre.clone());
         let l = self.share_value(Operand::Copy(first), ty);
         let l = self.own_value(l, ty);
@@ -523,9 +560,13 @@ impl FnLower<'_, '_> {
         let vt = self.cx.ty(ty);
         let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
         let p = self.place_expr_with(place, &mut pre);
-        let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
-        self.assign(p, Rvalue::Use(v));
-        self.drop_glue(Place::local(old), ty);
+        let unstored = v.clone();
+        let write = |this: &mut Self, p: Place| {
+            let old = this.copy_to_temp(Operand::Copy(p.clone()), vt);
+            this.assign(p, Rvalue::Use(v));
+            this.drop_glue(Place::local(old), ty);
+        };
+        self.write_pinned(pin, p, write, |this| this.drop_unstored(&unstored, ty));
         unit()
     }
 

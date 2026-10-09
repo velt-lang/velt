@@ -81,6 +81,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
+        let expanded;
+        let args = match self.expand_spreads(c, args) {
+            Ok(Some(a)) => {
+                expanded = a;
+                &expanded[..]
+            }
+            Ok(None) => args,
+            Err(()) => return self.failed_call(c, &slots),
+        };
         let packed;
         let args = match self.pack_rest(c, args) {
             Some((p, skip)) if !skip.is_empty() => {
@@ -102,16 +111,7 @@ impl FnCx<'_, '_> {
         if args.len() < min || args.len() > c.params.len() {
             self.arg_count_error(&c.what, min, c.params.len(), args.len(), span);
             self.check_args_loose(args);
-            let type_args: Vec<TyId> = slots
-                .iter()
-                .map(|s| s.unwrap_or(self.cx.ty.error))
-                .collect();
-            let ret = self.cx.subst(c.ret, &type_args);
-            return Checked {
-                args: vec![],
-                ret,
-                type_args,
-            };
+            return self.failed_call(c, &slots);
         }
         // The expected result type is a lower-priority inference source, as in TS: it types
         // the arguments of slots no argument has fixed yet (`const y: i32 = id(1)` checks `1`
@@ -170,6 +170,20 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// A call whose arguments were reported: no arguments, the result with what is known.
+    fn failed_call(&mut self, c: &Callable, slots: &[Option<TyId>]) -> Checked {
+        let type_args: Vec<TyId> = slots
+            .iter()
+            .map(|s| s.unwrap_or(self.cx.ty.error))
+            .collect();
+        let ret = self.cx.subst(c.ret, &type_args);
+        Checked {
+            args: vec![],
+            ret,
+            type_args,
+        }
+    }
+
     /// The arguments of a call to a function with a rest parameter: those from the rest
     /// parameter's position on, spreads included, as one array literal (`f(1, ...xs)` passes
     /// `[1, ...xs]`), and the parameters a spread skips (see below). `None` when nothing needs
@@ -194,7 +208,7 @@ impl FnCx<'_, '_> {
                 from = k;
             } else {
                 self.cx.err(
-                    "a spread argument can only fill the rest parameter (`...xs: T[]`)",
+                    "a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)",
                     args[k].span,
                 );
             }
@@ -284,6 +298,11 @@ impl FnCx<'_, '_> {
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             let expected = self.cx.subst_known(p.ty, &known);
             let adapter = self.fewer_params_adapter(&args[i], expected);
+            // `xs.forEach(o.log)`: checked as the arrow it stands for.
+            let bound = match adapter {
+                None => self.method_value_arg(&args[i], expected),
+                Some(_) => None,
+            };
             let arrow = adapter.as_ref().or(as_arrow(&args[i]));
             // An arrow passed to the JS API (also where `cmp | null` is expected): what its
             // parameters and result are in user code (`closure`, `returns::returned`).
@@ -294,13 +313,15 @@ impl FnCx<'_, '_> {
                 }
                 _ => None,
             };
-            let h = match arrow {
-                Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.arrow_arg(a, expected, p.mode == PassMode::Owned)
+            let owned = p.mode == PassMode::Owned;
+            let h = match (bound, arrow) {
+                (Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
+                    self.arrow_arg(a, expected, owned)
                 }
                 // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
                 // a value of it, and wrapped.
-                _ => self.expr(
+                (None, _) => self.expr(
                     adapter.as_ref().unwrap_or(&args[i]),
                     Some(expected),
                     want_of(p.mode),

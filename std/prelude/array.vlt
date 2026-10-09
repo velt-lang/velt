@@ -530,9 +530,11 @@ extend<T> Array<T> {
 
   /**
    * `join` for element types without their own (string enums, literal unions, objects): each
-   * element as a template literal shows it (`${x}`; for objects that is the `console.log`
-   * form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
-   * arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
+   * element as JS's `String(x)` writes an array element (a class instance through its
+   * `toString()`, `[object Object]` for another object, `[object Map]` for a map). A struct
+   * with its own `toString()`, an `Error` or a `RegExp` element is a compile error: write
+   * `xs.map((x) => x.toString()).join(sep)`. Strings, numbers and bools have exact ones
+   * below; arrays of arrays and of nullable elements have JS's in array_nested.vlt.
    */
   join(sep: string = ","): string {
     let s = "";
@@ -540,9 +542,19 @@ extend<T> Array<T> {
       if (i > 0) {
         s += sep;
       }
-      s += `${this[i]}`;
+      // A one-element tuple is written as its element is written in an array (no allocation).
+      const one: [T] = [__intrinsic_share(this[i])];
+      s += `${one}`;
     }
     return s;
+  }
+
+  /**
+   * The elements joined with ",", each as JS's `String(x)` writes an array element: what
+   * `${xs}` writes (`[1, [2, 3], null].toString()` is `"1,2,3,"`).
+   */
+  toString(): string {
+    return `${this}`;
   }
 }
 

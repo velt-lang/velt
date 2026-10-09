@@ -59,8 +59,13 @@ impl<'a> Printer<'a> {
         self.assignment(key, ":", value)
     }
 
+    /// Was property name `key` written as a string literal (`"a-b"`)?
+    pub(super) fn quoted(&self, key: &Ident) -> bool {
+        slice(self.src, key.span).starts_with(['"', '\''])
+    }
+
     /// A property name as written: identifier, or string literal (in house quotes).
-    fn prop_key(&self, key: &Ident) -> Doc {
+    pub(super) fn prop_key(&self, key: &Ident) -> Doc {
         let raw = slice(self.src, key.span);
         if raw.starts_with(['"', '\'']) {
             text(string_literal(raw))

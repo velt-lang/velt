@@ -23,6 +23,7 @@ mod abi;
 mod adt;
 mod append;
 mod array;
+mod assign_target;
 mod async_fn;
 mod attempt;
 mod boxes;
@@ -46,7 +47,9 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod glue;
+mod hooks;
 mod intrinsics;
+mod js_string;
 mod json;
 mod keys;
 mod layout;
@@ -266,6 +269,9 @@ struct Cx<'h> {
     honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
+    /// Whether some class has a `toJSON(key)`, and memoized `json_needs_key` per type
+    /// (json/key.rs); `None` until first asked.
+    json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
 }
@@ -396,6 +402,9 @@ struct FnLower<'c, 'h> {
     pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
+    /// While binding a destructuring `const` of a place others may change (matching.rs
+    /// `let_pat`): bindings by reference take owned shares instead (pattern.rs).
+    stable_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
     transfer_args: bool,
     /// The next call lowered is spawned through a function value, vtable or interface: its

@@ -103,6 +103,9 @@ impl FnCx<'_, '_> {
         if self.record_args(obj.ty).is_some() {
             return self.record_call(obj, "__keyNames", &[], span);
         }
+        self.cx
+            .object_copies
+            .observe(obj.ty, span, crate::object_copies::Seen::Keys);
         // An interface value lists the fields of the class it holds (none can hold anything
         // else: see `iface_classes`).
         let (keys, classes) = match self.cx.ty.kind(obj.ty).clone() {
@@ -376,7 +379,12 @@ impl FnCx<'_, '_> {
                 optional: f.optional && !class,
                 presence: crate::anon::has_presence(&self.cx.ty, a.kind, f),
             });
-        Some(keys.collect())
+        // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
+        let keys: Vec<Key> = keys.collect();
+        let names: Vec<&str> = keys.iter().map(|k| k.name.as_str()).collect();
+        let order = crate::property_order::js_key_order(&names);
+        let mut keys: Vec<Option<Key>> = keys.into_iter().map(Some).collect();
+        Some(order.into_iter().filter_map(|i| keys[i].take()).collect())
     }
 
     /// Reports that `Object.keys` cannot list the keys of a `t`.

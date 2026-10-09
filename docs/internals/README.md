@@ -11,7 +11,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ velt_vir (monomorphize, layouts, drops, async state machines) ─▶ VIR
       ─▶ velt_opt (inline, constant folding, SROA, DCE, numrep, …)  [all of it in release builds]
       ─▶ velt_codegen_cl (Cranelift: debug builds, JIT) | velt_codegen_llvm (LLVM IR → clang)
-      ─▶ object file ─▶ velt_link (system linker) + velt_rt (runtime static library)
+      ─▶ object file ─▶ velt_link (bundled lld or system linker) + velt_rt (runtime static library)
 ```
 
 1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt:` std,
@@ -64,7 +64,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR,
    compiled by clang (`-O3`, or `VELT_LLVM_OPT`, for release builds; unoptimized for `--backend
    llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`.
-7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.
+7. **Link** (`velt_link`): the toolchain's bundled lld with a link kit for the target, else the
+   system linker (MSVC `link.exe`, or `cc`), with the runtime library ([Linking](linking.md)).
 
 The **runtime** (`velt_rt`) is a Rust static library: memory allocation (mimalloc), strings,
 formatting, JSON, a tokio-based multi-threaded executor for async code, and the I/O behind the
@@ -82,7 +83,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_opt` | VIR optimizer and interpreter |
 | `velt_codegen_cl` | Cranelift backend (objects and JIT, hot swap) |
 | `velt_codegen_llvm` | LLVM backend (textual IR, clang) |
-| `velt_link` | system linker driver, runtime discovery |
+| `velt_link` | linker driver (bundled lld + link kits, or the system linker), runtime discovery; `velt-kit` builds the kits |
 | `velt_rt` | native runtime |
 | `velt_rt_shared` | the same runtime built as a shared library, which debug builds link against |
 | `velt_rt_wasm`, `velt_rt_host` | WebAssembly runtime; host-side mirror for tests |

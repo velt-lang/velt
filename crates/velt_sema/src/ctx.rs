@@ -91,6 +91,8 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: HashSet<DefId>,
+    /// The adapter of each `toString` / `toJSON` method glue calls through one (`crate::hooks`).
+    pub hook_adapters: HashMap<DefId, DefId>,
     /// Types whose field defaults are checked (or being checked): checked up front, or on first
     /// use by a `new` or struct literal in a default checked before them.
     pub field_defaults_checked: HashSet<DefId>,
@@ -114,6 +116,9 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// For each item nested in a method (or constructor) of a class or struct: that type. Its
+    /// body is inside the type's body, for `private` and `#x` (TypeScript).
+    pub enclosing_class: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included
@@ -156,6 +161,9 @@ pub(crate) struct Ctx<'m> {
     pub borrow_pass_errors: bool,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+    /// Object values converted by copying their fields, and the field assignments that could
+    /// tell the copy from the original (`crate::object_copies`).
+    pub object_copies: crate::object_copies::Copies,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -215,6 +223,7 @@ impl<'m> Ctx<'m> {
             generic_overrides: vec![],
             display_params: vec![],
             defaults_checked: HashSet::new(),
+            hook_adapters: HashMap::new(),
             field_defaults_checked: HashSet::new(),
             closure_counts: HashMap::new(),
             fn_defs: vec![],
@@ -224,6 +233,7 @@ impl<'m> Ctx<'m> {
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            enclosing_class: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
@@ -242,6 +252,7 @@ impl<'m> Ctx<'m> {
             held_borrows_used: false,
             borrow_pass_errors: false,
             fresh_checks: vec![],
+            object_copies: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],
@@ -672,10 +683,11 @@ impl<'m> Ctx<'m> {
                         .fields
                         .iter()
                         .map(|f| {
+                            let name = display_key(&f.name);
                             if f.optional {
-                                format!("{}?: {}", f.name, self.display_in(f.declared, &bound))
+                                format!("{name}?: {}", self.display_in(f.declared, &bound))
                             } else {
-                                format!("{}: {}", f.name, self.display_in(f.ty, &bound))
+                                format!("{name}: {}", self.display_in(f.ty, &bound))
                             }
                         })
                         .collect();
@@ -715,5 +727,20 @@ impl<'m> Ctx<'m> {
         } else {
             format!("{}::{}", self.modules[module].path, name)
         }
+    }
+}
+
+/// A property name in a displayed object type, as TypeScript writes it: bare when it is an
+/// identifier, otherwise quoted (`{ "content-type": string }`).
+pub(crate) fn display_key(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if ident {
+        name.to_string()
+    } else {
+        format!("{name:?}")
     }
 }

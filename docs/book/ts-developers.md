@@ -75,9 +75,10 @@ accept; compiler messages and editors print `boolean` either way
 
 ## Strings
 
-- **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a
-  template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
-  `"Total: " + a + b` bugs can't happen.
+- `+` with a string and a number or boolean concatenates, as in JS: `"Total: " + 5` is
+  `"Total: 5"`, and `s += n` appends `n` written as `String(n)` writes it (`1e+21`, `NaN`, `0`
+  for `-0`). Other values (arrays, objects) are a compile error next to a string: use a
+  template literal, `` `Total: ${xs.length}` ``.
 - Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
   by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
   `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
@@ -103,26 +104,31 @@ console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
 *Why*: the `null` vs `undefined` bug class disappears. `JSON.parse` treats an absent key like
-`null`; only `JsonValue` tells them apart.
+`null`; only `JsonValue` tells them apart. What JS gives as `undefined` for a missing value is
+`null`, and prints as `null`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match,
+`s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
 
 ## Truthiness
 
-Conditions, `!`, `&&` and `||` take `bool` and nullable values. A nullable is true when it is
-not null, so `if (!user) return;` is a null check and narrows `user`. Numbers and strings are
-rejected:
+The same as in JavaScript: conditions, `!`, `&&` and `||` take values of any type, and `0`,
+`-0`, `NaN`, `""` and `null` are falsy (also `0` of `i64`, `u8` and the other integer types).
+`||` and `&&` return an operand, typed as TypeScript types them, and `if (!user) return;` is a
+null check that narrows `user`.
 
-```ts error
+```ts
 function main() {
   const count = 0;
-  const port: i64 | null = null;
-  if (count) {                       // error: write `count !== 0`
-    console.log(port || 8080);       // error: use `??` for a default
+  const name = "";
+  const port: number | null = null;
+  console.log(count || 10, name || "anon", port || 8080, port ?? 8080);   // 10 anon 8080 8080
+  if (!count && !name) {
+    console.log("both falsy");
   }
 }
 ```
 
-*Why*: `0`, `""` and `NaN` being false is the source of the `port || 8080` and
-`if (items.length)` class of bugs. Each error names the comparison to write.
+A condition on a number is one comparison in the compiled code, a condition on a string a
+length check.
 
 ## Equality
 
@@ -290,9 +296,9 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | TypeScript / JavaScript | Velt today | Coming |
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
-| `"5" + 1 === "51"` | compile error: use a template literal | — |
+| `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
 | `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
-| `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |
+| `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""` and `null` are falsy; `\|\|` and `&&` return an operand) | — |
 | `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
@@ -319,7 +325,7 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 | `export default` | named exports only | — |
 | `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit, returning `{ done: true }`); a done result has no `value` (unnarrowed, `r.value` is `T \| null`, so `g().next().value` works); `Iterator<T, E>` carries the error type `next()` throws; `for await` over `AsyncIterable`s, and over arrays of promises | — |
 | generators: `function*`, `yield`, `yield*`, `Generator<T, TReturn, TNext>` | the same, lazy, `Generator<T, E>` (`E`: what the body throws); TS's `Generator<T, void, unknown>` spelling means `Generator<T>`, and a real `TReturn` is an error; no `return value`, `next(value)` (so `yield` has no value) or `throw()`, each an error that says so; a `for...of` over a call allocates nothing; async generators (`AsyncGenerator<T, E>`) likewise, and `yield p` there awaits a promise `p` as in JS | — |
-| arrays, strings, `Map`s and `Set`s are `Iterable`; `a[Symbol.iterator]()` | the same: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds (`sum(xs: Iterable<number>)` takes `[1, 2, 3]`); `x[Symbol.iterator]()` returns an `Iterator<T>`, live for arrays as in JS; map and set iterators see the entries as of the call (JS's are live), and `m.keys()` / `values()` / `entries()` are arrays | — |
+| arrays, strings, `Map`s and `Set`s are `Iterable`; `a[Symbol.iterator]()` | the same: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds (`sum(xs: Iterable<number>)` takes `[1, 2, 3]`); `x[Symbol.iterator]()` returns an `Iterator<T>`, live for arrays as in JS; map and set iterators see the entries as of the call (JS's are live), and `m.keys()` / `values()` / `entries()` are arrays; `for...of` over a map variable or field (or its `keys()`, `values()`, `entries()`) and `forEach` are live, as in JS | — |
 | `IterableIterator<T>`, `IteratorObject<T>`, `AsyncIterableIterator<T>`, `IteratorResult<T, TReturn>` | the same interfaces (`[Symbol.iterator]()` returns `Iterator<T>`: no covariant returns); generators implement them, and such a value converts to an `Iterable<T>`. `IteratorResult<T, void>` is `IteratorResult<T>`; a real `TReturn` is an error | an `IterableIterator<T>` value converting to `Iterator<T>` (interface values don't convert to the interfaces they extend) |
 | spread, `Array.from`, array destructuring, `new Map` / `new Set` of any iterable (strings, `Map`s, `Set`s, generators) | the same: an iterable is iterated where it stands, destructuring takes only the values it needs and then closes the iterator, and over a direct generator call only the result is allocated | an array-typed spread source is evaluated before the literal's other elements (`[f(), ...g()]` with `g(): T[]` calls `g` first; the elements are still read in place); a nested pattern takes its values after the outer one has taken all of its own |
 | function expressions: `function* () {}`, `async function* () {}`, `function () {}` | generator expressions work, sharing the variables they use as in JS (no recursion through the expression's name); other function expressions are arrows | — |

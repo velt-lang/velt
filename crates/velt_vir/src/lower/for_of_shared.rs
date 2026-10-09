@@ -1,5 +1,6 @@
-//! `for…of` over an array other references may reach (semantics stage 2: a boxed array, or one
-//! reached through a counted object). The body may change the array through another reference,
+//! `for…of` over an array other references may reach (semantics stage 2: a boxed array, one
+//! reached through a counted object, or one in a variable held in a shared cell, which a closure
+//! the body calls may reassign). The body may change the array through another reference,
 //! so the loop works like JS's array iterator: it keeps its own reference to the array, re-reads
 //! the length every iteration and shares each element into the binding instead of pointing
 //! into the buffer (which `push` may move). A consuming loop over such an array cannot move the
@@ -17,7 +18,7 @@ impl FnLower<'_, '_> {
     /// Does `for…of` over `iter` need the shared-array loop?
     pub(super) fn iterates_shared(&mut self, iter: &hir::Expr) -> bool {
         let aty = self.sub(iter.ty);
-        self.cx.boxed(aty) || self.through_counted(iter, aty)
+        self.cx.boxed(aty) || self.through_counted(iter, aty) || self.in_shared_cell(iter)
     }
 
     /// The loop of the module docs (`consume`: the binding is owned, as in a consuming loop).

@@ -1,0 +1,16 @@
+text/html 2 true
+text/html 3 true
+{"content-type":"text/html","x-count":3,"plain":true}
+content-type,x-count,plain
+{ 'content-type': 'text/html', 'x-count': 3, plain: true }
+text/html true
+1 two false 1
+{"a-b":1,"c":"two","3d":false,"$x":0}
+{ 'a-b': 1, c: 'two', '3d': false, '$x': 0 }
+x1/it's
+{ 'data-id': 'x1', 'aria-label': "it's" }
+7
+4 false
+4
+4 true
+x false -1

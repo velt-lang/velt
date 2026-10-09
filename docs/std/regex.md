@@ -1,6 +1,7 @@
 # velt:regex
 
-`import { RegExp } from "velt:regex"`. JavaScript-flavoured regular expressions on Rust's `regex`
+`RegExp` is a global, as in Node, and so are regex literals (`/ab+c/gi`); `import { RegExp } from
+"velt:regex"` also works. JavaScript-flavoured regular expressions on Rust's `regex`
 engine. Matching is linear-time. Offsets (`index`, `end`, `from`) are UTF-16 code units, like
 every string position, so `s.slice(m.index, m.end)` is the match. There is no hidden
 `lastIndex`: `exec(s, from)` takes the start offset explicitly. A lone surrogate is not matched

@@ -1,5 +1,6 @@
 # Release: pushing a tag v<version> (the workspace version in Cargo.toml) builds the toolchain
-# for every supported platform, installs each archive with scripts/get-velt.* and smoke-tests it,
+# for every supported platform (bundling the lld from lld.yml), installs each archive with
+# scripts/get-velt.* and smoke-tests it, also on machines without a C toolchain (clean-machine),
 # publishes a GitHub release with the archives, SHA256SUMS and the installers, then installs the
 # published release on every platform. Running the workflow by hand (workflow_dispatch) builds and
 # tests the archives and keeps them as workflow artifacts without publishing anything.
@@ -43,8 +44,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
+  # The bundled linker, per target (cached: it is rebuilt only when scripts/build-lld.* change).
+  lld:
+    uses: ./.github/workflows/lld.yml
+
   build:
-    needs: version
+    needs: [version, lld]
     strategy:
       fail-fast: false
       matrix:
@@ -70,9 +75,20 @@ jobs:
       - name: build tools (Debian container)
         if: matrix.container
         run: |
+          # Debian 11 is past its support: deb.debian.org no longer has the security updates the
+          # image was built with (404). The image lists the matching snapshot.debian.org sources
+          # (commented out); use those.
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            [ -f "$f" ] || continue
+            sed -i 's|^deb http://deb.debian.org|# deb http://deb.debian.org|; s|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' "$f"
+          done
           apt-get update -q
-          apt-get install -y -q --no-install-recommends build-essential git curl ca-certificates
+          apt-get install -y -q --no-install-recommends build-essential git curl ca-certificates musl-tools
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lld-${{ matrix.target }}
+          path: ${{ runner.temp }}/lld
       - name: rust (pinned)
         shell: bash
         run: |
@@ -92,11 +108,13 @@ jobs:
 
       - name: package (Linux, macOS)
         if: runner.os != 'Windows'
-        run: scripts/package.sh
+        run: |
+          chmod +x "$RUNNER_TEMP/lld/lld"
+          scripts/package.sh --lld "$RUNNER_TEMP/lld/lld"
       - name: package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/package.ps1
+        run: pwsh -NoProfile -File scripts/package.ps1 -Lld "$env:RUNNER_TEMP/lld/lld.exe"
 
       - name: install the archive and smoke-test it (Linux, macOS)
         if: runner.os != 'Windows'
@@ -134,9 +152,196 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  # Every toolchain archive gets the hashes of all target packs (lib/targets/PACKS.sha256):
+  # `velt target add` checks a pack against them, so a pack substituted on the download path is
+  # refused even with a matching SHA256SUMS beside it. Each build job wrote only its own packs'.
+  pack-hashes:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: velt-*
+          path: dist
+          merge-multiple: true
+      - run: (cd dist && sha256sum velt-*-target-*.tar.gz) | tee PACKS.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-hashes
+          path: PACKS.sha256
+
+  finalize:
+    needs: [version, pack-hashes]
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - x86_64-pc-windows-msvc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: pack-hashes
+          path: hashes
+      - name: put PACKS.sha256 into the toolchain archive
+        run: |
+          name="velt-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "x/$name/lib/targets"
+          cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+          if [ -f "dist/$name.zip" ]; then
+            (cd x && zip -q "../dist/$name.zip" "$name/lib/targets/PACKS.sha256")
+          else
+            tar -xzf "dist/$name.tar.gz" -C x
+            cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+            tar -czf "dist/$name.tar.gz" -C x "$name"
+          fi
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          overwrite: true
+
+  # The archive on a machine without a C toolchain (#803): Debian slim (no build-essential), a
+  # Windows Server Core container (no Visual Studio, SDK or Visual C++ runtime), and macOS with
+  # the bundled linker forced (the runners' Xcode cannot be removed). scripts/smoke-clean.*.
+  clean-machine:
+    needs: [version, finalize]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: dist
+      - name: Debian slim (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tar -xzf dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz -C "$RUNNER_TEMP"
+          arch=${{ matrix.target }}; arch=${arch%%-*}
+          # The musl target is a target pack (velt target add), not part of the archive.
+          docker run --rm -v "$RUNNER_TEMP/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}:/velt" \
+            -v "$PWD:/repo:ro" debian:bookworm-slim bash -c "
+              /velt/bin/velt target add $arch-unknown-linux-musl \
+                --from /repo/dist/velt-${{ needs.version.outputs.version }}-target-$arch-unknown-linux-musl.tar.gz &&
+              bash /repo/scripts/smoke-clean.sh /velt/bin/velt $arch-unknown-linux-musl"
+      - name: bundled linker (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          tar -xzf dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz -C "$RUNNER_TEMP"
+          scripts/smoke-clean.sh "$RUNNER_TEMP/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}/bin/velt"
+      - name: Windows Server Core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Name = "velt-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          Expand-Archive "dist/$Name.zip" -DestinationPath $env:RUNNER_TEMP
+          # Some runner images leave the Docker service stopped.
+          if ((Get-Service docker -ErrorAction SilentlyContinue).Status -ne "Running") { Start-Service docker }
+          docker run --rm -v "$env:RUNNER_TEMP\${Name}:C:\velt" -v "${PWD}:C:\repo" `
+            mcr.microsoft.com/windows/servercore:ltsc2025 `
+            powershell -NoProfile -ExecutionPolicy Bypass -File C:\repo\scripts\smoke-clean.ps1 C:\velt\bin\velt.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # Cross-compiling (#856): on each OS, the toolchain with every other target's pack installed
+  # (velt target add --from) builds hello and http_hello for those targets; cross-run then runs
+  # them on each target's own machine. scripts/cross.sh.
+  cross-build:
+    needs: [version, finalize]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - host: aarch64-apple-darwin
+            os: macos-15
+          - host: x86_64-pc-windows-msvc
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: velt-*
+          path: dist
+          merge-multiple: true
+      - name: build for every other target
+        shell: bash
+        run: |
+          name="velt-${{ needs.version.outputs.version }}-${{ matrix.host }}"
+          if [ -f "dist/$name.zip" ]; then
+            pwsh -NoProfile -Command "Expand-Archive dist/$name.zip -DestinationPath '$RUNNER_TEMP'"
+            velt="$RUNNER_TEMP/$name/bin/velt.exe"
+          else
+            tar -xzf "dist/$name.tar.gz" -C "$RUNNER_TEMP"
+            velt="$RUNNER_TEMP/$name/bin/velt"
+          fi
+          scripts/cross.sh build "$velt" dist "$RUNNER_TEMP/cross/${{ matrix.host }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-${{ matrix.host }}
+          path: ${{ runner.temp }}/cross
+          if-no-files-found: error
+
+  cross-run:
+    needs: cross-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            targets: x86_64-unknown-linux-gnu x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-gnu aarch64-unknown-linux-musl
+          - os: macos-15
+            targets: aarch64-apple-darwin
+          - os: macos-15-intel
+            targets: x86_64-apple-darwin
+          - os: windows-2025
+            targets: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cross-*
+          path: ${{ runner.temp }}/cross
+          merge-multiple: true
+      - name: run what the other machines built
+        shell: bash
+        run: scripts/cross.sh run "$RUNNER_TEMP/cross" ${{ matrix.targets }}
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [version, build]
+    needs: [version, build, clean-machine, cross-run]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,8 +377,8 @@ jobs:
             echo "irm $base/get-velt.ps1 | iex"
             echo '```'
             echo
-            echo "Then run \`velt doctor\`. Velt needs the system linker: the Build Tools for Visual Studio on"
-            echo "Windows, \`build-essential\` on Linux, the Xcode command line tools on macOS"
+            echo "Then run \`velt doctor\`. The toolchain brings its own linker: no Visual Studio Build Tools,"
+            echo "Xcode or C compiler needed"
             echo "([Platforms and installation](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/tooling/platforms.md))."
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body

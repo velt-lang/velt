@@ -4,29 +4,81 @@
 
 - `const` bindings cannot be reassigned (``cannot assign twice to const `x` ``); `let`
   bindings can. Both are block-scoped. `let x: T;` may be assigned later.
+- `let x;` without a type takes its type from its first assignment, as in TypeScript (also one
+  inside a `try` or an `if`); later assignments must have that type. Reading it, updating it
+  (`x += 1`) or using it in a closure before that assignment is an error asking for a type
+  (TypeScript reads `undefined` there), as is a `let x;` that is never assigned.
+
+  ```ts
+  function parse(s: string): number {
+    let n;
+    try {
+      n = Number.parseInt(s, 10);
+    } catch (e) {
+      return -1;
+    }
+    return n;
+  }
+  console.log(parse("42")); // 42
+  ```
 - `const` only fixes the binding: modifying a `const` object or array is fine, as in JS.
 - `using` and `await using` declare a `const` that is disposed at the end of the block
   ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)).
 - There is no `var`.
 
-## Conditions: safe truthiness
+## Conditions: truthiness
 
 Conditions (`if`, `while`, `do … while`, `for`, `?:`) and the operands of `!`, `&&` and `||`
-accept `bool` and nullable values.
+test values of any type as JavaScript does.
 
-- A nullable is truthy when it is not `null`, and the test narrows it like `x !== null` does:
-  `if (!user) return;` leaves `user` non-null below, and `if (user && user.manager)` narrows
-  both. `bool | null` is truthy only when it is `true`.
-- Numbers, strings and enums are rejected in conditions and as operands of `!`, `&&` and `||`,
-  also as the payload of a nullable: `n: i64 | null` in `if (n)` would mix the null test with
-  JavaScript's falsy `0`, so it is an error. Write `count !== 0`, `name !== ""` or
-  `n !== null` (each error says which; editors offer it as a quick fix), and `??` for defaults
-  (`port || 8080` is an error with "use `??` for a default").
-- On nullable objects, `||` and `&&` return values like TypeScript: `a || b` is `a ?? b` (`T`
-  when `b` is a `T`), and `a && b` is `b` when `a` is not null (with `a` narrowed in `b`), else
-  `null` (type `B | null`: `user && user.name` is a `string | null`). When a `bool` is expected
-  (conditions, `const ok: bool = …`) or the left side is a `bool`, they are logical and give a
-  `bool`.
+- Falsy are `false`, `null`, `0` and `-0` (of `number` and of every integer type: `0` of `i64`,
+  `u8`, …), `NaN` and `""`. Everything else is truthy: `" "`, `"0"` and `"false"`, `Infinity`,
+  and every object, array and function (also an empty array).
+- A nullable is truthy when it is not `null` and its payload is truthy, and the test narrows it
+  like `x !== null` does: `if (!user) return;` leaves `user` non-null below, and
+  `if (user && user.manager)` narrows both. `if (name)` on a `string | null` makes `name` a
+  `string` (which may still be `""` in the `else` branch). `??` still replaces only `null`: for
+  `n: number | null` holding `0`, `n ?? 5` is `0` and `n || 5` is `5`.
+- An enum value is falsy when its member's value is `0` or `""`. A union is tested by the
+  member it holds.
+- `void` values are not conditions (``an expression of type `void` cannot be tested for
+  truthiness``), and neither are values of a generic type, whose test would depend on the type
+  argument.
+- A test is one comparison in the compiled code: `n != 0` on an integer (also on a `number` the
+  compiler stores as an integer), `x != 0 && x == x` on any other `number` (one compare once
+  optimized), `s.length != 0` on a string.
+- `||` and `&&` return an operand, as in JavaScript: `a || b` is `a` when `a` is truthy and
+  `b` otherwise; `a && b` is `b` when `a` is truthy and `a` otherwise. `b` runs only when it is
+  the result. The type is TypeScript's: when both sides have the same type, that type
+  (`count || 8080` is a `number`, `name || "anon"` a `string`), else their union
+  (`count || "none"` is a `number | string`). `||` drops `null` from the left side's type
+  (`(n: number | null) || 0` is a `number`). On a nullable object, `a || b` is `a ?? b` and
+  `a && b` is `b` or `null` (type `B | null`: `user && user.name` is a `string | null`). When a
+  `boolean` is expected (conditions, `const ok: boolean = …`) or both sides are `boolean`s,
+  they give a `boolean`.
+- `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
+
+```ts
+function label(count: number, name: string | null): string {
+  if (!count) {
+    return "none";
+  }
+  if (name) {
+    return `${count} for ${name}`;    // name is a string here
+  }
+  return `${count}`;
+}
+
+function main() {
+  const port = 0;
+  const retries: i64 = 3;
+  console.log(port || 8080, retries && retries - 1);   // 8080 2
+  console.log(label(0, "ann"), label(2, ""), label(2, "ann"));   // none 2 2 for ann
+  const pairs = [[1, 2], [0, 5], [1, 1]];
+  pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  console.log(JSON.stringify(pairs));  // [[0,5],[1,1],[1,2]]
+}
+```
 
 ## No mutable module state
 
@@ -71,7 +123,7 @@ function main() {
 let requestCount = 0;                   // error: mutable module-level state is not allowed
 
 function main() {
-  if (requestCount) {                   // error: numbers are not conditions (`requestCount !== 0`)
+  if (requestCount) {
     console.log("never");
   }
 }

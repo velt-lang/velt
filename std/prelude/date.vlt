@@ -23,8 +23,7 @@ const MAX_TIME: f64 = 8640000000000000.0;
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
  * 1970-01-01T00:00:00Z, NaN for an invalid date, with JS's conventions (months 0-11, local-time
- * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code. Unlike JS, the
- * setters currently turn a year of 0-99 into 1900-1999 (#674).
+ * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code.
  */
 export class Date implements Comparable<Date> {
   private t: f64;
@@ -32,7 +31,8 @@ export class Date implements Comparable<Date> {
   /**
    * `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
    * (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
-   * seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+   * seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS; a year of 0-99
+   * means 1900-1999.
    */
   constructor(
     value: number | string | Date | null = null,
@@ -45,7 +45,7 @@ export class Date implements Comparable<Date> {
   ) {
     if (month != null) {
       const y = typeof value === "number" ? value : 0.0 / 0.0;
-      this.t = fromFields(false, [y, month, day, hours, minutes, seconds, ms]);
+      this.t = fromFields(false, [fullYear(y), month, day, hours, minutes, seconds, ms]);
     } else if (value == null) {
       this.t = velt_rt_date_now() as f64;
     } else if (typeof value === "number") {
@@ -79,7 +79,10 @@ export class Date implements Comparable<Date> {
     return 0.0 / 0.0;
   }
 
-  /** The epoch time of UTC fields (month 0-11), rolling over like JS. */
+  /**
+   * The epoch time of UTC fields (month 0-11), rolling over like JS; a year of 0-99 means
+   * 1900-1999.
+   */
   static UTC(
     year: number,
     month: number = 0,
@@ -89,7 +92,7 @@ export class Date implements Comparable<Date> {
     seconds: number = 0,
     ms: number = 0,
   ): number {
-    return fromFields(true, [year, month, day, hours, minutes, seconds, ms]);
+    return fromFields(true, [fullYear(year), month, day, hours, minutes, seconds, ms]);
   }
 
   /**
@@ -217,8 +220,7 @@ export class Date implements Comparable<Date> {
 
   /**
    * Sets the year of the Date object using local time.
-   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setFullYear(50)` gives
-   * 1950.
+   * The year is taken as given: `setFullYear(50)` is the year 50.
    * @param year - A numeric value for the year.
    * @param month - A zero-based numeric value for the month (0 for January, 11 for December).
    * @param day - A numeric value equal to the day of the month.
@@ -298,8 +300,7 @@ export class Date implements Comparable<Date> {
 
   /**
    * Sets the year value in the Date object using Universal Coordinated Time (UTC).
-   * Unlike JS, a `year` of 0-99 currently becomes 1900-1999 (#674): `setUTCFullYear(50)` gives
-   * 1950.
+   * The year is taken as given: `setUTCFullYear(50)` is the year 50.
    * @param year - A numeric value equal to the year.
    * @param month - A numeric value equal to the month. The value for January is 0, and other month
    * values follow consecutively.
@@ -388,7 +389,7 @@ export class Date implements Comparable<Date> {
 
   /**
    * The ISO string, or null for an invalid date: what JS's `JSON.stringify` writes for a date.
-   * Velt's `JSON.stringify` does not take a `Date` (it has no JSON form): call this first.
+   * `JSON.stringify` writes a date (and a subclass of `Date`) as this, as JS does.
    */
   toJSON(): string | null {
     return this.t != this.t ? null : isoString(this.t as i64, 0, true);
@@ -511,7 +512,7 @@ function timeClip(t: f64): f64 {
 }
 
 // The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
-// or local; NaN if one is not finite. Years 0-99 mean 1900-1999, as in JS.
+// or local; NaN if one is not finite. The year is taken as given (see `fullYear`).
 function fromFields(utc: bool, fields: f64[]): f64 {
   const n: i64[] = [];
   for (const f of fields) {
@@ -520,9 +521,15 @@ function fromFields(utc: bool, fields: f64[]): f64 {
     }
     n.push(Math.trunc(f) as i64);
   }
-  const year = n[0] >= 0 && n[0] <= 99 ? n[0] + 1900 : n[0];
-  const t = epochMsOf(year, n[1] + 1, n[2], n[3], n[4], n[5], n[6]);
+  const t = epochMsOf(n[0], n[1] + 1, n[2], n[3], n[4], n[5], n[6]);
   return timeClip((utc ? t : localToUtc(t)) as f64);
+}
+
+// JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
+// it; the setters take the year as given.
+function fullYear(y: f64): f64 {
+  const whole = Math.trunc(y);
+  return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
 }
 
 // Minutes added to UTC to get local time at epoch time `t`.

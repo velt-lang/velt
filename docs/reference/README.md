@@ -9,7 +9,7 @@ native code with Rust-level performance and no garbage collector. Three rules sh
 decision:
 
 - adopt TypeScript's best parts, never JavaScript's bug sources (implicit coercions,
-  `undefined`, loose truthiness, floating promises, …);
+  `undefined`, floating promises, …);
 - one way of doing things;
 - valid TypeScript runs as it does in Node, but TypeScript is the starting point, not the
   limit: Velt is a native backend language and adds its own opt-in features wherever they make
@@ -29,7 +29,7 @@ decision:
 1. [Lexical structure](lexical.md) — programs, comments, literals, keywords, operators
 2. [Types](types.md) — numbers, strings, equality, `null`, literal types, unions, discriminated
    unions, intersection, branded and indexed access types, enums, objects, arrays, tuples, maps
-3. [Variables and conditions](variables.md) — `const`/`let`, safe truthiness, module state
+3. [Variables and conditions](variables.md) — `const`/`let`, truthiness, module state
 4. [Functions and closures](functions.md) — parameters, generics, arrows, captures
 5. [Classes, structs, interfaces and generics](classes.md) — members, inheritance, dispatch,
    `extend`, `Comparable`

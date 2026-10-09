@@ -123,7 +123,7 @@ pub(crate) fn build_unit(
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string().replace('\\', "/"))
         .unwrap_or_default();
-    let line_string = |s: &str| LineString::String(s.as_bytes().to_vec());
+    let line_string = |s: &str| LineString::String(dwarf_str(s).into_bytes());
     let (main_name, _) = file_and_directory(files.first().map_or("<velt>", |f| f), &cwd);
     let mut program = LineProgram::new(
         ENCODING,
@@ -181,8 +181,8 @@ pub(crate) fn build_unit(
     let producer = dwarf.strings.add("velt (cranelift)");
     let name = dwarf
         .strings
-        .add(files.first().map_or("<velt>", |f| f.as_str()));
-    let comp_dir = dwarf.strings.add(cwd.as_str());
+        .add(dwarf_str(files.first().map_or("<velt>", |f| f.as_str())));
+    let comp_dir = dwarf.strings.add(dwarf_str(&cwd));
     let root = dwarf.unit.root();
     let cu = dwarf.unit.get_mut(root);
     cu.set(gimli::DW_AT_producer, AttributeValue::StringRef(producer));
@@ -199,8 +199,8 @@ pub(crate) fn build_unit(
     cu.set(gimli::DW_AT_ranges, AttributeValue::RangeListRef(ranges));
 
     for (i, f) in functions.iter().enumerate() {
-        let name = dwarf.strings.add(f.name.as_str());
-        let linkage_name = dwarf.strings.add(f.symbol.as_str());
+        let name = dwarf.strings.add(dwarf_str(&f.name));
+        let linkage_name = dwarf.strings.add(dwarf_str(&f.symbol));
         let sub = dwarf.unit.add(root, gimli::DW_TAG_subprogram);
         let sub = dwarf.unit.get_mut(sub);
         sub.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
@@ -262,5 +262,20 @@ mod tests {
             file_and_directory("examples/foo.vlt", "/w"),
             ("examples/foo.vlt".into(), "/w".into())
         );
+    }
+}
+
+/// `s` as a DWARF string, which is NUL-terminated: a NUL inside it (a quoted field name such as
+/// `"a\u0000b"` that ends up in a function's name) is written `\0`.
+fn dwarf_str(s: &str) -> String {
+    s.replace('\0', "\\0")
+}
+
+#[cfg(test)]
+mod dwarf_str_tests {
+    #[test]
+    fn a_nul_is_escaped() {
+        assert_eq!(super::dwarf_str("a\0b"), "a\\0b");
+        assert_eq!(super::dwarf_str("plain"), "plain");
     }
 }

@@ -7,7 +7,8 @@
   [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
   (optionally labeled: `outer: for (…)` … `continue outer;`), `return`, blocks, and the
   ternary `?:`. A body without braces (`if (c) return x;`) is a one-statement block.
-- Conditions take `bool` or nullable values ([safe truthiness](variables.md#conditions-safe-truthiness)).
+- Conditions take values of any type and test them as JavaScript does: `0`, `NaN`, `""` and
+  `null` are falsy ([truthiness](variables.md#conditions-truthiness)).
 
 ## `for...of`
 
@@ -293,9 +294,11 @@ block scope.
 - **Case values**: literals (numbers, also negative ones; strings; bools), `null`, enum members,
   or any expression that `===` can compare with the discriminant (and compared like it: a
   `string | null` case value on a `string` discriminant, or the reverse; a `string` constant on a
-  union of string literals; a `string` on a discriminant `s.kind` or on `typeof x`). A local of a
-  literal type (`const y: "y" = "y"`) acts like the literal: it narrows and counts toward
-  covering the members. A literal that is not a possible value (`case "square":` when `s.kind`
+  union of string literals; a `string` on a discriminant `s.kind` or on `typeof x`). A constant
+  of a literal type acts like the literal: it narrows and counts toward covering the members.
+  As in TypeScript, that is a `const` (local or module-level) initialized with a literal and
+  without a type annotation (`const A = "a"`), or a local whose type is a literal type
+  (`const y: "y" = "y"`). A literal that is not a possible value (`case "square":` when `s.kind`
   is `"circle" | "rect"`) is an error, as in TypeScript. A value may appear in several cases:
   the first one wins.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
