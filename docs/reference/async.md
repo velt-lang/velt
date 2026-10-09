@@ -83,7 +83,12 @@ Promises behave like JavaScript's, at Rust's cost:
   after `spawn`, so the task would get a copy, …"), and so is passing one an object still
   holds (`spawn(serve(this.conn))`: "`this.conn` stays where it is held, …"); pass the last
   reference, give the class a `clone()`, or share it with `shared(new Mutex(conn))` (a class
-  is shared behind a [`Mutex`](#thread-safety)). When another reference is only found at run time
+  is shared behind a [`Mutex`](#thread-safety)). The same holds for a value sent on a
+  channel (`ch.send(r)`, `ch.trySend(r)`, or a function that passes its parameter on to one:
+  "`r` is still used after `send`, so the receiving task would get a copy, …"), and for such
+  a value inside an object, array or tuple literal built for the task or the channel
+  (`ch.send({ conns })`). A function that sends its parameter only on some paths is checked
+  as if it always sent it, like a `spawn` inside an `if`. When another reference is only found at run time
   (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
   for another thread …``.
 
