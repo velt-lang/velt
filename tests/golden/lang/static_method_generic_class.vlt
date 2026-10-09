@@ -1,0 +1,19 @@
+// A static method of a generic class is called without type arguments: statics can't use the
+// class's type parameters in TypeScript, so there is nothing to infer.
+class Box<T> {
+  v: T;
+  constructor(v: T) { this.v = v; }
+  static wrap(n: number): number { return n * 2; }
+  static label(): string { return "Box"; }
+  static pair<U>(a: U, b: U): U[] { return [a, b]; }
+  get(): T { return this.v; }
+}
+class Pair<K, V> {
+  k: K;
+  v: V;
+  constructor(k: K, v: V) { this.k = k; this.v = v; }
+  static describe(s: string): string { return "Pair of " + s; }
+}
+class StrBox extends Box<string> {}
+console.log(Box.wrap(4), Box.label(), Box.pair("a", "b"));
+console.log(Pair.describe("two"), StrBox.wrap(5), new Box(1).get());

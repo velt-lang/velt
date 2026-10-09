@@ -138,7 +138,9 @@ hidden classes and no runtime shape checks.
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
   body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
   statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
-  nearest first.
+  nearest first. A static method of a generic class is called without type arguments
+  (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
+  the static's signature doesn't use (in TypeScript statics can't use them) needs no inference.
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`

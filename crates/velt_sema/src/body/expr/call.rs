@@ -390,9 +390,10 @@ impl FnCx<'_, '_> {
             .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
         let private_to = self.fn_private_to(m.def);
         self.check_private(private_to, &prop.name, prop.span);
-        let c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name), span);
+        let mut c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;
+        self.default_unused_owner_slots(&mut c, owner_generics);
         let mut slots = vec![None; n];
         for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
             *slot = Some(a);
@@ -406,6 +407,24 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// The class's type parameters that a static method's signature doesn't use (always the
+    /// case in TypeScript, where statics can't use them) default to `void`, so `Box.wrap(4)`
+    /// needs no type arguments. A parameter with a bound keeps being inferred.
+    fn default_unused_owner_slots(&mut self, c: &mut Callable, owner_generics: usize) {
+        let mut used = vec![];
+        for t in c.params.iter().map(|p| p.ty).chain([c.ret]) {
+            crate::types::collect_params(&self.cx.ty, t, &mut used);
+        }
+        let n = c.slot_names.len();
+        for i in 0..owner_generics {
+            let unbounded = c.bounds.get(i).is_none_or(|b| b.is_empty());
+            if unbounded && !used.contains(&(i as u32)) {
+                c.defaults.resize(n, None);
+                c.defaults[i].get_or_insert(self.cx.ty.unit);
+            }
+        }
     }
 
     /// The nearest base class of class `d` declaring a static method `name`: that method, the
