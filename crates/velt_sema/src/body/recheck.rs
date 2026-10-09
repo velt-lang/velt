@@ -193,8 +193,16 @@ impl Mark {
         );
         let copies = &mut cx.object_copies;
         let start = m.object_copies;
-        keep_ranges(&mut copies.copies, start[0], &ranges(|l| l.object_copies[0]));
-        keep_ranges(&mut copies.writes, start[1], &ranges(|l| l.object_copies[1]));
+        keep_ranges(
+            &mut copies.copies,
+            start[0],
+            &ranges(|l| l.object_copies[0]),
+        );
+        keep_ranges(
+            &mut copies.writes,
+            start[1],
+            &ranges(|l| l.object_copies[1]),
+        );
         keep_ranges(&mut copies.seen, start[2], &ranges(|l| l.object_copies[2]));
         keep_ranges(
             &mut cx.jsx_adapters,
