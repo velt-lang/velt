@@ -1,0 +1,26 @@
+// `c["v"] = x` with a constant key calls the setter, as `c.v = x` does: plain, compound and
+// update assignments, and an assignment used as a value.
+
+class C {
+  private _v = 0;
+  writes = 0;
+  get v(): number {
+    return this._v;
+  }
+  set v(x: number) {
+    this.writes++;
+    this._v = x;
+  }
+}
+
+function main() {
+  const c = new C();
+  c["v"] = 5;
+  console.log(c.v, c.writes);
+  c["v"] += 2;
+  console.log(c["v"], c.writes);
+  c["v"]++;
+  console.log(c.v, c.writes);
+  const r = (c["v"] = 10);
+  console.log(r, c.writes);
+}
