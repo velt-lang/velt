@@ -21,7 +21,7 @@ on:
       suite:
         description: Which benchmarks to run.
         type: choice
-        options: [jsx, web, both]
+        options: [jsx, web, both, nightly]
         default: jsx
       ref:
         description: The branch, tag or commit to measure.
@@ -44,7 +44,7 @@ env:
 
 jobs:
   jsx:
-    if: (inputs.suite || 'jsx') != 'web'
+    if: (inputs.suite || 'jsx') != 'web' && inputs.suite != 'nightly'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     steps:
@@ -164,7 +164,7 @@ jobs:
           if-no-files-found: ignore
 
   web:
-    if: (inputs.suite || 'jsx') != 'jsx'
+    if: (inputs.suite || 'jsx') != 'jsx' && inputs.suite != 'nightly'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     # The bench/web/db settings (db.sh) are applied after seeding, with a restart: a service
@@ -271,3 +271,56 @@ jobs:
           name: bench-web-arm64
           path: ${{ runner.temp }}/bench-web
           if-no-files-found: ignore
+
+  # Scratch (not for merging): bench/nightly.sh (this workflow's copy) for `base`'s velt, then for
+  # `ref`'s with the base's counts as the baseline; NIGHTLY_EXTRA_DIRS=typical adds bench/typical.
+  nightly:
+    if: inputs.suite == 'nightly'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: actions/checkout@v4
+        with:
+          path: .bench-arm
+          sparse-checkout: |
+            bench/nightly.sh
+            .github/actions/setup
+          sparse-checkout-cone-mode: false
+      - run: cp .bench-arm/bench/nightly.sh bench/nightly.sh
+      - uses: ./.bench-arm/.github/actions/setup
+        with:
+          tools: "false"
+      - name: valgrind and clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q valgrind clang
+          echo "VELT_CLANG=$(command -v clang)" >> "$GITHUB_ENV"
+      - name: build velt (release)
+        run: cargo build --release -q -p veltc -p velt_rt
+      - name: build the base's velt (release)
+        run: |
+          git fetch -q --depth 1 origin "$BASE_REF"
+          mkdir .base
+          git archive FETCH_HEAD | tar -x -C .base
+          echo "BASE_SHA=$(git rev-parse --short FETCH_HEAD)" >> "$GITHUB_ENV"
+          cd .base
+          rustup toolchain install
+          cargo build --release -q -p veltc -p velt_rt
+      - name: bench/nightly.sh, base then ref
+        env:
+          NIGHTLY_EXTRA_DIRS: typical
+        run: |
+          out="$RUNNER_TEMP/nightly"
+          mkdir -p "$out"
+          echo "ref=$REF $(git rev-parse --short HEAD) base=$BASE_REF $BASE_SHA" > "$out/info.txt"
+          bench/nightly.sh --velt "$PWD/.base/target/release/velt" --out "$out/base.tsv" > "$out/base.md"
+          bench/nightly.sh --velt "$PWD/target/release/velt" --baseline "$out/base.tsv" --out "$out/ref.tsv" | tee "$out/ab.md" || true
+          cat "$out/info.txt" "$out/ab.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-ab
+          path: ${{ runner.temp }}/nightly
