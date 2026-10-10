@@ -24,7 +24,6 @@
 //! - `x++`/`x--` → `CompoundAssign` (+ value read for postfix via a temp `Let`).
 //! - Ternary `c ? a : b` → `ExprKind::If`.
 //! - Implicit `return` of `Unit` at end of `void` functions is NOT inserted; lowering handles it.
-
 //!
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
@@ -102,7 +101,6 @@ pub enum TyKind {
     Never,
     /// Placeholder after a reported type error; lowering never sees it (check fails first).
     Error,
-
     // M2+ draft
     /// Instance of a struct/class/enum (`DefId` points at `Def::Adt`/`Def::Enum`) with type args.
     Adt(DefId, Vec<TyId>),
@@ -132,8 +130,7 @@ pub enum TyKind {
     /// Literal type (`"circle"`, `42`, `true`; see hir_encodings.md "Literal types"): its only
     /// value is `LitValue`. Zero-sized: a value carries no bits (like `Unit`).
     Literal(LitValue),
-    /// `symbol`: a pointer to a symbol record (rt_abi.md "Symbols"), compared by identity.
-    /// Copy; nothing to drop (records live as long as the program).
+    /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
 }
 
