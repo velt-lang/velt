@@ -67,6 +67,11 @@ async function forAwait() {
   const ns: (() => number)[] = [];
   for await (let n of nums()) { ns.push(() => { n *= 10; return n; }); n += 1; }
   console.log(ns.map((f) => f()).join(","), ns.map((f) => f()).join(","));
+}
+
+// Its own function: with the generator loop above in the same function, a wasm32 release build
+// gives wrong output (the same with a plain `let` in the loop body, on main too; #963).
+async function forAwaitPromises() {
   const ps: (() => string)[] = [];
   for await (let p of [Promise.resolve("x"), Promise.resolve("y")]) ps.push(() => { p = p.toUpperCase() + p; return p; });
   console.log(ps.map((f) => f()).join(","), ps.map((f) => f()).join(","));
@@ -99,5 +104,6 @@ async function main() {
   await destructured();
   await mapsAndSets();
   await forAwait();
+  await forAwaitPromises();
   await nested();
 }
