@@ -39,7 +39,7 @@ libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 # velt dev: the job object that ends programs with the supervisor, and the Ctrl-C handler.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading"] }
 
 [dev-dependencies]
 lsp-server = "0.10.0"
