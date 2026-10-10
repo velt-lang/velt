@@ -187,7 +187,7 @@ fn with_args(name: &str, args: &str) -> String {
     }
 }
 
-fn int_key(i: IntTy) -> &'static str {
+pub(super) fn int_key(i: IntTy) -> &'static str {
     match i {
         IntTy::I8 => "i8",
         IntTy::I16 => "i16",

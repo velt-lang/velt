@@ -160,6 +160,9 @@ pub struct LowerOptions<'a> {
     /// (`velt_rt_cell_*`, rt_abi.md "Counted objects"), which aborts when two tasks use one
     /// cell (#916). Off, the generated code is unchanged.
     pub cell_checks: bool,
+    /// Describe source variables for debuggers (`Program::debug_types`, `LocalDecl::debug`;
+    /// vir/debug.rs). Needs `source_map`. Off, the program is the same without them.
+    pub debug_info: bool,
 }
 
 /// One native library to initialize before `main` runs.

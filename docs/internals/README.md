@@ -129,6 +129,8 @@ Decisions and their rationale, including what is still planned:
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
+- [Variables in the debugger](design/debug-variables.md): describing source variables in VIR,
+  their DWARF in debug builds, and the LLDB formatters (#958).
 - [TSX for server-side rendering](design/tsx.md): the JSX support, and the common subset of
   TypeScript and Velt that `velt check --ts-compat` lints.
 - [Typed causes of render errors](design/jsx-render-errors.md): `RenderError.cause` for a

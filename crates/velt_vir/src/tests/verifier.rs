@@ -196,3 +196,36 @@ fn verify_checks_loop_carried_reads() {
     };
     assert!(at("bb2") && at("bb3"), "{errs:?}");
 }
+
+#[test]
+fn verify_rejects_dangling_debug_descriptions() {
+    let described = |ty: DebugTyId| LocalDebug {
+        decl: SrcLoc {
+            file: 0,
+            line: 1,
+            col: 1,
+        },
+        ty,
+        by_ref: false,
+        param: false,
+    };
+    let mut p = base_program();
+    p.files.push("main.vlt".into());
+    p.funcs[0].locals[0].debug = Some(described(DebugTyId(3)));
+    expect_err(&p, "unknown debug type #3");
+
+    let mut p = base_program();
+    p.files.push("main.vlt".into());
+    p.debug_types.push(DebugTy {
+        name: "Point".into(),
+        kind: DebugKind::Struct {
+            agg: STR_AGG,
+            fields: vec![DebugField {
+                name: "x".into(),
+                index: 7,
+                ty: DebugTyId(0),
+            }],
+        },
+    });
+    expect_err(&p, "bad field `x` of agg#0");
+}

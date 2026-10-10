@@ -43,6 +43,7 @@ impl<'h> Cx<'h> {
             shared_envs: HashMap::new(),
             lay: Layouts::default(),
             locs: None,
+            debug: None,
             tracked: HashMap::new(),
             str_objects: HashMap::new(),
             boxing,
@@ -79,6 +80,7 @@ impl<'h> Cx<'h> {
             externs: self.externs,
             statics: self.statics,
             files: self.locs.map(|m| m.files).unwrap_or_default(),
+            debug_types: self.debug.map(|d| d.types).unwrap_or_default(),
         }
     }
 

@@ -172,6 +172,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let abi = lw.cx.ret_abi(ret, lw.throws);
         lw.lower_body(f);
+        lw.describe_locals(f, f.params.len());
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
         if let Some(at) = caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.

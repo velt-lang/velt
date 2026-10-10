@@ -355,6 +355,8 @@ impl Supervisor {
         let output = versions.next_output();
         opts.output = Some(output.clone());
         opts.emit = Emit::Exe;
+        // `velt dev --exe` builds what a debugger attaches to.
+        opts.debug_vars = true;
         match driver::build(sess, &opts) {
             Ok(Artifact::Executable(exe)) => Ok(Launch {
                 program: vpm::relpath::absolute(&exe),
