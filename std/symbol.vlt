@@ -34,13 +34,21 @@ export class SymbolConstructor {
   /** The method `await using` calls to dispose of a value. */
   static readonly asyncDispose: symbol = __intrinsic_symbol_static(0, "Symbol.asyncDispose", true);
   /** The method `for await` calls to get an async iterator. */
-  static readonly asyncIterator: symbol = __intrinsic_symbol_static(1, "Symbol.asyncIterator", true);
+  static readonly asyncIterator: symbol = __intrinsic_symbol_static(
+    1,
+    "Symbol.asyncIterator",
+    true,
+  );
   /** The method `using` calls to dispose of a value. */
   static readonly dispose: symbol = __intrinsic_symbol_static(2, "Symbol.dispose", true);
   /** The method `instanceof` consults in JavaScript. */
   static readonly hasInstance: symbol = __intrinsic_symbol_static(3, "Symbol.hasInstance", true);
   /** Whether `Array.prototype.concat` flattens an object in JavaScript. */
-  static readonly isConcatSpreadable: symbol = __intrinsic_symbol_static(4, "Symbol.isConcatSpreadable", true);
+  static readonly isConcatSpreadable: symbol = __intrinsic_symbol_static(
+    4,
+    "Symbol.isConcatSpreadable",
+    true,
+  );
   /** The method `for...of` calls to get an iterator. */
   static readonly iterator: symbol = __intrinsic_symbol_static(5, "Symbol.iterator", true);
   /** The method `String.prototype.match` calls in JavaScript. */
