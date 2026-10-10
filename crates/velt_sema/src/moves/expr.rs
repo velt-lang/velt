@@ -284,6 +284,13 @@ impl Moves<'_> {
             // has its own state: a variable it assigns lives in a cell so that the closure's
             // generators (or calls) and this function see one value.
             let by_value = matches!(c.mode, PassMode::Owned | PassMode::Copy);
+            // A variable this closure captured, assigned by an escaping closure created here
+            // (#904): the assignment must reach the variable itself, which every call of this
+            // closure and the function that declared it see, so it lives in a cell all the way up
+            // (`crate::ownership::cells`).
+            if escaping && by_value && writes(&c) && self.own_captures.contains(&c.outer) {
+                self.nested_writes(c.outer, span);
+            }
             if let (true, true, Some(&generator)) = (escaping, by_value, self.generators.get(&d)) {
                 if writes(&c) {
                     self.generator_writes(c.outer, span, generator);

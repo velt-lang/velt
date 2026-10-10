@@ -1,0 +1,342 @@
+// check: no leaks
+// A closure created inside another closure assigns a variable the outer closure captured
+// (#904): the assignment reaches the variable itself, as in JavaScript, whether the inner
+// closure is called right away or stored, at any depth, and for strings, numbers and objects.
+class Box {
+  v: number;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+class Recorder {
+  last = "";
+  run(v: string) {
+    const g = () => {
+      this.last = v;
+    };
+    g();
+  }
+  later(v: string) {
+    const g = () => {
+      const h = () => {
+        this.last = v;
+      };
+      h();
+    };
+    return g;
+  }
+}
+
+function called() {
+  let last = "";
+  const f = (v: string) => {
+    const g = () => {
+      last = v;
+    };
+    g();
+  };
+  f("y");
+  console.log(last);
+  let n = 0;
+  const inc = () => {
+    const g = () => {
+      n++;
+    };
+    g();
+    g();
+  };
+  inc();
+  console.log(n);
+  let m = 1;
+  const add = (k: number) => {
+    const g = () => {
+      m += k;
+    };
+    g();
+  };
+  add(5);
+  console.log(m);
+  let p = new Box(1);
+  const swap = () => {
+    const g = () => {
+      p = new Box(2);
+    };
+    g();
+  };
+  swap();
+  console.log(p.v);
+}
+
+function deep() {
+  let s = "a";
+  const f = () => {
+    const g = () => {
+      const h = () => {
+        s = s + "b";
+      };
+      h();
+    };
+    g();
+  };
+  f();
+  f();
+  console.log(s);
+  const mk = () => () => () => {
+    s = s + "z";
+    return s;
+  };
+  const k1 = mk()();
+  const k2 = mk()();
+  console.log(k1(), k2(), k1());
+  console.log(s);
+}
+
+function stored() {
+  let s = 0;
+  const f = () => {
+    const g = () => {
+      s = s + 1;
+    };
+    return g;
+  };
+  const k = f();
+  k();
+  k();
+  console.log(s);
+  let t = "";
+  const f2 = () => {
+    const g = () => {
+      t = t + "x";
+    };
+    return g;
+  };
+  const k2 = f2();
+  k2();
+  k2();
+  console.log(t);
+  let o = new Box(1);
+  const f3 = () => {
+    const g = () => {
+      o = new Box(o.v + 10);
+    };
+    return g;
+  };
+  const k3 = f3();
+  k3();
+  k3();
+  console.log(o.v);
+  let u = 0;
+  const fns: (() => void)[] = [];
+  const push = () => {
+    fns.push(() => {
+      u += 10;
+    });
+  };
+  push();
+  push();
+  for (const fn of fns) fn();
+  console.log(u);
+}
+
+function seenByOuter() {
+  let n = 0;
+  const f = () => {
+    const g = () => {
+      n++;
+    };
+    const fs: (() => void)[] = [g];
+    for (const h of fs) h();
+    console.log("in f", n);
+  };
+  f();
+  f();
+  let x = 0;
+  const f2 = () => {
+    const g = () => {
+      x++;
+    };
+    g();
+  };
+  f2();
+  f2();
+  console.log(x);
+}
+
+function loops() {
+  let s = 0;
+  const f = () => {
+    for (let i = 0; i < 3; i++) {
+      const g = () => {
+        s += i;
+      };
+      g();
+    }
+  };
+  f();
+  console.log(s);
+  let u = 0;
+  const f2 = () => {
+    [1, 2, 3].forEach((x) => {
+      u += x;
+    });
+  };
+  f2();
+  console.log(u);
+  const out: (() => number)[] = [];
+  let shared = 0;
+  for (let i = 0; i < 3; i++) {
+    const f3 = () => {
+      const g = () => {
+        shared += i;
+        return shared;
+      };
+      return g;
+    };
+    out.push(f3());
+  }
+  for (const k of out) console.log(k());
+  console.log(shared);
+  // A variable declared in the loop body: one per iteration, each shared by its own closures.
+  const hs: (() => string)[] = [];
+  for (let i = 0; i < 3; i++) {
+    let s = "s" + i;
+    hs.push(() => {
+      const g = () => {
+        const h = () => {
+          s = s + "!";
+        };
+        h();
+      };
+      g();
+      return s;
+    });
+  }
+  for (const h of hs) console.log(h());
+  for (const h of hs) console.log(h());
+}
+
+function methods() {
+  const c = new Recorder();
+  c.run("m");
+  console.log(c.last);
+  const lg = c.later("n");
+  lg();
+  console.log(c.last);
+}
+
+async function asyncForms() {
+  let s = "";
+  const f = async () => {
+    const g = () => {
+      s = "async-outer";
+    };
+    g();
+  };
+  const f2 = () => {
+    const g = async () => {
+      s = s + "+async-inner";
+    };
+    return g();
+  };
+  await f();
+  console.log(s);
+  await f2();
+  console.log(s);
+  const f3 = async () => {
+    const g = async () => {
+      s = s + "+both";
+    };
+    await g();
+  };
+  await f3();
+  console.log(s);
+  let n = 0;
+  const f4 = async () => {
+    const g = async () => {
+      n++;
+    };
+    return g;
+  };
+  const k = await f4();
+  await k();
+  await k();
+  console.log(n);
+}
+
+// Each closure the loop stores has its own copy of a `for...of` or destructured variable, which
+// the closure created inside it assigns (#904 review: these must not become one shared cell).
+async function* twoLetters(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+async function patternBindings() {
+  const fs: (() => string)[] = [];
+  for (let x of ["a", "b"]) {
+    fs.push(() => {
+      const g = () => {
+        x += "!";
+      };
+      g();
+      return x;
+    });
+  }
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const ns: (() => number)[] = [];
+  for (let [k, v] of new Map<string, number>([["a", 1], ["b", 2]])) {
+    ns.push(() => {
+      const g = () => {
+        v += 10;
+      };
+      g();
+      return v;
+    });
+  }
+  console.log(ns.map((f) => f()).join(","), ns.map((f) => f()).join(","));
+  const ss: (() => string)[] = [];
+  for (let s of new Set<string>(["p", "q"])) {
+    ss.push(() => {
+      const g = () => {
+        s += "?";
+      };
+      g();
+      return s;
+    });
+  }
+  console.log(ss.map((f) => f()).join(","));
+  const aw: (() => string)[] = [];
+  for await (let x of twoLetters()) {
+    aw.push(() => {
+      const g = () => {
+        x += "!";
+      };
+      g();
+      return x;
+    });
+  }
+  console.log(aw.map((f) => f()).join(","));
+  const ds: (() => number)[] = [];
+  for (let i = 0; i < 2; i++) {
+    let [a, b] = [i, i * 10];
+    ds.push(() => {
+      const g = () => {
+        a += b + 1;
+      };
+      g();
+      return a;
+    });
+  }
+  console.log(ds.map((f) => f()).join(","), ds.map((f) => f()).join(","));
+}
+
+async function main() {
+  called();
+  deep();
+  stored();
+  seenByOuter();
+  loops();
+  methods();
+  await asyncForms();
+  await patternBindings();
+}
