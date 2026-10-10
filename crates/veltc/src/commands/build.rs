@@ -42,7 +42,7 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
             return ExitCode::from(1);
         }
     }
-    let (exe, script) = match build_with_input(args) {
+    let (exe, script) = match build_with_input(args, false) {
         Ok((Artifact::Executable(p), input)) => {
             (vpm::relpath::absolute(&p), vpm::relpath::absolute(&input))
         }
@@ -98,19 +98,24 @@ fn runnable_here(target: &str) -> Result<(), String> {
 /// Resolve the build inputs (file or package), run the pipeline, print diagnostics / timings.
 /// `Err` carries the process exit code.
 fn build(args: &BuildArgs) -> Result<Artifact, ExitCode> {
-    build_with_input(args).map(|(artifact, _)| artifact)
+    build_with_input(args, true).map(|(artifact, _)| artifact)
 }
 
 /// [`build`], also returning the entry source file (a package's entry when no file was given).
-fn build_with_input(args: &BuildArgs) -> Result<(Artifact, std::path::PathBuf), ExitCode> {
+/// `debug_vars`: describe variables for debuggers (`BuildOptions::debug_vars`).
+fn build_with_input(
+    args: &BuildArgs,
+    debug_vars: bool,
+) -> Result<(Artifact, std::path::PathBuf), ExitCode> {
     let checked = match &args.input {
         Some(file) => super::project::check_input_file(file),
         None => Ok(()),
     };
-    let opts = checked.and_then(|()| build_options(args)).map_err(|msg| {
+    let mut opts = checked.and_then(|()| build_options(args)).map_err(|msg| {
         crate::style::error(&msg);
         ExitCode::from(1)
     })?;
+    opts.debug_vars = debug_vars;
     let mut sess = Session::new();
     sess.show_details = args.timings;
     let result = driver::build(&mut sess, &opts);
@@ -155,7 +160,9 @@ fn build_json(args: &BuildArgs) -> ExitCode {
         None => Ok(()),
     };
     let (debug_info, result) = match checked.and_then(|()| build_options(args)) {
-        Ok(opts) => {
+        Ok(mut opts) => {
+            // What F5 debugs.
+            opts.debug_vars = true;
             let result = driver::build(&mut sess, &opts).and_then(|artifact| {
                 finish_executable(&opts, &artifact).map_err(BuildError::Failed)?;
                 Ok(artifact)
