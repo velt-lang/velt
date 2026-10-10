@@ -264,6 +264,9 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         source_map: Some(&sess.sm),
         std_root: std_root.as_deref(),
         native_inits: &native_inits,
+        // A debug compiler links the debug runtime, which checks that no two tasks use one
+        // captured variable's cell (#916); release programs and release compilers skip it.
+        cell_checks: !opts.release && cfg!(debug_assertions),
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
     if !opts.wants_debug_info() && !opts.report_numbers {

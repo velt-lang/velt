@@ -16,6 +16,7 @@ pub mod bigint;
 pub mod build_profile;
 pub mod bytes;
 pub mod bytes_ops;
+pub mod cell_owner;
 pub mod child;
 pub mod db_json;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
