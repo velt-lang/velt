@@ -113,7 +113,7 @@ async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room<WebSocket
 export async function startChat(port: i64): Promise<Server> {
   const room = shared(new Mutex<Room<WebSocket>>(new Room<WebSocket>()));
   const ids = shared(0);
-  return await serve({ port }, async (req) => {
+  return await serve({ port: port as number }, async (req) => {
     if (new URL(req.url).pathname === "/chat" && isWebSocketRequest(req)) {
       const up = upgradeWebSocket(req);
       spawn(session(up.socket, ids.add(1), room));

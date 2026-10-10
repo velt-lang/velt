@@ -22,7 +22,7 @@ struct DemoConfig implements HostConfig {
   }
 }
 
-async function post(port: i64, route: string, body: string) {
+async function post(port: number, route: string, body: string) {
   const res = await fetch(`http://127.0.0.1:${port}/_sigx/actor/${route}`, {
     method: "POST",
     body: body,

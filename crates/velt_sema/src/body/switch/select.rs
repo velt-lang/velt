@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The literal a `const` named `id` was initialized with, when it has no type annotation.
-    fn const_lit(&mut self, id: &ast::Ident) -> Option<ast::SignedLit> {
+    pub(crate) fn const_lit(&mut self, id: &ast::Ident) -> Option<ast::SignedLit> {
         if self.is_local_name(&id.name) {
             return self.peek_const_lit(&id.name);
         }

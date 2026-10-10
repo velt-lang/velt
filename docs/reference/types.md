@@ -658,8 +658,14 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
 - **Quoted property names** work as in TypeScript, for names that are not identifiers:
   `type Headers = { "content-type": string }`, `{ "a-b": 1 }`, `interface A { "data-id": string }`
   and `const { "a-b": n } = o`. `o["a-b"]` (or `` o[`a-b`] ``) reads the field; with any string
-  literal, `o["name"]` is the same as `o.name`. `console.log` quotes the names that are not
-  identifiers, as Node does (`{ 'a-b': 1 }`), and `JSON.stringify` writes them as given. Names
+  literal, `o["name"]` is the same as `o.name`. A key whose type is a string literal or a union
+  of them works too, as in TypeScript: `const k = "a-b"; o[k]` reads `o["a-b"]`, and `o[k]` with
+  `k: "a" | "b"` reads the field `k` holds when it runs, typed as the union of the fields'
+  types (`number | string`). Assigning through such a key (`o[k] = v`, `o[k] += 1`, `o[k]++`)
+  needs the fields to have one type; `o[k] += v` reads the field before `v` runs, as JavaScript
+  does. The key can be any expression of such a type (`o[pick()]`, `o[keys[1]]`, `h.o[h.k]`),
+  evaluated once; the object must be a variable, `this` or a field of one. `console.log` quotes
+  the names that are not identifiers, as Node does (`{ 'a-b': 1 }`), and `JSON.stringify` writes them as given. Names
   beginning with `#` or `[Symbol.`, `"__proto__"` (it sets the prototype in JavaScript) and
   quoted method names are not supported. Parameter destructuring isn't supported yet, so quoted
   names in it aren't either.

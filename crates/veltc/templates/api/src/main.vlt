@@ -3,7 +3,7 @@
 import { startServer } from "./server";
 
 async function main() {
-  const port = parseInt(process.env.PORT ?? "8080", 10) as i64;
+  const port = parseInt(process.env.PORT ?? "8080", 10);
   const server = await startServer(port);
   console.log(`listening on http://127.0.0.1:${server.port}`);
 }

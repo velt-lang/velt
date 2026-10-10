@@ -1,0 +1,8 @@
+// A type parameter without a default may not follow one with a default (TypeScript's TS2706).
+function a<T = string, U>(x: U): U {
+  return x;
+}
+
+function main() {
+  console.log(a(1));
+}

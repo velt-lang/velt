@@ -45,6 +45,7 @@ pub(super) fn declare(cx: &mut Ctx) {
             generics: Generics {
                 names: i.generics.names.clone(),
                 bounds: vec![],
+                defaults: vec![],
             },
             fields: vec![],
             own_fields_start: 0,

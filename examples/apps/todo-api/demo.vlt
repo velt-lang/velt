@@ -5,7 +5,7 @@ import { startServer } from "./src/server";
 
 const DB = "todo-demo.json";
 
-async function request(port: i64, method: string, path: string, body: string | null = null) {
+async function request(port: number, method: string, path: string, body: string | null = null) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: method.clone(), body });
   const status = res.status;
   const type = res.headers.get("content-type") ?? "-";

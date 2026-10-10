@@ -33,7 +33,7 @@ async function main() {
 
 ## `serve(opts, handler)`
 
-`serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
+`serve<E>(opts: ServeOptions { port: number; host?; tls?: TlsOptions { cert; key } }, handler: (req:
 Request, info: ServeInfo) => Response | Promise<Response, E> throws E): Promise<Server>`. The default host is
 127.0.0.1 (`host: "0.0.0.0"` listens on every interface); port 0 picks a free port. With `tls`
 (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. A `serve` that fails
@@ -135,7 +135,7 @@ handler pays only for what it reads.
   with a clear error. Read what outlives the handler first (`const url = req.url`).
 
 `info: ServeInfo` holds what the server knows beyond the request (Deno's `ServeHandlerInfo`):
-`info.remoteAddr` is the client's `NetAddr { transport: "tcp", hostname, port }`.
+`info.remoteAddr` is the client's `NetAddr { transport: "tcp", hostname, port: number }`.
 
 ## The response
 
@@ -183,7 +183,7 @@ async function main() {
 
 ## `Server`
 
-`Server { port }`: `close()` stops accepting, lets in-flight requests finish and closes idle
+`Server { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes idle
 connections; once the last request finished the handler closure is dropped, so values it
 captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same
 and resolves only after that (it consumes the `Server`); a program that exits right after
