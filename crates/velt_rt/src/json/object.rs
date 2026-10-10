@@ -107,6 +107,7 @@ impl Object {
     }
 
     /// Slot of `key`.
+    #[inline(always)]
     fn find(&self, key: &[u8]) -> Option<usize> {
         match &self.index {
             Some(ix) => ix.slots.get(key).copied(),
