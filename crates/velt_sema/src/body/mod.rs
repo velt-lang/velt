@@ -319,6 +319,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
+    /// call's expression is a block with these first (`FnCx::expr`).
+    pub call_temps: Vec<hir::Stmt>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
@@ -373,6 +376,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: None,
+            call_temps: vec![],
             void_task: None,
             task_callback: None,
             thread_task: None,

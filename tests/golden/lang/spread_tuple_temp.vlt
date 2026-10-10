@@ -1,0 +1,42 @@
+// A spread of a tuple that is not stored, from a getter or a call (`f(0, ...g.pair)`,
+// `f(...pair())`): the value is read once, after the arguments before it, as in JavaScript.
+
+class Grid {
+  reads = 0;
+  get pair(): [number, string] {
+    this.reads += 1;
+    console.log("read pair");
+    return [this.reads, "x"];
+  }
+}
+
+function pair(): [number, number] {
+  console.log("call pair");
+  return [3, 4];
+}
+
+function f(a: number, b: number, c: string): string {
+  return `${a} ${b} ${c}`;
+}
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+function names(): [string, string] {
+  return ["ann", "bo"];
+}
+
+function greet(a: string, b: string): string {
+  return `hi ${a} and ${b}`;
+}
+
+function main() {
+  const g = new Grid();
+  console.log(f(0, ...g.pair));
+  console.log(f(1, ...g.pair), g.reads);
+  console.log(add(...pair()));
+  console.log(greet(...names()));
+  const k = 10;
+  console.log(add(k, ...[1] as [number]) + add(...pair()));
+}

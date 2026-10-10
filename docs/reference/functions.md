@@ -20,16 +20,18 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   `resolve()`.
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
-  The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`) accept a
-  spread anywhere.
+  The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,
+  `String.fromCharCode`, an array's `push`) accept a spread anywhere.
 - A **spread into fixed parameters** passes the elements of a value whose length is known when
   compiling, as in TypeScript: a variable or field of a tuple type (`f(...t)` with
   `t: [number, string]` is `f(t[0], t[1])`) or an array literal (`f(...[1, 2])`). Too few or
   too many elements are the usual arity error, and a missing optional parameter takes its
   default. A spread of an array type (`T[]`) into fixed parameters is an error, as in
-  TypeScript (JS would bind `undefined` to the parameters its elements do not fill); a tuple
-  returned by a call or a getter is stored in a variable first (`const t = pair(); f(...t);`),
-  since JS reads it once.
+  TypeScript (JS would bind `undefined` to the parameters its elements do not fill). A tuple
+  returned by a call or a getter (`f(0, ...g.pair)`, `f(...pair())`) is read once into a
+  hidden temporary before the call, as JS reads it once; after an argument with effects
+  (`f(next(), ...pair())`), which JS evaluates first, store it in a variable first
+  (`const t = pair(); f(next(), ...t);`).
 
   ```ts
   function label(name: string, n: number, suffix?: string): string {

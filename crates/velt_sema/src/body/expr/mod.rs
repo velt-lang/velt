@@ -107,7 +107,10 @@ impl FnCx<'_, '_> {
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
+        let outer = std::mem::take(&mut self.call_temps);
         let h = self.expr_kind(e, exp, want);
+        let temps = std::mem::replace(&mut self.call_temps, outer);
+        let h = self.with_lets(temps, h);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
         if self.cx.recording() {
