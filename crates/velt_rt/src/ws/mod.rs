@@ -361,6 +361,14 @@ impl Conn {
         }
     }
 
+    /// Fails the connection (RFC 6455 §7.1.7): sends a close frame with `code`, after which
+    /// every `receive` reports the connection closed; returns the error for this `receive`.
+    async fn fail(&self, r: &mut Reader, code: u16, what: &str) -> io::Error {
+        r.done = true;
+        let _ = self.send(Op::Close, &code.to_be_bytes()).await;
+        protocol_error(what)
+    }
+
     /// The next text or binary message, or kind 0 once the peer has closed the connection.
     async fn receive(&self) -> io::Result<VeltWsMessage> {
         let mut r = self.rx.lock().await;
@@ -373,7 +381,10 @@ impl Conn {
                 frame::parse(&mut buf[*pos..], self.role == Role::Server, MAX_MESSAGE)
             };
             let f = match parsed {
-                Err(e) => return Err(protocol_error(e)),
+                Err(e) => {
+                    let code = if e == frame::TOO_LONG { 1009 } else { 1002 };
+                    return Err(self.fail(&mut r, code, e).await);
+                }
                 Ok(None) => {
                     if !r.fill().await? {
                         r.done = true;
@@ -401,15 +412,27 @@ impl Conn {
                 }
                 Op::Pong => r.release_if_drained(),
                 Op::Close => {
-                    let code = if len >= 2 {
-                        [r.buf[at], r.buf[at + 1]]
-                    } else {
-                        [0x03, 0xe8]
-                    };
+                    let payload = r.buf[at..at + len].to_vec();
                     r.done = true;
                     r.release_if_drained();
-                    // Answer with the same code (RFC 6455 §5.5.1); fails if we closed first.
-                    let _ = self.send(Op::Close, &code).await;
+                    // Answer with the peer's code (RFC 6455 §5.5.1); a malformed close frame is a
+                    // protocol error (1002), a reason that isn't UTF-8 is 1007. Fails harmlessly
+                    // if we closed first.
+                    let reply = match payload.len() {
+                        0 => 1000,
+                        1 => 1002,
+                        _ => {
+                            let code = u16::from_be_bytes([payload[0], payload[1]]);
+                            if !valid_close_code(code) {
+                                1002
+                            } else if std::str::from_utf8(&payload[2..]).is_err() {
+                                1007
+                            } else {
+                                code
+                            }
+                        }
+                    };
+                    let _ = self.send(Op::Close, &reply.to_be_bytes()).await;
                     return Ok(message(0, vec![], vec![]));
                 }
                 Op::Text | Op::Binary | Op::Continuation => {
@@ -418,16 +441,18 @@ impl Conn {
                     let (op, data) = match (op, r.partial.take()) {
                         (Op::Continuation, Some((first, mut so_far))) => {
                             if so_far.len() + data.len() > MAX_MESSAGE {
-                                return Err(protocol_error("message too long"));
+                                return Err(self.fail(&mut r, 1009, frame::TOO_LONG).await);
                             }
                             so_far.extend_from_slice(&data);
                             (first, so_far)
                         }
                         (Op::Continuation, None) => {
-                            return Err(protocol_error("continuation without a message"))
+                            let e = "continuation without a message";
+                            return Err(self.fail(&mut r, 1002, e).await);
                         }
                         (_, Some(_)) => {
-                            return Err(protocol_error("new message inside a fragmented one"))
+                            let e = "new message inside a fragmented one";
+                            return Err(self.fail(&mut r, 1002, e).await);
                         }
                         (op, None) => (op, data),
                     };
@@ -437,9 +462,8 @@ impl Conn {
                     }
                     if op == Op::Text {
                         if std::str::from_utf8(&data).is_err() {
-                            let _ = self.send(Op::Close, &1007u16.to_be_bytes()).await;
-                            r.done = true;
-                            return Err(protocol_error("invalid UTF-8 in a text message"));
+                            let e = "invalid UTF-8 in a text message";
+                            return Err(self.fail(&mut r, 1007, e).await);
                         }
                         return Ok(message(1, data, vec![]));
                     }
@@ -464,6 +488,12 @@ fn message(kind: u32, text: Vec<u8>, data: Vec<u8>) -> VeltWsMessage {
         text: VeltStr::from_vec(text),
         data: VeltBytes::from_vec(data),
     }
+}
+
+/// Close codes a peer may send (RFC 6455 §7.4): the defined ones, and 3000–4999 for libraries
+/// and applications. 1005, 1006 and 1015 never go on the wire; the rest is reserved.
+fn valid_close_code(code: u16) -> bool {
+    matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
 }
 
 fn closed_error() -> io::Error {

@@ -1,5 +1,8 @@
 //! RFC 6455 framing: parsing (and unmasking in place) and encoding.
 
+/// The parse error for a frame or message over the size limit (closes with 1009, not 1002).
+pub(super) const TOO_LONG: &str = "message too long";
+
 /// Frame opcodes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Op {
@@ -93,7 +96,7 @@ pub(super) fn parse(
         return Err("invalid control frame");
     }
     if len > max as u64 {
-        return Err("message too long");
+        return Err(TOO_LONG);
     }
     let len = len as usize;
     let mask = if masked {
