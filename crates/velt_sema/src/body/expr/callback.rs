@@ -148,9 +148,11 @@ fn wrapper(
             params: (0..n)
                 .map(|k| ast::ArrowParam {
                     name: arg_name(k, span),
+                    pattern: None,
                     ty: None,
                     default: None,
                     optional: false,
+                    rest: false,
                 })
                 .collect(),
             ret: None,

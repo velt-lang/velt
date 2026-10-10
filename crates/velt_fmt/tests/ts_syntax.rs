@@ -66,3 +66,31 @@ fn object_literal_methods() {
         "const h = {\n  id: (x: number): number => x,\n  twice(x: number) {\n    return 2 * x;\n  },\n};\n",
     );
 }
+
+#[test]
+fn destructured_parameters_and_types_from_defaults() {
+    round_trips(
+        "function f([a, b = 1]: [string, number], { c, d: e }: P): string {
+  return a;
+}
+",
+    );
+    round_trips(
+        "function g(location: string, status = 302) {}
+",
+    );
+    round_trips(
+        "const h = xs.map(([k, v]) => k + v);
+",
+    );
+    round_trips(
+        "const r = (a: number, ...xs: number[]) => a;
+",
+    );
+    round_trips(
+        "class C {
+  m({ x }: P = q) {}
+}
+",
+    );
+}

@@ -55,10 +55,15 @@ impl Printer<'_> {
             .split_whitespace()
             .map(|m| format!("{m} "))
             .collect();
+        // A destructured parameter shows its pattern as written.
+        let name = match &p.pattern {
+            Some(q) => self.flat(q.span),
+            None => p.name.name.clone(),
+        };
         if p.optional {
-            return format!("{mods}{}?: {}", p.name.name, self.ty_optional(&p.ty));
+            return format!("{mods}{name}?: {}", self.ty_optional(&p.ty));
         }
-        let mut out = format!("{mods}{}: {}", p.name.name, self.ty(&p.ty));
+        let mut out = format!("{mods}{name}: {}", self.ty(&p.ty));
         if let Some(default) = &p.default {
             out.push_str(" = ");
             out.push_str(&self.flat(default.span));

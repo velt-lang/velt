@@ -445,9 +445,11 @@ fn bound_arrow(
     let params = (0..n)
         .map(|k| ast::ArrowParam {
             name: name(k),
+            pattern: None,
             ty: None,
             default: defaults.get(k).cloned().flatten(),
             optional: false,
+            rest: false,
         })
         .collect();
     let callee = synth(

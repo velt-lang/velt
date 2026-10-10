@@ -104,9 +104,11 @@ impl FnCx<'_, '_> {
             type_params: vec![],
             params: vec![ast::ArrowParam {
                 name: param,
+                pattern: None,
                 ty: None,
                 default: None,
                 optional: false,
+                rest: false,
             }],
             ret: None,
             throws: None,

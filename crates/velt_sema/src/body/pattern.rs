@@ -133,18 +133,27 @@ impl FnCx<'_, '_> {
         let err = self.cx.ty.error;
         match self.cx.ty.kind(ty).clone() {
             TyKind::Tuple(ts) => {
-                if ts.len() != elems.len() || rest.is_some() {
+                // Fewer elements than the tuple has leave the rest unbound (`[k]` of a
+                // `[string, number]`), as in TS.
+                if ts.len() < elems.len() || rest.is_some() {
                     let tn = self.cx.display(ty);
                     self.cx.err(
                         format!("pattern does not match the tuple type `{tn}`"),
                         span,
                     );
                 }
-                let pats = elems
+                let mut pats: Vec<hir::Pat> = elems
                     .iter()
                     .enumerate()
                     .map(|(i, e)| self.pattern(e, ts.get(i).copied().unwrap_or(err), ctx))
                     .collect();
+                for &t in ts.iter().skip(pats.len()) {
+                    pats.push(hir::Pat {
+                        kind: P::Wildcard,
+                        ty: t,
+                        span,
+                    });
+                }
                 P::Tuple(pats)
             }
             TyKind::Array(e) => {

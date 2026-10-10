@@ -9,8 +9,11 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 ```
 
 - `function name(p: T, q: U = default): R { … }`, optionally with a `throws E` clause after the
-  return type ([Errors](errors.md)). Parameter types are required; a missing return type is
-  inferred from the body ([Return types](#return-types)).
+  return type ([Errors](errors.md)). Parameter types are required, except that a parameter with
+  a default the type plainly shows has that type, as in TypeScript (`status = 302` is a
+  `number`, `live = true` a `boolean`; the same literals, `new C(…)` and arrays of them that type
+  [class fields](classes.md) without annotations). A missing return type is inferred from the
+  body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
@@ -489,6 +492,25 @@ function sum(...xs: number[]): number {
 
 const more = [2, 3];
 console.log(sum(), sum(1, ...more, 4), Math.max(...more)); // 0 10 3
+```
+
+A parameter may be **destructured**, in functions, methods and arrows alike: `[a, b]: T` or
+`{ a, b }: T`, with defaults (`{ x = 0 }`, `[a, b = 5]`) and holes (`[, c]`) inside the pattern
+and a default for the whole parameter (`{ host, port }: Opts = defaults`). An arrow passed where
+a function type is expected takes the pattern's type from it (`pairs.map(([k, v]) => …)`).
+The body starts by destructuring the argument, exactly as `let [a, b] = arg;` would there, so a
+destructured parameter costs what destructuring by hand does, and its bindings are `let`
+variables (a closure may capture and assign them; each call has its own). As for `let`, an array
+pattern may bind fewer elements than a tuple has, but not more (TS2493).
+
+```ts
+function label([name, n]: [string, number], { sep = "=" }: { sep?: string }): string {
+  return name + sep + n;
+}
+
+const counts = new Map<string, number>([["a", 1], ["b", 2]]);
+console.log(label(["x", 4], {}), label(["y", 5], { sep: ":" })); // x=4 y:5
+console.log([...counts.entries()].map(([k, v]) => k + v).join(",")); // a1,b2
 ```
 
 Parameters behave like `let` locals: reassigning one never affects the caller. Objects are

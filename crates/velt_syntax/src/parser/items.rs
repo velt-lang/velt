@@ -423,7 +423,7 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         while !self.at(Tok::RParen) {
-            let p = self.parse_param()?;
+            let p = self.parse_param(params.len())?;
             if params.last().is_some_and(|q: &Param| q.rest) {
                 self.error("a rest parameter must be the last parameter", p.span);
             }
@@ -436,7 +436,10 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(super) fn parse_param(&mut self) -> PResult<Param> {
+    /// One parameter, the `index`-th: `name: T`, `name?: T`, `name: T = e`, `name = e` (the type
+    /// stated by the default, as for class fields), `...name: T[]`, or a destructuring pattern
+    /// `[a, b]: T` / `{ a, b }: T = e`.
+    pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
         self.reject_mut_modifier();
         let rest = self.eat(Tok::DotDotDot);
@@ -446,22 +449,30 @@ impl<'a> Parser<'a> {
             self.bump();
             return Err(Fail);
         }
-        let name = self.parse_binding_ident()?;
+        let (name, pattern) = self.parse_param_binding(index, rest)?;
         let optional = self.eat(Tok::Question);
-        if !self.eat(Tok::Colon) {
-            let msg = format!(
-                "expected `:`, found {} (parameter types are required)",
-                self.found()
-            );
-            let span = self.cur_span();
-            self.error(msg, span);
-            return Err(Fail);
-        }
-        let mut ty = self.parse_type()?;
+        let written = if self.eat(Tok::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         let mut default = if self.eat(Tok::Eq) {
             Some(self.parse_assign()?)
         } else {
             None
+        };
+        let mut ty = match (written, &default) {
+            (Some(t), _) => t,
+            (None, Some(d)) if !optional && !rest => self.param_type_of(&name, d)?,
+            (None, _) => {
+                let msg = format!(
+                    "expected `:`, found {} (parameter types are required)",
+                    self.found()
+                );
+                let span = self.cur_span();
+                self.error(msg, span);
+                return Err(Fail);
+            }
         };
         if optional {
             if let Some(d) = &default {
@@ -492,6 +503,7 @@ impl<'a> Parser<'a> {
         }
         Ok(Param {
             name,
+            pattern,
             ty,
             default,
             optional,

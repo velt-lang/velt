@@ -225,8 +225,13 @@ impl<'a> Walker<'a> {
             for p in &sig.params {
                 w.ty(&p.ty);
                 w.opt_expr(p.default.as_ref());
-                let detail = signature::param(w.analysis, p);
-                w.bind(&p.name, detail, type_name(&p.ty).map(String::from));
+                match &p.pattern {
+                    Some(q) => w.bind_pattern(q, "param"),
+                    None => {
+                        let detail = signature::param(w.analysis, p);
+                        w.bind(&p.name, detail, type_name(&p.ty).map(String::from));
+                    }
+                }
             }
             w.opt_ty(sig.ret.as_ref());
             w.opt_ty(sig.throws.as_ref());
