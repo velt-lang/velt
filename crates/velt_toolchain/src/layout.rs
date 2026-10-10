@@ -56,19 +56,35 @@ impl fmt::Display for Toolchain {
 }
 
 /// A link name starts with a letter, so it is never read as a version, and is a single path
-/// segment.
+/// segment that is a file name on every OS.
 pub fn check_link_name(name: &str) -> Result<(), String> {
     let ok = name.starts_with(|c: char| c.is_ascii_lowercase())
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'));
-    if ok {
+    if ok && is_windows_device_name(name) {
+        Err(format!(
+            "`{name}` is a device name on Windows (`con`, `nul`, `com1`, …), not a toolchain name"
+        ))
+    } else if ok {
         Ok(())
     } else {
         Err(format!(
             "`{name}` is neither a version (such as `0.1.0`) nor a toolchain name (lowercase \
              letters, digits, `-`, `_` and `.`, starting with a letter)"
         ))
+    }
+}
+
+/// `con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`, alone or before an extension
+/// (`nul.txt`): Windows opens the device for these, whatever the directory
+/// (`vpm::manifest::is_windows_device_name` has the same rule for package names).
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_lowercase();
+    match stem.as_bytes() {
+        b"con" | b"prn" | b"aux" | b"nul" => true,
+        [b'c', b'o', b'm', d] | [b'l', b'p', b't', d] => d.is_ascii_digit(),
+        _ => false,
     }
 }
 
@@ -314,5 +330,10 @@ mod tests {
         for bad in ["0.1", "Dev", "", "a/b", "..", "1x"] {
             assert!(Toolchain::parse(bad).is_err(), "{bad}");
         }
+        for device in ["con", "nul", "nul.txt", "com1", "lpt9", "aux"] {
+            let err = Toolchain::parse(device).unwrap_err();
+            assert!(err.contains("device name on Windows"), "{device}: {err}");
+        }
+        assert!(Toolchain::parse("console").is_ok() && Toolchain::parse("com").is_ok());
     }
 }

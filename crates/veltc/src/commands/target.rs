@@ -152,15 +152,21 @@ fn add(target: &str, from: Option<&Path>, unverified: bool) -> Result<(), String
             let sums = match &pinned {
                 Some(sums) => sums.clone(),
                 None => {
-                    let sums = download(&format!("{release}/SHA256SUMS"))?;
-                    let sums = String::from_utf8_lossy(&sums).into_owned();
+                    // A toolchain without pack hashes (built from source): the release's own
+                    // `SHA256SUMS`, which its signature shows the velt project published.
+                    let key = velt_toolchain::signature::public_key()?;
+                    let sums = velt_toolchain::signature::signed_sums(&release, &key)?.ok_or_else(
+                        || {
+                            format!(
+                                "{release}/SHA256SUMS does not exist (HTTP 404): this velt's \
+                                 release ({}) has no target packs; a toolchain built from source \
+                                 installs packs with `--from`",
+                                env!("CARGO_PKG_VERSION")
+                            )
+                        },
+                    )?;
                     sha256_entry(&sums, &name)
                         .ok_or_else(|| format!("the release's SHA256SUMS has no {name}"))?;
-                    eprintln!(
-                        "note: this toolchain lists no pack hashes ({PACK_HASHES}); checking \
-                         against the release's SHA256SUMS, which shows the pack is intact, not \
-                         where it comes from"
-                    );
                     sums
                 }
             };

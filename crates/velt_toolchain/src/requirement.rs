@@ -20,6 +20,9 @@ impl Requirement {
     /// Parse a requirement; the message names the value, so callers prefix it with the field.
     pub fn parse(text: &str) -> Result<Requirement, String> {
         let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("the version requirement is empty (write one such as `\"0.1\"`, or leave the field out)".into());
+        }
         let bare = trimmed.starts_with(|c: char| c.is_ascii_digit());
         let source = if bare {
             format!("~{trimmed}")
@@ -74,9 +77,18 @@ impl fmt::Display for Requirement {
     }
 }
 
-/// The `velt` field `velt new` writes for toolchain `version`: its `major.minor`.
+/// The `velt` field `velt new` writes for toolchain `version`: its `major.minor`, or for a
+/// pre-release the whole version (`0.2.0-rc.1`, which also accepts `0.2.0` and later `0.2.x`):
+/// `"0.2"` would not accept the pre-release that wrote it.
 pub fn pin_for(version: &Version) -> String {
-    format!("{}.{}", version.major, version.minor)
+    if version.pre.is_empty() {
+        format!("{}.{}", version.major, version.minor)
+    } else {
+        format!(
+            "{}.{}.{}-{}",
+            version.major, version.minor, version.patch, version.pre
+        )
+    }
 }
 
 #[cfg(test)]
@@ -120,9 +132,13 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error_naming_the_value() {
-        for bad in ["", "latest", "0.x.y", "v0.1", "0.1.2.3", "=="] {
+        for bad in ["latest", "0.x.y", "v0.1", "0.1.2.3", "=="] {
             let err = Requirement::parse(bad).unwrap_err();
             assert!(err.contains(&format!("`{bad}`")), "{bad}: {err}");
+        }
+        for empty in ["", "  "] {
+            let err = Requirement::parse(empty).unwrap_err();
+            assert!(err.starts_with("the version requirement is empty"), "{err}");
         }
     }
 
@@ -140,5 +156,33 @@ mod tests {
         assert_eq!(Requirement::parse("=0.1").unwrap().exact_version(), None);
         assert!(Requirement::exact(&v("0.2.0-rc.1")).matches(&v("0.2.0-rc.1")));
         assert_eq!(pin_for(&v("0.1.7")), "0.1");
+    }
+
+    #[test]
+    fn the_pin_a_toolchain_writes_accepts_it() {
+        for version in [
+            "0.1.0",
+            "0.1.7",
+            "1.2.3",
+            "0.2.0-rc.1",
+            "1.0.0-alpha.2+build.5",
+        ] {
+            let version = v(version);
+            let pin = pin_for(&version);
+            let req = Requirement::parse(&pin).unwrap();
+            assert!(req.matches(&version), "{pin} rejects {version}");
+        }
+        assert_eq!(pin_for(&v("0.2.0-rc.1")), "0.2.0-rc.1");
+        // The release after a pre-release still builds the package.
+        assert!(Requirement::parse("0.2.0-rc.1")
+            .unwrap()
+            .matches(&v("0.2.0")));
+    }
+
+    #[test]
+    fn a_major_alone_is_any_minor_of_it() {
+        // `"1"` is the newest 1.x: written by hand to accept new minors on purpose.
+        assert!(accepts("1", "1.0.0") && accepts("1", "1.7.2") && !accepts("1", "2.0.0"));
+        assert!(accepts("0", "0.9.0") && !accepts("0", "1.0.0"));
     }
 }

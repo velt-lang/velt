@@ -65,9 +65,17 @@ file and reports these errors without building anything.
 ## `velt`
 
 The velt versions that build the package. `velt new` and `velt init` write the `major.minor` of
-the velt that created the package, so installing a newer velt doesn't change how it builds:
-pre-1.0 minors may change the language, and a toolchain's standard library and runtime belong to
-it.
+the velt that created the package (a pre-release writes its whole version, such as
+`"0.2.0-rc.1"`), so installing a newer velt doesn't change how it builds: pre-1.0 minors may
+change the language, and a toolchain's standard library and runtime belong to it.
+
+Choosing the toolchain by this field comes with the velt launcher, which installs versions side
+by side (#948). Until then the field records the version, the velt that runs checks that it is a
+requirement, and it warns when its own version is not one the field accepts:
+
+```text
+warning: package.vlt asks for velt "0.2", but this is velt 0.1.0; it may not build the package
+```
 
 | `velt` | builds with |
 |---|---|
@@ -77,7 +85,8 @@ it.
 | `">=0.1, <0.3"` | a requirement with an operator means what it means in `dependencies` |
 
 A version without an operator stays within its minor version, also after 1.0: `"1.2"` accepts
-`1.2.5` but not `1.3.0`, unlike the same requirement in `dependencies`. Pre-releases match only
+`1.2.5` but not `1.3.0`, unlike the same requirement in `dependencies`. A major version alone
+(`"1"`) accepts any `1.x`. Pre-releases match only
 a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with any velt.
 `velt manifest` and every other command check that the value is a requirement.
 
@@ -177,6 +186,7 @@ $ velt manifest --json
   "entry": "src/main.vlt",
   "name": "hello",
   "paths": {},
+  "velt": "0.1",
   "version": "0.1.0"
 }
 ```

@@ -130,8 +130,10 @@ velt target remove x86_64-pc-windows-msvc
 - Packs are verified against the hashes the installed toolchain carries
   (`lib/targets/PACKS.sha256`, every target's packs of that release), so a pack replaced on the
   way is refused. A toolchain without that list (built from source) checks downloads against the
-  release's `SHA256SUMS` instead, which shows a pack is intact but not where it comes from, and
-  says so.
+  release's `SHA256SUMS` instead, after checking that file's signature (`SHA256SUMS.sig`)
+  against the velt release key built into velt, so a mirror or a replaced release can't
+  substitute a pack either. `$VELT_INSTALL_PUBLIC_KEY` (hex) sets another key, for the releases
+  of another build.
 - A pack holds a runtime built with one velt: `velt build` uses it only with that velt (version
   and commit) and otherwise asks for `velt target add` again.
 - `velt target add --from <pack.tar.gz>` installs a pack downloaded before, verified the same

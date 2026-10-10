@@ -2,8 +2,26 @@
 //! atomically: toolchains ([`crate::release::install_toolchain`]) and target packs
 //! (`velt target add`).
 
-use std::io::Read;
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
+
+/// The most an archive may unpack to: a gzip bomb (a `--from` pack, an archive from a mirror
+/// before its hash is checked is never unpacked, but a file given by path is) stops here.
+/// Toolchains unpack to a few hundred MiB.
+#[derive(Clone, Copy, Debug)]
+pub struct UnpackLimits {
+    /// One file.
+    pub entry: u64,
+    /// All files together.
+    pub total: u64,
+}
+
+impl UnpackLimits {
+    pub const DEFAULT: UnpackLimits = UnpackLimits {
+        entry: 1 << 30,
+        total: 4 << 30,
+    };
+}
 
 use sha2::{Digest, Sha256};
 
@@ -118,9 +136,21 @@ pub fn swap_into_place(staging: &Path, dest: &Path) -> Result<(), String> {
 }
 
 /// Extract the regular files under `<top>/` of a `.tar.gz` into `into`, keeping whether each is
-/// executable; any other path (absolute, `..`, another top directory) or entry type (links,
-/// devices) is refused.
+/// executable; any other path (absolute, `..`, another top directory, `<top>` itself) or entry
+/// type (links, devices) is refused, and so is more than [`UnpackLimits::DEFAULT`].
 pub fn unpack(archive: &[u8], top: &str, into: &Path, what: &str) -> Result<(), String> {
+    unpack_within(archive, top, into, what, UnpackLimits::DEFAULT)
+}
+
+/// [`unpack`] with other limits.
+pub fn unpack_within(
+    archive: &[u8],
+    top: &str,
+    into: &Path,
+    what: &str,
+    limits: UnpackLimits,
+) -> Result<(), String> {
+    let mut total: u64 = 0;
     let gz = flate2::read::GzDecoder::new(archive);
     let mut tar = tar::Archive::new(gz);
     let entries = tar
@@ -155,16 +185,32 @@ pub fn unpack(archive: &[u8], top: &str, into: &Path, what: &str) -> Result<(), 
         if !kind.is_file() {
             return Err(bad(&path, &format!("only files may be in a {what}")));
         }
+        if rel.as_os_str().is_empty() {
+            return Err(bad(&path, &format!("{top} must be a directory")));
+        }
+        let too_big = || {
+            bad(
+                &path,
+                "more data than a release holds (a damaged or hostile archive)",
+            )
+        };
+        if entry.size() > limits.entry || total.saturating_add(entry.size()) > limits.total {
+            return Err(too_big());
+        }
         let out = into.join(&rel);
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
         }
-        let mut bytes = vec![];
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("cannot read {} from the {what}: {e}", path.display()))?;
-        std::fs::write(&out, bytes).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
+        let mut file = std::fs::File::create(&out)
+            .map_err(|e| format!("cannot write {}: {e}", out.display()))?;
+        // The header's size is checked above; `take` holds even if the data runs longer.
+        let written = std::io::copy(&mut (&mut entry).take(limits.entry + 1), &mut file)
+            .map_err(|e| format!("cannot unpack {} from the {what}: {e}", path.display()))?;
+        total += written;
+        if written > limits.entry || total > limits.total {
+            return Err(too_big());
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -231,25 +277,163 @@ pub(crate) mod tests {
         assert_eq!(left.len(), 1, "{left:?}");
     }
 
+    /// One tar entry of any kind, its name written as given.
+    fn entry(name: &[u8], kind: tar::EntryType, link: &[u8], data: &[u8], mode: u32) -> Vec<u8> {
+        let mut header = tar::Header::new_gnu();
+        header.as_old_mut().name[..name.len()].copy_from_slice(name);
+        header.as_old_mut().linkname[..link.len()].copy_from_slice(link);
+        header.set_entry_type(kind);
+        header.set_size(data.len() as u64);
+        header.set_mode(mode);
+        header.set_cksum();
+        let mut out = header.as_bytes().to_vec();
+        out.extend_from_slice(data);
+        out.resize(out.len().div_ceil(512) * 512, 0);
+        out
+    }
+
+    /// A `.tar.gz` of raw entries (and the end-of-archive blocks).
+    fn raw(entries: &[Vec<u8>]) -> Vec<u8> {
+        use std::io::Write;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        for e in entries {
+            gz.write_all(e).unwrap();
+        }
+        gz.write_all(&[0; 1024]).unwrap();
+        gz.finish().unwrap()
+    }
+
+    /// Refused, with nothing left in `dir` (the staging directory is gone, no file escaped).
+    fn refused(archive: &[u8], dir: &Path, expect: &str) {
+        let dest = dir.join("t");
+        let err = install_dir(archive, "top", &dest, "toolchain", |_| None).unwrap_err();
+        assert!(err.contains(expect), "expected `{expect}` in: {err}");
+        let left: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert!(left.is_empty(), "left behind: {left:?}");
+    }
+
     #[test]
     fn refuses_unsafe_archives() {
         let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("t");
-        let other = archive(&[("other/kit.stamp", b"", 0o644)]);
-        let err = install_dir(&other, "top", &dest, "target pack", |_| None).unwrap_err();
-        assert!(
-            err.contains("the target pack holds") && err.contains("under top/"),
-            "{err}"
+        let dir = tmp.path().join("in");
+        std::fs::create_dir_all(&dir).unwrap();
+        use tar::EntryType as K;
+        let file = |name: &[u8]| entry(name, K::Regular, b"", b"x", 0o644);
+        refused(
+            &raw(&[file(b"other/kit.stamp")]),
+            &dir,
+            "everything must be under top/",
         );
-        let escape = archive(&[("top/../../evil", b"", 0o644)]);
-        assert!(install_dir(&escape, "top", &dest, "toolchain", |_| None).is_err());
-        assert!(!tmp.path().join("evil").exists());
-        let err = install_dir(b"not gzip", "top", &dest, "toolchain", |_| None).unwrap_err();
-        assert!(err.contains("the toolchain"), "{err}");
+        refused(
+            &raw(&[file(b"/top/abs")]),
+            &dir,
+            "everything must be under top/",
+        );
+        refused(
+            &raw(&[file(b"top/../../evil")]),
+            &dir,
+            "not a plain relative path",
+        );
+        refused(
+            &raw(&[file(b"top/a/./../../evil")]),
+            &dir,
+            "not a plain relative path",
+        );
+        let only_files = "only files may be in a toolchain";
+        refused(
+            &raw(&[entry(b"top/l", K::Symlink, b"/etc/passwd", b"", 0o777)]),
+            &dir,
+            only_files,
+        );
+        refused(
+            &raw(&[entry(b"top/h", K::Link, b"top/x", b"", 0o644)]),
+            &dir,
+            only_files,
+        );
+        refused(
+            &raw(&[entry(b"top/c", K::Char, b"", b"", 0o644)]),
+            &dir,
+            only_files,
+        );
+        refused(
+            &raw(&[entry(b"top/b", K::Block, b"", b"", 0o644)]),
+            &dir,
+            only_files,
+        );
+        refused(
+            &raw(&[entry(b"top/f", K::Fifo, b"", b"", 0o644)]),
+            &dir,
+            only_files,
+        );
+        // A GNU long name (`././@LongLink`) hiding `..` past the 100-byte name field.
+        let long = format!("top/{}/../../../evil\0", "d".repeat(120));
+        let long_name = entry(
+            b"././@LongLink",
+            K::GNULongName,
+            b"",
+            long.as_bytes(),
+            0o644,
+        );
+        refused(
+            &raw(&[long_name, file(b"placeholder")]),
+            &dir,
+            "not a plain relative path",
+        );
+        // `top` itself as a file.
+        refused(&raw(&[file(b"top")]), &dir, "top must be a directory");
+        refused(b"not gzip", &dir, "the toolchain");
+        assert!(!tmp.path().join("evil").exists() && !Path::new("/top").exists());
+
         // macOS metadata entries are skipped, not refused.
+        let dest = dir.join("t");
         let meta = archive(&[("top/a", b"", 0o644), ("._top", b"meta", 0o644)]);
         install_dir(&meta, "top", &dest, "toolchain", |_| None).unwrap();
         assert!(dest.join("a").is_file());
+    }
+
+    #[test]
+    fn unpacking_is_capped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let limits = UnpackLimits {
+            entry: 10,
+            total: 15,
+        };
+        let big = archive(&[("top/a", &[0; 11], 0o644)]);
+        let err = unpack_within(&big, "top", &tmp.path().join("1"), "pack", limits).unwrap_err();
+        assert!(err.contains("more data than a release holds"), "{err}");
+        let many = archive(&[("top/a", &[0; 8], 0o644), ("top/b", &[0; 8], 0o644)]);
+        let err = unpack_within(&many, "top", &tmp.path().join("2"), "pack", limits).unwrap_err();
+        assert!(err.contains("top/b"), "{err}");
+        let fits = archive(&[("top/a", &[0; 8], 0o644), ("top/b", &[0; 7], 0o644)]);
+        unpack_within(&fits, "top", &tmp.path().join("3"), "pack", limits).unwrap();
+    }
+
+    /// Any mode with an execute bit becomes exactly 0o755 (no setuid, setgid, sticky or
+    /// world-writable bits); others keep the default for a new file.
+    #[cfg(unix)]
+    #[test]
+    fn executable_bits_and_nothing_else() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let a = archive(&[
+            ("top/suid", b"", 0o4777),
+            ("top/plain", b"", 0o666),
+            ("top/exe", b"", 0o700),
+        ]);
+        unpack(&a, "top", tmp.path(), "toolchain").unwrap();
+        let mode = |p: &str| {
+            std::fs::metadata(tmp.path().join(p))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(mode("suid"), 0o755);
+        assert_eq!(mode("exe"), 0o755);
+        assert_eq!(mode("plain") & 0o7111, 0, "{:o}", mode("plain"));
     }
 
     #[test]

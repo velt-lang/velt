@@ -9,13 +9,16 @@
 //!   every command; vpm checks the whole manifest);
 //! - [`layout`]: `<root>`, its installed versions, linked prefixes and the default;
 //! - [`release`]: the published versions and installing one from a release;
-//! - [`install`]: downloading, verifying and unpacking archives (also `velt target add`'s).
+//! - [`install`]: downloading, verifying and unpacking archives (also `velt target add`'s);
+//! - [`signature`]: checking a release's `SHA256SUMS` against the release key.
 
 pub mod install;
 pub mod layout;
 pub mod pin;
 pub mod release;
 pub mod requirement;
+pub mod signature;
 
 pub use layout::{Root, Toolchain};
 pub use requirement::Requirement;
+pub use semver::Version;

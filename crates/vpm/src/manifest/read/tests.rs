@@ -262,13 +262,16 @@ fn the_toolchain_requirement() {
     for req in ["0.1", "0.1.3", "=0.1.3", ">=0.1, <0.3"] {
         let m = read(&with(&format!("velt: \"{req}\"")));
         assert_eq!(m.toolchain.as_deref(), Some(req));
+        assert_eq!(m.to_json()["velt"], req);
         assert_eq!(
             Manifest::read(FILE, &m.to_vlt()).unwrap(),
             m,
             "round trip of {req}"
         );
     }
-    assert_eq!(read(&with("entry: \"src/a.vlt\"")).toolchain, None);
+    let without = read(&with("entry: \"src/a.vlt\""));
+    assert_eq!(without.toolchain, None);
+    assert!(without.to_json().get("velt").is_none());
     let (message, covered) = error(&with("velt: \"latest\""));
     assert!(
         message.starts_with("velt `latest` is not a version requirement"),

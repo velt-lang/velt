@@ -200,10 +200,16 @@ velt: "0.1",
 - `velt` is a `velt_toolchain::Requirement`: a version without an operator (`X`, `X.Y`,
   `X.Y.Z`, optionally with a pre-release) means `~` that version (the newest patch of its minor;
   `"1"` is any `1.x`); any other text is a `semver::VersionReq` (`=0.1.3`, `>=0.1, <0.3`, `^1.2`).
-  A value that is neither is an error at the value: "velt `<text>` is not a version requirement".
-- `velt new` / `velt init` write `velt: "<major>.<minor>"` of the toolchain that runs them
-  (`vpm::scaffold::this_toolchain_pin`). `to_vlt` writes the field after `version`, and
+  A value that is neither is an error at the value: "velt `<text>` is not a version requirement"
+  (an empty or blank one: "velt the version requirement is empty …").
+- `velt new` / `velt init` write `velt: "<major>.<minor>"` of the toolchain that runs them, or
+  its whole `<major>.<minor>.<patch>-<pre>` when it is a pre-release
+  (`velt_toolchain::requirement::pin_for`, `vpm::scaffold::this_toolchain_pin`): the pin always
+  accepts the toolchain that wrote it. `to_vlt` writes the field after `version`, and
   `velt manifest --json` prints it as `"velt"` when present.
+- Every command that reads the package (`Project::open`, `velt manifest`) warns on stderr,
+  `package.vlt asks for velt "<req>", but this is velt <version>; it may not build the package`,
+  when the requirement doesn't accept the running velt's version and `$VELT_LAUNCHER` is unset.
 - The reader only checks the syntax. Choosing the toolchain is the launcher's job (#948), which
   reads this one field with `velt_toolchain::pin::find_pin` (the nearest `package.vlt` above the
   working directory; a manifest that does not parse counts as no pin, and the toolchain then

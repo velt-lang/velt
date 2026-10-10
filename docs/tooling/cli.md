@@ -285,6 +285,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
 | `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
 | `VELT_INSTALL_BASE_URL` | the repository whose releases `velt target add` (and the installers) download from (default `https://github.com/velt-lang/velt`) |
+| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 key (64 hex digits) release signatures (`SHA256SUMS.sig`) are checked with, instead of the velt release key: for the releases of another build |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |

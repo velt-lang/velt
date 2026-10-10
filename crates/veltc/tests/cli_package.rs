@@ -23,14 +23,22 @@ fn sandbox() -> Sandbox {
 
 impl Sandbox {
     fn velt(&self, cwd: &str, args: &[&str]) -> Output {
+        self.velt_with(cwd, args, &[])
+    }
+
+    fn velt_with(&self, cwd: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         let cwd = self.dir.join(cwd);
-        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        command
             .args(args)
             .current_dir(&cwd)
             .env("VELT_HOME", self.dir.join("home"))
             .env_remove("VELT_REGISTRY")
-            .output()
-            .unwrap()
+            .env_remove("VELT_LAUNCHER");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().unwrap()
     }
 
     /// Run and assert success; returns stderr (status lines).
@@ -640,4 +648,26 @@ fn a_package_written_in_typescript_needs_no_entry() {
         err.contains("more than one `src/main` module: `src/main.vlt`, `src/main.ts`"),
         "{err}"
     );
+}
+
+#[test]
+fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
+    // #948: until the launcher selects toolchains, velt says when a package asks for another.
+    let s = sandbox();
+    std::fs::create_dir_all(s.dir.join("app")).unwrap();
+    s.write(
+        "app/package.vlt",
+        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
+    );
+    let out = s.velt("app", &["manifest"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(
+        err.contains("package.vlt asks for velt \"9.9\", but this is velt"),
+        "{err}"
+    );
+    // Run by the launcher, the choice was made there.
+    let out = s.velt_with("app", &["manifest"], &[("VELT_LAUNCHER", "/x/bin/velt")]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("asks for velt"), "{err}");
 }
