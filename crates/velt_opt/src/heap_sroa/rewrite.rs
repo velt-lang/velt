@@ -33,10 +33,7 @@ pub(super) fn apply(
         };
         let name = func.locals[i].name.as_ref().map(|n| format!("{n}.obj"));
         let l = Local(func.locals.len() as u32);
-        func.locals.push(LocalDecl {
-            ty: Ty::Agg(obj),
-            name,
-        });
+        func.locals.push(LocalDecl::new(Ty::Agg(obj), name));
         *slot = Some((l, obj));
         entry.push((l, obj));
     }
@@ -178,10 +175,7 @@ impl Zeros {
             })
             .collect();
         let l = Local(func.locals.len() as u32);
-        func.locals.push(LocalDecl {
-            ty: Ty::Agg(id),
-            name: None,
-        });
+        func.locals.push(LocalDecl::new(Ty::Agg(id), None));
         self.inits
             .push(Stmt::Assign(Place::local(l), Rvalue::Aggregate(id, ops)));
         self.locals.insert(id, l);

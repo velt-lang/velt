@@ -192,10 +192,7 @@ fn field_place(p: Local, pointee: Ty, path: &[u32]) -> Place {
 
 fn promote(func: &mut Function, p: Local, pointee: Ty, mut fields: Vec<Field>) {
     for f in &mut fields {
-        func.locals.push(LocalDecl {
-            ty: f.ty,
-            name: None,
-        });
+        func.locals.push(LocalDecl::new(f.ty, None));
         f.local = Local(func.locals.len() as u32 - 1);
     }
     // Rewrite the accesses first: the loads and stores added below must keep naming `*p`.

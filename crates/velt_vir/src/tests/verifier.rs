@@ -30,23 +30,16 @@ fn verify_rejects_bad_jump_and_agg_param() {
 
     let mut p = base_program();
     p.funcs[0].params.push(Ty::Agg(STR_AGG));
-    p.funcs[0].locals.insert(
-        0,
-        LocalDecl {
-            ty: Ty::Agg(STR_AGG),
-            name: None,
-        },
-    );
+    p.funcs[0]
+        .locals
+        .insert(0, LocalDecl::new(Ty::Agg(STR_AGG), None));
     expect_err(&p, "non-scalar");
 }
 
 #[test]
 fn verify_rejects_binary_type_mismatch_and_missing_main() {
     let mut p = base_program();
-    p.funcs[0].locals.push(LocalDecl {
-        ty: Ty::I64,
-        name: None,
-    });
+    p.funcs[0].locals.push(LocalDecl::new(Ty::I64, None));
     let l = Local(p.funcs[0].locals.len() as u32 - 1);
     p.funcs[0].blocks[0].stmts.push(Stmt::Assign(
         Place::local(l),
@@ -68,18 +61,9 @@ fn verify_rejects_conditional_init() {
     // bb0: branch c, bb1, bb2; bb1: x = 1; goto bb2; bb2: return x
     let mut p = base_program();
     p.funcs.push(Function {
-        symbol: "t".into(),
-        params: vec![Ty::Bool],
-        ret: Ty::I64,
         locals: vec![
-            LocalDecl {
-                ty: Ty::Bool,
-                name: None,
-            },
-            LocalDecl {
-                ty: Ty::I64,
-                name: Some("x".into()),
-            },
+            LocalDecl::new(Ty::Bool, None),
+            LocalDecl::new(Ty::I64, Some("x".into())),
         ],
         blocks: vec![
             BasicBlock {
@@ -102,10 +86,7 @@ fn verify_rejects_conditional_init() {
                 term: Terminator::Return(Operand::Copy(Place::local(Local(1)))),
             },
         ],
-        linkage: Linkage::Internal,
-        locs: vec![],
-        param_attrs: vec![],
-        is_poll: false,
+        ..Function::new("t".into(), vec![Ty::Bool], Ty::I64, Linkage::Internal)
     });
     expect_err(&p, "_1 x may be used before it is assigned");
 }
@@ -139,20 +120,11 @@ fn verify_rejects_misplaced_param_attrs() {
 /// `t(c: bool) -> i64` with local `_1 x: i64` and the given blocks, added to a valid program.
 fn with_test_fn(blocks: Vec<BasicBlock>) -> vir::Program {
     let mut p = base_program();
-    let local = |ty, name: Option<&str>| LocalDecl {
-        ty,
-        name: name.map(Into::into),
-    };
+    let local = |ty, name: Option<&str>| LocalDecl::new(ty, name.map(Into::into));
     p.funcs.push(Function {
-        symbol: "t".into(),
-        params: vec![Ty::Bool],
-        ret: Ty::I64,
         locals: vec![local(Ty::Bool, None), local(Ty::I64, Some("x"))],
         blocks,
-        linkage: Linkage::Internal,
-        locs: vec![],
-        param_attrs: vec![],
-        is_poll: false,
+        ..Function::new("t".into(), vec![Ty::Bool], Ty::I64, Linkage::Internal)
     });
     p
 }
