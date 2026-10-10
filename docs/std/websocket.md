@@ -46,3 +46,28 @@ async function main() {
 
 Notes: messages are pulled with `receive` or `for await` (no callbacks, so hot reload needs nothing special);
 pings are answered automatically; WebSockets over HTTP/2 (RFC 8441) are not supported.
+
+`send` and `sendBytes` return once the message is queued, as `ws.send` does in browsers, Node
+and Bun: everything queued on a connection goes out in one write, so replies to messages that
+arrived together, or a message sent to many sockets, cost one system call per socket. A send
+waits while more than 1 MiB is queued for the connection, so a slow peer slows its sender down
+instead of filling memory. A connection that broke is reported by the next `send` or `receive`
+(`IoError`). `close` returns once everything sent before it is written. An idle connection keeps
+no read buffer (about 3 KB of memory per open connection in total).
+
+Because sends are queued, a plain loop is the fastest way to send one message to many sockets
+(each `await` returns at once; `Promise.all` over the sends adds a promise per socket):
+
+```ts
+import { WebSocket } from "velt:websocket";
+
+async function broadcast(sockets: WebSocket[], text: string) {
+  for (const s of sockets) {
+    try {
+      await s.send(text);
+    } catch (e) {
+      // That peer is gone; its own receive loop cleans it up.
+    }
+  }
+}
+```

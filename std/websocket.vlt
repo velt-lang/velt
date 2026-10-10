@@ -64,12 +64,15 @@ export class WsMessage {
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   private handle: u64;
 
-  /** Sends a text message. */
+  /**
+   * Sends a text message: returns once it is queued (everything queued goes out in one write),
+   * waiting while more than 1 MiB is queued for this connection.
+   */
   async send(text: string): Promise<void> {
     checkIo(await velt_rt_ws_send_text(this.handle, text));
   }
 
-  /** Sends a binary message. */
+  /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
     checkIo(await velt_rt_ws_send_binary(this.handle, data));
   }
@@ -98,9 +101,10 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   }
 
   /**
-   * Sends a close frame (`code` 1000 = normal closure) and releases the handle. Closing a
-   * connection the peer already closed, or closing twice, is fine; other operations on the
-   * handle (through any copy) throw `IoError` `EBADF` afterwards.
+   * Sends a close frame (`code` 1000 = normal closure) after everything queued, waits until it is
+   * written, and releases the handle. Closing a connection the peer already closed, or closing
+   * twice, is fine; other operations on the handle (through any copy) throw `IoError` `EBADF`
+   * afterwards.
    */
   async close(code: i64 = 1000, reason: string = ""): Promise<void> {
     const s = await velt_rt_ws_close(this.handle, code as u32, reason);
