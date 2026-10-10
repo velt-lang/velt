@@ -37,6 +37,10 @@ version while the old one keeps running:
   function that live values may still call was removed, or closures were reordered.
 - **Build error**: the diagnostics are printed and the old version keeps running.
 - **Program exit**: `velt dev` prints the exit code and waits for the next change.
+- **Crash during a reload**: if the running program dies while it takes a change (a bug in
+  `velt dev`, please report it), `velt dev` says so, for example `velt dev: the running program
+  crashed during the reload (exit code 0xc0000005); restarted it in 950 ms`, and the new version
+  runs from a fresh start.
 
 Stopping `velt dev` (Ctrl-C, or SIGTERM/SIGHUP from a process manager or `docker stop`) stops
 the program the same way a reload does: it gets a stop request and can finish in-flight

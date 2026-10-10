@@ -228,7 +228,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
     (a struct/class layout or a closure's captures changed, a function's signature changed,
     `main` changed, a function live values may still call was removed, closures were reordered)
     start a new host instead: `velt dev: restarted (<reason>) in <ms> ms`, e.g.
-    `restarted (Point gained a field)`. A failed build keeps the program running, as above.
+    `restarted (Point gained a field)`. A failed build keeps the program running, as above. A
+    host that dies (or stops answering) while it takes a change is replaced by a new host
+    running the change, and said so (additive): `velt dev: the running program crashed during
+    the reload (<how>); restarted it in <ms> ms`, `<how>` being `exit code 0x<NTSTATUS>` on
+    Windows or `signal <n>` on Unix (`exited during the reload (exit code <n>)` and `stopped
+    answering during the reload` for the other cases). On Windows x64 a host that faults with an
+    access violation first prints where (faulting address, registers, stack) to stderr.
   - `--exe`: each version is a linked debug executable with its own file
     (`<target dir>/dev/<stem>-<n>`, numbered per session), so a running (on Windows: locked)
     executable is never overwritten; a version's files are deleted once its process has exited,

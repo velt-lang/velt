@@ -67,6 +67,9 @@ enum Outcome {
     Swapped(usize, Vec<PathBuf>),
     /// The running host could not take the new version (the reason), so it was restarted.
     Restarted(String, Vec<PathBuf>),
+    /// The running host died (or stopped answering) during the reload, which it should never
+    /// do (what happened); a new one runs the new version.
+    Recovered(String, Vec<PathBuf>),
     /// The build failed; it read these files.
     Failed(Vec<PathBuf>),
 }
@@ -142,6 +145,11 @@ impl Supervisor {
                     .set(files.into_iter().chain(manifest), &snapshot);
                 eprintln!("velt dev: restarted ({reason}) in {ms} ms");
             }
+            Outcome::Recovered(what, files) => {
+                self.watcher
+                    .set(files.into_iter().chain(manifest), &snapshot);
+                eprintln!("velt dev: {what}; restarted it in {ms} ms");
+            }
             Outcome::Failed(files) => {
                 self.watcher
                     .add(files.into_iter().chain(manifest), &snapshot);
@@ -160,7 +168,7 @@ impl Supervisor {
     fn reload_jit(&mut self) -> Outcome {
         let outcome = self.reload_jit_inner();
         match outcome {
-            Outcome::Restarted(..) => self.last_restarted = true,
+            Outcome::Restarted(..) | Outcome::Recovered(..) => self.last_restarted = true,
             Outcome::Swapped(..) | Outcome::Replaced(_) => self.last_restarted = false,
             Outcome::Failed(_) => {}
         }
@@ -201,9 +209,25 @@ impl Supervisor {
                 Outcome::Replaced(files) => Outcome::Restarted(reason, files),
                 other => other,
             },
-            // The host went away (crashed or exited meanwhile): start a new one.
-            Err(_) => self.rebuild_jit(spare),
+            // The host went away (crashed or exited meanwhile): say so and start a new one.
+            Err(_) => {
+                let what = self.lost_host();
+                match self.rebuild_jit(spare) {
+                    Outcome::Replaced(files) => Outcome::Recovered(what, files),
+                    other => {
+                        eprintln!("velt dev: {what}");
+                        other
+                    }
+                }
+            }
         }
+    }
+
+    /// What became of the running host after its reload channel failed.
+    fn lost_host(&mut self) -> String {
+        // The channel closes as the process ends: its exit status follows at once.
+        let status = (self.running.as_mut()).and_then(|r| r.wait_status(LOST_HOST_GRACE));
+        lost_host_message(status)
     }
 
     /// The modification times of the manifest and lockfile.
@@ -405,6 +429,43 @@ impl Supervisor {
         }
         std::process::exit(code)
     }
+}
+
+/// How long a host whose reload channel failed gets to finish exiting.
+const LOST_HOST_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What `velt dev` says when the running host ended (`status`) or stopped answering (`None`)
+/// during a reload.
+fn lost_host_message(status: Option<std::process::ExitStatus>) -> String {
+    let Some(status) = status else {
+        return "the running program stopped answering during the reload".into();
+    };
+    match crash(status) {
+        Some(how) => format!("the running program crashed during the reload ({how})"),
+        None => format!(
+            "the running program exited during the reload (exit code {})",
+            crate::commands::exit_code(status)
+        ),
+    }
+}
+
+/// How a process that crashed ended (a fatal signal, or a Windows exception code); `None` for
+/// an exit.
+fn crash(status: std::process::ExitStatus) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return Some(format!("signal {signal}"));
+        }
+    }
+    // NTSTATUS error codes (0xC...): an unhandled exception or a fail-fast ended the process.
+    #[cfg(windows)]
+    if let Some(code) = status.code().map(|c| c as u32).filter(|c| c >> 30 == 3) {
+        return Some(format!("exit code {code:#x}"));
+    }
+    let _ = status;
+    None
 }
 
 /// Whether a host may be started ahead of need here: build reports must carry the host's

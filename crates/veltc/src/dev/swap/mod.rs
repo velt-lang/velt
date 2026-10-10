@@ -17,6 +17,10 @@ use crate::cli::BuildArgs;
 use crate::commands::{failure_code, report};
 use crate::driver::{self, BuildOptions, Session};
 
+/// For tests: a host with this set crashes (aborts) when asked to reload, as one whose swap
+/// faults would.
+pub const CRASH_ON_RELOAD_ENV: &str = "VELT_DEV_CRASH_ON_RELOAD";
+
 /// Answer reload requests on `channel` on a background thread for the life of the program;
 /// `args` says what to report (`-v`, `--timings`).
 pub fn serve_reloads(
@@ -30,10 +34,14 @@ pub fn serve_reloads(
         details: args.timings,
     };
     let natives = Fingerprint::of(opts.packages.as_ref());
+    let crash = std::env::var_os(CRASH_ON_RELOAD_ENV).is_some();
     let spawned = std::thread::Builder::new()
         .name("velt-dev-reload".into())
         .spawn(move || {
             while wait_reload(&channel).is_ok() {
+                if crash {
+                    std::process::abort();
+                }
                 let reply = if Fingerprint::of(opts.packages.as_ref()) != natives {
                     // Native libraries are never swapped (or unloaded): start over.
                     Reloaded::Restart {
