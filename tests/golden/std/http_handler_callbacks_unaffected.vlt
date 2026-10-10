@@ -1,8 +1,6 @@
-// What an HTTP handler reaches is only an error when a callback it calls assigns a variable that
-// callback captured (#873): callbacks that only read, a render function, a pool, closures each
-// request makes for itself, a callback stored in a field no request reads (called in `main`),
-// and a `() => void` that assigns while the handler calls `() => string` values (a closure
-// returning nothing is never one of those) all compile and run.
+// What an HTTP handler reaches is only an error when a callback it reaches assigns a variable
+// that callback captured (#873): callbacks that only read, a render function, a pool, an object
+// whose callbacks assign nothing, and closures each request makes for itself all compile and run.
 import { serve } from "velt:http";
 
 class Input {
@@ -11,7 +9,6 @@ class Input {
 
 class Widget {
   name = "w";
-  onClick: () => void = () => {};
 }
 
 class Emitter {
@@ -41,12 +38,7 @@ async function main() {
       console.log("long");
     }
   };
-  let clicks = 0;
   const w = new Widget();
-  w.onClick = () => {
-    clicks++;
-  };
-  w.onClick();
   const render = (s: string): string => `<b>${s}</b>`;
   const pool = new Pool();
   const hits = shared(0);
@@ -74,5 +66,5 @@ async function main() {
     console.log(await (await fetch(`http://127.0.0.1:${a.port}/`)).text());
   }
   await a.shutdown();
-  console.log(clicks, hits.get());
+  console.log(hits.get());
 }

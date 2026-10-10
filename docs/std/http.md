@@ -76,11 +76,13 @@ it throws.
   error, but changes each request's copy (#854).
 
   Callbacks stored in the heap are followed by type: one stored in an object the handler
-  reaches, or of the type of one it calls, counts as reached, unless it is only stored in fields
-  that no code a request may run reads and that no code copies out (`w.onClick = …` while the
-  handler reads only `w.name`; calling `w.onClick()` in `main` is fine, `const h = w.onClick` is
-  not). The check errs on the side of rejecting, since a missed case can crash: a callback of a
-  type the handler calls is an error even when the handler never gets to it. That includes one
+  reaches, or of the type of one it calls, counts as reached, whether or not anything reads the
+  field holding it. Capturing an object that holds such a callback is an error even when the
+  handler never calls it (`w.onClick = () => { clicks++; }` while the handler reads only
+  `w.name`): each request's copy of `w` copies the callback, and those copies would share the
+  variable's cell across threads. The check errs on the side of rejecting, since a missed case
+  can crash: a callback of a type the handler calls is an error even when the handler never gets
+  to it. That includes one
   stored in another object of the same class (`other.onChange = …` while the handler calls
   `i.onChange`), in another emitter (`startup.on(() => { ready = true; })` while the handler
   calls `requests.emit(…)` on an `Emitter` of the same class), one in an array only `main` uses

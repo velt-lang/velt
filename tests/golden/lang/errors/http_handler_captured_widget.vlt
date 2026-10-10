@@ -1,6 +1,6 @@
-// check: no leaks
 // A handler that captures an object holding a sync callback which modifies its own capture,
-// and never calls it: valid, as on main (no type-based rule rejects it).
+// and never calls it (#813, #873): each request's copy of `w` copies the callback, and those
+// copies would share `clicks` across threads.
 import { serve } from "velt:http";
 
 class Widget {

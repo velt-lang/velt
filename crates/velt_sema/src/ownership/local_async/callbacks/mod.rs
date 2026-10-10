@@ -11,8 +11,10 @@
 //! map value is reached when a value the handler reaches has a type holding a function type of
 //! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
 //! stands for no callback the user stores), and in the direction values flow ([`fits`]: a
-//! `() => void` closure is never a `() => string`). A closure only ever stored in fields that
-//! no code a request may run reads (nor any code copies out) is not reached ([`Bodies`]). A variable declared in a request
+//! `() => void` closure is never a `() => string`). A closure is reached even when no code
+//! a request may run reads the field holding it (`w.onClick = …` while the handler reads only
+//! `w.name`): each request's copy of `w` copies the closure, and those copies share the
+//! variable it captured across threads. A variable declared in a request
 //! (a reached async closure, or a closure made inside one) is that request's own, and the
 //! standard library's closures are not the user's to change, so neither is reported. A reached
 //! closure's assignments include those of the closures it makes.
@@ -27,8 +29,8 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Intrinsic, Lit, LocalId, Pat,
-    PatKind, Stmt, StmtKind as S, TyId, TyKind, UnOp,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Intrinsic, Lit, LocalId, Stmt,
+    StmtKind as S, TyId, TyKind, UnOp,
 };
 use crate::ownership::local_closures::walk::{self, Visit};
 
@@ -70,7 +72,7 @@ pub(super) fn check_handler_callbacks(
     if work.is_empty() && roots.is_empty() {
         return;
     }
-    // What the program's bodies do with fields: only needed when it stores a closure at all.
+    // Where the program stores closures, for the message: only needed when it stores one.
     let user =
         g.nodes.iter().enumerate().any(
             |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_std(cx, *c)),
@@ -83,12 +85,6 @@ pub(super) fn check_handler_callbacks(
     if user {
         bodies.homes = homes(cx, g);
     }
-    // Nodes whose values flow somewhere the graph follows.
-    let flowing: HashSet<usize> = if user {
-        g.srcs.iter().flatten().map(|(n, _)| *n).collect()
-    } else {
-        HashSet::new()
-    };
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
     let mut seen = HashSet::new();
     let mut fns: HashMap<TyId, Why> = HashMap::new();
@@ -117,35 +113,8 @@ pub(super) fn check_handler_callbacks(
         }
         types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
         rooted = roots.len();
-        // A closure only ever stored in fields that no code a request may run reads, and that
-        // no code copies out (`w.onClick = …` while the handler reads only `w.name`), is never
-        // called by one.
-        let reads = if !user {
-            None
-        } else {
-            bodies.request_reads(g.nodes.iter().enumerate().filter_map(|(n, node)| {
-                match (node, why[n]) {
-                    (Node::Lit(c), Some(_)) => Some(*c),
-                    _ => None,
-                }
-            }))
-        };
-        let unread = |n: usize, c: DefId| {
-            let Some(reads) = &reads else { return false };
-            !flowing.contains(&n)
-                && bodies.stores.get(&c).is_some_and(|fs| {
-                    fs.iter().all(|&(a, k)| {
-                        cx.adt(a)
-                            .and_then(|i| i.fields.get(k as usize))
-                            .is_some_and(|f| !reads.contains(&f.name))
-                    })
-                })
-        };
         for (n, node) in g.nodes.iter().enumerate() {
             if !matches!(node, Node::Lit(_)) || why[n].is_some() || flags[n] & STORED == 0 {
-                continue;
-            }
-            if matches!(node, Node::Lit(c) if unread(n, *c)) {
                 continue;
             }
             let found = fns
