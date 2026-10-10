@@ -144,6 +144,13 @@ pub enum Intrinsic {
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
     SourceLocation,
+    /// Compiler-internal (std: `__intrinsic_symbol_static(id, desc)`): `(id: i64 literal, desc:
+    /// string literal) -> symbol`, the address of a read-only symbol record made at compile
+    /// time (rt_abi.md "Symbols"): one record per `id` in a program, whatever the call site, so
+    /// every evaluation gives the same symbol. A module constant `Symbol("d")` and the
+    /// well-known symbols (`Symbol.iterator`) are such records. Without `desc` the symbol has
+    /// no description.
+    SymbolStatic,
     /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
     /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
     /// the rejection.

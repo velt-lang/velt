@@ -272,6 +272,7 @@ impl Types {
             // `boolean` is TypeScript's name, so code can be shared with `tsc` (#353).
             "bool" | "boolean" => TyKind::Bool,
             "string" => TyKind::Str,
+            "symbol" => TyKind::Symbol,
             "void" => TyKind::Unit,
             "never" => TyKind::Never,
             _ => return None,

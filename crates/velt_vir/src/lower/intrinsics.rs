@@ -35,6 +35,7 @@ impl FnLower<'_, '_> {
                 self.gen_embed_value(&e)
             }
             (I::Print, _) => self.print(1, args),
+            (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
             (I::FieldAbsent, []) => {
                 // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
                 let t = self.sub(ty);

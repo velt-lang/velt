@@ -373,7 +373,9 @@ impl FnCx<'_, '_> {
         let keys = a
             .fields
             .iter()
-            .filter(|f| !is_private_name(&f.name))
+            .filter(|f| {
+                !is_private_name(&f.name) && crate::property_order::symbol_key(&f.name).is_none()
+            })
             .map(|f| Key {
                 name: f.name.clone(),
                 optional: f.optional && !class,

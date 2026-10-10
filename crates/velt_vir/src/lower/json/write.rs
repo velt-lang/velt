@@ -267,8 +267,8 @@ impl FnLower<'_, '_> {
         for i in order {
             let (name, optional) = names[i].clone();
             let fty = tys[i];
-            // ES private fields (`#x`) are not written, as in JavaScript.
-            if name.starts_with('#') {
+            // ES private fields (`#x`) and symbol keys are not written, as in JavaScript.
+            if name.starts_with('#') || velt_sema::property_order::symbol_key(&name).is_some() {
                 continue;
             }
             let fp = self.field_place(place, ty, i as u32);

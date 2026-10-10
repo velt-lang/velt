@@ -45,6 +45,7 @@ impl<'h> Cx<'h> {
             locs: None,
             tracked: HashMap::new(),
             str_objects: HashMap::new(),
+            symbol_records: HashMap::new(),
             boxing,
             facts: Default::default(),
             iface_impls: None,

@@ -98,7 +98,9 @@ impl FnLower<'_, '_> {
             .into_iter()
             .map(|i| {
                 let (index, n, t) = &shown[i];
-                (*index, inspect_key(n), *t)
+                let key =
+                    velt_sema::property_order::symbol_key(n).unwrap_or_else(|| inspect_key(n));
+                (*index, key, *t)
             })
             .collect()
     }

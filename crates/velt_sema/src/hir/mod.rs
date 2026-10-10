@@ -132,6 +132,9 @@ pub enum TyKind {
     /// Literal type (`"circle"`, `42`, `true`; see hir_encodings.md "Literal types"): its only
     /// value is `LitValue`. Zero-sized: a value carries no bits (like `Unit`).
     Literal(LitValue),
+    /// `symbol`: a pointer to a symbol record (rt_abi.md "Symbols"), compared by identity.
+    /// Copy; nothing to drop (records live as long as the program).
+    Symbol,
 }
 
 /// The value of a literal type.

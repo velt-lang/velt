@@ -38,6 +38,7 @@ impl Cx<'_> {
             TyKind::Float(FloatTy::F64) => "f64".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
+            TyKind::Symbol => "symbol".into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "error".into(),

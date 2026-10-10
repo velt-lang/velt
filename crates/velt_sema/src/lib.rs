@@ -59,6 +59,7 @@ mod record_keys;
 mod recursive_aliases;
 mod resolve;
 mod suggest;
+mod symbols;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
@@ -385,9 +386,9 @@ fn check_main(
 }
 
 /// Is `name` a property name a quoted key may not use: Velt's encodings of ES private names
-/// (`#x`) and well-known symbol keys (`[Symbol.iterator]`), or `__proto__`?
+/// (`#x`) and symbol keys (`[Symbol.iterator]`, `[KEY]`), or `__proto__`?
 pub(crate) fn reserved_key(name: &str) -> bool {
-    name.starts_with('#') || name.starts_with("[Symbol.") || name == "__proto__"
+    name.starts_with('#') || name.starts_with('[') || name == "__proto__"
 }
 
 /// Why property name `name` (a [`reserved_key`]) is not supported.

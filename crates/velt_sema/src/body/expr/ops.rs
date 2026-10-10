@@ -228,7 +228,14 @@ impl FnCx<'_, '_> {
         use ast::BinaryOp as B;
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
-            B::In => return self.private_in(lhs, rhs, span),
+            B::In => {
+                return match &lhs.kind {
+                    ast::ExprKind::Ident(x) if x.is_private_name() => {
+                        self.private_in(lhs, rhs, span)
+                    }
+                    _ => self.key_in(lhs, rhs, span),
+                }
+            }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
                 let other = if is_null(rhs) { lhs } else { rhs };

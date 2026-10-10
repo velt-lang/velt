@@ -63,6 +63,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "async_generator_value" => I::AsyncGeneratorValue,
         "async_generator_return" => I::AsyncGeneratorReturn,
         "async_generator_dispose" => I::AsyncGeneratorDispose,
+        "symbol_static" => I::SymbolStatic,
         _ => return None,
     })
 }
@@ -200,6 +201,10 @@ impl FnCx<'_, '_> {
             I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
+            I::SymbolStatic => {
+                let sym = ty.intern(TyKind::Symbol);
+                (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)
+            }
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),
