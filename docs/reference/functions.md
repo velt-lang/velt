@@ -687,11 +687,15 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   (``…is assigned by a closure created inside another closure, and cannot be shared with it``);
   assign it in the function that declares it. A `for (let …)` loop's step runs on a fresh
   binding per iteration, as in JS, so the same error applies to a variable the loop's head
-  declares; a variable declared in the loop body is one per iteration and may be assigned. A
-  variable a destructuring `let` or a `for (let … of …)` loop declares does not live in such a
-  cell yet: each closure that captured it keeps its own copy, so copy it into a variable of its
-  own (`let v = a;`) and assign that. A closure passed to `push` is stored, so it is escaping
-  too.
+  declares; a variable declared in the loop body is one per iteration and may be assigned. So
+  is a variable a `for (let … of …)` or `for await` loop declares (over an array, a `Map`, a
+  `Set` or a generator), as in JS: each iteration gets its own cell, so the closures the
+  iterations create do not share one (`for (let x of ["a", "b"]) fs.push(() => { x += "!";
+  return x; })` gives `a!` and `b!`). The same holds for the variables a destructuring `let`
+  declares, each time it runs. A closure called on the spot or a callback (`[1, 2].forEach(()
+  => { x += "!"; })`) that assigns such a variable changes that variable too, never the array
+  element it was bound from: the array keeps its contents, as in JS. A closure passed to `push`
+  is stored, so it is escaping too.
 - An async closure that stays on the task that created it captures like any other escaping
   closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
   variables it captured, and every call sees the same objects and variables. Each call shares

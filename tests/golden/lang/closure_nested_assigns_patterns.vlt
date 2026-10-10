@@ -1,0 +1,89 @@
+// check: no leaks
+// Variables a `Map` / `Set` loop, a `for…of` loop or a destructuring `let` declares, assigned by
+// a closure created inside a closure and read afterwards by that closure or by the code around
+// it: each iteration (each run of the `let`) has its own variable in a cell of its own, which the
+// function declaring it and every closure on the way share (#799).
+
+async function loops() {
+  const m = new Map<string, number>([["a", 1], ["b", 2]]);
+  let total = 0;
+  const fs: (() => void)[] = [];
+  for (let [k, v] of m) {
+    const f = () => {
+      const g = () => {
+        v += 10;
+      };
+      g();
+    };
+    fs.push(f);
+    f();
+    total += v;
+  }
+  console.log(total);
+  const st = new Set<string>(["p", "q"]);
+  let out = "";
+  for (let s of st) {
+    const f = () => {
+      const g = () => {
+        s += "?";
+      };
+      g();
+    };
+    fs.push(f);
+    f();
+    out += s;
+  }
+  console.log(out);
+}
+
+async function destructured() {
+  let [a, b] = [1, 10];
+  const f = () => {
+    const g = () => {
+      a += b + 1;
+    };
+    g();
+    return a;
+  };
+  console.log(f(), f(), a);
+  let { x, y } = { x: "s", y: "t" };
+  const h = () => {
+    const g = () => {
+      x += y;
+    };
+    g();
+    return x;
+  };
+  console.log(h(), h(), x);
+}
+
+async function readAfter() {
+  let out = "";
+  for (let x of ["a", "b"]) {
+    const f = () => {
+      const g = () => {
+        x = x + "#";
+      };
+      g();
+    };
+    f();
+    f();
+    out += x + ";";
+  }
+  console.log(out);
+  const fs: (() => () => number)[] = [];
+  for (let n of [1, 2]) {
+    fs.push(() => () => {
+      n += 1;
+      return n;
+    });
+  }
+  const inner = fs.map((o) => o());
+  console.log(inner.map((f) => f()).join(","), inner.map((f) => f()).join(","));
+}
+
+async function main() {
+  await loops();
+  await destructured();
+  await readAfter();
+}

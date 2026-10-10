@@ -121,9 +121,6 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
-                if *kind == ast::VarKind::Let {
-                    self.cx.pattern_bindings.push(pattern.span);
-                }
                 let tested = match is_await {
                     true => None,
                     false => self.for_in_presence_test(pattern, iter, body),

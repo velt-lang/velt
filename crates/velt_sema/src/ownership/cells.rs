@@ -26,9 +26,8 @@ use super::soft::{is_moved_place, make_share};
 /// closure created in a closure assigns a variable the outer one captured), and from there the
 /// captures of it in every other closure. `per_iteration` are the `for (let …)` variables the
 /// loop's head declares (`crate::moves::Outcome::per_iteration`): each iteration has its own,
-/// so none of them becomes one cell from below. Nor does a variable a pattern declares
-/// ([`pattern_bound`], #799): the closure keeps its copy, as when nothing else sees the
-/// variable afterwards (`crate::moves` reports it otherwise).
+/// so none of them becomes one cell from below. A variable a pattern or a `for…of` loop
+/// declares can: each time the pattern binds, it gets a cell of its own (#799).
 pub(crate) fn box_cells(
     cx: &mut Ctx,
     boxed: &HashMap<DefId, HashSet<LocalId>>,
@@ -75,11 +74,6 @@ pub(crate) fn box_cells(
                 Some(Unshareable::Promise)
             } else if per_iteration.contains(&(p, outer)) {
                 Some(Unshareable::PerIteration)
-            } else if pattern_bound(cx, p, outer) {
-                // Each closure keeps its own copy, as without the closure created inside it:
-                // `crate::moves` reports the variable when its function would need the cell.
-                done.insert((p, outer));
-                continue;
             } else {
                 None
             };
@@ -124,18 +118,6 @@ pub(crate) fn unshareable_note(name: &str, why: Unshareable) -> String {
             "each iteration of the `for` loop has its own `{name}`, which is copied into the next one; assign a variable declared in the loop body instead"
         ),
     }
-}
-
-/// Is local `l` of function `d` declared by a destructuring `let` or a `for (let … of …)` loop
-/// (`Ctx::pattern_bindings`)? Such a variable cannot yet be a cell made from below (#799).
-pub(crate) fn pattern_bound(cx: &Ctx, d: DefId, l: LocalId) -> bool {
-    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
-        return false;
-    };
-    let at = f.body.locals[l.0 as usize].span;
-    cx.pattern_bindings
-        .iter()
-        .any(|p| p.file == at.file && p.lo <= at.lo && at.hi <= p.hi)
 }
 
 /// May local `l` of function `d` live in a cell (`crate::moves`: not a promise)?
@@ -250,7 +232,7 @@ fn unshareable(
 
 /// Where function `d` assigns its local `l` first, itself or else through a closure created
 /// in it that captures `l`.
-fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> {
+pub(crate) fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> {
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
         return None;
     };
