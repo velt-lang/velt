@@ -1,0 +1,77 @@
+// check: no leaks
+// WeakMap and WeakSet: get/set/has/delete with class instances, object types and arrays as keys
+// (by identity), and values of every kind (numbers, strings, unions, objects, arrays, null).
+class Key {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+function show(m: WeakMap<Key, string>, k: Key): string {
+  return m.has(k) ? "has " + (m.get(k) ?? "?") : "none";
+}
+
+function main() {
+  const a = new Key("a");
+  const b = new Key("b");
+  const names = new WeakMap<Key, string>();
+  console.log(show(names, a), names.delete(a));
+  names.set(a, "the first key, a heap string for sure");
+  names.set(b, "bee");
+  console.log(show(names, a), show(names, b));
+  names.set(a, "replaced");
+  console.log(show(names, a), names.delete(a), names.delete(a), show(names, a), show(names, b));
+
+  // Numbers: a stored 0 is found (it is not "missing").
+  const counts = new WeakMap<Key, number>();
+  counts.set(a, 0);
+  counts.set(b, -1.5);
+  console.log(counts.has(a), counts.get(a) ?? 99, counts.get(b) ?? 99);
+  counts.set(a, (counts.get(a) ?? 0) + 1);
+  console.log(counts.get(a) ?? 99);
+
+  // Unions and nullable values.
+  const tags = new WeakMap<Key, string | number | null>();
+  tags.set(a, 7);
+  tags.set(b, null);
+  console.log(tags.get(a), tags.has(b), tags.get(b));
+  tags.set(b, "seven");
+  console.log(tags.get(b));
+
+  // Objects and arrays as values: `get` returns the stored object itself.
+  const meta = new WeakMap<Key, Key>();
+  const c = new Key("c");
+  meta.set(a, c);
+  const got = meta.get(a);
+  console.log(got === c, got != null ? got.name : "-");
+  const lists = new WeakMap<Key, number[]>();
+  lists.set(a, [1, 2, 3]);
+  const xs = lists.get(a);
+  if (xs != null) {
+    xs.push(4);
+  }
+  console.log(lists.get(a));
+
+  // Object types and arrays as keys, by identity.
+  const p: Point = { x: 1, y: 2 };
+  const q: Point = { x: 1, y: 2 };
+  const byPoint = new WeakMap<Point, string>();
+  byPoint.set(p, "p");
+  console.log(byPoint.has(p), byPoint.has(q), byPoint.get(p));
+  const arr = [1, 2];
+  const byArray = new WeakMap<number[], boolean>();
+  byArray.set(arr, true);
+  console.log(byArray.has(arr), byArray.has([1, 2]));
+
+  // WeakSet.
+  const seen = new WeakSet<Key>();
+  seen.add(a);
+  seen.add(a);
+  console.log(seen.has(a), seen.has(b), seen.delete(a), seen.has(a), seen.delete(a));
+}

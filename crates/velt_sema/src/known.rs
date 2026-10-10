@@ -157,6 +157,44 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `d` the prelude's `WeakMap`, `WeakSet` or `WeakRef` class?
+    pub fn is_weak_class(&self, d: DefId) -> bool {
+        ["WeakMap", "WeakSet", "WeakRef"]
+            .iter()
+            .any(|n| self.prelude_adt(n) == Some(d))
+    }
+
+    /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
+    /// or payload)? Their entries live in a table of the thread that made them, so such values
+    /// cannot be copied or passed to another task. Interface values are not looked into.
+    pub fn holds_weak(&mut self, t: TyId) -> bool {
+        self.holds_weak_in(t, &mut std::collections::HashSet::new())
+    }
+
+    fn holds_weak_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Adt(d, _) if self.is_weak_class(d) => return true,
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_weak_in(p, seen))
+    }
+
     /// Does a value of type `t` hold a generator object (`Generator`, `AsyncGenerator`; in a
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.

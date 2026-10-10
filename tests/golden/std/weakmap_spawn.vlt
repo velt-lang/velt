@@ -1,0 +1,13 @@
+// A weak collection belongs to the thread that made it: it cannot go to a spawned task.
+class Key {}
+
+async function count(m: WeakMap<Key, number>, k: Key): Promise<number> {
+  return m.get(k) ?? 0;
+}
+
+async function main() {
+  const m = new WeakMap<Key, number>();
+  const k = new Key();
+  m.set(k, 1);
+  console.log(await spawn(count(m, k)));
+}

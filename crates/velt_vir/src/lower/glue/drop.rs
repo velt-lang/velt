@@ -70,7 +70,8 @@ impl FnLower<'_, '_> {
                 self.when(nn, done);
                 if self.cx.counted(ty) {
                     let o = obj.clone();
-                    self.release(obj, |lw| lw.drop_object(o, ty, d));
+                    let weak = self.cx.weak_capable(ty);
+                    self.release_as(obj, weak, |lw| lw.drop_object(o, ty, d));
                 } else {
                     self.drop_object(obj, ty, d);
                 }

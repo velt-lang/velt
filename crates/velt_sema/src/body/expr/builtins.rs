@@ -308,7 +308,9 @@ impl FnCx<'_, '_> {
                 crate::body::places::set_place_mode(&mut recv, m);
             }
         }
-        if i == Intrinsic::Clone && self.cx.holds_generator(recv.ty) {
+        if i == Intrinsic::Clone
+            && (self.cx.holds_generator(recv.ty) || self.cx.holds_weak(recv.ty))
+        {
             let t = recv.ty;
             self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
         } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {

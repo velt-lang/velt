@@ -137,6 +137,10 @@ impl State {
                 m
             }
             None => {
+                if self.maps.is_empty() {
+                    // Id 0 is never a map: generated code keeps it for "not created yet".
+                    self.maps.push(None);
+                }
                 self.maps.push(Some(data));
                 (self.maps.len() - 1) as MapId
             }
@@ -264,6 +268,10 @@ impl State {
                 r
             }
             None => {
+                if self.refs.is_empty() {
+                    // Id 0 is never a `WeakRef` slot (as for maps).
+                    self.refs.push(None);
+                }
                 self.refs.push(Some(obj as usize));
                 (self.refs.len() - 1) as RefId
             }

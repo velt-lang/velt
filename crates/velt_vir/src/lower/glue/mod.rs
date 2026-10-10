@@ -25,6 +25,10 @@
 //! | JsonWriteKey | `(buf: ptr, p: ptr, key: ptr)`  | JsonWrite of a type that passes its key (a string) to a `toJSON(key)` (json/key.rs) |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
 //! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
+//! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
+//! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
+//! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
+//! | WeakBoxTrace | `(box: ptr, visit: ptr, ctx: ptr)` | Trace of a boxed weak map value       |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted/transferred through
 //! their vtable (slots -1/-2/-3/-6, glue/vtable.rs), so a `Dog` held as an `Animal` releases
@@ -43,6 +47,7 @@ mod format_promise;
 mod literals;
 mod many;
 mod thunk;
+mod trace;
 mod transfer;
 mod transfer_env;
 mod vtable;
@@ -85,6 +90,11 @@ pub(crate) enum Glue {
     JsonWriteKey,
     JsonRead,
     JsonParse,
+    Trace,
+    TraceIn,
+    WeakRetain,
+    WeakRelease,
+    WeakBoxTrace,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -126,6 +136,11 @@ impl Glue {
             Glue::JsonWriteKey => "jsonwritekey",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
+            Glue::Trace => "trace",
+            Glue::TraceIn => "tracein",
+            Glue::WeakRetain => "weakretain",
+            Glue::WeakRelease => "weakrelease",
+            Glue::WeakBoxTrace => "weakboxtrace",
         }
     }
 
@@ -153,6 +168,8 @@ impl Glue {
             Glue::JsonWriteKey => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
+            Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
         }
     }
 }
@@ -191,6 +208,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::JsonParse => {
                 lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
             }
+            Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
+            Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
+            Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
+            Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
+            Glue::WeakRelease => lw.weak_release_body(args[0], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

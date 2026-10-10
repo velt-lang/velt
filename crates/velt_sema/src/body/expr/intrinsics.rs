@@ -63,6 +63,13 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "async_generator_value" => I::AsyncGeneratorValue,
         "async_generator_return" => I::AsyncGeneratorReturn,
         "async_generator_dispose" => I::AsyncGeneratorDispose,
+        "weakmap_set" => I::WeakMapSet,
+        "weakmap_get" => I::WeakMapGet,
+        "weakmap_has" => I::WeakMapHas,
+        "weakmap_delete" => I::WeakMapDelete,
+        "weakmap_value" => I::WeakMapValue,
+        "weakref_new" => I::WeakRefNew,
+        "weakref_deref" => I::WeakRefDeref,
         _ => return None,
     })
 }
@@ -103,7 +110,8 @@ impl FnCx<'_, '_> {
                 | Intrinsic::AsyncGeneratorResume
                 | Intrinsic::AsyncGeneratorValue
                 | Intrinsic::AsyncGeneratorReturn
-                | Intrinsic::AsyncGeneratorDispose,
+                | Intrinsic::AsyncGeneratorDispose
+                | Intrinsic::WeakMapSet,
             ) => {
                 vec!["T".into(), "E".into()]
             }
@@ -164,6 +172,24 @@ impl FnCx<'_, '_> {
             I::Panic => (vec![(str_, B)], ty.never, false),
             I::ArrayDataPtr => (vec![(arr, B)], ty.u64, true),
             I::Print | I::PrintErr => (vec![], unit, false),
+            I::WeakMapSet => {
+                let (u32_, v) = (ty.intern(TyKind::Int(IntTy::U32)), ty.param(1));
+                (vec![(u32_, C), (t, B), (v, O)], u32_, true)
+            }
+            I::WeakMapGet => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C), (t, B)], ty.u64, true)
+            }
+            I::WeakMapHas | I::WeakMapDelete => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C), (t, B)], bool_, true)
+            }
+            I::WeakMapValue => (vec![(ty.u64, C)], t, true),
+            I::WeakRefNew => (vec![(t, B)], ty.intern(TyKind::Int(IntTy::U32)), true),
+            I::WeakRefDeref => {
+                let u32_ = ty.intern(TyKind::Int(IntTy::U32));
+                (vec![(u32_, C)], ty.option(t), true)
+            }
             _ => return None,
         })
     }

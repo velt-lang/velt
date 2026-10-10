@@ -76,6 +76,7 @@ mod track_caller;
 mod transfer;
 mod truthy;
 mod types;
+mod weak;
 mod widen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -125,6 +126,7 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
             }
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
+                eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
             return cx.finish();
         }

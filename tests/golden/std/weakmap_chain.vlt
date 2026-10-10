@@ -1,0 +1,33 @@
+// check: no leaks
+// A long chain of weak keys (a linked list, freed in a loop by drop_chain.rs): each node leaves
+// the map as it is freed, and a WeakRef into the chain is cleared with it.
+class Node {
+  n: number;
+  next: Node | null = null;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function build(m: WeakMap<Node, string>, len: number): Node {
+  let head = new Node(0);
+  m.set(head, "node 0");
+  for (let i = 1; i < len; i++) {
+    const x = new Node(i);
+    x.next = head;
+    m.set(x, "node " + i.toString());
+    head = x;
+  }
+  return head;
+}
+
+function main() {
+  const m = new WeakMap<Node, string>();
+  let head: Node | null = build(m, 100000);
+  const r = new WeakRef(head!.next!.next!);
+  const mid = head!.next!.next!.next!;
+  console.log(m.get(mid) ?? "-", r.deref() != null);
+  console.log(head!.n);
+  head = null;
+  console.log(m.get(mid) ?? "-", r.deref() != null, m.has(mid));
+}
