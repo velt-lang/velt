@@ -129,7 +129,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // A shared cell (a generator closure's variable that is assigned after the capture,
             // cells.rs): the state holds one more reference to it and reads through it.
             let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(slot)));
-            self.retain(p.clone());
+            self.retain_cell(p.clone());
             return Some(p);
         }
         Some(match c.mode {

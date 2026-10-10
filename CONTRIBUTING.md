@@ -47,7 +47,9 @@ half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDE
 (the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
 directory fail the run too). The debug runs use the runtime's checking allocator
 (`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free (a read through a dangling
-pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`.
+pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`, and a captured
+variable's cell used by two tasks (a closure assigning it reached another task or HTTP request
+without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects").
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 

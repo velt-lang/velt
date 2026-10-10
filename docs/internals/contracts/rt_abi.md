@@ -222,6 +222,28 @@ an extern parameter or result whose type holds boxed values crosses as an unboxe
 or is boxed after the call (results). Closure environments on the heap are counted blocks too; the
 drop function in their header releases one reference.
 
+**Debug check of captured variables' cells** (#916). A captured variable that a closure assigns
+lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
+transfer glue gives a value crossing to another task cells of its own, and sema rejects the
+shapes that would share one (#901). Debug programs built by a debug compiler (as every debug
+golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
+records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
+which is not a race. The first use by a task other than the owner prints `velt debug-cells:
+captured variable <name> was used by two tasks: …` (both tasks and their threads, and the fix:
+`shared(...)`) to stderr and aborts. A cell made outside any task is claimed by the first task
+that uses it; uses outside any task (runtime clean-up, an HTTP request's set-up) are not checked. Release builds emit none of these
+calls and the cell layout is the same; the release runtime keeps the symbols as empty functions
+(and so does the WebAssembly runtime, which has one thread).
+
+| Symbol | Signature | Emitted |
+|---|---|---|
+| `velt_rt_cell_new` | `(void* cell, const VeltStr* name)` | a new cell of variable `name`: owned by the current task (unowned outside a task) |
+| `velt_rt_cell_use` | `(void* cell)` | before each count change of a cell, and on entry to a closure that assigns the captured variable: claims an unowned cell, aborts if another task owns it |
+| `velt_rt_cell_give` | `(void* cell)` | the transfer glue moves the only reference to another task: unowned until the receiver uses it |
+| `velt_rt_cell_copy` | `(void* cell, void* from)` | the transfer glue's fresh copy of the shared cell `from`: unowned |
+| `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 
