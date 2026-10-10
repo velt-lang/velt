@@ -10,11 +10,13 @@ use super::walk::scalar;
 use crate::str::VeltStr;
 
 /// The `text` of `JSON.stringify(value)` re-laid out: only the members of objects whose keys
-/// are in `keys` (in that order; `None` keeps every member in place), and with `indent` as JS's
-/// gap (empty: no whitespace). Malformed text (never written by the glue) comes back as is.
-pub fn relayout(text: &[u8], keys: Option<&[Vec<u8>]>, indent: &[u8]) -> Vec<u8> {
+/// are in `keys` (in that order; `None` keeps every member in place), and, when `pretty`, with
+/// line breaks, `indent` (JS's gap, which may be empty) per level and `": "` after keys (not
+/// `pretty`: no whitespace). Malformed text (never written by the glue) comes back as is.
+pub fn relayout(text: &[u8], keys: Option<&[Vec<u8>]>, pretty: bool, indent: &[u8]) -> Vec<u8> {
     let mut l = Layout {
         keys,
+        pretty,
         indent,
         out: Vec::with_capacity(text.len() + text.len() / 2),
     };
@@ -55,6 +57,7 @@ pub fn property_list(text: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 struct Layout<'a> {
     keys: Option<&'a [Vec<u8>]>,
+    pretty: bool,
     indent: &'a [u8],
     out: Vec<u8>,
 }
@@ -81,9 +84,9 @@ impl Layout<'_> {
         }
     }
 
-    /// A line break and the indentation of `depth` (nothing without a gap).
+    /// A line break and the indentation of `depth` (nothing unless `pretty`).
     fn newline(&mut self, depth: usize) {
-        if self.indent.is_empty() {
+        if !self.pretty {
             return;
         }
         self.out.push(b'\n');
@@ -139,7 +142,7 @@ impl Layout<'_> {
             self.newline(depth + 1);
             self.out.extend_from_slice(&sc.src[m.raw.0..m.raw.1]);
             self.out.push(b':');
-            if !self.indent.is_empty() {
+            if self.pretty {
                 self.out.push(b' ');
             }
             self.out.extend_from_slice(&m.value);
@@ -187,8 +190,9 @@ impl Layout<'_> {
 }
 
 /// `JSON.stringify(value, replacer, space)` from the compact `*text` of `JSON.stringify(value)`:
-/// `filter` 1 keeps only the object keys listed in `*keys` (the compact JSON text of the
-/// replacer's array of strings), `*indent` is the gap. Writes an owned string to `*out`.
+/// `flags` bit 0 keeps only the object keys listed in `*keys` (the compact JSON text of the
+/// replacer's array of strings); bit 1 adds line breaks and `": "`, with `*indent` (JS's gap,
+/// possibly empty) per level. Writes an owned string to `*out`.
 ///
 /// # Safety
 /// `text`, `keys` and `indent` must point to valid strings and `out` to writable memory.
@@ -196,16 +200,16 @@ impl Layout<'_> {
 pub unsafe extern "C" fn velt_rt_json_relayout(
     text: *const VeltStr,
     keys: *const VeltStr,
-    filter: u8,
+    flags: u8,
     indent: *const VeltStr,
     out: *mut VeltStr,
 ) {
     let text = (*text).as_bytes();
-    let list = match filter {
+    let list = match flags & 1 {
         0 => None,
         _ => property_list((*keys).as_bytes()),
     };
-    let laid = relayout(text, list.as_deref(), (*indent).as_bytes());
+    let laid = relayout(text, list.as_deref(), flags & 2 != 0, (*indent).as_bytes());
     out.write(VeltStr::from_vec(laid));
 }
 
@@ -219,6 +223,7 @@ mod tests {
         String::from_utf8(relayout(
             text.as_bytes(),
             keys.as_deref(),
+            !indent.is_empty(),
             indent.as_bytes(),
         ))
         .unwrap()
@@ -234,6 +239,21 @@ mod tests {
             "{\n\t\"a\": [\n\t\t1,\n\t\t2\n\t],\n\t\"b\": {\n\t\t\"c\": \"x,{\"\n\t}\n}"
         );
         assert_eq!(lay("\"s\"", None, "  "), "\"s\"");
+    }
+
+    #[test]
+    fn pretty_with_an_empty_gap_keeps_line_breaks() {
+        // `JSON.stringify(x, null, 0.5)` in V8: line breaks, no indentation.
+        let laid = relayout(br#"[1,{"a":[]}]"#, None, true, b"");
+        assert_eq!(
+            laid,
+            b"[
+1,
+{
+\"a\": []
+}
+]"
+        );
     }
 
     #[test]

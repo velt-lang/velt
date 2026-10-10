@@ -48,3 +48,8 @@ const n: number | null = null;
 console.log(JSON.stringify([n, 1.5, -0, 1e21], null, 1));
 console.log(JSON.stringify("x", null, "😀😀😀😀😀😀"));
 console.log(JSON.stringify([1], null, "😀😀😀😀😀😀"));
+// A `space` in (0, 1) keeps the line breaks with an empty indent, as in V8.
+for (const s of [0.5, 0.9, 0.0001, 1e-300]) {
+  console.log(JSON.stringify(rows, null, s));
+}
+console.log(JSON.stringify(new Point(), ["y", "x"], 0.5), JSON.stringify([1], null, -0.5));

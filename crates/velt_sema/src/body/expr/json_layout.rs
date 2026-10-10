@@ -49,14 +49,14 @@ impl FnCx<'_, '_> {
         }
         let text = self.call(callee, type_args, &args[..1], false, None, span);
         let (keys, filter) = self.json_replacer(&args[1]);
-        let gap = match args.get(2) {
+        let (helper, gap) = match args.get(2) {
             Some(a) => self.json_gap(a),
-            None => self.str_lit("", span),
+            None => ("jsonRelayout", self.str_lit("", span)),
         };
         let b = self.cx.ty.bool_;
         let filter = self.mk(H::Lit(hir::Lit::Bool(filter)), b, span);
         let str_ = self.cx.ty.str_;
-        Some(self.json_helper_call("jsonRelayout", vec![text, keys, filter, gap], str_, span))
+        Some(self.json_helper_call(helper, vec![text, keys, filter, gap], str_, span))
     }
 
     /// The replacer: its keys' JSON text and whether it filters (`null`: no).
@@ -99,11 +99,12 @@ impl FnCx<'_, '_> {
         (self.error_expr(span), true)
     }
 
-    /// The gap of `space`: a number of spaces or a string (`null`: none).
-    fn json_gap(&mut self, a: &ast::Expr) -> hir::Expr {
+    /// The prelude helper that lays the text out for `space`, and its last argument: the gap of
+    /// a string (`null`: none) for `jsonRelayout`, or the number for `jsonRelayoutNumber`.
+    fn json_gap(&mut self, a: &ast::Expr) -> (&'static str, hir::Expr) {
         let span = a.span;
         if is_null(a) {
-            return self.str_lit("", span);
+            return ("jsonRelayout", self.str_lit("", span));
         }
         let f64 = self.cx.ty.f64;
         let h = self.expr(a, Some(f64), Want::Borrow);
@@ -112,14 +113,15 @@ impl FnCx<'_, '_> {
         let str_ = self.cx.ty.str_;
         if t == str_ {
             let h = self.coerce(h, str_);
-            return self.json_helper_call("jsonGapOfString", vec![h], str_, span);
+            let gap = self.json_helper_call("jsonGapOfString", vec![h], str_, span);
+            return ("jsonRelayout", gap);
         }
         if self.cx.ty.is_numeric(t) {
             let h = match self.try_coerce(h, f64) {
                 Ok(h) => h,
                 Err(h) => self.mk(H::Cast(Box::new(h)), f64, span),
             };
-            return self.json_helper_call("jsonGapOfNumber", vec![h], str_, span);
+            return ("jsonRelayoutNumber", h);
         }
         if t != self.cx.ty.error && !self.cx.ty.is_bottom(t) {
             let found = self.cx.display(h.ty);
@@ -128,7 +130,7 @@ impl FnCx<'_, '_> {
                 span,
             );
         }
-        self.error_expr(span)
+        ("jsonRelayout", self.error_expr(span))
     }
 
     /// A call of the prelude's helper `name` (a function the compiler calls itself).

@@ -56,11 +56,12 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
 
 - `NaN`, `Infinity`, `isNaN(x)`, `isFinite(x)`.
 - `Number(x)` converts a string, a number or a boolean (`Number(true)` is `1`), and
-  `Boolean(x)` tests a value's truthiness, as in JS; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
-  `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`, `Number.parseFloat(s)` and the
-  constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
-  `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
-  class `NumberConstructor`, TypeScript's name for the type of `Number`).
+  `Boolean(x)` tests a value's truthiness, as in JS; `Number.isInteger(x)`, `Number.isNaN(x)`,
+  `Number.isFinite(x)`, `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`,
+  `Number.parseFloat(s)` and the constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`,
+  `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's,
+  on `f64` (they live in the prelude class `NumberConstructor`, TypeScript's name for the type
+  of `Number`).
 - `x.toFixed(digits = 0)`, `x.toExponential(digits?)` and `x.toPrecision(precision?)` on `f64`,
   with JS's output and rounding (the nearest, an exact tie away from zero):
 

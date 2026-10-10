@@ -6,9 +6,11 @@
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
 - `JSON.stringify(x, replacer, space)` writes as JavaScript does. `space` indents: a number of
-  spaces (at most 10; less than 1 is none) or a string (its first 10 characters, such as
-  `"	"`); every member and element goes on its own line, `"key": value` gets a space after
-  the colon, and an empty array or object stays `[]` / `{}`. `replacer` is `null` or an array
+  spaces (its integer part, at most 10; a number in (0, 1) keeps the line breaks without
+  indentation, as in Node, and 0 or less writes no whitespace) or a string (its first 10
+  characters, such as `"	"`; empty: no whitespace); every member and element goes on its own
+  line, `"key": value` gets a space after the colon, and an empty array or object stays `[]` /
+  `{}`. `replacer` is `null` or an array
   of keys (strings, or numbers written as `String(n)`): objects at any depth keep only those
   keys, in the array's order. A replacer function is not supported yet (a compile error);
   `JSON.stringify(x)` alone writes no whitespace.
