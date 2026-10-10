@@ -81,25 +81,34 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "init",
         summary: "Turn the current directory into a package from a template",
-        usage: &["init [--template <name>] [--name <name>] [--force]"],
+        usage: &[
+            "init [--template <name>] [--name <name>] [--force]",
+            "init --editor vscode [--dir <dir>]",
+        ],
         about: "Like `velt new`, in the current directory. The package is named after the \
                 directory unless --name is given. Existing files are never overwritten without \
                 --force (an existing README.md is kept and `target/` is added to an existing \
-                .gitignore).",
+                .gitignore). With --editor, adds only the editor's files (for VS Code \
+                `.vscode/launch.json`, so F5 debugs the program, and `.vscode/extensions.json`) \
+                to the current package, or to the current directory outside one (or to --dir), \
+                keeping existing files.",
         options: &[
             TEMPLATE,
             ("--name <name>", "package name (default: the directory's name)"),
             ("--force", "overwrite files the template would create"),
+            ("--editor <name>", "only add the editor's project files (vscode)"),
+            ("--dir <dir>", "with --editor: write them into this directory"),
         ],
         examples: &[
             ("velt init", "hello world in the current directory"),
             ("velt init --template websocket --name chat", "WebSocket chat, package `chat`"),
+            ("velt init --editor vscode", "set up F5 debugging in VS Code for this package"),
         ],
     },
     CommandHelp {
         name: "build",
         summary: "Compile a file or the current package",
-        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [-v] [--timings] [--report numbers]"],
+        usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]"],
         about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
@@ -111,6 +120,11 @@ pub const COMMANDS: &[CommandHelp] = &[
             BACKEND,
             ("--emit <kind>", "vir | llvm (print VIR / LLVM IR and stop) | obj (object file only) | exe"),
             LOCKED,
+            (
+                "--json",
+                "the output path, whether it has debug info, and the diagnostics as one JSON \
+                 document on stdout (for editors and tools)",
+            ),
             VERBOSE,
             TIMINGS,
             REPORT,

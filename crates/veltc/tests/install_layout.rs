@@ -58,6 +58,14 @@ fn install(root: &Path) -> Option<PathBuf> {
             std::fs::copy(&lib, prefix.join("lib").join(name)).unwrap();
         }
     }
+    let share = prefix.join("share").join("velt").join("lldb");
+    std::fs::create_dir_all(&share).unwrap();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    std::fs::copy(
+        repo.join("editors").join("lldb").join("velt_lldb.py"),
+        share.join("velt_lldb.py"),
+    )
+    .unwrap();
     let repo_std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     if repo_std.is_dir() {
         copy_tree(&repo_std, &prefix.join("std"));
@@ -71,6 +79,7 @@ fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env("VELT_HOME", home)
         .env_remove("VELT_STD")
+        .env_remove("VELT_SHARE")
         .env_remove("VELT_RT_LIB")
         .env_remove("VELT_RT_LINK")
         .env_remove("VELT_REGISTRY")
@@ -107,6 +116,13 @@ fn installed_prefix_runs_doctor_and_programs() {
         report.contains(&std.display().to_string()),
         "std not from the prefix:\n{report}"
     );
+    let script = ["share", "velt", "lldb", "velt_lldb.py"]
+        .iter()
+        .fold(prefix.clone(), |p, part| p.join(part));
+    assert!(
+        report.contains(&script.display().to_string()),
+        "debugger scripts not from the prefix:\n{report}"
+    );
     assert!(report.contains("✓ hello (debug)"), "{report}");
     // Not run by the launcher (#948): doctor says so, and `velt toolchain` points at it.
     assert!(
@@ -139,10 +155,27 @@ fn installed_prefix_runs_doctor_and_programs() {
         "{}",
         String::from_utf8_lossy(&o.stderr)
     );
-    assert!(work
+    let exe = work
         .join("target/velt")
-        .join(if cfg!(windows) { "hello.exe" } else { "hello" })
-        .is_file());
+        .join(if cfg!(windows) { "hello.exe" } else { "hello" });
+    assert!(exe.is_file());
+
+    // What the VS Code extension asks for: the program and the LLDB script, as absolute paths.
+    let o = velt(&prefix, &work, &home, &["build", "hello.vlt", "--json"]);
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(out["errors"], 0, "{out}");
+    // The default (Cranelift) build has no line information on Windows yet.
+    assert_eq!(out["debugInfo"], !cfg!(windows), "{out}");
+    let same = |key: &str, path: &Path| {
+        let got = Path::new(out[key].as_str().unwrap_or_else(|| panic!("{out}")));
+        assert_eq!(
+            got.canonicalize().unwrap(),
+            path.canonicalize().unwrap(),
+            "{key}: {out}"
+        );
+    };
+    same("executable", &exe);
+    same("lldbScript", &script);
 
     // The runtime's build profile: doctor names it, and a release build warns about a debug one
     // (cargo's debug runtime here, unless the tests run with `--release`).

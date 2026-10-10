@@ -19,9 +19,9 @@ done
 mkdir -p "$prefix"
 prefix=$(cd "$prefix" && pwd)
 # Replace the toolchain parts wholesale so files removed upstream (e.g. std modules) disappear.
-for d in bin lib std; do
+for d in bin lib std share/velt; do
     rm -rf "${prefix:?}/$d"
-    if [ -d "$dist/$d" ]; then cp -R "$dist/$d" "$prefix/$d"; fi
+    if [ -d "$dist/$d" ]; then mkdir -p "$(dirname "$prefix/$d")" && cp -R "$dist/$d" "$prefix/$d"; fi
 done
 for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE; do
     if [ -f "$dist/$f" ]; then cp "$dist/$f" "$prefix/"; fi

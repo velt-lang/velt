@@ -8,6 +8,7 @@
 pub mod backend;
 pub mod cli;
 pub mod commands;
+pub mod debugger;
 pub mod dev;
 pub mod driver;
 pub mod link;

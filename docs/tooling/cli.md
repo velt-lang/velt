@@ -7,7 +7,7 @@ prints every command's options and examples.
 | Command | What it does |
 |---|---|
 | `velt new <name>` | create a package in a new directory from a template |
-| `velt init` | turn the current directory into a package |
+| `velt init` | turn the current directory into a package; `--editor vscode` only adds the VS Code files |
 | `velt build` | compile a file or the current package |
 | `velt run` | build and run a file or the current package |
 | `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)); `--ts-compat` lints code shared with TypeScript ([below](#code-shared-with-typescript---ts-compat)) |
@@ -44,13 +44,13 @@ Every build command works on a single file or on a package:
 
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings] [--report numbers]
+           [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
            [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
-  on Linux (macOS untested; function symbols on Windows).
+  on Linux and macOS (function symbols on Windows).
 - **`--release`** runs Velt's optimizer, then LLVM `-O3` when clang 16 or newer is found
   (`VELT_CLANG`, `PATH`, the standard install directories); otherwise Cranelift, with a
   one-line note. `-g` keeps debug info in a release build ([Debugging](debugging.md)).
@@ -68,6 +68,14 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
+- `build --json` prints one JSON document on stdout instead of diagnostics on stderr, for
+  editors (the VS Code extension's F5 runs it): `{"executable", "debugInfo", "lldbScript",
+  "diagnostics", "errors", "warnings"}`. `executable` is the absolute path of the program
+  (`null` if the build failed or made none, as with `--emit obj`); `debugInfo` says whether it
+  has line information for debuggers (`false` for the default build on Windows, which has
+  none yet); `lldbScript` is the toolchain's LLDB script for Velt values
+  (`share/velt/lldb/velt_lldb.py`, `null` if missing); the diagnostics are those of
+  [`velt check --json`](#velt-check). It exits like `velt build`.
 - `--report numbers` lists, on stderr, the `number` variables assigned inside loops that the
   optimizer keeps as doubles, with the first reason it found for not storing each one as an
   integer:
@@ -180,6 +188,7 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
 ```
 velt new <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init [--template <t>] [--name <name>] [--force]
+velt init --editor vscode [--dir <dir>]
 ```
 
 | Template | What you get |
@@ -193,6 +202,12 @@ velt init [--template <t>] [--name <name>] [--force]
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
 existing `README.md`, and names the package after the directory unless `--name` is given.
+
+Packages also get `.vscode/launch.json`, so F5 in VS Code builds and debugs the program, and
+`.vscode/extensions.json`, which recommends the Velt and CodeLLDB extensions
+([Debugging](debugging.md#vs-code)); existing ones are kept. `velt init --editor vscode` adds
+only those two files, to the root of the current package (or to the current directory outside
+a package, or to `--dir`), and never overwrites one.
 
 ## `velt doc`
 
@@ -276,10 +291,11 @@ pins. A toolchain's own `bin/velt`, started directly, says so instead.
 Checks the runtime library, the standard library, the linker (the bundled lld with the
 target's link kit, or the system linker and why the bundled one is not used), the installed
 target packs (`velt target`), the WebAssembly
-linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
-`VELT_HOME` is writable, and which toolchain version runs and why (`velt toolchain`), then compiles and runs a hello world (debug, plus release through LLVM
-when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
-It exits with 0 when every required check passes.
+linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, the
+debugger scripts (`share/velt/lldb/velt_lldb.py`, optional), that `VELT_HOME` is writable, and
+which toolchain version runs and why (`velt toolchain`), then compiles and runs a hello world
+(debug, plus release through LLVM when clang is found). Problems are marked `✗` (required) or
+`!` (optional) with a `fix:` hint. It exits with 0 when every required check passes.
 
 ```
 $ velt doctor
@@ -289,6 +305,7 @@ $ velt doctor
 ✓ linker           bundled C:\Users\me\AppData\Local\velt\lib\velt\lld.exe (kit C:\Users\me\AppData\Local\velt\lib\targets\x86_64-pc-windows-msvc)
 ✓ wasm linker      C:\Users\me\AppData\Local\velt\lib\velt\lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
+✓ debugger scripts C:\Users\me\AppData\Local\velt\share\velt\lldb\velt_lldb.py
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
 ✓ toolchain        0.1.0 (the default); launcher C:\Users\me\AppData\Local\velt\bin\velt.exe, default 0.1.0
 ✓ hello (debug)    built with Cranelift and ran
@@ -319,6 +336,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | Variable | Meaning |
 |---|---|
 | `VELT_STD` | standard library directory |
+| `VELT_SHARE` | directory of the debugger scripts (`<it>/lldb/velt_lldb.py`; default `<prefix>/share/velt`) |
 | `VELT_HOME` | package manager home (default `~/.velt`: `cache/`, `registry/`) |
 | `VELT_REGISTRY` | package registry: a directory (default `$VELT_HOME/registry`) or an `http(s)://` URL |
 | `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |

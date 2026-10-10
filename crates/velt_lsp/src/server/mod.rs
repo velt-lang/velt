@@ -41,8 +41,9 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
     let (id, params) = connection
         .initialize_start()
         .map_err(|e| format!("language server handshake failed: {e}"))?;
+    let run_lenses = run_lenses(&params);
     let result = serde_json::json!({
-        "capabilities": requests::capabilities(),
+        "capabilities": requests::capabilities(run_lenses),
         "serverInfo": { "name": "velt-lsp", "version": env!("CARGO_PKG_VERSION") },
     });
     connection
@@ -62,8 +63,18 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         registry: RegistryData::default(),
         ts_folders: Default::default(),
         imports: Default::default(),
+        run_lenses,
     }
     .main_loop()
+}
+
+/// Whether the client asked for the "▶ Run | Debug" code lenses (`initializationOptions:
+/// {"runLenses": true}`): they run commands of the client (`velt.runFile`, `velt.debugFile`),
+/// which only the VS Code extension has.
+fn run_lenses(init: &serde_json::Value) -> bool {
+    init["initializationOptions"]["runLenses"]
+        .as_bool()
+        .unwrap_or(false)
 }
 
 struct Server<'a> {
@@ -88,6 +99,8 @@ struct Server<'a> {
     ts_folders: ts_compat::FolderCache,
     /// Parsed exports of modules outside the analyzed programs (import completion, auto-import).
     imports: ImportHelp,
+    /// Serve the run and debug code lenses ([`run_lenses`]).
+    run_lenses: bool,
 }
 
 /// Id of the request registering the file watcher.

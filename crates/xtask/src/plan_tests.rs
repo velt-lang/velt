@@ -234,6 +234,14 @@ fn the_tsc_oracle_runs_the_lint_tests() {
 }
 
 #[test]
+fn the_lldb_script_runs_the_install_layout_test() {
+    let p = plan(&["editors/lldb/velt_lldb.py"]);
+    assert!(p.packages.is_empty());
+    assert_eq!(p.veltc, Veltc::Some(set(&["install_layout"])));
+    assert_eq!(p.goldens, Goldens::None);
+}
+
+#[test]
 fn rules_combine() {
     let p = plan(&[
         "docs/std/fs.md",
