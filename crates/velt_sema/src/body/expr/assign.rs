@@ -659,7 +659,8 @@ impl FnCx<'_, '_> {
         Some(first.ty)
     }
 
-    /// Common type of two branches (coercing one to the other, or both to `exp`).
+    /// Common type of two branches (coercing one to the other, or both to `exp`), else their
+    /// union, as in TypeScript (`qty ? qty : "none"` is a `number | string`).
     pub(crate) fn unify_branches(
         &mut self,
         t: hir::Expr,
@@ -697,8 +698,13 @@ impl FnCx<'_, '_> {
             let f = self.coerce(f, e);
             return (t, f, e);
         }
-        self.report_mismatch(tt, &f);
-        (t, f, tt)
+        let unit = self.cx.ty.unit;
+        if tt == unit || ft == unit {
+            self.report_mismatch(tt, &f);
+            return (t, f, tt);
+        }
+        let span = t.span.to(f.span);
+        self.union_join(t, f, span)
     }
 }
 

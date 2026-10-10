@@ -493,7 +493,18 @@ impl FnCx<'_, '_> {
             let f = self.coerce(f, e);
             return (t, f, e);
         }
-        let (wt, wf) = (self.cx.widened(tt), self.cx.widened(ft));
+        self.union_join(t, f, span)
+    }
+
+    /// Two values of different types (neither converts to the other) as values of their union,
+    /// as TypeScript types `a || b` and `c ? a : b` (`number | string`).
+    pub(crate) fn union_join(
+        &mut self,
+        t: hir::Expr,
+        f: hir::Expr,
+        span: Span,
+    ) -> (hir::Expr, hir::Expr, TyId) {
+        let (wt, wf) = (self.cx.widened(t.ty), self.cx.widened(f.ty));
         let u = self.cx.union_of(&[wt, wf], false, span);
         let t = self.coerce(t, u);
         let f = self.coerce(f, u);

@@ -57,6 +57,8 @@ test values of any type as JavaScript does.
   `boolean` is expected (conditions, `const ok: boolean = …`) or both sides are `boolean`s,
   they give a `boolean`.
 - `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
+- `c ? a : b` is typed the same way: when one branch converts to the other's type, that type,
+  else their union (`qty ? qty : "none"` is a `number | string`).
 
 ```ts
 function label(count: number, name: string | null): string {
@@ -73,6 +75,7 @@ function main() {
   const port = 0;
   const retries: i64 = 3;
   console.log(port || 8080, retries && retries - 1);   // 8080 2
+  console.log(port ? port : "none");   // none
   console.log(label(0, "ann"), label(2, ""), label(2, "ann"));   // none 2 2 for ann
   const pairs = [[1, 2], [0, 5], [1, 1]];
   pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
