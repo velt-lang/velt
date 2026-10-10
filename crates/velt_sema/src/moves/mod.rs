@@ -253,7 +253,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         };
         let (name, declared) = (f.body.locals[l].name.clone(), f.body.locals[l].span);
         let why = match async_captured.contains(&(p, outer)) {
-            true => format!("an async closure that may run on another thread captures `{name}` too"),
+            true => {
+                format!("an async closure that may run on another thread captures `{name}` too")
+            }
             false => format!("`{name}` holds a promise, which cannot be shared"),
         };
         let at = crate::ownership::assignment_in(cx, c, inner)
