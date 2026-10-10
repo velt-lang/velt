@@ -229,7 +229,8 @@ extend string {
 
 /**
  * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
- * `string` itself. Unlike JS, `String(x)` is not a conversion: write `x.toString()` or `${x}`.
+ * `string` itself. `String(x)` converts any printable value as `${x}` does (the compiler
+ * writes it).
  */
 export class String {
   /**
@@ -251,7 +252,10 @@ export function parseFloat(s: string): f64 {
   return velt_rt_parse_float(s);
 }
 
-/** Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN. */
+/**
+ * Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN. The
+ * compiler converts a number or a boolean argument itself, as JS does.
+ */
 export function Number(s: string): f64 {
   return velt_rt_str_to_number(s);
 }
