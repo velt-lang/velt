@@ -13,10 +13,12 @@ use velt_syntax::ast;
 
 use super::super::LocalKind;
 use super::args::Callable;
-use crate::body::places::is_place;
+use crate::body::places::{is_path, is_place, set_place_mode};
 use crate::body::FnCx;
 use crate::defs::ParamSig;
-use crate::hir::{self, Callee, ExprKind as H, PassMode, PatKind as P, TyId, TyKind, UseMode};
+use crate::hir::{
+    self, Callee, ExprKind as H, Intrinsic, PassMode, PatKind as P, TyId, TyKind, UseMode,
+};
 
 impl FnCx<'_, '_> {
     /// `f(args)` when `f` is a union of function types whose parameter lists are prefixes of
@@ -99,11 +101,16 @@ impl FnCx<'_, '_> {
         let mut ck = self.check_call(&c, vec![], args, None, span);
         // A member taking fewer parameters ignores the extra arguments, which JS evaluates
         // anyway, in order: when one is left out, every argument that is a value rather than
-        // a variable or literal is evaluated into a temporary first.
+        // a variable or literal is evaluated into a temporary first, and so is every variable
+        // or field before one (which may assign it: `g(a, (a = 2))` passes the old `a`).
         let mut temps = vec![];
         if sigs.iter().any(|(ps, _, _)| ps.len() < longest.len()) {
-            for a in &mut ck.args {
-                self.arg_temp(a, &mut temps);
+            let last = ck.args.iter().rposition(|a| !evaluated_anywhere(a));
+            for (k, a) in ck.args.iter_mut().enumerate() {
+                let earlier = last.is_some_and(|l| k < l);
+                if earlier || !evaluated_anywhere(a) {
+                    self.arg_temp(a, &mut temps);
+                }
             }
         }
         for (_, _, throws) in &sigs {
@@ -171,13 +178,18 @@ impl FnCx<'_, '_> {
         Ok(self.with_temps_value(temps, call))
     }
 
-    /// Replaces the argument `a` by a temporary holding it (a `let` appended to `temps`) when
-    /// it is a value with possible effects, not a place or a literal.
+    /// Replaces the argument `a` by a temporary holding it (a `let` appended to `temps`), unless
+    /// it is a literal or an arrow; a place's value is shared (or copied).
     fn arg_temp(&mut self, a: &mut hir::Expr, temps: &mut Vec<hir::Stmt>) {
-        if is_place(a) || matches!(a.kind, H::Lit(_) | H::Closure(_)) {
+        if matches!(a.kind, H::Lit(_) | H::Closure(_)) {
             return;
         }
         let (ty, span) = (a.ty, a.span);
+        if is_place(a) && !self.cx.is_copy(ty) {
+            set_place_mode(a, UseMode::Borrow);
+            let place = std::mem::replace(a, self.error_expr(span));
+            *a = self.intrinsic(Intrinsic::Share, vec![place], ty, span);
+        }
         let tmp = self.new_local("<arg>", ty, false, span, LocalKind::Temp);
         let mode = if self.cx.is_copy(ty) {
             UseMode::Copy
@@ -193,4 +205,10 @@ impl FnCx<'_, '_> {
             span,
         });
     }
+}
+
+/// An argument evaluated without effects, which a later argument may change: a variable or
+/// field path, a literal or an arrow.
+fn evaluated_anywhere(a: &hir::Expr) -> bool {
+    is_path(a) || matches!(a.kind, H::Lit(_) | H::Closure(_))
 }

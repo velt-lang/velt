@@ -154,6 +154,14 @@ impl FnCx<'_, '_> {
                 type_args,
                 args,
                 optional,
+            } if !*optional && args.iter().any(|a| matches!(a.kind, A::Spread(_))) => {
+                self.call_spreading(callee, type_args, args, exp, span)
+            }
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
             } => self.call(callee, type_args, args, *optional, exp, span),
             A::New { class, args } => self.new_expr(class, args, exp, span),
             A::Member {

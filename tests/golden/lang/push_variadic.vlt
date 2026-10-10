@@ -47,4 +47,32 @@ function main() {
     t += String.fromCharCode(bytes[i]);
   }
   console.log(t);
+  // ToUint16 of codes outside the 64-bit integer range.
+  const big = String.fromCharCode(Infinity, 1e20, 2 ** 63 + 3 * 2 ** 20 + 65, -Infinity, NaN, -1);
+  console.log(big.split("").map((c) => c.charCodeAt(0)), String.fromCharCode(1e20).length);
+  // The receiver under another name is spread as it was, before the first push.
+  const ss = [["a"]];
+  const alias = ss;
+  ss.push(...alias);
+  console.log(ss.length);
+  const letters = ["a", "b"];
+  const same = letters;
+  letters.push(...same, ...same);
+  console.log(letters);
+  // An item after a spread that changes it runs after the spread is read.
+  const src = [1, 2, 3];
+  const out: number[] = [];
+  out.push(...src, src.pop() ?? -1);
+  console.log(out, src);
+  src.push(...src, src.pop() ?? -1);
+  console.log(src);
+  // A variable is read before a later item assigns it.
+  let a = 1;
+  const nums: number[] = [];
+  nums.push(a, (a = 2), a);
+  console.log(nums);
+  let w = "p";
+  const words: string[] = [];
+  words.push(w, (w = "q"), w);
+  console.log(words);
 }

@@ -329,6 +329,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The span of the call being checked when its function or receiver has effects
+    /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
+    pub callee_effects: Option<Span>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
@@ -385,6 +388,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             direct_await: None,
             std_callback: None,
             call_temps: vec![],
+            callee_effects: None,
             void_task: None,
             task_callback: None,
             thread_task: None,

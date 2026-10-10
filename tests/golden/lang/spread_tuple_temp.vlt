@@ -31,6 +31,22 @@ function greet(a: string, b: string): string {
   return `hi ${a} and ${b}`;
 }
 
+class Adder {
+  add(a: number, b: number): number {
+    return a + b;
+  }
+}
+
+function mk(): Adder {
+  console.log("call mk");
+  return new Adder();
+}
+
+function getf(): (a: number, b: number) => number {
+  console.log("call getf");
+  return add;
+}
+
 function main() {
   const g = new Grid();
   console.log(f(0, ...g.pair));
@@ -39,4 +55,7 @@ function main() {
   console.log(greet(...names()));
   const k = 10;
   console.log(add(k, ...[1] as [number]) + add(...pair()));
+  // A function or receiver that is a call runs before the spread is read.
+  console.log(mk().add(...pair()));
+  console.log(getf()(...pair()));
 }

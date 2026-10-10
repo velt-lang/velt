@@ -218,9 +218,6 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `for (const e of src) out.push(e / share of e);`, each element converted from the
-    /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
-    /// interface values in `const ns: Named[] = [...cs]`).
     /// Do the elements `et` of a spread array convert to the element type `elem`?
     pub(super) fn spread_fits(&mut self, et: TyId, elem: TyId) -> bool {
         et == elem
@@ -236,6 +233,9 @@ impl FnCx<'_, '_> {
         self.cx.ty.is_float(inner).then_some(inner)
     }
 
+    /// `for (const e of src) out.push(e / share of e);`, each element converted from the
+    /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
+    /// interface values in `const ns: Named[] = [...cs]`).
     fn push_all(
         &mut self,
         out: hir::LocalId,
@@ -256,23 +256,11 @@ impl FnCx<'_, '_> {
         (src_elem, elem): (TyId, TyId),
         span: Span,
     ) -> hir::Stmt {
-        let copy = self.cx.is_copy(src_elem);
         self.reject_promise_spread(src_elem, span);
-        let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
+        let mode = self.elem_read_mode(src_elem);
         let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
         let read = self.mk(H::Local(e, mode), src_elem, span);
-        let float = self
-            .float_elem(elem)
-            .filter(|_| self.cx.ty.is_int(src_elem));
-        let value = if let Some(f) = float {
-            // Into `number[]` or `(number | null)[]`: the number, then wrapped.
-            self.mk(H::Cast(Box::new(read)), f, span)
-        } else if copy {
-            read
-        } else {
-            self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
-        };
-        let value = self.coerce(value, elem);
+        let value = self.spread_elem_value(read, (src_elem, elem));
         let push = self.push_onto(target, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),
@@ -293,5 +281,36 @@ impl FnCx<'_, '_> {
             },
             span,
         }
+    }
+    /// How an element of type `t` of a spread source is read: copied, or borrowed and shared.
+    pub(super) fn elem_read_mode(&mut self, t: TyId) -> UseMode {
+        if self.cx.is_copy(t) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        }
+    }
+
+    /// The element `read` (read with `elem_read_mode`) of a spread source, converted from the
+    /// source's element type to `elem`: integers into a float `elem`, a share of a value that
+    /// is not Copy.
+    pub(super) fn spread_elem_value(
+        &mut self,
+        read: hir::Expr,
+        (src_elem, elem): (TyId, TyId),
+    ) -> hir::Expr {
+        let span = read.span;
+        let float = self
+            .float_elem(elem)
+            .filter(|_| self.cx.ty.is_int(src_elem));
+        let value = if let Some(f) = float {
+            // Into `number[]` or `(number | null)[]`: the number, then wrapped.
+            self.mk(H::Cast(Box::new(read)), f, span)
+        } else if self.cx.is_copy(src_elem) {
+            read
+        } else {
+            self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
+        };
+        self.coerce(value, elem)
     }
 }

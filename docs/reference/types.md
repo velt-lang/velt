@@ -777,7 +777,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:
-  `xs.push(a, b)`, `xs.push(...ys)`), `pop(): T | null`,
+  `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
+  `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
   reverse isEmpty entries fill`, `join` and `toString()` (any elements, written as
   `${xs}` writes them), `sort()` on
