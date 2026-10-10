@@ -82,6 +82,7 @@ impl Parser<'_> {
             kind: ItemKind::Function(FnDecl {
                 sig,
                 body: Block { stmts: body, span },
+                overloads: vec![],
             }),
             exported: false,
             span,

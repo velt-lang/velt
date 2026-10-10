@@ -131,6 +131,11 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of every function made from a generic arrow, module-level ones included
     /// (diagnostics show them as arrows).
     pub generic_arrow_all: HashSet<Span>,
+    /// The program has TypeScript-form overloads (`crate::overloads`): calls of a name with
+    /// signatures `name#k` choose among them.
+    pub has_overloads: bool,
+    /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
+    pub overloaded_methods: HashSet<String>,
     /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
     /// errors were reported).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
@@ -259,6 +264,8 @@ impl<'m> Ctx<'m> {
             static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             generic_arrow_all: HashSet::new(),
+            has_overloads: false,
+            overloaded_methods: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             callback_wrappers: Default::default(),

@@ -22,7 +22,10 @@ impl Member<'_> {
         match self {
             Member::Field(f) => (f.span.lo, f.span.hi),
             Member::Constructor(c, _) => (c.sig.span.lo, c.body.span.hi),
-            Member::Method(m) => (m.decl.sig.span.lo, m.decl.body.span.hi),
+            Member::Method(m) => {
+                let first = m.decl.overloads.first().unwrap_or(&m.decl.sig);
+                (first.span.lo, m.decl.body.span.hi)
+            }
             Member::InterfaceMethod(m) => {
                 let hi = m.body.as_ref().map_or(m.sig.span.hi, |b| b.span.hi);
                 (m.sig.span.lo, hi)
@@ -172,7 +175,7 @@ impl<'a> Printer<'a> {
                 if m.is_setter {
                     mods.push_str("set ");
                 }
-                cat![mods, self.fn_decl(&m.decl, "")]
+                self.fn_decl_with(&m.decl, "", &mods)
             }
             Member::InterfaceMethod(m) => {
                 let mut mods = String::new();

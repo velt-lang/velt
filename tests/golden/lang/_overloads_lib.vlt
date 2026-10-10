@@ -1,0 +1,12 @@
+// Overloaded functions imported by overloads_import.vlt (directly and through a re-export).
+export function size(x: string): number;
+export function size(x: number[]): number;
+export function size(x: string | number[]): number {
+  return typeof x === "string" ? x.length : x.length * 10;
+}
+
+export function label(n: number): string;
+export function label(n: number, unit: string): string;
+export function label(n: number, unit?: string): string {
+  return `${n}${unit ?? ""}`;
+}

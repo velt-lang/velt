@@ -1,0 +1,13 @@
+// An overload signature must be followed by the implementation (TS2391).
+function lonely(x: string): string;
+
+function other(x: number): number;
+function different(x: number): number {
+  return x;
+}
+
+class C {
+  m(): void;
+}
+
+function main() {}

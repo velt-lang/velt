@@ -1,0 +1,3 @@
+overloads_missing_impl.vlt:2:10: error: function implementation is missing or not immediately following the declaration of `lonely`
+overloads_missing_impl.vlt:4:10: error: function implementation is missing or not immediately following the declaration of `other`
+overloads_missing_impl.vlt:10:3: error: function implementation is missing or not immediately following the declaration of `m`

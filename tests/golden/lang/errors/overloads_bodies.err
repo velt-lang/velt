@@ -1,0 +1,2 @@
+overloads_bodies.vlt:5:10: error: the name `twice` is defined multiple times
+  = note: overloads with a body each (Velt's form) are not supported yet: write the signatures without bodies, then one implementation that takes every form (TypeScript's form)

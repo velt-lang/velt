@@ -9,7 +9,7 @@ async form, which runs on the runtime's blocking pool, and a `*Sync` form. Failu
 - `writeFile(path, data: string)`: creates or truncates. `appendFile(path, data)`.
 - `readDir(path): Promise<string[]>`: entry names, sorted.
 - `readDirEntries(path): Promise<Dirent[]>`: the entries with their types, sorted by name; Node's
-  `readdir(path, { withFileTypes: true })` (Velt has no overloads, so it is a function of its
+  `readdir(path, { withFileTypes: true })` (a function of its
   own). A `Dirent` has `name` and `isFile()`,
   `isDirectory()`, `isSymbolicLink()`. The type comes with the listing (`d_type` on Linux and
   macOS, the find data on Windows), so a directory walk needs no `stat` per entry; only a file

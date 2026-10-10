@@ -193,7 +193,8 @@ contents.
 
 - No `function` expressions except generators (`const g = function* () { … }`; otherwise use
   arrows), no `this` rebinding, no `arguments`.
-- No overloads. Optional and default parameters work, on arrows too; rest parameters
+- Overloads in TypeScript's form (bodiless signatures before one implementation) work for
+  functions and methods ([Overloads](../reference/functions.md#overloads)). Optional and default parameters work, on arrows too; rest parameters
   (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
   parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
 - Parameter types are required. As in TypeScript, an omitted return type is inferred from the

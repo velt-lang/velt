@@ -193,6 +193,12 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
                 name.name
             ));
         }
+        let earlier_fn = matches!(cx.scopes[m].items.get(&name.name), Some(Item::Def(d)) if matches!(cx.info[d.0 as usize], DefInfo::Fn(_)));
+        if matches!(item.kind, ast::ItemKind::Function(_)) && earlier_fn {
+            d = d.with_note(
+                "overloads with a body each (Velt's form) are not supported yet: write the signatures without bodies, then one implementation that takes every form (TypeScript's form)",
+            );
+        }
         cx.error(d);
         return;
     }

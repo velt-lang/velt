@@ -51,6 +51,7 @@ mod known;
 mod literals;
 mod moves;
 mod object_copies;
+mod overloads;
 mod ownership;
 mod promise_copies;
 pub mod property_order;
@@ -168,6 +169,8 @@ fn check_on_current_thread(
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
+    let overloaded = overloads::rewrite(modules);
+    let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let rewritten = recursive_aliases::rewrite(modules);
     let modules = rewritten.as_deref().unwrap_or(modules);
     let Some(root_mod) = modules.get(root) else {
@@ -182,7 +185,14 @@ fn check_on_current_thread(
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
         }
+        if let Some(o) = &overloaded {
+            cx.has_overloads = true;
+            cx.overloaded_methods = o.methods.clone();
+        }
         let entry = analyze(&mut cx, root, root_mod, modules, opts);
+        if let Some(o) = &overloaded {
+            overloads::report_misfits(&mut cx.diags, &o.sig_spans);
+        }
         (cx, entry)
     };
     let (mut cx, mut entry) = new_cx(true);

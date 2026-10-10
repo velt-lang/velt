@@ -1,0 +1,13 @@
+// A call that no signature accepts is TypeScript's TS2769 ("No overload matches this call"),
+// also when only the implementation's signature would take it.
+function describe(x: string): string;
+function describe(x: number): number;
+function describe(x: string | number): string | number {
+  return x;
+}
+
+function main() {
+  describe(true);
+  const v: string | number = "a";
+  describe(v);
+}

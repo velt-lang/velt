@@ -276,7 +276,11 @@ impl<'a> Parser<'a> {
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
         let body = self.parse_block()?;
-        Ok(Some(ObjectProp::Method(Box::new(FnDecl { sig, body }))))
+        Ok(Some(ObjectProp::Method(Box::new(FnDecl {
+            sig,
+            body,
+            overloads: vec![],
+        }))))
     }
 
     /// `` `a ${x} b` `` — quasis come pre-cooked from the lexer.

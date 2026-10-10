@@ -1,0 +1,11 @@
+// A signature may promise a narrower result than the implementation's: the result is tested,
+// and another member panics (TypeScript would trust the implementation).
+function pick(x: number): string;
+function pick(x: number): string | number {
+  return x;
+}
+
+function main() {
+  console.log("before");
+  console.log(pick(1));
+}
