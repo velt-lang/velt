@@ -343,7 +343,7 @@ impl Conn {
     /// Queues the close frame (unless one was queued) and waits until it has been written.
     async fn close(&self, code: u16, reason: &str) -> io::Result<()> {
         let mut payload = code.to_be_bytes().to_vec();
-        payload.extend_from_slice(&reason.as_bytes()[..reason.len().min(123)]);
+        payload.extend_from_slice(close_reason(reason).as_bytes());
         match self.send(Op::Close, &payload).await {
             Ok(()) => {}
             // Already closing or closed (by us or after the peer's close): fine.
@@ -488,6 +488,16 @@ fn message(kind: u32, text: Vec<u8>, data: Vec<u8>) -> VeltWsMessage {
         text: VeltStr::from_vec(text),
         data: VeltBytes::from_vec(data),
     }
+}
+
+/// `reason` cut to the 123 bytes a close frame has room for (125 minus the code), at a
+/// character boundary: the reason must stay valid UTF-8 (RFC 6455 §5.5.1).
+fn close_reason(reason: &str) -> &str {
+    let mut end = reason.len().min(123);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    &reason[..end]
 }
 
 /// Close codes a peer may send (RFC 6455 §7.4): the defined ones, and 3000–4999 for libraries
@@ -699,6 +709,16 @@ mod tests {
             assert_eq!(client.receive().await.unwrap().kind, 0);
             assert!(server.send(Op::Text, b"late").await.is_err());
         });
+    }
+
+    #[test]
+    fn close_reasons_are_cut_at_a_character_boundary() {
+        assert_eq!(close_reason("bye"), "bye");
+        let long = "é".repeat(100); // 200 bytes: byte 123 is inside a character
+        let cut = close_reason(&long);
+        assert_eq!(cut.len(), 122);
+        assert!(cut.chars().all(|c| c == 'é'));
+        assert_eq!(close_reason(&"x".repeat(200)).len(), 123);
     }
 
     #[test]
