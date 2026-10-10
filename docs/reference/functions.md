@@ -425,7 +425,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   default's type.
 - As in TS, a function may take **fewer parameters** than the function type it is passed as:
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
-  `double`. A function may also take more, when the extra ones are optional or have defaults
+  `double`, also a method value or a generic callback type (`xs.reduce(plus, 0)` and
+  `xs.reduce(acc.add, 0)` with a two-parameter `plus` and `add`, where `reduce` passes
+  `(acc, x, i)`). A function may also take more, when the extra ones are optional or have defaults
   (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
 - As in TS, a function that returns a value is accepted where a **`void`-returning** function
   type is expected; the value is evaluated and dropped. This holds for an arrow without a

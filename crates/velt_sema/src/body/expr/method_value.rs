@@ -290,11 +290,21 @@ impl FnCx<'_, '_> {
             }
             other => {
                 let n = sig.defaults.len();
-                let ret = match other {
-                    Some((_, r)) if r == unit => unit,
+                let ret = match &other {
+                    Some((_, r)) if *r == unit => unit,
                     _ => sig.ret,
                 };
-                (sig.params[..n].to_vec(), n, sig.defaults.clone(), ret)
+                let mut params = sig.params[..n].to_vec();
+                // An expected type still being inferred that passes more parameters
+                // (`xs.reduce(p.add, 0)`, `reduce` passes the index too): the value takes them
+                // and leaves them unused, like an arrow with fewer parameters.
+                if let Some((ps, _)) = &other {
+                    let extra = ps.get(n..).unwrap_or_default();
+                    if n == sig.params.len() && !extra.iter().any(|p| self.cx.ty.has_error(*p)) {
+                        params.extend(extra);
+                    }
+                }
+                (params, n, sig.defaults.clone(), ret)
             }
         };
         let discard = ret == unit && sig.ret != unit;

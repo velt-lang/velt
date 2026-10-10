@@ -11,6 +11,7 @@ mod await_union;
 mod builtins;
 mod call;
 mod callback;
+mod callback_sig;
 mod chain;
 mod closure;
 mod closure_sig;
