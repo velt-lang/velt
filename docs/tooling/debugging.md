@@ -23,10 +23,13 @@ stays in the object files next to the executable (`target/velt/<name>.o`, plus `
 target/velt/<name>` to bundle it.
 
 Debug builds by `velt build` (what F5 debugs) and `velt dev --exe` also describe each
-function's parameters and local variables with their source types: a debugger shows `count` as an `i64`, `xs` as a `number[]` with its `len` and `data`,
-a class value as a pointer whose fields it expands (`p->x`), an enum by its member name, and
-`null` for an empty `T | null`. Strings show as their raw words for now, and variables of
-`async` functions, generators and inlined code are not shown yet. Variables are visible in the
+function's parameters and local variables with their source types: a debugger shows `count`
+as an `i64`, a class value as a pointer whose fields it expands (`p->x`), an enum by its member
+name, and `NULL` for an empty `T | null` of a class. LLDB with Velt's formatters (which the VS
+Code extension loads, [Command line](#command-line) shows how) also shows a string as its text,
+an array as `len=N` with its elements, a union by its active member, and other options as
+`null` or their value; without them those are raw words. Variables of `async` functions,
+generators and inlined code are not shown yet. Variables are visible in the
 whole function, also before their declaration runs. On Windows, Cranelift builds have function
 symbols only. On macOS, executables are signed ad hoc without the hardened runtime, so
 LLDB can launch and attach to them.
@@ -39,9 +42,15 @@ code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).
 ```sh
 velt build app.vlt
 lldb target/velt/app
+(lldb) command script import <velt>/share/velt/lldb/velt_lldb.py
 (lldb) breakpoint set -f app.vlt -l 12
 (lldb) run
+(lldb) frame variable
 ```
+
+The `command script import` loads the formatters; `velt doctor` prints the script's path (the
+*debugger scripts* line), and `velt build --json` reports it as `lldbScript`. To load them in
+every session, put the line in `~/.lldbinit`.
 
 GDB: `gdb target/velt/app`, then `break app.vlt:12` and `run`.
 
