@@ -5,25 +5,47 @@
 //! sits inside (each comment stays with its field, as in a class body).
 
 use velt_common::Span;
-use velt_syntax::ast::{Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
+use velt_syntax::ast::{Ident, Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
 
 use super::decls::braced;
 use super::Printer;
-use crate::doc::{cat, group, if_break, indent, join, line, text, Doc};
-use crate::source::{fn_type_param_name, literal_tokens};
+use crate::doc::{cat, group, if_break, indent, join, line, nil, text, Doc};
+use crate::source::{chars_after, fn_type_param_name, literal_tokens, slice};
 
 impl<'a> Printer<'a> {
     /// A type in a position that accepts unions.
     pub(super) fn ty(&mut self, t: &TypeExpr) -> Doc {
         match &t.kind {
             TypeExprKind::Named { path, args } => {
+                // `readonly T[]`, which the parser gives as `ReadonlyArray<T>` named by the
+                // `readonly` keyword.
+                if let ([p], [elem]) = (path.as_slice(), args.as_slice()) {
+                    if p.name == "ReadonlyArray" && slice(self.src, p.span) == "readonly" {
+                        return cat!["readonly ", self.ty_operand(elem), "[]"];
+                    }
+                }
                 let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
                 cat![path.join("."), self.type_args(args)]
             }
             TypeExprKind::Array(elem) => cat![self.ty_operand(elem), "[]"],
             TypeExprKind::Tuple(elems) => {
-                let docs = elems.iter().map(|e| self.ty(e)).collect();
-                cat!["[", join(&text(", "), docs), "]"]
+                // Element labels (`[kind: string]`) and `readonly` are not in the AST.
+                let docs = elems
+                    .iter()
+                    .map(|e| {
+                        let ty = self.ty(e);
+                        match fn_type_param_name(self.src, e.span.lo) {
+                            Some(label) => cat![label.to_string(), ": ", ty],
+                            None => ty,
+                        }
+                    })
+                    .collect();
+                let tuple = cat!["[", join(&text(", "), docs), "]"];
+                if is_readonly_op(slice(self.src, t.span)) {
+                    cat!["readonly ", tuple]
+                } else {
+                    tuple
+                }
             }
             TypeExprKind::Function {
                 params,
@@ -52,6 +74,13 @@ impl<'a> Printer<'a> {
             TypeExprKind::Object(fields) => self.object_type(fields, t.span),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
+            TypeExprKind::Predicate { param, ty, asserts } => {
+                let asserts = if *asserts { "asserts " } else { "" };
+                match ty {
+                    Some(ty) => cat![asserts, param.name.clone(), " is ", self.ty(ty)],
+                    None => cat![asserts, param.name.clone()],
+                }
+            }
         }
     }
 
@@ -84,6 +113,9 @@ impl<'a> Printer<'a> {
 
     /// `name: T` / `name?: T` / `readonly name: T`
     fn object_type_field(&mut self, f: &ObjectTypeField) -> Doc {
+        if let Some(sig) = self.method_sig_type(&f.name, f.optional, &f.ty) {
+            return sig;
+        }
         let key = self.prop_key(&f.name);
         let name = if f.readonly {
             cat!["readonly ", key]
@@ -152,8 +184,59 @@ impl<'a> Printer<'a> {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
             | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
+            // `(readonly T[])[]`
+            TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)
+                if is_readonly_op(slice(self.src, t.span)) =>
+            {
+                cat!["(", self.ty(t), ")"]
+            }
             _ => self.ty(t),
         }
+    }
+
+    /// A method signature `name(x: T): R` / `name?(x: T): R` (in an object type or
+    /// interface), which the parser gives as a field of function type: printed as written when
+    /// a `(` (or `?(`) follows the name in the source. `None` for a field.
+    pub(super) fn method_sig_type(
+        &mut self,
+        name: &Ident,
+        optional: bool,
+        ty: &TypeExpr,
+    ) -> Option<Doc> {
+        let after = chars_after(self.src, name.span.hi);
+        let is_sig = match after {
+            (Some('?'), Some('(')) => optional,
+            (Some('('), _) => !optional,
+            _ => false,
+        };
+        if !is_sig {
+            return None;
+        }
+        let f = match &ty.kind {
+            TypeExprKind::Union(members) if optional => members
+                .iter()
+                .find(|m| matches!(m.kind, TypeExprKind::Function { .. }))?,
+            _ => ty,
+        };
+        let TypeExprKind::Function {
+            params,
+            ret,
+            throws,
+        } = &f.kind
+        else {
+            return None;
+        };
+        let docs = params.iter().map(|p| self.fn_type_param(p)).collect();
+        let throws = self.throws_clause(throws.as_deref());
+        let key = self.prop_key(name);
+        let q = if optional { "?" } else { "" };
+        // A missing return type is a zero-width `void`.
+        let ret = if ret.span.lo == ret.span.hi {
+            nil()
+        } else {
+            cat![": ", self.ty(ret)]
+        };
+        Some(cat![key, q, "(", join(&text(", "), docs), ")", ret, throws])
     }
 
     fn fn_type_param(&mut self, t: &TypeExpr) -> Doc {
@@ -181,4 +264,12 @@ fn signed_lit(lit: &SignedLit, spelled: Option<&String>) -> String {
         },
     };
     format!("{sign}{body}")
+}
+
+/// Does a type's source start with the `readonly` operator (`readonly [A, B]`)?
+/// (A parenthesized type's span includes the parentheses.)
+fn is_readonly_op(src: &str) -> bool {
+    src.trim_start_matches(|c: char| c == '(' || c.is_whitespace())
+        .strip_prefix("readonly")
+        .is_some_and(|r| r.starts_with(char::is_whitespace))
 }

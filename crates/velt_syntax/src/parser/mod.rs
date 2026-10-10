@@ -76,6 +76,9 @@ pub(crate) struct Parser<'a> {
     /// A plain `.ts` file: `<T>x` there is TypeScript's type assertion, not JSX
     /// (`type_assertion`).
     pub(crate) plain_ts: bool,
+    /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
+    /// statement or item list to add after the first one.
+    more_vars: Vec<VarDecl>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -119,6 +122,7 @@ impl<'a> Parser<'a> {
             speculating: 0,
             paren_matches: ParenMatches::default(),
             plain_ts: false,
+            more_vars: Vec::new(),
         }
     }
 

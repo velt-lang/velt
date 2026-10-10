@@ -539,6 +539,10 @@ const ENVIRONMENT: &[(&str, &str)] = &[
         "VELT_WASM_RUNNER",
         "program running wasm32-wasip1 modules for `velt run` (default: wasmtime)",
     ),
+    (
+        "VELT_INSTALL_PUBLIC_KEY",
+        "key release signatures are checked with instead of velt's (another build's releases)",
+    ),
     ("NO_COLOR", "set to disable colored output"),
 ];
 

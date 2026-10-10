@@ -1,0 +1,28 @@
+// Every variable a `for (let …)` head declares is one per iteration in JS, whether the loop's
+// update assigns it or not, and with no update at all (Node prints 10,10,10 twice): a closure
+// created inside a closure the loop stores cannot assign it as one variable for all iterations.
+async function main() {
+  const fs: (() => number)[] = [];
+  for (let i = 0, j = 0; j < 3; j++) {
+    fs.push(() => {
+      const g = () => {
+        i += 10;
+      };
+      g();
+      return i;
+    });
+  }
+  console.log(fs.map((f) => f()).join(","));
+  const hs: (() => number)[] = [];
+  for (let i = 0, n = 0; n < 3; ) {
+    hs.push(() => {
+      const g = () => {
+        i += 10;
+      };
+      g();
+      return i;
+    });
+    n++;
+  }
+  console.log(hs.map((f) => f()).join(","));
+}

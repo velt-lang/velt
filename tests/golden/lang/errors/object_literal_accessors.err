@@ -1,0 +1,3 @@
+object_literal_accessors.vlt:6:12: error: `this` in the object-literal method `next` is not supported yet
+object_literal_accessors.vlt:11:3: error: getters and setters in object literals are not supported yet
+object_literal_accessors.vlt:14:3: error: getters and setters in object literals are not supported yet

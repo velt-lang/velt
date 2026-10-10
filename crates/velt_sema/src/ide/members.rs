@@ -3,7 +3,7 @@
 //! generic space — inherited ones substituted —, static members, `extend` blocks) and displayed
 //! for a concrete receiver type at query time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::{FileId, Span};
 
@@ -81,6 +81,8 @@ pub(super) struct Members {
     /// Declaration span of each type definition (for `DefRef` → `DefId`).
     by_span: HashMap<Span, DefId>,
     extensions: Vec<Extension>,
+    /// The prelude's `Error` and the classes that extend it.
+    pub errors: HashSet<DefId>,
 }
 
 /// A type definition's raw members: instance, static, and what it is.
@@ -90,6 +92,7 @@ type RawType = (DefId, Vec<Raw>, Vec<Raw>, TypeKind, bool);
 pub(super) struct RawMembers {
     types: Vec<RawType>,
     extensions: Vec<(TyId, usize, Vec<Raw>)>,
+    errors: HashSet<DefId>,
 }
 
 pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
@@ -156,7 +159,18 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
             .collect();
         extensions.push((target, n, raws));
     }
-    RawMembers { types, extensions }
+    let errors = match cx.prelude_adt("Error") {
+        Some(error) => (0..cx.info.len() as u32)
+            .map(DefId)
+            .filter(|d| cx.class_extends(*d, error))
+            .collect(),
+        None => HashSet::new(),
+    };
+    RawMembers {
+        types,
+        extensions,
+        errors,
+    }
 }
 
 fn method_raw(cx: &mut Ctx, name: String, def: DefId, owner_args: &[TyId]) -> Raw {
@@ -378,6 +392,7 @@ impl RawMembers {
             types,
             by_span,
             extensions,
+            errors: self.errors,
         }
     }
 }

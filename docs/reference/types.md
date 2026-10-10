@@ -512,6 +512,42 @@ for (const s of shapes) {
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
+## Type predicates
+
+A function whose return type is a type predicate `x is T` (TypeScript's user-defined type
+guard) returns a `boolean`; a call of it in a condition (`if`, `while`, `?:`, `&&`, `||`, `!`)
+narrows the variable passed as `x`, as a `typeof` or `instanceof` test would: to the union
+members that are `T` (or to the subclass `T`), and to the others when the call is false. A
+`T | null` variable narrows to `T`.
+
+```ts
+function isString(v: string | number): v is string {
+  return typeof v === "string";
+}
+
+function show(v: string | number): string {
+  if (isString(v)) {
+    return v.toUpperCase();
+  }
+  return (v + 1).toString();
+}
+console.log(show("ab"), show(41)); // AB 42
+```
+
+- TypeScript does not check that a predicate's body answers correctly. A call that narrows
+  checks the value at run time against what its result says, as `typeof` or `instanceof` would,
+  and throws a `TypeError` when they disagree (``the type predicate `isString` returned false
+  for a value that is `string` ``), where Node would go on with a value that is not of the
+  type it was narrowed to. A predicate that answers correctly behaves as in Node.
+- A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
+  value of (`string`) when the call is true and leaves the variable as it is when false; a
+  type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
+- The function must be declared with `function` and not be generic for its calls to narrow; a
+  predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
+  result. `this is T` is accepted and not used for narrowing yet.
+- `asserts x is T` and `asserts x` declare a function that returns nothing (it throws instead
+  of returning `false`); the narrowing after its call is not made yet.
+
 ## Intersection types
 
 `A & B` is the object type with the fields of both `A` and `B`, as in TypeScript. The parts are
@@ -695,6 +731,37 @@ const b: { v: string } = box("hi"); // `Box<string>` is `{ v: string }`
 console.log(b.v); // hi
 ```
 
+- **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
+  as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
+  arrow, the parameter types may be left out where the literal's type gives them. `this` in such
+  a method, and getters and setters in object literals (`get x() {}`), are not supported yet
+  (an object literal is plain data); generator methods only as `*[Symbol.iterator]()`
+  ([Iterable object literals](#iterable-object-literals)).
+- **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
+  fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
+  `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
+  left out as `null`; call it as `o.label?.(p)`). A generic method signature
+  (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
+
+```ts
+type Handler = {
+  get(target: string, key: string): number;
+  label?(prefix: string): string;
+};
+
+const h: Handler = {
+  get(target, key) {
+    return target.length + key.length;
+  },
+};
+console.log(h.get("ab", "c"), h.label?.("x") ?? "none"); // 3 none
+```
+
+- **`satisfies`**: `value satisfies T` checks `value` against `T`, with `T` as its context (as
+  an annotation `const x: T = value` does), and is `value`: `{ version: "1" } satisfies Stamp`.
+  Its type is `T`, as for the annotated `x`; TypeScript keeps the value's own, more precise
+  type instead (a field `T` declares as `number | string` but given a number is a `number`
+  after `satisfies` there), which Velt does not do yet.
 - **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
   (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without
@@ -808,8 +875,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
-- **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
-  different types is not supported.
+- **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
+  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. TypeScript's errors
+  for writing to them (`xs.push(x)`, `xs[0] = x`) are not reported yet.
+- **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
+  elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
+  string]`. `Promise.all` over tuples of different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
   and values, and a repeated key keeps its first position and its last value) or from any
@@ -908,9 +979,10 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   *[Symbol.asyncIterator](): AsyncGenerator<T>` makes an `AsyncIterable<T>` for
   [`for await`](control-flow.md#for-await). The method uses the variables around it, as a
   [generator function expression](functions.md#generator-function-expressions) does.
-- Object literals are plain data in Velt, so this is their only method. The literal can have no
-  other members, and `this` in the method is an error (in TS it is the object): use variables,
-  or declare a class that `implements Iterable<T>` and reads its fields. Other methods in object
-  literals are errors too: write a property holding an arrow function.
+- Object literals are plain data in Velt, so this method holds the iterable's whole state. The
+  literal can have no other members, and `this` in the method is an error (in TS it is the
+  object): use variables, or declare a class that `implements Iterable<T>` and reads its
+  fields. Other generator methods in object literals are errors too: write a property holding a
+  generator function.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.

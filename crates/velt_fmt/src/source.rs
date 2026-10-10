@@ -120,6 +120,31 @@ fn is_word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
 }
 
+/// The word (identifier or keyword) directly before `pos`, whitespace skipped: the `const` of
+/// `<const T>`.
+pub(crate) fn word_before(src: &str, pos: u32) -> Option<&str> {
+    let before = src.get(..pos as usize)?.trim_end();
+    let start = before
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .map_or(0, |i| i + 1);
+    let word = &before[start..];
+    (!word.is_empty()).then_some(word)
+}
+
+/// The characters at or after `pos` that are not whitespace, the first two.
+pub(crate) fn chars_after(src: &str, pos: u32) -> (Option<char>, Option<char>) {
+    let rest = src.get(pos as usize..).unwrap_or("").trim_start();
+    let mut cs = rest.chars();
+    let first = cs.next();
+    (first, cs.as_str().trim_start().chars().next())
+}
+
+/// The words of the modifiers written in `src[lo..name_lo]` (a member's `declare`, `readonly`).
+pub(crate) fn has_modifier(src: &str, lo: u32, name_lo: u32, word: &str) -> bool {
+    src.get(lo as usize..name_lo as usize)
+        .is_some_and(|s| s.split_whitespace().any(|w| w == word))
+}
+
 /// The `name:` written before a function-type parameter whose type starts at `type_lo`
 /// (the AST drops these names; they are kept for readability).
 pub(crate) fn fn_type_param_name(src: &str, type_lo: u32) -> Option<&str> {

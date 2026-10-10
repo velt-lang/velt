@@ -11,8 +11,9 @@
 //!   →  { const <iterator#N> = function* (): Iterator<T> { body }; new __IterableObject(<iterator#N>) }
 //! ```
 //!
-//! An object literal is plain data in Velt (its type has fields only), so other methods, other
-//! members next to the iterator method, and `this` in it are errors that say what to write.
+//! An object literal is plain data in Velt (its type has fields only; the parser makes a plain
+//! method a field holding an arrow), so other generator methods, other members next to the
+//! iterator method, and `this` in it are errors that say what to write.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, SYMBOL_ASYNC_ITERATOR, SYMBOL_ITERATOR};
@@ -72,8 +73,8 @@ impl FnCx<'_, '_> {
         });
         for d in methods.clone().filter(|d| !iterator(&d.sig.name.name)) {
             self.cx.error(
-                Diagnostic::error("methods in object literals are not supported", d.sig.name.span)
-                    .with_note("TypeScript allows this; Velt doesn't because an object literal is plain data: its type has fields only (an iterable object literal, `{ *[Symbol.iterator]() { ... } }`, is the exception); write a property holding an arrow function (`name: (x: T): R => ...`), or declare a class"),
+                Diagnostic::error("generator methods in object literals are not supported", d.sig.name.span)
+                    .with_note("TypeScript allows this; Velt doesn't because an object literal is plain data: its type has fields only, and a method is a field holding a function (an iterable object literal, `{ *[Symbol.iterator]() { ... } }`, is the exception); write a property holding a generator function (`name: function* () { ... }`), or declare a class"),
             );
         }
         let d = methods.clone().find(|d| iterator(&d.sig.name.name))?;

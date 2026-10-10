@@ -1,0 +1,2 @@
+closure_nested_assigns_destructured.vlt:7:15: error: cannot move captured variable `a` out of the closure
+  = note: the closure may run more than once; use `a.clone()`

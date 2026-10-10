@@ -45,8 +45,28 @@ impl<'a> Printer<'a> {
     fn object_prop(&mut self, prop: &ObjectProp) -> Doc {
         match prop {
             ObjectProp::KeyValue(key, value) => {
-                let key = self.prop_key(key);
-                self.property(key, value)
+                let method = value.span.lo <= key.span.lo;
+                let doc = self.prop_key(key);
+                match &value.kind {
+                    // `name(params) { body }`, which the parser gives as an arrow property whose
+                    // span starts with the name (an arrow written after `name:` starts later).
+                    ExprKind::Arrow {
+                        type_params,
+                        params,
+                        ret,
+                        throws,
+                        body,
+                        is_async,
+                    } if method => self.arrow(
+                        type_params,
+                        params,
+                        (ret.as_ref(), throws.as_ref()),
+                        body,
+                        *is_async,
+                        Some(doc),
+                    ),
+                    _ => self.property(doc, value),
+                }
             }
             ObjectProp::Shorthand(key) => self.prop_key(key),
             ObjectProp::Spread(value) => cat!["...", self.expr(value)],

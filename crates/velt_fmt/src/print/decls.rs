@@ -1,6 +1,7 @@
 //! Nominal type declarations: `struct`/`class` (members in source order: fields, constructor and
 //! methods are separate lists in the AST), `interface`, `extend` and `enum`.
 
+use crate::source::has_modifier;
 use velt_syntax::ast::{
     CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
     TypeDecl, TypeExpr, Variant,
@@ -204,7 +205,18 @@ impl<'a> Printer<'a> {
             ""
         };
         let is_static = if f.is_static { "static " } else { "" };
+        // `declare x: T` (a field TypeScript emits no initializer for; the AST does not keep it).
+        let declare = if has_modifier(self.src, f.span.lo, f.name.span.lo, "declare") {
+            "declare "
+        } else {
+            ""
+        };
         let readonly = if f.readonly { "readonly " } else { "" };
+        if f.optional && f.default.is_none() {
+            if let Some(sig) = self.method_sig_type(&f.name, true, &f.ty) {
+                return cat![private, is_static, readonly, sig, ";"];
+            }
+        }
         let optional = if f.optional { "?" } else { "" };
         // `count = 0;`: the parser took the type from the initializer (its span is the
         // initializer's), so none is written.
@@ -217,6 +229,7 @@ impl<'a> Printer<'a> {
         let lhs = cat![
             private,
             is_static,
+            declare,
             readonly,
             self.prop_key(&f.name),
             optional,

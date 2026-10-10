@@ -1,0 +1,1 @@
+TypeError: the type predicate `isDog` returned true for a value that is not `Dog`

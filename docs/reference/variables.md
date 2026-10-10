@@ -21,6 +21,19 @@
   }
   console.log(parse("42")); // 42
   ```
+- One declaration may declare several variables, as in TypeScript: `let i: number, j = 0;` is
+  `let i: number; let j = 0;` (at the top level, in a block and in a `for` initializer).
+- `let x!: T` (TypeScript's definite assignment assertion) declares `x` as `let x: T;` does.
+  Velt still checks that `x` is assigned before it is read; a variable assigned only inside a
+  closure (where TypeScript needs `!`) is not supported yet.
+
+  ```ts
+  let lo: number, hi: number = 10;
+  let mid!: number;
+  lo = 2;
+  mid = (lo + hi) / 2;
+  console.log(lo, hi, mid); // 2 10 6
+  ```
 - `const` only fixes the binding: modifying a `const` object or array is fine, as in JS.
 - `using` and `await using` declare a `const` that is disposed at the end of the block
   ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)).
