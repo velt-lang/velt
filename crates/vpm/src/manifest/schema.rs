@@ -57,6 +57,16 @@ pub const PACKAGE: &[Field] = &[
         doc: "A semantic version, such as `\"0.1.0\"`.",
     },
     Field {
+        key: "velt",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The velt versions that build the package, such as `\"0.1\"`: any `0.1.x` \
+              (`\"0.1.3\"`: at least `0.1.3`; `\"=0.1.3\"`: exactly). velt warns when its own \
+              version is not one of them; selecting the toolchain by this field comes with the \
+              velt launcher (#948).",
+    },
+    Field {
         key: "description",
         kind: Kind::Str,
         ty: "string",

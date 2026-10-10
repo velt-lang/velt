@@ -174,8 +174,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   downloads `velt-<version>-target-<triple>.tar.gz` from
   `$VELT_INSTALL_BASE_URL/releases/download/v<version>/` (https, redirects followed) and checks
   it against `<prefix>/lib/targets/PACKS.sha256` (written by the release workflow), or, when the
-  toolchain lists no hash for it, against the release's `SHA256SUMS` (fetched first; a note says
-  that this shows integrity only). It unpacks only regular files under `<triple>/` and installs the
+  toolchain lists no hash for it, against the release's `SHA256SUMS` (fetched first), checked
+  against `SHA256SUMS.sig` with the release key (`velt_toolchain::signature`;
+  `$VELT_INSTALL_PUBLIC_KEY` replaces the built-in key); an unsigned release or a signature
+  that does not match fails. It unpacks only regular files under `<triple>/` and installs the
   pack into `<prefix>/lib/targets/<triple>/` once its kit and runtime are complete and its stamp
   names this velt (`velt_link::kit::toolchain_id`), swapping a previous pack out whole. `--from
   <file>` (one triple) installs a local pack checked the same way, or against a `SHA256SUMS`

@@ -94,6 +94,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
 | `vpm`, `velt_registry` | package manager, registry server |
 | `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
+| `velt_toolchain` | side-by-side toolchain versions: the `velt` pin of `package.vlt`, installed versions, downloading a release |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
 | `xtask` | repository tooling: the quality gate and its check selection (`cargo xtask`) |
 
