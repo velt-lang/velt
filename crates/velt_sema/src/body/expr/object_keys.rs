@@ -28,6 +28,10 @@ use crate::hir::{self, AdtKind, DefId, ExprKind as H, PatKind as P, TyId, TyKind
 /// What to use instead of `Object.values` / `Object.entries` on an object that is not a record.
 const ONE_VALUE_TYPE_NOTE: &str = "they return one value type, so they need a `Record<K, V>`; list an object's keys with `Object.keys`, or keep values of different types in a `Record<string, V>` whose `V` is a union or `JsonValue`";
 
+/// The start of the error for an `Object.keys` argument that has no keys.
+const NOT_AN_OBJECT: &str =
+    "`Object.keys` lists the keys of an object, a class or struct instance or a `Record`";
+
 /// A key of an object type: its name, whether it is listed only while present, and whether its
 /// presence is a flag (`b?: T | null`, `hir::FieldDef::presence`) rather than "not null".
 struct Key {
@@ -76,7 +80,18 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         Some(if keys {
-            self.object_keys(obj, span)
+            let mark = self.cx.diags.len();
+            let h = self.object_keys(obj, span);
+            // `for (const k in o)` is parsed as a loop over `Object.keys(o)` whose callee has an
+            // empty span: say what the loop needs (TypeScript's TS2407).
+            if callee.span.lo == callee.span.hi {
+                for d in &mut self.cx.diags[mark..] {
+                    if let Some(found) = d.message.strip_prefix(NOT_AN_OBJECT) {
+                        d.message = format!("the object of a `for...in` loop must be an object, a class or struct instance or a `Record`{found}");
+                    }
+                }
+            }
+            h
         } else {
             self.record_values(obj, &prop.name, span)
         })
@@ -390,12 +405,7 @@ impl FnCx<'_, '_> {
     /// Reports that `Object.keys` cannot list the keys of a `t`.
     fn not_an_object<T>(&mut self, t: TyId, span: Span) -> Option<T> {
         let tn = self.cx.display(t);
-        let mut diag = Diagnostic::error(
-            format!(
-                "`Object.keys` lists the keys of an object, a class or struct instance or a `Record`, found `{tn}`"
-            ),
-            span,
-        );
+        let mut diag = Diagnostic::error(format!("{NOT_AN_OBJECT}, found `{tn}`"), span);
         let map = self.cx.prelude_adt("Map");
         let fix = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) if Some(*d) == map => Some("list a map's keys with `m.keys()`"),

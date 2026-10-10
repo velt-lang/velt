@@ -4,7 +4,7 @@
 
 - `if` / `else if` / `else`, `while`, `do … while`, C-style `for` (comma lists allowed:
   `for (let i = 0, j = n; i < j; i++, j--)`), `for (const x of xs)`,
-  [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
+  [`for (const k in o)`](#forin), [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
   (optionally labeled: `outer: for (…)` … `continue outer;`), `return`, blocks, and the
   ternary `?:`. A body without braces (`if (c) return x;`) is a one-statement block.
 - Conditions take values of any type and test them as JavaScript does: `0`, `NaN`, `""` and
@@ -20,7 +20,35 @@
   element. Index the array to replace an element.
 - Iterating a temporary (a call result, `await …`, a literal) **consumes** it: each element is
   handed to the loop variable without a count.
-- There is no `for...in`; iterate `map.keys()` or an object's known fields.
+
+## `for...in`
+
+`for (const k in o)` visits the keys of an object, as in JavaScript: the same keys, in the same
+order, as [`Object.keys(o)`](types.md#objects-arrays-tuples-and-maps), and it is that loop
+(`for (const k of Object.keys(o))`). `k` is a `string`.
+
+- `o` is an object type, a struct or class instance or a `Record`. A record's keys come in
+  insertion order; an object's fields in declaration order, a base class's first. An optional
+  field (`label?: string`) is visited only while it is present. Methods are not keys.
+- `let k` makes the variable assignable in the body; the loop variable must be declared in the
+  head (`for (k in o)` with an outer `k` is an error, as for `for...of`).
+- For a `Map`, iterate `m.keys()` with `for...of`; `for...in` over a number or string is an
+  error (TypeScript's TS2407).
+
+```ts
+interface Point {
+  x: number;
+  y: number;
+  label?: string;
+}
+
+function main() {
+  const p: Point = { x: 1, y: 2 };
+  for (const k in p) {
+    console.log(k); // x, then y
+  }
+}
+```
 
 ### Iterables
 
