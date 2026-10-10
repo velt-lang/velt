@@ -649,7 +649,10 @@ mod index_member_tests {
                     let n = if ascending { i } else { 19_999 - i };
                     put(&mut o, &n.to_string());
                 }
-                assert!(work() - before < 1_000, "named {named}, ascending {ascending}");
+                assert!(
+                    work() - before < 1_000,
+                    "named {named}, ascending {ascending}"
+                );
                 assert_eq!(o.len(), 20_000 + usize::from(named));
                 let first: Vec<&[u8]> = o.iter().take(2).map(|(k, _)| &**k).collect();
                 assert_eq!(first, [&b"0"[..], &b"1"[..]]);

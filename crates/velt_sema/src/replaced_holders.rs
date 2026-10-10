@@ -480,7 +480,8 @@ impl Program {
             (TyKind::Param(_), _) => self.type_args.contains(&t),
             (TyKind::Adt(d, a), TyKind::Adt(e, b)) if d == e => self.pairs(cx, &a, &b, depth),
             (TyKind::Adt(d, a), TyKind::Adt(e, b))
-                if adt_kind(cx, d) == Some(AdtKind::Anon) && adt_kind(cx, e) == Some(AdtKind::Anon) =>
+                if adt_kind(cx, d) == Some(AdtKind::Anon)
+                    && adt_kind(cx, e) == Some(AdtKind::Anon) =>
             {
                 // The same shape: generic `{ a: T }` and the concrete `{ a: string }`.
                 let (Some(DefInfo::Adt(x)), Some(DefInfo::Adt(y))) =
@@ -489,12 +490,19 @@ impl Program {
                     return false;
                 };
                 if x.fields.len() != y.fields.len()
-                    || x.fields.iter().zip(&y.fields).any(|(f, g)| f.name != g.name)
+                    || x.fields
+                        .iter()
+                        .zip(&y.fields)
+                        .any(|(f, g)| f.name != g.name)
                 {
                     return false;
                 }
-                let fields: Vec<(TyId, TyId)> =
-                    x.fields.iter().zip(&y.fields).map(|(f, g)| (f.ty, g.ty)).collect();
+                let fields: Vec<(TyId, TyId)> = x
+                    .fields
+                    .iter()
+                    .zip(&y.fields)
+                    .map(|(f, g)| (f.ty, g.ty))
+                    .collect();
                 fields.into_iter().all(|(f, g)| {
                     let (f, g) = (cx.subst(f, &a), cx.subst(g, &b));
                     self.instance(cx, f, g, depth + 1)
@@ -619,7 +627,12 @@ fn source(e: &ast::Expr, depth: u32) -> Option<String> {
             object,
             prop,
             optional,
-        } => format!("{}{}{}", s(object)?, if *optional { "?." } else { "." }, prop.name),
+        } => format!(
+            "{}{}{}",
+            s(object)?,
+            if *optional { "?." } else { "." },
+            prop.name
+        ),
         A::Index {
             object,
             index,
@@ -875,4 +888,3 @@ fn text(cx: &Ctx, names: &[String], e: &Expr) -> String {
         _ => "…".into(),
     }
 }
-
