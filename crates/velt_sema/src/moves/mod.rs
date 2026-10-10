@@ -62,6 +62,11 @@ struct Moves<'a> {
     generators: &'a HashMap<DefId, bool>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
+    /// Per local: an async closure that may run on another thread captures it.
+    threaded: Vec<bool>,
+    /// The variables reported as assigned by a closure created in this one, with where
+    /// ([`Moves::nested_writes`]).
+    nested: Vec<(String, Span)>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
     /// The capture locals of this function (when it is a closure that shares them with its
@@ -79,6 +84,10 @@ pub(crate) struct Outcome {
     pub reused: HashMap<DefId, HashSet<(Span, LocalId)>>,
     /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
     pub boxed: HashMap<DefId, HashSet<LocalId>>,
+    /// The `for (let …)` variables the loop's update assigns: JS gives each iteration its own,
+    /// which the update copies into the next one, so none of them may be one cell for all
+    /// iterations (`crate::ownership::cells`).
+    pub per_iteration: HashSet<(DefId, LocalId)>,
 }
 
 /// Check every function body.
@@ -121,7 +130,11 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         })
         .collect();
     let mut all = vec![];
-    let mut out = Outcome::default();
+    let mut nested = vec![];
+    let mut out = Outcome {
+        per_iteration: per_iteration(cx),
+        ..Outcome::default()
+    };
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
@@ -154,6 +167,10 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                     (*s || *c) && !async_captured.contains(&(def, LocalId(l as u32)))
                 })
                 .collect(),
+            threaded: (0..f.body.locals.len())
+                .map(|l| async_captured.contains(&(def, LocalId(l as u32))))
+                .collect(),
+            nested: vec![],
             shared: shared[i].clone(),
             writers: &writers,
             generators: &generators,
@@ -177,11 +194,11 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
         m.report = true;
         m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-        all.extend(
-            m.errors
-                .into_iter()
-                .filter(|d| !follows_capture_error(cx, d)),
-        );
+        all.extend(m.errors);
+        // The closure that captured the variable is reported for it: its creator's use of the
+        // variable after moving it into the closure is no second error.
+        let closure = cx.def_spans.get(i).copied();
+        nested.extend(m.nested.into_iter().map(|(name, at)| (name, at, closure)));
         if !m.reused.is_empty() {
             out.reused.insert(def, m.reused);
         }
@@ -189,6 +206,17 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             out.boxed.insert(def, m.boxed);
         }
     }
+    for (name, at, closure) in nested {
+        // Nor is moving the promise out of the closure that captured it (`ownership::validate`).
+        let moved_out = format!("cannot move captured variable `{name}` out of the closure");
+        cx.diags.retain(|d| {
+            !(d.message == moved_out && d.labels.first().is_some_and(|l| l.span == at))
+        });
+        if let Some(span) = closure {
+            cx.reported_captures.push((name, span));
+        }
+    }
+    all.retain(|d| !follows_capture_error(cx, d));
     let mut seen = HashSet::new();
     for d in all {
         let key = (d.labels[0].span.lo, d.labels[0].span.hi, d.message.clone());
@@ -268,6 +296,61 @@ fn assigned_locals(
     }
     memo.insert(d, assigned.clone());
     assigned
+}
+
+/// The `for (let …)` variables of each function that the loop's update assigns
+/// ([`Outcome::per_iteration`]). A `for` loop with a `let` head is a block of the `let`s and
+/// a `while` with the update as its step (`crate::body::loops`).
+fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+    use crate::hir::{Expr, ExprKind as E};
+    use crate::visit::VisitMut;
+    struct Assigned<'a>(&'a mut Vec<LocalId>);
+    impl VisitMut for Assigned<'_> {
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+                if let E::Local(l, _) = place.kind {
+                    self.0.push(l);
+                }
+            }
+        }
+    }
+    struct ForHeads(Vec<LocalId>);
+    impl VisitMut for ForHeads {
+        fn stmt(&mut self, s: &mut Stmt) {
+            let StmtKind::Block(b) = &mut s.kind else {
+                return;
+            };
+            let Some((last, head)) = b.stmts.split_last_mut() else {
+                return;
+            };
+            let StmtKind::While {
+                step: Some(step), ..
+            } = &mut last.kind
+            else {
+                return;
+            };
+            let mut assigned = vec![];
+            crate::visit::expr(step, &mut Assigned(&mut assigned));
+            for s in head {
+                if let StmtKind::Let { local, .. } = s.kind {
+                    if assigned.contains(&local) {
+                        self.0.push(local);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+            continue;
+        };
+        let mut heads = ForHeads(vec![]);
+        crate::visit::block(&mut f.body.block, &mut heads);
+        cx.defs[i] = Some(Def::Fn(f));
+        out.extend(heads.0.into_iter().map(|l| (DefId(i as u32), l)));
+    }
+    out
 }
 
 /// `(function, local)` pairs captured by an async closure that may run on another thread: such
@@ -403,16 +486,20 @@ impl Moves<'_> {
         if !self.report {
             return;
         }
-        let name = &self.locals[i].name;
+        use crate::ownership::Unshareable;
+        let name = self.locals[i].name.clone();
+        let why = match self.threaded[i] {
+            true => Unshareable::Threaded,
+            false => Unshareable::Promise,
+        };
         self.errors.push(
             Diagnostic::error(
-                format!("`{name}` is assigned by a closure created inside another closure, and cannot be shared with it"),
+                format!("`{name}` {}", crate::ownership::NESTED_ASSIGN),
                 span,
             )
-            .with_note(format!(
-                "a closure that runs on several threads (an HTTP handler, a spawned async closure) captures `{name}` too, or it holds a promise; assign a variable of the closure that creates this one instead, or share it with `shared(...)`"
-            )),
+            .with_note(crate::ownership::unshareable_note(&name, why)),
         );
+        self.nested.push((name, span));
     }
 
     /// A use of local `i` (by this function, or a capture by a closure: `closure`) while an

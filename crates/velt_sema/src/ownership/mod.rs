@@ -31,7 +31,7 @@ mod validate;
 mod worklist;
 
 pub(crate) use boundary::check_boundaries;
-pub(crate) use cells::box_cells;
+pub(crate) use cells::{box_cells, unshareable_note, Unshareable, NESTED_ASSIGN};
 pub(crate) use exclusive::check_exclusive;
 pub(crate) use infer::infer_modes;
 pub(crate) use local_async::infer_local_async;

@@ -197,6 +197,23 @@ function loops() {
   }
   for (const k of out) console.log(k());
   console.log(shared);
+  // A variable declared in the loop body: one per iteration, each shared by its own closures.
+  const hs: (() => string)[] = [];
+  for (let i = 0; i < 3; i++) {
+    let s = "s" + i;
+    hs.push(() => {
+      const g = () => {
+        const h = () => {
+          s = s + "!";
+        };
+        h();
+      };
+      g();
+      return s;
+    });
+  }
+  for (const h of hs) console.log(h());
+  for (const h of hs) console.log(h());
 }
 
 function methods() {

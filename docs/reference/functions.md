@@ -594,8 +594,13 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   a plain copy. A closure created inside another closure that assigns a variable the outer
   closure captured (`let last = ""; const f = (v: string) => { const g = () => { last = v; };
   g(); }`) assigns the variable itself, as in JS: it lives in a cell that the function declaring
-  it and every closure on the way share. A `for (let …)` loop's step runs on a fresh binding per
-  iteration, as in JS. A closure passed to `push` is stored, so it is escaping too.
+  it and every closure on the way share. A variable holding a promise cannot live in a cell, so
+  a closure created inside another closure may not assign one the outer closure captured
+  (``…is assigned by a closure created inside another closure, and cannot be shared with it``);
+  assign it in the function that declares it. A `for (let …)` loop's step runs on a fresh
+  binding per iteration, as in JS, so the same error applies to a loop variable that the loop's
+  update assigns; a variable declared in the loop body is one per iteration and may be assigned.
+  A closure passed to `push` is stored, so it is escaping too.
 - An async closure that stays on the task that created it captures like any other escaping
   closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
   variables it captured, and every call sees the same objects and variables. Each call shares
@@ -604,11 +609,12 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   call runs as a started promise on the caller's task, so it interleaves with the rest of the
   task only at `await`s, never in parallel ([Async](async.md#promises)).
 - An async closure that may run on another thread copies what it captured for each call, and
-  may not modify a captured variable or object (``this async closure modifies captured `n`, so
-  it must stay on the task that created it``, with where it leaves its task); nor may the
-  enclosing code assign one it captured (``cannot assign to `k` after a stored closure captured
-  it``), nor a closure created in another closure (``…is assigned by a closure created inside
-  another closure, and cannot be shared with it``). The compiler proves which closures stay: one may leave when it is spawned
+  may not modify a captured variable or object, itself or through a closure it creates (``this
+  async closure modifies captured `n`, so it must stay on the task that created it``, with where
+  it leaves its task); nor may the enclosing code assign one it captured (``cannot assign to `k`
+  after a stored closure captured it``), nor a closure created in another closure (``…is
+  assigned by a closure created inside another closure, and cannot be shared with it``). The
+  compiler proves which closures stay: one may leave when it is spawned
   (`spawn(async () => …)`, `spawn(f())`, an argument of a spawned call), is an HTTP handler, goes
   into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
   is passed to (a generic one included), a variable holding it, a closure capturing it or a
