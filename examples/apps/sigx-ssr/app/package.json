@@ -12,7 +12,8 @@
   "dependencies": {
     "sigx": "1.0.1",
     "@sigx/server-renderer": "1.0.1",
-    "@sigx/server": "1.0.1"
+    "@sigx/server": "1.0.1",
+    "@sigx/ssr-islands": "1.0.1"
   },
   "devDependencies": {
     "@sigx/velt": "link:../sigx-velt",

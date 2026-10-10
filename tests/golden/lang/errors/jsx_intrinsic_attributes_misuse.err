@@ -1,0 +1,7 @@
+jsx_intrinsic_attributes_misuse.vlt:23:19: error: `client:load` is not supported on an async component (<Slow>)
+jsx_intrinsic_attributes_misuse.vlt:24:31: error: JSX elements cannot have multiple attributes with the same name.
+jsx_intrinsic_attributes_misuse.vlt:25:19: error: Property 'client:lod' does not exist on type 'IntrinsicAttributes & { n: f64 }'. Did you mean 'client:load'?
+jsx_intrinsic_attributes_misuse.vlt:26:33: error: Type 'f64' is not assignable to type 'string'.
+jsx_intrinsic_attributes_misuse.vlt:27:19: error: Property 'server:only' does not exist on type 'IntrinsicAttributes & { n: f64 }'.
+jsx_intrinsic_attributes_misuse.vlt:28:34: error: Type 'f64' is not assignable to type 'string'.
+jsx_intrinsic_attributes_misuse.vlt:29:14: error: Property 'n' is missing in type '{ "client:load": boolean }' but required in type 'IntrinsicAttributes & { n: f64 }'.

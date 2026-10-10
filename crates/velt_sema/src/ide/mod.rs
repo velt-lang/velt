@@ -52,6 +52,8 @@ pub struct Analysis {
     def_types: HashMap<Span, (TyId, u32)>,
     /// Per file with a JSX runtime: its intrinsic tags.
     jsx_tags: HashMap<FileId, JsxTags>,
+    /// Per file: the fields of its JSX runtime's `JSX.IntrinsicAttributes` besides `key`.
+    jsx_common: HashMap<FileId, JsxTags>,
     /// Inferred throws and mutation of each named function (by declaring identifier).
     effects: HashMap<Span, effects::Effects>,
     names: display::Names,
@@ -260,6 +262,13 @@ impl Analysis {
     /// runtime. `members_of` on a tag's definition lists its attributes.
     pub fn jsx_intrinsics(&self, file: FileId) -> &[(String, DefRef, String)] {
         self.jsx_tags.get(&file).map_or(&[], |tags| tags)
+    }
+
+    /// The attributes every component element of `file` accepts besides its props (the fields
+    /// of its JSX runtime's `JSX.IntrinsicAttributes` other than `key`): `(name, definition,
+    /// type)`, sorted by name; empty without them.
+    pub fn jsx_component_attributes(&self, file: FileId) -> &[(String, DefRef, String)] {
+        self.jsx_common.get(&file).map_or(&[], |attrs| attrs)
     }
 
     /// What the function, method, constructor or closure-valued variable `def` throws

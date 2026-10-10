@@ -55,7 +55,10 @@ pub fn items(
         }
         Context::Attribute { tag, written } => {
             let attrs = if is_component(tag) {
-                props_of(analysis, tag, offset)
+                // Its props, then what `JSX.IntrinsicAttributes` adds to every component.
+                let mut attrs = props_of(analysis, tag, offset);
+                attrs.extend(ide.jsx_component_attributes(file).iter().cloned());
+                attrs
             } else {
                 let tags = ide.jsx_intrinsics(file);
                 let found = tags.iter().find(|(name, _, _)| name == tag);
