@@ -1,8 +1,8 @@
 # Design: weak references without a collector
 
-Status: runtime prototype (issues #823 and #11). The core is in `velt_rt` (`crates/velt_rt/src/weak/`)
-with unit tests and a leak soak test; the compiler does not use it yet. The ABI it will be
-called through is proposed in [rt_abi.md](../contracts/rt_abi.md#weak-references-proposed).
+Status: runtime prototype (issues #823 and #11). The core is in `velt_rt`
+(`crates/velt_rt/src/weak/`) with unit tests and a leak soak test; the compiler does not use it
+yet. The ABI it will be called through is proposed in [rt_abi.md](../contracts/rt_abi.md#weak-references-proposed).
 
 `WeakMap`, `WeakSet`, `WeakRef` (#823) and `weak T` fields (#11) all need the same thing: a
 reference that does not keep its target alive and can tell whether the target is gone. This
@@ -35,16 +35,16 @@ first test from `c == 1` to a signed compare, which works because `RC_WEAK` is t
 
 ```text
 c = *rc
-if c as i64 > 1 { *rc = c - 1 }                                                  // shared path
-else if c == 1  { drop the fields; free }                                        // unique path
-else            { if velt_rt_weak_release(obj) { drop the fields; free } }      // RC_WEAK set: cold call
+if c as i64 > 1 { *rc = c - 1 }                                              // shared path
+else if c == 1  { drop the fields; free }                                    // unique path
+else            { if velt_rt_weak_release(obj) { drop the fields; free } }  // RC_WEAK: cold
 ```
 
 A weakly held object's count word is negative as a signed number, so it leaves the shared path
 with the unique case and goes to the cold call, which removes the object from every map and
-`WeakRef` before the generated code frees it. Every other type keeps today's two-way release, and a program
-without `WeakMap`, `WeakSet`, `WeakRef` or `weak` has no weak-capable types: it compiles exactly
-as today.
+`WeakRef` before the generated code frees it. Every other type keeps today's two-way release,
+and a program without `WeakMap`, `WeakSet`, `WeakRef` or `weak` has no weak-capable types: it
+compiles exactly as today.
 
 | Object | Cost |
 |---|---|
@@ -138,10 +138,10 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that
-the live objects, side-table records and map entries are exactly the window's. The long run (`soak_long`, ignored by default) passed
-10^6 reactive objects (4,000,002 objects) through a window of 1,000: at most 4,002 objects were
-alive and recorded at any step, and none were left at the end. CI runs 20,000 through a window of
-64.
+the live objects, side-table records and map entries are exactly the window's. The long run
+(`soak_long`, ignored by default) passed 10^6 reactive objects (4,000,002 objects) through a
+window of 1,000: at most 4,002 objects were alive and recorded at any step, and none were left at
+the end. CI runs 20,000 through a window of 64.
 
 ### What it does not handle
 
