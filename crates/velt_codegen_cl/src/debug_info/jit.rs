@@ -20,6 +20,7 @@ use cranelift_object::object::{
 
 use super::{build_unit, FunctionLines};
 use crate::CodegenResult;
+use velt_vir::vir;
 
 /// `struct jit_code_entry` of the GDB JIT interface.
 #[repr(C)]
@@ -62,14 +63,14 @@ static LOCK: Mutex<()> = Mutex::new(());
 
 /// Describe `functions` (whose code starts at `addresses`) to an attached debugger, if any.
 pub(crate) fn register(
-    files: &[String],
+    program: &vir::Program,
     functions: &[FunctionLines],
     addresses: &[u64],
 ) -> CodegenResult<()> {
     if functions.is_empty() {
         return Ok(());
     }
-    let image = elf_image(files, functions, addresses)?;
+    let image = elf_image(program, functions, addresses)?;
     let image: &'static [u8] = Box::leak(image.into_boxed_slice());
     let entry = Box::leak(Box::new(JitCodeEntry {
         next_entry: std::ptr::null_mut(),
@@ -116,7 +117,7 @@ pub(crate) fn registered_images_for_tests() -> Vec<Vec<u8>> {
 /// A relocatable ELF file for the host holding the DWARF of `functions` at their absolute
 /// `addresses`, plus an absolute symbol per function.
 pub(crate) fn elf_image(
-    files: &[String],
+    program: &vir::Program,
     functions: &[FunctionLines],
     addresses: &[u64],
 ) -> CodegenResult<Vec<u8>> {
@@ -126,7 +127,13 @@ pub(crate) fn elf_image(
         other => return Err(format!("codegen: no JIT debug info on {other}")),
     };
     let mut obj = Object::new(BinaryFormat::Elf, architecture, Endianness::Little);
-    let mut dwarf = build_unit(files, functions, |i| Address::Constant(addresses[i]));
+    let frame = super::frame_register(architecture);
+    let mut dwarf = build_unit(
+        program,
+        functions,
+        |i| Address::Constant(addresses[i]),
+        frame,
+    );
     let mut sections = Sections::new(EndianVec::new(RunTimeEndian::Little));
     dwarf
         .write(&mut sections)

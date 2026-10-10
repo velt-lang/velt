@@ -5,8 +5,10 @@
 //! `SourceLoc` indexing a per-function table); after compilation, Cranelift reports which code
 //! ranges carry which location, and [`FunctionLines`] keeps them as rows. [`build_unit`] turns
 //! the functions into one DWARF 4 compile unit: a `DW_TAG_subprogram` per function (name,
-//! linkage name, code range, declaration line) and a line program. Line level only: no types
-//! or variables yet.
+//! linkage name, code range, declaration line) and a line program. Debug builds also describe
+//! source variables (`vir::LocalDecl::debug`): each lives in a stack slot keyed by its local
+//! (function/mod.rs), found in the compiled frame and located relative to the frame pointer,
+//! which Cranelift always keeps; `types` builds their DWARF types.
 //!
 //! - `object`: the sections of ELF and Mach-O objects, with relocations against the function
 //!   symbols (COFF would need CodeView; Windows debug builds keep function symbols only);
@@ -14,16 +16,19 @@
 //!   to GDB and LLDB through the GDB JIT interface.
 
 use cranelift_codegen::gimli::write::{
-    Address, AttributeValue, DwarfUnit, LineProgram, LineString, Range, RangeList,
+    Address, AttributeValue, DwarfUnit, Expression, FileId, LineProgram, LineString, Range,
+    RangeList, UnitEntryId,
 };
 use cranelift_codegen::gimli::{self, Encoding, Format, LineEncoding};
 use cranelift_codegen::Context;
 use cranelift_module::FuncId;
+use cranelift_object::object::Architecture;
 use velt_vir::vir::{self, SrcLoc};
 
 #[cfg(unix)]
 pub(crate) mod jit;
 pub(crate) mod object;
+mod types;
 
 /// The line information of one compiled function.
 pub(crate) struct FunctionLines {
@@ -42,6 +47,18 @@ pub(crate) struct FunctionLines {
     pub rows: Vec<(u32, Option<SrcLoc>)>,
     /// Where the body starts (the end of the prologue).
     pub body: u32,
+    /// The source variables, by local index.
+    pub vars: Vec<Variable>,
+}
+
+/// A source variable of a compiled function: the stack slot of the local holding it.
+pub(crate) struct Variable {
+    pub name: String,
+    pub debug: vir::LocalDebug,
+    /// The local's VIR type (a scalar's encoding).
+    pub ty: vir::Ty,
+    /// The slot's offset from the frame pointer.
+    pub fp_offset: i64,
 }
 
 impl FunctionLines {
@@ -84,6 +101,28 @@ impl FunctionLines {
         if end > 0 && end < size {
             push_row(&mut rows, end, None);
         }
+        let mut vars: Vec<(u64, Variable)> = vec![];
+        if let Some(frame) = code.buffer.frame_layout() {
+            for slot in frame.stackslots.values() {
+                let Some(key) = slot.key.map(|k| k.bits()) else {
+                    continue;
+                };
+                let Some(local) = function.locals.get(key as usize) else {
+                    continue;
+                };
+                if let (Some(debug), Some(name)) = (&local.debug, &local.name) {
+                    let fp_offset = i64::from(slot.offset) - i64::from(frame.frame_to_fp_offset);
+                    let var = Variable {
+                        name: name.clone(),
+                        debug: debug.clone(),
+                        ty: local.ty,
+                        fp_offset,
+                    };
+                    vars.push((key, var));
+                }
+            }
+        }
+        vars.sort_by_key(|(k, _)| *k);
         Some(FunctionLines {
             id,
             symbol: function.symbol.clone(),
@@ -93,6 +132,7 @@ impl FunctionLines {
             decl,
             rows,
             body: body.unwrap_or(0),
+            vars: vars.into_iter().map(|(_, v)| v).collect(),
         })
     }
 }
@@ -113,13 +153,27 @@ pub(crate) const ENCODING: Encoding = Encoding {
     address_size: 8,
 };
 
-/// One compile unit describing `functions` of a program with source `files`; `address(i)` is
-/// the start of `functions[i]` (a symbol for objects, a constant for JIT code).
+/// The DWARF number of the frame pointer register, which variables are located from; `None`
+/// for other architectures (no variables).
+pub(crate) fn frame_register(arch: Architecture) -> Option<gimli::Register> {
+    match arch {
+        Architecture::X86_64 => Some(gimli::X86_64::RBP),
+        Architecture::Aarch64 => Some(gimli::AArch64::X29),
+        _ => None,
+    }
+}
+
+/// One compile unit describing `functions` of `program`; `address(i)` is the start of
+/// `functions[i]` (a symbol for objects, a constant for JIT code), and `frame` the frame
+/// pointer register (variables are described only with one).
 pub(crate) fn build_unit(
-    files: &[String],
+    program: &vir::Program,
     functions: &[FunctionLines],
     address: impl Fn(usize) -> Address,
+    frame: Option<gimli::Register>,
 ) -> DwarfUnit {
+    let files = &program.files;
+    let mut types = types::Types::new(program);
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string().replace('\\', "/"))
         .unwrap_or_default();
@@ -201,8 +255,8 @@ pub(crate) fn build_unit(
     for (i, f) in functions.iter().enumerate() {
         let name = dwarf.strings.add(dwarf_str(&f.name));
         let linkage_name = dwarf.strings.add(dwarf_str(&f.symbol));
-        let sub = dwarf.unit.add(root, gimli::DW_TAG_subprogram);
-        let sub = dwarf.unit.get_mut(sub);
+        let sub_id = dwarf.unit.add(root, gimli::DW_TAG_subprogram);
+        let sub = dwarf.unit.get_mut(sub_id);
         sub.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
         sub.set(
             gimli::DW_AT_linkage_name,
@@ -228,8 +282,55 @@ pub(crate) fn build_unit(
                 );
             }
         }
+        if let (Some(frame), false) = (frame, f.vars.is_empty()) {
+            let mut base = Expression::new();
+            base.op_reg(frame);
+            sub.set(gimli::DW_AT_frame_base, AttributeValue::Exprloc(base));
+            for v in &f.vars {
+                add_variable(&mut dwarf, &mut types, sub_id, v, file_of(v.debug.decl));
+            }
+        }
     }
     dwarf
+}
+
+/// A `DW_TAG_variable` (or `DW_TAG_formal_parameter`) for `v` under subprogram `sub`.
+fn add_variable(
+    dwarf: &mut DwarfUnit,
+    types: &mut types::Types<'_>,
+    sub: UnitEntryId,
+    v: &Variable,
+    file: Option<FileId>,
+) {
+    // A local holding the variable by reference holds a pointer: the value is the pointee, in
+    // its natural representation.
+    let held = (!v.debug.by_ref).then_some(v.ty);
+    let ty = types.ty(dwarf, v.debug.ty, held);
+    let tag = match v.debug.param {
+        true => gimli::DW_TAG_formal_parameter,
+        false => gimli::DW_TAG_variable,
+    };
+    let name = dwarf.strings.add(dwarf_str(&v.name));
+    let mut location = Expression::new();
+    location.op_fbreg(v.fp_offset);
+    if v.debug.by_ref {
+        location.op_deref();
+    }
+    let var = dwarf.unit.add(sub, tag);
+    let var = dwarf.unit.get_mut(var);
+    var.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
+    var.set(gimli::DW_AT_type, AttributeValue::UnitRef(ty));
+    var.set(gimli::DW_AT_location, AttributeValue::Exprloc(location));
+    if let Some(file) = file {
+        var.set(
+            gimli::DW_AT_decl_file,
+            AttributeValue::FileIndex(Some(file)),
+        );
+        var.set(
+            gimli::DW_AT_decl_line,
+            AttributeValue::Udata(u64::from(v.debug.decl.line)),
+        );
+    }
 }
 
 /// `(file name, directory)` of a source path: relative paths are relative to the current
