@@ -10,7 +10,7 @@ helper), and explain it in your final report.
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
 | HIR | `crates/velt_sema/src/hir/mod.rs`, `hir/intrinsic.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path), `effects::may_change_memory` (can evaluating an expression run code that changes memory: a call other than an intrinsic, an intrinsic handed a place to modify or move, an assignment, `new`, `await`; IR lowering holds earlier operands and re-forms element addresses on it) | sema → IR |
-| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify` | IR → codegen |
+| VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify`; values are built with `Function::new`, `LocalDecl::new` and `Program::default()` (struct update for the rest), where a new field gets its "no information" default | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |

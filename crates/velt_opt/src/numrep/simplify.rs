@@ -74,10 +74,7 @@ fn integer_remainder(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> bool
 /// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones.
 fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
     let fresh = |func: &mut Function| {
-        func.locals.push(LocalDecl {
-            ty: Ty::I64,
-            name: None,
-        });
+        func.locals.push(LocalDecl::new(Ty::I64, None));
         Local(func.locals.len() as u32 - 1)
     };
     let mut plans = vec![];
