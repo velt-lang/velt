@@ -110,6 +110,12 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     let own_bounds = resolve_bounds(cx, &sig.generics, &env);
     generics.bounds.truncate(owner.len());
     generics.bounds.extend(own_bounds);
+    if sig.generics.iter().any(|g| g.default.is_some()) {
+        let mut defaults = generics.defaults.clone();
+        defaults.resize(owner.len(), None);
+        defaults.extend(cx.fn_param_defaults(&sig.generics, &env));
+        generics.defaults = defaults;
+    }
     let kind = cx.fn_info(d).kind;
     let mut ps = params(cx, &sig.params, &env);
     // A generator declares its result (`generator_sig`), so it is never inferred.

@@ -1,0 +1,75 @@
+// Type-parameter defaults on functions, methods, static methods and arrows, as in TypeScript:
+// a parameter nothing infers takes its default, an inferred one ignores it, a default may use
+// the parameters before it, and explicit type arguments may leave out the defaulted ones.
+function make<T = string>(): T[] {
+  return [];
+}
+
+function first<T = string>(xs: T[]): T {
+  return xs[0];
+}
+
+function pair<A, B = A[]>(a: A, b: B): [A, B] {
+  return [a, b];
+}
+
+function both<A = string, B = A>(a: A, b: B): string {
+  return `${a}/${b}`;
+}
+
+class Store<K = string> {
+  keys: K[] = [];
+
+  make<V = K[]>(): V[] {
+    return [];
+  }
+
+  wrap<V = number>(v: V): [K[], V] {
+    return [this.keys, v];
+  }
+
+  static of<T = boolean>(): T[] {
+    return [];
+  }
+}
+
+interface Wrap<T = boolean> {
+  v: T;
+}
+
+type Pair2<A, B = A> = { a: A; b: B };
+
+const id = <T = number>(x: T): T => x;
+
+const xs = make();
+xs.push("hi");
+console.log(xs);
+const ns = make<number>();
+ns.push(3);
+console.log(ns);
+console.log(first([1, 2]));
+console.log(pair<number>(1, [2, 3]));
+console.log(both(1, 2));
+console.log(both<number>(1, 2));
+console.log(both<string, boolean>("x", true));
+const s = new Store();
+s.keys.push("k");
+const m = s.make();
+m.push(["a", "b"]);
+console.log(m);
+const m2 = s.make<number>();
+m2.push(7);
+console.log(m2);
+console.log(s.wrap("x"));
+console.log(s.wrap(true));
+const st = Store.of();
+st.push(false);
+console.log(st);
+const ctx: number[] = Store.of();
+ctx.push(1);
+console.log(ctx);
+const w: Wrap = { v: true };
+console.log(w.v);
+const q: Pair2<string> = { a: "x", b: "y" };
+console.log(q.a + q.b);
+console.log(id(5));

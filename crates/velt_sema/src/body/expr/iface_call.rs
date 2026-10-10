@@ -92,7 +92,7 @@ impl FnCx<'_, '_> {
         let mut slots: Vec<Option<TyId>> = s.iface_args.iter().map(|t| Some(*t)).collect();
         slots.push(Some(recv.ty));
         slots.resize(n + 1 + own, None);
-        self.explicit_type_args(&mut slots, own, type_args, span);
+        self.explicit_type_args(&mut slots, own, type_args, &[], span);
         let mut slot_names: Vec<String> = (0..=n).map(|k| format!("T{k}")).collect();
         slot_names.extend(s.method.generics.names.iter().cloned());
         let mut bounds = vec![vec![]; n + 1];

@@ -262,10 +262,10 @@ function splitUrl(url: string): [string, string] {
   return q < 0 ? [url.slice(start), ""] : [url.slice(start, q), url.slice(q + 1)];
 }
 
-function portArg(): i64 {
+function portArg(): number {
   const argv = args();
   const raw = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
-  return parseInt(raw, 10) as i64;
+  return parseInt(raw, 10);
 }
 
 function poolSize(): i64 {

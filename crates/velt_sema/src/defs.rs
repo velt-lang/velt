@@ -14,6 +14,10 @@ pub(crate) struct Generics {
     pub names: Vec<String>,
     /// Interface bounds per parameter (`T extends A & B`).
     pub bounds: Vec<Vec<Bound>>,
+    /// Per parameter, a function's default (`function f<T = string>()`, in terms of the
+    /// parameters before it), used when nothing infers it; `None` without one. Empty when
+    /// no parameter has one (a type's defaults live in `crate::type_defaults`).
+    pub defaults: Vec<Option<TyId>>,
 }
 
 impl Generics {

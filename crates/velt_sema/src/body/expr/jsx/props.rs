@@ -118,7 +118,7 @@ impl FnCx<'_, '_> {
         let mut slots = vec![None; c.slot_names.len()];
         if let Some(span) = type_args_span(el) {
             let n = slots.len();
-            self.explicit_type_args(&mut slots, n, &el.type_args, span);
+            self.explicit_type_args(&mut slots, n, &el.type_args, &[], span);
         }
         // Shown with the type arguments as written, else the component's parameter names.
         let written = (el.type_args.len() == slots.len()).then_some(&el.type_args);

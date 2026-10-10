@@ -171,6 +171,32 @@ function main() {
 }
 ```
 
+A type parameter may have a **default** (`<T = string>`), as in TypeScript: a type parameter
+nothing infers takes it, an inferred one ignores it, and explicit type arguments may leave out
+the parameters that have defaults (`f<number>()` of `function f<A, B = A[]>()` is
+`f<number, number[]>()`; the left-out ones are not inferred then). A default may use the type
+parameters declared before it (and a method's, its class's), and a parameter without a default
+may not follow one with a default:
+
+```ts
+function list<T = string>(): T[] {
+  return [];
+}
+
+function pair<A, B = A[]>(a: A, b: B): [A, B] {
+  return [a, b];
+}
+
+function main() {
+  const names = list(); // string[]
+  names.push("ada");
+  const ns = list<number>(); // number[]
+  ns.push(1);
+  const p = pair<number>(1, [2, 3]); // pair<number, number[]>
+  console.log(names, ns, p); // [ 'ada' ] [ 1 ] [ 1, [ 2, 3 ] ]
+}
+```
+
 Because each instantiation is compiled, a generic function may call itself (directly or
 through other generic functions) with the same type arguments, but not with growing ones:
 `f<T>` calling `f<T[]>` would need `f<T[][]>`, `f<T[][][]>` and so on without end. The

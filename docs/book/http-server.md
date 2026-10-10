@@ -38,9 +38,9 @@ serializes any value with `JSON.stringify`, which is generated at compile time f
 import { serve } from "velt:http";
 
 class ApiError extends Error {
-  status: i64;
+  status: number;
 
-  constructor(status: i64, message: string) {
+  constructor(status: number, message: string) {
     super(message);
     this.status = status;
   }
@@ -72,9 +72,9 @@ class Store {
   }
 }
 
-type Reply = { status: i64; body: string };
+type Reply = { status: number; body: string };
 
-function json<T>(status: i64, value: T): Reply {
+function json<T>(status: number, value: T): Reply {
   return { status, body: JSON.stringify(value) };
 }
 
