@@ -56,6 +56,7 @@ mod record;
 mod record_call;
 mod record_compound;
 mod record_literal;
+mod regex_args;
 mod setters;
 mod spread;
 mod spread_args;

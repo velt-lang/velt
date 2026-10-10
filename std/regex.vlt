@@ -4,9 +4,13 @@
 //
 // Offsets are UTF-16 code units, like every Velt string position (`slice`, `indexOf`).
 // `\d \w \b` are ASCII-only as in JS; `i m s` flags work as in JS; `g` makes `replace` replace
-// every match and `y` (sticky) makes `test`/`exec` match only at `from`. There is no hidden
-// `lastIndex` state: `exec(s, from)` takes the start offset explicitly, and `matchAll` returns
-// every match.
+// every match and `y` (sticky) makes `test`/`exec` match only at the start position. Called
+// without a start (`exec(s)`), a `g` or `y` regex starts at `lastIndex` and updates it, as in JS;
+// `exec(s, from)` takes the start explicitly and leaves `lastIndex` alone.
+//
+// The string methods that take a regex (`s.replace(re, …)`, `match`, `matchAll`, `search`,
+// `split`, `replaceAll`) are the `extend string` block at the end: the compiler sends such a
+// call there when the first argument is a `RegExp` (velt_sema's `regex_args`).
 //
 // A `RegExp` owns a runtime handle (released by `[Symbol.dispose]()`); the compiled program is
 // immutable and can be used from any task.
@@ -15,6 +19,8 @@ import { IoResult } from "velt:io";
 
 declare function velt_rt_regex_new(pattern: string, flags: string): IoResult<u64>;
 declare function velt_rt_regex_free(re: u64);
+declare function velt_rt_regex_last_index(re: u64): f64;
+declare function velt_rt_regex_set_last_index(re: u64, value: f64);
 declare function velt_rt_regex_group_count(re: u64): u64;
 declare function velt_rt_regex_group_names(re: u64): string[];
 declare function velt_rt_regex_test(re: u64, s: string, from: u64): bool;
@@ -59,6 +65,11 @@ export class RegExpMatch {
     this.names = names;
   }
 
+  /** `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist. */
+  __index(n: usize): string {
+    return this.group(n) ?? "";
+  }
+
   /** Group `n` (0 = the whole match); null if it did not take part or does not exist. */
   group(n: usize): string | null {
     if (n == 0) {
@@ -68,6 +79,65 @@ export class RegExpMatch {
       return null;
     }
     return this.captures[n - 1].clone();
+  }
+
+  /**
+   * `replacement` for this match of `s`, with `$&`, `$1`…`$99`, `$<name>`, `` $` ``, `$'` and
+   * `$$` expanded as JS's `replace` does.
+   */
+  substitute(s: string, replacement: string): string {
+    let out = "";
+    let i: i64 = 0;
+    while (true) {
+      const at = replacement.indexOf("$", i);
+      if (at < 0) {
+        out += replacement.slice(i);
+        return out;
+      }
+      out += replacement.slice(i, at);
+      const c = replacement.charCodeAt(at + 1);
+      let used: i64 = 2;
+      if (c == 36) {
+        out += "$";
+      } else if (c == 38) {
+        out += this.value;
+      } else if (c == 96) {
+        out += s.slice(0, this.index as i64);
+      } else if (c == 39) {
+        out += s.slice(this.end as i64);
+      } else if (c >= 48 && c <= 57) {
+        const groups = this.captures.length as i64;
+        const d1 = c - 48;
+        const c2 = replacement.charCodeAt(at + 2);
+        const two = c2 >= 48 && c2 <= 57 ? d1 * 10 + c2 - 48 : 0;
+        let g: i64 = 0;
+        if (two >= 1 && two <= groups) {
+          g = two;
+          used = 3;
+        } else if (d1 >= 1 && d1 <= groups) {
+          g = d1;
+        }
+        if (g == 0) {
+          used = 1;
+          out += "$";
+        } else {
+          out += this.captures[(g - 1) as usize] ?? "";
+        }
+      } else if (c == 60 && this.names.some((n) => n != "")) {
+        const close = replacement.indexOf(">", at + 2);
+        if (close < 0) {
+          used = 1;
+          out += "$";
+        } else {
+          out += this.named(replacement.slice(at + 2, close)) ?? "";
+          used = close + 1 - at;
+        }
+      } else {
+        used = 1;
+        out += "$";
+      }
+      i = at + used;
+    }
   }
 
   /** The named group `(?<name>…)`; null if it did not take part or does not exist. */
@@ -89,7 +159,7 @@ export class RegExp {
   readonly flags: string;
   /** `g`: `replace` replaces every match. */
   readonly global: bool;
-  /** `y`: `test`/`exec` only match starting exactly at `from`. */
+  /** `y`: `test`/`exec` only match starting exactly at the start position. */
   readonly sticky: bool;
   #handle: u64;
   #names: string[];
@@ -108,24 +178,34 @@ export class RegExp {
     this.#names = velt_rt_regex_group_names(this.#handle);
   }
 
-  /** Whether `s` matches (anywhere at or after position `from`; exactly at `from` when sticky). */
-  test(s: string, from: usize = 0): bool {
-    if (this.sticky) {
-      return this.exec(s, from) != null;
+  /**
+   * Whether `s` matches (anywhere at or after position `from`; exactly at `from` when sticky).
+   * Without `from`, a `g` or `y` regex starts at `lastIndex` and updates it, like `exec`.
+   */
+  test(s: string, from?: usize): bool {
+    if (from == null && (this.global || this.sticky)) {
+      return this.exec(s) != null;
     }
-    return velt_rt_regex_test(this.#handle, s, from as u64);
+    const start = from ?? 0;
+    if (this.sticky) {
+      return this.execAt(s, start) != null;
+    }
+    return velt_rt_regex_test(this.#handle, s, start as u64);
   }
 
-  /** The first match at or after position `from` (exactly at `from` when sticky), or null. */
-  exec(s: string, from: usize = 0): RegExpMatch | null {
-    let offsets: i64[] = [];
-    if (!velt_rt_regex_exec(this.#handle, s, from as u64, offsets)) {
-      return null;
+  /**
+   * The first match at or after position `from` (exactly at `from` when sticky), or null.
+   * Without `from`, a `g` or `y` regex starts at `lastIndex` and sets it past the match, or to 0
+   * when there is none (JS `exec`); other regexes start at 0.
+   */
+  exec(s: string, from?: usize): RegExpMatch | null {
+    if (from != null || !(this.global || this.sticky)) {
+      return this.execAt(s, from ?? 0);
     }
-    if (this.sticky && offsets[0] != from as i64) {
-      return null;
-    }
-    return this.matchAt(s, offsets, 0);
+    const start = this.lastIndex as usize;
+    const m = start > s.length ? null : this.execAt(s, start);
+    velt_rt_regex_set_last_index(this.#handle, m == null ? 0 : m.end as number);
+    return m;
   }
 
   /** Every non-overlapping match, in order (JS `s.matchAll(re)`, whatever the flags). */
@@ -153,10 +233,26 @@ export class RegExp {
 
   /**
    * JS `s.replace(re, replacement)`: every match with the `g` flag, else the first.
-   * `replacement` expands `$&`, `$1`…`$99`, `$<name>`, `` $` ``, `$'` and `$$`.
+   * `replacement` expands `$&`, `$1`…`$99`, `$<name>`, `` $` ``, `$'` and `$$`. A sticky regex
+   * matches only at `lastIndex` (with `g`: from 0, each match where the previous one ended), and
+   * `lastIndex` changes as in JS.
    */
   replace(s: string, replacement: string): string {
-    return velt_rt_regex_replace(this.#handle, s, replacement, this.global);
+    if (this.global) {
+      velt_rt_regex_set_last_index(this.#handle, 0);
+    }
+    if (!this.sticky) {
+      return velt_rt_regex_replace(this.#handle, s, replacement, this.global);
+    }
+    let out = "";
+    let last: usize = 0;
+    for (const m of this.replaced(s)) {
+      out += s.slice(last as i64, m.index as i64);
+      out += m.substitute(s, replacement);
+      last = m.end;
+    }
+    out += s.slice(last as i64);
+    return out;
   }
 
   /** Replaces every match, whatever the flags (JS `replaceAll`). */
@@ -164,12 +260,14 @@ export class RegExp {
     return velt_rt_regex_replace(this.#handle, s, replacement, true);
   }
 
-  /** Replaces matches (every one with `g`, else the first) with `f(match)`. */
+  /**
+   * Replaces matches (every one with `g`, else the first) with `f(match)`; the matches are the
+   * ones `replace` replaces.
+   */
   replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string throws E {
-    const found = this.global ? this.matchAll(s) : this.firstMatch(s);
     let out = "";
     let last: usize = 0;
-    for (const m of found) {
+    for (const m of this.replaced(s)) {
       out += s.slice(last as i64, m.index as i64);
       out += f(m);
       last = m.end;
@@ -178,9 +276,99 @@ export class RegExp {
     return out;
   }
 
+  /** `replaceWith` for `s.replace(re, (match, ...groups) => …)`: `f` gets the subject too. */
+  __replaceCalling<E>(
+    s: string,
+    f: (m: RegExpMatch, s: string) => string throws E,
+  ): string throws E {
+    let out = "";
+    let last: usize = 0;
+    for (const m of this.replaced(s)) {
+      out += s.slice(last as i64, m.index as i64);
+      out += f(m, s);
+      last = m.end;
+    }
+    out += s.slice(last as i64);
+    return out;
+  }
+
+  /** JS `s.match(re)`: every match's text with `g` (null if none), else `exec`'s groups. */
+  __match(s: string): string[] | null {
+    if (!this.global) {
+      const m = this.exec(s);
+      if (m == null) {
+        return null;
+      }
+      const out: string[] = __intrinsic_array_with_capacity(m.captures.length + 1);
+      out.push(m.value.clone());
+      for (const c of m.captures) {
+        out.push(c ?? "");
+      }
+      return out;
+    }
+    velt_rt_regex_set_last_index(this.#handle, 0);
+    const found = this.sticky ? this.stickyTexts(s) : this.matches(s);
+    return found.length == 0 ? null : found;
+  }
+
+  /** JS `s.matchAll(re)` (a `g` regex): every match from `lastIndex` on, which stays as is. */
+  __matchAll(s: string): RegExpMatch[] {
+    if (!this.global) {
+      panic("TypeError: String.prototype.matchAll called with a non-global RegExp argument");
+    }
+    if (this.lastIndex == 0 && !this.sticky) {
+      return this.matchAll(s);
+    }
+    const saved = this.lastIndex;
+    const out: RegExpMatch[] = [];
+    while (true) {
+      const m = this.exec(s);
+      if (m == null) {
+        break;
+      }
+      if (m.end == m.index) {
+        velt_rt_regex_set_last_index(this.#handle, (m.end + 1) as number);
+      }
+      out.push(m);
+    }
+    velt_rt_regex_set_last_index(this.#handle, saved);
+    return out;
+  }
+
+  /** JS `s.search(re)`: where the first match from 0 starts, or -1; `lastIndex` stays. */
+  __search(s: string): i64 {
+    const m = this.execAt(s, 0);
+    return m == null ? -1 : m.index as i64;
+  }
+
+  /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
+  __split(s: string, limit: number | null): string[] {
+    if (limit == null) {
+      return this.split(s);
+    }
+    const n = limit as i64;
+    if (n == 0) {
+      return [];
+    }
+    return this.split(s, n > 0 ? n as usize : 0);
+  }
+
   /** JS `s.split(re, limit)`: captured groups are included in the result; `limit` 0 = none. */
   split(s: string, limit: usize = 0): string[] {
     return velt_rt_regex_split(this.#handle, s, limit as u64);
+  }
+
+  /**
+   * Where `exec(s)` and `test(s)` of a `g` or `y` regex start, set past each match (0 after a
+   * failed one); `s.replace`, `s.match` and `s.matchAll` read and set it as in JS. Kept by the
+   * runtime, so the methods that update it don't need a mutable receiver.
+   */
+  get lastIndex(): number {
+    return velt_rt_regex_last_index(this.#handle);
+  }
+
+  set lastIndex(value: number) {
+    velt_rt_regex_set_last_index(this.#handle, value);
   }
 
   /** Number of capture groups (not counting the whole match). */
@@ -213,11 +401,50 @@ export class RegExp {
     }
   }
 
-  private firstMatch(s: string): RegExpMatch[] {
+  private execAt(s: string, from: usize): RegExpMatch | null {
+    let offsets: i64[] = [];
+    if (!velt_rt_regex_exec(this.#handle, s, from as u64, offsets)) {
+      return null;
+    }
+    if (this.sticky && offsets[0] != from as i64) {
+      return null;
+    }
+    return this.matchAt(s, offsets, 0);
+  }
+
+  // The matches `replace` replaces, setting `lastIndex` as JS does.
+  private replaced(s: string): RegExpMatch[] {
+    if (this.global) {
+      velt_rt_regex_set_last_index(this.#handle, 0);
+      return this.sticky ? this.stickyMatches(s) : this.matchAll(s);
+    }
     const out: RegExpMatch[] = [];
-    const m = this.exec(s, 0);
+    const m = this.exec(s);
     if (m != null) {
       out.push(m);
+    }
+    return out;
+  }
+
+  // A sticky `g` regex's matches: from 0, each one where the previous one ended.
+  private stickyMatches(s: string): RegExpMatch[] {
+    const out: RegExpMatch[] = [];
+    let at: usize = 0;
+    while (at <= s.length) {
+      const m = this.execAt(s, at);
+      if (m == null) {
+        break;
+      }
+      at = m.end == m.index ? m.end + 1 : m.end;
+      out.push(m);
+    }
+    return out;
+  }
+
+  private stickyTexts(s: string): string[] {
+    const out: string[] = [];
+    for (const m of this.stickyMatches(s)) {
+      out.push(m.value.clone());
     }
     return out;
   }
@@ -241,5 +468,63 @@ export class RegExp {
       captures,
       this.#names.clone(),
     );
+  }
+}
+
+/**
+ * The string methods that take a regex, as in JS. The compiler calls these for
+ * `s.replace(re, …)` & co. when the first argument is a `RegExp`; they are not called by name.
+ */
+extend string {
+  /** `s.replace(re, replacement)` */
+  __replaceRegExp(re: RegExp, replacement: string): string {
+    return re.replace(this, replacement);
+  }
+
+  /** `s.replace(re, (match, p1, …, offset, s) => …)` (the compiler adapts the function). */
+  __replaceRegExpCalling<E>(
+    re: RegExp,
+    f: (m: RegExpMatch, s: string) => string throws E,
+  ): string throws E {
+    return re.__replaceCalling(this, f);
+  }
+
+  /** `s.replaceAll(re, replacement)`: `re` must have the `g` flag. */
+  __replaceAllRegExp(re: RegExp, replacement: string): string {
+    if (!re.global) {
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
+    }
+    return re.replace(this, replacement);
+  }
+
+  /** `s.replaceAll(re, (match, …) => …)`: `re` must have the `g` flag. */
+  __replaceAllRegExpCalling<E>(
+    re: RegExp,
+    f: (m: RegExpMatch, s: string) => string throws E,
+  ): string throws E {
+    if (!re.global) {
+      panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
+    }
+    return re.__replaceCalling(this, f);
+  }
+
+  /** `s.match(re)` */
+  __matchRegExp(re: RegExp): string[] | null {
+    return re.__match(this);
+  }
+
+  /** `s.matchAll(re)`: `re` must have the `g` flag. */
+  __matchAllRegExp(re: RegExp): RegExpMatch[] {
+    return re.__matchAll(this);
+  }
+
+  /** `s.search(re)` */
+  __searchRegExp(re: RegExp): i64 {
+    return re.__search(this);
+  }
+
+  /** `s.split(re, limit)` */
+  __splitRegExp(re: RegExp, limit?: number): string[] {
+    return re.__split(this, limit);
   }
 }

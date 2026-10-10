@@ -1,0 +1,7 @@
+// `matchAll` and `replaceAll` with a regex literal without the `g` flag (JS: TypeError).
+
+function main() {
+  console.log("a1b2".matchAll(/\d/).length);
+  console.log("aa".replaceAll(/a/i, "b"));
+  console.log("a1".replace(/(\d)/, (m, d: string, off: number, s: string, extra: string) => m));
+}

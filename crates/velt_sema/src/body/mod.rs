@@ -33,7 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
-mod assigned;
+pub(crate) mod assigned;
 mod closure_assigned;
 mod const_borrow;
 mod consume;
@@ -242,6 +242,9 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
+    /// capturing groups and the flags of the regex each such local holds (`regex_args`).
+    pub regex_consts: HashMap<LocalId, (usize, String)>,
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
@@ -287,6 +290,7 @@ impl Frame {
             int_returns_number: false,
             truthy_returns: false,
             const_lits: HashMap::new(),
+            regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
         }
     }

@@ -135,8 +135,9 @@ extend string {
   }
 
   /**
-   * Replace all instances of a substring in a string. `from` is plain text; for patterns use
-   * `velt:regex`.
+   * Replace all instances of a substring in a string. `from` is plain text; with a `RegExp`
+   * (`s.replaceAll(/a/g, "b")`) the call is std/regex's (as for `replace`, `split`, `match`,
+   * `matchAll` and `search`).
    * @param from - A string to search for.
    * @param to - A string containing the text to replace for every successful match of `from` in
    * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.

@@ -381,6 +381,11 @@ impl FnCx<'_, '_> {
         {
             self.f.const_lits.insert(local, l);
         }
+        if let (LocalKind::Const, Some(e), Some(h)) = (kind, &v.init, &init) {
+            if let Some(shape) = self.regex_const_shape(e, h.ty) {
+                self.f.regex_consts.insert(local, shape);
+            }
+        }
         if let (None, Some(h)) = (ann, &init) {
             self.literal_decl(local, &name.name, h);
         }
