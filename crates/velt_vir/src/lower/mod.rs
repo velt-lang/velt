@@ -74,6 +74,7 @@ mod strings;
 mod template;
 mod track_caller;
 mod transfer;
+mod truthy;
 mod types;
 mod widen;
 

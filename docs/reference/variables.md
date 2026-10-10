@@ -41,9 +41,11 @@ test values of any type as JavaScript does.
   `n: number | null` holding `0`, `n ?? 5` is `0` and `n || 5` is `5`.
 - An enum value is falsy when its member's value is `0` or `""`. A union is tested by the
   member it holds.
+- A value of a generic type `T` is tested as a value of the type `T` stands for: generic code
+  is compiled for each type argument, so `!x` in `function f<T>(x: T)` is the number test in
+  `f(0)` and the string test in `f("")`, with no check at run time of what `T` is.
 - `void` values are not conditions (``an expression of type `void` cannot be tested for
-  truthiness``), and neither are values of a generic type, whose test would depend on the type
-  argument.
+  truthiness``).
 - A test is one comparison in the compiled code: `n != 0` on an integer (also on a `number` the
   compiler stores as an integer), `x != 0 && x == x` on any other `number` (one compare once
   optimized), `s.length != 0` on a string.
@@ -57,6 +59,8 @@ test values of any type as JavaScript does.
   `boolean` is expected (conditions, `const ok: boolean = …`) or both sides are `boolean`s,
   they give a `boolean`.
 - `x ||= v` and `x &&= v` assign when `||` or `&&` would take the right side.
+- `c ? a : b` is typed the same way: when one branch converts to the other's type, that type,
+  else their union (`qty ? qty : "none"` is a `number | string`).
 
 ```ts
 function label(count: number, name: string | null): string {
@@ -73,6 +77,7 @@ function main() {
   const port = 0;
   const retries: i64 = 3;
   console.log(port || 8080, retries && retries - 1);   // 8080 2
+  console.log(port ? port : "none");   // none
   console.log(label(0, "ann"), label(2, ""), label(2, "ann"));   // none 2 2 for ann
   const pairs = [[1, 2], [0, 5], [1, 1]];
   pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
