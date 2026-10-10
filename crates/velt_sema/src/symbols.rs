@@ -294,9 +294,7 @@ impl Ctx<'_> {
                 }
                 if let Some(f) = a.fields.iter().find(|f| f.name == name) {
                     return Some(match f.optional && a.kind != AdtKind::Class {
-                        true => {
-                            Presence::Optional(crate::anon::has_presence(&self.ty, a.kind, f))
-                        }
+                        true => Presence::Optional(crate::anon::has_presence(&self.ty, a.kind, f)),
                         false => Presence::Yes,
                     });
                 }

@@ -103,7 +103,12 @@ impl FnCx<'_, '_> {
     pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
         let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
         let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
-        let symbol = |t: &TyId| matches!(self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)), TyKind::Symbol);
+        let symbol = |t: &TyId| {
+            matches!(
+                self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)),
+                TyKind::Symbol
+            )
+        };
         if !members.iter().any(symbol) {
             return false;
         }
@@ -116,7 +121,7 @@ impl FnCx<'_, '_> {
         };
         self.cx.error(
             Diagnostic::error(msg, h.span)
-            .with_note("write `String(s)`, `s.toString()` or `s.description`"),
+                .with_note("write `String(s)`, `s.toString()` or `s.description`"),
         );
         true
     }

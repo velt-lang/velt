@@ -69,8 +69,7 @@ pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
     let saved = std::mem::replace(&mut cx.display_params, names.clone());
     for (i, f) in fields.iter().enumerate() {
         let Some(ast_field) = decl.fields.iter().find(|af| {
-            af.name.name == f.name
-                || cx.resolve_key(module, &af.name).ok() == Some(f.name.clone())
+            af.name.name == f.name || cx.resolve_key(module, &af.name).ok() == Some(f.name.clone())
         }) else {
             continue;
         };

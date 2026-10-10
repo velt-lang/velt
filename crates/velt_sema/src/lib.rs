@@ -400,7 +400,10 @@ fn check_main(
 /// starting with `[` (`"[x]"`) are ordinary keys: a computed key `[KEY]` is told apart by its
 /// span (`symbols::is_computed_key`).
 pub(crate) fn reserved_key(name: &str) -> bool {
-    name.starts_with('#') || name.starts_with("[Symbol.") || name.starts_with("[Symbol(") || name == "__proto__"
+    name.starts_with('#')
+        || name.starts_with("[Symbol.")
+        || name.starts_with("[Symbol(")
+        || name == "__proto__"
 }
 
 /// Why property name `name` (a [`reserved_key`]) is not supported.

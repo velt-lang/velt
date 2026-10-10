@@ -164,7 +164,10 @@ impl FnCx<'_, '_> {
         }
         let tn = self.cx.display(t);
         let mut d = Diagnostic::error(
-            format!("no field `{}` on type `{tn}`", self.cx.shown_name(&prop.name)),
+            format!(
+                "no field `{}` on type `{tn}`",
+                self.cx.shown_name(&prop.name)
+            ),
             prop.span,
         );
         if self.adt_of(t).is_some() {

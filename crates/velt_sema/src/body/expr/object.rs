@@ -502,7 +502,10 @@ impl FnCx<'_, '_> {
                 }
                 (None, None) => {
                     self.cx.err(
-                        format!("missing field `{}` in `{sname}` literal", self.cx.shown_name(&f.name)),
+                        format!(
+                            "missing field `{}` in `{sname}` literal",
+                            self.cx.shown_name(&f.name)
+                        ),
                         span,
                     );
                     self.error_expr(span)

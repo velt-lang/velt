@@ -160,7 +160,10 @@ mod tests {
             assert_eq!(velt_rt_symbol_described(none), 0);
             assert_eq!(text(none), "");
             let none_table = std::ptr::null();
-            let (f, g) = (velt_rt_symbol_for(&d, none_table), velt_rt_symbol_for(&d, none_table));
+            let (f, g) = (
+                velt_rt_symbol_for(&d, none_table),
+                velt_rt_symbol_for(&d, none_table),
+            );
             assert_eq!(f, g);
             assert_ne!(f, a);
             assert_eq!(velt_rt_symbol_registered(f), 1);
@@ -180,8 +183,14 @@ mod tests {
         let other = VeltStr::from_vec(b"compiled-other".to_vec());
         // SAFETY: valid strings, a null-terminated table of a live record.
         unsafe {
-            assert_eq!(velt_rt_symbol_for(&key, table.as_ptr()), &rec as *const SymbolRec);
-            assert_eq!(velt_rt_symbol_for(&key, std::ptr::null()), &rec as *const SymbolRec);
+            assert_eq!(
+                velt_rt_symbol_for(&key, table.as_ptr()),
+                &rec as *const SymbolRec
+            );
+            assert_eq!(
+                velt_rt_symbol_for(&key, std::ptr::null()),
+                &rec as *const SymbolRec
+            );
             let made = velt_rt_symbol_for(&other, table.as_ptr());
             assert_ne!(made, &rec as *const SymbolRec);
             assert_eq!(text(made), "compiled-other");
