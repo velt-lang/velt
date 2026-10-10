@@ -30,7 +30,7 @@ Code extension loads, [Command line](#command-line) shows how) also shows a stri
 an array as `len=N` with its elements, a union by its active member, and other options as
 `null` or their value; without them those are raw words. Variables of `async` functions,
 generators and inlined code are not shown yet. A variable is shown from the line declaring it
-to the end of its block. On Windows, Cranelift builds have function
+to the end of its block; inside a closure, the variables it captures are shown too. On Windows, Cranelift builds have function
 symbols only. On macOS, executables are signed ad hoc without the hardened runtime, so
 LLDB can launch and attach to them.
 

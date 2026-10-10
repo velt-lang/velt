@@ -485,3 +485,54 @@ fn lldb_shows_variables_in_their_scope() {
         "{out}"
     );
 }
+
+const CLOSURE: &str = r#"function main() {
+  const base = 10;
+  let hits = 0;
+  const names = ["a", "b"];
+  const add = (x: number): number => {
+    hits += 1;
+    return base + x + names.length;
+  };
+  console.log(add(1), add(2), hits);
+}
+"#;
+
+/// Inside a closure, its captures show like its own variables: by value (`base`), through the
+/// shared cell of a variable it assigns (`hits`), and borrowed (`names`).
+#[test]
+fn lldb_shows_closure_captures() {
+    if cfg!(windows) {
+        eprintln!("note: not checked on Windows yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let (work, exe) = build("golden-work-debugger-closure", CLOSURE, &[]);
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -f app.vlt -l 7",
+            "run",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number) x = 1",
+        "(number) hits = 1",
+        "(number) base = 10",
+        "(string[]) names = len=2",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+}
