@@ -106,10 +106,7 @@ impl FnCx<'_, '_> {
         let value = |s: &mut Self, k: usize| {
             let (d, ident) = &sigs[k];
             let h = s.fn_ref(*d, ident, Some(want));
-            match s.try_coerce(h, want) {
-                Ok(h) => Some(h),
-                Err(_) => None,
-            }
+            s.try_coerce(h, want).ok()
         };
         let picked = (0..sigs.len()).find(|&k| {
             let mark = crate::body::recheck::Mark::here(self.cx);
