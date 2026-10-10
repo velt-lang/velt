@@ -1,0 +1,35 @@
+// Calling a union of function types that take different numbers of parameters: the call
+// passes the longest member's arguments, and a shorter member ignores the extra ones. Every
+// argument is evaluated, in order, as in JavaScript.
+
+type F = ((a: number) => string) | (() => string);
+
+function call(f: F): string {
+  return f(1);
+}
+
+type G = ((a: string, b: number) => void) | ((a: string) => void) | (() => void);
+
+function next(label: string): number {
+  console.log(`evaluated ${label}`);
+  return label.length;
+}
+
+function name(label: string): string {
+  console.log(`evaluated ${label}`);
+  return label;
+}
+
+function run(g: G) {
+  g(name("a"), next("b"));
+}
+
+function main() {
+  console.log(call((a: number) => `a${a}`), call(() => "none"));
+  run((a: string, b: number) => console.log(`two: ${a} ${b}`));
+  run((a: string) => console.log(`one: ${a}`));
+  run(() => console.log("none"));
+  const label = "x";
+  const h: G = (a: string) => console.log(a.length);
+  h(label, 2);
+}

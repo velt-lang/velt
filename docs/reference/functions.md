@@ -455,7 +455,10 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   (`<E>(h: (x: number) => Resp | Promise<Resp, E>)` called with a sync function) is `never`.
 - A value whose type is a **union of function types** with the same parameters can be called:
   the call runs whichever function the value holds, and its result is the union of their
-  results (a `void` member makes it `T | null`; `await` on that gives `void`). An arrow passed
+  results (a `void` member makes it `T | null`; `await` on that gives `void`). Members may take
+  fewer parameters when theirs begin the longest member's: `f(1)` on
+  `((a: number) => string) | (() => string)` passes `1` to the first and nothing to the second
+  (the arguments are evaluated either way, in order). An arrow passed
   as such a union is typed by the member it fits, the first in order where several do.
 
   ```ts
