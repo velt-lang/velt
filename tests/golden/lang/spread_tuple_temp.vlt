@@ -84,4 +84,6 @@ function main() {
   console.log(add3(h.five, ...pair()));
   const t: [number, number] = [7, 8];
   console.log(addWith(h.adder, ...t));
+  // An element of a stored tuple has no effects: the spread's temporary may come first.
+  console.log(add3(t[0], ...pair()));
 }

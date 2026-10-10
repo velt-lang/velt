@@ -261,6 +261,17 @@ impl FnCx<'_, '_> {
             | ast::ExprKind::Arrow { .. }
             | ast::ExprKind::Ident(_)
             | ast::ExprKind::This => true,
+            // `t[0]` on a variable or field path: told by checking it, as for `o.f`.
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+            } if matches!(index.kind, ast::ExprKind::Lit(ast::Lit::Int { .. }))
+                && super::setters::side_effect_free(object) =>
+            {
+                let h = self.trial_expr(e);
+                read_without_effects(&h)
+            }
             _ if !super::setters::side_effect_free(e) => false,
             _ => {
                 let h = self.trial_expr(e);
