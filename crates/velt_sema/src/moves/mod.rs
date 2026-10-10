@@ -64,6 +64,9 @@ struct Moves<'a> {
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
+    /// The capture locals of this function (when it is a closure that shares them with its
+    /// creator: not an async closure that may run on another thread, which copies them).
+    own_captures: HashSet<LocalId>,
     /// The open `try` bodies and handlers (innermost last), see [`tries`].
     tries: Vec<tries::TryFrame>,
 }
@@ -155,6 +158,10 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             writers: &writers,
             generators: &generators,
             boxed: HashSet::new(),
+            own_captures: match f.is_async && !f.is_generator && !f.shares_captures {
+                true => HashSet::new(),
+                false => f.captures.iter().map(|c| c.inner).collect(),
+            },
             tries: vec![],
             report: false,
             errors: vec![],
@@ -192,39 +199,82 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     out
 }
 
-/// Per escaping closure: the enclosing variables it captures by value and assigns.
+/// Per escaping closure: the enclosing variables it captures by value and assigns, itself or
+/// through a closure created in it (#904: `() => { const g = () => { last = v; }; g(); }`
+/// assigns `last` too).
 fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<LocalId>> {
+    let mut assigned = HashMap::new();
     let mut out = HashMap::new();
     for &c in escaping {
-        let Some(Def::Fn(mut f)) = cx.defs[c.0 as usize].take() else {
-            continue;
+        let mine = assigned_locals(cx, c, &mut assigned);
+        let outer: HashSet<LocalId> = match &cx.defs[c.0 as usize] {
+            Some(Def::Fn(f)) => f
+                .captures
+                .iter()
+                .filter(|cap| mine.contains(&cap.inner))
+                .map(|cap| cap.outer)
+                .collect(),
+            _ => HashSet::new(),
         };
-        let mut assigned = HashSet::new();
-        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
-            use crate::hir::ExprKind as E;
-            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+        out.insert(c, outer);
+    }
+    out
+}
+
+/// The locals of function `d` it assigns, itself or through the closures created in it (which
+/// assign their captures of them), memoized in `memo`.
+fn assigned_locals(
+    cx: &mut Ctx,
+    d: DefId,
+    memo: &mut HashMap<DefId, HashSet<LocalId>>,
+) -> HashSet<LocalId> {
+    if let Some(s) = memo.get(&d) {
+        return s.clone();
+    }
+    // A closure is created once, inside its enclosing function: no cycle (the empty entry
+    // guards against a malformed one).
+    memo.insert(d, HashSet::new());
+    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+        return HashSet::new();
+    };
+    let mut assigned = HashSet::new();
+    let mut closures = vec![];
+    crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+        use crate::hir::ExprKind as E;
+        match &e.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
                 if let E::Local(l, _) = place.kind {
                     assigned.insert(l);
                 }
             }
-        });
-        let outer: HashSet<LocalId> = f
-            .captures
-            .iter()
-            .filter(|cap| assigned.contains(&cap.inner))
-            .map(|cap| cap.outer)
-            .collect();
-        cx.defs[c.0 as usize] = Some(Def::Fn(f));
-        out.insert(c, outer);
+            E::Closure(c) => closures.push(*c),
+            _ => {}
+        }
+    });
+    cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    for c in closures {
+        let inner = assigned_locals(cx, c, memo);
+        if inner.is_empty() {
+            continue;
+        }
+        if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
+            assigned.extend(
+                cf.captures
+                    .iter()
+                    .filter(|cap| inner.contains(&cap.inner))
+                    .map(|cap| cap.outer),
+            );
+        }
     }
-    out
+    memo.insert(d, assigned.clone());
+    assigned
 }
 
 /// `(function, local)` pairs captured by an async closure that may run on another thread: such
 /// a variable keeps its own value per closure (cells are not atomic). A local async closure
 /// (`FnDef::shares_captures`, `crate::ownership::local_async`) and a generator closure's
 /// generators stay on the task that creates them, so their captures may live in cells.
-fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+pub(crate) fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
     let mut out = HashSet::new();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
@@ -338,6 +388,29 @@ impl Moves<'_> {
             .with_label(at, "captured here")
             .with_note(format!(
                 "the closure keeps its own copy of `{name}` and would not see the new value; assign `{name}` before creating the closure, use a separate variable, or share it with `shared(...)`"
+            )),
+        );
+    }
+
+    /// An escaping closure created here assigns `l`, a variable this closure captured (#904):
+    /// it lives in a cell, or, when it cannot, that is an error.
+    fn nested_writes(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        if !self.report {
+            return;
+        }
+        let name = &self.locals[i].name;
+        self.errors.push(
+            Diagnostic::error(
+                format!("`{name}` is assigned by a closure created inside another closure, and cannot be shared with it"),
+                span,
+            )
+            .with_note(format!(
+                "a closure that runs on several threads (an HTTP handler, a spawned async closure) captures `{name}` too, or it holds a promise; assign a variable of the closure that creates this one instead, or share it with `shared(...)`"
             )),
         );
     }

@@ -37,10 +37,12 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        let copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
         let v = Validator {
             cx,
             f: &f,
             kinds: &kinds,
+            copy: &copy,
             fixed,
             keeps_fn_params,
             shared: &shared,
@@ -149,6 +151,8 @@ struct Validator<'a, 'c, 'm> {
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
     shared: &'a HashMap<DefId, Vec<LocalId>>,
+    /// Per local: is its type copyable?
+    copy: &'a [bool],
     fixed: bool,
     /// See `FnInfo::keeps_fn_params`.
     keeps_fn_params: bool,
@@ -211,9 +215,12 @@ impl Validator<'_, '_, '_> {
                                 )
                             })
                             .flatten();
+                        // A copyable variable the closure assigns: copied, or shared in a cell
+                        // when the assignment must reach it (`crate::moves`, #904).
+                        let copied = self.copy[cap.outer.0 as usize];
                         if let Some(err) = kept {
                             errors.push(err);
-                        } else if !shared.contains(&cap.outer) {
+                        } else if !shared.contains(&cap.outer) && !copied {
                             self.root(cap.outer, None, e.span, errors);
                         }
                     }
