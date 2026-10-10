@@ -84,10 +84,8 @@ fn owned_text(src: &[u8], tok: StrTok) -> Text {
 /// A container being built: its members so far and, for objects, the key awaiting its value.
 enum Frame {
     Array(Vec<Arc<Value>>),
-    /// The members so far (document order), the key of the one being read, and whether a key
-    /// may be an array index (it starts with a digit): then the members are reordered at the
-    /// end, indexes first, as `JSON.parse` does.
-    Object(Object, Option<Text>, bool),
+    /// The members so far (document order) and the key of the one being read.
+    Object(Object, Option<Text>),
 }
 
 /// Tree-building sink.
@@ -95,6 +93,16 @@ enum Frame {
 struct Builder {
     stack: Vec<Frame>,
     root: Option<Arc<Value>>,
+    /// Bit `d` (depth `d` of the stack, 63 for every deeper one): the object open there has a
+    /// key that may be an array index (it starts with a digit), so its members are put in
+    /// JavaScript's order when it ends, indexes first, as `JSON.parse` does.
+    digits: u64,
+}
+
+/// The `Builder::digits` bit of the container at stack depth `d`.
+#[inline]
+fn depth_bit(d: usize) -> u64 {
+    1 << d.min(63)
 }
 
 impl Builder {
@@ -105,11 +113,11 @@ impl Builder {
         for f in &self.stack {
             match f {
                 Frame::Array(items) => p.push_str(&format!("[{}]", items.len())),
-                Frame::Object(_, Some(key), _) => {
+                Frame::Object(_, Some(key)) => {
                     p.push('.');
                     p.push_str(&crate::str::wtf8::to_utf8_lossy(key));
                 }
-                Frame::Object(_, None, _) => {}
+                Frame::Object(_, None) => {}
             }
         }
         p
@@ -119,7 +127,7 @@ impl Builder {
         let value = Arc::new(value);
         match self.stack.last_mut() {
             Some(Frame::Array(items)) => items.push(value),
-            Some(Frame::Object(obj, key, _)) => {
+            Some(Frame::Object(obj, key)) => {
                 let key = key.take().expect("ICE: object value without key");
                 obj.insert_last(key, value);
             }
@@ -134,21 +142,28 @@ impl Sink for Builder {
         self.stack.push(Frame::Array(Vec::new()));
     }
     fn begin_object(&mut self, _: usize) {
-        self.stack
-            .push(Frame::Object(Object::default(), None, false));
+        self.stack.push(Frame::Object(Object::default(), None));
+        // Depths past 63 share a bit that stays set once set (a reorder there is only checked).
+        if self.stack.len() < 63 {
+            self.digits &= !depth_bit(self.stack.len());
+        }
     }
     fn key(&mut self, src: &[u8], key: StrTok) {
-        if let Some(Frame::Object(_, slot, digits)) = self.stack.last_mut() {
+        let depth = self.stack.len();
+        if let Some(Frame::Object(_, slot)) = self.stack.last_mut() {
             let key = owned_text(src, key);
-            *digits |= key.first().is_some_and(u8::is_ascii_digit);
+            if key.first().is_some_and(u8::is_ascii_digit) {
+                self.digits |= depth_bit(depth);
+            }
             *slot = Some(key);
         }
     }
     fn end(&mut self, _: usize) {
+        let depth = self.stack.len();
         let value = match self.stack.pop().expect("ICE: unbalanced JSON walk") {
             Frame::Array(items) => Value::Array(items),
-            Frame::Object(mut obj, _, digits) => {
-                if digits {
+            Frame::Object(mut obj, _) => {
+                if self.digits & depth_bit(depth) != 0 {
                     obj.order_indexes();
                 }
                 Value::Object(obj)

@@ -548,4 +548,25 @@ mod order_tests {
         assert_eq!(keys(inner), ["1", "9", "x"]);
         assert_eq!(keys(o), ["b", "a"]);
     }
+
+    #[test]
+    fn parse_orders_objects_nested_past_64_levels() {
+        let depth = 70;
+        let mut doc = String::new();
+        for _ in 0..depth {
+            doc.push_str(r#"{"x":1,"5":2,"k":"#);
+        }
+        doc.push_str(r#"{"y":1,"2":2}"#);
+        for _ in 0..depth {
+            doc.push('}');
+        }
+        let mut v = parse(doc.as_bytes(), 1000).unwrap();
+        for _ in 0..depth {
+            let Value::Object(o) = &*v else { panic!() };
+            assert_eq!(keys(o), ["5", "x", "k"]);
+            v = o.get(b"k").unwrap().clone();
+        }
+        let Value::Object(o) = &*v else { panic!() };
+        assert_eq!(keys(o), ["2", "y"]);
+    }
 }
