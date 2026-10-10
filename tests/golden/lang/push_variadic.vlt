@@ -1,0 +1,50 @@
+// `push` and `String.fromCharCode` take any number of arguments, as in JS: `push(a, b)`,
+// `push(...items)` and `String.fromCharCode(...codes)`.
+
+class Box {
+  constructor(public items: number[]) {}
+}
+
+function next(log: string[], label: string, v: number): number {
+  log.push(label);
+  return v;
+}
+
+function main() {
+  const xs = [1, 2];
+  const ys = [3, 4];
+  xs.push(5, 6);
+  xs.push(...ys);
+  console.log(xs, String.fromCharCode(...[72, 105]));
+  xs.push();
+  xs.push(0, ...ys, 9, ...[]);
+  console.log(xs);
+  // The receiver's own elements are spread before any is pushed.
+  const zs = [1, 2, 3];
+  zs.push(...zs);
+  console.log(zs);
+  // Arguments are evaluated in order, before the first push.
+  const log: string[] = [];
+  const ws: number[] = [];
+  ws.push(next(log, "a", ws.length), next(log, "b", ws.length));
+  console.log(ws, log);
+  // A field, and integers into a number array.
+  const b = new Box([]);
+  b.items.push(...[7, 8], 1.5);
+  console.log(b.items);
+  const names: string[] = [];
+  const more = ["x", "y"];
+  names.push("w", ...more);
+  console.log(names, more);
+  console.log(String.fromCharCode(72, 101, 108, 108, 111), String.fromCharCode(65));
+  const smile = String.fromCharCode(0xd83d, 0xde00);
+  console.log(String.fromCharCode() === "", smile.length, smile === "\u{1F600}");
+  const codes = [87, 111, 114, 108, 100];
+  console.log(String.fromCharCode(...codes), String.fromCharCode(65.7, 66 + 65536));
+  const bytes = [104, 105];
+  let t = "";
+  for (let i = 0; i < bytes.length; i++) {
+    t += String.fromCharCode(bytes[i]);
+  }
+  console.log(t);
+}

@@ -17,7 +17,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `deepEqual(a, b)` | content comparison (`==` compares objects by identity) |
 | `attempt(() => f())` | a throwing call as a value: `T \| E` ([Errors](errors.md#errors-as-values)) |
 | `Math` | `PI`, `E`, `sqrt floor ceil round trunc abs sign max min pow hypot random`, … |
-| `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `isNaN(x)`, `isFinite(x)`, `String.fromCharCode(c)`, `NaN`, `Infinity` | conversions and checks |
+| `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `isNaN(x)`, `isFinite(x)`, `String.fromCharCode(...codes)`, `NaN`, `Infinity` | conversions and checks |
 | `Buffer.alloc(n)`, `Buffer.byteLength(s)` | byte arrays (`u8[]`) ([prelude](../std/prelude.md)) |
 | `Number.isInteger(x)`, `Number.isNaN`, `isFinite`, `isSafeInteger`, `parseInt`, `parseFloat`, `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` | JS's `Number` members, on `f64` |
 | `JSON.stringify`, `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt:json`](../std/json.md)) |

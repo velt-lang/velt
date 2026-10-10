@@ -40,7 +40,7 @@ impl FnCx<'_, '_> {
 
     /// The object of a field or element of a place being updated: its own indices hoisted, or
     /// the whole object when it is a value rather than a place (a call's result).
-    fn hoist_object(&mut self, base: &mut hir::Expr, stmts: &mut Vec<hir::Stmt>) {
+    pub(super) fn hoist_object(&mut self, base: &mut hir::Expr, stmts: &mut Vec<hir::Stmt>) {
         if is_place(base) {
             return self.hoist_indices(base, stmts);
         }

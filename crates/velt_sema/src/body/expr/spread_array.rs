@@ -79,9 +79,10 @@ impl FnCx<'_, '_> {
             // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`,
             // `Math.max(...ints())`). An array's elements convert like any other value of the
             // literal, fresh ones too (#268).
-            let fits = et == elem
-                || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
-                || (is_array && (self.converts_to(et, elem) || self.widens(et, elem)));
+            let fits = match is_array {
+                true => self.spread_fits(et, elem),
+                false => et == elem || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some()),
+            };
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
                 self.cx.err(
@@ -202,8 +203,13 @@ impl FnCx<'_, '_> {
     }
 
     fn push_stmt(&mut self, out: hir::LocalId, arr_ty: TyId, v: hir::Expr) -> hir::Stmt {
+        let target = self.mk(H::Local(out, UseMode::BorrowMut), arr_ty, v.span);
+        self.push_to(target, v)
+    }
+
+    /// `target.push(v);` (`target` used mutably).
+    pub(super) fn push_to(&mut self, target: hir::Expr, v: hir::Expr) -> hir::Stmt {
         let span = v.span;
-        let target = self.mk(H::Local(out, UseMode::BorrowMut), arr_ty, span);
         let unit = self.cx.ty.unit;
         let call = self.intrinsic(Intrinsic::ArrayPush, vec![target, v], unit, span);
         hir::Stmt {
@@ -215,6 +221,14 @@ impl FnCx<'_, '_> {
     /// `for (const e of src) out.push(e / share of e);`, each element converted from the
     /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
     /// interface values in `const ns: Named[] = [...cs]`).
+    /// Do the elements `et` of a spread array convert to the element type `elem`?
+    pub(super) fn spread_fits(&mut self, et: TyId, elem: TyId) -> bool {
+        et == elem
+            || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
+            || self.converts_to(et, elem)
+            || self.widens(et, elem)
+    }
+
     /// The float type of an array element type `number` or `number | null` (integers spread
     /// into it convert, as JS numbers).
     fn float_elem(&self, elem: TyId) -> Option<TyId> {
@@ -226,6 +240,18 @@ impl FnCx<'_, '_> {
         &mut self,
         out: hir::LocalId,
         arr_ty: TyId,
+        src: hir::Expr,
+        types: (TyId, TyId),
+        span: Span,
+    ) -> hir::Stmt {
+        let target = self.mk(H::Local(out, UseMode::BorrowMut), arr_ty, span);
+        self.push_all_to(target, src, types, span)
+    }
+
+    /// `for (const e of src) target.push(e / share of e);` (see `push_all`).
+    pub(super) fn push_all_to(
+        &mut self,
+        target: hir::Expr,
         src: hir::Expr,
         (src_elem, elem): (TyId, TyId),
         span: Span,
@@ -247,7 +273,7 @@ impl FnCx<'_, '_> {
             self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
         };
         let value = self.coerce(value, elem);
-        let push = self.push_stmt(out, arr_ty, value);
+        let push = self.push_to(target, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),
             ty: src_elem,

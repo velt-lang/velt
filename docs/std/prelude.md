@@ -47,7 +47,8 @@ a pair is allowed everywhere: `"😀".slice(0, 1)` is a lone surrogate, which ou
 U+FFFD, and the searches can match half of a pair (`"😀".indexOf(lo)` is 1 when `lo` is the low
 half).
 
-Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lone surrogate),
+Conversions: `String.fromCharCode(...codes)` (any number of code units; a lone surrogate gives
+a lone surrogate, a surrogate pair its character),
 `parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
 `Number(s)`.
 
