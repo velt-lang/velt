@@ -1,0 +1,27 @@
+// `e as T` types a literal in the context of `T`, like an annotation (#794).
+interface Point {
+  x: number;
+  y: number;
+}
+
+function main() {
+  const xs =
+    [
+      ["a", 1],
+      ["b", 2],
+    ] as [string, u8][];
+  for (const [k, v] of xs) {
+    console.log(k, v + 1);
+  }
+  const pair = ["q", 7] as [string, number];
+  console.log(pair[0], pair[1]);
+  const empty = [] as string[];
+  empty.push("pushed");
+  console.log(empty);
+  const p = { x: 1, y: 2 } as Point;
+  console.log(p.x + p.y);
+  const same = p as Point;
+  console.log(same.y);
+  const nested = { name: "n", tags: [["t", 1]] as [string, number][] };
+  console.log(nested.tags[0][0], nested.tags.length);
+}
