@@ -132,8 +132,11 @@ impl FnCx<'_, '_> {
         };
         let primitive = match self.cx.ty.kind(k) {
             TyKind::Param(_) | TyKind::Error | TyKind::Array(_) => return true,
+            // Classes, object types and field-only interfaces (which are object types).
             TyKind::Adt(d, _) => match self.cx.adt(*d) {
-                Some(a) if a.kind != AdtKind::Struct => return true,
+                Some(a) if a.kind != AdtKind::Struct || self.cx.field_only_of.contains_key(d) => {
+                    return true
+                }
                 _ => false,
             },
             TyKind::Int(_)

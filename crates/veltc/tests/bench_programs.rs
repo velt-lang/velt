@@ -68,7 +68,10 @@ fn compile(path: &Path) -> Option<String> {
 /// collection.
 fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> Option<String> {
     let src = std::fs::read_to_string(path).unwrap_or_default();
-    if ["WeakMap", "WeakSet", "WeakRef"].iter().any(|n| src.contains(n)) {
+    if ["WeakMap", "WeakSet", "WeakRef"]
+        .iter()
+        .any(|n| src.contains(n))
+    {
         return None;
     }
     let weak: Vec<&str> = vir

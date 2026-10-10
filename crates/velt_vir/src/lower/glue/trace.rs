@@ -33,7 +33,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Body of `Glue::Trace` for the counted type `ty`.
-    pub(super) fn trace_body(&mut self, obj: vir::Local, visit: vir::Local, cx: vir::Local, ty: TyId) {
+    pub(super) fn trace_body(
+        &mut self,
+        obj: vir::Local,
+        visit: vir::Local,
+        cx: vir::Local,
+        ty: TyId,
+    ) {
         let o = Place::local(obj);
         let tv = (visit, cx);
         match self.cx.kind(ty) {
@@ -56,7 +62,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Body of `Glue::TraceIn`: the inline `ty` value at `p`.
-    pub(super) fn trace_in_body(&mut self, p: vir::Local, visit: vir::Local, cx: vir::Local, ty: TyId) {
+    pub(super) fn trace_in_body(
+        &mut self,
+        p: vir::Local,
+        visit: vir::Local,
+        cx: vir::Local,
+        ty: TyId,
+    ) {
         let place = self.deref_param(p, ty);
         self.trace_value(place, ty, (visit, cx));
         self.terminate(Terminator::Return(unit()));
@@ -144,7 +156,10 @@ impl FnLower<'_, '_> {
             let nn = self.non_null(p.clone());
             self.when(nn, done);
             let tf = self.trace_fn(c);
-            let (visit, cx) = (Operand::Copy(Place::local(tv.0)), Operand::Copy(Place::local(tv.1)));
+            let (visit, cx) = (
+                Operand::Copy(Place::local(tv.0)),
+                Operand::Copy(Place::local(tv.1)),
+            );
             self.call_entry(visit, vec![cx, p, tf], vec![Ty::Ptr; 3], Ty::Unit);
             self.goto(done);
             self.switch_to(done);
@@ -152,7 +167,11 @@ impl FnLower<'_, '_> {
         }
         if self.refers(t) {
             let a = self.addr(place);
-            let args = vec![a, Operand::Copy(Place::local(tv.0)), Operand::Copy(Place::local(tv.1))];
+            let args = vec![
+                a,
+                Operand::Copy(Place::local(tv.0)),
+                Operand::Copy(Place::local(tv.1)),
+            ];
             self.call_glue(Glue::TraceIn, t, args);
         }
     }

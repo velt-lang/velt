@@ -77,7 +77,10 @@ impl FnLower<'_, '_> {
         let (dec_bb, other, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(shared, dec_bb, other);
         self.switch_to(dec_bb);
-        let m = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, n.clone(), cint(1, Ty::U64)));
+        let m = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Sub, n.clone(), cint(1, Ty::U64)),
+        );
         self.assign(c, Rvalue::Use(m));
         self.goto(join);
         self.switch_to(other);

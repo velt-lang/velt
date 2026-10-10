@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
             (I::WeakMapValue, [w]) => {
                 let w = self.expr(w);
                 let t = self.sub(ty);
-                let v = self.from_word(w, t);
+                let v = self.word_value(w, t);
                 self.own_value(v, t)
             }
             (I::WeakRefNew, [target]) => {
@@ -93,7 +93,10 @@ impl FnLower<'_, '_> {
                 }
                 self.own_value(Operand::Copy(Place::local(d)), t)
             }
-            _ => ice(format_args!("intrinsic {i:?} called with {} arguments", args.len())),
+            _ => ice(format_args!(
+                "intrinsic {i:?} called with {} arguments",
+                args.len()
+            )),
         }
     }
 
@@ -118,7 +121,9 @@ impl FnLower<'_, '_> {
             // Sema rejects such keys where it sees them; a generic one instantiated with a
             // value that is not an object gets here.
             let name = self.cx.type_name(kt);
-            self.panic_msg(&format!("TypeError: Invalid value used as weak map key (`{name}` is not an object)"));
+            self.panic_msg(&format!(
+                "TypeError: Invalid value used as weak map key (`{name}` is not an object)"
+            ));
         }
         None
     }
@@ -170,14 +175,14 @@ impl FnLower<'_, '_> {
         );
         self.goto(join);
         self.switch_to(join);
-        let w = self.to_word(v, vty);
+        let w = self.value_word(v, vty);
         let mo = Operand::Copy(Place::local(out));
         self.call_rt(Rt::WeakmapSet, vec![mo.clone(), k, w], None);
         mo
     }
 
     /// The word of the owned `ty` value `v` (its ownership moves into the word).
-    fn to_word(&mut self, v: Operand, ty: TyId) -> Operand {
+    fn value_word(&mut self, v: Operand, ty: TyId) -> Operand {
         let vt = self.cx.ty(ty);
         match self.word_kind(ty) {
             WordKind::Plain => {
@@ -201,7 +206,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `ty` value of the word `w`, taking over the reference the word holds.
-    fn from_word(&mut self, w: Operand, ty: TyId) -> Operand {
+    fn word_value(&mut self, w: Operand, ty: TyId) -> Operand {
         let vt = self.cx.ty(ty);
         match self.word_kind(ty) {
             WordKind::Plain => {
@@ -220,7 +225,8 @@ impl FnLower<'_, '_> {
                 // the box loses the reference `get` gave.
                 let p = self.cast_to(w, Ty::U64, Ty::Ptr);
                 let pp = self.operand_place(p.clone(), Ty::Ptr);
-                let held = self.rvalue_temp(vt, Rvalue::Use(Operand::Copy(proj(&pp, Proj::Deref(vt)))));
+                let held =
+                    self.rvalue_temp(vt, Rvalue::Use(Operand::Copy(proj(&pp, Proj::Deref(vt)))));
                 let v = self.share_value(held, ty);
                 self.release_weak_box(p, ty);
                 v

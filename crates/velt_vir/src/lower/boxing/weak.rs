@@ -112,10 +112,14 @@ impl Cx<'_> {
 
     /// Display names of the weak-capable types (`VELT_DEBUG_COUNTED=1`).
     pub(in crate::lower) fn weak_names(&self) -> Vec<String> {
-        let roots = self.boxing.weak_roots.iter().map(|d| match self.hir.def(*d) {
-            velt_sema::hir::Def::Adt(a) => format!("class {}", a.name),
-            _ => "?".into(),
-        });
+        let roots = self
+            .boxing
+            .weak_roots
+            .iter()
+            .map(|d| match self.hir.def(*d) {
+                velt_sema::hir::Def::Adt(a) => format!("class {}", a.name),
+                _ => "?".into(),
+            });
         let tys = self.boxing.weak.iter().map(|&t| self.type_name(t));
         let mut out: Vec<String> = roots.chain(tys).collect();
         out.sort();
