@@ -1,15 +1,11 @@
 // Values of any type are conditions, as in JavaScript, except `void` (TypeScript rejects it
-// too) and values of a generic type, whose test would depend on the type argument.
+// too).
 function log(): void {}
-
-function isEmpty<T>(x: T): boolean {
-  return !x;
-}
 
 function main() {
   if (log()) {
     console.log("never");
   }
   const v = log() || 1;
-  console.log(isEmpty(1), v);
+  console.log(v);
 }

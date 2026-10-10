@@ -418,6 +418,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias
+        | I::Truthy
         | I::FnCapturesNothing
         | I::Sqrt
         | I::Floor
