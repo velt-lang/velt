@@ -1,0 +1,1 @@
+TypeError: the type predicate `ok` returned true for a value that is not `string`

@@ -89,7 +89,7 @@ impl FnCx<'_, '_> {
                 args,
                 optional: false,
                 ..
-            } => self.predicate_facts(callee, args),
+            } => self.predicate_facts(callee, args, cond.span),
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
