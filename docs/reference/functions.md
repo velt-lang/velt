@@ -17,7 +17,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
   not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
   parameters may be left out, as in TypeScript: the `resolve` of a `Promise<void>` is called as
-  `resolve()`.
+  `resolve()`, and `put(x: T)` on a `Box<void>` as `put()`. As in TypeScript, a call's own
+  type arguments don't make a parameter optional: `h<void>()` for `function h<T>(x: T)` is an
+  arity error (TS2554).
 - A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
   array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`.
   The standard library's variadic functions (`Math.max`, `Math.min`, `Math.hypot`,

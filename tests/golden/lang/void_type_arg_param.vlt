@@ -1,0 +1,19 @@
+// A parameter whose type is `void` through the receiver's type arguments may be left out, as in
+// TypeScript: `put(x: T)` on a `Box<void>` is called as `put()`.
+
+class Box<T> {
+  count = 0;
+  put(x: T): void {
+    this.count += 1;
+  }
+}
+
+function main() {
+  const b = new Box<void>();
+  b.put();
+  b.put();
+  console.log(b.count);
+  const n = new Box<number>();
+  n.put(1);
+  console.log(n.count);
+}

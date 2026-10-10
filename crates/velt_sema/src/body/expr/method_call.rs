@@ -155,7 +155,16 @@ impl FnCx<'_, '_> {
             .next()
             .unwrap_or("")
             .to_string();
-        let c = self.fn_callable(def, format!("method `{name}`"), span);
+        let mut c = self.fn_callable(def, format!("method `{name}`"), span);
+        // A parameter that is `void` through the receiver's type arguments may be left out, as
+        // in TS (`new Box<void>().put()` with `put(x: T)`); the call's own type arguments don't
+        // count for that (`h<void>()` is TS2554, as for a function).
+        let unit = self.cx.ty.unit;
+        for p in &mut c.params {
+            if self.cx.subst_known(p.ty, &slots) == unit {
+                p.ty = unit;
+            }
+        }
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, span);
