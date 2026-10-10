@@ -146,6 +146,12 @@ pub fn current_worker() -> Option<usize> {
     (i != usize::MAX).then_some(i)
 }
 
+/// The per-core workers' runtimes (`None` with the stealing scheduler), in worker order: for
+/// starting something on every worker (a listener's accept loops).
+pub fn worker_handles() -> Option<Vec<&'static Handle>> {
+    per_core().map(|ws| ws.iter().map(|w| &w.handle).collect())
+}
+
 fn start_workers() -> Vec<Worker> {
     let n = worker_count();
     let (tx, rx) = std::sync::mpsc::channel();

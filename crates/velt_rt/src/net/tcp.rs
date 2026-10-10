@@ -27,12 +27,47 @@ pub struct StreamObj {
     utf8: Mutex<Utf8Decoder>,
 }
 
+/// A listening socket. With the per-core scheduler each worker that accepts gets its own
+/// registration of it (a duplicated descriptor in the worker's I/O driver), so accept loops on
+/// several workers share the port and every connection stays on the worker that accepted it.
+pub struct ListenerObj {
+    listener: TcpListener,
+    per_worker: Vec<std::sync::OnceLock<TcpListener>>,
+}
+
+impl ListenerObj {
+    fn new(listener: TcpListener) -> ListenerObj {
+        let n = crate::task::runtime::worker_handles().map_or(0, |w| w.len());
+        ListenerObj {
+            listener,
+            per_worker: (0..n).map(|_| std::sync::OnceLock::new()).collect(),
+        }
+    }
+
+    /// The registration to accept on from this thread.
+    fn here(&self) -> io::Result<&TcpListener> {
+        let Some(slot) =
+            crate::task::runtime::current_worker().and_then(|i| self.per_worker.get(i))
+        else {
+            return Ok(&self.listener);
+        };
+        if let Some(l) = slot.get() {
+            return Ok(l);
+        }
+        // Only this worker's thread fills its slot, so nothing races us here.
+        let dup: std::net::TcpListener = socket2::SockRef::from(&self.listener).try_clone()?.into();
+        dup.set_nonblocking(true)?;
+        let _ = slot.set(TcpListener::from_std(dup)?);
+        Ok(slot.get().expect("ICE: worker listener just set"))
+    }
+}
+
 /// Opaque listener handle.
-pub type ListenerHandle = Key<TcpListener>;
+pub type ListenerHandle = Key<ListenerObj>;
 /// Opaque stream handle.
 pub type StreamHandle = Key<StreamObj>;
 
-static LISTENERS: Registry<TcpListener> = Registry::new();
+static LISTENERS: Registry<ListenerObj> = Registry::new();
 static STREAMS: Registry<StreamObj> = Registry::new();
 
 /// Owned text of a string argument (copied: async operations outlive the call).
@@ -56,7 +91,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
     let addr = text_arg(addr);
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |l| LISTENERS.insert(l))
+        IoResult::from_io(r, |l| LISTENERS.insert(ListenerObj::new(l)))
     })
 }
 
@@ -66,7 +101,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
 pub unsafe extern "C" fn velt_rt_tcp_listener_port(l: ListenerHandle) -> u32 {
     LISTENERS
         .get(l)
-        .and_then(|o| o.local_addr().ok())
+        .and_then(|o| o.listener.local_addr().ok())
         .map_or(0, |a| a.port() as u32)
 }
 
@@ -80,7 +115,13 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
     LISTENERS.op::<StreamHandle>(l, |listener| {
-        new_leaf(async move { stream_result(listener.accept().await.map(|(s, _)| s)) })
+        new_leaf(async move {
+            let accepted = match listener.here() {
+                Ok(l) => l.accept().await.map(|(s, _)| s),
+                Err(e) => Err(e),
+            };
+            stream_result(accepted)
+        })
     })
 }
 

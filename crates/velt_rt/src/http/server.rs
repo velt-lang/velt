@@ -60,7 +60,7 @@ static SERVERS: Registry<ServerObj> = Registry::new();
 /// A running server (`VeltServer` in the ABI docs).
 pub struct ServerObj {
     port: u16,
-    accept_loop: AbortHandle,
+    accept_loops: Vec<AbortHandle>,
     /// Signals (by closing) that the handler was released; see `Shared::released`.
     released: watch::Receiver<()>,
 }
@@ -290,6 +290,41 @@ where
     let _ = watcher.watch(conn).await;
 }
 
+/// Starts the accept loop: one, or with the per-core scheduler one per worker, each accepting on
+/// its own registration of the listening socket, so a connection (and the tasks its handler
+/// spawns) stays on the worker that accepted it (#211 step 4). Dev mode keeps one loop (its
+/// handover socket).
+fn spawn_accept_loops<S: OwnedStore>(
+    l: TcpListener,
+    shared: Arc<Shared>,
+    tls: Option<TlsAcceptor>,
+) -> std::io::Result<Vec<AbortHandle>> {
+    let Some(workers) = crate::task::runtime::worker_handles().filter(|_| !crate::dev::enabled())
+    else {
+        return Ok(vec![crate::task::runtime::spawn(accept_loop::<S>(
+            l, shared, tls,
+        ))
+        .abort_handle()]);
+    };
+    let std_listener = l.into_std()?;
+    let mut loops = Vec::with_capacity(workers.len());
+    for h in workers {
+        let dup: std::net::TcpListener = socket2::SockRef::from(&std_listener).try_clone()?.into();
+        dup.set_nonblocking(true)?;
+        let (shared, tls) = (shared.clone(), tls.clone());
+        loops.push(
+            h.spawn(async move {
+                // Registered with this worker's I/O driver (it runs here).
+                if let Ok(l) = TcpListener::from_std(dup) {
+                    accept_loop::<S>(l, shared, tls).await;
+                }
+            })
+            .abort_handle(),
+        );
+    }
+    Ok(loops)
+}
+
 /// Binds and starts the accept loop; `tls` = serve HTTPS.
 unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) -> *mut VeltFut {
     let shared = Shared::new(handler);
@@ -305,14 +340,13 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
             } else {
                 (desc.state_size as usize, desc.state_align as usize)
             };
-            let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
-                accept_loop::<S>(l, shared, tls)
-            ));
+            let accept_loops =
+                with_state_store!(size, align, |S| spawn_accept_loops::<S>(l, shared, tls))?;
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {
                 port,
-                accept_loop: task.abort_handle(),
+                accept_loops,
                 released,
             })
         });
@@ -386,7 +420,9 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
-    s.accept_loop.abort();
+    for l in &s.accept_loops {
+        l.abort();
+    }
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }
