@@ -3,7 +3,9 @@
 //! `o.inner`, JavaScript writes to the object `o.inner` held before the call, and the new
 //! object keeps its value (#581, #622). Only targets inside a class object or a boxed object
 //! literal (an object type another name shares, #876) reached through a place the right-hand
-//! side may change are affected, and only there is anything paid:
+//! side may change are affected, and only there is anything paid (an object literal stored
+//! inline that the right-hand side may replace is a compile error, `velt_sema`
+//! `replaced_holders`):
 //! - a counted object is retained before the right-hand side and written through that
 //!   reference afterwards (released at the end of the statement);
 //! - an object that is not counted has a single owner, the field or variable it was read from.

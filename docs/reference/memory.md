@@ -64,13 +64,21 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   object and then installs a new one at the same place (`o.inner = null; o.inner = new P()`),
   the allocator may give the new object the freed address; the write then goes to the new
   object, where Node writes to the unreachable old one
-  ([#825](https://github.com/velt-lang/velt/issues/825)). A target in an object literal
-  that nothing else refers to (`o.inner.v = f()` with `o = { inner: { v: 1 } }` and no other
-  name for `o.inner`) is stored inline in its holder, so it is written in the object the
-  right-hand side installed, where Node writes to the unreachable old one
-  ([#876](https://github.com/velt-lang/velt/issues/876)); so is an array
+  ([#825](https://github.com/velt-lang/velt/issues/825)); the same holds for an array
   element whose array the right-hand side replaces
   ([#820](https://github.com/velt-lang/velt/issues/820)).
+- **An object literal nothing else refers to is stored inside its holder** (an object
+  literal or a class object), so an assignment into it whose right-hand side may replace it
+  is an error
+  ([#876](https://github.com/velt-lang/velt/issues/876)): in `o.inner.v = f()` with
+  `o = { inner: { v: 1 } }`, where `f` (or a function it calls) assigns a new object to
+  `o.inner` or to `o`, and no other name refers to an object of that type, Node writes to the
+  old object, which nothing can see any more, and Velt would write to the new one. The fix
+  computes the value first, which runs the same in TypeScript: `const v = f(); o.inner.v = v;`.
+  The check looks at what the right-hand side may run: reads, arithmetic and new values
+  compile as written, and so do calls that assign no object of the holder's type (or of a
+  holder above it). A call through a function value counts as any function the program uses
+  as a value, a method call through a base class or interface as any method.
 
 ```ts
 class Box {

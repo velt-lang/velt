@@ -404,3 +404,27 @@ fn array_constructors() {
         "{r}"
     );
 }
+
+#[test]
+fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
+    // #876: `p.inner` is stored inside `p`; `h` replaces it.
+    let decls = "type Inner = { v: number; name: string }; type Outer = { inner: Inner };";
+    let replaced = "const p: Outer = { inner: { v: 1, name: \"a\" } }; const h = (): number => { p.inner = { v: 2, name: \"b\" }; return 3; };";
+    let r = err_src(&format!(
+        "{decls} function main() {{ {replaced} p.inner.v = h(); console.log(p.inner.v); }}"
+    ));
+    assert!(
+        r.contains("the right-hand side may replace `p.inner`"),
+        "{r}"
+    );
+    assert!(r.contains("const v = h(); p.inner.v = v;"), "{r}");
+    // Computing the value first, a right-hand side that only reads, and a call that replaces no
+    // object of these types compile.
+    ok_src(&format!(
+        "{decls} function two(): number {{ return 2; }} function main() {{ {replaced} const v = h(); p.inner.v = v; p.inner.v = p.inner.v + 1; p.inner.v = two(); }}"
+    ));
+    // Another name refers to `p.inner`: the object is counted, and the write goes to the old one.
+    ok_src(&format!(
+        "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
+    ));
+}
