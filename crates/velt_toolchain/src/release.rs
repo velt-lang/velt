@@ -9,9 +9,21 @@
 //! - `SHA256SUMS`, and `SHA256SUMS.sig`, its signature with the release key
 //!   ([`crate::signature`]): the hash shows an archive is intact, the signature that the velt
 //!   project published it. Releases before signing (v0.1.0) cannot be installed from here.
-//! - `releases.json`, every published version: `{"versions": ["0.1.0", "0.1.1"]}`. The newest
-//!   release's copy, at `<base>/releases/latest/download/releases.json`, is the index the
-//!   launcher reads (a list of names: what is installed is checked by the signature).
+//!
+//! The index of releases is one file that the release workflow rewrites on every release
+//! (stable or pre-release) and whenever a version is yanked: `releases.json` and its signature
+//! `releases.json.sig`, on a permanent release tagged `index` (a pre-release, so it is never
+//! GitHub's "latest"): `<base>/releases/download/index/releases.json`. A mirror copies it like
+//! any other release file. The format ([`parse_index`]):
+//!
+//! ```json
+//! { "format": 1,
+//!   "releases": [ { "version": "0.1.0" },
+//!                 { "version": "0.1.1", "yanked": "miscompiles closures; use 0.1.2" } ] }
+//! ```
+//!
+//! Fields this launcher doesn't know are ignored, so later ones (advisories, dates) can be added
+//! without breaking it; a higher `format` is a change it must not misread, and is refused.
 
 use std::path::PathBuf;
 
@@ -19,13 +31,17 @@ use semver::Version;
 
 use crate::install::{check_sha256, download, install_dir, sha256_entry};
 use crate::layout::{velt_exe, Root};
-use crate::signature::{public_key, signed_sums};
+use crate::signature::{public_key, signed_sums, signed_text};
 
 /// Where releases are downloaded from unless `$VELT_INSTALL_BASE_URL` says otherwise (the
 /// installers read the same variable).
 pub const DEFAULT_BASE_URL: &str = "https://github.com/velt-lang/velt";
-/// The list of published versions in each release.
+/// The index of releases, on the [`INDEX_TAG`] release.
 pub const INDEX_FILE: &str = "releases.json";
+/// The release that holds the index.
+pub const INDEX_TAG: &str = "index";
+/// The index format this launcher reads.
+pub const INDEX_FORMAT: u64 = 1;
 pub const SUMS_FILE: &str = "SHA256SUMS";
 
 /// `$VELT_INSTALL_BASE_URL` (a mirror, or a test's server), else [`DEFAULT_BASE_URL`].
@@ -61,33 +77,94 @@ pub fn archive_stem(version: &Version, triple: &str) -> String {
     format!("velt-{version}-{triple}")
 }
 
-/// The versions in a `releases.json`, oldest first.
-pub fn parse_index(text: &str) -> Result<Vec<Version>, String> {
-    let bad = |why: String| format!("{INDEX_FILE} is not a list of releases: {why}");
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| bad(e.to_string()))?;
-    let list = value
-        .get("versions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| bad("no `versions` array".into()))?;
-    let mut versions = list
-        .iter()
-        .map(|v| {
-            let s = v
-                .as_str()
-                .ok_or_else(|| bad(format!("{v} is not a string")))?;
-            Version::parse(s).map_err(|e| bad(format!("`{s}`: {e}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    versions.sort();
-    versions.dedup();
-    Ok(versions)
+/// A version in the index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Published {
+    pub version: Version,
+    /// Why it was withdrawn: a requirement no longer selects it (an exact one still does).
+    pub yanked: Option<String>,
 }
 
-/// The published versions, from the newest release's `releases.json`.
-pub fn fetch_index(base: &str) -> Result<Vec<Version>, String> {
-    let url = format!("{base}/releases/latest/download/{INDEX_FILE}");
-    let bytes = download(&url)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
-    parse_index(&String::from_utf8_lossy(&bytes))
+/// `<base>/releases/download/index/releases.json`.
+pub fn index_url(base: &str) -> String {
+    format!("{base}/releases/download/{INDEX_TAG}/{INDEX_FILE}")
+}
+
+/// The releases in a `releases.json`, oldest first.
+pub fn parse_index(text: &str) -> Result<Vec<Published>, String> {
+    let bad = |why: String| format!("{INDEX_FILE} is not an index of releases: {why}");
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| bad(e.to_string()))?;
+    match value.get("format").and_then(|f| f.as_u64()) {
+        Some(INDEX_FORMAT) => {}
+        Some(n) => {
+            return Err(format!(
+            "{INDEX_FILE} has format {n}, newer than this velt launcher reads ({INDEX_FORMAT}); \
+                 update the launcher (run the installer again)"
+        ))
+        }
+        None => return Err(bad("no `format` number".into())),
+    }
+    let list = value
+        .get("releases")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| bad("no `releases` array".into()))?;
+    let mut releases = list
+        .iter()
+        .map(|entry| {
+            let version = entry
+                .get("version")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| bad(format!("{entry} has no `version` string")))?;
+            let version = Version::parse(version).map_err(|e| bad(format!("`{version}`: {e}")))?;
+            let yanked = match entry.get("yanked") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(why)) => Some(why.clone()),
+                Some(other) => {
+                    return Err(bad(format!(
+                        "`yanked` of {version} is {other}, not a string"
+                    )))
+                }
+            };
+            Ok(Published { version, yanked })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    releases.sort_by(|a, b| a.version.cmp(&b.version));
+    releases.dedup_by(|a, b| a.version == b.version);
+    Ok(releases)
+}
+
+/// The published releases, from the signed index ([`index_url`]), checked with the release key.
+pub fn fetch_index(base: &str) -> Result<Vec<Published>, String> {
+    fetch_index_with_key(base, None)
+}
+
+/// [`fetch_index`] checking with `key` instead of [`public_key`].
+pub fn fetch_index_with_key(base: &str, key: Option<&[u8]>) -> Result<Vec<Published>, String> {
+    let url = index_url(base);
+    if !velt_http::is_tls_or_loopback(&url) {
+        return Err(format!("refusing to download over plain http: {url}"));
+    }
+    let key = match key {
+        Some(key) => key.to_vec(),
+        None => public_key()?,
+    };
+    let text =
+        signed_text(&url, &key)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
+    parse_index(&text)
+}
+
+/// The newest release `req` accepts that is not yanked (an exact requirement may name a yanked
+/// one: the user chose it).
+pub fn newest_match<'r>(
+    releases: &'r [Published],
+    req: &crate::Requirement,
+) -> Option<&'r Published> {
+    let exact = req.exact_version();
+    releases
+        .iter()
+        .filter(|r| req.matches(&r.version))
+        .filter(|r| r.yanked.is_none() || exact.as_ref() == Some(&r.version))
+        .max_by(|a, b| a.version.cmp(&b.version))
 }
 
 /// Download release `version` for this machine from `base`, check it against the release's
@@ -147,20 +224,56 @@ mod tests {
 
     #[test]
     fn index() {
-        let versions =
-            parse_index(r#"{"versions": ["0.2.0", "0.1.0", "0.1.0", "0.2.0-rc.1"]}"#).unwrap();
-        let shown: Vec<String> = versions.iter().map(Version::to_string).collect();
-        assert_eq!(shown, ["0.1.0", "0.2.0-rc.1", "0.2.0"]);
+        let releases = parse_index(
+            r#"{"format": 1, "later": true, "releases": [
+                {"version": "0.2.0"}, {"version": "0.1.0"}, {"version": "0.1.0"},
+                {"version": "0.2.0-rc.1", "date": "2026-10-01"},
+                {"version": "0.1.1", "yanked": "miscompiles closures; use 0.1.2"},
+                {"version": "0.1.2", "yanked": null}
+            ]}"#,
+        )
+        .unwrap();
+        let shown: Vec<String> = releases.iter().map(|r| r.version.to_string()).collect();
+        assert_eq!(shown, ["0.1.0", "0.1.1", "0.1.2", "0.2.0-rc.1", "0.2.0"]);
+        assert_eq!(
+            releases[1].yanked.as_deref(),
+            Some("miscompiles closures; use 0.1.2")
+        );
         for bad in [
             "[]",
             "{}",
-            r#"{"versions": [1]}"#,
-            r#"{"versions": ["x"]}"#,
+            r#"{"format": 1}"#,
+            r#"{"format": 1, "releases": [1]}"#,
+            r#"{"format": 1, "releases": [{"version": "x"}]}"#,
+            r#"{"format": 1, "releases": [{"version": "0.1.0", "yanked": true}]}"#,
+            r#"{"versions": ["0.1.0"]}"#,
             "nope",
         ] {
             let err = parse_index(bad).unwrap_err();
-            assert!(err.starts_with("releases.json is not"), "{bad}: {err}");
+            assert!(
+                err.starts_with("releases.json is not an index"),
+                "{bad}: {err}"
+            );
         }
+        let err = parse_index(r#"{"format": 2, "releases": []}"#).unwrap_err();
+        assert!(err.contains("newer than this velt launcher reads"), "{err}");
+    }
+
+    #[test]
+    fn yanked_releases_are_selected_only_by_name() {
+        let releases = parse_index(
+            r#"{"format": 1, "releases": [{"version": "0.1.0"},
+                {"version": "0.1.1", "yanked": "broken"}]}"#,
+        )
+        .unwrap();
+        let newest = |req: &str| {
+            newest_match(&releases, &crate::Requirement::parse(req).unwrap())
+                .map(|r| r.version.to_string())
+        };
+        assert_eq!(newest("0.1").as_deref(), Some("0.1.0"));
+        assert_eq!(newest("=0.1.1").as_deref(), Some("0.1.1"));
+        assert_eq!(newest("0.1.1"), None);
+        assert_eq!(newest("0.2"), None);
     }
 
     #[test]
@@ -223,10 +336,7 @@ mod tests {
 
         let unsigned = release(None);
         let err = install(&unsigned).unwrap_err();
-        assert!(
-            err.contains("has no SHA256SUMS.sig: the release is not signed"),
-            "{err}"
-        );
+        assert!(err.contains("SHA256SUMS has no signature"), "{err}");
         unsigned.stop();
         let (forger, _) = key_pair();
         let forged = release(Some(forger.sign(sums.as_bytes()).as_ref().to_vec()));
@@ -251,6 +361,31 @@ mod tests {
             "{missing}"
         );
         signed.stop();
+
+        // The index: signed, on the `index` release.
+        let index = br#"{"format": 1, "releases": [{"version": "0.3.0"}]}"#.to_vec();
+        let path = "/releases/download/index/releases.json".to_string();
+        let good = serve(vec![
+            (path.clone(), index.clone()),
+            (format!("{path}.sig"), signer.sign(&index).as_ref().to_vec()),
+        ]);
+        let releases =
+            fetch_index_with_key(&format!("http://{}", good.addr()), Some(&key)).unwrap();
+        assert_eq!(releases[0].version, v);
+        good.stop();
+        let unsigned = serve(vec![(path.clone(), index.clone())]);
+        let err =
+            fetch_index_with_key(&format!("http://{}", unsigned.addr()), Some(&key)).unwrap_err();
+        assert!(err.contains("releases.json has no signature"), "{err}");
+        unsigned.stop();
+        let forged = serve(vec![
+            (path.clone(), index.clone()),
+            (format!("{path}.sig"), forger.sign(&index).as_ref().to_vec()),
+        ]);
+        let err =
+            fetch_index_with_key(&format!("http://{}", forged.addr()), Some(&key)).unwrap_err();
+        assert!(err.contains("does not match the release key"), "{err}");
+        forged.stop();
     }
 
     #[test]

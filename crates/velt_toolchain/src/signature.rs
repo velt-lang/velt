@@ -1,5 +1,6 @@
-//! Release signatures: each release's `SHA256SUMS` is signed with the release key (Ed25519), and
-//! `SHA256SUMS.sig` holds the signature. A hash from the same place as the archive only shows
+//! Release signatures: each release's `SHA256SUMS`, and the index of releases
+//! ([`crate::release`]), are signed with the release key (Ed25519); `<file>.sig` holds the
+//! signature. A hash from the same place as the archive only shows
 //! the download is intact; checked against the signature, it also shows the archive is the one
 //! the velt project published, whatever mirror (`$VELT_INSTALL_BASE_URL`) served it.
 //!
@@ -17,8 +18,9 @@ pub const RELEASE_PUBLIC_KEY: &str =
     "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb";
 /// Overrides [`RELEASE_PUBLIC_KEY`].
 pub const ENV_PUBLIC_KEY: &str = "VELT_INSTALL_PUBLIC_KEY";
-/// The signature of `SHA256SUMS`, beside it.
-pub const SIG_FILE: &str = "SHA256SUMS.sig";
+/// A signed file's signature is beside it, named `<file>.sig` (`SHA256SUMS.sig`,
+/// `releases.json.sig`): the 64-byte Ed25519 signature of the file's bytes, raw or in hex.
+pub const SIG_SUFFIX: &str = ".sig";
 
 /// The key releases are checked with: `$VELT_INSTALL_PUBLIC_KEY`, else the built-in one.
 pub fn public_key() -> Result<Vec<u8>, String> {
@@ -61,17 +63,22 @@ pub fn verify(data: &[u8], signature: &[u8], key: &[u8]) -> Result<(), String> {
 /// The `SHA256SUMS` of the release at `release_url`, checked against its signature with `key`
 /// ([`public_key`]); `None` when the release has no `SHA256SUMS` (it does not exist).
 pub fn signed_sums(release_url: &str, key: &[u8]) -> Result<Option<String>, String> {
-    let Some(sums) = download(&format!("{release_url}/SHA256SUMS"))? else {
+    signed_text(&format!("{release_url}/SHA256SUMS"), key)
+}
+
+/// The text at `url`, checked against its signature at `<url>.sig` with `key`; `None` when
+/// `url` does not exist.
+pub fn signed_text(url: &str, key: &[u8]) -> Result<Option<String>, String> {
+    let Some(data) = download(url)? else {
         return Ok(None);
     };
-    let signature = download(&format!("{release_url}/{SIG_FILE}"))?.ok_or_else(|| {
-        format!("{release_url} has no {SIG_FILE}: the release is not signed, so its files cannot be checked")
+    let signature = download(&format!("{url}{SIG_SUFFIX}"))?.ok_or_else(|| {
+        format!("{url} has no signature ({url}{SIG_SUFFIX}), so it cannot be checked; refusing it")
     })?;
-    verify(&sums, &signature, key)
-        .map_err(|e| format!("{release_url}/SHA256SUMS: {e}; refusing its files"))?;
-    String::from_utf8(sums)
+    verify(&data, &signature, key).map_err(|e| format!("{url}: {e}; refusing it"))?;
+    String::from_utf8(data)
         .map(Some)
-        .map_err(|_| format!("{release_url}/SHA256SUMS is not text"))
+        .map_err(|_| format!("{url} is not text"))
 }
 
 fn decode_hex(text: &str) -> Option<Vec<u8>> {
