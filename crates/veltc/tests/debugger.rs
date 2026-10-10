@@ -3,6 +3,8 @@
 //! (Cranelift) build, and with clang one of `--backend llvm`, resolves breakpoints on `.vlt` lines
 //! in the right functions (checked without running the program, so no debugger permission is
 //! needed). On macOS the debug info stays in the object, which the executable's debug map names.
+//! Where LLDB may run programs, a default build also shows local variables with their source
+//! types (skipped where it may not).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -97,14 +99,13 @@ fn lldb_runs() -> bool {
     runs
 }
 
-/// Build `PROGRAM` as `app.vlt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
-/// (in `main`) with LLDB; its output.
-fn breakpoints(work_name: &str, args: &[&str]) -> String {
+/// Build `source` as `app.vlt` with `args` in a fresh work dir; the dir and the executable.
+fn build(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, PathBuf) {
     let root = root();
     runtime_support::build_native_runtime(&root);
     let work = work_dir::work_dir(&root, work_name);
     std::fs::create_dir_all(&work).expect("work dir");
-    std::fs::write(work.join("app.vlt"), PROGRAM).expect("write source");
+    std::fs::write(work.join("app.vlt"), source).expect("write source");
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "app.vlt"])
         .args(args)
@@ -113,6 +114,23 @@ fn breakpoints(work_name: &str, args: &[&str]) -> String {
         .expect("velt build");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let exe = work.join("target/velt/app");
+    (work, exe)
+}
+
+/// LLDB in batch mode running `commands` on `exe`; its output.
+fn lldb(exe: &Path, commands: &[&str]) -> String {
+    let mut cmd = crate::no_window::command("lldb");
+    cmd.arg("-b");
+    for c in commands {
+        cmd.args(["-o", c]);
+    }
+    output_within(cmd.arg(exe), Duration::from_secs(60)).expect("lldb finished")
+}
+
+/// Build `PROGRAM` as `app.vlt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
+/// (in `main`) with LLDB; its output.
+fn breakpoints(work_name: &str, args: &[&str]) -> String {
+    let (work, exe) = build(work_name, PROGRAM, args);
     if cfg!(target_os = "macos") {
         // The debug info stays in the object; the debug map must name it by its absolute path.
         let map = crate::no_window::command("nm")
@@ -131,21 +149,94 @@ fn breakpoints(work_name: &str, args: &[&str]) -> String {
             object.display()
         );
     }
-    let out = output_within(
-        crate::no_window::command("lldb")
-            .args([
-                "-b",
-                "-o",
-                "breakpoint set -f app.vlt -l 2",
-                "-o",
-                "breakpoint set -f app.vlt -l 7",
-            ])
-            .arg(&exe),
-        Duration::from_secs(60),
-    )
-    .expect("lldb finished");
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 2",
+            "breakpoint set -f app.vlt -l 7",
+        ],
+    );
     let _ = std::fs::remove_dir_all(&work);
     out
+}
+
+const LOCALS: &str = r#"class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+enum Color {
+  Red,
+  Green = 5,
+}
+
+function area(w: number, h: number): number {
+  const a = w * h;
+  return a;
+}
+
+function main() {
+  const xs: number[] = [1, 2, 3];
+  const p = new Point(1, 2);
+  const maybe: Point | null = null;
+  const c = Color.Green;
+  let count: i64 = 0;
+  for (const x of xs) {
+    count += 1;
+  }
+  console.log(xs.length, p.x, maybe == null, c, count, area(2, 3));
+}
+"#;
+
+/// Variables with their source types, values and fields, in the default build (the program
+/// runs under LLDB, which needs permission to debug on some systems).
+#[test]
+fn lldb_shows_locals_in_the_default_build() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let (work, exe) = build("golden-work-debugger-locals", LOCALS, &[]);
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 29",
+            "breakpoint set -f app.vlt -l 17",
+            "run",
+            "frame variable",
+            "frame variable -P 1 p",
+            "frame variable xs.data[2]",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number[]) xs = {",
+        "len = 3",
+        "(i64) count = 3",
+        "(Color) c = Green",
+        "(Point | null) maybe = NULL",
+        "y = 2",
+        "(number) xs.data[2] = 3",
+        "(number) w = 2",
+        "(number) h = 3",
+        "(number) a = 6",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
 }
 
 /// What F5 in VS Code debugs: the default build, which needs no clang.

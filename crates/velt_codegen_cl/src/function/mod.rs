@@ -3,8 +3,10 @@
 //! Scalar locals whose address is never taken live in registers: a local assigned exactly once
 //! is the SSA value of its assignment (`Storage::Value`), any other becomes a
 //! `cranelift_frontend::Variable` (SSA construction is left to `FunctionBuilder`). Aggregates and
-//! address-taken scalars live in explicit stack slots. Submodules handle one concern each on the
-//! shared `Translator`.
+//! address-taken scalars live in explicit stack slots, and so do locals that hold a source
+//! variable for debuggers (`LocalDecl::debug`, debug builds): their slot is keyed by the local's
+//! index, so debug_info finds it in the compiled frame. Submodules handle one concern each on
+//! the shared `Translator`.
 //!
 //! Why single assignments bypass `Variable`: `FunctionBuilder` keeps, per variable, a table
 //! indexed by block, so its memory grows with variables × blocks. VIR names every temporary, so
@@ -25,7 +27,7 @@ mod terminator;
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKey, StackSlotKind};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataId, FuncId, Module};
@@ -292,12 +294,13 @@ fn allocate_locals(
     for (i, local) in function.locals.iter().enumerate() {
         storage.push(match local.ty {
             Ty::Unit => Storage::Unit,
-            ty if in_memory[i] => {
+            ty if in_memory[i] || local.debug.is_some() => {
                 let (size, align) = size_align(program, ty)?;
-                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                let slot = builder.create_sized_stack_slot(StackSlotData::new_with_key(
                     StackSlotKind::ExplicitSlot,
                     size.max(1),
                     align.trailing_zeros() as u8,
+                    StackSlotKey::new(i as u64),
                 ));
                 Storage::Slot(slot)
             }
