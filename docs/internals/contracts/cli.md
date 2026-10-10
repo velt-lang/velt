@@ -36,11 +36,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   "errors", "warnings"}`. `executable` is the absolute path of the linked program (`null` on
   failure or with `--emit obj|vir|llvm`); `debugInfo` is whether the program has line
   information for debuggers: debug info was asked for and the backend emits it for the target
-  (`false` for Cranelift builds for Windows; `null` if the options could not be resolved); `lldbScript` is the absolute path of the
-  toolchain's `share/velt/lldb/velt_lldb.py` (`null` if missing). The diagnostics are those of
-  `check --json`, with a non-source failure (linker, missing runtime) as an error with
-  `location: null`. Exit codes as for `build`. The VS Code extension's `velt` debug type relies
-  on it.
+  (`false` for Cranelift builds for Windows; `null` if the options could not be resolved);
+  `lldbScript` is the absolute path of the toolchain's `share/velt/lldb/velt_lldb.py` (`null`
+  if missing). The diagnostics are those of `check --json`, with a non-source failure (linker,
+  missing runtime) as an error with `location: null`. Exit codes as for `build`. The VS Code
+  extension's `velt` debug type relies on it.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in

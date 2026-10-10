@@ -74,8 +74,8 @@ needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes o
 ```
 
 `velt new` already adds it. On Windows the default build has no line information yet; add
-`"buildArgs": ["--backend", "llvm"]` (needs clang). `templates/` has examples, including attaching to a program that
-`velt dev --exe` restarts on every change.
+`"buildArgs": ["--backend", "llvm"]` (needs clang). `templates/` has examples, including
+attaching to a program that `velt dev --exe` restarts on every change.
 
 ## Settings
 
