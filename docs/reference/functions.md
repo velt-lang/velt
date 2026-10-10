@@ -451,7 +451,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   default's type.
 - As in TS, a function may take **fewer parameters** than the function type it is passed as:
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
-  `double`. An arrow may also take more, when the extra ones have defaults.
+  `double`. A function may also take more, when the extra ones are optional or have defaults
+  (`setTimeout(tick, 10)` with `function tick(n?: number)`): they are left out.
 - As in TS, a function that returns a value is accepted where a **`void`-returning** function
   type is expected; the value is evaluated and dropped. This holds for an arrow without a
   return type (its expression body, or a `return value;` in it) and for a named function or a
@@ -470,6 +471,27 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
     each(["a", "b"], (s) => seen.push(s));
     each(["c\n"], (s) => process.stdout.write(s)); // c
     console.log(seen); // [ 'a', 'b' ]
+  }
+  ```
+- A function returning `T` is also accepted where the function type returns a union with `T`
+  as a member (`(x: number) => Resp` for `(x: number) => Resp | Promise<Resp>`), as in TS; its
+  result converts to the union. An error type parameter that nothing fixes
+  (`<E>(h: (x: number) => Resp | Promise<Resp, E>)` called with a sync function) is `never`.
+- A value whose type is a **union of function types** with the same parameters can be called:
+  the call runs whichever function the value holds, and its result is the union of their
+  results (a `void` member makes it `T | null`; `await` on that gives `void`). An arrow passed
+  as such a union is typed by the member it fits, the first in order where several do.
+
+  ```ts
+  type Format = ((n: number) => string) | ((n: number) => number);
+
+  function show(f: Format, n: number): string {
+    const v = f(n);
+    return typeof v === "string" ? `text ${v}` : `number ${v}`;
+  }
+
+  function main() {
+    console.log(show((n) => `#${n}`, 3), show((n) => n * 2, 3)); // text #3 number 6
   }
   ```
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`

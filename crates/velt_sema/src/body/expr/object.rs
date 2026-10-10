@@ -65,6 +65,9 @@ impl FnCx<'_, '_> {
         };
         let elem = match exp_elem {
             None if self.cx.class_of(elem).is_some() => self.common_base(elems, &mut out, elem),
+            None if self.cx.ty.promise_payload(elem).is_some() => {
+                self.common_rejection(elems, &mut out, elem)
+            }
             _ => elem,
         };
         let mut hs = vec![];
@@ -103,6 +106,38 @@ impl FnCx<'_, '_> {
             }
         }
         elem
+    }
+
+    /// Element type of an array literal of promises whose first element is `first`: promises
+    /// of the same value that reject with different errors are promises rejecting with the
+    /// union of them (`[fa(), fb()]` is `Promise<string, A | B>[]`, and `Promise.all` of it
+    /// rejects with `A | B`), as TS has no error types to tell them apart. Checks the elements
+    /// into `out`.
+    fn common_rejection(
+        &mut self,
+        elems: &[ast::Expr],
+        out: &mut [Option<hir::Expr>],
+        first: TyId,
+    ) -> TyId {
+        let Some(value) = self.cx.ty.promise_payload(first) else {
+            return first;
+        };
+        let mut errors = vec![];
+        for (i, e) in elems.iter().enumerate() {
+            if out[i].is_none() {
+                out[i] = Some(self.expr(e, Some(first), Want::Move));
+            }
+            let t = out[i].as_ref().map_or(first, |h| h.ty);
+            match self.cx.ty.kind(t) {
+                TyKind::Promise(v, err) if *v == value => errors.push(*err),
+                // Another value type: the element doesn't convert, which `coerce` reports.
+                _ => return first,
+            }
+        }
+        let never = self.cx.ty.never;
+        let errors: Vec<TyId> = errors.into_iter().filter(|e| *e != never).collect();
+        let err = self.cx.error_union(&errors).unwrap_or(never);
+        self.cx.ty.promise_rejecting(value, err)
     }
 
     fn tuple_lit(&mut self, elems: &[ast::Expr], ts: &[TyId], ty: TyId, span: Span) -> hir::Expr {

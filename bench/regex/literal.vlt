@@ -1,0 +1,17 @@
+// Literal-pattern replace/test/split calls through the RegExp API in a loop: the paths a string
+// method with a regex takes (`bench/regex/run.sh`).
+import { RegExp } from "velt:regex";
+
+function main() {
+  const line = "alpha,beta, gamma ,delta;epsilon-zeta eta,theta";
+  let n = 0;
+  for (let i = 0; i < 200000; i++) {
+    const comma = new RegExp(",", "g");
+    n += comma.replace(line, ";").length;
+    n += new RegExp("\\s*[,;]\\s*").split(line).length;
+    if (new RegExp("gam+a").test(line)) {
+      n += 1;
+    }
+  }
+  console.log(n);
+}

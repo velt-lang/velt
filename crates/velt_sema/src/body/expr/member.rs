@@ -385,6 +385,14 @@ impl FnCx<'_, '_> {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
+            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+                let prop = ast::Ident {
+                    name: "__index".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {
@@ -531,8 +539,8 @@ impl FnCx<'_, '_> {
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
-        if self.cx.has_literal_member(target) {
-            return self.literal_cast(expr, target, want, span);
+        if !self.cx.ty.is_numeric(target) && target != self.cx.ty.bool_ {
+            return self.type_assertion(expr, target, want, span);
         }
         // An integer literal cast to an integer type is an exact integer first, so the cast
         // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
@@ -569,9 +577,12 @@ impl FnCx<'_, '_> {
         self.mk(H::Cast(Box::new(inner)), target, span)
     }
 
-    /// `"c" as "a" | "c"`: a value that converts to the literal type (or union) `target` as it
-    /// is, as in TypeScript. A wider value (a `string` as `"a" | "b"`) would need a test.
-    fn literal_cast(
+    /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
+    /// converts nothing. `e` is typed in the context of `T`, as for an annotation, so a literal
+    /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`. A
+    /// literal type (or a union with one, `"c" as "a" | "c" | null`) takes a value that converts
+    /// to it as it is; a wider value (a `string` as `"a" | "b"`) would need a test.
+    fn type_assertion(
         &mut self,
         expr: &ast::Expr,
         target: TyId,
@@ -582,13 +593,15 @@ impl FnCx<'_, '_> {
         match self.try_coerce(inner, target) {
             Ok(h) => h,
             Err(h) => {
-                let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                if !self.cx.ty.is_bottom(h.ty) {
-                    self.cx.error(
-                        Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span).with_note(
+                if !self.cx.ty.has_error(h.ty) {
+                    let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                    let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    if self.cx.has_literal_member(target) {
+                        diag = diag.with_note(
                             "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
-                        ),
-                    );
+                        );
+                    }
+                    self.cx.error(diag);
                 }
                 self.error_expr(span)
             }

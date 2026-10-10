@@ -150,6 +150,11 @@ const s = <Section />;
   reports an error.
 - **Generic components** infer their type arguments from the props and the children, as in
   TypeScript, or take them on the tag.
+- A provider may declare attributes that **every component** accepts, as TypeScript's
+  `JSX.IntrinsicAttributes` (sigx marks islands this way: `<Counter client:load start={1} />`).
+  They are checked as `tsc` checks them, so a misspelled `client:lod` is an unknown property
+  with a suggestion. The provider receives them separately from the props. See
+  [the contract](../internals/contracts/jsx.md#attributes-of-every-component-optional-exports).
 - Until objects are shared references, a component that takes ownership of its props (one that
   uses an element from them, such as `<main>{props.children}</main>`) is called with a copy of
   them, and props holding an element can't be copied yet: an element may hold a pending async
@@ -187,4 +192,4 @@ An element becomes calls of the provider's functions, chosen by what it exports
 - `number` is JavaScript's number (`f64`). A provider whose `JSX.Child` and `JSX.AttrValue`
   should also take Velt's integer types writes `i64 | f64`, as `velt:jsx` does.
 - Class components and `ref` are not supported (compile errors); `JSX.LibraryManagedAttributes`
-  and `JSX.IntrinsicAttributes` are ignored.
+  is ignored.

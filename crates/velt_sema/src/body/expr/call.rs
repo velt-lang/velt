@@ -190,10 +190,12 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
-        let wrapped = self.timer_callback(d, args);
-        let args = wrapped.as_deref().unwrap_or(args);
+        self.std_callback_arg(d, args);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.void_task = None;
+        self.task_callback = None;
+        self.thread_task = None;
+        self.thread_callback = None;
         if name == "structuredClone" && Some(d) == self.cx.prelude_fn(name) {
             if let Some(a) = ck.args.first() {
                 self.check_structured_clone(a.ty, a.span);
@@ -221,6 +223,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
             _ => {
+                let f = match self.call_fn_union(f, args, span) {
+                    Ok(h) => return h,
+                    Err(f) => f,
+                };
                 let tn = self.cx.display(f.ty);
                 self.cx.err(
                     format!("this expression is not callable (it has type `{tn}`)"),

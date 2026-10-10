@@ -244,14 +244,18 @@ fn innermost_open(text: &str) -> Option<&str> {
 }
 
 /// Where the word ending at `offset` starts, for completion. In an opening tag a word may hold
-/// `-` (`aria-label`, `data-id`); `word_start` is where the identifier ends ordinary words.
+/// `-` or `:` (`aria-label`, `client:load`); `word_start` is where the identifier ends ordinary
+/// words.
 pub fn word_start(text: &str, offset: usize, ident_start: usize) -> usize {
     let mut start = ident_start;
-    while text[..start].ends_with('-') {
+    // `aria-l`, `client:lo`: the word an editor stops at `-` or `:` continues before it.
+    while text[..start].ends_with(['-', ':']) {
         let before = &text[..start - 1];
         let run = before.len()
             - before
-                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                .trim_end_matches(|c: char| {
+                    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':')
+                })
                 .len();
         if run == 0 {
             break;

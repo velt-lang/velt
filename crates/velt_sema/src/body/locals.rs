@@ -161,20 +161,23 @@ impl FnCx<'_, '_> {
         let mut prev = frame_lookup(&self.outer[j], name).expect("ICE: found");
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         let mut narrowing = frame_narrowing(&self.outer[j], prev);
+        // A captured closure `const` is still that closure: a call through the capture fills
+        // in its parameters' defaults (`FnCx::call_value`).
+        let closure = self.outer[j].closure_consts.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
+            if let Some(c) = closure {
+                f.closure_consts.insert(prev, c);
+            }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = frame_narrowing(f, prev);
         }
-        Some(add_narrowed_capture(
-            &mut self.f,
-            name,
-            prev,
-            ty,
-            span,
-            narrowing,
-        ))
+        let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        if let Some(c) = closure {
+            self.f.closure_consts.insert(inner, c);
+        }
+        Some(inner)
     }
 
     /// Lookup without creating captures (for "is this name a local?" questions).
@@ -188,6 +191,12 @@ impl FnCx<'_, '_> {
             .iter()
             .rev()
             .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
+    }
+
+    /// The closure the visible `const` named `name` holds (`closure_consts`), if it is one.
+    pub fn local_closure_const(&self, name: &str) -> Option<crate::hir::DefId> {
+        let (f, l) = self.peek_local(name)?;
+        f.closure_consts.get(&l).copied()
     }
 
     /// How the visible local `name` was declared (`const`, `using`, …), looking through the
@@ -210,6 +219,20 @@ impl FnCx<'_, '_> {
     pub fn peek_const_lit(&self, name: &str) -> Option<ast::SignedLit> {
         let (f, l) = self.peek_local(name)?;
         f.const_lits.get(&l).cloned()
+    }
+
+    /// The groups and flags of the regex the visible local `name` holds (see
+    /// `Frame::regex_consts`), looking through captures, without recording a use.
+    pub(super) fn peek_regex_local(&self, name: &str) -> Option<(usize, String)> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        for f in frames {
+            if let Some(l) = frame_lookup(f, name) {
+                if f.kinds[l.0 as usize] != super::LocalKind::Capture {
+                    return f.regex_consts.get(&l).cloned();
+                }
+            }
+        }
+        None
     }
 
     /// The frame declaring the visible local `name`, and the local's id there (no capture is

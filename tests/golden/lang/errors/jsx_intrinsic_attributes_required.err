@@ -1,0 +1,1 @@
+jsx_intrinsic_attributes_required.vlt:16:14: error: Property 'data-island' is missing in type '{ n: f64 }' but required in type 'IntrinsicAttributes'.

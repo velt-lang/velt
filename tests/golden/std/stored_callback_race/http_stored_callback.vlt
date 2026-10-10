@@ -1,0 +1,45 @@
+// An async handler calls a sync callback stored in a field of an object it captured; the
+// callback modifies its own capture. Requests share the handler's environment (and the
+// object), so concurrent requests update the callback's captured-variable cell at once: in a
+// release build at the default thread count this crashes in about one run in five. Fixed when
+// each request gets cells of its own for such callbacks (#873).
+import { serve } from "velt:http";
+
+class Input {
+  onChange: (v: string) => void = (v) => {};
+}
+
+async function client(base: string, n: i64): Promise<i64> {
+  let ok: i64 = 0;
+  for (let i = 0; i < n; i++) {
+    try {
+      const t = await (await fetch(`${base}/x`)).text();
+      ok += t.length > 0 ? 1 : 0;
+    } catch (e) {
+      console.log("request failed");
+    }
+  }
+  return ok;
+}
+
+async function main() {
+  let last = "";
+  const i = new Input();
+  i.onChange = (v: string) => {
+    last = `${v}${last.length}`;
+  };
+  const a = await serve({ port: 0 }, async (req) => {
+    i.onChange("x");
+    return new Response("ok");
+  });
+  const ts: Promise<i64>[] = [];
+  for (let k = 0; k < 8; k++) {
+    ts.push(spawn(client(`http://127.0.0.1:${a.port}`, 40)));
+  }
+  let n: i64 = 0;
+  for (const x of await Promise.all(ts)) {
+    n += x;
+  }
+  await a.shutdown();
+  console.log(n, last.length);
+}

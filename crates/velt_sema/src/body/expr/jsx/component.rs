@@ -8,11 +8,12 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::props::{ElementProps, ExtraAttr};
 use super::provider::Provider;
-use crate::body::{FnCx, Want};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
 use crate::defs::FnKind;
-use crate::hir::{self, DefId, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind, UseMode};
 use crate::ide::record::Target;
 
 /// The function a component tag denotes.
@@ -43,8 +44,8 @@ pub(super) struct Component {
 
 impl FnCx<'_, '_> {
     /// `<Name …>…</Name>` → `jsxComponent(Name, props, key, identity)` (or `jsxAsyncComponent`).
-    /// The props (with already built child elements) are evaluated first; the component runs
-    /// when the runtime calls it.
+    /// The attributes are evaluated in source order, then the children, then the key
+    /// (`component_props`); the component runs when the runtime calls it.
     pub(super) fn jsx_component(
         &mut self,
         p: &Provider,
@@ -61,13 +62,41 @@ impl FnCx<'_, '_> {
             return self.error_expr(el.span);
         };
         let mut lets = vec![];
-        let Some((props, type_args)) = self.component_props(p, el, &c, &tag, &mut lets) else {
+        let Some(ElementProps {
+            props,
+            type_args,
+            key,
+            extra,
+        }) = self.component_props(p, el, &c, &tag, &mut lets)
+        else {
             self.jsx_loose(p, el);
             return self.error_expr(el.span);
         };
         if type_args.contains(&self.cx.ty.error) {
             return self.error_expr(el.span);
         }
+        // With attributes from `JSX.IntrinsicAttributes` the element calls
+        // `jsxComponentAttributes`, whose component parameter gives the expected type.
+        let (d, f) = match (&p.component_attrs, extra.is_empty()) {
+            (Some(attrs), false) => {
+                if c.is_async {
+                    let span = extra[0].span;
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("`{}` is not supported on an async component (<{tag}>)", extra[0].name),
+                            span,
+                        )
+                        .with_note(format!(
+                            "the JSX provider '{}' receives it through `jsxComponentAttributes`, which takes a synchronous component",
+                            p.source
+                        )),
+                    );
+                    return self.error_expr(el.span);
+                }
+                (attrs.call, "jsxComponentAttributes")
+            }
+            _ => (d, f),
+        };
         let ret = self.cx.subst(c.ret, &type_args);
         let natural = self.cx.ty.fn_ptr(vec![props.ty], ret);
         let expected = self.runtime_component_type(d, props.ty, natural);
@@ -82,10 +111,145 @@ impl FnCx<'_, '_> {
         let Some(value) = self.component_value(c.func, expected, props.ty, el, &tag) else {
             return self.error_expr(el.span);
         };
-        let key = self.jsx_key(p, el);
         let identity = self.str_lit(&c.identity, name.span());
-        let call = self.jsx_call(p, d, f, vec![value, props, key, identity], el.span);
+        let mut args = vec![value, props, key, identity];
+        if !extra.is_empty() {
+            let (names, values) = self.attr_arrays(p, extra, el.span, &mut lets);
+            args.push(names);
+            args.push(values);
+        }
+        let call = self.jsx_call(p, d, f, args, el.span);
         self.with_lets(lets, call)
+    }
+
+    /// `names` and `values` of the attributes from `JSX.IntrinsicAttributes`, in source order:
+    /// array literals, or arrays filled by statements in `lets` when an attribute is passed only
+    /// if it is not null (then every value is a constant or a temporary).
+    fn attr_arrays(
+        &mut self,
+        p: &Provider,
+        extra: Vec<ExtraAttr>,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> (hir::Expr, hir::Expr) {
+        let str_ = self.cx.ty.str_;
+        let names_ty = self.cx.ty.array(str_);
+        let values_ty = self.cx.ty.array(p.attr_value);
+        if !extra.iter().any(|e| e.absent_if_null) {
+            let mut names = vec![];
+            let mut values = vec![];
+            for e in extra {
+                names.push(self.str_lit(&e.name, e.span));
+                values.push(e.value);
+            }
+            let names = self.mk(hir::ExprKind::ArrayLit(names), names_ty, span);
+            let values = self.mk(hir::ExprKind::ArrayLit(values), values_ty, span);
+            return (names, values);
+        }
+        let names_l = self.filled_array("<names>", names_ty, span, lets);
+        let values_l = self.filled_array("<values>", values_ty, span, lets);
+        let note = format!(
+            "attributes of `JSX.IntrinsicAttributes` are passed to the JSX provider '{}' as `JSX.AttrValue`",
+            p.source
+        );
+        for e in extra {
+            let name = self.str_lit(&e.name, e.span);
+            if !e.absent_if_null {
+                let pushes = vec![
+                    self.push_to(names_l, names_ty, name),
+                    self.push_to(values_l, values_ty, e.value),
+                ];
+                lets.extend(pushes);
+                continue;
+            }
+            // `if (v != null) { names.push(n); values.push(v); }`
+            let mut s = e.value;
+            let payload = self
+                .cx
+                .ty
+                .opt_payload(s.ty)
+                .expect("ICE: an attribute that may be absent is nullable");
+            let (l, mode) = self.option_binding(&s, payload, "<attr>", true);
+            if mode == UseMode::Move {
+                self.force_move(&mut s);
+            }
+            let v = self.mk(hir::ExprKind::Local(l, mode), payload, e.span);
+            let v = self.jsx_coerce(v, p.attr_value, &note);
+            let stmts = vec![
+                self.push_to(names_l, names_ty, name),
+                self.push_to(values_l, values_ty, v),
+            ];
+            let unit = self.cx.ty.unit;
+            let body = hir::Block {
+                stmts,
+                value: None,
+                span: e.span,
+            };
+            let body = self.mk(hir::ExprKind::Block(body), unit, e.span);
+            let none = self.mk(hir::ExprKind::Lit(hir::Lit::Unit), unit, e.span);
+            let sty = s.ty;
+            let some = self.pat(hir::PatKind::Binding(l, mode), payload, e.span);
+            let arms = vec![
+                hir::Arm {
+                    pat: self.pat(hir::PatKind::Some(Box::new(some)), sty, e.span),
+                    guard: None,
+                    body,
+                },
+                hir::Arm {
+                    pat: self.pat(hir::PatKind::None, sty, e.span),
+                    guard: None,
+                    body: none,
+                },
+            ];
+            let kind = hir::ExprKind::Match {
+                scrutinee: Box::new(s),
+                arms,
+            };
+            let m = self.mk(kind, unit, e.span);
+            lets.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(m),
+                span: e.span,
+            });
+        }
+        let names = self.mk(hir::ExprKind::Local(names_l, UseMode::Move), names_ty, span);
+        let values = self.mk(
+            hir::ExprKind::Local(values_l, UseMode::Move),
+            values_ty,
+            span,
+        );
+        (names, values)
+    }
+
+    /// `let <name>: ty = [];` (mutable) in `lets`.
+    fn filled_array(
+        &mut self,
+        name: &str,
+        ty: TyId,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::LocalId {
+        let l = self.new_local(name, ty, true, span, LocalKind::Temp);
+        let init = self.mk(hir::ExprKind::ArrayLit(vec![]), ty, span);
+        lets.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: l,
+                init: Some(init),
+            },
+            span,
+        });
+        l
+    }
+
+    /// `array.push(v)` for array local `array` of type `ty`.
+    fn push_to(&mut self, array: hir::LocalId, ty: TyId, v: hir::Expr) -> hir::Stmt {
+        let span = v.span;
+        let target = self.mk(hir::ExprKind::Local(array, UseMode::BorrowMut), ty, span);
+        let unit = self.cx.ty.unit;
+        let call = self.intrinsic(hir::Intrinsic::ArrayPush, vec![target, v], unit, span);
+        hir::Stmt {
+            kind: hir::StmtKind::Expr(call),
+            span,
+        }
     }
 
     /// The runtime function for component `c`.

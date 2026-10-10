@@ -38,6 +38,10 @@ impl FnCx<'_, '_> {
         let h = self.expr(inner, hint, Want::Move);
         self.direct_await = None;
         self.awaited_using_shares(&h);
+        let h = match self.await_union(h, span) {
+            Ok(done) => return done,
+            Err(h) => h,
+        };
         self.await_throws(&h);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,

@@ -17,7 +17,7 @@ import { BodyStream } from "velt:fetch";
 import { utf8Encode } from "velt:encoding";
 import { IoError } from "velt:io";
 import { AbortError } from "velt:task";
-import { Element, Renderer } from "./node";
+import { Element, IslandsManifest, Renderer } from "./node";
 
 export struct Options {
   // Where to listen: 127.0.0.1 unless set (a container or a host's proxy needs 0.0.0.0).
@@ -80,6 +80,21 @@ const BOOTSTRAP =
 const COMPLETE =
   "<script>window.__SIGX_STREAMING_COMPLETE__=true;window.dispatchEvent(new Event('sigx:ready'));</script>";
 
+// `before` (the template up to the outlet) with a modulepreload link for each island chunk the
+// page uses, and the islands runtime, before `</head>` (sigx's renderAssetLinks).
+function preloads(r: Renderer, before: string): string {
+  const manifest = r.manifest;
+  if (r.preload.length == 0 || manifest == null) {
+    return before;
+  }
+  const urls = r.preload.concat(manifest.runtimePreload);
+  const links = urls
+    .map((u: string): string => `<link rel="modulepreload" href="${u}">\n`)
+    .join("");
+  const at = before.lastIndexOf("</head>");
+  return at < 0 ? before : before.slice(0, at) + links + before.slice(at);
+}
+
 function scriptOf(js: string): string {
   return js == "" ? "" : `<script>${js}</script>`;
 }
@@ -96,9 +111,10 @@ export async function renderDocument(template: string, app: Element): Promise<st
   const after = template.slice(at + OUTLET.length);
   const end = after.lastIndexOf("</body>");
   const cut = end < 0 ? after.length : end;
-  return template.slice(0, at) +
+  return preloads(r, template.slice(0, at)) +
     r.take() +
     scriptOf(r.state.script()) +
+    scriptOf(r.boundaryScript()) +
     after.slice(0, cut) +
     COMPLETE +
     after.slice(cut);
@@ -110,8 +126,10 @@ export async function renderDocument(template: string, app: Element): Promise<st
 async function* streamDocument(
   template: string,
   app: Element,
+  manifest: IslandsManifest | null,
 ): AsyncGenerator<u8[], IoError | AbortError> {
   const r = new Renderer();
+  r.manifest = manifest;
   r.streaming = true;
   await r.render(app);
   const at = template.indexOf(OUTLET);
@@ -119,7 +137,14 @@ async function* streamDocument(
   const after = at < 0 ? "" : template.slice(at + OUTLET.length);
   const end = after.lastIndexOf("</body>");
   const cut = end < 0 ? after.length : end;
-  yield utf8Encode(before + r.take() + scriptOf(r.state.script()) + after.slice(0, cut));
+  const head = preloads(r, before);
+  yield utf8Encode(
+    head +
+      r.take() +
+      scriptOf(r.state.script()) +
+      scriptOf(r.boundaryScript()) +
+      after.slice(0, cut),
+  );
   if (r.pending.length > 0) {
     yield utf8Encode(BOOTSTRAP);
   }
@@ -274,7 +299,8 @@ function contentType(path: string): string {
 // The file under `dir` that `pathname` names, or null: no `..`, no directories, and never the
 // template (documents are rendered, not served raw).
 async function staticFile(dir: string, pathname: string): Promise<Response | null> {
-  if (dir == "" || pathname == "/" || pathname.includes("..") || pathname.endsWith("/")) {
+  // No `..`, and no dot files or folders (the build's .vite/ manifests are not public).
+  if (dir == "" || pathname == "/" || pathname.includes("/.") || pathname.endsWith("/")) {
     return null;
   }
   if (pathname == "/index.html") {
@@ -306,6 +332,12 @@ export async function serveApp(
   fns: ServerFn[] = [],
 ): Promise<Server> {
   const cached = await readFile(opts.template);
+  // Production: where each island's code is (dev has none; the browser finds islands by name).
+  const manifestPath = `${opts.staticDir}/.vite/sigx-islands-manifest.json`;
+  const manifest =
+    opts.staticDir != "" && (await exists(manifestPath))
+      ? JSON.parse<IslandsManifest>(await readFile(manifestPath))
+      : null;
   if (!cached.includes(OUTLET)) {
     console.error(`${opts.template} has no ${OUTLET}: nowhere to render the app`);
     exit(1);
@@ -322,7 +354,7 @@ export async function serveApp(
       return await callServerFn(fns, req, url.pathname);
     }
     const template = opts.dev ? await readFile(opts.template) : cached;
-    return new Response(BodyStream.from(streamDocument(template, render(url.pathname))), {
+    return new Response(BodyStream.from(streamDocument(template, render(url.pathname), manifest)), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   });

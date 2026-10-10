@@ -7,6 +7,39 @@
 methods and async arrows work the same way. `async function main()` runs on the runtime, a
 multi-threaded tokio executor with one worker per core.
 
+An async arrow passed where a `void` function is expected (`onClick?: () => void`, a
+`(() => void) | null` parameter) is accepted, as in TypeScript: each call starts the arrow's
+promise, which runs to completion on its own (a [dropped promise](#promises) is not cancelled).
+Against a union of function types an arrow takes the member that fits, as TypeScript's contextual
+typing does: an async arrow the one returning a promise (`(() => void) | (() => Promise<void>)`), a
+sync arrow one returning a value before a `void` one, so its result is kept
+(`(() => void) | (() => number)` given `() => 42` returns `42`), and a promise-returning member
+last.
+
+`await` on a value that may or may not be a promise (`T | Promise<T>`, the result of a sync-or-async
+callback, or `Promise<T> | null`) awaits a promise and gives any other value as it is, as in JS:
+`await h(1)` where `h: (x: number) => Resp | Promise<Resp>` is a `Resp`.
+
+An async arrow passed where the function type returns a union with one promise member
+(`(n: number) => View | Promise<View>`, or `Promise<T> | null`) returns that promise, as in
+TypeScript: its body returns `View`. Such a result is told apart with `r instanceof Promise`
+([unions](types.md#union-types)):
+
+```ts
+type View = () => string;
+
+async function render(setup: (n: number) => View | Promise<View>): Promise<string> {
+  const r = setup(1);
+  const view = r instanceof Promise ? await r : r;
+  return view();
+}
+
+async function main() {
+  console.log(await render((n) => () => `sync ${n}`));
+  console.log(await render(async (n) => () => `async ${n}`));
+}
+```
+
 ## Promises
 
 Promises behave like JavaScript's, at Rust's cost:
@@ -123,7 +156,10 @@ async function main() {
 }
 ```
 
-All promises in one call must have the same type. Like in JS, every promise passed to a
+All promises in one call must have the same value type (**Planned**: different ones, #754).
+Their error types may differ: an array of promises rejecting with `A` and with `B` (or never
+rejecting) is an array of promises rejecting with `A | B`, and the combinator rejects with
+that. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
 dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
 `Promise.race` is fine once the work won (`Promise.allSettled` awaits every promise itself).

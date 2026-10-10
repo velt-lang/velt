@@ -129,6 +129,19 @@ pub(crate) struct Ctx<'m> {
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
     /// JSX component adapters, checked after ownership inference.
     pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
+    /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
+    /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
+    /// stored on the heap by that type, the function the user wrote.
+    pub callback_wrappers: std::collections::HashMap<DefId, TyId>,
+    /// Captured variables reported as modified by a closure that crosses threads, with the
+    /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
+    pub reported_captures: Vec<(String, velt_common::Span)>,
+    /// Spans of the sync arrows passed to `serve` that are checked as async ones
+    /// (`body/expr/callback.rs` `thread_arrow`): diagnostics call them handlers, as written.
+    pub sync_handlers: Vec<velt_common::Span>,
+    /// The async adapters calling a function value passed to `serve` as its handler
+    /// (`body/expr/callback.rs`): the sync closures flowing into them are handlers.
+    pub thread_adapters: Vec<DefId>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -238,6 +251,10 @@ impl<'m> Ctx<'m> {
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
+            callback_wrappers: Default::default(),
+            reported_captures: vec![],
+            sync_handlers: vec![],
+            thread_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
             pure_fns: HashMap::new(),

@@ -1,0 +1,2 @@
+jsx_intrinsic_attributes_types.vlt:7:10: error: `jsxComponentAttributes` of the JSX provider '_jsx_attrs_types' must take `names` as `string[]`, not `f64[]`
+jsx_intrinsic_attributes_types.vlt:7:10: error: `JSX.IntrinsicAttributes` field "client:list" of the JSX provider '_jsx_attrs_types' has type `string[]`, which does not convert to `JSX.AttrValue` (`boolean | string | i64 | f64 | Record<string, string | f64> | null`)

@@ -11,8 +11,14 @@ import { ssrClientPlugin } from "@sigx/server-renderer/client";
 if (import.meta.hot) {
   await (await import("@sigx/vite/hmr")).installHMRPlugin();
 }
-const { App } = await import("./shared/App.tsx");
-
-await defineApp(jsx(App, { path: window.location.pathname })).use(ssrClientPlugin).hydrate("#app");
+if (window.__SIGX_BOUNDARIES__) {
+  // An islands page: only its islands hydrate, each loaded by name when its directive fires.
+  await import("virtual:sigx-islands");
+  const { hydrateIslands } = await import("@sigx/ssr-islands/client");
+  await hydrateIslands();
+} else {
+  const { App } = await import("./shared/App.tsx");
+  await defineApp(jsx(App, { path: window.location.pathname })).use(ssrClientPlugin).hydrate("#app");
+}
 // For tests: interactive from here on.
 document.documentElement.dataset.hydrated = "";

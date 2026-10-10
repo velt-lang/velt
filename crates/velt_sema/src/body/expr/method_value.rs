@@ -483,7 +483,7 @@ fn bound_arrow(
     )
 }
 
-fn strip_parens(e: &ast::Expr) -> &ast::Expr {
+pub(super) fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),
         _ => e,
@@ -532,7 +532,7 @@ fn method_value_read(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
 }
 
 /// A variable, `this`, or a path of fields of one.
-fn is_path(e: &ast::Expr) -> bool {
+pub(super) fn is_path(e: &ast::Expr) -> bool {
     match &strip_parens(e).kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Member {
