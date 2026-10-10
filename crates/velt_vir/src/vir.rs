@@ -122,6 +122,10 @@ pub struct AggLayout {
 /// text there, and aggregate copies need not preserve padding.
 pub const STR_AGG: AggId = AggId(0);
 
+/// `Program::default()` is the empty program, a starting point for builders and struct update
+/// syntax (`Program { aggs, funcs, ..Default::default() }`) where a new field gets its "no
+/// information" default. It is not a valid program: callers supply `aggs` with the string
+/// layout first (`STR_AGG`) and `funcs` with the exported `velt_main` (invariant 5).
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub aggs: Vec<AggLayout>,
@@ -217,15 +221,18 @@ impl ParamAttrs {
 }
 
 impl Function {
-    /// A function with no locals, blocks, source locations or param facts. Build the rest with
-    /// struct update syntax (`Function { locals, blocks, ..Function::new(..) }`), so adding a
-    /// field touches only this constructor.
+    /// A function with one unnamed local per param and no blocks, source locations or param
+    /// facts. It is not valid until the caller supplies the blocks, entry block first
+    /// (invariants 4 and 6), and any further locals after the params' (or replaces `locals`
+    /// with its own, still starting with one per param). Build the rest with struct update
+    /// syntax (`Function { locals, blocks, ..Function::new(..) }`), so adding a field touches
+    /// only this constructor, where it gets its "no information" default.
     pub fn new(symbol: String, params: Vec<Ty>, ret: Ty, linkage: Linkage) -> Self {
         Function {
             symbol,
+            locals: params.iter().map(|&ty| LocalDecl::new(ty, None)).collect(),
             params,
             ret,
-            locals: Vec::new(),
             blocks: Vec::new(),
             linkage,
             locs: Vec::new(),

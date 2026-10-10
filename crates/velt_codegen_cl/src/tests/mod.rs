@@ -23,12 +23,8 @@ pub(crate) struct FuncBuilder {
 impl FuncBuilder {
     /// New function; params occupy locals `0..params.len()`.
     pub fn new(symbol: &str, params: &[Ty], ret: Ty, linkage: Linkage) -> Self {
-        let locals = params.iter().map(|&ty| LocalDecl::new(ty, None)).collect();
         FuncBuilder {
-            f: Function {
-                locals,
-                ..Function::new(symbol.into(), params.to_vec(), ret, linkage)
-            },
+            f: Function::new(symbol.into(), params.to_vec(), ret, linkage),
         }
     }
     /// New function with internal linkage.
