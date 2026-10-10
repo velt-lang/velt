@@ -49,15 +49,18 @@ export interface VeltConfig {
   env?: Record<string, string>;
   /** Build before debugging (default `true`). */
   build?: boolean;
+  /** Extra `velt build` options, e.g. `["--backend", "llvm"]`. */
+  buildArgs?: string[];
   stopOnEntry?: boolean;
   /** Attach: the process id. */
   pid?: number | string;
   [key: string]: unknown;
 }
 
-/** The arguments of `velt build` for `config`: the file (if any) and `--json`. */
+/** The arguments of `velt build` for `config`: the file (if any), its `buildArgs`, `--json`. */
 export function buildArgs(config: VeltConfig): string[] {
-  return config.file ? ["build", config.file, "--json"] : ["build", "--json"];
+  const file = config.file ? [config.file] : [];
+  return ["build", ...file, ...(config.buildArgs ?? []), "--json"];
 }
 
 /** A diagnostic of `velt build --json` (the format of `velt check --json`). */
@@ -147,7 +150,7 @@ export function concreteConfig(
   if (config.request === "attach") {
     switch (engine) {
       case "codelldb":
-        return { type: "lldb", request: "attach", name, pid: config.pid, initCommands, program };
+        return { type: "lldb", request: "attach", name, pid: Number(config.pid), initCommands, program };
       case "lldb-dap":
         return { type: "lldb-dap", request: "attach", name, pid: Number(config.pid), initCommands, program };
       case "cpptools":
@@ -199,4 +202,43 @@ export function concreteConfig(
             MIMode: platform === "darwin" ? "lldb" : "gdb",
           };
   }
+}
+
+/** A running process the attach picker offers. */
+export interface ProcessEntry {
+  pid: number;
+  command: string;
+}
+
+/** Parse `ps -A -o pid=,args=` (macOS, Linux). */
+export function parsePs(output: string): ProcessEntry[] {
+  const entries: ProcessEntry[] = [];
+  for (const line of output.split("\n")) {
+    const m = /^\s*(\d+)\s+(.*\S)\s*$/.exec(line);
+    if (m) {
+      entries.push({ pid: Number(m[1]), command: m[2] });
+    }
+  }
+  return entries;
+}
+
+/** Parse `tasklist /fo csv /nh` (Windows): `"name.exe","1234",...` per line. */
+export function parseTasklist(output: string): ProcessEntry[] {
+  const entries: ProcessEntry[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const m = /^"([^"]*)","(\d+)"/.exec(line);
+    if (m) {
+      entries.push({ pid: Number(m[2]), command: m[1] });
+    }
+  }
+  return entries;
+}
+
+/**
+ * The processes in the order the picker shows them: Velt programs (built into `target/velt/`,
+ * e.g. by `velt dev --exe`) first, then the rest by pid, newest first.
+ */
+export function sortProcesses(entries: ProcessEntry[]): ProcessEntry[] {
+  const isVelt = (e: ProcessEntry) => /target[\\/]velt[\\/]/.test(e.command);
+  return [...entries].sort((a, b) => Number(isVelt(b)) - Number(isVelt(a)) || b.pid - a.pid);
 }

@@ -126,7 +126,10 @@ does and what to write. A finding with a mechanical replacement (`f64` → `numb
 ## Visual Studio Code
 
 The extension adds syntax highlighting, starts `velt lsp`, and debugs Velt programs with F5
-([Debugging](debugging.md#vs-code)). Above `main` the server shows **▶ Run | Debug**.
+([Debugging](debugging.md#vs-code)). Above `main` the server shows **▶ Run | Debug** to a client
+that asks for these lenses (`"initializationOptions": {"runLenses": true}`, as the VS Code
+extension does): they run the extension's `velt.runFile` and `velt.debugFile` commands, so
+other editors don't get them.
 
 1. Build or install `velt` and put it on `PATH`, or set `velt.serverPath` to the executable.
 2. Build and install the extension (Node.js 18 or newer):

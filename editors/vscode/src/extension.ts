@@ -45,6 +45,8 @@ async function start(): Promise<void> {
     transport: TransportKind.stdio,
   };
   const clientOptions: LanguageClientOptions = {
+    // The "▶ Run | Debug" code lenses run this extension's commands.
+    initializationOptions: { runLenses: true },
     documentSelector: [
       { scheme: "file", language: "velt" },
       { scheme: "untitled", language: "velt" },

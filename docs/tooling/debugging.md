@@ -9,7 +9,7 @@ builds and debugs with nothing to configure ([VS Code](#vs-code)).
 
 | Build | Line info (`.vlt` file:line) | Use it for |
 |---|---|---|
-| `velt build` / `velt run` (Cranelift, the debug default) | yes on Linux and macOS; function symbols on Windows | stepping, breakpoints, backtraces |
+| `velt build` / `velt run` (Cranelift, the debug default) | yes on Linux and macOS; on Windows function symbols only | stepping, breakpoints, backtraces |
 | `velt build --backend llvm` | yes, unoptimized | stepping, breakpoints, backtraces |
 | `velt build --release -g` | yes, optimized (LLVM when clang is installed) | profiling, crash addresses |
 | `velt dev --exe` | as `velt build` | attaching to a running version |
@@ -54,6 +54,11 @@ needed), shows build errors in the *Problems* view, and starts the debugger on t
 the build reports. It picks the first installed of CodeLLDB, LLDB DAP and C/C++; the
 `velt.debug.engine` setting chooses one.
 
+**Windows:** the default build has no line information yet, so breakpoints in `.vlt` files do
+not bind (the extension warns). With clang installed, add `"buildArgs": ["--backend", "llvm"]` to
+the configuration: that build has line information (a `.pdb`), which the C/C++ extension's
+Visual Studio debugger reads.
+
 A `launch.json` is optional. `velt new` and `velt init` write one, `velt init --editor vscode`
 adds one to an existing package (it keeps files that exist), and so does **Velt: Generate
 launch.json**:
@@ -73,9 +78,11 @@ A `velt` configuration takes:
 | `program` | the executable to debug (default: the one `velt build` makes) |
 | `args`, `env`, `cwd` | the program's arguments, environment and working directory |
 | `build` | `false` skips `velt build` (then set `program`) |
+| `buildArgs` | extra `velt build` options, e.g. `["--backend", "llvm"]` |
 | `stopOnEntry` | stop before `main` runs |
 
-`"request": "attach"` with `"pid": "${command:pickProcess}"` attaches to a running program.
+`"request": "attach"` with `"pid": "${command:pickProcess}"` attaches to a running program; the
+picker lists Velt programs (built into `target/velt/`) first.
 `editors/vscode/templates/` has a `launch.json` with each kind and a `tasks.json` for
 `velt dev --exe`.
 

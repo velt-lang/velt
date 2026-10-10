@@ -72,7 +72,8 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
   editors (the VS Code extension's F5 runs it): `{"executable", "debugInfo", "lldbScript",
   "diagnostics", "errors", "warnings"}`. `executable` is the absolute path of the program
   (`null` if the build failed or made none, as with `--emit obj`); `debugInfo` says whether it
-  carries debug info; `lldbScript` is the toolchain's LLDB script for Velt values
+  has line information for debuggers (`false` for the default build on Windows, which has
+  none yet); `lldbScript` is the toolchain's LLDB script for Velt values
   (`share/velt/lldb/velt_lldb.py`, `null` if missing); the diagnostics are those of
   [`velt check --json`](#velt-check). It exits like `velt build`.
 - `--report numbers` lists, on stderr, the `number` variables assigned inside loops that the
@@ -187,7 +188,7 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
 ```
 velt new <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init [--template <t>] [--name <name>] [--force]
-velt init --editor vscode
+velt init --editor vscode [--dir <dir>]
 ```
 
 | Template | What you get |
@@ -206,7 +207,7 @@ Packages also get `.vscode/launch.json`, so F5 in VS Code builds and debugs the 
 `.vscode/extensions.json`, which recommends the Velt and CodeLLDB extensions
 ([Debugging](debugging.md#vs-code)); existing ones are kept. `velt init --editor vscode` adds
 only those two files, to the root of the current package (or to the current directory outside
-a package), and never overwrites one.
+a package, or to `--dir`), and never overwrites one.
 
 ## `velt doc`
 
@@ -293,8 +294,8 @@ target packs (`velt target`), the WebAssembly
 linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, the
 debugger scripts (`share/velt/lldb/velt_lldb.py`, optional), that `VELT_HOME` is writable, and
 which toolchain version runs and why (`velt toolchain`), then compiles and runs a hello world
-(debug, plus release through LLVM when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
-It exits with 0 when every required check passes.
+(debug, plus release through LLVM when clang is found). Problems are marked `✗` (required) or
+`!` (optional) with a `fix:` hint. It exits with 0 when every required check passes.
 
 ```
 $ velt doctor

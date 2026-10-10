@@ -284,11 +284,19 @@ fn completion_after_a_dot_lists_members() {
     client.shutdown();
 }
 
-/// "▶ Run" and "Debug" sit above `main`, with the document as the commands' argument; a module
-/// without `main` gets none.
+/// "▶ Run" and "Debug" sit above `main`, with the document as the commands' argument, for a
+/// client that asks for them (the VS Code extension, which has the commands); a module without
+/// `main` gets none.
 #[test]
 fn code_lenses_run_and_debug_main() {
-    let (mut client, app) = open_app();
+    let mut client = Client::start_with(json!({
+        "capabilities": {},
+        "initializationOptions": { "runLenses": true },
+    }));
+    assert!(client.init["capabilities"]["codeLensProvider"].is_object());
+    let app = uri("nav_app.vlt");
+    client.open(&uri("nav_util.vlt"), UTIL);
+    client.open(&app, APP);
     let params = json!({ "textDocument": { "uri": app } });
     let lenses = client.request("textDocument/codeLens", params);
     let main_line = APP
@@ -322,5 +330,18 @@ fn code_lenses_run_and_debug_main() {
         json!({ "textDocument": { "uri": util } }),
     );
     assert_eq!(none, json!([]));
+    client.shutdown();
+}
+
+/// Other clients (Neovim, Helix, Zed) don't have the lenses' commands, so they get none.
+#[test]
+fn plain_clients_get_no_code_lenses() {
+    let (mut client, app) = open_app();
+    assert!(client.init["capabilities"]["codeLensProvider"].is_null());
+    let r = client.request_raw(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": app } }),
+    );
+    assert!(r.response_result.is_err());
     client.shutdown();
 }

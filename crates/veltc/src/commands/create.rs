@@ -56,11 +56,18 @@ pub fn init_package(name: Option<&str>, template: Template, force: bool) -> Resu
     Ok(())
 }
 
-/// `velt init --editor <e>`: the editor's files at the root of the current package (or in the
-/// current directory outside a package), keeping the ones that exist.
-pub fn init_editor(editor: Editor) -> Result<(), String> {
-    let cwd = current_dir()?;
-    let root = vpm::manifest::find_package_root(&cwd).unwrap_or(cwd);
+/// `velt init --editor <e> [--dir <d>]`: the editor's files in `dir` (an editor names its
+/// workspace folder), else at the root of the current package (or in the current directory
+/// outside a package), keeping the ones that exist.
+pub fn init_editor(editor: Editor, dir: Option<&Path>) -> Result<(), String> {
+    let root = match dir {
+        Some(dir) if dir.is_dir() => dir.to_path_buf(),
+        Some(dir) => return Err(format!("`{}` is not a directory", dir.display())),
+        None => {
+            let cwd = current_dir()?;
+            vpm::manifest::find_package_root(&cwd).unwrap_or(cwd)
+        }
+    };
     let written = vpm::scaffold::write_files(&root, &editor.files(), false)?;
     if !written.created.is_empty() {
         style::status(

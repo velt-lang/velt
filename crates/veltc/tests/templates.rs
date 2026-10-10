@@ -1,6 +1,7 @@
 //! Project scaffolding through the `velt` binary: every `velt new --template` project builds,
-//! passes `velt test` and is formatted; `velt init` refuses to overwrite; `velt clean`; and the
-//! CLI polish (help, completions, typo suggestions, colors, errors for common mistakes).
+//! passes `velt test` and is formatted; `velt init` refuses to overwrite; `velt clean`; what
+//! editors read (`velt build --json`); and the CLI polish (help, completions, typo suggestions,
+//! colors, errors for common mistakes).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -265,11 +266,68 @@ fn init_editor_adds_only_missing_vscode_files() {
     // Nothing else of a package is (re)written.
     assert!(!s.path("app/src/deep/package.vlt").exists());
 
+    // With --dir (VS Code names its workspace folder, e.g. `app/src`): exactly there.
+    s.ok("app", &["init", "--editor", "vscode", "--dir", "src"]);
+    assert!(s.path("app/src/.vscode/launch.json").is_file());
+    assert!(s
+        .fail("app", &["init", "--editor", "vscode", "--dir", "nope"])
+        .contains("not a directory"));
+
     // Outside a package: into the current directory.
     std::fs::create_dir_all(s.path("loose")).unwrap();
     s.ok("loose", &["init", "--editor", "vscode"]);
     assert!(s.path("loose/.vscode/launch.json").is_file());
     assert!(!s.path("loose/package.vlt").exists());
+}
+
+/// `velt build --json` (what VS Code's F5 runs): the program's path on success; on failure exit
+/// 1, no program, and the errors with their locations (`null` for a non-source failure).
+#[test]
+fn build_json_reports_the_program_or_the_errors() {
+    let s = sandbox();
+    let json = |o: &Output| -> serde_json::Value {
+        serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(o)))
+    };
+    std::fs::write(s.path("ok.vlt"), "function main() {}\n").unwrap();
+    let o = s.velt("", &["build", "ok.vlt", "--json"]);
+    assert!(o.status.success(), "{}", text(&o));
+    let out = json(&o);
+    assert_eq!(out["errors"], 0, "{out}");
+    let exe = Path::new(
+        out["executable"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{out}")),
+    );
+    assert!(exe.is_absolute() && exe.is_file(), "{out}");
+
+    std::fs::write(
+        s.path("bad.vlt"),
+        "function main() {\n  const x: string = 1;\n}\n",
+    )
+    .unwrap();
+    let o = s.velt("", &["build", "bad.vlt", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = json(&o);
+    assert_eq!(out["executable"], serde_json::Value::Null, "{out}");
+    assert!(out["errors"].as_u64() >= Some(1), "{out}");
+    let loc = &out["diagnostics"][0]["location"];
+    assert_eq!(
+        (loc["file"].as_str(), loc["line"].as_u64()),
+        (Some("bad.vlt"), Some(2)),
+        "{out}"
+    );
+    assert!(loc["column"].as_u64().is_some(), "{out}");
+
+    let o = s.velt("", &["build", "missing.vlt", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = json(&o);
+    assert_eq!(out["executable"], serde_json::Value::Null, "{out}");
+    let d = &out["diagnostics"][0];
+    assert_eq!(d["location"], serde_json::Value::Null, "{out}");
+    assert!(
+        d["message"].as_str().unwrap().contains("missing.vlt"),
+        "{out}"
+    );
 }
 
 #[test]

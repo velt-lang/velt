@@ -16,7 +16,10 @@ import {
   EngineSetting,
   failureMessages,
   parseBuildResult,
+  parsePs,
+  parseTasklist,
   pickEngine,
+  sortProcesses,
   RECOMMENDED_EXTENSION,
   VeltConfig,
 } from "./debugConfig";
@@ -40,6 +43,8 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("velt.debugFile", (uri?: vscode.Uri | string) => debugFile(fileOf(uri))),
     vscode.commands.registerCommand("velt.runFile", (uri?: vscode.Uri | string) => runFile(fileOf(uri))),
     vscode.commands.registerCommand("velt.generateLaunchJson", () => generateLaunchJson()),
+    // `${command:pickProcess}` in a `velt` configuration (package.json maps it here).
+    vscode.commands.registerCommand("velt.pickProcess", () => pickProcess()),
   );
 }
 
@@ -110,6 +115,13 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
       }
       program = program ?? built.executable ?? undefined;
       lldbScript = built.lldbScript;
+      if (built.debugInfo === false) {
+        void vscode.window.showWarningMessage(
+          "Velt: this build has no line information, so breakpoints will not bind. On Windows the " +
+            'default build has none yet: add "buildArgs": ["--backend", "llvm"] (needs clang) to the ' +
+            "launch configuration.",
+        );
+      }
     }
     if (velt.request === "launch" && !program) {
       void vscode.window.showErrorMessage("Velt: nothing to debug (set `program`, or `build: true`).");
@@ -237,17 +249,43 @@ async function debugFile(file: string | undefined): Promise<void> {
   });
 }
 
-// "Run File": `velt run <file>` in a terminal.
+// "Run File": `velt run <file>` in a terminal. The terminal runs velt itself, not a shell, so
+// nothing in the file name is interpreted.
 async function runFile(file: string | undefined): Promise<void> {
   if (!file) {
     void vscode.window.showErrorMessage("Velt: open a .vlt file to run it.");
     return;
   }
-  await vscode.window.activeTextEditor?.document.save();
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.scheme === "file" && d.uri.fsPath === file);
+  if (doc?.isDirty) {
+    await doc.save();
+  }
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
-  const terminal = vscode.window.createTerminal({ name: "Velt", cwd: folder?.uri.fsPath ?? path.dirname(file) });
+  const terminal = vscode.window.createTerminal({
+    name: `Velt: ${path.basename(file)}`,
+    cwd: folder?.uri.fsPath ?? path.dirname(file),
+    shellPath: veltCommand(),
+    shellArgs: ["run", file],
+  });
   terminal.show();
-  terminal.sendText(`${quote(veltCommand())} run ${quote(file)}`);
+}
+
+// The attach picker: running processes, Velt programs (`target/velt/...`) first; the pid.
+async function pickProcess(): Promise<string | undefined> {
+  const windows = process.platform === "win32";
+  const output = windows
+    ? await run("tasklist", ["/fo", "csv", "/nh"], process.cwd())
+    : await run("ps", ["-A", "-o", "pid=,args="], process.cwd());
+  if (output.error) {
+    void vscode.window.showErrorMessage(`Velt: cannot list processes (${output.error}).`);
+    return undefined;
+  }
+  const entries = sortProcesses(windows ? parseTasklist(output.stdout) : parsePs(output.stdout));
+  const picked = await vscode.window.showQuickPick(
+    entries.map((e) => ({ label: e.command, description: String(e.pid), pid: e.pid })),
+    { placeHolder: "Attach to which process?", matchOnDescription: true },
+  );
+  return picked ? String(picked.pid) : undefined;
 }
 
 // "Generate launch.json": `velt init --editor vscode` in the workspace folder (it keeps files that
@@ -258,7 +296,11 @@ async function generateLaunchJson(): Promise<void> {
     void vscode.window.showErrorMessage("Velt: open a folder first.");
     return;
   }
-  const output = await run(veltCommand(), ["init", "--editor", "vscode"], folder.uri.fsPath);
+  const output = await run(
+    veltCommand(),
+    ["init", "--editor", "vscode", "--dir", folder.uri.fsPath],
+    folder.uri.fsPath,
+  );
   if (output.error) {
     void vscode.window.showErrorMessage(`Velt: could not run velt (${output.error}).`);
     return;
@@ -286,8 +328,4 @@ function activeVeltFile(): string | undefined {
     return doc.fileName;
   }
   return undefined;
-}
-
-function quote(arg: string): string {
-  return /^[\w./:\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`;
 }

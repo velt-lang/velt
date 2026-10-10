@@ -58,11 +58,11 @@ fn install(root: &Path) -> Option<PathBuf> {
             std::fs::copy(&lib, prefix.join("lib").join(name)).unwrap();
         }
     }
-    let share = prefix.join("share/velt/lldb");
+    let share = prefix.join("share").join("velt").join("lldb");
     std::fs::create_dir_all(&share).unwrap();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::fs::copy(
-        repo.join("editors/lldb/velt_lldb.py"),
+        repo.join("editors").join("lldb").join("velt_lldb.py"),
         share.join("velt_lldb.py"),
     )
     .unwrap();
@@ -116,7 +116,9 @@ fn installed_prefix_runs_doctor_and_programs() {
         report.contains(&std.display().to_string()),
         "std not from the prefix:\n{report}"
     );
-    let script = prefix.join("share/velt/lldb/velt_lldb.py");
+    let script = ["share", "velt", "lldb", "velt_lldb.py"]
+        .iter()
+        .fold(prefix.clone(), |p, part| p.join(part));
     assert!(
         report.contains(&script.display().to_string()),
         "debugger scripts not from the prefix:\n{report}"

@@ -67,13 +67,14 @@ Install a debugger extension: [CodeLLDB](https://marketplace.visualstudio.com/it
 (a folder with `package.vlt`) or on an open `.vlt` file: the extension runs `velt build --json`,
 shows build errors in *Problems*, and starts the debugger on the program. No `launch.json` is
 needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes one to customize
-(`args`, `env`, `cwd`, `program`, `file`, `build`, `stopOnEntry`):
+(`args`, `env`, `cwd`, `program`, `file`, `build`, `buildArgs`, `stopOnEntry`):
 
 ```json
 { "type": "velt", "request": "launch", "name": "Debug", "args": ["--port", "8080"] }
 ```
 
-`velt new` already adds it. `templates/` has examples, including attaching to a program that
+`velt new` already adds it. On Windows the default build has no line information yet; add
+`"buildArgs": ["--backend", "llvm"]` (needs clang). `templates/` has examples, including attaching to a program that
 `velt dev --exe` restarts on every change.
 
 ## Settings

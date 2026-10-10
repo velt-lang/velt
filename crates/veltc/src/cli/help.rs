@@ -83,20 +83,21 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Turn the current directory into a package from a template",
         usage: &[
             "init [--template <name>] [--name <name>] [--force]",
-            "init --editor vscode",
+            "init --editor vscode [--dir <dir>]",
         ],
         about: "Like `velt new`, in the current directory. The package is named after the \
                 directory unless --name is given. Existing files are never overwritten without \
                 --force (an existing README.md is kept and `target/` is added to an existing \
                 .gitignore). With --editor, adds only the editor's files (for VS Code \
                 `.vscode/launch.json`, so F5 debugs the program, and `.vscode/extensions.json`) \
-                to the current package, or to the current directory outside one, keeping \
-                existing files.",
+                to the current package, or to the current directory outside one (or to --dir), \
+                keeping existing files.",
         options: &[
             TEMPLATE,
             ("--name <name>", "package name (default: the directory's name)"),
             ("--force", "overwrite files the template would create"),
             ("--editor <name>", "only add the editor's project files (vscode)"),
+            ("--dir <dir>", "with --editor: write them into this directory"),
         ],
         examples: &[
             ("velt init", "hello world in the current directory"),

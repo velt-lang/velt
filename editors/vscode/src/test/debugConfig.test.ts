@@ -10,7 +10,10 @@ import {
   failureMessages,
   importScript,
   parseBuildResult,
+  parsePs,
+  parseTasklist,
   pickEngine,
+  sortProcesses,
   VeltConfig,
 } from "../debugConfig";
 
@@ -33,6 +36,12 @@ test("build arguments: the package, or one file", () => {
   const base: VeltConfig = { type: "velt", request: "launch", name: "Debug" };
   assert.deepEqual(buildArgs(base), ["build", "--json"]);
   assert.deepEqual(buildArgs({ ...base, file: "/w/app.vlt" }), ["build", "/w/app.vlt", "--json"]);
+  assert.deepEqual(buildArgs({ ...base, buildArgs: ["--backend", "llvm"] }), [
+    "build",
+    "--backend",
+    "llvm",
+    "--json",
+  ]);
 });
 
 const failed = JSON.stringify({
@@ -101,10 +110,28 @@ test("cpptools: lldb on macOS, gdb on Linux, the Visual Studio debugger on Windo
 test("attach passes the process id", () => {
   const attach: VeltConfig = { type: "velt", request: "attach", name: "Attach", pid: 42 };
   assert.equal(concreteConfig("codelldb", attach, undefined, null, "linux").pid, 42);
+  // `${command:pickProcess}` gives a string.
+  assert.equal(concreteConfig("codelldb", { ...attach, pid: "7" }, undefined, null, "linux").pid, 7);
   assert.equal(concreteConfig("lldb-dap", attach, undefined, null, "linux").pid, 42);
   assert.equal(concreteConfig("cpptools", attach, undefined, null, "linux").processId, "42");
 });
 
 test("script paths are quoted for LLDB", () => {
   assert.equal(importScript('C:\\Velt "x"\\velt_lldb.py'), 'command script import "C:\\\\Velt \\"x\\"\\\\velt_lldb.py"');
+});
+
+test("the attach picker lists processes, Velt programs first", () => {
+  const ps = parsePs("    1 /sbin/launchd\n  812 /w/target/velt/dev/app-3 --port 8080\n  900 zsh\n\n");
+  assert.deepEqual(ps, [
+    { pid: 1, command: "/sbin/launchd" },
+    { pid: 812, command: "/w/target/velt/dev/app-3 --port 8080" },
+    { pid: 900, command: "zsh" },
+  ]);
+  assert.deepEqual(sortProcesses(ps).map((e) => e.pid), [812, 900, 1]);
+  const tasks = parseTasklist('"System","4","Services","0","152 K"\r\n"app.exe","5120","Console","1","9,000 K"\r\n');
+  assert.deepEqual(tasks, [
+    { pid: 4, command: "System" },
+    { pid: 5120, command: "app.exe" },
+  ]);
+  assert.deepEqual(sortProcesses([{ pid: 2, command: "C:\\w\\target\\velt\\app.exe" }, { pid: 3, command: "x" }]).map((e) => e.pid), [2, 3]);
 });

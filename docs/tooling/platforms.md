@@ -190,8 +190,8 @@ anywhere with the musl target packs.
 Pass options through the pipe with `sh -s --`, for example
 `curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.0`; in PowerShell set the environment
 variables before `irm ... | iex`. Re-running the installer upgrades (or downgrades) in place: it
-replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix. To uninstall, delete the prefix and the `PATH`
-line.
+replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix. To uninstall, delete the prefix
+and the `PATH` line.
 
 `PATH`: `get-velt.sh` appends `export PATH="<prefix>/bin:$PATH"` to `~/.profile`, to
 `~/.bashrc`, `~/.bash_profile` and `~/.zshrc` when they exist (or `~/.zshrc` when your shell is
@@ -218,8 +218,9 @@ link kits; `-NoBundledLinker`/`--no-bundled-linker` leaves both out. On Windows 
 `velt.exe` and `velt_rt_shared.dll` with the bundled linker, so the toolchain itself needs no
 Visual C++ redistributable. The default
 prefix is `%LOCALAPPDATA%\velt` on Windows and `~/.velt/toolchain` on Linux and macOS. The
-installer replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix and prints the command that adds
-`<prefix>/bin` to `PATH`; it never edits `PATH` itself. An unpacked archive also works in place.
+installer replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix and prints the command
+that adds `<prefix>/bin` to `PATH`; it never edits `PATH` itself. An unpacked archive also works
+in place.
 
 ## Windows notes
 

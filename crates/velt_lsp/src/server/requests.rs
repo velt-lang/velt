@@ -32,8 +32,8 @@ use crate::{
     semantic_tokens, signature_help, symbols,
 };
 
-/// What the server supports.
-pub fn capabilities() -> ServerCapabilities {
+/// What the server supports; code lenses only for a client that runs their commands.
+pub fn capabilities(run_lenses: bool) -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
@@ -62,7 +62,7 @@ pub fn capabilities() -> ServerCapabilities {
             ..Default::default()
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
-        code_lens_provider: Some(CodeLensOptions {
+        code_lens_provider: run_lenses.then_some(CodeLensOptions {
             resolve_provider: Some(false),
         }),
         signature_help_provider: Some(SignatureHelpOptions {
@@ -189,7 +189,7 @@ impl Server<'_> {
                 let p: lsp_types::CodeActionParams = parse(params)?;
                 Ok(json(self.code_actions(&p)))
             }
-            CodeLensRequest::METHOD => {
+            CodeLensRequest::METHOD if self.run_lenses => {
                 let p: lsp_types::CodeLensParams = parse(params)?;
                 let uri = p.text_document.uri;
                 let lenses = self.analysis(&uri).map(|a| code_lens::code_lenses(a, &uri));

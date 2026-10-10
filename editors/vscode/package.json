@@ -26,6 +26,12 @@
     "onDebugInitialConfigurations",
     "workspaceContains:package.vlt"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Velt runs the `velt` executable (which `velt.serverPath` may name) to analyze, build and debug the workspace."
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -145,6 +151,9 @@
         "languages": [
           "velt"
         ],
+        "variables": {
+          "pickProcess": "velt.pickProcess"
+        },
         "configurationAttributes": {
           "launch": {
             "properties": {
@@ -181,6 +190,14 @@
                 "type": "boolean",
                 "default": true,
                 "description": "Build with `velt build` before debugging."
+              },
+              "buildArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (line information on Windows, which the default build lacks yet)."
               },
               "stopOnEntry": {
                 "type": "boolean",

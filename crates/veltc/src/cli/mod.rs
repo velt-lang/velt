@@ -157,8 +157,12 @@ pub enum Command {
         /// Overwrite existing files.
         force: bool,
     },
-    /// `velt init --editor <e>`: only the editor's files, in the current package (or directory).
-    InitEditor(Editor),
+    /// `velt init --editor <e> [--dir <d>]`: only the editor's files, in `dir`, else at the root
+    /// of the current package (or in the current directory).
+    InitEditor {
+        editor: Editor,
+        dir: Option<PathBuf>,
+    },
     /// `velt clean`: remove the package's `target/`.
     Clean,
     /// `velt completions <shell>`.
