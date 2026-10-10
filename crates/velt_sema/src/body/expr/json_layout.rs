@@ -132,7 +132,13 @@ impl FnCx<'_, '_> {
     }
 
     /// A call of the prelude's helper `name` (a function the compiler calls itself).
-    fn json_helper_call(&mut self, name: &str, args: Vec<hir::Expr>, ty: TyId, span: Span) -> hir::Expr {
+    fn json_helper_call(
+        &mut self,
+        name: &str,
+        args: Vec<hir::Expr>,
+        ty: TyId,
+        span: Span,
+    ) -> hir::Expr {
         let Some(d) = self.cx.prelude_fn(name) else {
             self.cx.err(
                 "`JSON.stringify` with a replacer or `space` needs the prelude (std/prelude)",

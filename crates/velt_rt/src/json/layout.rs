@@ -216,7 +216,12 @@ mod tests {
     fn lay(text: &str, keys: Option<&[&str]>, indent: &str) -> String {
         let keys: Option<Vec<Vec<u8>>> =
             keys.map(|ks| ks.iter().map(|k| k.as_bytes().to_vec()).collect());
-        String::from_utf8(relayout(text.as_bytes(), keys.as_deref(), indent.as_bytes())).unwrap()
+        String::from_utf8(relayout(
+            text.as_bytes(),
+            keys.as_deref(),
+            indent.as_bytes(),
+        ))
+        .unwrap()
     }
 
     #[test]
