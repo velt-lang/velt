@@ -143,6 +143,11 @@ pub(crate) struct Ctx<'m> {
     /// Captured variables reported as modified by a closure that crosses threads, with the
     /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
     pub reported_captures: Vec<(String, velt_common::Span)>,
+    /// The patterns of `let` declarations that take a value apart (`let [a, b] = …`) and of
+    /// `for (let … of …)` and `for await (let … of …)` loops: the variables declared in them
+    /// cannot yet live in a cell made for a closure created inside a closure
+    /// (`ownership::cells`, #799).
+    pub pattern_bindings: Vec<velt_common::Span>,
     /// Spans of the sync arrows passed to `serve` that are checked as async ones
     /// (`body/expr/callback.rs` `thread_arrow`): diagnostics call them handlers, as written.
     pub sync_handlers: Vec<velt_common::Span>,
@@ -263,6 +268,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             callback_wrappers: Default::default(),
             reported_captures: vec![],
+            pattern_bindings: vec![],
             sync_handlers: vec![],
             thread_adapters: vec![],
             ide: None,

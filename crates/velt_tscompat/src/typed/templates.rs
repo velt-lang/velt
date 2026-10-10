@@ -1,6 +1,6 @@
-//! Rules on turning values into text: template literals of objects (`object-in-template`) and
-//! of values that may be `null` (`nullable-in-template`), and `JSON.stringify` of a `Map`
-//! (`json-map`; a `Set` has no JSON form in Velt).
+//! Rules on turning values into text: template literals of errors and promises
+//! (`object-in-template`) and of values that may be `null` (`nullable-in-template`), and
+//! `JSON.stringify` of a `Map` (`json-map`; a `Set` has no JSON form in Velt).
 
 use std::collections::HashSet;
 
@@ -13,21 +13,24 @@ use crate::Severity;
 
 /// How a template literal prints a value, compared with JavaScript.
 enum Printed {
-    /// The same in both (numbers, strings, booleans, enums, a class's own `toString()`), or
-    /// unknown (a generic parameter).
+    /// The same in both: primitives, enums, arrays, and objects, which both write as JS's
+    /// `String(x)` does (a class's `toString()`, own or inherited, else `[object Object]`, or
+    /// `[object Map]` for std's classes); or unknown (a generic parameter).
     Same,
     /// The same, except that JavaScript prints `undefined` where the value is `undefined`.
     Nullable,
-    /// Velt prints the contents; JavaScript `[object Object]`.
-    Contents,
+    /// An `Error`: Velt prints it as `console.log` does, JavaScript as `Error: message`.
+    Error,
+    /// A `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]`.
+    Promise,
 }
 
 /// `${x}` in a template literal.
 pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
     for e in exprs {
         let Some(ty) = t.type_of(e) else { continue };
-        match printed(&ty, t, 0) {
-            Printed::Same => {}
+        let (what, velt, js, instead) = match printed(&ty, t, 0) {
+            Printed::Same => continue,
             // Only a value that is `undefined` in JavaScript prints differently: a `null`
             // prints `null` in both.
             Printed::Nullable => {
@@ -38,48 +41,40 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
                     "nullable-in-template",
                     Severity::Warning,
                     e.span,
-                    "`${…}` of a value that may be `undefined` in JavaScript: it prints \
-                     `undefined` there, `null` in Velt"
+                    "`${…}` of a value that may be `undefined` in JavaScript: it prints                      `undefined` there, `null` in Velt"
                         .into(),
                     &[
                         why,
                         "say what to print for nothing: `${x ?? \"\"}`, or test the value first",
                     ],
                     None,
-                )
-            }
-            Printed::Contents => {
-                let what = describe(&ty, t);
-                t.cx.report(
-                    "object-in-template",
-                    Severity::Error,
-                    e.span,
-                    format!("`${{…}}` of {what} prints its contents in Velt, not in JavaScript"),
-                    &[
-                        "Velt formats an object as `console.log` does (`P { x: 1 }`); \
-                         JavaScript calls `toString()`, which gives `[object Object]`",
-                        "format it yourself: `xs.join(\", \")`, a field (`${p.name}`), or a \
-                         `toString()` method the class declares itself, which both call",
-                    ],
-                    None,
                 );
+                continue;
             }
-        }
-    }
-}
-
-/// `an array`, `an object`, `` a value of type `User` ``.
-fn describe(ty: &TypeRef, t: &Typed) -> String {
-    match t.view(ty) {
-        TypeView::Nullable(inner) => describe(&inner, t),
-        TypeView::Array(_) | TypeView::Tuple(_) => "an array".into(),
-        TypeView::Map(..) => "a `Map`".into(),
-        TypeView::Set(_) => "a `Set`".into(),
-        TypeView::Record => "an object".into(),
-        TypeView::Named(n) => format!("a value of type `{}`", n.name),
-        TypeView::Promise(_) => "a `Promise`".into(),
-        TypeView::Fn => "a function".into(),
-        _ => "a value that may be an object".into(),
+            Printed::Error => (
+                "an error",
+                "`Error { message: 'boom' }`",
+                "`Error: boom`",
+                "write its message: `${e.message}`",
+            ),
+            Printed::Promise => (
+                "a `Promise`",
+                "`Promise { <pending> }`",
+                "`[object Promise]`",
+                "`await` it and write its value",
+            ),
+        };
+        t.cx.report(
+            "object-in-template",
+            Severity::Error,
+            e.span,
+            format!("`${{…}}` of {what} prints differently in Velt and JavaScript"),
+            &[
+                &format!("Velt writes it as `console.log` does ({velt}); JavaScript as {js}"),
+                instead,
+            ],
+            None,
+        );
     }
 }
 
@@ -90,30 +85,30 @@ fn printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
     match t.view(ty) {
         TypeView::Nullable(inner) => match printed(&inner, t, depth + 1) {
             Printed::Same | Printed::Nullable => Printed::Nullable,
-            Printed::Contents => Printed::Contents,
+            p => p,
         },
         TypeView::Union(members) => {
             members
                 .iter()
                 .map(|m| printed(m, t, depth + 1))
                 .fold(Printed::Same, |acc, p| match (acc, p) {
-                    (Printed::Contents, _) | (_, Printed::Contents) => Printed::Contents,
+                    (Printed::Error, _) | (_, Printed::Error) => Printed::Error,
+                    (Printed::Promise, _) | (_, Printed::Promise) => Printed::Promise,
                     (Printed::Nullable, _) | (_, Printed::Nullable) => Printed::Nullable,
                     _ => Printed::Same,
                 })
         }
-        // An array is written as JS writes it (`1,2`, #757; an object in it as `[object Object]`),
-        // or is a compile error in Velt (elements with their own `toString()`).
-        TypeView::Array(_) | TypeView::Tuple(_) => Printed::Same,
-        TypeView::Named(n) if n.kind == NamedKind::Enum => Printed::Same,
-        TypeView::Named(_) if t.program.analysis.declares_method(ty, "toString") => Printed::Same,
-        TypeView::Map(..)
-        | TypeView::Set(_)
-        | TypeView::Record
-        | TypeView::Named(_)
-        | TypeView::Promise(_)
-        | TypeView::Shared(_)
-        | TypeView::Fn => Printed::Contents,
+        // An error class's own `toString()` is called in both.
+        TypeView::Named(n)
+            if n.kind == NamedKind::Class
+                && t.program.analysis.is_error(ty)
+                && !t.program.analysis.declares_method(ty, "toString") =>
+        {
+            Printed::Error
+        }
+        TypeView::Promise(_) => Printed::Promise,
+        // Everything else is written as JS writes it, or (a function) is a compile error in
+        // Velt.
         _ => Printed::Same,
     }
 }

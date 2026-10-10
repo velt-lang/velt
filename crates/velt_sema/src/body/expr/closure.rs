@@ -471,6 +471,16 @@ impl FnCx<'_, '_> {
             generator,
             span,
         } = c;
+        // A variable this closure modifies that the enclosing closure captured is modified by
+        // that one too (#913): a handler or timer callback whose own closure assigns its capture
+        // must stay on its task (`crate::ownership::local_async`).
+        for c in &frame.captures {
+            if let Some(at) = c.mutated_at {
+                if let Some(p) = self.f.captures.iter_mut().find(|p| p.inner == c.outer) {
+                    p.mutated_at.get_or_insert(at);
+                }
+            }
+        }
         let order = local_order(&frame, &captures, &declared);
         let mut map = vec![LocalId(0); order.len()];
         for (new, old) in order.iter().enumerate() {
