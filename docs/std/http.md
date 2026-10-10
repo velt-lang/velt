@@ -54,11 +54,65 @@ it throws.
   not the caller's object (unlike Node, which shares it; #854). A captured resource
   (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
   ([Async](../reference/async.md#thread-safety)).
-- **Known problem:** a sync callback stored in an object the handler captured, which modifies
-  what it captured itself (`i.onChange = (v) => { last = v; }`, then `i.onChange("x")` in the
-  handler), is called by several requests at once on the same captured variables. It is not
-  rejected and can crash ([#873](https://github.com/velt-lang/velt/issues/873)); until it is
-  fixed, capture such state as `shared(...)`.
+- That includes a variable assigned by a sync callback the handler calls (or by a closure that
+  callback makes): a function value stored in something it captured (`i.onChange("x")` with
+  `i.onChange = (v) => { last = v; }`), in an array (`cbs[0]()`), a `Map`, a generic box or a
+  `T | null` field, called by a method (`this.cb()`), passed to `setTimeout`, or returned by a
+  function (`const next = makeCounter()`). Requests would all assign that one variable at the
+  same time, so it is an error that names the call and the variable, and shows the variable's
+  declaration rewritten to hold one value every request shares, as Node does:
+
+  ```
+  error: this handler calls `i.onChange`, which changes `last`; requests run at the same time
+    = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+    = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`
+  ```
+
+  A 64-bit integer goes in `shared(0)` itself (`.add(1)`, `.get()`, `.set(v)`), a `number` or
+  `boolean` in `shared(new Mutex(0))`. Callbacks that only read what they captured, functions
+  the handler calls that change only their own variables, and closures a request makes for
+  itself are not affected. Sharing such a variable without `shared(...)` is planned (#885).
+  Changing an object's fields or elements through such a callback (`log.push(v)`) is not an
+  error, but changes each request's copy (#854).
+
+  Callbacks stored in the heap are followed by type: one stored in an object the handler
+  reaches, or of the type of one it calls, counts as reached, whether or not anything reads the
+  field holding it. Capturing an object that holds such a callback is an error even when the
+  handler never calls it (`w.onClick = () => { clicks++; }` while the handler reads only
+  `w.name`, or a callback in a `[Symbol.dispose]` field): each request's copy of `w` copies the
+  callback, and those copies would share the variable's cell across threads. The check errs on
+  the side of rejecting, since a missed case can crash: a callback of a type the handler calls
+  is an error even when the handler never gets to it. That includes one
+  stored in another object of the same class (`other.onChange = …` while the handler calls
+  `i.onChange`), in another emitter (`startup.on(() => { ready = true; })` while the handler
+  calls `requests.emit(…)` on an `Emitter` of the same class), one in an array only `main` uses
+  (`steps.push(() => { done++; })` while the handler reaches any `() => void` value), one stored
+  by a function into an object passed to it (`setup(input)`), and one in a field any method
+  reads, even a method no request calls (`fire() { this.onChange("x"); }`). Share the variable
+  with `shared(...)` as the fix shows; the program then runs as in Node.
+
+  ```ts
+  import { serve } from "velt:http";
+
+  class Input {
+    onChange: (v: string) => void = (v) => {};
+  }
+
+  async function main() {
+    const last = shared(new Mutex<{ value: string }>({ value: "" }));
+    const i = new Input();
+    i.onChange = (v: string) => {
+      last.with((s) => {
+        s.value = `${v}${s.value.length}`;
+      });
+    };
+    const server = await serve({ port: 0 }, async (req) => {
+      i.onChange("x");
+      return new Response("ok");
+    });
+    await server.shutdown();
+  }
+  ```
 - A handler that throws gets a 500 response (`Internal Server Error`) and its error is printed to
   stderr, as in Deno and Bun. So does a response with an invalid header name or value.
 

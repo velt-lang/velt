@@ -26,7 +26,7 @@
 //! would invalidate a held reference is an error rather than undefined behaviour.
 
 mod sites;
-mod walk;
+pub(super) mod walk;
 
 use std::collections::{HashMap, HashSet};
 

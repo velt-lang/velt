@@ -1,8 +1,8 @@
-// An async handler calls a sync callback stored in a field of an object it captured; the
-// callback modifies its own capture. Requests share the handler's environment (and the
-// object), so concurrent requests update the callback's captured-variable cell at once: in a
-// release build at the default thread count this crashes in about one run in five. Fixed when
-// each request gets cells of its own for such callbacks (#873).
+// check: no leaks
+// An async handler calls a sync callback stored in a field of an object it captured, and the
+// callback changes state it shares with every request through `shared(new Mutex(...))`, the
+// fix the compiler proposes for a callback that assigns a captured variable (#873). Requests run
+// at the same time and take turns on the lock; the output matches Node's.
 import { serve } from "velt:http";
 
 class Input {
@@ -23,10 +23,12 @@ async function client(base: string, n: i64): Promise<i64> {
 }
 
 async function main() {
-  let last = "";
+  const last = shared(new Mutex({ value: "" }));
   const i = new Input();
   i.onChange = (v: string) => {
-    last = `${v}${last.length}`;
+    last.with((s) => {
+      s.value = `${v}${s.value.length}`;
+    });
   };
   const a = await serve({ port: 0 }, async (req) => {
     i.onChange("x");
@@ -41,5 +43,5 @@ async function main() {
     n += x;
   }
   await a.shutdown();
-  console.log(n, last.length);
+  console.log(n, last.with((s) => s.value.length));
 }
