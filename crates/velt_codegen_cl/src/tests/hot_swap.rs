@@ -238,3 +238,100 @@ fn repeated_swaps_keep_redirecting_old_code() {
         assert_eq!(call_capturing(loaded.main()), (0, want));
     }
 }
+
+/// Version `generation` of a program whose `velt_main` returns `run()`, which returns
+/// `answer()`: `answer` calls
+/// `helper_<generation>`, a function new in this version (its own new slot and trampoline),
+/// which returns `generation`. Earlier helpers stay, so every version is a swap.
+fn growing(generation: i64) -> Program {
+    let (mut pb, _) = ProgramBuilder::new();
+    let helpers: Vec<FuncId> = (1..=generation)
+        .map(|g| pb.add(constant_fn(&format!("helper_{g}"), g)))
+        .collect();
+    let mut fb = FuncBuilder::internal("answer", &[], I64);
+    let r = fb.local(I64);
+    let b = fb.block();
+    let next = fb.call(
+        b,
+        Callee::Func(helpers[helpers.len() - 1]),
+        vec![],
+        Some(Place::local(r)),
+    );
+    fb.term(next, Terminator::Return(copy_local(r)));
+    let answer = pb.add(fb.finish());
+    // `velt_main` and what it calls count as `main` (never swapped): `run` keeps `answer` out.
+    let mut fb = FuncBuilder::internal("run", &[], I64);
+    let r = fb.local(I64);
+    let b = fb.block();
+    let next = fb.call(b, Callee::Func(answer), vec![], Some(Place::local(r)));
+    fb.term(next, Terminator::Return(copy_local(r)));
+    let run = pb.add(fb.finish());
+    let (mut fb, b) = main_fb();
+    let got = fb.local(I64);
+    let next = fb.call(b, Callee::Func(run), vec![], Some(Place::local(got)));
+    let code = Rvalue::Cast(copy_local(got), I32);
+    let ret = fb.local(I32);
+    fb.assign(next, ret, code);
+    fb.term(next, Terminator::Return(copy_local(ret)));
+    pb.add(fb.finish());
+    pb.p
+}
+
+/// Swaps while other threads keep calling the running code (#880): every call runs whole
+/// code of some version (no fault, no torn state), and a call that starts after a swap
+/// returned runs that version or a newer one. Ordered by what the callers observe: each
+/// reads the published generation before its call.
+#[test]
+fn swaps_under_concurrent_calls() {
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+    const GENERATIONS: i64 = 120;
+    const CALLERS: usize = 4;
+    let mut session = DevSession::new(&stub_symbols());
+    let main = session.load(&growing(1)).expect("load").main();
+    let published = AtomicI64::new(1);
+    let done = AtomicBool::new(false);
+    let calling = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        let callers: Vec<_> = (0..CALLERS)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut calls = 0u64;
+                    while !done.load(Ordering::Acquire) {
+                        let at_least = published.load(Ordering::Acquire);
+                        let got = i64::from(main());
+                        assert!(
+                            (at_least..=GENERATIONS).contains(&got),
+                            "a call after swap {at_least} returned {got}"
+                        );
+                        if calls == 0 {
+                            calling.fetch_add(1, Ordering::AcqRel);
+                        }
+                        calls += 1;
+                    }
+                })
+            })
+            .collect();
+        /// Stops the callers however the swaps end (a failed assertion included).
+        struct Stop<'a>(&'a AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let stop = Stop(&done);
+        // Swap only once every caller is calling.
+        while calling.load(Ordering::Acquire) < CALLERS {
+            std::thread::yield_now();
+        }
+        for generation in 2..=GENERATIONS {
+            let outcome = session.reload(&growing(generation));
+            assert_eq!(outcome, Ok(swapped(2)), "generation {generation}");
+            published.store(generation, Ordering::Release);
+        }
+        drop(stop);
+        for caller in callers {
+            caller.join().expect("caller");
+        }
+    });
+    assert_eq!(i64::from(main()), GENERATIONS);
+}

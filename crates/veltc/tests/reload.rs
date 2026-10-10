@@ -246,7 +246,11 @@ impl Run<'_> {
             match get(port, path) {
                 Ok(got) if got == *body => return Ok(()),
                 other if Instant::now() > deadline => {
-                    return Err(format!("GET {path}: want `{body}`, got {other:?}"))
+                    let log = self.dev.transcript();
+                    return Err(format!(
+                        "GET {path}: want `{body}`, got {other:?}:
+{log}"
+                    ));
                 }
                 _ => std::thread::sleep(Duration::from_millis(20)),
             }
