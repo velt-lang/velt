@@ -1,0 +1,10 @@
+// Importing an overloaded function brings its signatures: by name, renamed, and through a
+// re-export.
+import { size, label as fmt } from "./_overloads_lib";
+import { tag } from "./_overloads_reexport";
+
+function main() {
+  console.log(size("abc"), size([1, 2]));
+  console.log(fmt(3), fmt(4, "px"));
+  console.log(tag(5, "em"));
+}

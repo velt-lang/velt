@@ -6,6 +6,12 @@ fn main() {
     let prefix = exe.parent().and_then(|bin| bin.parent()).unwrap();
     let var = |name: &str| std::env::var(name).unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["--version"] {
+        // Like velt's: `velt <version> (<commit> <triple>)`, the version from the fake release.
+        let version = std::fs::read_to_string(prefix.join("std/VERSION")).unwrap_or_default();
+        println!("velt {} (fake {})", version.trim(), std::env::consts::ARCH);
+        return;
+    }
     println!("prefix={}", prefix.display());
     println!("selected={}", var("VELT_TOOLCHAIN_SELECTED"));
     println!("launcher={}", var("VELT_LAUNCHER"));

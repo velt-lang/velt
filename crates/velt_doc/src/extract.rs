@@ -292,9 +292,22 @@ impl Source<'_> {
         let p = &self.printer;
         Some(match &item.kind {
             ItemKind::Function(f) => {
-                let asyncness = if f.sig.is_async { "async " } else { "" };
+                // An overloaded function is called through its signatures, one per line; the
+                // implementation's own signature is not callable.
+                let sigs = match f.overloads.is_empty() {
+                    true => std::slice::from_ref(&f.sig),
+                    false => &f.overloads[..],
+                };
+                let signature = sigs
+                    .iter()
+                    .map(|s| {
+                        let asyncness = if s.is_async { "async " } else { "" };
+                        format!("{asyncness}function {}", p.fn_sig(s))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 DocItem {
-                    signature: format!("{asyncness}function {}", p.fn_sig(&f.sig)),
+                    signature,
                     ..leaf(Kind::Function, &f.sig.name.name, &f.sig.generics, doc)
                 }
             }
@@ -362,7 +375,18 @@ impl Source<'_> {
         methods
             .iter()
             .filter(|m| !m.is_private)
-            .map(|m| self.member_fn(Kind::Method, &m.decl.sig))
+            .map(|m| match m.decl.overloads.split_first() {
+                None => self.member_fn(Kind::Method, &m.decl.sig),
+                // Overloads: the signatures, one per line, with the first one's doc comment.
+                Some((first, rest)) => {
+                    let mut item = self.member_fn(Kind::Method, first);
+                    for s in rest {
+                        item.signature.push('\n');
+                        item.signature += &self.member_fn(Kind::Method, s).signature;
+                    }
+                    item
+                }
+            })
             .collect()
     }
 
@@ -521,6 +545,28 @@ mod tests {
         let e = &m.items[1].members;
         assert_eq!(e[0].deprecated.as_deref(), Some(""));
         assert_eq!((e[1].doc.as_str(), e[1].deprecated.as_ref()), ("", None));
+    }
+
+    #[test]
+    fn overloads_show_their_signatures() {
+        let src = "/** Twice. */\nexport function f(x: string): string;\nexport async function f(x: number): Promise<number>;\nexport async function f(x: string | number): Promise<string | number> {\n  return x;\n}\n\nexport class C {\n  /** Scales. */\n  m(a: f64): f64;\n  m(a: f64, b: f64): f64;\n  m(a: f64, b?: f64): f64 {\n    return a;\n  }\n  static m2(): C;\n  static m2(): C {\n    return new C();\n  }\n}\n";
+        let m = extract("demo", src);
+        let f = &m.items[0];
+        assert_eq!(
+            f.signature,
+            "function f(x: string): string\nasync function f(x: number): Promise<number>"
+        );
+        assert_eq!(f.doc, "Twice.");
+        let members: Vec<&str> = m.items[1]
+            .members
+            .iter()
+            .map(|m| m.signature.as_str())
+            .collect();
+        assert_eq!(
+            members,
+            ["m(a: f64): f64\nm(a: f64, b: f64): f64", "static m2(): C"]
+        );
+        assert_eq!(m.items[1].members[0].doc, "Scales.");
     }
 
     #[test]

@@ -149,6 +149,7 @@ fn fn_body<'m>(
         let Some(name) = nested_name(cx, item) else {
             continue;
         };
+        reject_nested_overloads(cx, item);
         let mut q = format!("{qual}::{name}");
         let mut k = 2;
         while !used.insert(q.clone()) {
@@ -338,5 +339,25 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
             walk_block(&d.body, f);
         }
         _ => crate::ast_walk::children(e, &mut |c| walk_expr(c, f)),
+    }
+}
+
+/// Overload signatures of a nested function or of a nested class's method: not supported yet
+/// (`crate::overloads` rewrites module-level declarations only).
+fn reject_nested_overloads(cx: &mut Ctx, item: &ast::Item) {
+    let sigs: Vec<&ast::FnSig> = match &item.kind {
+        ast::ItemKind::Function(f) => f.overloads.iter().collect(),
+        ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => t
+            .methods
+            .iter()
+            .flat_map(|m| m.decl.overloads.first())
+            .collect(),
+        _ => vec![],
+    };
+    if let Some(sig) = sigs.first() {
+        cx.err(
+            "overloads of a function or class declared inside a function are not supported yet: declare it at module level",
+            sig.name.span,
+        );
     }
 }

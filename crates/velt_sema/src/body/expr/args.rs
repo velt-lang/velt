@@ -563,6 +563,15 @@ impl FnCx<'_, '_> {
             };
             slots[k] = Some(self.cx.subst(*d, &before));
         }
+        // An overload signature calling its implementation: a type parameter of the
+        // implementation that the signature's parameters leave open is `void` (TypeScript
+        // infers `unknown`), as in `function f(x: string): string;` over
+        // `function f<T>(x: string | T[]): string | T`.
+        if slots.iter().any(Option::is_none) && self.signature_body().is_some() {
+            for slot in slots.iter_mut().filter(|s| s.is_none()) {
+                *slot = Some(self.cx.ty.unit);
+            }
+        }
     }
 
     /// One error naming every type parameter of `c` that no argument or expected type fixed.

@@ -49,6 +49,11 @@ impl FnCx<'_, '_> {
             }
             ast::ExprKind::Super => self.super_ctor_call(args, span),
             ast::ExprKind::Ident(id) if !self.is_local_name(&id.name) => {
+                if self.cx.has_overloads {
+                    if let Some(h) = self.overloaded_call(id, type_args, args, exp, span) {
+                        return h;
+                    }
+                }
                 self.named_call(id, type_args, args, exp, span)
             }
             ast::ExprKind::Member {
@@ -71,7 +76,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `name(args)` where `name` is not a local.
-    fn named_call(
+    pub(super) fn named_call(
         &mut self,
         id: &ast::Ident,
         type_args: &[ast::TypeExpr],
@@ -417,6 +422,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if self.cx.has_overloads {
+            let h = self.overloaded_static_call(d, this_class, prop, type_args, args, exp, span);
+            if let Some(h) = h {
+                return h;
+            }
+        }
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
             Ok(found) => found,

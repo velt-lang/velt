@@ -1,0 +1,8 @@
+// Overloaded functions exported with an export list (overloads_more.vlt imports them).
+function pick(x: string): string;
+function pick(x: number): number;
+function pick(x: string | number): string | number {
+  return x;
+}
+
+export { pick };

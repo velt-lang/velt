@@ -25,6 +25,7 @@ Commands:
   which                        the toolchain this directory selects, and why
   link <name> <prefix>         use a toolchain built elsewhere (a checkout) as <name>
   unlink <name>                remove a link (the prefix stays)
+  --version                    the launcher's own version (`velt --version` is the toolchain's)
 
 A package selects versions with `velt: \"0.1\"` in package.vlt; `velt +<toolchain> <command>` or
 $VELT_TOOLCHAIN (a version or a link) overrides it for one command. Missing versions are installed on first use unless
@@ -47,6 +48,11 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
             return Ok(());
         }
     };
+    if matches!(command, "--version" | "-V") {
+        // The installers compare it with the launcher they would install.
+        println!("velt-launcher {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let flag = |name: &str| rest.contains(&name);
     let positional: Vec<&str> = rest
         .iter()

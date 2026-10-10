@@ -1,0 +1,6 @@
+overloads_no_match.vlt:10:12: error: no overload of `describe` matches this call
+  = note: overload 1 of 2: mismatched types (expected string, found string | f64)
+  = note: overload 2 of 2: mismatched types (expected f64, found string | f64)
+overloads_no_match.vlt:14:12: error: no overload of `describe` matches this call
+  = note: overload 1 of 2: mismatched types (expected string, found boolean)
+  = note: overload 2 of 2: mismatched types (expected f64, found boolean)

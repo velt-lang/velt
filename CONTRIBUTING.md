@@ -238,15 +238,36 @@ The tag starts the `release` workflow (`.github/workflows/release.yml`). It buil
 for Linux x86_64 and arm64 (in Debian 11, so it runs on glibc 2.31 and newer), macOS arm64 and
 x86_64 and Windows x64 with `scripts/package.*`, bundling the lld that `lld.yml` builds (from
 source, kept in the Actions cache; a cold build takes up to an hour), installs every archive with
-`scripts/get-velt.*` and smoke-tests it, also on machines without a C toolchain
-(`scripts/smoke-clean.*` in Debian slim and Windows Server Core containers), publishes a GitHub
-release with the archives,
-`SHA256SUMS` and the two installers, and finally installs the published release on every platform
-the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
+`scripts/get-velt.*` and smoke-tests it through the launcher, also on machines without a C
+toolchain (`scripts/smoke-clean.*` in Debian slim and Windows Server Core containers), publishes
+a GitHub release with the archives, `SHA256SUMS`, its signature `SHA256SUMS.sig` and the two
+installers, rewrites the signed index of releases (`releases.json` on the `index` release,
+`.github/workflows/release-index.yml`), and finally installs the published release on every
+platform the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
 built. Versions with a suffix (`0.2.0-rc.1`) become pre-releases; they are not "latest", so the
 `releases/latest/download/...` install commands keep pointing at the last full release. To test
 the pipeline without publishing, run the workflow by hand (Actions → release → Run workflow): it
-builds and smoke-tests the archives and keeps them as workflow artifacts.
+builds and smoke-tests the archives and keeps them as workflow artifacts, and checks that the
+signing key matches the key velt is built with.
+
+**Signing.** `scripts/release-sign.sh` signs `SHA256SUMS` and `releases.json` with the release
+key, the secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM) of the GitHub
+environment `release` (Settings → Environments), which allows only `main` and tags `v*` to use
+it, so a workflow run from another branch, with changed scripts, can't read the key. The jobs that
+sign (`signing-key` and `publish` in `release.yml`, `index` in `release-index.yml`) run in that
+environment. The script checks
+each signature against the public key velt is built with
+(`velt_toolchain::signature::RELEASE_PUBLIC_KEY`, also embedded in `scripts/get-velt.sh`; a test
+keeps them in line). The launcher and `velt target add` refuse what doesn't match it. Keep a
+backup of the private key outside GitHub: without it no release can be signed with the key that
+installed launchers trust.
+
+**Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
+(`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the
+`release-index` workflow (Actions → release-index → Run workflow). Launchers then skip the
+version when they choose the newest a requirement accepts (an exact `=0.1.2` still installs
+it), and `velt toolchain list --available` shows why. Remove the entry and run the workflow
+again to unyank it. The release itself stays.
 
 Never commit secrets, tokens or personal data.
 

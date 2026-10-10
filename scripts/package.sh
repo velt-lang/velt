@@ -2,7 +2,8 @@
 # Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .tar.gz).
 #
 # Layout (see docs/tooling/platforms.md):
-#   bin/velt  lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
+#   bin/velt  bin/velt-launcher (installed as <root>/bin/velt, #948)
+#   lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
@@ -50,8 +51,8 @@ case "$host" in *linux-gnu*) ;; *) musl=0 ;; esac
 musl_target="${host%%-*}-unknown-linux-musl"
 
 if [ "$build" = 1 ]; then
-    echo "building release velt + velt_rt + velt_rt_shared + velt-kit..."
-    cargo build --release -p veltc -p velt_rt -p velt_rt_shared -p velt_link --manifest-path "$repo/Cargo.toml"
+    echo "building release velt + velt-launcher + velt_rt + velt_rt_shared + velt-kit..."
+    cargo build --release -p veltc -p velt_launcher -p velt_rt -p velt_rt_shared -p velt_link --manifest-path "$repo/Cargo.toml"
     if [ "$bundled" = 1 ] && [ "$musl" = 1 ]; then
         echo "building the runtime for $musl_target..."
         rustup target add "$musl_target"
@@ -70,7 +71,7 @@ case "$host" in
     *apple*) shared_rt="libvelt_rt_shared.dylib" ;;
     *) shared_rt="libvelt_rt_shared.so" ;;
 esac
-for f in "$release/velt" "$release/libvelt_rt.a" "$release/$shared_rt"; do
+for f in "$release/velt" "$release/velt-launcher" "$release/libvelt_rt.a" "$release/$shared_rt"; do
     [ -f "$f" ] || { echo "error: missing build output: $f" >&2; exit 1; }
 done
 
@@ -80,7 +81,7 @@ out="$dist/$name"
 rm -rf "$out"
 mkdir -p "$out/bin" "$out/lib" "$out/std" "$out/share/velt/lldb"
 
-cp "$release/velt" "$out/bin/"
+cp "$release/velt" "$release/velt-launcher" "$out/bin/"
 cp "$release/libvelt_rt.a" "$release/$shared_rt" "$out/lib/"
 cp "$repo/crates/velt_rt/NATIVE_LIBS.md" "$out/lib/"
 cp "$repo/editors/lldb/velt_lldb.py" "$out/share/velt/lldb/"
@@ -94,14 +95,17 @@ cat > "$out/README.md" <<EOF
 # Velt $version ($host)
 
 Install:  get-velt.sh --archive <this .tar.gz> (an asset of every release), or
-          scripts/install.sh <this directory> from a source checkout, or copy it anywhere.
-Then add \`<prefix>/bin\` to PATH and run \`velt doctor\`.
+          scripts/install.sh <this directory> from a source checkout. Both install it as
+          ~/.velt/toolchains/$version beside other versions, with bin/velt-launcher as
+          ~/.velt/bin/velt; or run bin/velt from this directory as it is.
+Then add \`~/.velt/bin\` to PATH and run \`velt doctor\`.
 
     velt run hello.vlt
     velt new app && cd app && velt run
 
-Layout: bin/ (the velt CLI), lib/ (runtime library linked into every program),
-std/ (standard library sources), share/ (debugger scripts). Full guide: docs/tooling/platforms.md in the Velt repository.
+Layout: bin/ (the velt CLI, and the launcher), lib/ (runtime library linked into every program),
+std/ (standard library sources), share/ (debugger scripts). Full guide:
+docs/tooling/platforms.md in the Velt repository.
 EOF
 
 cp "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$repo/NOTICE" "$out/"

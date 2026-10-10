@@ -246,9 +246,8 @@ the standard library. The output has one page per module and a client-side searc
 
 Several velt versions can be installed side by side, each in `<root>/toolchains/<version>/`
 (`<root>` is `~/.velt`, or `%LOCALAPPDATA%\velt` on Windows). The `velt` on your `PATH` is a
-small launcher, `<root>/bin/velt`, that runs one of them with the same arguments. (The
-installers set this layout up from the next release on, #948; a velt 0.1.0 install is a single
-toolchain in `~/.velt/toolchain`, without a launcher.)
+small launcher, `<root>/bin/velt`, that runs one of them with the same arguments. The
+installers set it up ([Installing a release](platforms.md#installing-a-release)).
 
 1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
    a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
@@ -281,6 +280,7 @@ $ velt toolchain list
 | `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
 | `default [<toolchain>]` | show or set the default |
 | `which` | the toolchain this directory runs, why, and its directory |
+| `--version` | the launcher's own version, `velt-launcher <version>` (`velt --version` is the selected toolchain's) |
 | `link <name> <prefix>`, `unlink <name>` | use a toolchain prefix built elsewhere (a checkout's; it holds `bin/velt` and `std/`) as `<name>`: `velt +dev test` |
 
 The launcher runs `velt toolchain` itself, so it works the same whichever version a package
@@ -299,15 +299,15 @@ which toolchain version runs and why (`velt toolchain`), then compiles and runs 
 
 ```
 $ velt doctor
-✓ velt             velt 0.1.0 (4efaa8d x86_64-pc-windows-msvc)
-✓ runtime lib      C:\Users\me\AppData\Local\velt\lib\velt_rt.lib
-✓ std              C:\Users\me\AppData\Local\velt\std
-✓ linker           bundled C:\Users\me\AppData\Local\velt\lib\velt\lld.exe (kit C:\Users\me\AppData\Local\velt\lib\targets\x86_64-pc-windows-msvc)
-✓ wasm linker      C:\Users\me\AppData\Local\velt\lib\velt\lld.exe
+✓ velt             velt 0.1.1 (4efaa8d x86_64-pc-windows-msvc)
+✓ runtime lib      C:\Users\me\AppData\Local\velt\toolchains\0.1.1\lib\velt_rt.lib
+✓ std              C:\Users\me\AppData\Local\velt\toolchains\0.1.1\std
+✓ linker           bundled C:\Users\me\AppData\Local\velt\toolchains\0.1.1\lib\velt\lld.exe (kit …\lib\targets\x86_64-pc-windows-msvc)
+✓ wasm linker      C:\Users\me\AppData\Local\velt\toolchains\0.1.1\lib\velt\lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
 ✓ debugger scripts C:\Users\me\AppData\Local\velt\share\velt\lldb\velt_lldb.py
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
-✓ toolchain        0.1.0 (the default); launcher C:\Users\me\AppData\Local\velt\bin\velt.exe, default 0.1.0
+✓ toolchain        0.1.1 (the default); launcher C:\Users\me\AppData\Local\velt\bin\velt.exe, default 0.1.1
 ✓ hello (debug)    built with Cranelift and ran
 ✓ hello (release)  built with LLVM and ran
 ```

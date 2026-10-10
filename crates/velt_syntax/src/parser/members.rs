@@ -136,15 +136,64 @@ impl<'a> Parser<'a> {
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
         sig.is_generator = star.is_some();
         self.check_accessor(&sig, &mods);
+        if self.at(Tok::Semi) {
+            return self.method_overload(sig, &mods);
+        }
         let body = self.parse_block()?;
         Ok(Member::Method(Method {
-            decl: FnDecl { sig, body },
+            decl: FnDecl {
+                sig,
+                body,
+                overloads: vec![],
+            },
             is_static: mods.is_static,
             is_private: mods.is_private,
             is_getter: mods.is_getter,
             is_setter: mods.is_setter,
             is_override: mods.is_override,
         }))
+    }
+
+    /// After a method signature ending in `;`: a TypeScript-form overload, attached to the
+    /// method of the same name that follows (`FnDecl::overloads`).
+    fn method_overload(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
+        while self.eat(Tok::Semi) {}
+        if mods.is_getter || mods.is_setter {
+            self.error("an accessor cannot be overloaded", sig.name.span);
+        }
+        self.signature_defaults(&sig);
+        if self.at(Tok::RBrace) || self.at(Tok::Eof) {
+            self.missing_implementation(&sig.name);
+            return Err(Fail);
+        }
+        match self.parse_member()? {
+            Member::Method(mut m) if m.decl.sig.name.name == sig.name.name => {
+                // TypeScript's TS2387 / TS2388, at the implementation.
+                if m.is_static != mods.is_static && m.decl.overloads.is_empty() {
+                    let msg = match mods.is_static {
+                        true => "this method's overload signatures are `static`, so it must be `static` too (TypeScript's TS2387)",
+                        false => "this method's overload signatures are not `static`, so it must not be `static` either (TypeScript's TS2388)",
+                    };
+                    self.error(msg, m.decl.sig.name.span);
+                }
+                if m.is_private != mods.is_private {
+                    self.error(
+                        "overload signatures must all be private or all be public (TypeScript's TS2385)",
+                        sig.name.span,
+                    );
+                }
+                m.decl.overloads.insert(0, sig);
+                Ok(Member::Method(m))
+            }
+            Member::Method(m) => {
+                self.wrong_implementation_name(&sig.name, m.decl.sig.name.span);
+                Ok(Member::Method(m))
+            }
+            other => {
+                self.missing_implementation(&sig.name);
+                Ok(other)
+            }
+        }
     }
 
     /// A member named `#x` is private (ES private name): `private` / `public` on it are errors
@@ -296,6 +345,13 @@ impl<'a> Parser<'a> {
             self.parse_type()?;
         }
         let throws = self.parse_throws_clause()?;
+        if self.at(Tok::Semi) {
+            self.error(
+                "constructor overloads are not supported yet: write one constructor whose parameters take every form (`a: string | number`)",
+                name.span,
+            );
+            return Err(Fail);
+        }
         let sig = FnSig {
             name,
             generics: vec![],
@@ -308,7 +364,14 @@ impl<'a> Parser<'a> {
         };
         let mut body = self.parse_block()?;
         self.store_param_props(&mut body, &fields);
-        Ok((FnDecl { sig, body }, fields))
+        Ok((
+            FnDecl {
+                sig,
+                body,
+                overloads: vec![],
+            },
+            fields,
+        ))
     }
 
     /// Interface member: a field (`name[?]: T;`) or a method signature, optionally with a

@@ -24,7 +24,7 @@ velt playground [--port <n>] [--host <addr>]   # browser playground (default 127
 velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
-velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | default [<t>] | which | link <name> <prefix> | unlink <name>   # the launcher's (#948)
+velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
 velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
