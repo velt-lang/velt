@@ -199,9 +199,8 @@ pub struct Program {
     pub types: TyTable,
     /// Indexed by `DefId`.
     pub defs: Vec<Def>,
-    /// The user's `main` function (M1: `function main(): void | i32`; M3: may be async).
-    /// `None` only for a library root checked with `CheckOptions { require_main: false }`
-    /// (`velt check`); lowering requires `Some`.
+    /// The user's `main` (M1: `function main(): void | i32`; M3: may be async). `None` only for
+    /// a library root checked with `require_main: false` (`velt check`); lowering needs `Some`.
     pub entry: Option<DefId>,
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).
@@ -211,14 +210,9 @@ pub struct Program {
     /// twin before lowering (readonly erasure). Lowering maps every instance of a generic
     /// anonymous def onto these, so one shape is one type (velt_vir `Cx::canon`).
     pub anon_shapes: HashMap<Vec<(String, TyId, bool, bool)>, DefId>,
-    /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
-    /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
+    /// The concrete union def of each sorted member list, for generic unions (`Cx::canon`).
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
-    /// Object types (concrete, anonymous) whose values lowering must store as counted boxes from
-    /// its first pass, whether or not it sees a share of them: sema accepted an assignment into
-    /// such an object whose right-hand side may replace it only because the program shares the
-    /// type (an assignment target in a counted object is the object it named before the
-    /// right-hand side ran; hir_encodings.md "Sharing").
+    /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
 }
 
