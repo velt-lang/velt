@@ -26,7 +26,9 @@ fn definite_assignment() {
 
 #[test]
 fn declare_fields() {
-    round_trips("class B extends A {\n  declare cause: string;\n  declare readonly n: number;\n}\n");
+    round_trips(
+        "class B extends A {\n  declare cause: string;\n  declare readonly n: number;\n}\n",
+    );
 }
 
 #[test]
