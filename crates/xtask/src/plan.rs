@@ -129,6 +129,8 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
+    // The LLDB script the toolchain ships (`install_layout` installs it and asks for its path).
+    ("editors/lldb/", &[], &["install_layout"]),
     // `example_apps` runs `velt test` for examples/apps/*/ (the compiler, runtime and std run
     // it too: they select every `veltc` test).
     (

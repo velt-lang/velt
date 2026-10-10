@@ -19,10 +19,13 @@ foreach ($f in @("bin/velt.exe", "lib/velt_rt.lib")) {
 New-Item -ItemType Directory -Force $Prefix | Out-Null
 $Prefix = (Resolve-Path $Prefix).Path
 # Replace the toolchain parts wholesale so files removed upstream (e.g. std modules) disappear.
-foreach ($d in @("bin", "lib", "std")) {
+foreach ($d in @("bin", "lib", "std", "share\velt")) {
     $dest = Join-Path $Prefix $d
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-    if (Test-Path (Join-Path $Dist $d)) { Copy-Item -Recurse (Join-Path $Dist $d) $dest }
+    if (Test-Path (Join-Path $Dist $d)) {
+        New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+        Copy-Item -Recurse (Join-Path $Dist $d) $dest
+    }
 }
 foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
     if (Test-Path (Join-Path $Dist $f)) { Copy-Item -Force (Join-Path $Dist $f) $Prefix }

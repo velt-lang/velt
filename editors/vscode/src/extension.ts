@@ -1,8 +1,7 @@
 // VS Code client for the Velt language server: launches `velt lsp` over stdio and restarts it when
-// `velt.serverPath` changes or on the "Velt: Restart Language Server" command.
+// `velt.serverPath` changes or on the "Velt: Restart Language Server" command. Also registers the
+// `velt` debug type and the run/debug commands (`debug.ts`).
 
-import * as os from "os";
-import * as path from "path";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -10,6 +9,8 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+import { registerDebugging } from "./debug";
+import { veltCommand } from "./velt";
 
 let client: LanguageClient | undefined;
 
@@ -22,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
   );
+  registerDebugging(context);
   await start();
 }
 
@@ -35,7 +37,7 @@ async function restart(): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  const command = serverCommand();
+  const command = veltCommand();
   // TransportKind.stdio makes the client append `--stdio`, which `velt lsp` accepts.
   const serverOptions: ServerOptions = {
     command,
@@ -43,6 +45,8 @@ async function start(): Promise<void> {
     transport: TransportKind.stdio,
   };
   const clientOptions: LanguageClientOptions = {
+    // The "▶ Run | Debug" code lenses run this extension's commands.
+    initializationOptions: { runLenses: true },
     documentSelector: [
       { scheme: "file", language: "velt" },
       { scheme: "untitled", language: "velt" },
@@ -66,15 +70,4 @@ async function stop(): Promise<void> {
   if (running) {
     await running.stop();
   }
-}
-
-// The configured executable with `~` and `${workspaceFolder}` expanded.
-function serverCommand(): string {
-  const configured = vscode.workspace.getConfiguration("velt").get<string>("serverPath") || "velt";
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-  let command = configured.replace("${workspaceFolder}", folder);
-  if (command === "~" || command.startsWith("~/") || command.startsWith("~\\")) {
-    command = path.join(os.homedir(), command.slice(1));
-  }
-  return command;
 }

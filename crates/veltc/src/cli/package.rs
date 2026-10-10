@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::build::take_value;
 use super::{strings, Command};
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// Parse subcommand `name` with its arguments `rest`.
 pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> {
@@ -30,6 +30,17 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
                 flags.name = Some(take_value(inline.as_deref(), &mut it, "--name")?)
             }
             ("init", "--force") => flags.force = true,
+            ("init", "--dir") => {
+                flags.dir = Some(PathBuf::from(take_value(
+                    inline.as_deref(),
+                    &mut it,
+                    "--dir",
+                )?))
+            }
+            ("init", "--editor") => {
+                let e = take_value(inline.as_deref(), &mut it, "--editor")?;
+                flags.editor = Some(Editor::parse(&e)?);
+            }
             ("add", "--path") => {
                 flags.path = Some(take_value(inline.as_deref(), &mut it, "--path")?)
             }
@@ -56,6 +67,8 @@ struct Flags {
     template: Option<Template>,
     name: Option<String>,
     force: bool,
+    editor: Option<Editor>,
+    dir: Option<PathBuf>,
     locked: bool,
     release: bool,
     watch: bool,
@@ -85,11 +98,29 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             )?,
             template: flags.template.unwrap_or_default(),
         }),
-        "init" => Ok(Command::Init {
-            name: flags.name,
-            template: flags.template.unwrap_or_default(),
-            force: flags.force,
-        }),
+        "init" => match flags.editor {
+            Some(editor) => {
+                if flags.template.is_some() || flags.name.is_some() || flags.force {
+                    return Err(
+                        "`velt init --editor` only adds the editor's files; it takes no \
+                         --template, --name or --force"
+                            .into(),
+                    );
+                }
+                Ok(Command::InitEditor {
+                    editor,
+                    dir: flags.dir,
+                })
+            }
+            None if flags.dir.is_some() => {
+                Err("`--dir` goes with `--editor` (`velt init --editor vscode --dir <dir>`)".into())
+            }
+            None => Ok(Command::Init {
+                name: flags.name,
+                template: flags.template.unwrap_or_default(),
+                force: flags.force,
+            }),
+        },
         "add" => {
             let spec = arg.ok_or(
                 "missing package (e.g. `velt add json@1.2` or `velt add util --path ../util`)",
@@ -170,6 +201,29 @@ mod tests {
                 force: true
             }
         );
+        assert_eq!(
+            p(&["init", "--editor", "vscode"]).unwrap(),
+            Command::InitEditor {
+                editor: Editor::VsCode,
+                dir: None
+            }
+        );
+        assert_eq!(
+            p(&["init", "--editor=code", "--dir", "w"]).unwrap(),
+            Command::InitEditor {
+                editor: Editor::VsCode,
+                dir: Some(PathBuf::from("w"))
+            }
+        );
+        assert!(p(&["init", "--dir", "w"])
+            .unwrap_err()
+            .contains("goes with `--editor`"));
+        assert!(p(&["init", "--editor", "vscode", "--force"])
+            .unwrap_err()
+            .contains("only adds the editor's files"));
+        assert!(p(&["init", "--editor", "emacs"])
+            .unwrap_err()
+            .contains("unknown editor"));
         assert_eq!(
             p(&["init"]).unwrap(),
             Command::Init {

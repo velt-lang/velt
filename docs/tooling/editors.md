@@ -125,7 +125,11 @@ does and what to write. A finding with a mechanical replacement (`f64` → `numb
 
 ## Visual Studio Code
 
-The extension adds syntax highlighting and starts `velt lsp`.
+The extension adds syntax highlighting, starts `velt lsp`, and debugs Velt programs with F5
+([Debugging](debugging.md#vs-code)). Above `main` the server shows **▶ Run | Debug** to a client
+that asks for these lenses (`"initializationOptions": {"runLenses": true}`, as the VS Code
+extension does): they run the extension's `velt.runFile` and `velt.debugFile` commands, so
+other editors don't get them.
 
 1. Build or install `velt` and put it on `PATH`, or set `velt.serverPath` to the executable.
 2. Build and install the extension (Node.js 18 or newer):
@@ -142,6 +146,7 @@ The extension adds syntax highlighting and starts `velt lsp`.
 |---|---|---|
 | `velt.serverPath` | `velt` | the `velt` executable (`~` and `${workspaceFolder}` are expanded); changing it restarts the server |
 | `velt.trace.server` | `off` | `messages` / `verbose` log the LSP traffic to the output channel |
+| `velt.debug.engine` | `auto` | the debugger extension F5 starts: `codelldb`, `lldb-dap`, `cpptools`, or `auto` (the first installed, in that order) |
 
 With the default `velt.serverPath`, the `velt` on `PATH` is the launcher, which starts the
 language server of the toolchain the first workspace folder's package pins
@@ -149,7 +154,9 @@ language server of the toolchain the first workspace folder's package pins
 versions uses that one for all of them; open each in its own window to get its own.
 
 The command **Velt: Restart Language Server** restarts it, for example after rebuilding `velt`.
-For debugging configurations, see [Debugging](debugging.md#vs-code).
+**Velt: Run File** and **Velt: Debug File** run or debug the open file (also as buttons in the
+editor title), and **Velt: Generate launch.json** writes `.vscode/launch.json` like
+`velt init --editor vscode`. For debugging, see [Debugging](debugging.md#vs-code).
 
 **Not yet available**: a published Marketplace extension, and packaged support for other
 editors. Any editor that can start `velt lsp` as a language server works today.
