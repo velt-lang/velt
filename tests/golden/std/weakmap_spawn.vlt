@@ -1,4 +1,4 @@
-// A weak collection belongs to the thread that made it: it cannot go to a spawned task.
+// A weak collection belongs to the task that made it: it cannot go to a spawned task.
 class Key {}
 
 async function count(m: WeakMap<Key, number>, k: Key): Promise<number> {

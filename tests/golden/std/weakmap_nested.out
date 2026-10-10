@@ -1,0 +1,5 @@
+true child 0
+true child 1
+true child 2
+true [ true, true, true ]
+[ false, false, false ]

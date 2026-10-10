@@ -274,10 +274,13 @@ will use them too. Design: [weak-refs.md](../design/weak-refs.md).
   (the box is weak-capable) and traces the value in it. The runtime never retains, releases or
   traces a 0 value.
 - **Threads.** Handles (`MapId`, `RefId`) are nonzero `uint32_t`s (generated code keeps 0 for
-  "not created yet"), valid on the creating thread until dropped; the compiler keeps `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema
-  rejects them, or the transfer glue panics). Weak-capable types are never `shared<T>` or
-  atomic. A weakly held object released on a thread with no record of it is an ICE
-  (`velt_rt_weak_release` panics before it changes the count).
+  "not created yet"), valid on every thread until dropped: the side table is one per process,
+  behind a lock the runtime takes only in these functions, so a task that resumes on another
+  worker, or a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps
+  `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer
+  glue panics): a handle is used by one task at a time. Weak-capable types are never atomic. An
+  object with `RC_WEAK` set and no record is an ICE (`velt_rt_weak_release` panics before it
+  changes the count). Trace glue runs with the table locked and must only call `visit`.
 - **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
   1 (a weakly held object is never unique), and every site that decrements a count directly
   (`c - 1`: `lower/rc.rs`, `lower/glue/drop_chain.rs`, `lower/glue/transfer.rs`,
@@ -294,7 +297,7 @@ will use them too. Design: [weak-refs.md](../design/weak-refs.md).
 | `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj` |
 | `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
 | `velt_rt_weakref_drop` | `(uint32_t r)` | |
-| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) on a thread without the object's record |
+| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.

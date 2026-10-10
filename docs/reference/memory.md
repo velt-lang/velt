@@ -56,7 +56,9 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   such as a cache from an object to a wrapper holding it (`cache.set(raw, new Proxy(raw))`),
   frees both once nothing else refers to either, like JavaScript
   ([design](../internals/design/weak-refs.md#the-ephemeron-rule)). Not freed: a value graph of
-  more than 256 objects, and a key that is also in an ordinary cycle (`raw.self = raw`).
+  more than 256 objects, a key that is also in an ordinary cycle (`raw.self = raw`), and two
+  maps whose entries keep each other's keys (`m1.set(a, b); m2.set(b, a)`), which stay until an
+  entry is deleted or a map goes.
   Releasing an object of a type that can be a weak key, or be reached from a weak map's keys and
   values, costs two more instructions when it frees the object; other types are unaffected.
 - **Evaluation order is JS's**: operands and arguments run left to right, and one read before a

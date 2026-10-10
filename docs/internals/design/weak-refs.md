@@ -20,12 +20,14 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 - **A flag in the count word.** Bit 63 (`RC_WEAK`, the sign bit) is set while the object is
   weakly held: a weak-map key, a `WeakRef` target, or a member of an ephemeron cycle (below).
   Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
-- **A per-thread side table** from object address to a record: the maps the object is a key
-  of, the entries whose value graph refers to it, its `WeakRef` slots, and two small counts
-  used by the ephemeron rule (`hint`, `observed`). Counted objects do cross threads (a transfer
-  moves an object whose count is 1 in place, [semantics-stage2.md](semantics-stage2.md) §6), but
-  weakly held ones must not: the compiler keeps weak-capable types and weak handles on their
-  thread (rules below), so the table is thread-local and unlocked.
+- **One side table for the process**, behind a lock, from object address to a record: the
+  maps the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots,
+  and two small counts used by the ephemeron rule (`hint`, `observed`). A weakly held object is
+  used by one task at a time (its count is not atomic), but not on one thread: an async task
+  resumes on any worker after an `await`, and a `shared` `Mutex` hands its value to whichever
+  task locks it. So map ids, `WeakRef` slots and records mean the same on every thread. The
+  lock is taken only on the cold paths (weak map and `WeakRef` operations, and releases of
+  objects with `RC_WEAK` set); a program without weak collections never takes it.
 - **Weak maps** are runtime-owned hash tables keyed by object address (the key is not counted),
   with the value's retain, release and trace glue given at creation. A value word of a map with
   release glue is 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings
@@ -91,16 +93,23 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   `lower/glue/drop_chain.rs` (`take`, which decrements when the count is not 1),
   `lower/glue/transfer.rs` (releasing the sender's reference after a deep copy) and
   `lower/glue/transfer_env.rs` (the same for a closure environment).
-- **Weak handles and weakly held objects are thread-bound.** The side table is per thread, so a
-  `WeakMap`, `WeakSet` or `WeakRef` handle is used only on the thread that made it: sema rejects
-  them in transfers (spawn arguments and captures, channel sends, promise results), or the
-  transfer glue panics. A weak-capable object that is weakly held is never transferred in place
-  either (its count word is never 1, so the transfer deep-copies it, and the copy is not weakly
-  held). If one is released on another thread anyway, `velt_rt_weak_release` finds no record and
-  panics with an `ICE:` message before it touches the count word, instead of freeing an object
-  the first thread's entries and `WeakRef`s still point to.
-- **Weak-capable types are never `shared<T>` or atomic.** The flag and the side table assume
-  plain counts on one thread.
+- **Weak handles belong to one task.** A `WeakMap`, `WeakSet` or `WeakRef` (a class instance
+  with a plain count) stays with the task that made it: sema rejects them in transfers (spawn
+  arguments and captures, channel sends, promise results), or the transfer glue panics. The
+  task itself may run on several threads in turn, which the process-wide table allows. A
+  weak-capable object that is weakly held is never transferred in place either (its count word
+  is never 1, so the transfer deep-copies it, and the copy is not weakly held). An object with
+  `RC_WEAK` set and no record is an `ICE:` that `velt_rt_weak_release` reports before it touches
+  the count word.
+- **Weak-capable types are never atomic.** The flag lives in a plain count word, which only the
+  task using the object changes; the table's lock protects the table, not the objects.
+- **Lock discipline.** No generated code that could reach the table runs while it is locked:
+  value retains and releases run after the lock is released (the cascade below), and trace glue,
+  which runs under the lock during a trial, only reads fields and records them. A re-entry would
+  deadlock, so the runtime reports it as an `ICE:` instead. Cascades and the trials they defer
+  (`CASCADE`, `PENDING`) are per thread: a cascade is synchronous drop glue, which never awaits,
+  so it starts and ends on one thread; two threads may run cascades at once over objects of
+  different tasks.
 
 ### What the compiler does
 
@@ -125,8 +134,10 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   argument, a channel message, a capture of an async closure that may run on another thread,
   the value of `shared(...)` and the receiver of `clone()`. A weak-capable object that is not
   weakly held may still cross threads (it is copied when shared, and the copy is not weakly
-  held); one that is weakly held and reached through a `shared` `Mutex` is not rejected yet,
-  and its release on another thread would stop at the `ICE` above.
+  held). A weakly held object reached through a `shared` `Mutex` (a key read inside `with`) is
+  released by whichever task holds the lock, on its thread, through the same table
+  (`tests/golden/std/weakmap_mutex.vlt`); `async main` keeps its maps across `await`s and
+  spawned tasks use maps of their own at once (`weakmap_async.vlt`).
 
 ## Weak maps and `WeakRef`
 
@@ -200,8 +211,11 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 - null values and values of maps without trace glue next to a cycle (`src/weak/tests/values.rs`);
 - a `get` result held across the release of its key's last outside reference.
 
-A release on another thread than the object's records is an ICE, reported before the count
-changes (`src/weak/tests/threads.rs`).
+`src/weak/tests/threads.rs` releases weakly held objects and an ephemeron cycle on another
+thread than the one that made them, runs eight threads with maps of their own at once, releases
+values that release other maps' keys or drop other maps (nothing re-enters the lock), and checks
+that an object marked without a record is an ICE reported before the count changes. The goldens
+`weakmap_async`, `weakmap_mutex` and `weakmap_nested` do the same from Velt programs.
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that
@@ -224,6 +238,12 @@ the end. CI runs 20,000 through a window of 64.
 - **Strong cycles through the key** (`raw.self = proxy(raw)`): the trial frees the entry, but raw
   and the proxy still hold each other. That is an ordinary strong cycle, the problem `weak T`
   (#11) solves; the core does not collect cycles that no weak map takes part in.
+- **Ephemeron cycles across maps.** `m1.set(a, b); m2.set(b, a)` with no other references
+  between `a` and `b`: each key is kept alive only by the other map's value, so a garbage
+  collector frees both at its next collection. The insert-time analysis records a path from a
+  value back to its own entry's key only, so neither entry has a hint and no trial runs; the
+  pair is kept until an entry is deleted or a map dropped. A trial through either object would
+  find the pair dead (it follows entries in every map), but nothing starts one.
 - **A weak map held only by its own cycle** (sigx's `nestedCache` lives in the handler's
   closure): the trial treats every map as live, so entries whose keys are dead are still deleted,
   but a map that is itself garbage is freed only when its holder is.
@@ -243,7 +263,7 @@ the next trial until a release elsewhere in the cycle changes the answer.
    Left: trace glue through function values' environments (a handler closure capturing the
    target is opaque today, so such a cycle is kept until its map entry goes) and through class
    hierarchies (dispatching on the dynamic class), keys of other object kinds (unions, tuples,
-   function and interface values), and `WeakMap` support in the WebAssembly runtime.
+   function and interface values), and ephemeron cycles that span several maps (above).
 2. `weak T` fields (#11): a `weak` field is a `WeakRef` slot inline in the object; reading it is
    a liveness check where it is used.
 3. Store the records inline (small vectors) and measure `set` and the cold release against

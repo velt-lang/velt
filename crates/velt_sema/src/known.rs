@@ -165,8 +165,8 @@ impl Ctx<'_> {
     }
 
     /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
-    /// or payload)? Their entries live in a table of the thread that made them, so such values
-    /// cannot be copied or passed to another task. Interface values are not looked into.
+    /// or payload)? They belong to the task that made them (a copy would share the runtime
+    /// handle), so such values cannot be copied or passed to another task. Interface values are not looked into.
     pub fn holds_weak(&mut self, t: TyId) -> bool {
         self.holds_weak_in(t, &mut std::collections::HashSet::new())
     }
