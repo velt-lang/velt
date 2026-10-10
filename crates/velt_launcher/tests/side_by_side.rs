@@ -2,28 +2,18 @@
 //! different versions run different toolchains, missing versions are downloaded and checked,
 //! and `velt toolchain` manages them.
 
+mod support;
+
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
 
+use support::fake_velt;
 use velt_http::{Response, Server};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
-
-/// The stand-in toolchain binary (examples/fake_velt.rs), built by `cargo test` beside the
-/// launcher.
-fn fake_velt() -> PathBuf {
-    let launcher = Path::new(env!("CARGO_BIN_EXE_velt-launcher"));
-    let exe = launcher
-        .parent()
-        .unwrap()
-        .join("examples")
-        .join(format!("fake_velt{EXE}"));
-    assert!(exe.is_file(), "{} is not built", exe.display());
-    exe
-}
 
 fn host() -> String {
     velt_toolchain::release::host_triple()
@@ -647,4 +637,15 @@ fn downloads_only_over_https_or_from_this_machine() {
         );
     }
     assert_eq!(releases.downloads(), 0);
+}
+
+#[test]
+fn the_launcher_says_its_own_version() {
+    let releases = Releases::new(&["0.1.0"]);
+    let m = Machine::new(&releases);
+    let out = m.ok(&m.work, &["toolchain", "--version"]);
+    assert_eq!(
+        out,
+        format!("velt-launcher {}\n", env!("CARGO_PKG_VERSION"))
+    );
 }

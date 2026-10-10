@@ -1,13 +1,15 @@
-# Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .zip).
+# Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .zip and
+# .tar.gz).
 #
 # Layout (see docs/tooling/platforms.md):
-#   bin/velt.exe  lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
+#   bin/velt.exe  bin/velt-launcher.exe (installed as <root>\bin\velt.exe, #948)
+#   lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
 # and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
 #   std/**  share/velt/lldb/velt_lldb.py  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
-# With the bundled linker, velt.exe and velt_rt_shared.dll are linked with it too (lld-link, the
-# kit's startup object and the Universal CRT), so neither needs the Visual C++ runtime
+# With the bundled linker, velt.exe, velt-launcher.exe and velt_rt_shared.dll are linked with it
+# too (lld-link, the kit's startup object and the Universal CRT), so none needs the Visual C++ runtime
 # (vcruntime140.dll) on the machine they run on.
 #
 # Usage: pwsh scripts/package.ps1 [-StdDir <dir>] [-SkipBuild] [-NoArchive] [-Lld <path>] [-NoBundledLinker]
@@ -45,7 +47,7 @@ foreach ($d in @("bin", "lib", "std", "share\velt\lldb")) { New-Item -ItemType D
 
 if (-not $SkipBuild) {
     Write-Host "building release velt + velt_rt + velt_rt_shared + velt-kit..."
-    cargo build --release -p veltc -p velt_rt -p velt_rt_shared -p velt_link --manifest-path $Manifest
+    cargo build --release -p veltc -p velt_launcher -p velt_rt -p velt_rt_shared -p velt_link --manifest-path $Manifest
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 
@@ -79,6 +81,9 @@ if (-not $NoBundledLinker) {
         Write-Host "linking velt.exe with lld-link..."
         cargo rustc --release -p veltc --bin velt --manifest-path $Manifest -- @Common "-Clink-arg=$(Join-Path $Kit 'velt_crt.obj')"
         if ($LASTEXITCODE -ne 0) { throw "linking velt.exe with lld-link failed" }
+        Write-Host "linking velt-launcher.exe with lld-link..."
+        cargo rustc --release -p velt_launcher --bin velt-launcher --manifest-path $Manifest -- @Common "-Clink-arg=$(Join-Path $Kit 'velt_crt.obj')"
+        if ($LASTEXITCODE -ne 0) { throw "linking velt-launcher.exe with lld-link failed" }
         Write-Host "linking velt_rt_shared.dll with lld-link..."
         cargo rustc --release -p velt_rt_shared --lib --manifest-path $Manifest -- @Common "-Clink-arg=$(Join-Path $Kit 'velt_crt_dll.obj')"
         if ($LASTEXITCODE -ne 0) { throw "linking velt_rt_shared.dll with lld-link failed" }
@@ -86,14 +91,15 @@ if (-not $NoBundledLinker) {
 }
 
 $Exe = Join-Path $Release "velt.exe"
+$Launcher = Join-Path $Release "velt-launcher.exe"
 $RtLib = Join-Path $Release "velt_rt.lib"
 # The shared runtime debug builds link (crates/velt_rt_shared): the DLL and its import library.
 $SharedRt = @((Join-Path $Release "velt_rt_shared.dll"), (Join-Path $Release "velt_rt_shared.dll.lib"))
-foreach ($f in @($Exe, $RtLib) + $SharedRt) {
+foreach ($f in @($Exe, $Launcher, $RtLib) + $SharedRt) {
     if (-not (Test-Path $f -PathType Leaf)) { throw "missing build output: $f" }
 }
 
-Copy-Item $Exe (Join-Path $Out "bin")
+Copy-Item $Exe, $Launcher (Join-Path $Out "bin")
 Copy-Item $RtLib (Join-Path $Out "lib")
 foreach ($f in $SharedRt) { Copy-Item $f (Join-Path $Out "lib") }
 Copy-Item (Join-Path $Repo "crates/velt_rt/NATIVE_LIBS.md") (Join-Path $Out "lib")
@@ -108,13 +114,16 @@ if (Test-Path $StdDir -PathType Container) {
 # Velt $Version ($HostTriple)
 
 Install:  get-velt.ps1 -Archive <this .zip> (an asset of every release), or
-          pwsh scripts/install.ps1 -Dist <this directory> from a source checkout, or copy it anywhere.
-Then add ``<prefix>\bin`` to PATH and run ``velt doctor``.
+          pwsh scripts/install.ps1 -Dist <this directory> from a source checkout. Both install it
+          as %LOCALAPPDATA%\velt\toolchains\$Version beside other versions, with
+          bin\velt-launcher.exe as %LOCALAPPDATA%\velt\bin\velt.exe; or run bin\velt.exe from
+          this directory as it is.
+Then add ``%LOCALAPPDATA%\velt\bin`` to PATH and run ``velt doctor``.
 
     velt run hello.vlt
     velt new app; cd app; velt run
 
-Layout: bin/ (the velt CLI), lib/ (runtime library linked into every program),
+Layout: bin/ (the velt CLI, and the launcher), lib/ (runtime library linked into every program),
 std/ (standard library sources). Full guide: docs/tooling/platforms.md in the Velt repository.
 "@ | Set-Content -Encoding utf8 (Join-Path $Out "README.md")
 
@@ -154,5 +163,12 @@ if (-not $NoArchive) {
     if (Test-Path $Zip) { Remove-Item -Force $Zip }
     Compress-Archive -Path $Out -DestinationPath $Zip
     Write-Host "archive: $Zip"
+    # The launcher installs toolchains from .tar.gz archives on every OS (velt_toolchain unpacks
+    # one format); the installer keeps the .zip.
+    $Tgz = Join-Path $Dist "$Name.tar.gz"
+    if (Test-Path $Tgz) { Remove-Item -Force $Tgz }
+    tar.exe -czf $Tgz -C $Dist $Name
+    if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+    Write-Host "archive: $Tgz"
 }
 Write-Host "dist:    $Out"

@@ -2,19 +2,29 @@
 #
 #   irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 #
+# Versions install side by side (#948, docs/tooling/platforms.md): the toolchain goes into
+# <root>\toolchains\<version>\, and the launcher into <root>\bin\velt.exe, the one directory on
+# PATH. It runs the version each package pins (`velt` in package.vlt), else the default. Running
+# this again with another version adds it beside the others.
+#
 # Parameters when run as a file (environment variable in parentheses, also honored by `| iex`):
-#   -Version <v>     the release to install, e.g. 0.1.0 (VELT_INSTALL_VERSION); default: the release
+#   -Version <v>     the release to install, e.g. 0.1.1 (VELT_INSTALL_VERSION); default: the release
 #                    this script was published with, or the latest release
-#   -Prefix <dir>    where to install (VELT_INSTALL_PREFIX); default: %LOCALAPPDATA%\velt
+#   -Prefix <dir>    the root (VELT_INSTALL_PREFIX); default: %LOCALAPPDATA%\velt
+#   -Default         make this version the default (the first one installed always is)
+#   -Force           reinstall a version that is already installed
 #   -Archive <file>  install a downloaded velt-<version>-<target>.zip instead of downloading
-#   -NoModifyPath    do not add <prefix>\bin to the user PATH
+#   -NoModifyPath    do not add <root>\bin to the user PATH
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests).
 #
-# The prefix's bin\, lib\ and std\ are replaced wholesale (docs/tooling/platforms.md).
+# A download is checked against the release's SHA256SUMS. PowerShell cannot check its Ed25519
+# signature; the installed launcher checks the signature of everything it downloads later.
 param(
     [string]$Version = $env:VELT_INSTALL_VERSION,
     [string]$Prefix = $env:VELT_INSTALL_PREFIX,
     [string]$Archive = "",
+    [switch]$Default,
+    [switch]$Force,
     [switch]$NoModifyPath
 )
 $ErrorActionPreference = "Stop"
@@ -85,7 +95,7 @@ try {
         if ($Actual -ne $Expected) { Fail "checksum mismatch for $Name.zip (expected $Expected, got $Actual)" }
     }
 
-    # Unpack and install.
+    # Unpack.
     $Unpacked = Join-Path $Tmp "unpacked"
     Expand-Archive -Path $Archive -DestinationPath $Unpacked -Force
     $Dist = Get-ChildItem -Directory $Unpacked |
@@ -93,24 +103,84 @@ try {
         Select-Object -First 1
     if (-not $Dist) { Fail "$Archive is not a Velt release archive (no *\bin\velt.exe inside)" }
     $Dist = $Dist.FullName
+    $NewLauncher = Join-Path $Dist "bin\velt-launcher.exe"
+    if (-not (Test-Path $NewLauncher -PathType Leaf)) {
+        Fail "$Archive has no launcher (bin\velt-launcher.exe): velt 0.1.0 predates it; this installer installs later releases"
+    }
+    # `velt <version> (<commit> <triple>)`
+    $Installed = & (Join-Path $Dist "bin\velt.exe") --version
+    if ($LASTEXITCODE -ne 0) { Fail "the velt.exe in $Archive does not run" }
+    $Version = ($Installed -split "\s+")[1]
+    if (-not $Version) { Fail "cannot read the version of the velt.exe in $Archive" }
 
     New-Item -ItemType Directory -Force $Prefix | Out-Null
-    $Prefix = (Resolve-Path $Prefix).Path
-    foreach ($d in @("bin", "lib", "std", "share\velt")) {
-        $Dest = Join-Path $Prefix $d
-        if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
-        if (Test-Path (Join-Path $Dist $d)) {
-            New-Item -ItemType Directory -Force (Split-Path $Dest) | Out-Null
-            Copy-Item -Recurse (Join-Path $Dist $d) $Dest
+    $Root = (Resolve-Path $Prefix).Path
+    $Bin = Join-Path $Root "bin"
+    $Toolchains = Join-Path $Root "toolchains"
+
+    # A single toolchain installed into the root by an installer from before the launcher: its
+    # bin\velt.exe is the compiler, which the launcher replaces. Not moved: removed.
+    if ((Test-Path (Join-Path $Root "std")) -and -not (Test-Path $Toolchains)) {
+        Write-Host "replacing the earlier single-toolchain install in $Root"
+        foreach ($d in @("lib", "std")) {
+            Remove-Item -Recurse -Force (Join-Path $Root $d) -ErrorAction SilentlyContinue
+        }
+        foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
+            Remove-Item -Force (Join-Path $Root $f) -ErrorAction SilentlyContinue
         }
     }
-    foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
-        if (Test-Path (Join-Path $Dist $f)) { Copy-Item -Force (Join-Path $Dist $f) $Prefix }
+    New-Item -ItemType Directory -Force $Toolchains, $Bin | Out-Null
+
+    # The toolchain, into place whole: a staging copy, renamed (an older copy is renamed aside).
+    $Dest = Join-Path $Toolchains $Version
+    if ((Test-Path (Join-Path $Dest "bin\velt.exe")) -and -not $Force) {
+        Write-Host "velt $Version is already installed in $Dest (-Force reinstalls it)"
+    } else {
+        $Staging = Join-Path $Toolchains ".$Version.$PID"
+        if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging }
+        Copy-Item -Recurse $Dist $Staging
+        if (Test-Path $Dest) {
+            $Old = Join-Path $Toolchains ".$Version.old.$PID"
+            try { Rename-Item $Dest $Old } catch { Fail "cannot replace $Dest (in use?)" }
+            Remove-Item -Recurse -Force $Old -ErrorAction SilentlyContinue
+        }
+        Rename-Item $Staging $Dest
+        Write-Host "installed $Installed into $Dest"
     }
-    $Bin = Join-Path $Prefix "bin"
-    $Installed = & (Join-Path $Bin "velt.exe") --version
-    if ($LASTEXITCODE -ne 0) { Fail "the installed velt.exe does not run" }
-    Write-Host "installed $Installed into $Prefix"
+
+    # The launcher: replaced unless the one installed belongs to a newer velt. A running
+    # velt.exe can be renamed but not overwritten, so the old one is renamed aside first.
+    $Launcher = Join-Path $Bin "velt.exe"
+    $Current = $null
+    if (Test-Path $Launcher) {
+        $Out = & $Launcher toolchain --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $Out) { $Current = ($Out -split "\s+")[1] }
+    }
+    $Release = { param($v) [version](($v -split "-")[0]) }
+    if (-not $Current -or (& $Release $Version) -ge (& $Release $Current)) {
+        if (Test-Path $Launcher) {
+            $Aside = Join-Path $Bin (".velt.exe.old-" + [guid]::NewGuid().ToString("N"))
+            Rename-Item $Launcher $Aside
+            Remove-Item -Force $Aside -ErrorAction SilentlyContinue
+        }
+        Copy-Item $NewLauncher $Launcher
+    }
+    Get-ChildItem $Bin -Filter ".velt.exe.old-*" -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $DefaultFile = Join-Path $Root "default"
+    $HasDefault = (Test-Path $DefaultFile) -and ((Get-Content -Raw $DefaultFile).Trim())
+    if ($Default -or -not $HasDefault) {
+        [IO.File]::WriteAllText($DefaultFile, "$Version`n")
+        Write-Host "velt $Version is the default (packages that pin another version run that one)"
+    }
+    $env:VELT_TOOLCHAIN = $Version
+    try {
+        & $Launcher --version | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "the launcher in $Bin does not run velt $Version" }
+    } finally {
+        Remove-Item Env:VELT_TOOLCHAIN -ErrorAction SilentlyContinue
+    }
 } finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }

@@ -2,17 +2,27 @@
 # Download and install a released Velt toolchain on Linux or macOS.
 #
 #   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
-#   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh -s -- --prefix ~/velt
+#   curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh -s -- --version 0.1.1
+#
+# Versions install side by side (#948, docs/tooling/platforms.md): the toolchain goes into
+# <root>/toolchains/<version>/, and the launcher into <root>/bin/velt, the one directory on PATH.
+# It runs the version each package pins (`velt` in package.vlt), else the default. Running this
+# again with another version adds it beside the others.
 #
 # Options (environment variable in parentheses):
-#   --version <v>     the release to install, e.g. 0.1.0 (VELT_INSTALL_VERSION); default: the release
+#   --version <v>     the release to install, e.g. 0.1.1 (VELT_INSTALL_VERSION); default: the release
 #                     this script was published with, or the latest release
-#   --prefix <dir>    where to install (VELT_INSTALL_PREFIX); default: ~/.velt/toolchain
+#   --prefix <dir>    the root (VELT_INSTALL_PREFIX); default: ~/.velt
+#   --default         make this version the default (the first one installed always is)
+#   --force           reinstall a version that is already installed
 #   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading
-#   --no-modify-path  do not add <prefix>/bin to PATH in your shell profiles
-# VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests).
+#   --no-modify-path  do not add <root>/bin to PATH in your shell profiles
+# VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests), and
+# VELT_INSTALL_PUBLIC_KEY (64 hex digits) the release key, for another build's releases.
 #
-# The prefix's bin/, lib/, std/ and share/velt/ are replaced wholesale (docs/tooling/platforms.md).
+# A download is checked against the release's SHA256SUMS, and that file against its signature
+# (SHA256SUMS.sig) with the velt release key when OpenSSL can check Ed25519 signatures (OpenSSL
+# 1.1.1 or newer; not macOS's LibreSSL). The installed launcher checks every later download itself.
 set -eu
 
 # The release workflow replaces this with the version it publishes.
@@ -20,9 +30,17 @@ published_version="@VELT_RELEASE_VERSION@"
 
 base_url=${VELT_INSTALL_BASE_URL:-https://github.com/velt-lang/velt}
 version=${VELT_INSTALL_VERSION:-}
-prefix=${VELT_INSTALL_PREFIX:-"$HOME/.velt/toolchain"}
+prefix=${VELT_INSTALL_PREFIX:-"$HOME/.velt"}
 archive=
 modify_path=1
+make_default=0
+force=0
+
+# The velt release key (velt_toolchain::signature::RELEASE_PUBLIC_KEY), as OpenSSL reads it.
+release_key='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAlXBDOAeP85PjjZH6CzVAe++R8saiPgF4bNYBUQBhBcs=
+-----END PUBLIC KEY-----'
+
 
 say() { printf '%s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -33,8 +51,10 @@ while [ $# -gt 0 ]; do
         --prefix) [ $# -ge 2 ] || err "--prefix needs a value"; prefix=$2; shift 2 ;;
         --archive) [ $# -ge 2 ] || err "--archive needs a value"; archive=$2; shift 2 ;;
         --no-modify-path) modify_path=0; shift ;;
+        --default) make_default=1; shift ;;
+        --force) force=1; shift ;;
         -h|--help)
-            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--archive <file>] [--no-modify-path]"
+            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--default] [--force] [--archive <file>] [--no-modify-path]"
             exit 0 ;;
         *) err "unknown option: $1 (see --help)" ;;
     esac
@@ -100,6 +120,40 @@ sha256_of() {
     fi
 }
 
+# SHA256SUMS against SHA256SUMS.sig with the release key: the checksum shows the download is
+# intact, the signature that the velt project published it (whatever mirror served it).
+check_signature() { # <release url>
+    if ! command -v openssl >/dev/null 2>&1 ||
+        ! printf '%s\n' "$release_key" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+        ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
+        say "note: no OpenSSL that checks Ed25519 signatures here, so only the checksum was checked" \
+            "(it shows the archive is intact, not who published it)" >&2
+        return 0
+    fi
+    if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
+        # An Ed25519 public key's DER is a fixed 12-byte header and the 32-byte key.
+        der=$(printf '302a300506032b6570032100%s' "$VELT_INSTALL_PUBLIC_KEY" | tr 'A-F' 'a-f' | awk '{
+            h = "0123456789abcdef"
+            for (i = 1; i < length($0); i += 2)
+                printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+        }')
+        # shellcheck disable=SC2059
+        b64=$(printf "$der" | openssl base64 -A) || err "VELT_INSTALL_PUBLIC_KEY is not a key"
+        release_key=$(printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$b64")
+        printf '%s\n' "$release_key" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+            err "VELT_INSTALL_PUBLIC_KEY is not an Ed25519 public key (64 hex digits)"
+    fi
+    fetch "$1/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
+        err "download failed: $1/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
+    printf '%s\n' "$release_key" > "$tmp/release-key.pem"
+    # The release workflow writes the signature as its 64 raw bytes.
+    sig="$tmp/SHA256SUMS.sig"
+    openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
+        -in "$tmp/SHA256SUMS" -sigfile "$sig" >/dev/null 2>&1 ||
+        err "SHA256SUMS does not match its signature with the velt release key: refusing this download"
+    say "checked the signature of SHA256SUMS with the velt release key"
+}
+
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t velt)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
@@ -129,6 +183,7 @@ else
     else
         say "warning: neither sha256sum nor shasum is installed; skipping the checksum check" >&2
     fi
+    check_signature "$url"
     archive="$tmp/$name.tar.gz"
 fi
 
@@ -140,20 +195,53 @@ for d in "$tmp/unpacked"/*/; do
     if [ -f "$d/bin/velt" ]; then dist=${d%/}; break; fi
 done
 [ -n "$dist" ] || err "$archive is not a Velt release archive (no */bin/velt inside)"
+[ -f "$dist/bin/velt-launcher" ] ||
+    err "$archive has no launcher (bin/velt-launcher): velt 0.1.0 predates it; this installer installs later releases"
+chmod +x "$dist/bin/velt" "$dist/bin/velt-launcher"
+# `velt <version> (<commit> <triple>)`
+installed=$("$dist/bin/velt" --version) || err "the velt in $archive does not run on this system"
+version=$(printf '%s\n' "$installed" | awk '{ print $2 }')
+[ -n "$version" ] || err "cannot read the version of the velt in $archive"
 
-mkdir -p "$prefix" || err "cannot create $prefix"
-prefix=$(cd "$prefix" && pwd)
-for d in bin lib std share/velt; do
-    rm -rf "${prefix:?}/$d"
-    if [ -d "$dist/$d" ]; then mkdir -p "$(dirname "$prefix/$d")" && cp -R "$dist/$d" "$prefix/$d"; fi
-done
-for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE; do
-    if [ -f "$dist/$f" ]; then cp "$dist/$f" "$prefix/"; fi
-done
-chmod +x "$prefix/bin/velt"
-bin="$prefix/bin"
-installed=$("$bin/velt" --version) || err "the installed $bin/velt does not run on this system"
-say "installed $installed into $prefix"
+mkdir -p "$prefix/toolchains" "$prefix/bin" || err "cannot create $prefix"
+root=$(cd "$prefix" && pwd)
+dest="$root/toolchains/$version"
+if [ -f "$dest/bin/velt" ] && [ "$force" = 0 ]; then
+    say "velt $version is already installed in $dest (--force reinstalls it)"
+else
+    # Into place whole: a staging copy, renamed over (an older copy is renamed aside first).
+    staging="$root/toolchains/.$version.$$"
+    rm -rf "$staging"
+    cp -R "$dist" "$staging"
+    if [ -d "$dest" ]; then
+        mv "$dest" "$root/toolchains/.$version.old.$$" ||
+            err "cannot replace $dest (in use?)"
+        rm -rf "$root/toolchains/.$version.old.$$"
+    fi
+    mv "$staging" "$dest"
+    say "installed $installed into $dest"
+fi
+
+# The launcher: replaced unless the one installed belongs to a newer velt.
+launcher_version() { "$1" toolchain --version 2>/dev/null | awk '{ print $2 }'; }
+newer_or_same() { # <a> <b>: a >= b, by version order
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)" = "$1" ]
+}
+current=
+if [ -x "$root/bin/velt" ]; then current=$(launcher_version "$root/bin/velt" || true); fi
+if [ -z "$current" ] || newer_or_same "$version" "$current"; then
+    cp "$dist/bin/velt-launcher" "$root/bin/.velt.$$"
+    chmod +x "$root/bin/.velt.$$"
+    mv -f "$root/bin/.velt.$$" "$root/bin/velt"
+fi
+
+if [ "$make_default" = 1 ] || [ ! -s "$root/default" ]; then
+    printf '%s\n' "$version" > "$root/default"
+    say "velt $version is the default (packages that pin another version run that one)"
+fi
+bin="$root/bin"
+VELT_TOOLCHAIN="$version" "$bin/velt" --version >/dev/null ||
+    err "the launcher in $bin does not run velt $version"
 
 # --- PATH ---------------------------------------------------------------------------------------
 add_line() { # <file> <line>
@@ -198,3 +286,8 @@ if [ "$on_path" = 0 ]; then
     say ""
 fi
 say "Then check the installation with:  velt doctor"
+if [ -d "$HOME/.velt/toolchain/bin" ] && [ "$root" = "$HOME/.velt" ]; then
+    say ""
+    say "An earlier install (one toolchain, before the launcher) is in ~/.velt/toolchain; remove it"
+    say "with \`rm -rf ~/.velt/toolchain\` and its PATH line from your shell profile."
+fi
