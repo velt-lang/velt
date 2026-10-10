@@ -231,10 +231,12 @@ the standard library. The output has one page per module and a client-side searc
 
 Several velt versions can be installed side by side, each in `<root>/toolchains/<version>/`
 (`<root>` is `~/.velt`, or `%LOCALAPPDATA%\velt` on Windows). The `velt` on your `PATH` is a
-small launcher, `<root>/bin/velt`, that runs one of them with the same arguments:
+small launcher, `<root>/bin/velt`, that runs one of them with the same arguments. (The
+installers set this layout up from the next release on, #948; a velt 0.1.0 install is a single
+toolchain in `~/.velt/toolchain`, without a launcher.)
 
-1. `velt +<toolchain> <command>` (`velt +0.2.0 build`), or `$VELT_TOOLCHAIN`, a version
-   (`0.1.3`) or a linked name, for one command;
+1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
+   a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
 2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
    version it accepts;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
@@ -261,10 +263,10 @@ $ velt toolchain list
 |---|---|
 | `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
 | `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
-| `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force` |
+| `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
 | `default [<toolchain>]` | show or set the default |
 | `which` | the toolchain this directory runs, why, and its directory |
-| `link <name> <prefix>`, `unlink <name>` | use a toolchain prefix built elsewhere (a checkout's) as `<name>`: `VELT_TOOLCHAIN=dev velt test` |
+| `link <name> <prefix>`, `unlink <name>` | use a toolchain prefix built elsewhere (a checkout's; it holds `bin/velt` and `std/`) as `<name>`: `velt +dev test` |
 
 The launcher runs `velt toolchain` itself, so it works the same whichever version a package
 pins. A toolchain's own `bin/velt`, started directly, says so instead.

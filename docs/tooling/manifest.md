@@ -70,7 +70,8 @@ the velt that created the package (a pre-release writes its whole version, such 
 change the language, and a toolchain's standard library and runtime belong to it.
 
 The `velt` on your `PATH`, the launcher, runs the newest installed version the field accepts,
-installing one first when none is ([`velt toolchain`](cli.md#velt-toolchain)). A toolchain's
+installing one first when none is ([`velt toolchain`](cli.md#velt-toolchain); the installers
+set the launcher up from the release after 0.1.0, #948). A toolchain's
 own `velt` started directly warns when its version is not one the field accepts:
 
 ```text

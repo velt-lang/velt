@@ -467,6 +467,7 @@ fn the_toolchain_commands() {
     // A prefix built elsewhere, linked under a name.
     let checkout = m.work.join("checkout");
     std::fs::create_dir_all(checkout.join("bin")).unwrap();
+    std::fs::create_dir_all(checkout.join("std")).unwrap();
     std::fs::copy(fake_velt(), checkout.join(format!("bin/velt{EXE}"))).unwrap();
     m.ok(
         &loose,
@@ -548,8 +549,17 @@ fn a_plus_argument_picks_the_toolchain_for_one_command() {
     assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.0")));
     let which = m.ok(&pkg, &["+0.2.0", "toolchain", "which"]);
     assert!(which.starts_with("0.2.0 (+0.2.0)"), "{which}");
-    let err = m.fail(&pkg, &["+0.x", "build"], &[]);
-    assert!(err.contains("`+0.x`: `0.x` is neither a version"), "{err}");
+    // A requirement, read like a pin: the newest installed 0.1.x.
+    let stdout = m.ok(&pkg, &["+0.1", "build"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.0")), "{stdout}");
+    assert!(stdout.contains("selected=0.1.0 (+0.1)"), "{stdout}");
+    let stdout = m.ok_with(&pkg, &["build"], &[("VELT_TOOLCHAIN", "0.2")]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.0")), "{stdout}");
+    let err = m.fail(&pkg, &["+0.1.2.3", "build"], &[]);
+    assert!(
+        err.contains("`+0.1.2.3`: `0.1.2.3` is not a version"),
+        "{err}"
+    );
     let err = m.fail(&pkg, &["+nightly", "build"], &[]);
     assert!(err.contains("no toolchain is linked as `nightly`"), "{err}");
 }
@@ -571,4 +581,70 @@ fn an_index_names_a_newer_launcher_and_is_never_older_than_one_seen() {
     releases.index_with(&[("0.1.0", None)], None, Some(4_000));
     let err = m.fail(&m.work, &["toolchain", "list", "--available"], &[]);
     assert!(err.contains("is older than an index seen before"), "{err}");
+}
+
+#[test]
+fn a_requirement_after_plus_installs_its_newest_release() {
+    let releases = Releases::new(&["0.1.0", "0.2.0", "0.2.1"]);
+    let m = Machine::new(&releases);
+    let stdout = m.ok(&m.work, &["+0.2", "run", "x.vlt"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.1")), "{stdout}");
+}
+
+#[test]
+fn a_launcher_never_runs_itself_or_others_without_end() {
+    let releases = Releases::new(&["0.1.0"]);
+    let m = Machine::new(&releases);
+    // A link to the launcher's own root (written by hand: `link` refuses it).
+    std::fs::create_dir_all(m.root.join("links")).unwrap();
+    std::fs::write(m.root.join("links/loop"), format!("{}\n", m.root.display())).unwrap();
+    let err = m.fail(&m.work, &["--version"], &[("VELT_TOOLCHAIN", "loop")]);
+    assert!(err.contains("is this launcher"), "{err}");
+    let err = m.fail(
+        &m.work,
+        &["toolchain", "link", "again", m.root.to_str().unwrap()],
+        &[],
+    );
+    assert!(err.contains("is the root of a velt launcher"), "{err}");
+
+    // Two roots whose links point at each other: each `bin/velt` is a launcher.
+    let other = m.work.join("other");
+    std::fs::create_dir_all(other.join("bin")).unwrap();
+    std::fs::create_dir_all(other.join("std")).unwrap();
+    std::fs::create_dir_all(other.join("links")).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_velt-launcher"),
+        other.join(format!("bin/velt{EXE}")),
+    )
+    .unwrap();
+    std::fs::write(other.join("links/ping"), format!("{}\n", m.root.display())).unwrap();
+    std::fs::write(m.root.join("links/ping"), format!("{}\n", other.display())).unwrap();
+    let started = std::time::Instant::now();
+    let err = m.fail(&m.work, &["--version"], &[("VELT_TOOLCHAIN", "ping")]);
+    assert!(
+        err.contains("velt launchers started one another 3 times"),
+        "{err}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[test]
+fn downloads_only_over_https_or_from_this_machine() {
+    let releases = Releases::new(&["0.1.0"]);
+    let m = Machine::new(&releases);
+    let pkg = m.package("app", Some("0.1"));
+    for (base, what) in [
+        (
+            "http://releases.example",
+            "plain http:// to another machine",
+        ),
+        ("file:///tmp/releases", "a file:// URL"),
+    ] {
+        let err = m.fail(&pkg, &["build"], &[("VELT_INSTALL_BASE_URL", base)]);
+        assert!(
+            err.contains(&format!("refusing to download {base}")) && err.contains(what),
+            "{err}"
+        );
+    }
+    assert_eq!(releases.downloads(), 0);
 }

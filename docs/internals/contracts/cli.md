@@ -194,7 +194,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
   a toolchain's own `velt` given one exits 1 saying it is the launcher's. For every command but
-  `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (a version or a link name),
+  `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (both: a full version is that
+  version, a `[a-z]…` name a link, anything else a requirement read like a pin),
   else the `velt` requirement of the nearest `package.vlt` above the cwd
   (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin), else
   `<root>/default`; none → exit 1 naming `velt toolchain install`. A requirement selects the
@@ -209,7 +210,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `velt-<v>-<host>.tar.gz` of `releases/download/v<v>/`, checked, unpacked under
   `velt-<v>-<host>/`, swapped into place) after `velt: installing velt <v> (<reason>) from <base>`
   on stderr. It then runs `<prefix>/bin/velt` with the same arguments (Unix: `exec`; Windows:
-  waits, exits with its code, ignores Ctrl-C itself), with `VELT_LAUNCHER=<launcher path>` and
+  waits, exits with its code, ignores Ctrl-C itself, and puts it in a kill-on-close job object
+  so killing the launcher ends it), unless that file is the launcher itself (exit 1, "is this
+  launcher") or `$VELT_LAUNCHER_HOPS` (incremented for the child; a toolchain's `velt` clears
+  it) has reached 3 (exit 1: launchers started one another), with `VELT_LAUNCHER=<launcher path>` and
   `VELT_TOOLCHAIN_SELECTED=<toolchain> (<reason>)` set; `<reason>` is `$VELT_TOOLCHAIN`,
   `velt: "<req>" in <manifest>:<line>`, `+<toolchain>` or `the default`. `velt doctor` reports both
   (`toolchain`), or "started directly". `velt toolchain` in a toolchain's own `velt` exits 1

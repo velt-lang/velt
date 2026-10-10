@@ -96,19 +96,34 @@ pub struct Selection {
     pub reason: Reason,
 }
 
+/// A toolchain chosen for one command (`+<x>`, `$VELT_TOOLCHAIN`): a full version (`0.2.0`)
+/// is that version, a name (`dev`) a link, anything else a requirement read like a pin (`0.2`:
+/// the newest 0.2.x).
+fn chosen(text: &str) -> Result<Wanted, String> {
+    if let Ok(toolchain) = Toolchain::parse(text) {
+        return Ok(Wanted::Toolchain(toolchain));
+    }
+    Requirement::parse(text)
+        .map(Wanted::Requirement)
+        .map_err(|_| {
+            format!(
+            "`{text}` is not a version (`0.2.0`), a requirement (`0.2`, `>=0.2`) or a toolchain \
+             name (`dev`)"
+        )
+        })
+}
+
 /// `+<toolchain>`, else `$VELT_TOOLCHAIN`, else the package's pin, else the default.
 pub fn select(ctx: &Context) -> Result<Selection, String> {
     if let Some(name) = &ctx.plus {
-        let toolchain = Toolchain::parse(name).map_err(|e| format!("`+{name}`: {e}"))?;
         return Ok(Selection {
-            wanted: Wanted::Toolchain(toolchain),
+            wanted: chosen(name).map_err(|e| format!("`+{name}`: {e}"))?,
             reason: Reason::Plus(name.clone()),
         });
     }
     if let Some(text) = &ctx.env_toolchain {
-        let toolchain = Toolchain::parse(text).map_err(|e| format!("${ENV_TOOLCHAIN}: {e}"))?;
         return Ok(Selection {
-            wanted: Wanted::Toolchain(toolchain),
+            wanted: chosen(text).map_err(|e| format!("${ENV_TOOLCHAIN}: {e}"))?,
             reason: Reason::Env,
         });
     }

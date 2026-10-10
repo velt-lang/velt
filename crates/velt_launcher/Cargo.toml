@@ -15,8 +15,9 @@ velt_toolchain.workspace = true
 semver = "1.0.28"
 
 [target.'cfg(windows)'.dependencies]
-# Leaving Ctrl-C to the toolchain the launcher waits for.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
+# Leaving Ctrl-C to the toolchain the launcher waits for, and a job object that ends it when the
+# launcher is killed.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 velt_http = { path = "../velt_http" }
