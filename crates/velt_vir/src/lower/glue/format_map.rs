@@ -154,7 +154,7 @@ impl FnLower<'_, '_> {
                 let types = (map_ty, kt, vt);
                 let order = (entries == Entries::Record).then(|| lw.record_order(obj, ty));
                 let ord = order.as_ref();
-                lw.format_map_entries(buf, &map, types, entries, size, &child, ord);
+                lw.format_map_entries(buf, &map, types, (entries, ord), size, &child);
                 if let Some(o) = order {
                     lw.drop_record_order(o);
                 }
@@ -212,16 +212,16 @@ impl FnLower<'_, '_> {
 
     /// The live entries of the `Map` at `obj` (of types `(map, key, value)`) with `size` of
     /// them, comma-separated, each part at node's depth `child`; a `Map` or `Set` stops after
-    /// the first 100 and adds `... n more items`.
+    /// the first 100 and adds `... n more items`. A record's entries come in `order` (its
+    /// `__positions`).
     fn format_map_entries(
         &mut self,
         buf: &Operand,
         obj: &Place,
         (ty, kt, vt): (TyId, TyId, TyId),
-        entries: Entries,
+        (entries, order): (Entries, Option<&RecordOrder>),
         size: Operand,
         child: &Operand,
-        order: Option<&RecordOrder>,
     ) {
         let tys = self.cx.adt_field_tys(ty);
         let keys = self.field_place(obj, ty, KEYS);
