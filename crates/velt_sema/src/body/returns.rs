@@ -107,8 +107,12 @@ pub(crate) fn check_deferred(cx: &mut Ctx) {
 
 impl FnCx<'_, '_> {
     /// The value `e` returned from a body whose result type is `ret`. A callback of the JS API
-    /// returning a number (a comparator) may return an integer of any type: it converts.
+    /// returning a number (a comparator) may return an integer of any type: it converts. A
+    /// predicate of the JS API may return any value: it is tested for truthiness.
     pub(crate) fn returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        if self.f.truthy_returns {
+            return self.cond(e);
+        }
         if self.f.int_returns_number {
             // Its own type first: `x.n != y.n ? y.n - x.n : -1` with `n: i64` is an `i64`.
             let h = self.expr(e, None, Want::Move);

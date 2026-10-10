@@ -1,0 +1,22 @@
+// A sync callback assigning a captured variable, reached by an HTTP handler: main copies the field into a variable the handler captures (#873).
+import { serve } from "velt:http";
+
+type Fn = (v: string) => void;
+
+class W {
+  name: string = "w";
+  onClick: Fn = (v) => {};
+}
+
+async function main() {
+  let last = "";
+  const w = new W();
+  w.onClick = (v: string) => { last = `${v}${last.length}`; };
+  const h = w.onClick;
+  const a = await serve({ port: 0 }, async (req) => {
+    h("x");
+    return new Response(w.name);
+  });
+  await a.shutdown();
+  console.log(last.length);
+}

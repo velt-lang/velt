@@ -789,13 +789,18 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
-  `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
+  `index out of bounds: the len is L but the index is I`), `push` (any number of items:
+  `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
+  `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
   reverse isEmpty entries fill`, `join` and `toString()` (any elements, written as
   `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
-  (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
+  (`xs.map((x, i) => …)`), and may take fewer parameters. A predicate (`filter`, `find`,
+  `findIndex`, `some`, `every`) may return any value, tested for
+  [truthiness](variables.md#conditions-truthiness) as in JS:
+  `[0, 3, 0, 4].filter((n) => n)` is `[3, 4]`. The full list is in the
   [prelude](../std/prelude.md#arrays). Arrays, strings and maps are
   [`Iterable`](control-flow.md#iterables): they convert to `Iterable<T>` values, and
   `xs[Symbol.iterator]()` returns an `Iterator<T>`.
