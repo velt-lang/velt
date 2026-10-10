@@ -30,8 +30,8 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 
 The compiler decides program-wide which types are **weak-capable**: the types used as weak-map
 keys, `WeakRef` targets or `weak T` fields, plus every type reachable from a weak map's key and
-value types (the objects an ephemeron trial may meet). For those types only, release changes its first
-test from `c == 1` to a signed compare, which works because `RC_WEAK` is the sign bit:
+value types (the objects an ephemeron trial may meet). For those types only, release changes its
+first test from `c == 1` to a signed compare, which works because `RC_WEAK` is the sign bit:
 
 ```text
 c = *rc
@@ -41,15 +41,15 @@ else            { if velt_rt_weak_release(obj) { drop the fields; free } }      
 ```
 
 A weakly held object's count word is negative as a signed number, so it leaves the shared path
-with the unique case and goes to the cold call, which removes the object from every map and `WeakRef` before
-the generated code frees it. Every other type keeps today's two-way release, and a program
+with the unique case and goes to the cold call, which removes the object from every map and
+`WeakRef` before the generated code frees it. Every other type keeps today's two-way release, and a program
 without `WeakMap`, `WeakSet`, `WeakRef` or `weak` has no weak-capable types: it compiles exactly
 as today.
 
 | Object | Cost |
 |---|---|
 | Type never weakly held | none: same code as today |
-| Weak-capable type, object not weakly held | the signed compare: about one instruction per release, two per free (measured below) |
+| Weak-capable type, object not weakly held | the signed compare: nothing on a shared release, two instructions per free (measured below) |
 | Object weakly held | a call and a side-table probe on each release |
 | Freeing a weakly held object | the above, plus removing its entries and clearing its `WeakRef`s |
 
@@ -59,15 +59,15 @@ x86_64, 10^6 iterations), instructions per iteration of the loop:
 
 | Loop | Today's release | Weak-capable, signed compare | Weak-capable, separate bit test | Weakly held object |
 |---|---|---|---|---|
-| retain + release (shared path) | 10.00 | 11.00 | 14.00 | 94.00 |
+| retain + release (shared path) | 10.00 | 10.00 | 14.00 | 96.00 |
 | allocate + release (drop, free) | 93.69 | 95.69 | 93.69 | — |
 
-The signed compare costs one instruction per shared release and two per free (+2.1% on the
-allocate/free loop, mostly mimalloc); a separate bit test after `c == 1` keeps the free path
-unchanged but costs four per shared release, so the signed compare is the proposal. Neither
-touches types that are not weak-capable, which is every type of every program today: their code
-is unchanged, so `bench/` is unaffected. A release of a weakly held object is a call and a hash
-probe, about 84 instructions more than today's.
+The signed compare leaves the shared release as it is and costs two instructions per free (+2.1%
+on the allocate/free loop, which is mostly mimalloc); a separate bit test after `c == 1` keeps the
+free path unchanged but costs four per shared release, so the signed compare is the proposal.
+Neither touches types that are not weak-capable, which is every type of every program today:
+their code is unchanged, so `bench/` is unaffected. A release of a weakly held object is a call
+and a hash probe, 86 instructions more than today's.
 
 ## Weak maps and `WeakRef`
 

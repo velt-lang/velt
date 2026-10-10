@@ -14,7 +14,7 @@ bin=$(cargo test -p velt_rt --lib --release --no-run --message-format=json 2>/de
   sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)
 [ -x "$bin" ] || { echo "test binary not found" >&2; exit 1; }
 out=$(mktemp -d)
-for loop in plain_shared capable_shared bittest_shared weak_shared plain_unique capable_unique \n  bittest_unique; do
+for loop in plain_shared capable_shared bittest_shared weak_shared plain_unique capable_unique bittest_unique; do
   # The weak loop is the capable loop run on a weakly held object.
   fn=bench_${loop/weak_/capable_}
   VELT_WEAK_BENCH=$loop VELT_WEAK_BENCH_N=$N valgrind --tool=callgrind \
