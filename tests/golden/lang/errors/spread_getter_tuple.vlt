@@ -1,6 +1,7 @@
-// A tuple read through a getter, spread into fixed parameters: JS reads it once and takes each
-// element from that one value, so expanding it into one read per element would call the getter
-// again for each. Velt asks to store it in a variable first.
+// A tuple read through a getter, spread into fixed parameters after an argument with effects:
+// JS evaluates that argument first, then reads the tuple once. Velt reads such a tuple into a
+// hidden temporary before the call, which would change that order, so it asks to store it in a
+// variable first.
 class Cnt {
   n: number = 0;
 }
@@ -20,8 +21,13 @@ function f(a: number, b: number, c: number): string {
   return `${a},${b},${c}`;
 }
 
+function bump(c: Cnt): number {
+  c.n += 5;
+  return c.n;
+}
+
 function main() {
   const cnt = new Cnt();
   const g = new G(cnt);
-  console.log(f(0, ...g.pair), cnt.n);
+  console.log(f(bump(cnt), ...g.pair), cnt.n);
 }

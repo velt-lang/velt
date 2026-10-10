@@ -1,0 +1,90 @@
+// `push` and `String.fromCharCode` take any number of arguments, as in JS: `push(a, b)`,
+// `push(...items)` and `String.fromCharCode(...codes)`.
+
+class Box {
+  constructor(public items: number[]) {}
+}
+
+function next(log: string[], label: string, v: number): number {
+  log.push(label);
+  return v;
+}
+
+class PopSource {
+  src: number[] = [1, 2, 3];
+  get popget(): number {
+    return this.src.pop() ?? -1;
+  }
+}
+
+function main() {
+  const xs = [1, 2];
+  const ys = [3, 4];
+  xs.push(5, 6);
+  xs.push(...ys);
+  console.log(xs, String.fromCharCode(...[72, 105]));
+  xs.push();
+  xs.push(0, ...ys, 9, ...[]);
+  console.log(xs);
+  // The receiver's own elements are spread before any is pushed.
+  const zs = [1, 2, 3];
+  zs.push(...zs);
+  console.log(zs);
+  // Arguments are evaluated in order, before the first push.
+  const log: string[] = [];
+  const ws: number[] = [];
+  ws.push(next(log, "a", ws.length), next(log, "b", ws.length));
+  console.log(ws, log);
+  // A field, and integers into a number array.
+  const b = new Box([]);
+  b.items.push(...[7, 8], 1.5);
+  console.log(b.items);
+  const names: string[] = [];
+  const more = ["x", "y"];
+  names.push("w", ...more);
+  console.log(names, more);
+  console.log(String.fromCharCode(72, 101, 108, 108, 111), String.fromCharCode(65));
+  const smile = String.fromCharCode(0xd83d, 0xde00);
+  console.log(String.fromCharCode() === "", smile.length, smile === "\u{1F600}");
+  const codes = [87, 111, 114, 108, 100];
+  console.log(String.fromCharCode(...codes), String.fromCharCode(65.7, 66 + 65536));
+  const bytes = [104, 105];
+  let t = "";
+  for (let i = 0; i < bytes.length; i++) {
+    t += String.fromCharCode(bytes[i]);
+  }
+  console.log(t);
+  // ToUint16 of codes outside the 64-bit integer range.
+  const big = String.fromCharCode(Infinity, 1e20, 2 ** 63 + 3 * 2 ** 20 + 65, -Infinity, NaN, -1);
+  console.log(big.split("").map((c) => c.charCodeAt(0)), String.fromCharCode(1e20).length);
+  // The receiver under another name is spread as it was, before the first push.
+  const ss = [["a"]];
+  const alias = ss;
+  ss.push(...alias);
+  console.log(ss.length);
+  const letters = ["a", "b"];
+  const same = letters;
+  letters.push(...same, ...same);
+  console.log(letters);
+  // An item after a spread that changes it runs after the spread is read.
+  const src = [1, 2, 3];
+  const out: number[] = [];
+  out.push(...src, src.pop() ?? -1);
+  console.log(out, src);
+  src.push(...src, src.pop() ?? -1);
+  console.log(src);
+  // A getter is a call: one after a spread that changes it runs after the spread is read.
+  const hs = new PopSource();
+  const outs: number[] = [];
+  outs.push(...hs.src, hs.popget);
+  console.log(outs, hs.src);
+  // A variable is read before a later item assigns it.
+  let a = 1;
+  const nums: number[] = [];
+  nums.push(a, (a = 2), a);
+  console.log(nums);
+  let w = "p";
+  const words: string[] = [];
+  words.push(w, (w = "q"), w);
+  console.log(words);
+}

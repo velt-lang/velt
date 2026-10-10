@@ -236,6 +236,9 @@ pub(crate) struct Frame {
     /// A callback of the JS API returning a number: an integer it returns converts
     /// (`returns::returned`).
     pub int_returns_number: bool,
+    /// A predicate of the JS API (`filter`, `find`, `some`, ...) without a declared result
+    /// type: what it returns is tested for truthiness, as JS does (`returns::returned`).
+    pub truthy_returns: bool,
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
@@ -285,6 +288,7 @@ impl Frame {
             unnarrowed_reads: vec![],
             closure_assigned: HashMap::new(),
             int_returns_number: false,
+            truthy_returns: false,
             const_lits: HashMap::new(),
             regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
@@ -322,6 +326,12 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
+    /// call's expression is a block with these first (`FnCx::expr`).
+    pub call_temps: Vec<hir::Stmt>,
+    /// The span of the call being checked when its function or receiver has effects
+    /// (`getf()(...t)`): a spread's hidden temporary would run before it (`spread_args`).
+    pub callee_effects: Option<Span>,
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
@@ -377,6 +387,8 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: None,
+            call_temps: vec![],
+            callee_effects: None,
             void_task: None,
             task_callback: None,
             thread_task: None,

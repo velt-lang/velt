@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
     ) -> Checked {
         let collect = std::mem::take(&mut self.collect_iterable_args);
         let expanded;
-        let args = match self.expand_spreads(c, args) {
+        let args = match self.expand_spreads(c, args, span) {
             Ok(Some(a)) => {
                 expanded = a;
                 &expanded[..]
