@@ -1,0 +1,2 @@
+void_type_arg_function.vlt:9:3
+error: function `h` takes 1 argument but 0 arguments were supplied

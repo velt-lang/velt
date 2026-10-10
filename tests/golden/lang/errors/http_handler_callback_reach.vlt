@@ -1,0 +1,104 @@
+// Every way an HTTP handler reaches a sync callback that assigns a variable it captured is an
+// error (#873): a field holding `T | null`, an interface value, a method calling `this.cb`, a
+// setter keeping it, a `Map` value, a generic box, `setTimeout` in the handler, a handler
+// factory's parameter.
+import { serve } from "velt:http";
+
+class Opt {
+  cb: (() => void) | null = null;
+}
+
+interface Hooks {
+  before: (v: number) => void;
+}
+
+class Fire {
+  cb: (n: i64) => void = (n) => {};
+  fire() {
+    this.cb(1);
+  }
+}
+
+class Button {
+  handler: (v: string) => void = (v) => {};
+  setHandler(f: (v: string) => void) {
+    this.handler = f;
+  }
+  click(v: string) {
+    this.handler(v);
+  }
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function makeHandler(onHit: (b: boolean) => void): (req: Request) => Promise<Response> {
+  return async (req: Request) => {
+    onHit(true);
+    return new Response("ok");
+  };
+}
+
+async function main() {
+  let a = 0;
+  const o = new Opt();
+  o.cb = () => {
+    a++;
+  };
+  let b = 0;
+  const h: Hooks = {
+    before: (v: number) => {
+      b += v;
+    },
+  };
+  let c: i64 = 0;
+  const f = new Fire();
+  f.cb = (n: i64) => {
+    c += n;
+  };
+  let d = "";
+  const btn = new Button();
+  btn.setHandler((v: string) => {
+    d = v;
+  });
+  let e = 0;
+  const m = new Map<string, (s: string) => number>();
+  m.set("a", (s: string) => {
+    e = s.length;
+    return e;
+  });
+  let k = 0;
+  const bx = new Box<(x: number, y: number) => void>((x: number, y: number) => {
+    k = x + y;
+  });
+  let t = 0;
+  const tick = () => {
+    t = 1;
+  };
+  const one = await serve({ port: 0 }, async (req) => {
+    const cb = o.cb;
+    if (cb !== null) {
+      cb();
+    }
+    h.before(1);
+    f.fire();
+    btn.click("x");
+    const g = m.get("a");
+    if (g !== null) {
+      g("y");
+    }
+    bx.v(1, 2);
+    setTimeout(tick, 0);
+    return new Response("ok");
+  });
+  let hit = false;
+  const two = await serve({ port: 0 }, makeHandler((b: boolean) => {
+    hit = b;
+  }));
+  await one.shutdown();
+  await two.shutdown();
+}

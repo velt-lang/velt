@@ -1,0 +1,33 @@
+// A predicate passed to `filter`, `find`, `findIndex`, `some` or `every` may return any value:
+// JavaScript tests it for truthiness, like a condition (`0`, `NaN` and `""` are falsy).
+
+class Item {
+  constructor(
+    public name: string,
+    public count: number,
+  ) {}
+}
+
+function main() {
+  console.log([0, 3, 0, 4].filter((n) => n));
+  console.log(["", "a", ""].find((s) => s));
+  console.log(["", "", "b"].findIndex((s) => s));
+  console.log([0, NaN, -0].some((n) => n), [1, 2].every((n) => n));
+  console.log([1, 2, 3].filter((n) => n % 2));
+  const items = [new Item("a", 0), new Item("", 2), new Item("c", 5)];
+  console.log(items.filter((it) => it.count).map((it) => it.count));
+  console.log(items.filter((it) => it.name).length);
+  // A block body: every `return` is tested.
+  const odd = [1, 2, 3, 4, 5].filter((n) => {
+    if (n > 4) {
+      return "";
+    }
+    return n % 2;
+  });
+  console.log(odd);
+  // Nullable values: `null` is falsy.
+  const names: (string | null)[] = ["x", null, "", "y"];
+  console.log(names.filter((s) => s));
+  // A boolean predicate is unchanged.
+  console.log([1, 2, 3].filter((n) => n > 1));
+}

@@ -1,0 +1,102 @@
+// A spread of a tuple that is not stored, from a getter or a call (`f(0, ...g.pair)`,
+// `f(...pair())`): the value is read once, after the arguments before it, as in JavaScript.
+
+class Grid {
+  reads = 0;
+  get pair(): [number, string] {
+    this.reads += 1;
+    console.log("read pair");
+    return [this.reads, "x"];
+  }
+}
+
+function pair(): [number, number] {
+  console.log("call pair");
+  return [3, 4];
+}
+
+function f(a: number, b: number, c: string): string {
+  return `${a} ${b} ${c}`;
+}
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+function names(): [string, string] {
+  return ["ann", "bo"];
+}
+
+function greet(a: string, b: string): string {
+  return `hi ${a} and ${b}`;
+}
+
+class Adder {
+  add(a: number, b: number): number {
+    return a + b;
+  }
+}
+
+function mk(): Adder {
+  console.log("call mk");
+  return new Adder();
+}
+
+function getf(): (a: number, b: number) => number {
+  console.log("call getf");
+  return add;
+}
+
+class AdderHolder {
+  get adder(): Adder {
+    console.log("get adder");
+    return new Adder();
+  }
+  get five(): number {
+    console.log("get five");
+    return 5;
+  }
+  get fnget(): (a: number, b: number) => number {
+    console.log("get fnget");
+    return add;
+  }
+}
+
+function holder(): AdderHolder {
+  console.log("call holder");
+  return new AdderHolder();
+}
+
+function addWith(a: Adder, b: number, c: number): number {
+  return a.add(b, c);
+}
+
+function add3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+
+function main() {
+  const g = new Grid();
+  console.log(f(0, ...g.pair));
+  console.log(f(1, ...g.pair), g.reads);
+  console.log(add(...pair()));
+  console.log(greet(...names()));
+  const k = 10;
+  console.log(add(k, ...[1] as [number]) + add(...pair()));
+  // A function or receiver that is a call runs before the spread is read.
+  console.log(mk().add(...pair()));
+  console.log(getf()(...pair()));
+  // A receiver or an argument before the spread read through a getter (a call) runs first too.
+  const h = new AdderHolder();
+  console.log(h.adder.add(...pair()));
+  console.log(addWith(h.adder, ...pair()));
+  console.log(add3(h.five, ...pair()));
+  const t: [number, number] = [7, 8];
+  console.log(addWith(h.adder, ...t));
+  // An element of a stored tuple has no effects: the spread's temporary may come first.
+  console.log(add3(t[0], ...pair()));
+  // A function returned by a getter: the getter runs before the spread is read.
+  console.log(h.fnget(...pair()));
+  console.log(holder().fnget(...pair()));
+  console.log(h.fnget(...t));
+}

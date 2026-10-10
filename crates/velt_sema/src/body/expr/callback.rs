@@ -312,6 +312,11 @@ impl FnCx<'_, '_> {
             }
         };
         let span = call.span;
+        let own = match &value {
+            Some((v, _)) => self.fn_params_of(v.ty),
+            None => self.named_fn_params(&call),
+        };
+        let exp = exp.map(|e| self.fill_unknown_params(e, &own));
         self.push_scope();
         let bound = value.map(|(v, name)| {
             let local = self.declare_local(&name, v.ty, LocalKind::Const);
@@ -352,20 +357,6 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), ty, span)
-    }
-
-    /// Whether a function returning `ret` fits where one returning `want` is expected only
-    /// through its result: `want` is a union (or `T | null`) with `ret` as a member.
-    fn result_widens(&mut self, ret: TyId, want: TyId) -> bool {
-        if ret == want {
-            return false;
-        }
-        let inner = self.cx.ty.opt_payload(want).unwrap_or(want);
-        inner == ret
-            || self
-                .cx
-                .union_members(inner)
-                .is_some_and(|ms| ms.contains(&ret))
     }
 
     /// An `async` arrow where the function type returns `void` or a union with one promise
