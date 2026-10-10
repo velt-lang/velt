@@ -1,0 +1,126 @@
+// Prelude: `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` (docs/std/weak.md), on velt_rt's
+// weak-reference core (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
+//
+// A key (a `WeakSet` member, a `WeakRef` target) must be an object: a class instance, an object
+// type or an array (sema checks it). The compiler counts its type and makes it, and every type
+// reachable from a weak map's key and value types, weak-capable: their release tells a weakly
+// held object apart and removes it from every map and `WeakRef` as it is freed. A map whose
+// value refers back to its key (`raw -> proxy(raw)`) frees both once nothing else refers to
+// either (the ephemeron rule).
+//
+// A map is created in the runtime on its first `set` (`#id` 0 until then): the intrinsic sees
+// the key and value types there and passes their glue. Maps and refs are bound to the thread
+// that made them: sema keeps them out of `spawn`, channels and `shared`.
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+declare function velt_rt_weakmap_drop(m: u32);
+declare function velt_rt_weakref_drop(r: u32);
+
+/**
+ * A map from objects to values that does not keep its keys alive: an entry goes away when its
+ * key is freed. Keys are compared by identity. Not iterable and without `size`, as in JS.
+ */
+export class WeakMap<K, V> {
+  #id: u32;
+
+  constructor() {
+    this.#id = 0;
+  }
+
+  /** The value stored for `key`, or `undefined` if it has none. */
+  get(key: K): V | null {
+    if (this.#id == 0) {
+      return null;
+    }
+    const w = __intrinsic_weakmap_get(this.#id, key);
+    if (w == 0 && !__intrinsic_weakmap_has(this.#id, key)) {
+      return null;
+    }
+    return __intrinsic_weakmap_value<V>(w);
+  }
+
+  /** Stores `value` for `key` (replacing a value stored before). */
+  set(key: K, value: V) {
+    this.#id = __intrinsic_weakmap_set(this.#id, key, value);
+  }
+
+  /** Whether `key` has an entry. */
+  has(key: K): bool {
+    return this.#id != 0 && __intrinsic_weakmap_has(this.#id, key);
+  }
+
+  /** Removes `key`'s entry: true if there was one. */
+  delete(key: K): bool {
+    return this.#id != 0 && __intrinsic_weakmap_delete(this.#id, key);
+  }
+
+  /** Drop hook: releases every value. */
+  [Symbol.dispose]() {
+    if (this.#id != 0) {
+      velt_rt_weakmap_drop(this.#id);
+      this.#id = 0;
+    }
+  }
+}
+
+/**
+ * A set of objects that does not keep its members alive: a member leaves the set when it is
+ * freed. Members are compared by identity. Not iterable and without `size`, as in JS.
+ */
+export class WeakSet<T> {
+  #id: u32;
+
+  constructor() {
+    this.#id = 0;
+  }
+
+  /** Adds `value` to the set. */
+  add(value: T) {
+    this.#id = __intrinsic_weakmap_set(this.#id, value, true);
+  }
+
+  /** Whether `value` is in the set. */
+  has(value: T): bool {
+    return this.#id != 0 && __intrinsic_weakmap_has(this.#id, value);
+  }
+
+  /** Removes `value`: true if it was in the set. */
+  delete(value: T): bool {
+    return this.#id != 0 && __intrinsic_weakmap_delete(this.#id, value);
+  }
+
+  /** Drop hook: forgets the members. */
+  [Symbol.dispose]() {
+    if (this.#id != 0) {
+      velt_rt_weakmap_drop(this.#id);
+      this.#id = 0;
+    }
+  }
+}
+
+/**
+ * A reference to an object that does not keep it alive. Velt frees an object as soon as its last
+ * reference goes, so `deref()` returns `undefined` from then on (Node clears it at a later
+ * garbage collection).
+ */
+export class WeakRef<T> {
+  #id: u32;
+
+  constructor(target: T) {
+    this.#id = __intrinsic_weakref_new(target);
+  }
+
+  /** The target, or `undefined` once it was freed. */
+  deref(): T | null {
+    return __intrinsic_weakref_deref<T>(this.#id);
+  }
+
+  /** Drop hook: releases the slot. */
+  [Symbol.dispose]() {
+    if (this.#id != 0) {
+      velt_rt_weakref_drop(this.#id);
+      this.#id = 0;
+    }
+  }
+}

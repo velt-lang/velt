@@ -87,6 +87,13 @@ impl FnCx<'_, '_> {
         };
         self.collect_iterable_args = self.takes_iterable(d);
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
+        if self.cx.is_weak_class(d) && !self.cx.scopes[self.module].is_std {
+            if let Some(&k) = ck.type_args.first() {
+                if !self.weak_key_type(k, &cname, span) {
+                    return self.error_expr(span);
+                }
+            }
+        }
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {
             let rec = self.cx.ty.intern(TyKind::Adt(d, ck.type_args.clone()));
             if !self.check_new_record(rec, span) {
@@ -112,6 +119,52 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// Can `k` be the key type of a `WeakMap` or `WeakSet`, or a `WeakRef`'s target type
+    /// (`class`: which)? JavaScript requires an object (TS2344 / TS2345 for a primitive); Velt
+    /// takes class instances, object types and arrays. Reports the error if not.
+    fn weak_key_type(&mut self, k: TyId, class: &str, span: Span) -> bool {
+        let what = match class {
+            "WeakRef" => "the target of a `WeakRef`",
+            "WeakSet" => "a member of a `WeakSet`",
+            _ => "a `WeakMap` key",
+        };
+        let primitive = match self.cx.ty.kind(k) {
+            TyKind::Param(_) | TyKind::Error | TyKind::Array(_) => return true,
+            TyKind::Adt(d, _) => match self.cx.adt(*d) {
+                Some(a) if a.kind != AdtKind::Struct => return true,
+                _ => false,
+            },
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Option(_) => true,
+            _ => false,
+        };
+        let tn = self.cx.display(k);
+        let d = match primitive {
+            true => Diagnostic::error(
+                format!("type `{tn}` does not satisfy the constraint `object`"),
+                span,
+            )
+            .with_note(format!(
+                "{what} must be an object (a class instance, an object or an array), as in JavaScript"
+            )),
+            false => Diagnostic::error(
+                format!("`{tn}` as {what} is not supported yet"),
+                span,
+            )
+            .with_note(
+                "use a class instance, an object type or an array (unions, tuples, structs, function and interface values are not supported yet, #823)",
+            ),
+        };
+        self.cx.error(d);
+        false
     }
 
     /// Is `d` the prelude's `Map` or std's `Set`, whose constructors also take an iterable

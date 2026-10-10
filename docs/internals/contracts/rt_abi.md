@@ -244,11 +244,10 @@ calls and the cell layout is the same; the release runtime keeps the symbols as 
 | `velt_rt_cell_copy` | `(void* cell, void* from)` | the transfer glue's fresh copy of the shared cell `from`: unowned |
 | `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
 
-## Weak references (proposed)
-**Proposed (#823, #11); not used by the compiler yet.** `velt_rt` exports these functions
-(`src/weak/`) for the compiler to lower `WeakMap`, `WeakSet`, `WeakRef` and `weak T` to; they
-may change until it does. Design:
-[weak-refs.md](../design/weak-refs.md).
+## Weak references
+`velt_rt` exports these functions (`src/weak/`); the compiler lowers `WeakMap`, `WeakSet` and
+`WeakRef` (std/prelude/weak.vlt, `velt_vir` lower/weak.rs) to them, and `weak T` fields (#11)
+will use them too. Design: [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
@@ -261,11 +260,21 @@ may change until it does. Design:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
   for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
   retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
+  A trace glue may leave references out (the target then looks referenced from outside and
+  stays alive: a leak at worst) but must never report a word that is not a counted reference
+  `obj` owns, or report one twice: the trial would count it as internal and could free a live
+  object. So the glue of a type whose objects can have more fields than it knows (a class in a
+  hierarchy with a vtable, an interface value, a function value's environment) is null, or
+  dispatches on the object's dynamic type; Velt's is null for those today.
 - **Map values.** A value word of a map with `value_release` is 0 (`null`, `undefined`) or a
-  counted object pointer; strings and unions stored as such values are boxed. The runtime never
-  retains, releases or traces a 0 value.
-- **Threads.** Handles (`MapId`, `RefId`) are `uint32_t`, valid on the creating thread until
-  dropped; the compiler keeps `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema
+  counted object pointer. The compiler stores a value whose type is a counted object (or
+  `T | null` of one) as its pointer, a value without drop glue that fits in 8 bytes (numbers,
+  `bool`) as its bits with no value glue, and any other value (strings, unions, tuples, function
+  values) in a counted box of its own, `[count][value]`, whose glue retains and releases the box
+  (the box is weak-capable) and traces the value in it. The runtime never retains, releases or
+  traces a 0 value.
+- **Threads.** Handles (`MapId`, `RefId`) are nonzero `uint32_t`s (generated code keeps 0 for
+  "not created yet"), valid on the creating thread until dropped; the compiler keeps `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema
   rejects them, or the transfer glue panics). Weak-capable types are never `shared<T>` or
   atomic. A weakly held object released on a thread with no record of it is an ICE
   (`velt_rt_weak_release` panics before it changes the count).

@@ -222,4 +222,28 @@ pub enum Intrinsic {
     /// `AsyncGeneratorReturn`, except that a body whose cleanup at that `yield` would `await`
     /// is cancelled instead (drops only, like a cancelled async function).
     AsyncGeneratorDispose,
+
+    // Weak references (std/prelude/weak.vlt; rt_abi.md "Weak references")
+    /// std only: `__intrinsic_weakmap_set<K, V>(m: u32, key: borrow K, value: owned V): u32` —
+    /// store `value` for the object `key` in weak map `m`, creating the map first when `m` is 0
+    /// (with `K`'s and `V`'s glue); returns the map. `K` is counted and weak-capable.
+    WeakMapSet,
+    /// std only: `__intrinsic_weakmap_get<K>(m: u32, key: borrow K): u64` — the value word
+    /// stored for `key` (counted), or 0 when there is none (0 is also a stored null or zero:
+    /// `WeakMapHas` tells them apart).
+    WeakMapGet,
+    /// std only: `__intrinsic_weakmap_has<K>(m: u32, key: borrow K): bool`.
+    WeakMapHas,
+    /// std only: `__intrinsic_weakmap_delete<K>(m: u32, key: borrow K): bool` — true if there
+    /// was an entry (its value is released).
+    WeakMapDelete,
+    /// std only: `__intrinsic_weakmap_value<V>(w: u64): V` — the value a word `WeakMapGet`
+    /// returned (taking over its reference).
+    WeakMapValue,
+    /// std only: `__intrinsic_weakref_new<T>(target: borrow T): u32` — a `WeakRef` slot of the
+    /// object `target`, which is counted and weak-capable.
+    WeakRefNew,
+    /// std only: `__intrinsic_weakref_deref<T>(r: u32): T | null` — the target (counted), or
+    /// null once it was freed.
+    WeakRefDeref,
 }

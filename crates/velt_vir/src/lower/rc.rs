@@ -39,6 +39,18 @@ impl FnLower<'_, '_> {
     /// the object) when it was the only one; otherwise the count goes down. The unique case
     /// reads the count once and never writes it.
     pub(super) fn release(&mut self, p: Operand, last: impl FnOnce(&mut Self)) {
+        self.release_as(p, false, last);
+    }
+
+    /// [`release`](Self::release) of an object of a type that is weak-capable when `weak`
+    /// (boxing/weak.rs): its count word may carry `RC_WEAK`, the sign bit, so the shared path
+    /// tests `c as i64 > 1`, `c == 1` is the unique path, and anything else (weakly held) calls
+    /// `velt_rt_weak_release`, which removes the object from every weak map and `WeakRef` when
+    /// this was its last reference (then `last` runs, as on the unique path).
+    pub(super) fn release_as(&mut self, p: Operand, weak: bool, last: impl FnOnce(&mut Self)) {
+        if weak {
+            return self.release_weak(p, last);
+        }
         let c = self.count_place(p);
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
         let one = self.rvalue_temp(
@@ -53,6 +65,30 @@ impl FnLower<'_, '_> {
         self.switch_to(dec_bb);
         let m = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, n, cint(1, Ty::U64)));
         self.assign(c, Rvalue::Use(m));
+        self.goto(join);
+        self.switch_to(join);
+    }
+
+    fn release_weak(&mut self, p: Operand, last: impl FnOnce(&mut Self)) {
+        let c = self.count_place(p.clone());
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
+        let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(n.clone(), Ty::I64));
+        let shared = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Gt, s, cint(1, Ty::I64)));
+        let (dec_bb, other, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(shared, dec_bb, other);
+        self.switch_to(dec_bb);
+        let m = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, n.clone(), cint(1, Ty::U64)));
+        self.assign(c, Rvalue::Use(m));
+        self.goto(join);
+        self.switch_to(other);
+        let one = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, n, cint(1, Ty::U64)));
+        let (last_bb, cold) = (self.new_block(), self.new_block());
+        self.branch(one, last_bb, cold);
+        self.switch_to(cold);
+        let gone = self.rt_u8(Rt::WeakRelease, vec![p]);
+        self.branch(gone, last_bb, join);
+        self.switch_to(last_bb);
+        last(self);
         self.goto(join);
         self.switch_to(join);
     }

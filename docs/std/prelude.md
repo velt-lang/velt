@@ -167,6 +167,54 @@ reference to it: the value the callback gets stays valid, `forEach` visits entri
 meanwhile, and `upsert` and `getOrInsert` store their result under the key even when the
 callback deleted or added entries.
 
+## WeakMap, WeakSet and WeakRef
+
+`WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` refer to objects without keeping them alive, as
+in JavaScript: when nothing else refers to a key, its entries go (their values are released),
+and a `WeakRef` to it returns `null` from then on. Keys, members and targets are objects: class
+instances, object types and arrays, compared by identity (a primitive is an error, as in
+TypeScript: ``type `string` does not satisfy the constraint `object` ``; unions, tuples,
+structs, function and interface values are not supported as keys yet). Like JavaScript's, the
+maps are not iterable and have no `size`.
+
+```ts
+class Node {
+  constructor(public label: string) {}
+}
+
+const sizes = new WeakMap<Node, number>();
+const seen = new WeakSet<Node>();
+const a = new Node("a");
+sizes.set(a, 3);
+seen.add(a);
+console.log(sizes.get(a), sizes.has(new Node("a")), seen.has(a)); // 3 false true
+const ref = new WeakRef(a);
+console.log(ref.deref()?.label); // a
+```
+
+A cache from an object to a wrapper that holds the object (`rawToProxy.set(raw, proxy)` in
+reactive libraries) frees both once nothing else refers to either, as JavaScript's garbage
+collector does ([memory](../reference/memory.md)).
+
+| Member | Notes |
+|---|---|
+| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `null` for a missing key (JS: `undefined`). `set` returns nothing (JS: the map) |
+| `new WeakSet<T>()`; `add(x)`, `has(x)`, `delete(x): bool` | `add` returns nothing (JS: the set) |
+| `new WeakRef(target)`; `deref(): T \| null` | `null` once the target was freed (JS: `undefined`) |
+
+Differences from JavaScript:
+
+- **Freed at once.** Velt frees an object when its last reference goes, so a `WeakRef`'s
+  `deref()` returns `null` right after, where Node keeps returning the object until a later
+  garbage collection.
+- **One thread.** A weak collection belongs to the thread that made it: it cannot be passed to
+  a spawned task, sent on a channel, captured by an async closure that may run on another
+  thread, put in `shared(...)` or cloned (an error says so; in JavaScript, `structuredClone`
+  rejects them too).
+- **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
+  error, as for any module constant made by a call with effects: make it in `main` (or a
+  class) and pass it on.
+
 ## Record
 
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,

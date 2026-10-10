@@ -51,7 +51,8 @@ impl FnLower<'_, '_> {
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
         let q = p.clone();
-        self.release(p, |lw| {
+        let weak = self.cx.weak_capable(t);
+        self.release_as(p, weak, |lw| {
             inner(lw, &value);
             lw.counted_free(q, payload);
         });

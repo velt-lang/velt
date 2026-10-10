@@ -243,6 +243,9 @@ impl FnCx<'_, '_> {
     /// A value holding a generator cannot be copied (module docs of `known.rs`
     /// `holds_generator`): report `what` copying it at `span`.
     pub(crate) fn no_generator_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
+        if self.cx.holds_weak(t) {
+            return self.no_weak_copy(t, what, span);
+        }
         if !self.cx.holds_generator(t) {
             return;
         }
@@ -269,6 +272,39 @@ impl FnCx<'_, '_> {
             GenCopy::Capture(name) => (
                 format!("an async closure cannot capture the generator `{name}`"),
                 "an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
+            ),
+        };
+        self.cx.error(Diagnostic::error(msg, span).with_note(note));
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// A `WeakMap`, `WeakSet` or `WeakRef` is bound to the thread that made it (its entries
+    /// are in that thread's table; docs/internals/design/weak-refs.md): report `what` copying
+    /// the value of type `t` at `span`.
+    fn no_weak_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
+        let tn = self.cx.display(t);
+        let direct = matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if self.cx.is_weak_class(*d));
+        let it = match direct {
+            true => format!("a weak collection (`{tn}`)"),
+            false => format!("`{tn}`, which holds a weak collection,"),
+        };
+        let (msg, note) = match what {
+            GenCopy::Clone => (
+                format!("{it} cannot be copied"),
+                "a `WeakMap`, `WeakSet` or `WeakRef` cannot be cloned (in JavaScript, `structuredClone` rejects it too): pass it on, or make a new one".to_string(),
+            ),
+            GenCopy::Task => (
+                format!("{it} cannot be passed to another task"),
+                "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the thread that made it, and values passed to a spawned task (or sent on a channel) go to another thread: make it inside the task".to_string(),
+            ),
+            GenCopy::Shared => (
+                format!("{it} cannot be shared between threads"),
+                "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the thread that made it, and a `shared(...)` value may be used from several threads".to_string(),
+            ),
+            GenCopy::Capture(name) => (
+                format!("an async closure cannot capture the weak collection `{name}`"),
+                "an async closure that may run as a task on another thread copies what it captures, and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the thread that made it: make it inside the closure, or pass it to an async function".to_string(),
             ),
         };
         self.cx.error(Diagnostic::error(msg, span).with_note(note));

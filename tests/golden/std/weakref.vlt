@@ -1,0 +1,29 @@
+// check: no leaks
+// WeakRef: `deref()` returns the target while something else refers to it, and `null` as soon
+// as its last reference goes (Node: `undefined`, once a garbage collection ran).
+class Target {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function make(n: number): WeakRef<Target> {
+  const t = new Target(n);
+  const r = new WeakRef(t);
+  const d = r.deref();
+  console.log("inside", d != null ? d.n : -1);
+  return r;
+}
+
+function main() {
+  const gone = make(1);
+  console.log("after", gone.deref() == null);
+  const kept = new Target(2);
+  const r = new WeakRef(kept);
+  const refs = [r, new WeakRef(kept)];
+  for (const x of refs) {
+    const d = x.deref();
+    console.log(d === kept, d != null ? d.n : -1);
+  }
+}

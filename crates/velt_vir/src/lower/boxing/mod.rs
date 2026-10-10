@@ -10,6 +10,7 @@
 
 mod kinds;
 mod transfers;
+mod weak;
 
 use std::collections::HashSet;
 
@@ -41,6 +42,10 @@ pub(super) struct Boxing {
     recursive: HashSet<DefId>,
     /// Counted types a transfer to another thread can copy (transfers.rs).
     transferred: HashSet<TyId>,
+    /// Weak-capable class hierarchies (by root class) and other counted types: their release
+    /// tells a weakly held object apart (weak.rs). Empty in a program without weak references.
+    weak_roots: HashSet<DefId>,
+    weak: HashSet<TyId>,
 }
 
 impl Boxing {
@@ -122,6 +127,8 @@ pub(super) struct Facts {
     /// Concrete types a vtable was built for: interface implementors and classes in a
     /// hierarchy (transfers.rs).
     vtable_types: HashSet<TyId>,
+    /// Types of weak keys, `WeakRef` targets and weak map values (weak.rs).
+    weak_seeds: HashSet<TyId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -231,6 +238,7 @@ impl Cx<'_> {
             }
             if work.is_empty() {
                 self.close_transfers(&mut next);
+                self.close_weak(&mut next);
                 return next;
             }
         }

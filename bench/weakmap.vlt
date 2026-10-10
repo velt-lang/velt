@@ -1,0 +1,48 @@
+// WeakMap: the cache of a reactive library (#823 section 7). `signal(raw)` called repeatedly on
+// the same objects (the hit path: one weak map probe and a counted result), then reactive
+// objects created and dropped through the cache (the ephemeron path frees each raw object and
+// its wrapper as its last outside reference goes).
+class Raw {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Reactive {
+  target: Raw;
+
+  constructor(target: Raw) {
+    this.target = target;
+  }
+}
+
+function signal(cache: WeakMap<Raw, Reactive>, raw: Raw): Reactive {
+  const hit = cache.get(raw);
+  if (hit != null) {
+    return hit;
+  }
+  const p = new Reactive(raw);
+  cache.set(raw, p);
+  return p;
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Reactive>();
+  const raws: Raw[] = [];
+  for (let i: i64 = 0; i < 1000; i++) {
+    raws.push(new Raw(i));
+  }
+  let sum: i64 = 0;
+  for (let round = 0; round < 1000; round++) {
+    for (const raw of raws) {
+      sum += signal(cache, raw).target.n;
+    }
+  }
+  for (let i: i64 = 0; i < 100000; i++) {
+    const raw = new Raw(i);
+    sum += signal(cache, raw).target.n + signal(cache, raw).target.n;
+  }
+  console.log(sum);
+}

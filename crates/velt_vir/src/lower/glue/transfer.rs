@@ -237,12 +237,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.goto(now);
         }
         self.switch_to(now);
-        let c = self.count_place(v);
-        let n = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
-        );
-        self.assign(c, Rvalue::Use(n));
+        if self.cx.weak_capable(ty) {
+            // A weakly held object's count word is not its count (weak-refs.md): release it
+            // with the full sequence, which frees it if this was its last reference.
+            let p = self.operand_place(v, Ty::Ptr);
+            self.drop_glue(p, ty);
+        } else {
+            let c = self.count_place(v);
+            let n = self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
+            );
+            self.assign(c, Rvalue::Use(n));
+        }
         self.goto(done);
         self.switch_to(done);
         new

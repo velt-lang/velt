@@ -1,8 +1,11 @@
 # Design: weak references without a collector
 
-Status: runtime prototype (issues #823 and #11). The core is in `velt_rt`
-(`crates/velt_rt/src/weak/`) with unit tests and a leak soak test; the compiler does not use it
-yet. The ABI it will be called through is proposed in [rt_abi.md](../contracts/rt_abi.md#weak-references-proposed).
+Status: `WeakMap`, `WeakSet` and `WeakRef` are in the language (#823 step B); `weak T` fields
+(#11) are not yet. The core is in `velt_rt` (`crates/velt_rt/src/weak/`) with unit tests and a
+leak soak test; the ABI is in [rt_abi.md](../contracts/rt_abi.md#weak-references). The compiler's
+side is `std/prelude/weak.vlt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
+weak-capable), `lower/weak.rs` (the intrinsics and map value words) and `lower/glue/trace.rs`
+(trace, retain and release glue).
 
 `WeakMap`, `WeakSet`, `WeakRef` (#823) and `weak T` fields (#11) all need the same thing: a
 reference that does not keep its target alive and can tell whether the target is gone. This
@@ -98,6 +101,32 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   the first thread's entries and `WeakRef`s still point to.
 - **Weak-capable types are never `shared<T>` or atomic.** The flag and the side table assume
   plain counts on one thread.
+
+### What the compiler does
+
+- **Weak-capable types** are found with the counted types (`lower_program`'s fixed point): the
+  key types of `WeakMap`s and `WeakSet`s and the target types of `WeakRef`s are counted (an
+  object type used as one is counted for its identity), and they, the counted types a weak
+  map's value refers to, and everything the trace glue reaches from those through fields,
+  elements and payloads stored inline are weak-capable. Classes are weak-capable per hierarchy
+  (the root class), since a release through a base class type releases a subclass object. A
+  program that never names a weak collection has none, and its VIR is unchanged
+  (`crates/veltc/tests/bench_programs.rs` checks every benchmark for it).
+- **Release.** `release_as` in `lower/rc.rs` takes the three-way sequence above for those
+  types, at every release (drop glue, boxed values, half-built objects, the queued drops of
+  `drop_depth.rs`), at `drop_chain.rs`'s `take` and at `transfer.rs`'s release of the sender's
+  reference after a deep copy (a full release there). `transfer_env.rs` decrements closure
+  environments, which are never weak-capable: function values are opaque to the trace glue.
+- **Trace glue** (`glue/trace.rs`) visits the counted objects an object refers to through its
+  fields, elements and payloads stored inline; uncounted objects, function and interface values
+  and `shared` values are not looked into, and classes in a hierarchy with a vtable are opaque
+  (null glue), so a glue never reads a field the dynamic type does not have.
+- **Threads and `shared`.** Sema rejects a weak collection (or a value holding one) as a `spawn`
+  argument, a channel message, a capture of an async closure that may run on another thread,
+  the value of `shared(...)` and the receiver of `clone()`. A weak-capable object that is not
+  weakly held may still cross threads (it is copied when shared, and the copy is not weakly
+  held); one that is weakly held and reached through a `shared` `Mutex` is not rejected yet,
+  and its release on another thread would stop at the `ICE` above.
 
 ## Weak maps and `WeakRef`
 
@@ -210,8 +239,11 @@ the next trial until a release elsewhere in the cycle changes the answer.
 
 ## Next steps
 
-1. `WeakMap`/`WeakSet` in the language on this core (#823 step B): the program-wide
-   weak-capable analysis, trace glue per type, the release sequence above, and the ABI exported.
+1. Done (#823 step B): `WeakMap`, `WeakSet` and `WeakRef` in the language.
+   Left: trace glue through function values' environments (a handler closure capturing the
+   target is opaque today, so such a cycle is kept until its map entry goes) and through class
+   hierarchies (dispatching on the dynamic class), keys of other object kinds (unions, tuples,
+   function and interface values), and `WeakMap` support in the WebAssembly runtime.
 2. `weak T` fields (#11): a `weak` field is a `WeakRef` slot inline in the object; reading it is
    a liveness check where it is used.
 3. Store the records inline (small vectors) and measure `set` and the cold release against

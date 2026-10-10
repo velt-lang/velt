@@ -168,6 +168,16 @@ impl FnLower<'_, '_> {
             (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
+            (
+                I::WeakMapSet
+                | I::WeakMapGet
+                | I::WeakMapHas
+                | I::WeakMapDelete
+                | I::WeakMapValue
+                | I::WeakRefNew
+                | I::WeakRefDeref,
+                _,
+            ) => self.weak_intrinsic(i, args, ty),
             (I::ArrayDataPtr, [xs]) => {
                 let v = self.expr(xs);
                 let aty = self.sub(xs.ty);
