@@ -37,6 +37,7 @@ fn golden_m1_files_parse() {
                 | "private_names_syntax.vlt"
                 | "quoted_property_names_reserved.vlt"
                 | "type_param_defaults_required.vlt"
+                | "class_expression_named.vlt"
         ) {
             continue;
         }

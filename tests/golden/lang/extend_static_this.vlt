@@ -1,0 +1,12 @@
+// `this` in a static method of an `extend` block is the class the method was called on, as in
+// the class's own statics.
+class A {
+  static kind(): string { return "A"; }
+}
+extend A {
+  static hi(): string { return "hi " + this.kind(); }
+}
+class B extends A {
+  static kind(): string { return "B"; }
+}
+console.log(A.hi(), B.hi());

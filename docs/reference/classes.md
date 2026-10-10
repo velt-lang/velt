@@ -5,6 +5,13 @@ hidden classes and no runtime shape checks.
 
 ## Classes
 
+- **Class expressions** bound to a variable, `const Point = class { … };` (also `let`, `export
+  const`, with `extends` / `implements`, at module level or in a function), declare the class
+  `Point`: an anonymous class takes the variable's name, as in JavaScript (`console.log` shows
+  `Point { … }`). A class expression may have its own name only when it is the variable's
+  (`const Point = class Point { … }`); another one is an error (``a named class expression must
+  have the name of the variable it initializes``). Class expressions elsewhere (an argument,
+  a return value, `new (class { … })()`) are not supported yet.
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
   in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
@@ -136,13 +143,44 @@ hidden classes and no runtime shape checks.
   Static methods are inherited, as in TypeScript: with `class B extends A {}`, `B.f()` calls
   `A`'s `static f()` (unless `B` declares a `static f` of its own, in its body or in an
   `extend B` block), keeping its visibility (a `private static` one stays usable only in `A`'s
-  body).
+  body). The statics of `extend` blocks are inherited the same way: `B.f()` looks at `B`'s own
+  statics, then `B`'s `extend` statics, then each base class's statics and `extend` statics,
+  nearest first. A static method of a generic class is called without type arguments
+  (`Box.wrap(4)` for `class Box<T> { static wrap(n: number): number }`): a class type parameter
+  the static's signature doesn't use (in TypeScript statics can't use them) needs no inference,
+  also a bounded one (`class Box<T extends Named>`).
+  In a static method, `this` is the class the method was called on, as in TypeScript: with
+  `class A { static kind() { return "A"; } static hello() { return "hello " + this.kind(); } }`
+  and `class B extends A { static kind() { return "B"; } }`, `B.hello()` is `"hello B"`.
+  `this.f()` calls a static method and `this.NAME` reads a `static readonly` constant (own or
+  inherited); other uses of `this` there are an error (``` `this` in a static method can only
+  be used to call or read its class's static members ```). `super.f()` in a static method calls
+  the base class's static `f`, with `this` unchanged. These calls are resolved at compile time:
+  a static method using `this` or `super` is compiled once per class below its own that can
+  run it, so there is no dispatch at run time. As in TypeScript, the body is typed once, with
+  the declaring class's members: when `class DogShelter extends Shelter` overrides
+  `static create(): Animal` with `static create(): Dog`, `this.create()` in `Shelter`'s statics
+  is an `Animal` also when they run for `DogShelter` (which calls `DogShelter.create`), and a
+  `static kind(): 2` overriding `static kind(): number` gives a `number` there. A subclass
+  static whose type doesn't convert to the one it overrides is an error naming the subclass
+  (``` `B.kind` has type `string`, which does not convert to `f64` of the member it
+  overrides ```, noted ``in `B`'s copy of `A.run` ``). `this.f` passed where a function with
+  more parameters is expected is wrapped like `C.f` (`["a"].map(this.plain)`).
+  A static method is also a value: `const f = C.kind`, `xs.map(C.double)` (passing it where a
+  function with more parameters is expected calls it with the leading arguments, as for any
+  named function). One using `this` or `super` is not (``` `C.hello` uses `this` or `super`, so
+  it cannot be used as a value ```): TypeScript accepts it, but JavaScript calls the function
+  with `this` undefined, so `this.kind()` would throw a `TypeError`. Call it, or wrap the call:
+  `() => C.hello()`.
 - **ES private names** (`#x`, ES2022): fields (`#count = 0`, `readonly #id: string`), methods
   (`#check()`), accessors (`get #v()` / `set #v(v)`, `this.#v++` uses both) and statics
   (`static #make()`, `static readonly #K = …`, used as `C.#make()` inside the body). `o.#x`
   names the member that the class whose body the code is in declares, on any instance of that
   class or a subclass, not only `this` (a function or class declared in a method is in the body
-  too; where class bodies nest, the innermost one declaring `#x`); elsewhere, also in a subclass, it is an error (``
+  too; where class bodies nest, the innermost one declaring `#x`, so a nested class's own `#x`
+  shadows the outer one's: `o.#x` on an outer-class value there is ``property `#x` cannot be
+  accessed on type `Outer` within this class because it is shadowed by another private
+  identifier with the same spelling``, TypeScript's TS18014); elsewhere, also in a subclass, it is an error (``
   property `#x` is not accessible outside class `A` because it has a private name ``, also for
   an accessor: reading `o.#v`, assigning `o.#v = 1` or updating `o.#v += 1` reports it once). A
   subclass may declare its own `#x`: a second field, not a redeclaration, and a base class
@@ -150,7 +188,9 @@ hidden classes and no runtime shape checks.
   nothing (`override #m` is an error). `#x in o` is a brand check: it is `o instanceof C`, `C`
   the class declaring `#x`, and narrows like `instanceof`. As in TypeScript, `o` must not be
   possibly null (``the right operand of `in` may be null``; JavaScript throws a `TypeError` for
-  `null`): test `o !== null && #x in o`. Private names exist only in class
+  `null`): test `o !== null && #x in o`. Nor may it possibly be a primitive (`A | string`: ``the
+  right operand of `in` may be a primitive``, TypeScript's TS2322); narrow it first
+  (`typeof o !== "string" && #x in o`). A union of objects (`A | number[]`) is fine. Private names exist only in class
   bodies: not in interfaces, object types, structs, `extend` blocks or parameters, and not
   with `private` / `public`. At run time `#x` and `private x` cost the same (an ordinary field
   slot, a direct call); they differ where Node differs:

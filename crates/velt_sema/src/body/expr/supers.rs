@@ -113,6 +113,13 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some((this, declaring)) = self.static_this {
+            // In a static method: the base class's static, with `this` unchanged.
+            let base = self.cx.adt(declaring).and_then(|a| a.base);
+            if let Some((bd, _)) = base.and_then(|b| self.cx.class_of(b)) {
+                return self.static_call_as(bd, this, prop, &[], args, exp, span);
+            }
+        }
         let Some(base) = self.this_base() else {
             self.cx.err(
                 "`super` is only available in classes that `extends` another",

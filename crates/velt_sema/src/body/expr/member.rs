@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
-        if self.private_accessor_outside(t, prop, false) {
+        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
         }
         if self.has_setter(t, &prop.name) {
@@ -211,6 +211,25 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
+            // `this.NAME` / `this.f` in a static method: the class it was called on.
+            if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
+                return h;
+            }
+            if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
+                return h;
+            }
+            let cname = self
+                .cx
+                .adt(this)
+                .map(|a| a.name.clone())
+                .unwrap_or_default();
+            self.cx.err(
+                format!("`{cname}` has no static member `{}`", prop.name),
+                prop.span,
+            );
+            return self.error_expr(span);
+        }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
                 if matches!(
@@ -247,6 +266,9 @@ impl FnCx<'_, '_> {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
                     if let Some(h) = self.static_field(d, prop, want, span) {
+                        return h;
+                    }
+                    if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {

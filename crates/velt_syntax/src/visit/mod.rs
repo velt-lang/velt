@@ -115,7 +115,9 @@ fn walk_interface<'a>(i: &'a ast::InterfaceDecl, v: &mut dyn Visit<'a>) {
     }
 }
 
-pub(super) fn walk_fn<'a>(f: &'a ast::FnDecl, v: &mut dyn Visit<'a>) {
+/// Visit a function, method or constructor declaration: its signature's types, its parameters'
+/// defaults and its body.
+pub fn walk_fn<'a>(f: &'a ast::FnDecl, v: &mut dyn Visit<'a>) {
     walk_sig_types(&f.sig, v);
     params(&f.sig, v);
     v.function(&f.sig, &f.body);

@@ -100,6 +100,9 @@ impl<'a> Parser<'a> {
             Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => {
                 ItemKind::TypeAlias(self.parse_type_alias()?)
             }
+            Some(Kw::Const | Kw::Let) if self.at_class_binding() => {
+                ItemKind::Class(self.parse_class_binding()?)
+            }
             Some(Kw::Const | Kw::Let) => {
                 let var = self.parse_var_decl()?;
                 self.expect_semi()?;

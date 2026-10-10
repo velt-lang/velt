@@ -84,6 +84,15 @@ impl<'a> Parser<'a> {
             };
         };
         match kw {
+            Kw::Let | Kw::Const if self.at_class_binding() => {
+                let lo = self.cur_span().lo;
+                let kind = ItemKind::Class(self.parse_class_binding()?);
+                Ok(StmtKind::Item(Box::new(Item {
+                    kind,
+                    exported: false,
+                    span: self.span_from(lo),
+                })))
+            }
             Kw::Let | Kw::Const => {
                 let var = self.parse_var_decl()?;
                 self.expect_semi()?;

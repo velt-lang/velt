@@ -1,0 +1,8 @@
+// `#x in o` with an `o` whose members are all objects (a class or an array) is a brand check.
+class A {
+  #x: number = 1;
+  static s(o: A | number[]): boolean {
+    return #x in o;
+  }
+}
+console.log(A.s([1, 2]), A.s(new A()));
