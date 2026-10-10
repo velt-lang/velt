@@ -26,7 +26,7 @@ pub(super) fn apply(env: &Env, func: &mut Function, plan: &Plan) -> bool {
         if let Some(t) = *to {
             map[i] = Some((Local(func.locals.len() as u32), t));
             let name = func.locals[i].name.clone();
-            func.locals.push(LocalDecl { ty: t, name });
+            func.locals.push(LocalDecl::new(t, name));
         }
     }
     let mut rw = Rewriter {
@@ -45,7 +45,7 @@ pub(super) fn apply(env: &Env, func: &mut Function, plan: &Plan) -> bool {
         rw.terminator(env, func, bi);
     }
     func.locals
-        .extend(rw.temps.into_iter().map(|ty| LocalDecl { ty, name: None }));
+        .extend(rw.temps.into_iter().map(|ty| LocalDecl::new(ty, None)));
     true
 }
 
