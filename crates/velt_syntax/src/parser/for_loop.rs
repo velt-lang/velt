@@ -138,7 +138,12 @@ impl<'a> Parser<'a> {
             }
         } else {
             loop {
-                let e = self.parse_expr()?;
+                // `for (k in o)`: the head's `in` is the loop's, not a key test (`KEY in o`).
+                let key_in = self.at(Tok::Ident) && self.nth(1) == Tok::Kw(Kw::In);
+                let e = match key_in {
+                    true => self.parse_unary()?,
+                    false => self.parse_expr()?,
+                };
                 if self.at_kw(Kw::Of) || self.at_kw(Kw::In) {
                     let span = self.cur_span();
                     self.error(
