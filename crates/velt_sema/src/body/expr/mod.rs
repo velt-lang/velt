@@ -51,6 +51,7 @@ mod object_keys;
 mod object_method;
 mod ops;
 mod ordering;
+mod overload_call;
 mod process;
 mod promise_new;
 mod promise_reads;

@@ -170,7 +170,11 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
         is_generator: false,
         span: v.span,
     };
-    Some(ast::FnDecl { sig, body })
+    Some(ast::FnDecl {
+        sig,
+        body,
+        overloads: vec![],
+    })
 }
 
 #[cfg(test)]

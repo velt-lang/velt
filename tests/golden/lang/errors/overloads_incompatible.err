@@ -1,0 +1,6 @@
+overloads_incompatible.vlt:3:10: error: this overload signature is not compatible with its implementation signature
+  = note: mismatched types
+  = note: expected string, found boolean
+overloads_incompatible.vlt:8:10: error: this overload signature is not compatible with its implementation signature
+  = note: mismatched types
+  = note: expected f64, found string

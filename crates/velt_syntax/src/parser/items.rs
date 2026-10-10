@@ -151,11 +151,127 @@ impl<'a> Parser<'a> {
         Ok(sig)
     }
 
-    /// At `function`. `lo` is the start of the item (may include `export`/`async`).
+    /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
+    /// signature ending in `;` is a TypeScript-form overload: the declarations of the same name
+    /// that follow it, up to the one with a body, are parsed with it (`FnDecl::overloads`).
     fn parse_fn_decl(&mut self, lo: u32, is_async: bool) -> PResult<FnDecl> {
-        let sig = self.parse_fn_sig(lo, is_async)?;
+        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
+        let mut sigs: Vec<(FnSig, bool)> = vec![];
+        while self.at(Tok::Semi) {
+            self.bump(); // ;
+            self.signature_defaults(&sig);
+            let (next_exported, next_async) = match self.at_function_after(&sig.name.name) {
+                Some(Ok(next)) => next,
+                Some(Err(other)) if self.next_fn_has_body() => {
+                    self.wrong_implementation_name(&sig.name, other);
+                    return Err(Fail);
+                }
+                Some(Err(_)) | None => {
+                    self.missing_implementation(&sig.name);
+                    return Err(Fail);
+                }
+            };
+            let next_lo = self.cur_lo();
+            if next_exported {
+                self.bump();
+            }
+            if next_async {
+                self.bump();
+            }
+            sigs.push((sig, exported));
+            exported = next_exported;
+            sig = self.parse_fn_sig(next_lo, next_async)?;
+        }
         let body = self.parse_block()?;
-        Ok(FnDecl { sig, body })
+        // TypeScript's TS2383, at each signature exported differently from the implementation.
+        for (s, e) in &sigs {
+            if *e != exported {
+                self.error(
+                    "overload signatures must all be exported or non-exported (TypeScript's TS2383)",
+                    s.name.span,
+                );
+            }
+        }
+        Ok(FnDecl {
+            sig,
+            body,
+            overloads: sigs.into_iter().map(|(s, _)| s).collect(),
+        })
+    }
+
+    /// After an overload signature of `name`: is the next item `[export] [async] function`,
+    /// `Ok` with whether it is exported and `async` when it is named `name`, `Err` with its name
+    /// when it has another?
+    fn at_function_after(&mut self, name: &str) -> Option<Result<(bool, bool), Span>> {
+        let mut k = 0;
+        let exported = self.nth(k) == Tok::Kw(Kw::Export);
+        k += usize::from(exported);
+        let is_async = self.nth(k) == Tok::Kw(Kw::Async);
+        k += usize::from(is_async);
+        if self.nth(k) != Tok::Kw(Kw::Function) {
+            return None;
+        }
+        k += 1;
+        if self.nth(k) == Tok::Star {
+            k += 1;
+        }
+        if !Self::is_ident_like(self.nth(k)) {
+            return None;
+        }
+        let t = self.tok(self.pos + k);
+        match self.text(t.lo, t.hi) == name {
+            true => Some(Ok((exported, is_async))),
+            false => Some(Err(Span::new(self.file, t.lo, t.hi))),
+        }
+    }
+
+    /// At `[export] [async] function`: does the function have a body (rather than being a
+    /// signature)? Looks ahead without consuming anything.
+    fn next_fn_has_body(&mut self) -> bool {
+        let snap = self.snapshot();
+        self.speculating += 1;
+        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) {
+            self.bump();
+        }
+        let lo = self.cur_lo();
+        let body = self.parse_fn_sig(lo, false).is_ok() && self.at(Tok::LBrace);
+        self.speculating -= 1;
+        self.restore(snap);
+        body
+    }
+
+    /// TS2391 for an overload signature that no implementation follows.
+    pub(super) fn missing_implementation(&mut self, name: &Ident) {
+        self.error(
+            format!("function implementation is missing or not immediately following the declaration of `{}`", name.name),
+            name.span,
+        );
+    }
+
+    /// TS2389: the declaration after overload signatures of `name` is named otherwise (at
+    /// `other`, its name).
+    pub(super) fn wrong_implementation_name(&mut self, name: &Ident, other: Span) {
+        self.error(
+            format!(
+                "function implementation name must be `{}` (TypeScript's TS2389)",
+                name.name
+            ),
+            other,
+        );
+    }
+
+    /// TS2371: a default value in an overload signature (an optional parameter `p?: T` is
+    /// fine).
+    pub(super) fn signature_defaults(&mut self, sig: &FnSig) {
+        for p in &sig.params {
+            if p.default.is_some() && !p.optional && !p.rest {
+                self.error(
+                    "a parameter default is only allowed in a function or method implementation, not in an overload signature (TypeScript's TS2371)",
+                    p.name.span,
+                );
+            }
+        }
     }
 
     /// A function expression at `function` (after `async`, with `is_async`): `function*
@@ -173,7 +289,11 @@ impl<'a> Parser<'a> {
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
         let body = self.parse_block()?;
-        Ok(ExprKind::Function(Box::new(FnDecl { sig, body })))
+        Ok(ExprKind::Function(Box::new(FnDecl {
+            sig,
+            body,
+            overloads: vec![],
+        })))
     }
 
     /// `function name(...)` or `function* name(...)` (a generator).

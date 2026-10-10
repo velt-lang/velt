@@ -1,0 +1,24 @@
+// `for...in` over a record skips a key deleted during the loop and doesn't visit one added
+// during it, as in JavaScript. It lists keys with the built-in `Object.keys`, even where a
+// local `Object` hides the global one.
+function main() {
+  const r: Record<string, number> = { a: 1, b: 2, c: 3 };
+  for (const k in r) {
+    console.log("visit", k);
+    if (k === "a") {
+      delete r.b;
+      r.d = 4;
+    }
+  }
+  const holder = { scores: r };
+  for (const k in holder.scores) {
+    if (k === "a") {
+      delete holder.scores.c;
+    }
+    console.log("again", k);
+  }
+  const Object = { name: "mine" };
+  for (const k in { x: 1 }) {
+    console.log(k, Object.name);
+  }
+}

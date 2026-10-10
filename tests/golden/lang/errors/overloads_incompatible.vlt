@@ -1,0 +1,13 @@
+// A signature the implementation can't take is TypeScript's TS2394 ("This overload signature
+// is not compatible with its implementation signature"), for parameters and the result.
+function f(x: boolean): string;
+function f(x: string): string {
+  return x;
+}
+
+function g(x: string): number;
+function g(x: string): string {
+  return x;
+}
+
+function main() {}

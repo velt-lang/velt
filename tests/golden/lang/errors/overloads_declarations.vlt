@@ -1,0 +1,28 @@
+// Overload signatures and their implementation must agree on `export` (TS2383) and `static`
+// (TS2387, TS2388), and a signature can't give a parameter a default (TS2371).
+export function f(x: string): string;
+function f(x: number): number;
+export function f(x: string | number): string | number {
+  return x;
+}
+
+class A {
+  static m(x: string): string;
+  m(x: string | number): string {
+    return `${x}`;
+  }
+}
+
+class B {
+  m(x: string): string;
+  static m(x: string | number): string {
+    return `${x}`;
+  }
+}
+
+function g(x: string, n: number = 1): string;
+function g(x: string, n?: number): string {
+  return `${x}${n}`;
+}
+
+function main() {}
