@@ -61,6 +61,7 @@ mod setters;
 mod spread;
 mod spread_args;
 mod spread_array;
+pub(crate) mod static_copy;
 mod std_glue;
 mod structured_clone;
 mod supers;

@@ -310,6 +310,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The function whose body is being checked, if it is a declared function (for a nested
     /// one, `Ctx::enclosing_class` gives the class whose body it is in).
     pub body_def: Option<DefId>,
+    /// In a static method using `this` or `super` (`collect::static_this`): the class `this`
+    /// is, and the class declaring the method (whose base `super` is).
+    pub static_this: Option<(DefId, DefId)>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
@@ -374,6 +377,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             fn_name: String::new(),
             owner: None,
             body_def: None,
+            static_this: None,
             enclosing_locals: vec![],
             generic_arrow: false,
             f: frame,

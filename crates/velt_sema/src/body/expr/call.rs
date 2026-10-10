@@ -329,6 +329,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
+            // `this.f()` in a static method: the class it was called on.
+            return Some(self.this_static_call(this, declaring, prop, type_args, args, exp, span));
+        }
         let ast::ExprKind::Ident(id) = &object.kind else {
             return None;
         };
@@ -365,58 +369,136 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let a = self.cx.adt(d).expect("ICE: adt");
-        let cname = a.name.clone();
-        let mut owner_generics = a.generics.len();
-        let mut m = a
-            .methods
-            .get(&crate::defs::static_key(&prop.name))
-            .or_else(|| a.methods.get(&prop.name))
-            .copied();
-        let mut owner_args = None;
-        if m.is_none() {
-            if let Some((em, n)) = self.extension_static(d, &prop.name) {
-                (m, owner_generics) = (Some(em), n);
+        self.static_call_as(d, d, prop, type_args, args, exp, span)
+    }
+
+    /// `C.f(args)`, the static method `f` that class `d` declares or inherits, run with `this`
+    /// being class `this_class` (`d` or a subclass of it: `this.f()` and `super.f()` in a static
+    /// method keep the class the outer call was made on).
+    #[allow(clippy::too_many_arguments)] // `static_call` plus the class `this` is
+    pub(super) fn static_call_as(
+        &mut self,
+        d: DefId,
+        this_class: DefId,
+        prop: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
+        let (m, owner_generics, owner_args) = match self.find_static(d, &prop.name) {
+            Ok(found) => found,
+            Err(instance) => {
+                let what = match instance {
+                    true => "an instance method",
+                    false => "not a static method",
+                };
+                self.cx
+                    .err(format!("`{cname}.{}` is {what}", prop.name), prop.span);
+                self.check_args_loose(args);
+                return self.error_expr(span);
             }
-        }
-        if !m.is_some_and(|m| m.is_static) {
-            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`,
-            // unless `B` has its own `static f` (in the class or an `extend B` block).
-            if let Some((im, n, args)) = self.inherited_static(d, &prop.name) {
-                (m, owner_generics, owner_args) = (Some(im), n, args);
-            }
-        }
-        let Some(m) = m.filter(|m| m.is_static) else {
-            let what = if m.is_some() {
-                "an instance method"
-            } else {
-                "not a static method"
-            };
-            self.cx
-                .err(format!("`{cname}.{}` is {what}", prop.name), prop.span);
-            self.check_args_loose(args);
-            return self.error_expr(span);
         };
         self.cx
             .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
         let private_to = self.fn_private_to(m.def);
         self.check_private(private_to, &prop.name, prop.span);
-        let c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name), span);
+        let def = self.static_def_for(m.def, this_class);
+        let mut c = self.fn_callable(def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;
+        self.default_unused_owner_slots(&mut c, owner_generics);
         let mut slots = vec![None; n];
         for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
             *slot = Some(a);
         }
         self.explicit_type_args(&mut slots, own, type_args, span);
         let ck = self.check_call(&c, slots, args, exp, span);
-        self.note_async_args(m.def, &ck.args);
-        self.call_throws(m.def, &ck.type_args, ck.ret, span);
+        self.note_async_args(def, &ck.args);
+        self.call_throws(def, &ck.type_args, ck.ret, span);
         let kind = H::Call {
-            callee: Callee::Def(m.def, ck.type_args),
+            callee: Callee::Def(def, ck.type_args),
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// The static method `name` of class `d`: its own (in the class, then in an `extend`
+    /// block), else the nearest base class's. With the number of generics of the class (or
+    /// block) declaring it and, when known, their type arguments. `Err(true)`: `name` is an
+    /// instance method.
+    pub(super) fn find_static(
+        &mut self,
+        d: DefId,
+        name: &str,
+    ) -> Result<(crate::defs::MethodRef, usize, Option<Vec<TyId>>), bool> {
+        let a = self.cx.adt(d).expect("ICE: adt");
+        let mut owner_generics = a.generics.len();
+        let mut m = a
+            .methods
+            .get(&crate::defs::static_key(name))
+            .or_else(|| a.methods.get(name))
+            .copied();
+        let mut owner_args = None;
+        if m.is_none() {
+            if let Some((em, n)) = self.extension_static(d, name) {
+                (m, owner_generics) = (Some(em), n);
+            }
+        }
+        if !m.is_some_and(|m| m.is_static) {
+            // Statics are inherited (TypeScript): `B.f()` calls base class `A`'s `static f`,
+            // unless `B` has its own `static f` (in the class or an `extend B` block).
+            if let Some((im, n, args)) = self.inherited_static(d, name) {
+                (m, owner_generics, owner_args) = (Some(im), n, args);
+            }
+        }
+        match m {
+            Some(m) if m.is_static => Ok((m, owner_generics, owner_args)),
+            found => Err(found.is_some()),
+        }
+    }
+
+    /// The function running static method `m` with `this` being class `this_class`: `m`, or its
+    /// copy for that subclass when `m` uses `this` (`collect::static_this`).
+    pub(crate) fn static_def_for(&self, m: DefId, this_class: DefId) -> DefId {
+        match self.cx.static_this.get(&m) {
+            Some(&declaring) if declaring != this_class => self
+                .cx
+                .static_copies
+                .get(&(m, this_class))
+                .copied()
+                .unwrap_or(m),
+            _ => m,
+        }
+    }
+
+    /// The class's type parameters that a static method's signature doesn't use (always the
+    /// case in TypeScript, where statics can't use them) default to `void`, so `Box.wrap(4)`
+    /// needs no type arguments, bounded (`class Box<T extends Named>`) or not: nothing of the
+    /// call depends on it, so its bound isn't checked.
+    fn default_unused_owner_slots(&mut self, c: &mut Callable, owner_generics: usize) {
+        let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).chain([c.ret]).collect();
+        let unused = self.unused_owner_slots(&tys, owner_generics);
+        let n = c.slot_names.len();
+        for i in unused {
+            c.defaults.resize(n, None);
+            c.defaults[i].get_or_insert(self.cx.ty.unit);
+            if let Some(b) = c.bounds.get_mut(i) {
+                b.clear();
+            }
+        }
+    }
+
+    /// The slots below `owner_generics` that no type of `tys` uses.
+    pub(super) fn unused_owner_slots(&self, tys: &[TyId], owner_generics: usize) -> Vec<usize> {
+        let mut used = vec![];
+        for &t in tys {
+            crate::types::collect_params(&self.cx.ty, t, &mut used);
+        }
+        (0..owner_generics)
+            .filter(|&i| !used.contains(&(i as u32)))
+            .collect()
     }
 
     /// The nearest base class of class `d` declaring a static method `name`: that method, the
@@ -443,6 +525,14 @@ impl FnCx<'_, '_> {
             let m = a.methods.get(&key).or_else(|| a.methods.get(name));
             if let Some(m) = m.filter(|m| m.is_static) {
                 return Some((*m, a.generics.len(), args));
+            }
+            // Then the statics an `extend` block of that base adds.
+            let n = a.generics.len();
+            if let Some((m, k)) = self
+                .extension_static(cur, name)
+                .filter(|(m, _)| m.is_static)
+            {
+                return Some((m, k, args.filter(|_| k == n)));
             }
         }
         None

@@ -254,3 +254,32 @@ fn readonly_fields_in_object_types() {
         ]
     );
 }
+
+#[test]
+fn class_expression_bound_to_a_variable() {
+    let m = parse_ok(
+        "export const A = class extends B { x = 1; }; let C = class C {}
+function f() { const D = class { m() {} }; }",
+    );
+    let ItemKind::Class(a) = &m.items[0].kind else {
+        panic!()
+    };
+    assert!(m.items[0].exported);
+    assert_eq!(a.name.name, "A");
+    assert!(a.extends.is_some());
+    assert_eq!(a.fields.len(), 1);
+    let ItemKind::Class(c) = &m.items[1].kind else {
+        panic!()
+    };
+    assert_eq!(c.name.name, "C");
+    let ItemKind::Function(f) = &m.items[2].kind else {
+        panic!()
+    };
+    let StmtKind::Item(item) = &f.body.stmts[0].kind else {
+        panic!()
+    };
+    let ItemKind::Class(d) = &item.kind else {
+        panic!()
+    };
+    assert_eq!((d.name.name.as_str(), d.methods.len()), ("D", 1));
+}

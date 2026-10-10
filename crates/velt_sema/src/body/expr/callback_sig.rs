@@ -1,6 +1,7 @@
 //! What a callback adapter (`callback`) knows about the function it wraps: its parameters and
-//! result, and the expected function type with the parameters still being inferred filled in
-//! from them.
+//! result (`named_fn_sig`, for a function passed by name: how many parameters it takes, how many
+//! it needs, and what it returns), and the expected function type with the parameters still
+//! being inferred filled in from them.
 
 use velt_syntax::ast;
 
@@ -91,6 +92,14 @@ impl FnCx<'_, '_> {
     /// needed) of the function `arg` names: a local of function type (a closure `const` knows
     /// which of its parameters have defaults), or a non-generic module-level function.
     pub(super) fn named_fn_sig(&mut self, arg: &ast::Expr, with_ret: bool) -> Option<FnSig> {
+        if let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &arg.kind
+        {
+            return self.static_method_sig(object, prop, with_ret);
+        }
         let ast::ExprKind::Ident(id) = &arg.kind else {
             return None;
         };
@@ -129,6 +138,45 @@ impl FnCx<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// `C.f` naming a static method without type parameters of its own that doesn't use `this`
+    /// (which can't be a value): like a module-level function in `named_fn_sig`. Also `this.f`
+    /// in a static method, as the declaring class sees `f` (the wrapper calls `this.f(…)`).
+    fn static_method_sig(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        with_ret: bool,
+    ) -> Option<FnSig> {
+        let (d, via_this) = match (&object.kind, self.static_this) {
+            (ast::ExprKind::This, Some((_, declaring))) => (declaring, true),
+            (ast::ExprKind::Ident(id), _) => {
+                if self.peek_local_ty(&id.name).is_some() {
+                    return None;
+                }
+                let Item::Def(d) = self.cx.lookup_item_at(self.module, &id.name, id.span)? else {
+                    return None;
+                };
+                (d, false)
+            }
+            _ => return None,
+        };
+        self.cx.adt(d)?;
+        let (m, owner_generics, _) = self.find_static(d, &prop.name).ok()?;
+        let f = self.cx.fn_info(m.def);
+        let uses_this = !via_this && self.cx.static_this.contains_key(&m.def);
+        if f.generics.len() != owner_generics || uses_this {
+            return None;
+        }
+        let params = f.params.len();
+        let required = f.params.iter().take_while(|p| p.default.is_none()).count();
+        let ret = with_ret.then(|| self.callee_ret(m.def, prop.span));
+        Some(FnSig {
+            params,
+            required,
+            ret,
+        })
     }
 
     /// What calling the named function `d` gives: its result type, a promise of it for an

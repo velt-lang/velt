@@ -1,0 +1,33 @@
+// Static methods from `extend` blocks are inherited like the class's own statics. The lookup
+// order is: the class's own static, its own `extend` statics, then each base class's statics and
+// `extend` statics, nearest first.
+class A {
+  static f(): string { return "A.f"; }
+}
+extend A {
+  static g(): string { return "A.g (extend)"; }
+  static h(): string { return "A.h (extend)"; }
+}
+class B extends A {
+  static h(): string { return "B.h"; }
+}
+extend B {
+  static k(): string { return "B.k (extend)"; }
+}
+class C extends B {}
+extend C {
+  static g(): string { return "C.g (extend)"; }
+}
+class Box<T> {
+  v: T;
+  constructor(v: T) { this.v = v; }
+}
+extend<T> Box<T> {
+  static of(v: T): Box<T> { return new Box<T>(v); }
+  static twice(n: number): number { return n * 2; }
+}
+class StrBox extends Box<string> {}
+
+console.log(B.f(), B.g(), B.h());
+console.log(C.f(), C.g(), C.h(), C.k());
+console.log(StrBox.of("x").v, StrBox.twice(21));

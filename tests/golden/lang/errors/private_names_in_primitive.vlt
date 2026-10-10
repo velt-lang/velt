@@ -1,0 +1,12 @@
+// The right operand of `#x in o` must be an object: TypeScript rejects one that may be a
+// primitive (TS2322, not assignable to `object`), and JavaScript throws a `TypeError` for it.
+class A {
+  #x: number = 1;
+  static s(o: A | string): boolean {
+    return #x in o;
+  }
+  static n(o: A | number | boolean): boolean {
+    return #x in o;
+  }
+}
+console.log(A.s("hi"), A.n(new A()));

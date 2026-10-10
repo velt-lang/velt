@@ -53,6 +53,10 @@ impl FnCx<'_, '_> {
             let never = recv.ty == self.cx.ty.never;
             return if never { recv } else { self.error_expr(span) };
         }
+        if self.shadowed_private_name(recv.ty, prop) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
         // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs).

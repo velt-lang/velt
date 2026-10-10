@@ -254,6 +254,17 @@ impl FnCx<'_, '_> {
     /// (it can't be reassigned, and a call by name fills in defaults), a local's value read
     /// once (a closure `const` keeps filling in its parameters' defaults).
     fn callback_callee(&mut self, arg: &ast::Expr) -> Callee {
+        // `C.f` / `this.f` naming a static method (`static_method_sig`): called by name, as
+        // `this` in a static method can't be a value.
+        if matches!(
+            &arg.kind,
+            ast::ExprKind::Member {
+                optional: false,
+                ..
+            }
+        ) {
+            return Callee::Named(arg.clone());
+        }
         if let ast::ExprKind::Ident(id) = &arg.kind {
             if !self.is_local_name(&id.name) {
                 return Callee::Named(arg.clone());
