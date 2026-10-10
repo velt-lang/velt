@@ -121,9 +121,6 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
-                if *kind == ast::VarKind::Let {
-                    self.cx.pattern_bindings.push(pattern.span);
-                }
                 let parts = ForOfParts {
                     kind: *kind,
                     pattern,

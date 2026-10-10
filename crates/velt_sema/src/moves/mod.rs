@@ -201,22 +201,15 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
         m.report = true;
         m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-        // A variable that cannot be one cell (a `for (let …)` variable, or one a pattern
-        // declares, #799) and needs one only because a closure created inside an escaping
-        // closure assigns it, unless it needs the cell anyway: a `for (let …)` variable is an
-        // error; a pattern's variable is checked as if that closure did not assign it (each
-        // closure keeps its own copy).
+        // A `for (let …)` variable cannot be one cell (each iteration has its own, copied into
+        // the next one): when it needs one only because a closure created inside an escaping
+        // closure assigns it, and not anyway, it is an error.
         let cannot: Vec<LocalId> = m
             .boxed
             .iter()
             .copied()
-            .filter(|l| {
-                nested_only.contains(l)
-                    && (out.per_iteration.contains(&(def, *l))
-                        || crate::ownership::pattern_bound(cx, def, *l))
-            })
+            .filter(|l| nested_only.contains(l) && out.per_iteration.contains(&(def, *l)))
             .collect();
-        let without: Writers;
         if !cannot.is_empty() {
             let (boxed, errors, reused) = (m.boxed.clone(), m.errors.len(), m.reused.clone());
             m.writers = &own_writers;
@@ -228,36 +221,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             m.errors.truncate(errors);
             m.reused = reused;
             m.writers = &writers;
-            let (per_iter, pattern): (Vec<LocalId>, Vec<LocalId>) = cannot
-                .into_iter()
-                .filter(|l| !anyway.contains(l))
-                .partition(|l| out.per_iteration.contains(&(def, *l)));
-            for l in per_iter {
+            for l in cannot.into_iter().filter(|l| !anyway.contains(l)) {
                 m.boxed.remove(&l);
                 unshared.push((def, l));
-            }
-            if !pattern.is_empty() {
-                without = writers
-                    .iter()
-                    .map(|(c, a)| {
-                        let own = &own_writers[c];
-                        let a = a.iter().copied();
-                        (
-                            *c,
-                            a.filter(|l| !pattern.contains(l) || own.contains(l))
-                                .collect(),
-                        )
-                    })
-                    .collect();
-                m.writers = &without;
-                m.boxed.retain(|l| !pattern.contains(l));
-                m.errors.clear();
-                m.reused.clear();
-                m.nested.clear();
-                m.report = false;
-                m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-                m.report = true;
-                m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
             }
         }
         all.extend(m.errors);
