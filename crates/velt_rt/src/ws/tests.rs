@@ -220,6 +220,35 @@ fn close_reasons_are_cut_at_a_character_boundary() {
 }
 
 #[test]
+fn publish_reaches_subscribers_once_and_drop_leaves_topics() {
+    rt().block_on(async {
+        let (s1, c1) = pair().await;
+        let (s2, c2) = pair().await;
+        let topic = format!("t{}", s1.id);
+        assert!(topics::subscribe(&s1, &topic));
+        assert!(
+            !topics::subscribe(&s1, &topic),
+            "subscribing twice is a no-op"
+        );
+        assert!(topics::subscribe(&s2, &topic));
+        // Everyone, then everyone but s1 (`ws.publish`).
+        assert_eq!(topics::publish(&topic, Op::Text, b"all", 0), 2);
+        assert_eq!(topics::publish(&topic, Op::Text, b"others", s1.id), 1);
+        assert_eq!(text(&c1.receive().await.unwrap()), "all");
+        assert_eq!(text(&c2.receive().await.unwrap()), "all");
+        assert_eq!(text(&c2.receive().await.unwrap()), "others");
+        topics::unsubscribe(s2.id, &topic);
+        assert_eq!(topics::publish(&topic, Op::Text, b"x", 0), 1);
+        assert_eq!(text(&c1.receive().await.unwrap()), "x");
+        // Dropping a subscribed connection leaves its topics (and an empty topic goes away).
+        s1.topics.lock().unwrap().push(topic.clone());
+        drop(s1);
+        assert_eq!(topics::publish(&topic, Op::Text, b"gone", 0), 0);
+        drop((c1, s2, c2));
+    });
+}
+
+#[test]
 fn pings_are_answered_and_fragments_joined() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

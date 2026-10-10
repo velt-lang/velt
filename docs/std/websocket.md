@@ -17,6 +17,13 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs.
   IoError>`: `for await (const m of ws)` receives messages until the peer closes; leaving the
   loop early leaves the connection open.
 - `WsMessage { isBinary; text; data: u8[] }`.
+- Topics: `await ws.subscribe(topic)`, `ws.unsubscribe(topic)`; `publish(topic, text)` and
+  `publishBytes(topic, data)` send to every subscriber, `ws.publish(topic, text)` /
+  `ws.publishBytes` to every subscriber but `ws` (like Bun's `server.publish` and
+  `ws.publish`). They return the number of connections the message was queued for: the frame
+  is encoded once and queued for each subscriber, so a publish costs no task or promise per
+  socket. A subscriber with more than 16 MiB already queued misses the message (a slow reader
+  can't grow the server's memory); a closed connection leaves its topics.
 
 ```ts
 import { serve } from "velt:http";
@@ -61,7 +68,8 @@ seconds to take what is queued after `close` (or after the handle is released), 
 connection is shut down. An idle connection keeps
 no read buffer (about 3 KB of memory per open connection in total).
 
-Because sends are queued, a plain loop is the fastest way to send one message to many sockets
+To send one message to many connections, `publish` to a topic they subscribed to. To send to a
+list you keep yourself, a plain loop is the fastest way
 (each `await` returns at once; `Promise.all` over the sends adds a promise per socket):
 
 ```ts

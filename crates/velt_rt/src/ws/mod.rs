@@ -25,6 +25,7 @@
 mod accept;
 mod connect;
 mod frame;
+mod topics;
 mod writer;
 
 use crate::bytes::VeltBytes;
@@ -162,9 +163,15 @@ impl Reader {
 
 /// An open connection.
 struct Conn {
+    /// Process-unique, for topic subscriptions.
+    id: u64,
     rx: Mutex<Reader>,
     tx: Arc<Writer>,
+    /// The topics it is subscribed to (left when it is dropped).
+    topics: SyncMutex<Vec<String>>,
 }
+
+static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Conn {
     /// Starts a connection over a raw TCP stream or another transport, with the queue `tx` (which
@@ -179,6 +186,8 @@ impl Conn {
         let (r, w) = split(tcp, other);
         crate::task::runtime::handle().spawn(write_loop(tx.clone(), w));
         Conn {
+            id: NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            topics: SyncMutex::new(Vec::new()),
             rx: Mutex::new(Reader {
                 half: r,
                 buf: prefix,
@@ -336,6 +345,10 @@ impl Conn {
 
 impl Drop for Conn {
     fn drop(&mut self) {
+        let topics = std::mem::take(&mut *self.topics.lock().unwrap_or_else(|e| e.into_inner()));
+        for t in topics {
+            topics::unsubscribe(self.id, &t);
+        }
         self.tx.lock().dropped = true;
         self.tx.ready.notify_one();
         self.tx.ending.notify_waiters();
@@ -531,6 +544,74 @@ pub unsafe extern "C" fn velt_rt_ws_close(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_ws_free(ws: WsHandle) {
     SOCKETS.remove(ws);
+}
+
+/// `ws.subscribe(topic)` → `IoResult<()>` once the connection is open: messages published to
+/// `topic` are queued for it until it unsubscribes or is dropped.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_ws_subscribe(ws: WsHandle, topic: *const VeltStr) -> *mut VeltFut {
+    let topic = (*topic).text_lossy().into_owned();
+    SOCKETS.op::<()>(ws, |obj| {
+        new_leaf(async move {
+            let r = obj.conn().await.map(|c| {
+                if topics::subscribe(c, &topic) {
+                    c.topics
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(topic);
+                }
+            });
+            IoResult::from_io(r, |()| ())
+        })
+    })
+}
+
+/// `ws.unsubscribe(topic)`: leaves `topic` (nothing if not subscribed, or not open yet).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_ws_unsubscribe(ws: WsHandle, topic: *const VeltStr) {
+    let Some(obj) = SOCKETS.get(ws) else {
+        return;
+    };
+    let Some(conn) = obj.conn.get() else {
+        return;
+    };
+    let topic = (*topic).text_lossy();
+    conn.topics
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|t| *t != topic);
+    topics::unsubscribe(conn.id, &topic);
+}
+
+/// The connection id behind handle `ws` (0 for none, or a connection not open yet).
+fn conn_id(ws: WsHandle) -> u64 {
+    SOCKETS
+        .get(ws)
+        .and_then(|obj| obj.conn.get().map(|c| c.id))
+        .unwrap_or(0)
+}
+
+/// `publish(topic, text)` / `ws.publish(topic, text)`: queues a text frame for every
+/// subscriber of `topic` except `except` (a null handle: none); the number of connections.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_ws_publish(
+    topic: *const VeltStr,
+    text: *const VeltStr,
+    except: WsHandle,
+) -> u64 {
+    let (topic, text) = ((*topic).text_lossy(), (*text).text_lossy());
+    topics::publish(&topic, Op::Text, text.as_bytes(), conn_id(except))
+}
+
+/// `publishBytes(topic, data)`: as [`velt_rt_ws_publish`], a binary frame.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_ws_publish_binary(
+    topic: *const VeltStr,
+    data: *const VeltBytes,
+    except: WsHandle,
+) -> u64 {
+    let topic = (*topic).text_lossy();
+    topics::publish(&topic, Op::Binary, (*data).as_bytes(), conn_id(except))
 }
 
 fn invalid(message: String) -> VeltErr {
