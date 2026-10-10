@@ -19,9 +19,13 @@ pub fn fake_velt() -> PathBuf {
             let exe = dir.join(format!("fake_velt{}", std::env::consts::EXE_SUFFIX));
             let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
             if modified(&exe) < modified(&source) || modified(&exe).is_none() {
-                std::fs::create_dir_all(&dir).unwrap();
-                // Built aside and renamed: test processes running at once never see half a file.
-                let partial = dir.join(format!("fake_velt.{}.partial", std::process::id()));
+                // Built in a directory of this process's own and renamed: test processes running
+                // at once never see half a file, and never share rustc's intermediate objects
+                // (named after the crate, next to the output), which one could truncate while
+                // another links them.
+                let work = dir.join(format!("build.{}", std::process::id()));
+                std::fs::create_dir_all(&work).unwrap();
+                let partial = work.join(format!("fake_velt{}", std::env::consts::EXE_SUFFIX));
                 let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
                 let status = Command::new(rustc)
                     .args(["--edition", "2021", "-O", "-o"])
@@ -31,6 +35,7 @@ pub fn fake_velt() -> PathBuf {
                     .unwrap();
                 assert!(status.success(), "compiling {} failed", source.display());
                 std::fs::rename(&partial, &exe).unwrap();
+                let _ = std::fs::remove_dir_all(&work);
             }
             exe
         })
