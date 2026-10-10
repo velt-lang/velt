@@ -214,6 +214,12 @@ pub struct Program {
     /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
     /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
+    /// Object types (concrete, anonymous) whose values lowering must store as counted boxes from
+    /// its first pass, whether or not it sees a share of them: sema accepted an assignment into
+    /// such an object whose right-hand side may replace it only because the program shares the
+    /// type (an assignment target in a counted object is the object it named before the
+    /// right-hand side ran; hir_encodings.md "Sharing").
+    pub counted_objects: Vec<TyId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

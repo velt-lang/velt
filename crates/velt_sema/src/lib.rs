@@ -202,6 +202,7 @@ fn check_on_current_thread(
         defs,
         diags,
         impls,
+        counted_objects,
         ..
     } = cx;
     let defs = defs
@@ -215,6 +216,7 @@ fn check_on_current_thread(
         impls,
         anon_shapes,
         union_shapes,
+        counted_objects,
     };
     (Some(program), diags)
 }

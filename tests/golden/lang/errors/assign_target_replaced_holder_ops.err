@@ -1,0 +1,12 @@
+assign_target_replaced_holder_ops.vlt:13:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v **= …` writes into
+= note: compute the value first: `const v = g(2); p.inner.v **= v;`
+assign_target_replaced_holder_ops.vlt:14:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v |= …` writes into
+= note: compute the value first: `const v = g(1) + 3; p.inner.v |= v;`
+assign_target_replaced_holder_ops.vlt:15:3: error: the right-hand side may replace `p.inner`, the object `p.inner.s += …` writes into
+= note: compute the value first: `const v = `${g(1)}`; p.inner.s += v;`
+assign_target_replaced_holder_ops.vlt:16:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v ||= …` writes into
+= note: compute the value first: `if (!p.inner.v) { const v = g(4); p.inner.v = v; }`
+assign_target_replaced_holder_ops.vlt:17:3: error: the right-hand side may replace `p.inner`, the object `p.inner.n ??= …` writes into
+= note: compute the value first: `if (p.inner.n == null) { const v = g(5); p.inner.n = v; }`
+assign_target_replaced_holder_ops.vlt:18:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v = …` writes into
+= note: compute the value first: `const v = Math.max(g(1), p.inner.v); p.inner.v = v;`

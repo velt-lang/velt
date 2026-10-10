@@ -29,7 +29,11 @@ pub(crate) fn erase(cx: &mut Ctx) {
         cache.insert(brand, base);
     }
     let Ctx {
-        ty, defs, impls, ..
+        ty,
+        defs,
+        impls,
+        counted_objects,
+        ..
     } = cx;
     let mut e = |t: TyId| erase_ty(ty, &twins, &mut cache, t);
     // A twin must know a field is assigned if its readonly view's is (it never is today).
@@ -91,6 +95,9 @@ pub(crate) fn erase(cx: &mut Ctx) {
                 }
             }
         }
+    }
+    for t in counted_objects.iter_mut() {
+        *t = e(*t);
     }
     for imp in impls.iter_mut() {
         imp.ty = e(imp.ty);
