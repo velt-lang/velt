@@ -25,8 +25,13 @@ pub(super) fn apply(env: &Env, func: &mut Function, plan: &Plan) -> bool {
     for (i, to) in plan.to.iter().enumerate() {
         if let Some(t) = *to {
             map[i] = Some((Local(func.locals.len() as u32), t));
+            // The narrowed local holds the variable from now on (debuggers read its type).
             let name = func.locals[i].name.clone();
-            func.locals.push(LocalDecl::new(t, name));
+            let debug = func.locals[i].debug.take();
+            func.locals.push(LocalDecl {
+                debug,
+                ..LocalDecl::new(t, name)
+            });
         }
     }
     let mut rw = Rewriter {

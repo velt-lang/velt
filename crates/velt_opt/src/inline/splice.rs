@@ -67,7 +67,12 @@ pub(super) fn inline_call(
         );
     }
     caller.blocks[call_block].term = Terminator::Goto(BlockId(block_base));
-    caller.locals.extend(body.locals);
+    // Inlined variables are not described: without inlined scopes a debugger would show them
+    // as the caller's own.
+    caller.locals.extend(body.locals.into_iter().map(|mut l| {
+        l.debug = None;
+        l
+    }));
     caller.blocks.extend(body.blocks);
     if !caller.locs.is_empty() {
         caller.locs.extend(body.locs);

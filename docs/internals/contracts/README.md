@@ -84,3 +84,16 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `velt_opt` keeps them on clones/specializations (inlined bodies simply lose them) and uses
   `noalias` for redundant-load elimination; LLVM emits them as parameter attributes;
   Cranelift ignores them.
+
+## Debug variables (additive VIR extension)
+- `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`
+  (vir/debug.rs): which source variable a local holds (declaration, debug type, held by
+  reference, param) and how each source type is laid out, in terms of existing aggregates
+  (fields are VIR field indexes; a local's own VIR type gives a scalar's encoding, which may be
+  narrower than the scalar's natural one).
+- Filled only by `velt_vir::lower_with` with `LowerOptions::debug_info`, which the driver sets
+  for debug builds made for debugging (`velt build`, `velt dev --exe`; not `velt run` or
+  `velt test`); empty otherwise. Invariant (vir.rs 10): every reference resolves (checked by `verify`).
+- `velt_opt`: dead-code elimination keeps described locals; `numrep` moves a description to
+  the narrowed local; inlined locals lose theirs. Backends turn them into debugger variables
+  or ignore them.

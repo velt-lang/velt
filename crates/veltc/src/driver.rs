@@ -40,6 +40,10 @@ pub struct BuildOptions {
     pub backend: Option<Backend>,
     /// `--report numbers`: add the number representation report to [`Session::reports`].
     pub report_numbers: bool,
+    /// Describe local variables for debuggers in a debug build (`velt build`, `velt dev --exe`).
+    /// Off for builds that only run (`velt run`, `velt test`): a described variable lives in
+    /// memory rather than a register, which slows hot loops by about a quarter.
+    pub debug_vars: bool,
 }
 
 impl BuildOptions {
@@ -267,6 +271,9 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // A debug compiler links the debug runtime, which checks that no two tasks use one
         // captured variable's cell (#916); release programs and release compilers skip it.
         cell_checks: !opts.release && cfg!(debug_assertions),
+        // Variables for debuggers in debug builds made for debugging; release builds with `-g`
+        // keep line information only, and their optimizations stay as they are.
+        debug_info: !opts.release && opts.debug_vars,
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
     if !opts.wants_debug_info() && !opts.report_numbers {
