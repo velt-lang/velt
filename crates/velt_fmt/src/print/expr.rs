@@ -108,6 +108,7 @@ impl<'a> Printer<'a> {
                 (ret.as_ref(), throws.as_ref()),
                 body,
                 *is_async,
+                None,
             ),
             ExprKind::Function(f) => self.fn_decl(f, "function "),
             ExprKind::Array(elems) => self.array(elems, e.span.hi),
