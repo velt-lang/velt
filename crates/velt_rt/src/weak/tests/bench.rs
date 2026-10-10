@@ -1,7 +1,8 @@
 //! Cost of the weak flag on retain/release/free, measured in instructions (valgrind, see
 //! `crates/velt_rt/scripts/weak_rc_cost.sh`). Each loop inlines the release sequence the compiler
-//! would emit: `plain` is today's (a type never weakly held), `capable` adds the flag test (a
-//! weak-capable type whose object is not weakly held), and `weak_shared` runs the `capable` loop
+//! would emit: `plain` is today's (a type never weakly held), `capable` is the proposed sequence for a
+//! weak-capable type whose object is not weakly held (a signed compare), `bittest` the
+//! alternative (a separate test of the flag), and `weak_shared` runs the `capable` loop
 //! on an object that is a weak key (the cold path).
 
 use super::*;
@@ -52,6 +53,26 @@ macro_rules! bench_loops {
 
 bench_loops!(bench_plain_shared, bench_plain_unique, release_plain);
 bench_loops!(bench_capable_shared, bench_capable_unique, release);
+bench_loops!(bench_bittest_shared, bench_bittest_unique, release_bit_test);
+
+/// The alternative to `release`: today's `c == 1` test first, then a test of the flag.
+#[inline(always)]
+fn release_bit_test(obj: *mut u8) {
+    // SAFETY: the loops own the reference they release.
+    unsafe {
+        let rc = rc_word(obj);
+        let c = *rc;
+        if c == 1 {
+            destroy(obj);
+        } else if c & RC_WEAK != 0 {
+            if velt_rt_weak_release(obj) != 0 {
+                destroy(obj);
+            }
+        } else {
+            *rc = c - 1;
+        }
+    }
+}
 
 /// Runs the loop `VELT_WEAK_BENCH` names (all of them when unset), `VELT_WEAK_BENCH_N` times.
 /// `weak_shared` is `bench_capable_shared` on an object that is a weak key: the cold path.
@@ -77,6 +98,12 @@ fn rc_paths() {
         }
         if run("capable_unique") {
             bench_capable_unique(n);
+        }
+        if run("bittest_shared") {
+            bench_bittest_shared(obj, n);
+        }
+        if run("bittest_unique") {
+            bench_bittest_unique(n);
         }
         let m = obj_map();
         set(m, obj, new_obj(&[]));

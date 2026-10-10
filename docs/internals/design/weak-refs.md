@@ -14,9 +14,9 @@ ephemeron rule that keeps `raw -> proxy` caches from leaking.
 A counted object is `[count: u64][value]`; the value pointer is the block address + 8
 ([semantics-stage2.md](semantics-stage2.md) §3). The core adds:
 
-- **A flag in the count word.** Bit 63 (`RC_WEAK`) is set while the object is weakly held: a
-  weak-map key, a `WeakRef` target, or a member of an ephemeron cycle (below). Counts never get
-  near 2^63, so the bit costs no range, and retain stays `count += 1`.
+- **A flag in the count word.** Bit 63 (`RC_WEAK`, the sign bit) is set while the object is
+  weakly held: a weak-map key, a `WeakRef` target, or a member of an ephemeron cycle (below).
+  Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
 - **A per-thread side table** from object address to a record: the maps the object is a key
   of, the entries whose value graph refers to it, its `WeakRef` slots, and two small counts
   used by the ephemeron rule (`hint`, `observed`). Counted objects never cross threads, so the
@@ -30,18 +30,18 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 
 The compiler decides program-wide which types are **weak-capable**: the types used as weak-map
 keys, `WeakRef` targets or `weak T` fields, plus every type reachable from a weak map's key and
-value types (the objects an ephemeron trial may meet). For those types only, release gains one
-test on the shared path:
+value types (the objects an ephemeron trial may meet). For those types only, release changes its first
+test from `c == 1` to a signed compare, which works because `RC_WEAK` is the sign bit:
 
 ```text
 c = *rc
-if c == 1                { drop the fields; free }                          // unique path, unchanged
-else if c & RC_WEAK != 0 { if velt_rt_weak_release(obj) { drop the fields; free } }   // cold call
-else                     { *rc = c - 1 }
+if c as i64 > 1 { *rc = c - 1 }                                                  // shared path
+else if c == 1  { drop the fields; free }                                        // unique path
+else            { if velt_rt_weak_release(obj) { drop the fields; free } }      // RC_WEAK set: cold call
 ```
 
-A weakly held object's count word is never exactly 1 (the flag is set), so the unique path's
-test sends it to the cold call, which removes the object from every map and `WeakRef` before
+A weakly held object's count word is negative as a signed number, so it leaves the shared path
+with the unique case and goes to the cold call, which removes the object from every map and `WeakRef` before
 the generated code frees it. Every other type keeps today's two-way release, and a program
 without `WeakMap`, `WeakSet`, `WeakRef` or `weak` has no weak-capable types: it compiles exactly
 as today.
@@ -49,17 +49,25 @@ as today.
 | Object | Cost |
 |---|---|
 | Type never weakly held | none: same code as today |
-| Weak-capable type, object not weakly held | one test of a bit in the word the release already loaded (shared path only) |
+| Weak-capable type, object not weakly held | the signed compare: about one instruction per release, two per free (measured below) |
 | Object weakly held | a call and a side-table probe on each release |
 | Freeing a weakly held object | the above, plus removing its entries and clearing its `WeakRef`s |
 
-Measured with cachegrind (`crates/velt_rt/scripts/weak_rc_cost.sh`, loops in
-`src/weak/tests/bench.rs`, release build, Linux x86_64), instructions per iteration:
+Measured with valgrind (`crates/velt_rt/scripts/weak_rc_cost.sh`, callgrind's per-function
+counts, loops in `src/weak/tests/bench.rs` inlining each release sequence, release build, Linux
+x86_64, 10^6 iterations), instructions per iteration of the loop:
 
-| Loop | Today's release | Weak-capable release | Weakly held object |
-|---|---|---|---|
-| retain + release, shared | MEASURED_PLAIN_SHARED | MEASURED_CAPABLE_SHARED | MEASURED_WEAK_SHARED |
-| allocate + release (drop, free) | MEASURED_PLAIN_UNIQUE | MEASURED_CAPABLE_UNIQUE | — |
+| Loop | Today's release | Weak-capable, signed compare | Weak-capable, separate bit test | Weakly held object |
+|---|---|---|---|---|
+| retain + release (shared path) | 10.00 | 11.00 | 14.00 | 94.00 |
+| allocate + release (drop, free) | 93.69 | 95.69 | 93.69 | — |
+
+The signed compare costs one instruction per shared release and two per free (+2.1% on the
+allocate/free loop, mostly mimalloc); a separate bit test after `c == 1` keeps the free path
+unchanged but costs four per shared release, so the signed compare is the proposal. Neither
+touches types that are not weak-capable, which is every type of every program today: their code
+is unchanged, so `bench/` is unaffected. A release of a weakly held object is a call and a hash
+probe, about 84 instructions more than today's.
 
 ## Weak maps and `WeakRef`
 
@@ -130,7 +138,10 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that
-the live objects, side-table records and map entries are exactly the window's. SOAK_RESULTS
+the live objects, side-table records and map entries are exactly the window's. The long run (`soak_long`, ignored by default) passed
+10^6 reactive objects (4,000,002 objects) through a window of 1,000: at most 4,002 objects were
+alive and recorded at any step, and none were left at the end. CI runs 20,000 through a window of
+64.
 
 ### What it does not handle
 
