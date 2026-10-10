@@ -15,10 +15,10 @@ bin=$(cargo test -p velt_rt --lib --release --no-run --message-format=json 2>/de
 [ -x "$bin" ] || { echo "test binary not found" >&2; exit 1; }
 out=$(mktemp -d)
 for f in plain_shared capable_shared weak_shared plain_unique capable_unique; do
-  VELT_WEAK_BENCH_N=$N valgrind --tool=cachegrind --cache-sim=no \
-    --cachegrind-out-file="$out/$f.out" --toggle-collect="*bench_${f}*" \
+  VELT_WEAK_BENCH_N=$N valgrind --tool=callgrind \
+    --callgrind-out-file="$out/$f.out" --toggle-collect="*bench_${f}*" \
     "$bin" --ignored --exact weak::tests::bench::rc_paths --test-threads=1 >/dev/null 2>&1
-  ir=$(sed -n 's/^summary: *\([0-9]*\).*/\1/p' "$out/$f.out")
+  ir=$(sed -n 's/^\(summary\|totals\): *\([0-9]*\).*/\2/p' "$out/$f.out" | head -1)
   awk -v f="$f" -v ir="$ir" -v n="$N" 'BEGIN { printf "%-15s %12d Ir  %7.2f Ir/iteration\n", f, ir, ir / n }'
 done
 rm -rf "$out"
