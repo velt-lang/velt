@@ -713,8 +713,9 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   names in it aren't either.
 - **Key order** of an object type is JavaScript's: field names that are array indices (`"0"`,
   `"404"`: canonical, up to 2^32 - 2) come first, ascending, then the others in declaration
-  order. `console.log`, `JSON.stringify` and `Object.keys` all follow it. A `Record` and a
-  `JsonValue` keep insertion order for every key (#756).
+  order. `console.log`, `JSON.stringify` and `Object.keys` all follow it. So do a `Record`
+  and a `JsonValue` object: their array-index keys come first, ascending, then the others in
+  insertion order (`JSON.parse` too).
 - **Generic object types** are structural, as in TypeScript: an instance is the object type it
   spells out, so with `type Box<T> = { v: T }`, `Box<string>` *is* `{ v: string }`, and so is
   the instance of a generic interface with only fields.
@@ -910,9 +911,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
-  and `Object.entries(r)` return arrays in insertion order, also for array-index keys, which
-  JavaScript lists first (#756) (`for (const [k, v] of
-  Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
+  and `Object.entries(r)` return arrays in JavaScript's order: keys that are array indices
+  (`"0"` to `"4294967294"`) first, ascending, then the others in insertion order (`for (const
+  [k, v] of Object.entries(r))`). `console.log` and `JSON.stringify` use the same order. Given an object literal, `Object.values` and `Object.entries` read it
   as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class

@@ -1,0 +1,19 @@
+// A share of the holder's type in a function nothing calls exempts `o.inner.v = g()` from the
+// replaced-holder error (#876); lowering counts the type anyway, so the write lands in the old
+// object as in JavaScript, and the new one keeps its own value.
+type Inner = { v: number };
+type Outer = { inner: Inner };
+function unused(o: Outer): Inner {
+  const k = o.inner;
+  o.inner.v = 1;
+  return k;
+}
+function main() {
+  const o: Outer = { inner: { v: 0 } };
+  const g = (): number => {
+    o.inner = { v: 100 };
+    return 13;
+  };
+  o.inner.v = g();
+  console.log(o.inner.v);
+}

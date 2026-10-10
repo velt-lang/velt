@@ -1,0 +1,16 @@
+// The right-hand side of `p.inner.v = h()` replaces `p.inner`. JavaScript writes into the old
+// object (nothing refers to it any more, so the program prints 200); Velt stores an object
+// literal nothing else refers to inside its holder, so this is an error with a fix: compute the
+// value first (#876).
+type Inner = { v: number; name: string };
+type Outer = { inner: Inner };
+
+function main() {
+  const p: Outer = { inner: { v: 1, name: "a" } };
+  const h = (): number => {
+    p.inner = { v: 200, name: "b" };
+    return 14;
+  };
+  p.inner.v = h();
+  console.log(p.inner.v);
+}

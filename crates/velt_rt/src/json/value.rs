@@ -84,6 +84,7 @@ fn owned_text(src: &[u8], tok: StrTok) -> Text {
 /// A container being built: its members so far and, for objects, the key awaiting its value.
 enum Frame {
     Array(Vec<Arc<Value>>),
+    /// The members so far (document order) and the key of the one being read.
     Object(Object, Option<Text>),
 }
 
@@ -92,6 +93,16 @@ enum Frame {
 struct Builder {
     stack: Vec<Frame>,
     root: Option<Arc<Value>>,
+    /// Bit `d` (depth `d` of the stack, 63 for every deeper one): the object open there has a
+    /// key that may be an array index (it starts with a digit), so its members are put in
+    /// JavaScript's order when it ends, indexes first, as `JSON.parse` does.
+    digits: u64,
+}
+
+/// The `Builder::digits` bit of the container at stack depth `d`.
+#[inline]
+fn depth_bit(d: usize) -> u64 {
+    1 << d.min(63)
 }
 
 impl Builder {
@@ -118,7 +129,7 @@ impl Builder {
             Some(Frame::Array(items)) => items.push(value),
             Some(Frame::Object(obj, key)) => {
                 let key = key.take().expect("ICE: object value without key");
-                obj.insert(key, value);
+                obj.insert_last(key, value);
             }
             None => self.root = Some(value),
         }
@@ -132,16 +143,31 @@ impl Sink for Builder {
     }
     fn begin_object(&mut self, _: usize) {
         self.stack.push(Frame::Object(Object::default(), None));
+        // Depths past 63 share a bit that stays set once set (a reorder there is only checked).
+        if self.stack.len() < 63 {
+            self.digits &= !depth_bit(self.stack.len());
+        }
     }
     fn key(&mut self, src: &[u8], key: StrTok) {
+        let depth = self.stack.len();
         if let Some(Frame::Object(_, slot)) = self.stack.last_mut() {
-            *slot = Some(owned_text(src, key));
+            let key = owned_text(src, key);
+            if key.first().is_some_and(u8::is_ascii_digit) {
+                self.digits |= depth_bit(depth);
+            }
+            *slot = Some(key);
         }
     }
     fn end(&mut self, _: usize) {
+        let depth = self.stack.len();
         let value = match self.stack.pop().expect("ICE: unbalanced JSON walk") {
             Frame::Array(items) => Value::Array(items),
-            Frame::Object(obj, _) => Value::Object(obj),
+            Frame::Object(mut obj, _) => {
+                if self.digits & depth_bit(depth) != 0 {
+                    obj.order_indexes();
+                }
+                Value::Object(obj)
+            }
         };
         self.add(value);
     }

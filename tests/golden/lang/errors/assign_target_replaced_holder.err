@@ -1,0 +1,2 @@
+assign_target_replaced_holder.vlt:14:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v = …` writes into
+note: compute the value first: `const v = h(); p.inner.v = v;`

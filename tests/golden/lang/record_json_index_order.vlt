@@ -1,0 +1,66 @@
+// Records and JSON values list their keys in JavaScript's order: keys that are array indices
+// (canonical "0" to "4294967294") first, ascending, then the others in insertion order, in
+// Object.keys / values / entries, JSON.stringify and console.log, also after JSON.parse (#756;
+// object types: lang/quoted_property_names_index_order).
+type Holder = { r: Record<string, number> };
+
+function show(r: Record<string, number>): string {
+  return Object.keys(r).join(",");
+}
+
+function vals(h: Holder): number[] {
+  return Object.values(h.r);
+}
+
+function main() {
+  const r: Record<string, number> = {};
+  r["b"] = 1;
+  r["10"] = 2;
+  r["a"] = 3;
+  r["01"] = 5;
+  r["4294967295"] = 7;
+  r["4294967294"] = 8;
+  r["10"] = 9;
+  console.log(Object.keys(r));
+  console.log(Object.values(r), Object.entries(r));
+  console.log(r, JSON.stringify(r));
+
+  const table: Record<string, number> = { b: 1, "7": 2, a: 3, "3": 4 };
+  console.log(Object.keys(table), table, JSON.stringify(table));
+
+  const h: Holder = { r: { z: 1 } };
+  h.r["9"] = 2;
+  h.r["1"] = 3;
+  console.log(show(h.r), vals(h), h);
+  const copy: Record<string, number> = { ...h.r, "0": 9, q: 1 };
+  console.log(copy, Object.entries(copy));
+
+  const lit: Record<"x" | "404" | "200", number> = { x: 1, "404": 2, "200": 3 };
+  console.log(Object.keys(lit), JSON.stringify(lit), lit);
+
+  const big: Record<string, number> = {};
+  for (let i = 20; i > 0; i--) {
+    big[`${(i * 7) % 23}`] = i;
+    big[`k${i}`] = i;
+  }
+  console.log(Object.keys(big).join(" "));
+  delete big["7"];
+  big["7"] = 0;
+  console.log(Object.keys(big).slice(0, 8).join(" "), JSON.stringify(big).length);
+
+  const nested: Record<string, Record<string, number>> = { x: { "5": 1, a: 2, "2": 3 } };
+  console.log(nested, JSON.stringify(nested));
+
+  const parsed: Record<string, number> = JSON.parse('{"b":1,"10":2,"a":3,"2":4,"10":5}');
+  console.log(JSON.stringify(parsed), Object.keys(parsed), parsed);
+  parsed["0"] = 0;
+  console.log(Object.entries(parsed));
+
+  const plain: Record<string, string> = JSON.parse('{"name":"x","kind":"y"}');
+  plain["id"] = "z";
+  console.log(plain, JSON.stringify(plain));
+
+  const j: JsonValue = JSON.parse('{"b":1,"10":2,"a":3,"inner":{"z":[1,{"9":0,"y":1,"3":2}],"07":1,"7":2}}');
+  console.log(JSON.stringify(j));
+  console.log(j);
+}

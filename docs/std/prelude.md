@@ -160,7 +160,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | `getOrInsert(k, () => v)` | |
 | `keys()`, `values()`, `entries()`, `forEach((v, k) => …)` | in insertion order; the first three return arrays (JS: iterators). `forEach` is live, as in JS: it visits entries its callback adds and skips the ones it deletes |
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call (JS's is a live view) |
-| `for (const [k, v] of map)` | live, as in JS: so is `for...of` over `map.keys()`, `map.values()` and `map.entries()` when `map` is a variable, `this` or a field of one (any other map expression iterates the array of entries as of the loop's start). The loop walks the map object `map` named when it started, so assigning another map to `map` in the body does not change what it visits, as in JS |
+| `for (const [k, v] of map)` | live, as in JS: so is `for...of` over `map.keys()`, `map.values()` and `map.entries()` when `map` is a variable, `this`, a field, a getter, an array element or a call result (`ms[0]`, `obj.m`, `get()!`; a map expression with an optional chain, a spread or a function expression iterates the array of entries as of the loop's start). The loop walks the map object `map` named when it started, so assigning another map to `map` in the body does not change what it visits, as in JS |
 
 A callback of `forEach`, `upsert`, `update` or `getOrInsert` may change the map through another
 reference to it: the value the callback gets stays valid, `forEach` visits entries added
@@ -172,9 +172,10 @@ callback deleted or added entries.
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,
 `r[k] = v`, `delete r[k]` and object literals
 ([Reference](../reference/types.md#objects-arrays-tuples-and-maps)). `Object.keys(r)`,
-`Object.values(r)` and `Object.entries(r)` return arrays in insertion order; `Object.keys`
-returns a `string[]` and, as in TypeScript, also lists the fields of any object, struct or
-class instance (except `#private` fields, as in JS).
+`Object.values(r)` and `Object.entries(r)` return arrays in JavaScript's key order: array-index
+keys such as `"2"` first, ascending, then the others in insertion order. `Object.keys` returns
+a `string[]` and, as in TypeScript, also lists the fields of any object, struct or class
+instance (except `#private` fields, as in JS).
 
 ```ts
 class User {

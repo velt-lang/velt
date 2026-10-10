@@ -1,0 +1,36 @@
+// The right-hand side replaces the holder in a function it calls, or replaces a holder above it
+// (#876): each assignment is an error with a fix.
+type Inner = { v: number; name: string };
+type Outer = { inner: Inner };
+type Deep = { mid: Outer };
+
+function reset(o: Outer): number {
+  o.inner = { v: 0, name: "r" };
+  return 1;
+}
+
+function viaReset(o: Outer): number {
+  return reset(o) + 1;
+}
+
+class Box {
+  inner: Inner = { v: 1, name: "a" };
+}
+
+function main() {
+  const p: Outer = { inner: { v: 1, name: "a" } };
+  p.inner.v = viaReset(p);
+  const d: Deep = { mid: { inner: { v: 1, name: "a" } } };
+  const g = (): number => {
+    d.mid = { inner: { v: 50, name: "m" } };
+    return 7;
+  };
+  d.mid.inner.v += g();
+  const b = new Box();
+  const k = (): number => {
+    b.inner = { v: 200, name: "b" };
+    return 14;
+  };
+  b.inner.v = k();
+  console.log(p.inner.v, d.mid.inner.v, b.inner.v);
+}

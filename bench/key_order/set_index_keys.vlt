@@ -1,0 +1,21 @@
+// JsonValue.set with 20,000 array-index keys, ascending (each one above the largest), alone and
+// after a named key (each one goes before it): JavaScript's key order (#756).
+function fill(named: boolean): number {
+  const t0 = performance.now();
+  const o = JsonValue.object();
+  if (named) {
+    o.set("name", JsonValue.of("x"));
+  }
+  for (let i = 0; i < 20000; i++) {
+    o.set(`${i}`, JsonValue.of(i));
+  }
+  const ms = performance.now() - t0;
+  console.log(named ? "after a name:" : "alone:", o.stringify().length);
+  return ms;
+}
+
+function main() {
+  const a = fill(false);
+  const b = fill(true);
+  console.error(`set_index_keys alone ${a.toFixed(1)} ms, after a name ${b.toFixed(1)} ms`);
+}

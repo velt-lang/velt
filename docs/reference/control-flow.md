@@ -111,8 +111,13 @@ interface Iterable<T, E = never> {
   the prelude classes `ArrayIterator<T>` and `StringIterator` are its implementations). An
   array's iterator is a live view, as in JS: it reads the length at each step, so it visits
   elements pushed meanwhile, and once it reported `done` it stays done. A string's yields
-  characters (code points). A map's and a set's iterate the entries as of the call, like
-  `for...of` over a map (JS's map and set iterators are live views).
+  characters (code points). A map's and a set's iterate the entries as of the call (JS's map
+  and set iterators are live views).
+- `for...of` over a map, or over its `keys()`, `values()` or `entries()`, is live as in JS:
+  entries the body adds are visited, deleted ones are not. That holds for a map in a variable,
+  a field, a getter, an array element or a call result (`for (const [k, v] of ms[0])`). The
+  map is read once, when the loop starts: assigning another map to its source in the body does
+  not change what the loop visits.
 - `IterableIterator<T, E>`, `IteratorObject<T, E>` and `AsyncIterableIterator<T, E>` are TS's
   iterators that are also iterable (`[Symbol.iterator]()` returns the iterator itself, declared
   as `Iterator<T, E>`, since Velt has no covariant returns). Generators implement them and may

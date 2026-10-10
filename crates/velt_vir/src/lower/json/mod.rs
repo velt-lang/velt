@@ -23,6 +23,8 @@ mod object;
 mod read;
 mod union;
 mod union_object;
+
+pub(in crate::lower) use map::RecordOrder;
 pub(in crate::lower) mod write;
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};

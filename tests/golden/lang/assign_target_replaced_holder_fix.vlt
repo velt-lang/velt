@@ -1,0 +1,108 @@
+// The fix for an assignment whose right-hand side may replace the object literal it writes into
+// (#876, tests/golden/lang/errors/assign_target_replaced_holder.vlt): compute the value first.
+// TypeScript runs this the same way: the value goes into the new object. Right-hand sides that
+// cannot replace the object compile as written: calls through an interface, a vtable or a
+// callback that replace nothing of these types, an `await` in a program that never replaces
+// them, and callbacks written in the right-hand side next to other functions that replace other
+// objects of the type.
+type Inner = { v: number; name: string };
+type Outer = { inner: Inner };
+type Totals = { count: number; sum: number };
+type Report = { totals: Totals; title: string };
+// Nothing assigns a whole `Slot` or its `at`.
+type Slot = { at: { v: number } };
+
+interface Source {
+  get(): number;
+}
+
+class FromConst implements Source {
+  get(): number {
+    return 5;
+  }
+}
+
+class Base {
+  f(): number {
+    return 2;
+  }
+}
+
+class Derived extends Base {
+  override f(): number {
+    return 5;
+  }
+}
+
+async function later(): Promise<number> {
+  return 5;
+}
+
+function plain(): number {
+  return 3;
+}
+
+function fixed() {
+  const p: Outer = { inner: { v: 1, name: "a" } };
+  const h = (): number => {
+    p.inner = { v: 200, name: "b" };
+    return 14;
+  };
+  const v = h();
+  p.inner.v = v;
+  console.log(p.inner.v, p.inner.name);
+}
+
+function unaffected() {
+  const p: Outer = { inner: { v: 1, name: "a" } };
+  const q: Outer = { inner: { v: 1, name: "a" } };
+  // Reads and arithmetic only.
+  p.inner.v = p.inner.v + 1;
+  p.inner.name = `x${p.inner.v}`;
+  // Calls that replace no object literal of these types.
+  p.inner.v = Math.max(p.inner.v, 2);
+  p.inner.v += plain();
+  // Replaced elsewhere, not by the right-hand side.
+  q.inner = { v: 9, name: "z" };
+  console.log(p.inner.v, p.inner.name, q.inner.v);
+}
+
+function calls() {
+  const p: Outer = { inner: { v: 5, name: "a" } };
+  const s: Source = new FromConst();
+  p.inner.v += s.get();
+  const b: Base = new Derived();
+  p.inner.v += b.f();
+  console.log(p.inner.v);
+}
+
+async function awaited() {
+  const p: Slot = { at: { v: 0 } };
+  p.at.v = await later();
+  console.log(p.at.v);
+}
+
+function callbacks() {
+  const rows = [{ n: 1 }, { n: 2 }, { n: 3 }];
+  const others: Report[] = [{ totals: { count: 1, sum: 1 }, title: "a" }];
+  others.forEach((o) => {
+    o.totals = { count: 0, sum: 0 };
+  });
+  const other: Report = { totals: { count: 1, sum: 1 }, title: "b" };
+  const reset = () => {
+    other.totals = { count: 0, sum: 0 };
+  };
+  reset();
+  const report: Report = { totals: { count: 3, sum: 0 }, title: "r" };
+  report.totals.sum = rows.map((r) => r.n).reduce((a, b) => a + b, 0);
+  console.log(JSON.stringify(report));
+  console.log(others[0].totals.count, other.totals.count);
+}
+
+async function main() {
+  fixed();
+  unaffected();
+  calls();
+  await awaited();
+  callbacks();
+}
