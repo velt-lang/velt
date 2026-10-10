@@ -26,6 +26,12 @@ impl FnCx<'_, '_> {
         let recv = self.unbrand(recv);
         // `x.toFixed(2)`: a number's method (`literal_locals`).
         self.literal_use_number(&recv);
+        // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
+        if recv.ty == self.cx.ty.str_ {
+            if let Some((prop, args)) = self.regex_string_call(prop, args) {
+                return self.method_call_at(recv, &prop, type_args, &args, exp, span, false);
+            }
+        }
         self.method_call_at(recv, prop, type_args, args, exp, span, false)
     }
 

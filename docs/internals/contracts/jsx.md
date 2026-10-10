@@ -83,8 +83,13 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   and the call is then checked against its signature like any call.
 - The compiler never calls a component itself, so evaluation order is TS's: the props object
   (including already-built child elements) is evaluated, and the component runs when the
-  provider calls it. A provider may call it at once (`std/jsx`, no context) or store it and call
-  it while rendering parent-first (a provider with `provide`/`inject`).
+  provider calls it. Within the element, as in TS's `jsx(C, { ... }, key)`, the attributes
+  (props, spread sources, attributes of every component) are evaluated in source order, then
+  the children, then the key; a key after a spread source is evaluated in its place, as TS's
+  `createElement(C, { ...o, key })`. Where the call's own order differs (props are passed in
+  field order), the compiler binds the values to temporaries first. A provider may call it at
+  once (`std/jsx`, no context) or store it and call it while rendering parent-first (a provider
+  with `provide`/`inject`).
 - A component that `throw`s: its error type must be accepted by the provider's signature;
   `std/jsx` reports errors from rendering.
 - **Until semantics stage 2** (shared object references) a component passed as a value takes
@@ -98,6 +103,9 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   `"src/components/card#Card"`. Providers use it for hydration/island/resumability markers.
 - `key`: `key={k}` is removed from the attributes/props and passed separately (`string` or
   `number`, numbers converted to their decimal string). Missing → `null`.
+- A provider may declare attributes that **every component** accepts besides its props
+  (`JSX.IntrinsicAttributes`, e.g. sigx's `client:load`): see "Attributes of every component"
+  below.
 
 ## How the compiler lowers each construct
 - **Tag kind:** a lower-case simple name (`div`, `my-widget`) or a namespaced name (`svg:rect`)
@@ -267,6 +275,67 @@ of a precompiled element (`{}` and `{/* */}` are no children) and is `true`, `fa
 Without the export nothing changes, and the generic lowering ignores it. The golden
 `lang/jsx_sole_child` renders these cases through a sigx-like provider in both lowerings.
 
+## Attributes of every component (optional exports)
+TypeScript checks a component element's attributes against `Props & JSX.IntrinsicAttributes`:
+`IntrinsicAttributes` lists attributes that every component accepts besides its own props. Velt
+does the same. sigx's island directives are the use case (`<Counter client:load />`,
+`client:visible`, `client:media="(min-width: 768px)"`):
+
+```ts ignore
+export type IntrinsicAttributes = {
+  "client:load"?: boolean;
+  "client:media"?: string;
+};
+// <Counter client:load start={1} /> → jsxComponentAttributes(Counter, { start: 1 }, null,
+//   "src/counter#Counter", ["client:load"], [true])
+function jsxComponentAttributes<P>(component: (props: P) => Element, props: P,
+                                   key: string | null, name: string,
+                                   names: string[], values: AttrValue[]): Element;
+```
+- **Typing is TypeScript's.** An attribute of a component element that is not one of its props is
+  looked up in `IntrinsicAttributes`. Its value is checked against the declared type, with the
+  same errors as `tsc`:
+  - `Property 'client:lod' does not exist on type 'IntrinsicAttributes & CounterProps'. Did you
+    mean 'client:load'?`;
+  - a value of the wrong type;
+  - a required field that is missing;
+  - the same attribute twice.
+
+  An optional field's value is checked against its declared type, so an optional value (a
+  forwarded optional prop, an optional field of a spread source) is accepted, as `tsc` accepts
+  it; a mismatch names the type without `| null`, as `tsc` reports it
+  (`not assignable to type 'string'`). A spread source may give these attributes, and a prop of
+  the same name counts as given (its value must fit both types, as `tsc` intersects them).
+  `key` keeps its own handling. The names are usually quoted property names, since they hold a
+  `:`.
+- **At run time** such an attribute is not in the props: Velt's props have a fixed layout. A
+  component element with at least one of them calls `jsxComponentAttributes`, with the names and
+  the values converted to `AttrValue` (a bare attribute is `true`, a written optional value that
+  is absent is `null`), in source order and evaluated in source order with the props (above).
+  An attribute given by a spread source is passed too. Each name is passed once: a later value
+  replaces an earlier one in its place, as in an object, whether it is written or comes from a
+  spread source. An optional field that a spread source does not have keeps the earlier value,
+  and without one is not passed, as the props object has no such key (the arrays may then be
+  empty). An element without any calls `jsxComponent` as before.
+- **Required.** A provider whose `IntrinsicAttributes` declares fields besides `key` must export
+  `jsxComponentAttributes` with these six parameters. `key`, `name`, `names` and `values` must
+  take `string | null`, `string`, `string[]` and `AttrValue[]`. `IntrinsicAttributes` must be
+  an object type whose fields convert to `AttrValue` (an optional field's `T | null`, so
+  `AttrValue` includes `null` when a field is optional). All of this is checked once, when the
+  provider is loaded: a mismatch is one error, not one per element.
+- **Async components** take no such attribute (an error), since `jsxComponentAttributes` takes a
+  synchronous component. Intrinsic elements are unaffected: `xlink:href`, `client:x` and other
+  namespaced names on them are ordinary attributes.
+- **Precompile.** Component calls are template slots, so these attributes work the same in both
+  lowerings.
+- **The same source under `tsc`.** The TypeScript runtime declares the same
+  `JSX.IntrinsicAttributes`, as sigx does through its `ComponentAttributeExtensions`
+  augmentation, so `tsc` and Velt accept and reject the same `.tsx`.
+- **Editors.** Velt's language server completes these attributes after a component's props,
+  shows their type and docs on hover, and reports the errors above as diagnostics.
+
+The golden `lang/jsx_intrinsic_attributes` renders them through a provider in both lowerings.
+
 ## Escaping (all providers that render HTML)
 - Text and attribute values: `&` `<` `>` `"` → `&amp;` `&lt;` `&gt;` `&quot;`, and `'` as the
   provider writes it: `&#x27;` in `std/jsx` (as react-dom), `&#39;` in sigx and `std/html`
@@ -320,6 +389,6 @@ definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provid
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async
   element are rejected until then.
-- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes`/`IntrinsicAttributes` are
-  not supported.
+- Class components, `ref`, and TS's `JSX.LibraryManagedAttributes` are not supported.
+  `JSX.IntrinsicAttributes` is supported (above).
 

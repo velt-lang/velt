@@ -100,6 +100,40 @@ export const App = component<{ path: string }>((ctx) => {
 Both take `ctx` where JavaScript sigx finds the component itself (`useRouter()`, `useData(key,
 …)`): Velt has no "current component" yet (#386).
 
+## Islands
+
+`/islands` is a page that is static HTML except for its islands, as in sigx's islands apps:
+
+```tsx
+// src/islands/Clicker.tsx: island modules live in src/islands/ and are known by export name
+export const Clicker = component<{ start: number; label: string }>((ctx) => { … });
+
+// src/shared/IslandsPage.tsx
+<Clicker client:load start={1} label="load" />
+<Clicker client:visible start={5} label="visible" />
+<Clicker client:only start={9} label="only" />
+```
+
+- **Directives.** The provider declares them as TypeScript does, in `JSX.IntrinsicAttributes`
+  (`"client:load"?: boolean`, `"client:media"?: string`, …; #815, with quoted property names
+  from #826). Velt checks them like `tsc`: a typo such as `client:lod` is an error, and the
+  editor completes them. They reach the provider through `jsxComponentAttributes`.
+- **What the server writes.** It records each island in sigx's `__SIGX_BOUNDARIES__` table:
+  strategy, export name and props as JSON. `client:only` gets sigx's empty placeholder.
+- **Production.** The server reads the build's islands manifest
+  (`dist/client/.vite/sigx-islands-manifest.json`), adds each island's chunk, and preloads it
+  from the head.
+- **The browser.** The entry hydrates only the islands (`hydrateIslands()` with `sigxIslands()`'s
+  registry). The app's code is never loaded.
+- **Known gap.** sigx also records each island's signals by name (`"state":{"count":1}`); it
+  learns the names from its Vite transform, which rewrites `const count = ctx.signal(…)`. Velt
+  has no such names, so the browser re-runs setup from the props. That gives the same result
+  here, but not when state on the server differs from what the props give. The e2e compares
+  islands byte for byte apart from that field.
+- **Resume** (`@sigx/resume`) is not ported. Its handler names come from the Vite build's
+  extraction of JavaScript source, so a Velt server would need that build to hand it each
+  component's handler sites.
+
 ## Develop, build, run
 
 ```sh
@@ -143,7 +177,9 @@ gets the old server's HTML.
    restored, without a server-function call. Two clicks give `Count: 3`, and the browser logs
    no warnings or errors. Links navigate without a page load, back works, and `/about` loaded
    directly hydrates.
-3. Under `vite`:
+3. On `/islands`, the load, visible and only islands hydrate and count, and the app's code is
+   not loaded. The island chunk is preloaded, and the build's manifests are not served.
+4. Under `vite`:
    - editing a shared component hot-updates the browser without a reload, and the server renders
      the new markup;
    - a server-only edit reloads the page with the new HTML;
@@ -221,6 +257,10 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
    would give the plugin each function's name and types. It would then generate both the
    browser stubs and the TypeScript declarations, and the server's registration list, which
    today are a regex, a hand-written `.d.ts` and a list in `server.vlt`.
-9. **Component directives** (`<Counter client:load />`), for sigx islands: a provider declares
-   directive prefixes, and the compiler passes those attributes separately instead of as
-   props. This is in progress as a JSX contract extension.
+9. **`JSX.IntrinsicAttributes`** (`<Counter client:load />`), for sigx islands: attributes
+   every component takes, checked as in TypeScript and passed to the provider separately
+   (#815 on #826, used by `/islands`).
+10. **Binding names for providers.** The provider could learn the name a value is bound to
+    (`const count = ctx.signal(0)` gives `"count"`), for example through an opt-in parameter the
+    compiler fills in. This is what sigx's island state and resume need, and it replaces a
+    source transform.

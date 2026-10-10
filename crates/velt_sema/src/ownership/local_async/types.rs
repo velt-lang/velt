@@ -111,6 +111,14 @@ fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
     out
 }
 
+/// Does `t` mention a generic parameter?
+pub(super) fn mentions_param(cx: &Ctx, t: TyId) -> bool {
+    let mut found = false;
+    cx.ty
+        .visit(t, &mut |k| found |= matches!(k, TyKind::Param(_)));
+    found
+}
+
 /// Can a closure of type `lit` be a value of the crossing function type `f`? Same parameter
 /// shapes and both results promises (or both not); generic parameters match anything, and
 /// what a function throws, or a promise rejects or resolves with, is not compared (a function

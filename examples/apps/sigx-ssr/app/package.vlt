@@ -12,5 +12,5 @@ export const pkg: Package = {
   paths: { "@sigx/velt/*": "node_modules/@sigx/velt/velt/src/*" },
   jsx: { importSource: "sigx" },
   // Compiled by Vite for the browser too: the subset both compilers accept.
-  tsCompat: ["src/shared"],
+  tsCompat: ["src/shared", "src/islands"],
 };

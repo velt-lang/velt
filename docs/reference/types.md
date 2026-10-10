@@ -96,6 +96,9 @@ and memory where you want a fixed width; code shared with TypeScript never names
 - **`as`** converts with Rust semantics: floats truncate and saturate (`3.9 as i64` is `3`,
   `NaN as i64` is `0`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`). So
   `x as i32` (saturates) and `x | 0` (wraps modulo 2^32, as in JS) are different operations.
+  To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
+  typed as if annotated with that type, so a literal takes its shape
+  (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
@@ -414,7 +417,8 @@ the nullable type; `void` cannot be a member.
     closures are `"function"`. An impossible tag is an error.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
-    ([downcasts](classes.md#instanceof-downcasts)).
+    ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
+    promise member (`View | Promise<View>`), when no class named `Promise` is in scope.
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).

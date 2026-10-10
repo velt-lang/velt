@@ -37,6 +37,8 @@ export class Element {
   parts: Element[] | null = null;
   // Set on a component's node: the component, started by the renderer when it reaches it.
   setup: ((r: Renderer) => Instance) | null = null;
+  // Set on a component used with a `client:*` directive: hydrated on its own (sigx islands).
+  island: Island | null = null;
 
   constructor(html: string) {
     this.html = html;
@@ -47,6 +49,27 @@ export class Element {
     return this.parts == null && this.setup == null;
   }
 }
+
+// What sigx's islands need to hydrate a component on its own: when (`load`, `idle`,
+// `visible`, `interaction`, `only`, `media`), its name (the island module's export) and its props.
+export class Island {
+  hydrate: string;
+  media: string | null;
+  component: string;
+  props: string;
+
+  constructor(hydrate: string, media: string | null, component: string, props: string) {
+    this.hydrate = hydrate;
+    this.media = media;
+    this.component = component;
+    this.props = props;
+  }
+}
+
+// Where an island's code is in the client build: @sigx/vite's islands manifest
+// (dist/client/.vite/sigx-islands-manifest.json, version 2).
+export type IslandChunk = { chunkUrl: string; exportName: string };
+export type IslandsManifest = { islands: Record<string, IslandChunk>; runtimePreload: string[] };
 
 // A started component: its render function, and the data loads its setup registered
 // (`useData`). With loads, the render function shows their pending state until they finish.
@@ -224,6 +247,12 @@ export class Renderer {
   // content follows the shell. Otherwise the render waits for the loads (renderToString).
   streaming: bool = false;
   pending: Pending[] = [];
+  // Islands rendered so far, as `__SIGX_BOUNDARIES__` entries (`"id":{…}`), and the build's
+  // islands manifest (production: each island's chunk).
+  boundaries: string[] = [];
+  manifest: IslandsManifest | null = null;
+  // The chunks of the islands rendered, for `<link rel="modulepreload">`.
+  preload: string[] = [];
 
   async render(el: Element): Promise<void> {
     const setup = el.setup;
@@ -231,6 +260,19 @@ export class Renderer {
       // Pre-order ids: the component's id is taken before its children render.
       const id = this.nextId;
       this.nextId += 1;
+      const island = el.island;
+      if (island != null) {
+        const record = this.record(island);
+        this.boundaries.push(`"${id}":${record}`);
+        if (island.hydrate == "only") {
+          // Rendered in the browser only: setup does not run here.
+          this.out.push(
+            `<div data-boundary="${id}" style="display:contents;"></div><!--$c:${id}-->`,
+          );
+          this.lastText = false;
+          return;
+        }
+      }
       const inst = setup(this);
       if (inst.loads.length == 0) {
         await this.render(inst.view());
@@ -261,6 +303,43 @@ export class Renderer {
         await this.render(p);
       }
     }
+  }
+
+  // An island's `__SIGX_BOUNDARIES__` record, fields in sigx's order.
+  record(island: Island): string {
+    const parts: string[] = [];
+    if (island.hydrate == "only") {
+      parts.push(`"flush":"skip","hydrate":"load"`);
+    } else {
+      parts.push(`"hydrate":${JSON.stringify(island.hydrate)}`);
+    }
+    const media = island.media;
+    if (media != null) {
+      parts.push(`"media":${JSON.stringify(media)}`);
+    }
+    const manifest = this.manifest;
+    const chunk: IslandChunk | null = manifest == null ? null : manifest.islands[island.component];
+    if (chunk != null) {
+      if (!this.preload.includes(chunk.chunkUrl)) {
+        this.preload.push(chunk.chunkUrl);
+      }
+      parts.push(
+        `"chunk":{"url":${JSON.stringify(chunk.chunkUrl)},"export":${JSON.stringify(chunk.exportName)}}`,
+      );
+    }
+    parts.push(`"component":${JSON.stringify(island.component)}`);
+    parts.push(`"props":${island.props}`);
+    return `{${parts.join(",")}}`;
+  }
+
+  // The script that adds the islands rendered so far to `window.__SIGX_BOUNDARIES__` ("" for none).
+  boundaryScript(): string {
+    if (this.boundaries.length == 0) {
+      return "";
+    }
+    const table = `{${this.boundaries.join(",")}}`;
+    this.boundaries = [];
+    return `window.__SIGX_BOUNDARIES__=Object.assign(Object.create(null),window.__SIGX_BOUNDARIES__,${escapeForScript(table)});`;
   }
 
   // The output so far, emptied.

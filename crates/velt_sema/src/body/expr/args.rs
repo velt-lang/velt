@@ -9,6 +9,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::error_slots::{error_only, occurs_plain};
 use super::ops::untyped;
 use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
@@ -294,38 +295,41 @@ impl FnCx<'_, '_> {
                 self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
-            let known: Vec<Option<TyId>> =
+            let mut known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
+            if let Some(k) = self.infer_union_error(&args[i], p.ty, &known, slots) {
+                known[k] = slots[k];
+            }
             let expected = self.cx.subst_known(p.ty, &known);
-            let adapter = self.fewer_params_adapter(&args[i], expected);
-            // `xs.forEach(o.log)`: checked as the arrow it stands for.
-            let bound = match adapter {
-                None => self.method_value_arg(&args[i], expected),
-                Some(_) => None,
-            };
-            let arrow = adapter.as_ref().or(as_arrow(&args[i]));
-            // An arrow passed to the JS API (also where `cmp | null` is expected): what its
-            // parameters and result are in user code (`closure`, `returns::returned`).
+            let mode = self.callback_mode(&args[i]);
+            let arrow = as_arrow(&args[i]);
+            let named = matches!(args[i].kind, ast::ExprKind::Ident(_));
+            // An arrow (or a function's adapter) passed to the JS API (also where `cmp | null` is
+            // expected): what its parameters and result are in user code (`closure`,
+            // `returns::returned`).
             let declared = self.cx.ty.opt_payload(p.ty).unwrap_or(p.ty);
             self.std_callback = match self.cx.ty.kind(declared) {
-                TyKind::FnPtr { params, .. } if c.js_api && arrow.is_some() => {
+                TyKind::FnPtr { params, .. } if c.js_api && (arrow.is_some() || named) => {
                     Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
                 }
                 _ => None,
             };
+            let adapted = self.callback_adapter(&args[i], expected, mode);
+            // `xs.forEach(o.log)`: checked as the arrow it stands for.
+            let bound = match adapted {
+                None => self.method_value_arg(&args[i], expected),
+                Some(_) => None,
+            };
             let owned = p.mode == PassMode::Owned;
-            let h = match (bound, arrow) {
-                (Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
-                (None, Some(a)) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
+            let h = match (adapted, bound, arrow) {
+                (Some(h), _, _) => h,
+                (None, Some((a, fn_ty)), _) => self.bound_closure(&a, fn_ty, Some(owned)),
+                (None, None, Some(a))
+                    if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) =>
+                {
                     self.arrow_arg(a, expected, owned)
                 }
-                // A nullable function type (`f?: (s: string) => void`): the adapter is checked as
-                // a value of it, and wrapped.
-                (None, _) => self.expr(
-                    adapter.as_ref().unwrap_or(&args[i]),
-                    Some(expected),
-                    want_of(p.mode),
-                ),
+                _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };
             // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
             let h = match self.cx.ty.array_elem(expected).is_some()
@@ -532,8 +536,21 @@ impl FnCx<'_, '_> {
         out
     }
 
-    /// Slots nothing inferred take their defaults (while the slots before them are known).
+    /// Slots nothing inferred take their defaults (while the slots before them are known); an
+    /// error type parameter nothing fixed (it appears only as a promise's or function's error
+    /// type) is `never`.
     fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
+        for (k, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
+                continue;
+            }
+            let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
+            let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
+                && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
+            if unconstrained_error {
+                *slot = Some(self.cx.ty.never);
+            }
+        }
         for k in 0..slots.len() {
             let Some(Some(d)) = c.defaults.get(k) else {
                 continue;

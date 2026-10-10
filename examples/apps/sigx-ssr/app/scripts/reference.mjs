@@ -5,6 +5,7 @@
 //   node scripts/reference.mjs --stream [path]   the whole streamed document, as sigx streams
 //                                                it into index.html (renderDocumentToWebStream)
 import { createServer } from "vite";
+import { sigxIslands } from "@sigx/vite/islands";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -20,8 +21,9 @@ const vite = await createServer({
   oxc: { jsx: { runtime: "automatic", importSource: "sigx" } },
   optimizeDeps: { noDiscovery: true },
   resolve: { dedupe: ["sigx", "@sigx/server-renderer"] },
-  ssr: { noExternal: ["sigx", "@sigx/server-renderer", "@sigx/velt"] },
+  ssr: { noExternal: ["sigx", "@sigx/server-renderer", "@sigx/velt", "@sigx/ssr-islands"] },
   plugins: [
+    sigxIslands(),
     {
       name: "api-reference",
       resolveId: (source) => (/\.server$/.test(source) ? fileURLToPath(new URL("./api.reference.js", import.meta.url)) : null),
@@ -29,10 +31,19 @@ const vite = await createServer({
   ],
 });
 try {
-  const { App } = await vite.ssrLoadModule("/src/shared/App.tsx");
   const server = await vite.ssrLoadModule("@sigx/server-renderer/server");
   const { jsx } = await vite.ssrLoadModule("sigx/jsx-runtime");
-  const app = jsx(App, { path });
+  // The islands page renders as an islands app (server.vlt does the same).
+  let app;
+  if (path === "/islands") {
+    const { IslandsPage } = await vite.ssrLoadModule("/src/shared/IslandsPage.tsx");
+    const { defineApp } = await vite.ssrLoadModule("sigx");
+    const { islandsPlugin } = await vite.ssrLoadModule("@sigx/ssr-islands");
+    app = defineApp(jsx(IslandsPage, {})).use(islandsPlugin());
+  } else {
+    const { App } = await vite.ssrLoadModule("/src/shared/App.tsx");
+    app = jsx(App, { path });
+  }
   if (stream) {
     const template = readFileSync(`${root}/index.html`, "utf8");
     const body = server.renderDocumentToWebStream(app, { template });

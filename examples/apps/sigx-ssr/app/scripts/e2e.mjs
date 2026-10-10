@@ -20,7 +20,10 @@ const counterFile = `${root}/src/shared/Counter.tsx`;
 const serverFile = `${root}/src/server.vlt`;
 const counterSrc = readFileSync(counterFile, "utf8");
 const serverSrc = readFileSync(serverFile, "utf8");
-const PAGES = ["/", "/about"];
+const PAGES = ["/", "/about", "/islands"];
+// sigx's islands also record each island's named signals ("state"), which needs its Vite
+// transform's names; Velt's server leaves them out and the browser re-runs setup from the props.
+const withoutState = (html) => html.replace(/,"state":\{[^{}]*\}/g, "");
 let failed = 0;
 const check = (ok, what) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
@@ -78,7 +81,7 @@ try {
     const raw = await start("./dist/server/app", ["--port", String(devPort), "--template", "index.html", "--dev"], /listening/);
     const html = await (await fetch(`http://127.0.0.1:${devPort}${path}`)).text();
     raw.kill();
-    check(html === ref, `stream: Velt's streamed ${path} equals JavaScript sigx's renderDocumentToWebStream`);
+    check(html === withoutState(ref), `stream: Velt's streamed ${path} equals JavaScript sigx's renderDocumentToWebStream`);
   }
   // The shell does not wait for the data.
   {
@@ -123,6 +126,30 @@ try {
     "prod: hydrated, two clicks give Count: 3",
   );
   check(messages.length === 0, `prod: no console warnings or errors${messages.length ? `: ${messages.join(" | ")}` : ""}`);
+
+  // Islands: only the islands hydrate (the app's code is never loaded), each works.
+  {
+    const isl = await browser.newPage();
+    const islMessages = [];
+    isl.on("console", (m) => (m.type() === "warning" || m.type() === "error") && islMessages.push(m.text()));
+    const islRequests = [];
+    isl.on("request", (r) => islRequests.push(new URL(r.url()).pathname));
+    await isl.goto(`http://127.0.0.1:${port}/islands`, { waitUntil: "networkidle" });
+    await hydrated(isl);
+    for (const b of await isl.$$("p.clicker button")) await b.click();
+    check(
+      await until(async () => (await isl.$$eval("p.clicker", (ps) => ps.map((p) => p.textContent).join("|"))) === "load count: 2|visible count: 6|only count: 10"),
+      "islands: load, visible and only islands hydrate and count",
+    );
+    check(!islRequests.some((r) => r.includes("/App-")), "islands: the app's code is not loaded");
+    check(
+      (await isl.$$eval('link[rel=modulepreload]', (ls) => ls.map((l) => l.getAttribute("href")))).some((h) => /\/assets\/Clicker-/.test(h)),
+      "islands: the server preloads the island's chunk (from the build's islands manifest)",
+    );
+    check(islMessages.length === 0, `islands: no console warnings or errors${islMessages.length ? `: ${islMessages}` : ""}`);
+    check((await fetch(`http://127.0.0.1:${port}/.vite/sigx-islands-manifest.json`)).headers.get("content-type").startsWith("text/html"), "islands: the build's manifests are not served");
+    await isl.close();
+  }
 
   // The router: a link click navigates in the browser (no page load), the back button returns.
   await page.evaluate(() => (window.__marker = 1));

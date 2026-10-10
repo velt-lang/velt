@@ -44,6 +44,66 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The members of a union of function types (`(() => void) | (() => Promise<void>)`) that
+    /// an arrow with `n_params` parameters may be typed by, in order of preference, as TS's
+    /// contextual typing picks one: for an async arrow the members returning a promise (or a
+    /// union with one), then the `void` ones; for a sync arrow those returning a value, then the
+    /// `void` ones, then those returning a promise.
+    /// Empty when `exp` is not such a union.
+    pub(super) fn arrow_members(
+        &mut self,
+        exp: Option<TyId>,
+        is_async: bool,
+        n_params: usize,
+    ) -> Vec<TyId> {
+        let Some(u) = self.hint(exp) else {
+            return vec![];
+        };
+        let Some(members) = self.cx.union_members(u) else {
+            return vec![];
+        };
+        let fns: Vec<(TyId, TyId)> = members
+            .iter()
+            .filter_map(|m| match self.cx.ty.kind(*m) {
+                TyKind::FnPtr { params, ret, .. } if params.len() >= n_params => Some((*m, *ret)),
+                _ => None,
+            })
+            .collect();
+        let promise = |s: &mut Self, ret: TyId| {
+            s.cx.ty.promise_payload(ret).is_some()
+                || s.cx
+                    .union_members(ret)
+                    .is_some_and(|ms| ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some()))
+        };
+        let unit = self.cx.ty.unit;
+        let mut out = vec![];
+        if is_async {
+            for &(m, ret) in &fns {
+                if promise(self, ret) {
+                    out.push(m);
+                }
+            }
+            out.extend(fns.iter().filter(|(_, r)| *r == unit).map(|(m, _)| *m));
+        } else {
+            // A value-returning arrow fits a `void` member too, which would drop its result:
+            // members returning a value come first, then `void` ones, then those returning a
+            // promise (`() => save()`).
+            let (mut voids, mut later) = (vec![], vec![]);
+            for &(m, ret) in &fns {
+                if promise(self, ret) {
+                    later.push(m);
+                } else if ret == unit {
+                    voids.push(m);
+                } else {
+                    out.push(m);
+                }
+            }
+            out.append(&mut voids);
+            out.append(&mut later);
+        }
+        out
+    }
+
     /// The closure's error type: written or expected (`declared`), else what its body is known
     /// to throw now (re-checked once every error type is inferred, `crate::throws`).
     pub(super) fn closure_error(

@@ -46,8 +46,8 @@ The end-to-end tests take `VELT_GOLDEN=a,b` (files matching any of the substring
 half the cores, at most 8), `VELT_GOLDEN_TIMEOUT=<s>` (default 120), `VELT_GOLDEN_SHARD=<i>/<n>`
 (the i-th of n interleaved shards) and `VELT_GOLDEN_STRICT=1` (failures under a `.pending`
 directory fail the run too). The debug runs use the runtime's checking allocator
-(`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free or overflow aborts with
-`velt debug-alloc: …`.
+(`VELT_RT_DEBUG_ALLOC=1`; `=0` turns it off): a use after free (a read through a dangling
+pointer, a write, a double free) or overflow aborts with `velt debug-alloc: …`.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 

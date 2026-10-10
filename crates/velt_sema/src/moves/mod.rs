@@ -170,7 +170,11 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
         m.report = true;
         m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-        all.extend(m.errors);
+        all.extend(
+            m.errors
+                .into_iter()
+                .filter(|d| !follows_capture_error(cx, d)),
+        );
         if !m.reused.is_empty() {
             out.reused.insert(def, m.reused);
         }
@@ -518,4 +522,21 @@ fn creates_escaping(b: &crate::hir::Block, escaping: &HashSet<DefId>) -> bool {
         }
     });
     found
+}
+
+/// A "use of moved value `x`" whose move is into a closure already reported for modifying the
+/// captured `x` (`ownership::local_async`): the first error says it all.
+fn follows_capture_error(cx: &Ctx, d: &Diagnostic) -> bool {
+    let Some(name) = d
+        .message
+        .strip_prefix("use of moved value `")
+        .and_then(|r| r.strip_suffix('`'))
+    else {
+        return false;
+    };
+    d.labels.iter().skip(1).any(|l| {
+        cx.reported_captures.iter().any(|(n, span)| {
+            n == name && l.span.file == span.file && span.lo <= l.span.lo && l.span.lo < span.hi
+        })
+    })
 }

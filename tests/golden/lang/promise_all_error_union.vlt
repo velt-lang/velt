@@ -1,0 +1,43 @@
+// Promises of the same value that reject with different errors (#121): an array literal of
+// them rejects with the union, so `Promise.all`, `race`, `any` and `allSettled` take them, and
+// a promise that never rejects goes where one rejecting with `A` is expected.
+
+class A extends Error {}
+class B extends Error {}
+
+async function fa(ok: boolean): Promise<string> {
+  if (!ok) {
+    throw new A("a failed");
+  }
+  return "a";
+}
+
+async function fb(ok: boolean): Promise<string> {
+  if (!ok) {
+    throw new B("b failed");
+  }
+  return "b";
+}
+
+async function fc(): Promise<string> {
+  return "c";
+}
+
+function which(e: A | B): string {
+  return e instanceof A ? "A" : "B";
+}
+
+async function main() {
+  console.log(await Promise.all([fa(true), fb(true), fc()]));
+  try {
+    await Promise.all([fa(true), fb(false)]);
+  } catch (e) {
+    console.log(`all rejected with ${which(e)}`);
+  }
+  console.log(await Promise.race([fa(true), fb(true)]));
+  console.log(await Promise.any([fa(false), fb(true)]));
+  const settled = await Promise.allSettled([fa(false), fc()]);
+  console.log(settled.map((s) => s.status));
+  const typed: Promise<string, A>[] = [fa(true), fc()];
+  console.log(await Promise.all(typed));
+}

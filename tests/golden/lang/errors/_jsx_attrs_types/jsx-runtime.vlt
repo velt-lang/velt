@@ -1,0 +1,21 @@
+// A JSX runtime whose `IntrinsicAttributes` has a field that is not a `JSX.AttrValue`, and whose
+// `jsxComponentAttributes` takes `names` with the wrong type.
+
+import { Element } from "velt:jsx/node";
+import type { AttrValue } from "velt:jsx/node";
+import { jsxComponent } from "velt:jsx/factory";
+
+export * from "velt:jsx/jsx-runtime";
+
+export type IntrinsicAttributes = { "client:load"?: boolean; "client:list"?: string[] };
+
+export function jsxComponentAttributes<P, E>(
+  component: (props: P) => Element throws E,
+  props: P,
+  key: string | null,
+  name: string,
+  names: number[],
+  values: AttrValue[],
+): Element {
+  return jsxComponent(component, props, key, name);
+}

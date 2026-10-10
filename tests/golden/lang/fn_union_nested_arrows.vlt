@@ -1,0 +1,7 @@
+// Arrows nested 14 deep, each against a union of two function types: each one is typed by the
+// member it fits once, not once per try of every enclosing arrow (exponential before).
+type H = (() => string) | (() => number);
+function run(h: H): number { return 1; }
+function main() {
+  console.log(run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => run(() => 1)))))))))))))));
+}

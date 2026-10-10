@@ -1,0 +1,23 @@
+// check: no leaks
+// A handler that captures an object holding a sync callback which modifies its own capture,
+// and never calls it: valid, as on main (no type-based rule rejects it).
+import { serve } from "velt:http";
+
+class Widget {
+  name = "w";
+  onClick: () => void = () => {};
+}
+
+async function main() {
+  let clicks = 0;
+  const w = new Widget();
+  w.onClick = () => {
+    clicks++;
+  };
+  w.onClick();
+  const a = await serve({ port: 0 }, (req) => new Response(w.name));
+  const r = await fetch(`http://127.0.0.1:${a.port}/`);
+  console.log(await r.text());
+  await a.shutdown();
+  console.log(clicks);
+}

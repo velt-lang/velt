@@ -33,7 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
-mod assigned;
+pub(crate) mod assigned;
 mod closure_assigned;
 mod const_borrow;
 mod consume;
@@ -239,6 +239,9 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
+    /// capturing groups and the flags of the regex each such local holds (`regex_args`).
+    pub regex_consts: HashMap<LocalId, (usize, String)>,
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
@@ -283,6 +286,7 @@ impl Frame {
             closure_assigned: HashMap::new(),
             int_returns_number: false,
             const_lits: HashMap::new(),
+            regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
         }
     }
@@ -321,6 +325,22 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The span of the callback arrow of a timer call (`setTimeout(() => …, ms)`) that is not
     /// `async`: it is checked as an async arrow (`expr/timer_task.rs`).
     pub void_task: Option<Span>,
+    /// A timer's callback that is a function value, not an arrow (`expr/callback.rs`).
+    pub task_callback: Option<Span>,
+    /// The handler arrow of a server call (`serve`) that is not `async`: checked as an async
+    /// arrow (`expr/callback.rs`).
+    pub thread_task: Option<Span>,
+    /// The handler of a server call that is a function value, not an arrow.
+    pub thread_callback: Option<Span>,
+    /// An arrow checked as `async` by `thread_arrow`: its expression body is awaited when it is
+    /// a promise.
+    pub await_body: Option<Span>,
+    /// The wrapper arrow `serve`'s adapter makes for a handler function value: the async
+    /// closure it becomes is recorded in `Ctx::thread_adapters`.
+    pub thread_adapter: Option<Span>,
+    /// The member of a union of function types each arrow (by span) was typed by, for the
+    /// members it was tried against and the types it could see (`expr/closure.rs`).
+    pub member_choices: HashMap<(Span, Vec<TyId>, u64), TyId>,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
@@ -358,6 +378,12 @@ impl<'a, 'm> FnCx<'a, 'm> {
             direct_await: None,
             std_callback: None,
             void_task: None,
+            task_callback: None,
+            thread_task: None,
+            thread_callback: None,
+            await_body: None,
+            thread_adapter: None,
+            member_choices: HashMap::new(),
             detached: false,
             collect_iterable_args: false,
             refused_reads: vec![],
