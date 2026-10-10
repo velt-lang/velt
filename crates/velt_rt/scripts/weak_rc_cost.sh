@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Instructions per operation of the release sequences with and without the weak flag
-# (src/weak/tests/bench.rs), counted by cachegrind (Linux, valgrind installed):
+# (src/weak/tests/bench.rs), counted by valgrind (Linux; callgrind, the tool with per-function
+# collection, counts the same instructions as cachegrind):
 #
 #   crates/velt_rt/scripts/weak_rc_cost.sh [N]
 #

@@ -1,4 +1,4 @@
-//! Cost of the weak flag on retain/release/free, measured in instructions (cachegrind, see
+//! Cost of the weak flag on retain/release/free, measured in instructions (valgrind, see
 //! `crates/velt_rt/scripts/weak_rc_cost.sh`). Each loop inlines the release sequence the compiler
 //! would emit: `plain` is today's (a type never weakly held), `capable` adds the flag test (a
 //! weak-capable type whose object is not weakly held), `weak` runs on an object that is a weak
@@ -64,7 +64,7 @@ fn bench_weak_shared(obj: *mut u8, n: u64) {
 }
 
 #[test]
-#[ignore = "a measurement, run under cachegrind by scripts/weak_rc_cost.sh"]
+#[ignore = "a measurement, run under valgrind by scripts/weak_rc_cost.sh"]
 fn rc_paths() {
     let n = std::env::var("VELT_WEAK_BENCH_N")
         .ok()
