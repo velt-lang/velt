@@ -64,6 +64,10 @@ pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
     }
 }
 
+/// The panic of a symbol converted to a string implicitly (an element of an array being joined),
+/// JS's `TypeError` message.
+const SYMBOL_TO_STRING: &str = "TypeError: Cannot convert a Symbol value to a string";
+
 impl FnLower<'_, '_> {
     /// `StrConcat(a, b)`, flattened with any nested concatenations and `ToString`s.
     pub(super) fn str_concat(&mut self, a: &hir::Expr, b: &hir::Expr, ty: TyId) -> Operand {
@@ -620,7 +624,8 @@ impl FnLower<'_, '_> {
     /// An element of an array being written by [`push_js_string`](Self::push_js_string):
     /// `null` is empty text, a union member is written as itself, a class instance through its
     /// `toString()` (#818), and any other object as JS's default `Object.prototype.toString`
-    /// writes it (`[object Object]`, `[object Map]`, ...). Sema rejects the element types whose
+    /// writes it (`[object Object]`, `[object Map]`, ...). A symbol stops the program with JS's
+    /// `TypeError`. Sema rejects the element types whose
     /// JS text comes from a method lowering cannot call (a struct's `toString()`, `Error`,
     /// `RegExp`; velt_sema's js_list.rs), except through a type parameter.
     fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
@@ -634,6 +639,9 @@ impl FnLower<'_, '_> {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
             }
+            // `[s].join()`, `String([s])`: JS's `Array.prototype.join` converts each element
+            // with `ToString`, which throws for a symbol (sema rejects the direct conversions).
+            TyKind::Symbol => self.panic_msg(SYMBOL_TO_STRING),
             TyKind::Option(e) => {
                 let (some_bb, done) = (self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);

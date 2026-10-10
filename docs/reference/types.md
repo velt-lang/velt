@@ -247,8 +247,10 @@ every call), and `Symbol.keyFor(s)` its key. A symbol has a `description` (`null
 says `undefined`) and `toString()` (`Symbol(description)`); `typeof s` is `"symbol"`, and
 `console.log` shows it as Node does. Symbols are `Map` keys and `Set` members. The well-known
 symbols are values too (`Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.toStringTag`, …).
-Converting a symbol to a string implicitly (`${s}`, `"k" + s`) is an error, as JavaScript throws
-a `TypeError` there; `String(s)` is allowed. The API is [`Symbol`](../std/symbol.md).
+Converting a symbol to a string implicitly (`${s}`, `"k" + s`, also of a `string | symbol`) is an
+error, as JavaScript throws a `TypeError` there; `String(s)` is allowed. Joining an array that
+holds a symbol (`[s].join()`, `String([s])`) stops the program with that `TypeError`, as Node
+does. The API is [`Symbol`](../std/symbol.md).
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
@@ -258,9 +260,19 @@ may be imported. Velt objects have fixed fields, so the compiler resolves these 
 compiling: reading `o[KEY]` costs what reading a named field does. A key known only at run time
 (a symbol made in a function, a string variable) is an error: use a `Map`. A module constant
 holding a string literal names that field the same way (`const NAME = "name"`, `[NAME]: T`).
-`KEY in o` is decided from `o`'s type (on a union, from the member it holds). `console.log`
-shows a symbol-keyed member after the others as `[Symbol(description)]: v`, and
-`JSON.stringify` and `Object.keys` leave it out, as in Node.
+A class may declare a method, getter or setter with a well-known symbol key
+(`get [Symbol.toStringTag]()`). A quoted key starting with `[` (`"[x]"`) is an ordinary key; only
+`"[Symbol.…"` and `"[Symbol(…"` are reserved for symbol keys. `console.log` shows a
+symbol-keyed member after the others as `[Symbol(description)]: v`, and `JSON.stringify` and
+`Object.keys` leave it out, as in Node.
+
+`KEY in o` is `true` when `o`'s type declares the member, `false` when it doesn't, and for an
+optional member (`[KEY]?: T` in an object type or interface) whether it is present, tested at
+run time (a class's optional field is always present, as TypeScript-compiled classes define
+it). On a union it answers for the member `o` holds, and in an `if` it narrows the union to the
+members that may have the key, as TypeScript does. Arrays, `Map`s, `Set`s and generators have
+`Symbol.iterator`, async generators `Symbol.asyncIterator`; another well-known symbol `in` a
+built-in object (`Symbol.toStringTag in m`) is an error rather than a guess.
 
 ```ts
 const VNODE: unique symbol = Symbol("vnode");
@@ -283,10 +295,24 @@ function main() {
   tokens.set(MODEL, "model");
   console.log(tokens.get(Symbol.for("app.model")), typeof VNODE); // model symbol
 }
+
+type Cell = { value: number; [VNODE]?: true };
+
+function describe(c: Cell | VNode): string {
+  if (VNODE in c) {
+    return "vnode or marked cell";
+  }
+  return `cell ${c.value}`;
+}
+
+function check() {
+  console.log(describe({ value: 1 }), describe({ value: 2, [VNODE]: true })); // cell 1 vnode or marked cell
+}
 ```
 
-A module constant initialized with `Symbol(...)` is one symbol for the whole program (module
-constants are otherwise evaluated at each use). A symbol `Symbol(...)` makes at run time lives
+A module constant initialized with `Symbol(...)` or `Symbol.for("...")` is one symbol for the
+whole program, made while compiling (module constants are otherwise evaluated at each use), so
+reading it costs no call; `Symbol.for(k)` at run time gives that same symbol for its key. A symbol `Symbol(...)` makes at run time lives
 until the program ends. **Planned**: a symbol brand added with `Object.defineProperty(o, KEY,
 …)` as an optional symbol-keyed field of `o`'s type
 ([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)

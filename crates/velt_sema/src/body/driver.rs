@@ -70,7 +70,7 @@ pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
     for (i, f) in fields.iter().enumerate() {
         let Some(ast_field) = decl.fields.iter().find(|af| {
             af.name.name == f.name
-                || cx.resolve_key(module, &af.name.name).ok() == Some(f.name.clone())
+                || cx.resolve_key(module, &af.name).ok() == Some(f.name.clone())
         }) else {
             continue;
         };
@@ -135,7 +135,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     fcx.fn_name = qual;
     fcx.owner = owner;
     let ann = ann.map(|t| fcx.cx.resolve_type(t, &TyEnv::new(module, &[])));
-    let own_symbol = fcx.cx.own_symbol_init(d, ann);
+    let own_symbol = fcx.cx.symbol_init(d, ann);
     let init = match (init_expr, ann) {
         _ if own_symbol.is_some() => own_symbol,
         (Some(e), Some(t)) => Some(fcx.expr_coerce(e, t, Want::Move)),

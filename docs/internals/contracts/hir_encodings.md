@@ -499,8 +499,15 @@ well-known symbol, `[Symbol(d)]` for the symbol a module constant holds (`[Symbo
 `#3`, … for further symbols with description `d`); no identifier starts with `[`. Readers act on
 the form (`velt_sema::property_order::symbol_key`): `console.log` shows such a field after the
 others as `[Symbol(d)]: v`, `JSON.stringify` and `Object.keys` leave it out. The value of a
-module constant initialized with `Symbol(...)` is `Intrinsic::SymbolStatic(id, desc,
-described)` (all literals), one read-only record per `id`.
+module constant initialized with `Symbol(...)` or `Symbol.for("k")` is
+`Intrinsic::SymbolStatic(id, desc, described)` (all literals), one read-only record per `id`
+(ids from 2^40: the registry's records, listed in `Intrinsic::SymbolRegistry`'s table).
+
+`KEY in o` with such a key is a `match` on `o` (on a union, per member): `true` for a member
+whose type declares the key (a field, method or accessor; a class's optional field too),
+`false` for one that doesn't, and for an optional field of an object type or interface
+(`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) for
+`[KEY]?: T | null` in an object type, else not null.
 
 ## Types with no HIR form
 

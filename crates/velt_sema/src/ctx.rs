@@ -728,7 +728,9 @@ impl<'m> Ctx<'m> {
                         .fields
                         .iter()
                         .map(|f| {
-                            let name = display_key(&f.name);
+                            let name = self
+                                .key_spelling(&f.name)
+                                .unwrap_or_else(|| display_key(&f.name));
                             if f.optional {
                                 format!("{name}?: {}", self.display_in(f.declared, &bound))
                             } else {

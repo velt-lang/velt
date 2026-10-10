@@ -293,18 +293,24 @@ A `symbol` (HIR `TyKind::Symbol`, VIR `Ptr`) is the address of a record, never n
 identity (equality, hashing):
 
 ```text
-struct SymbolRec { desc: *const VeltStr /* null: no description */, key: u64 }
+struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }   // 32 bytes
 ```
 
-`key` is 0 for a record `velt_rt_symbol_new` made, 1 for one `velt_rt_symbol_for` made, and 2 and
-up for a read-only record the compiler emits (`Intrinsic::SymbolStatic`; `key` is its id + 2, so
-no two records have the same bytes). Records are never freed. On wasm32 `desc` takes the first
-half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
+`key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
+(`Symbol.for`), and 2 and up for another read-only record the compiler emits
+(`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
+the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
+registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
+description being the key, in the static string form), and lists them in a read-only table
+(`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
+never freed; one made at run time is one allocation. On wasm32 each table address takes the
+first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
 `string` result through an out pointer):
 - `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
   (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
-- `velt_rt_symbol_for(key: *const VeltStr) -> *const SymbolRec`: the process-wide registry's record
-  for `key`, made on first use.
+- `velt_rt_symbol_for(key: *const VeltStr, table: *const RegistrySlot) -> *const SymbolRec`: the
+  process-wide registry's record for `key`. On first use of a key it is the record in `table`
+  whose description is `key` (`table` may be null), else a new one; a lookup does not allocate.
 - `velt_rt_symbol_registered(s) -> u8`, `velt_rt_symbol_described(s) -> u8`,
   `velt_rt_symbol_description(s, out: *mut VeltStr)` (`""` without a description).
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`

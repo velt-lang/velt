@@ -97,7 +97,7 @@ impl FnCx<'_, '_> {
                 rhs,
             } => match self.brand_class(lhs, false) {
                 Some(class) => self.class_facts(rhs, class),
-                None => (vec![], vec![]),
+                None => self.key_in_facts(lhs, rhs),
             },
             // `if (r.done)` on a union discriminated by a `bool` literal field.
             ast::ExprKind::Member {
@@ -337,6 +337,32 @@ impl FnCx<'_, '_> {
                 vs.iter()
                     .all(|v| matches!(v, crate::hir::LitValue::Bool(_)))
             })
+    }
+
+    /// Facts of `KEY in x` on a union local: the members that may have the member when true
+    /// (an optional one may), the members that may lack it when false.
+    fn key_in_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        use crate::symbols::Presence;
+        let Some(key) = self.symbol_key_of(lhs) else {
+            return (vec![], vec![]);
+        };
+        let Some((l, false, u)) = self.local_with_members(rhs) else {
+            return (vec![], vec![]);
+        };
+        let Some(members) = self.cx.union_members(u) else {
+            return (vec![], vec![]);
+        };
+        let (mut yes, mut no) = (vec![], vec![]);
+        for (i, m) in members.into_iter().enumerate() {
+            let p = self.key_presence(m, &key);
+            if p != Some(Presence::No) {
+                yes.push(i as u32);
+            }
+            if p != Some(Presence::Yes) {
+                no.push(i as u32);
+            }
+        }
+        (vec![Fact::Members(l, yes)], vec![Fact::Members(l, no)])
     }
 
     /// Facts of `typeof x === tag`.

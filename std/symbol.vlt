@@ -2,14 +2,15 @@
 //
 // A `symbol` is the address of a record the runtime or the compiler made (rt_abi.md "Symbols"),
 // compared by identity. A module constant initialized with `Symbol("d")` is a record the
-// compiler emits, so each use of the constant is the same symbol, and such a constant (or one
-// initialized with `Symbol.for("k")`) can name a member: `[KEY]: T` in an object type, an
+// compiler emits (as is one initialized with `Symbol.for("k")`, which `Symbol.for` at run time
+// finds), so each use of the constant is the same symbol, and such a constant can name a member: `[KEY]: T` in an object type, an
 // interface or a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The
 // well-known symbols are records the compiler emits too.
 
 // `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
 declare function velt_rt_symbol_new(description: string, described: bool): symbol;
-declare function velt_rt_symbol_for(key: string): symbol;
+// `table`: the compiler's records of the registry's symbols (`__intrinsic_symbol_registry()`).
+declare function velt_rt_symbol_for(key: string, table: symbol): symbol;
 declare function velt_rt_symbol_registered(s: symbol): bool;
 declare function velt_rt_symbol_described(s: symbol): bool;
 declare function velt_rt_symbol_description(s: symbol): string;
@@ -72,7 +73,7 @@ export class SymbolConstructor {
 
   /** The symbol of the global registry for `key`, made on first use: the same for every call. */
   static for(key: string): symbol {
-    return velt_rt_symbol_for(key);
+    return velt_rt_symbol_for(key, __intrinsic_symbol_registry());
   }
 
   /** The key of a symbol `Symbol.for` made, or null (`undefined` in JavaScript) for others. */

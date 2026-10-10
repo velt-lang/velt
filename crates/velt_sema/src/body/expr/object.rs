@@ -333,8 +333,9 @@ impl FnCx<'_, '_> {
             } else if crate::reserved_key(&k.name) && k.name != "__proto__" {
                 self.cx.err(
                     format!(
-                        "the property name {:?} is not supported in an object type: Velt uses names starting with `#` and `[Symbol.` for private names and symbol keys (a `Record<string, V>` may hold it)",
-                        k.name
+                        "the property name {:?} is not supported in an object type: Velt uses names starting with {} for private names and symbol keys (a `Record<string, V>` may hold it)",
+                        k.name,
+                        crate::reserved_prefixes(&k.name)
                     ),
                     k.span,
                 );
@@ -501,7 +502,7 @@ impl FnCx<'_, '_> {
                 }
                 (None, None) => {
                     self.cx.err(
-                        format!("missing field `{}` in `{sname}` literal", f.name),
+                        format!("missing field `{}` in `{sname}` literal", self.cx.shown_name(&f.name)),
                         span,
                     );
                     self.error_expr(span)
@@ -533,7 +534,10 @@ impl FnCx<'_, '_> {
             let Some(i) = fields.iter().position(|f| f.name == pname.name) else {
                 self.cx.error(
                     Diagnostic::error(
-                        format!("no field `{}` on type `{sname}`", pname.name),
+                        format!(
+                            "no field `{}` on type `{sname}`",
+                            self.cx.shown_name(&pname.name)
+                        ),
                         pname.span,
                     )
                     .with_note(

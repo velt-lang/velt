@@ -144,13 +144,22 @@ pub enum Intrinsic {
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
     SourceLocation,
-    /// Compiler-internal (std: `__intrinsic_symbol_static(id, desc)`): `(id: i64 literal, desc:
-    /// string literal) -> symbol`, the address of a read-only symbol record made at compile
-    /// time (rt_abi.md "Symbols"): one record per `id` in a program, whatever the call site, so
-    /// every evaluation gives the same symbol. A module constant `Symbol("d")` and the
-    /// well-known symbols (`Symbol.iterator`) are such records. Without `desc` the symbol has
-    /// no description.
+    /// Compiler-internal (std: `__intrinsic_symbol_static(id, desc, described)`): `(id: i64
+    /// literal, desc: string literal, described: bool literal) -> symbol`, the address of a
+    /// read-only symbol record made at compile time (rt_abi.md "Symbols"): one record per `id`
+    /// in a program, whatever the call site, so every evaluation gives the same symbol. Ids
+    /// below 64 are the well-known symbols (`Symbol.iterator`, std/symbol.vlt), ids from 64 the
+    /// module constants initialized with `Symbol()` / `Symbol("d")`, and ids from 2^40 the
+    /// registry's symbols of module constants initialized with `Symbol.for("k")` (`desc` is the
+    /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
+    /// false the symbol has no description (`desc` is `""`).
     SymbolStatic,
+    /// Compiler-internal (std: `__intrinsic_symbol_registry()`): `() -> symbol`, the address of
+    /// the program's read-only table of the registry's records (the `SymbolStatic` records with
+    /// ids from 2^40): their addresses, one per 8-byte slot, ending with a null slot. It is typed
+    /// `symbol` only to be passed on as a pointer, to `velt_rt_symbol_for`, whose registry
+    /// gives these records for their keys (rt_abi.md "Symbols").
+    SymbolRegistry,
     /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
     /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
     /// the rejection.

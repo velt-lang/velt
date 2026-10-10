@@ -41,10 +41,26 @@ impl<'a> Parser<'a> {
 
     /// Is the cursor at a symbol key of a declaration: `[Symbol.<name>]` or `[NAME]`?
     pub(super) fn at_symbol_key(&mut self) -> bool {
-        self.at_well_known_key()
-            || (self.peek() == Tok::LBracket
-                && self.nth(1) == Tok::Ident
-                && self.nth(2) == Tok::RBracket)
+        self.symbol_key_len(0) > 0
+    }
+
+    /// The number of tokens of the symbol key (`[Symbol.<name>]`: 5, `[NAME]`: 3) starting `n`
+    /// tokens after the cursor, or 0 if there is none.
+    pub(super) fn symbol_key_len(&mut self, n: usize) -> usize {
+        if self.nth(n) != Tok::LBracket {
+            return 0;
+        }
+        if self.nth_word(n + 1, "Symbol")
+            && self.nth(n + 2) == Tok::Dot
+            && Self::is_name(self.nth(n + 3))
+            && self.nth(n + 4) == Tok::RBracket
+        {
+            return 5;
+        }
+        match self.nth(n + 1) == Tok::Ident && self.nth(n + 2) == Tok::RBracket {
+            true => 3,
+            false => 0,
+        }
     }
 
     /// `[Symbol.<name>]` for a well-known symbol, or `[NAME]` (the caller checked

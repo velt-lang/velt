@@ -1,0 +1,2 @@
+symbol_text_union.vlt:4:13: error: a `string | symbol` may hold a symbol, which cannot be converted to a string implicitly: JavaScript throws a `TypeError`
+symbol_text_union.vlt:8:20: error: a `string | symbol | null` may hold a symbol, which cannot be converted to a string implicitly: JavaScript throws a `TypeError`

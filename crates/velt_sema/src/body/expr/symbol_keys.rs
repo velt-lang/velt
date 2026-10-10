@@ -6,8 +6,9 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::ctx::{Ctx, Item};
-use crate::hir::{self, TyKind};
+use crate::ctx::Item;
+use crate::hir::{self, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::symbols::Presence;
 
 /// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
 /// `[Symbol.<name>]`.
@@ -40,7 +41,9 @@ impl FnCx<'_, '_> {
                     return None;
                 };
                 let sym = self.cx.known_symbol(d)?;
-                Some(self.cx.key_name(sym))
+                let key = self.cx.key_name(sym);
+                self.cx.note_spelling(&key, &format!("[{}]", x.name));
+                Some(key)
             }
             ast::ExprKind::Member {
                 object,
@@ -67,7 +70,7 @@ impl FnCx<'_, '_> {
         if !crate::symbols::is_computed_key(&k) {
             return k;
         }
-        let name = self.cx.member_key(self.module, &k.name, k.span);
+        let name = self.cx.member_key(self.module, &k);
         ast::Ident { name, span: k.span }
     }
 
@@ -95,24 +98,33 @@ impl FnCx<'_, '_> {
     }
 
     /// Reports a symbol converted to a string implicitly (a template literal part, an operand of
-    /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one.
+    /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one
+    /// or may hold one (a union with a `symbol` member, `string | symbol`).
     pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
         let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
-        if !matches!(self.cx.ty.kind(inner), TyKind::Symbol) {
+        let members = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
+        let symbol = |t: &TyId| matches!(self.cx.ty.kind(self.cx.ty.opt_payload(*t).unwrap_or(*t)), TyKind::Symbol);
+        if !members.iter().any(symbol) {
             return false;
         }
+        let msg = match members.len() {
+            1 => "a symbol cannot be converted to a string implicitly: JavaScript throws a `TypeError`".to_string(),
+            _ => format!(
+                "a `{}` may hold a symbol, which cannot be converted to a string implicitly: JavaScript throws a `TypeError`",
+                self.cx.display(h.ty)
+            ),
+        };
         self.cx.error(
-            Diagnostic::error(
-                "a symbol cannot be converted to a string implicitly: JavaScript throws a `TypeError`",
-                h.span,
-            )
+            Diagnostic::error(msg, h.span)
             .with_note("write `String(s)`, `s.toString()` or `s.description`"),
         );
         true
     }
 
     /// `key in o` with a symbol key (a symbol constant or a well-known symbol): whether the
-    /// value has that member, known from its type (on a union, from the member it holds).
+    /// value has that member, known from its type (on a union, from the member it holds), and
+    /// for an optional member of an object type or interface (`[KEY]?: T`), whether it is
+    /// present (tested at run time).
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
         let Some(key) = self.symbol_key_of(lhs) else {
             self.expr(lhs, None, Want::Borrow);
@@ -130,7 +142,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
-        if self.cx.ty.opt_payload(s.ty).is_some() || self.primitive_member(&s).is_some() {
+        let primitive = !matches!(self.cx.typeof_tag(s.ty), "object" | "function")
+            && self.cx.union_def(s.ty).is_none();
+        if self.cx.ty.opt_payload(s.ty).is_some()
+            || primitive
+            || self.primitive_member(&s).is_some()
+        {
             // TypeScript rejects both (TS18047, TS2322), and JavaScript throws a `TypeError`.
             let tn = self.cx.display(s.ty);
             self.cx.err(
@@ -139,7 +156,111 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let pred = move |cx: &Ctx, t| cx.has_member(t, &key);
-        self.type_test(s, &pred, false, span).expr
+        let sty = s.ty;
+        let union = self.cx.union_def(sty).map(|(d, _)| d);
+        let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
+        let mut found = Vec::with_capacity(members.len());
+        for &m in &members {
+            match self.key_presence(m, &key) {
+                Some(p) => found.push(p),
+                None => {
+                    let (shown, tn) = (self.cx.shown_name(&key), self.cx.display(m));
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("cannot tell whether a `{tn}` has `{shown}`"),
+                            lhs.span,
+                        )
+                        .with_note("Velt knows the well-known symbols of built-in and standard library types only for `Symbol.iterator` and `Symbol.asyncIterator`"),
+                    );
+                    return self.error_expr(span);
+                }
+            }
+        }
+        let mut arms = vec![];
+        let b = self.cx.ty.bool_;
+        for (v, (&m, p)) in members.iter().zip(&found).enumerate() {
+            let (pat, body) = match p {
+                Presence::No => continue,
+                Presence::Yes => {
+                    let wild = self.pat(P::Wildcard, m, span);
+                    (wild, self.mk(H::Lit(hir::Lit::Bool(true)), b, span))
+                }
+                Presence::Optional(flag) => {
+                    let (l, mode) = self.option_binding(&s, m, "<in>", false);
+                    let bind = self.pat(P::Binding(l, mode), m, span);
+                    let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
+                    (bind, self.present_test(obj, &key, *flag, span))
+                }
+            };
+            let pat = match union {
+                Some(def) => self.pat(
+                    P::Variant {
+                        def,
+                        variant: v as u32,
+                        args: vec![pat],
+                    },
+                    sty,
+                    span,
+                ),
+                None => pat,
+            };
+            arms.push(hir::Arm {
+                pat,
+                guard: None,
+                body,
+            });
+        }
+        if arms.len() < members.len() || arms.is_empty() {
+            arms.push(hir::Arm {
+                pat: self.pat(P::Wildcard, sty, span),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
+            });
+        }
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, b, span)
+    }
+
+    /// Is optional field `key` of `obj` present: its presence flag (`flag`), or not null?
+    fn present_test(&mut self, obj: hir::Expr, key: &str, flag: bool, span: Span) -> hir::Expr {
+        let prop = ast::Ident {
+            name: key.to_string(),
+            span,
+        };
+        let Some(field) = self.field_access(obj, &prop, Want::Borrow, span) else {
+            return self.error_expr(span);
+        };
+        if flag {
+            let b = self.cx.ty.bool_;
+            return self.intrinsic(hir::Intrinsic::FieldPresent, vec![field], b, span);
+        }
+        let payload = self.cx.ty.opt_payload(field.ty).unwrap_or(field.ty);
+        let wild = self.pat(P::Wildcard, payload, span);
+        let some = self.pat(P::Some(Box::new(wild)), field.ty, span);
+        self.bool_match(field, Some(some), span)
+    }
+
+    /// Whether a (non-null) value of type `t` has member `key` (`None`: unknown, a well-known
+    /// symbol other than an iterator one on a built-in or standard library type, or an iterator
+    /// one the type has no method for).
+    pub(crate) fn key_presence(&mut self, t: TyId, key: &str) -> Option<Presence> {
+        let declared = self.cx.declared_presence(t, key);
+        if !key.starts_with("[Symbol.") {
+            // A symbol the program made: only its own types have such members.
+            return Some(declared.unwrap_or(Presence::No));
+        }
+        if matches!(declared, Some(Presence::Yes | Presence::Optional(_))) {
+            return declared;
+        }
+        let iterator = key == ast::SYMBOL_ITERATOR || key == ast::SYMBOL_ASYNC_ITERATOR;
+        if iterator && self.method_exists(t, key) {
+            return Some(Presence::Yes);
+        }
+        // A type of the program's own: objects have no well-known symbol members of their own
+        // (`Object.prototype` has none) unless they declare them.
+        declared
     }
 }

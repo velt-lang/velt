@@ -126,7 +126,7 @@ impl Ctx<'_> {
                 f.ty.clone()
             };
             let t = self.resolve_type(&written, env);
-            let name = self.member_key(env.module, &f.name.name, f.name.span);
+            let name = self.member_key(env.module, &f.name);
             if out.iter().any(|o| o.name == name) {
                 self.err(
                     format!("duplicate field `{name}` in object type"),

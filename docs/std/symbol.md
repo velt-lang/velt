@@ -25,6 +25,7 @@ function main() {
 }
 ```
 
-A module constant initialized with `Symbol("...")` is made once, when the program is compiled,
-so every use of the constant is the same symbol. `Symbol(...)` called at run time makes a new
+A module constant initialized with `Symbol("...")` or `Symbol.for("...")` is made once, when the
+program is compiled, so every use of the constant is the same symbol (and `Symbol.for` at run
+time gives the same one for that key). `Symbol(...)` called at run time makes a new
 symbol that lives until the program ends, and `Symbol.for` keeps one per key.
