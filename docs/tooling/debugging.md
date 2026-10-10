@@ -29,8 +29,8 @@ name, and `NULL` for an empty `T | null` of a class. LLDB with Velt's formatters
 Code extension loads, [Command line](#command-line) shows how) also shows a string as its text,
 an array as `len=N` with its elements, a union by its active member, and other options as
 `null` or their value; without them those are raw words. Variables of `async` functions,
-generators and inlined code are not shown yet. Variables are visible in the
-whole function, also before their declaration runs. On Windows, Cranelift builds have function
+generators and inlined code are not shown yet. A variable is shown from the line declaring it
+to the end of its block. On Windows, Cranelift builds have function
 symbols only. On macOS, executables are signed ad hoc without the hardened runtime, so
 LLDB can launch and attach to them.
 

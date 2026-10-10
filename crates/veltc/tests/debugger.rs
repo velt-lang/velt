@@ -417,3 +417,71 @@ fn lldb_shows_params_at_function_entry() {
         assert!(out.contains(expected), "no `{expected}` in:\n{out}");
     }
 }
+
+const SCOPES: &str = "function main() {
+  const before = 1;
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 3; i++) {
+    const inner: i64 = i * 10;
+    total += inner;
+  }
+  const after = total + before;
+  console.log(after);
+}
+";
+
+/// A variable is shown from its declaration's line to the end of its block: not before it is
+/// declared (`after`, the loop's), and not after its loop.
+#[test]
+fn lldb_shows_variables_in_their_scope() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let (work, exe) = build("golden-work-debugger-scopes", SCOPES, &[]);
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -f app.vlt -l 3",
+            "breakpoint set -f app.vlt -l 6",
+            "breakpoint set -f app.vlt -l 9",
+            "run",
+            "frame variable",
+            "continue",
+            "frame variable",
+            "breakpoint disable 2",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    // The variables shown at each stop, in order.
+    let stops: Vec<Vec<&str>> = out
+        .split("(lldb) frame variable")
+        .skip(1)
+        .map(|s| {
+            s.lines()
+                .filter(|l| !l.starts_with("(lldb)"))
+                .filter_map(|l| l.strip_prefix('('))
+                .filter_map(|l| l.split(") ").nth(1)?.split(" = ").next())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        stops,
+        [
+            vec!["before", "total"],
+            vec!["before", "total", "i", "inner"],
+            vec!["before", "total", "after"],
+        ],
+        "{out}"
+    );
+}

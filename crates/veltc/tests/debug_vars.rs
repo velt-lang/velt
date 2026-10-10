@@ -174,6 +174,37 @@ fn debug_types_follow_the_layouts() {
 }
 
 #[test]
+fn block_variables_end_with_their_block() {
+    // `x` (the `for … of` binding) ends with the loop body; `count`, declared in the function's
+    // own block, and the params end with the function.
+    let p = compile(false);
+    let main = p
+        .funcs
+        .iter()
+        .find(|f| f.symbol.ends_with("4main"))
+        .unwrap();
+    let end_of = |name: &str| {
+        main.locals
+            .iter()
+            .find(|l| l.name.as_deref() == Some(name) && l.debug.is_some())
+            .and_then(|l| l.debug.as_ref().unwrap().end)
+    };
+    let x = end_of("x").expect("x ends with the loop body");
+    assert_eq!((x.line, x.col), (30, 4), "{x:?}");
+    assert_eq!(end_of("count"), None);
+    let area = p
+        .funcs
+        .iter()
+        .find(|f| f.symbol.ends_with("4area"))
+        .unwrap();
+    assert!(area
+        .locals
+        .iter()
+        .filter_map(|l| l.debug.as_ref())
+        .all(|d| d.end.is_none()));
+}
+
+#[test]
 fn a_narrowed_number_stays_described() {
     // `numrep` stores the counter `n` as an integer; the description moves with it.
     let p = compile(false);
