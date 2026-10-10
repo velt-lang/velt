@@ -85,7 +85,7 @@ pub(crate) fn compile(
         let addresses: Vec<u64> = (built.lines.iter())
             .map(|f| module.get_finalized_function(f.id) as u64)
             .collect();
-        crate::debug_info::jit::register(&program.files, &built.lines, &addresses)?;
+        crate::debug_info::jit::register(program, &built.lines, &addresses)?;
         timings.push(("debug info", start.elapsed()));
     }
     // Debuggers read JIT line tables on Unix only.

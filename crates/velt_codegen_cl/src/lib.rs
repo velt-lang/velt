@@ -69,7 +69,7 @@ pub fn emit_object(program: &vir::Program, opts: &CodegenOptions) -> Result<Vec<
     let built = module::build_module(&mut module, program, &module::Naming::Program)?;
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
-    debug_info::object::add_debug_info(&mut product, &program.files, &built.lines)?;
+    debug_info::object::add_debug_info(&mut product, program, &built.lines)?;
     product
         .emit()
         .map_err(|e| format!("codegen: cannot write object file: {e}"))
