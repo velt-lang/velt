@@ -20,13 +20,12 @@ unsafe fn bytes_mut<'a>(b: *const VeltBytes) -> &'a mut [u8] {
     }
 }
 
-/// JS relative index: negative counts from `len`, then clamped to `0..=len`.
+/// JS relative index: negative counts from `len`, then clamped to `0..=len`. Clamped in `i64`
+/// before converting, so an index beyond a 32-bit `usize` (wasm32) isn't truncated.
 fn relative(i: i64, len: usize) -> usize {
-    if i < 0 {
-        len.saturating_sub(i.unsigned_abs() as usize)
-    } else {
-        (i as usize).min(len)
-    }
+    // A Rust allocation is at most `isize::MAX` bytes, so `len` fits in an `i64`.
+    let n = len as i64;
+    (if i < 0 { n + i.max(-n) } else { i.min(n) }) as usize
 }
 
 /// A zeroed array of `n` bytes (`Buffer.alloc(n)`): calloc, so large arrays cost no memset.
@@ -214,6 +213,25 @@ mod tests {
             assert_eq!(z.as_bytes(), [0, 0, 0]);
             drop(z.take_vec());
             drop(d.take_vec());
+        }
+    }
+
+    #[test]
+    fn relative_indices_clamp_before_converting() {
+        for (i, want) in [
+            (0, 0),
+            (3, 3),
+            (99, 10),
+            (-3, 7),
+            (-99, 0),
+            (1 << 32, 10),
+            (-(1 << 32), 0),
+            ((1 << 32) + 3, 10),
+            (-(1 << 32) - 3, 0),
+            (i64::MAX, 10),
+            (i64::MIN, 0),
+        ] {
+            assert_eq!(relative(i, 10), want, "relative({i}, 10)");
         }
     }
 
