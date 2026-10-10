@@ -13,7 +13,8 @@ use crate::install::download;
 
 /// The velt release key: an Ed25519 public key, hex. The private half signs releases in
 /// `.github/workflows/release.yml` (secret `VELT_RELEASE_SIGNING_KEY`).
-pub const RELEASE_PUBLIC_KEY: &str = "";
+pub const RELEASE_PUBLIC_KEY: &str =
+    "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb";
 /// Overrides [`RELEASE_PUBLIC_KEY`].
 pub const ENV_PUBLIC_KEY: &str = "VELT_INSTALL_PUBLIC_KEY";
 /// The signature of `SHA256SUMS`, beside it.
@@ -115,6 +116,15 @@ pub(crate) mod tests {
         let (other, _) = key_pair();
         assert!(verify(sums, other.sign(sums).as_ref(), &key).is_err());
         assert!(verify(sums, b"zz", &key).is_err());
+    }
+
+    #[test]
+    fn the_built_in_key_is_an_ed25519_key() {
+        let key = decode_hex(RELEASE_PUBLIC_KEY).unwrap();
+        assert_eq!(key.len(), 32);
+        // A signature made with another key does not pass with it.
+        let (other, _) = key_pair();
+        assert!(verify(b"x", other.sign(b"x").as_ref(), &key).is_err());
     }
 
     #[test]
