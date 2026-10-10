@@ -194,6 +194,9 @@ impl FnLower<'_, '_> {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
                 let moving = *mode == UseMode::Move;
+                if self.info[id.0 as usize].cell {
+                    return self.bind_cell(*id, moving, register, place);
+                }
                 if *mode == UseMode::Borrow && self.stable_binds {
                     return self.bind_share(*id, place);
                 }
@@ -277,6 +280,32 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// A binding that is a shared cell (`LocalDef::boxed`: a closure assigns it): a new cell,
+    /// every time the pattern binds (each iteration of a loop has its own variable, as in JS),
+    /// holding the matched part. A moving binding moves the part into the cell (a share inside a
+    /// counted value); any other takes a share of it. The current scope owns the cell, except
+    /// for a moving binding that is not owned yet (a `match` arm owns its moved bindings later,
+    /// `own_bindings`).
+    fn bind_cell(&mut self, id: hir::LocalId, moving: bool, register: bool, place: &Place) {
+        let ty = self.info[id.0 as usize].ty;
+        if self.info[id.0 as usize].vir.is_none() {
+            return;
+        }
+        let v = match moving && !self.share_binds {
+            true => Operand::Copy(place.clone()),
+            false => self.share_value(Operand::Copy(place.clone()), ty),
+        };
+        let vt = self.cx.ty(ty);
+        let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
+        self.new_cell(id);
+        let p = self.local_place(id);
+        self.store(p, v);
+        if register || !moving {
+            self.mark_init(id);
+            self.register_local_drop(id);
+        }
+    }
+
     /// A binding by reference into a place others may replace while it lives (`stable_binds`):
     /// it refers to a share of the value, owned by the current scope (semantics stage 2). An
     /// indirect binding (a value stored inline, bound by reference) points to that share. A
@@ -317,7 +346,13 @@ impl FnLower<'_, '_> {
         let fp = Place::local(fresh);
         self.copy_elems(place, cint(skip as i128, Ty::U64), &fp, n, elem, true);
         let v = self.box_value(Operand::Copy(fp), ty);
-        self.assign(Place::local(l), Rvalue::Use(v));
+        if self.info[r.0 as usize].cell {
+            self.new_cell(r);
+            let p = self.local_place(r);
+            self.store(p, v);
+        } else {
+            self.assign(Place::local(l), Rvalue::Use(v));
+        }
         if self.info[r.0 as usize].droppable {
             self.mark_init(r);
             self.register_local_drop(r);

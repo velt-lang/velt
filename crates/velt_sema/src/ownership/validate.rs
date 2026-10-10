@@ -309,6 +309,10 @@ impl Validator<'_, '_, '_> {
                 };
                 (msg, format!("{why}; use `{w}.clone()` for an owned copy"))
             }
+            // A mutable element binding is a copy of a copyable element (`for (let x of [1, 2])`,
+            // `body/pattern.rs`), not a borrow of it: a closure capturing it by value (one
+            // assigning it) takes a copy.
+            Some(LocalKind::Elem) if self.f.body.locals[l.0 as usize].mutable => return,
             Some(LocalKind::Elem) => (
                 format!(
                     "cannot move out of `{}`, which borrows an array element",

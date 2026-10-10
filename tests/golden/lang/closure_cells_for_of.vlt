@@ -1,0 +1,103 @@
+// check: no leaks
+// A closure that assigns a `for…of` / `for await` / `Map` / `Set` loop variable: each iteration
+// has its own variable (as in JS), in a cell of its own, for strings, numbers, objects, arrays
+// and destructured bindings (#799; the cell used to point into the iterated element).
+
+async function strings() {
+  const words = ["a", "b", "c"];
+  const fs: (() => string)[] = [];
+  for (let x of words) fs.push(() => { x += "!"; return x; });
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","), words.join(","));
+  const gs: (() => string)[] = [];
+  for (let x of ["p", "q"]) { gs.push(() => { x = x + x; return x; }); x += "-"; }
+  console.log(gs.map((f) => f()).join(","), gs.map((f) => f()).join(","));
+}
+
+async function numbers() {
+  const fs: (() => number)[] = [];
+  for (let x of [1, 2, 3]) fs.push(() => ++x);
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const xs = [10, 20];
+  const gs: (() => number)[] = [];
+  for (let x of xs) { const g = () => { x *= 2; return x; }; g(); gs.push(g); console.log("in", x); }
+  console.log(gs.map((f) => f()).join(","), xs.join(","));
+  let total = 0;
+  for (let x of xs) { const add = () => { x += 1; }; add(); add(); total += x; }
+  console.log(total);
+}
+
+async function destructured() {
+  const fs: (() => string)[] = [];
+  for (let [k, v] of [["a", 1], ["b", 2]] as [string, number][]) fs.push(() => { v += 10; k += v; return k; });
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const pts = [{ x: 1, y: "p" }, { x: 2, y: "q" }];
+  const gs: (() => string)[] = [];
+  for (let { x, y } of pts) gs.push(() => { x++; y += x; return y; });
+  console.log(gs.map((f) => f()).join(","), gs.map((f) => f()).join(","), JSON.stringify(pts));
+  const hs: (() => string)[] = [];
+  for (let [first, ...rest] of [[1, 2, 3], [4, 5]]) hs.push(() => { first += 100; rest = rest.concat([first]); return rest.join("/"); });
+  console.log(hs.map((f) => f()).join(","), hs.map((f) => f()).join(","));
+}
+
+async function mapsAndSets() {
+  const m = new Map<string, number>([["a", 1], ["b", 2]]);
+  const fs: (() => string)[] = [];
+  for (let [k, v] of m) fs.push(() => { v += 10; k = k + "!"; return k + v; });
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","), [...m].join(";"));
+  const st = new Set<string>(["p", "q"]);
+  const gs: (() => string)[] = [];
+  for (let s of st) gs.push(() => { s += "?"; return s; });
+  console.log(gs.map((f) => f()).join(","), gs.map((f) => f()).join(","), [...st].join(","));
+  const ks: (() => number)[] = [];
+  for (let k of new Set<number>([5, 6])) ks.push(() => k++);
+  console.log(ks.map((f) => f()).join(","), ks.map((f) => f()).join(","));
+  const es: (() => string)[] = [];
+  for (let [k, v] of m.entries()) es.push(() => { v *= 3; return k + v; });
+  for (let k of m.keys()) es.push(() => { k += "k"; return k; });
+  for (let v of m.values()) es.push(() => { v -= 1; return "" + v; });
+  console.log(es.map((f) => f()).join(","), es.map((f) => f()).join(","));
+}
+
+async function* gen(): AsyncGenerator<string> { yield "a"; yield "b"; }
+async function* nums(): AsyncGenerator<number> { yield 1; yield 2; }
+async function forAwait() {
+  const fs: (() => string)[] = [];
+  for await (let x of gen()) fs.push(() => { x += "!"; return x; });
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const ns: (() => number)[] = [];
+  for await (let n of nums()) { ns.push(() => { n *= 10; return n; }); n += 1; }
+  console.log(ns.map((f) => f()).join(","), ns.map((f) => f()).join(","));
+  const ps: (() => string)[] = [];
+  for await (let p of [Promise.resolve("x"), Promise.resolve("y")]) ps.push(() => { p = p.toUpperCase() + p; return p; });
+  console.log(ps.map((f) => f()).join(","), ps.map((f) => f()).join(","));
+}
+
+function mk(xs: string[]): (() => string)[] {
+  const fs: (() => string)[] = [];
+  for (let x of xs) fs.push(() => { const g = () => x + "+"; x = g(); return x; });
+  return fs;
+}
+async function nested() {
+  const fs = mk(["a", "b"]);
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const grid: (() => string)[] = [];
+  for (let row of ["r1", "r2"]) {
+    for (let [c, n] of [["x", 1], ["y", 2]] as [string, number][]) {
+      grid.push(() => { n += 1; row += c; return `${row}:${n}`; });
+    }
+  }
+  console.log(grid.map((f) => f()).join(" "), grid.map((f) => f()).join(" "));
+  const makers: (() => () => number)[] = [];
+  for (let n of [1, 2]) makers.push(() => { n += 100; return () => n; });
+  const rs = makers.map((m) => m());
+  console.log(rs.map((f) => f()).join(","), makers.map((m) => m()()).join(","));
+}
+
+async function main() {
+  await strings();
+  await numbers();
+  await destructured();
+  await mapsAndSets();
+  await forAwait();
+  await nested();
+}
