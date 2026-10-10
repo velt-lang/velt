@@ -824,8 +824,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
-- **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
-  different types is not supported.
+- **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
+  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. TypeScript's errors
+  for writing to them (`xs.push(x)`, `xs[0] = x`) are not reported yet.
+- **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
+  elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
+  string]`. `Promise.all` over tuples of different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
   and values, and a repeated key keeps its first position and its last value) or from any

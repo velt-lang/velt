@@ -272,7 +272,9 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> Option<TyId> {
         let arity = match name {
-            "Array" | "shared" | "Shared" => 1,
+            // `ReadonlyArray<T>` (and `readonly T[]`, parsed as it) is `T[]` for now: TypeScript's
+            // checks that it is not written to are not made yet.
+            "Array" | "ReadonlyArray" | "shared" | "Shared" => 1,
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
@@ -288,7 +290,7 @@ impl Ctx<'_> {
             return Some(self.ty.error);
         }
         let k = match name {
-            "Array" => TyKind::Array(args[0]),
+            "Array" | "ReadonlyArray" => TyKind::Array(args[0]),
             "Promise" => {
                 let e = args.get(1).copied().unwrap_or(self.ty.never);
                 if let Some(w) = written.get(1) {

@@ -119,6 +119,9 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_no_union(&mut self) -> PResult<TypeExpr> {
         self.guarded(|p| {
             let lo = p.cur_lo();
+            if p.at_readonly_type() {
+                return p.parse_readonly_type();
+            }
             let prim = p.parse_type_prim()?;
             let mut ty = p.parse_array_suffixes(lo, prim);
             // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
@@ -138,6 +141,50 @@ impl<'a> Parser<'a> {
             }
             Ok(ty)
         })
+    }
+
+    /// `readonly` as a type operator: before an array or tuple type (`readonly T[]`,
+    /// `readonly [A, B]`), not a type named `readonly`.
+    fn at_readonly_type(&mut self) -> bool {
+        self.at(Tok::Kw(Kw::Readonly))
+            && (Self::is_ident_like(self.nth(1))
+                || matches!(self.nth(1), Tok::LBracket | Tok::LParen | Tok::LBrace)
+                || self.nth(1) == Tok::Kw(Kw::Void)
+                || self.nth(1) == Tok::Kw(Kw::Null))
+    }
+
+    /// `readonly T[]` (TypeScript's `ReadonlyArray<T>`, which it is parsed as) or
+    /// `readonly [A, B]` (the tuple type: Velt tuples have no mutating methods). On any other
+    /// type it is TypeScript's error TS1354.
+    fn parse_readonly_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        let kw = self.cur_span();
+        self.bump(); // readonly
+        let inner = self.parse_type_no_union()?;
+        let span = self.span_from(lo);
+        match inner.kind {
+            TypeExprKind::Array(elem) => Ok(TypeExpr {
+                kind: TypeExprKind::Named {
+                    path: vec![Ident {
+                        name: "ReadonlyArray".into(),
+                        span: kw,
+                    }],
+                    args: vec![*elem],
+                },
+                span,
+            }),
+            TypeExprKind::Tuple(_) => Ok(TypeExpr {
+                kind: inner.kind,
+                span,
+            }),
+            _ => {
+                self.error(
+                    "'readonly' type modifier is only permitted on array and tuple literal types",
+                    kw,
+                );
+                Ok(inner)
+            }
+        }
     }
 
     fn parse_array_suffixes(&mut self, lo: u32, mut ty: TypeExpr) -> TypeExpr {
