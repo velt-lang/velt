@@ -264,6 +264,72 @@ async function asyncForms() {
   console.log(n);
 }
 
+// Each closure the loop stores has its own copy of a `for...of` or destructured variable, which
+// the closure created inside it assigns (#904 review: these must not become one shared cell).
+async function* twoLetters(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+async function patternBindings() {
+  const fs: (() => string)[] = [];
+  for (let x of ["a", "b"]) {
+    fs.push(() => {
+      const g = () => {
+        x += "!";
+      };
+      g();
+      return x;
+    });
+  }
+  console.log(fs.map((f) => f()).join(","), fs.map((f) => f()).join(","));
+  const ns: (() => number)[] = [];
+  for (let [k, v] of new Map<string, number>([["a", 1], ["b", 2]])) {
+    ns.push(() => {
+      const g = () => {
+        v += 10;
+      };
+      g();
+      return v;
+    });
+  }
+  console.log(ns.map((f) => f()).join(","), ns.map((f) => f()).join(","));
+  const ss: (() => string)[] = [];
+  for (let s of new Set<string>(["p", "q"])) {
+    ss.push(() => {
+      const g = () => {
+        s += "?";
+      };
+      g();
+      return s;
+    });
+  }
+  console.log(ss.map((f) => f()).join(","));
+  const aw: (() => string)[] = [];
+  for await (let x of twoLetters()) {
+    aw.push(() => {
+      const g = () => {
+        x += "!";
+      };
+      g();
+      return x;
+    });
+  }
+  console.log(aw.map((f) => f()).join(","));
+  const ds: (() => number)[] = [];
+  for (let i = 0; i < 2; i++) {
+    let [a, b] = [i, i * 10];
+    ds.push(() => {
+      const g = () => {
+        a += b + 1;
+      };
+      g();
+      return a;
+    });
+  }
+  console.log(ds.map((f) => f()).join(","), ds.map((f) => f()).join(","));
+}
+
 async function main() {
   called();
   deep();
@@ -272,4 +338,5 @@ async function main() {
   loops();
   methods();
   await asyncForms();
+  await patternBindings();
 }

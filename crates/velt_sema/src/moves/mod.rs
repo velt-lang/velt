@@ -120,7 +120,13 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .into_iter()
         .map(|tys| tys.into_iter().map(|t| cx.is_shared_value(t)).collect())
         .collect();
-    let writers = writers(cx, &escaping);
+    let (writers, own_writers) = writers(cx, &escaping);
+    // The variables only a closure created inside an escaping closure assigns: a cell the
+    // enclosing function makes for them is checked below (`unshareable`).
+    let nested_only: HashSet<LocalId> = writers
+        .iter()
+        .flat_map(|(c, a)| a.difference(&own_writers[c]).copied())
+        .collect();
     let async_captured = async_captured(cx);
     let generators: HashMap<DefId, bool> = escaping
         .iter()
@@ -135,6 +141,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         per_iteration: per_iteration(cx),
         ..Outcome::default()
     };
+    let mut unshared = vec![];
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
@@ -194,6 +201,65 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
         m.report = true;
         m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+        // A variable that cannot be one cell (a `for (let …)` variable, or one a pattern
+        // declares, #799) and needs one only because a closure created inside an escaping
+        // closure assigns it, unless it needs the cell anyway: a `for (let …)` variable is an
+        // error; a pattern's variable is checked as if that closure did not assign it (each
+        // closure keeps its own copy).
+        let cannot: Vec<LocalId> = m
+            .boxed
+            .iter()
+            .copied()
+            .filter(|l| {
+                nested_only.contains(l)
+                    && (out.per_iteration.contains(&(def, *l))
+                        || crate::ownership::pattern_bound(cx, def, *l))
+            })
+            .collect();
+        let without: Writers;
+        if !cannot.is_empty() {
+            let (boxed, errors, reused) = (m.boxed.clone(), m.errors.len(), m.reused.clone());
+            m.writers = &own_writers;
+            m.report = false;
+            m.boxed.clear();
+            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+            let anyway = std::mem::replace(&mut m.boxed, boxed);
+            m.errors.truncate(errors);
+            m.reused = reused;
+            m.writers = &writers;
+            let (per_iter, pattern): (Vec<LocalId>, Vec<LocalId>) = cannot
+                .into_iter()
+                .filter(|l| !anyway.contains(l))
+                .partition(|l| out.per_iteration.contains(&(def, *l)));
+            for l in per_iter {
+                m.boxed.remove(&l);
+                unshared.push((def, l));
+            }
+            if !pattern.is_empty() {
+                without = writers
+                    .iter()
+                    .map(|(c, a)| {
+                        let own = &own_writers[c];
+                        let a = a.iter().copied();
+                        (
+                            *c,
+                            a.filter(|l| !pattern.contains(l) || own.contains(l))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                m.writers = &without;
+                m.boxed.retain(|l| !pattern.contains(l));
+                m.errors.clear();
+                m.reused.clear();
+                m.nested.clear();
+                m.report = false;
+                m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+                m.report = true;
+                m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+            }
+        }
         all.extend(m.errors);
         // The closure that captured the variable is reported for it: its creator's use of the
         // variable after moving it into the closure is no second error.
@@ -216,6 +282,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             cx.reported_captures.push((name, span));
         }
     }
+    if !unshared.is_empty() {
+        crate::ownership::unshareable_nested(cx, &unshared, &writers, &own_writers);
+    }
     all.retain(|d| !follows_capture_error(cx, d));
     let mut seen = HashSet::new();
     for d in all {
@@ -229,32 +298,37 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
 
 /// Per escaping closure: the enclosing variables it captures by value and assigns, itself or
 /// through a closure created in it (#904: `() => { const g = () => { last = v; }; g(); }`
-/// assigns `last` too).
-fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<LocalId>> {
+/// assigns `last` too). The second map holds those the closure assigns itself.
+type Writers = HashMap<DefId, HashSet<LocalId>>;
+fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> (Writers, Writers) {
     let mut assigned = HashMap::new();
-    let mut out = HashMap::new();
+    let mut direct = HashMap::new();
+    let (mut all, mut own) = (HashMap::new(), HashMap::new());
     for &c in escaping {
-        let mine = assigned_locals(cx, c, &mut assigned);
-        let outer: HashSet<LocalId> = match &cx.defs[c.0 as usize] {
-            Some(Def::Fn(f)) => f
-                .captures
-                .iter()
-                .filter(|cap| mine.contains(&cap.inner))
-                .map(|cap| cap.outer)
-                .collect(),
-            _ => HashSet::new(),
-        };
-        out.insert(c, outer);
+        let mine = assigned_locals(cx, c, &mut assigned, &mut direct);
+        let itself = direct.get(&c).cloned().unwrap_or_default();
+        let (mut a, mut o) = (HashSet::new(), HashSet::new());
+        if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
+            for cap in f.captures.iter().filter(|cap| mine.contains(&cap.inner)) {
+                a.insert(cap.outer);
+                if itself.contains(&cap.inner) {
+                    o.insert(cap.outer);
+                }
+            }
+        }
+        all.insert(c, a);
+        own.insert(c, o);
     }
-    out
+    (all, own)
 }
 
 /// The locals of function `d` it assigns, itself or through the closures created in it (which
-/// assign their captures of them), memoized in `memo`.
+/// assign their captures of them), memoized in `memo`; those it assigns itself go to `direct`.
 fn assigned_locals(
     cx: &mut Ctx,
     d: DefId,
     memo: &mut HashMap<DefId, HashSet<LocalId>>,
+    direct: &mut HashMap<DefId, HashSet<LocalId>>,
 ) -> HashSet<LocalId> {
     if let Some(s) = memo.get(&d) {
         return s.clone();
@@ -280,8 +354,9 @@ fn assigned_locals(
         }
     });
     cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    direct.insert(d, assigned.clone());
     for c in closures {
-        let inner = assigned_locals(cx, c, memo);
+        let inner = assigned_locals(cx, c, memo, direct);
         if inner.is_empty() {
             continue;
         }
@@ -298,44 +373,28 @@ fn assigned_locals(
     assigned
 }
 
-/// The `for (let …)` variables of each function that the loop's update assigns
-/// ([`Outcome::per_iteration`]). A `for` loop with a `let` head is a block of the `let`s and
-/// a `while` with the update as its step (`crate::body::loops`).
+/// The `for (let …)` variables of each function ([`Outcome::per_iteration`]): JS copies every
+/// variable the head declares into each iteration, whether the update assigns it or not. A
+/// `for` loop with a `let` head is a block of the `let`s and a `while` with the update as its
+/// step, both spanning the whole loop (`crate::body::loops`); a block written as such ends
+/// with its closing brace, so it never spans the same code as the `while` it holds.
 fn per_iteration(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
-    use crate::hir::{Expr, ExprKind as E};
     use crate::visit::VisitMut;
-    struct Assigned<'a>(&'a mut Vec<LocalId>);
-    impl VisitMut for Assigned<'_> {
-        fn expr(&mut self, e: &mut Expr) {
-            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
-                if let E::Local(l, _) = place.kind {
-                    self.0.push(l);
-                }
-            }
-        }
-    }
     struct ForHeads(Vec<LocalId>);
     impl VisitMut for ForHeads {
         fn stmt(&mut self, s: &mut Stmt) {
-            let StmtKind::Block(b) = &mut s.kind else {
+            let StmtKind::Block(b) = &s.kind else {
                 return;
             };
-            let Some((last, head)) = b.stmts.split_last_mut() else {
+            let Some((last, head)) = b.stmts.split_last() else {
                 return;
             };
-            let StmtKind::While {
-                step: Some(step), ..
-            } = &mut last.kind
-            else {
+            if !matches!(last.kind, StmtKind::While { .. }) || last.span != b.span {
                 return;
-            };
-            let mut assigned = vec![];
-            crate::visit::expr(step, &mut Assigned(&mut assigned));
+            }
             for s in head {
                 if let StmtKind::Let { local, .. } = s.kind {
-                    if assigned.contains(&local) {
-                        self.0.push(local);
-                    }
+                    self.0.push(local);
                 }
             }
         }

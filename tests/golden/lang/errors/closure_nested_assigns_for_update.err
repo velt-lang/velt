@@ -1,2 +1,2 @@
 closure_nested_assigns_for_update.vlt:9:9: error: `i` is assigned by a closure created inside another closure, and cannot be shared with it
-  = note: each iteration of the `for` loop has its own `i`, which the loop's update copies into the next one; assign a variable declared in the loop body instead
+  = note: each iteration of the `for` loop has its own `i`, which is copied into the next one; assign a variable declared in the loop body instead

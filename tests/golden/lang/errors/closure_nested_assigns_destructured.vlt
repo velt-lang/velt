@@ -1,0 +1,23 @@
+// Variables a destructuring `let` declares, assigned by a closure created inside a closure
+// that reads them afterwards (Node prints 12 23 23 and st stt stt): such a variable does not
+// live in a shared cell yet, so this is rejected rather than run wrong.
+async function main() {
+  let [a, b] = [1, 10];
+  const f = () => {
+    const g = () => {
+      a += b + 1;
+    };
+    g();
+    return a;
+  };
+  console.log(f(), f(), a);
+  let { x, y } = { x: "s", y: "t" };
+  const h = () => {
+    const g = () => {
+      x += y;
+    };
+    g();
+    return x;
+  };
+  console.log(h(), h(), x);
+}

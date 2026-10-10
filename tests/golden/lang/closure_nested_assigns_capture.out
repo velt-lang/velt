@@ -30,3 +30,8 @@ async-outer
 async-outer+async-inner
 async-outer+async-inner+both
 2
+a!,b! a!!,b!!
+11,12 21,22
+p?,q?
+a!,b!
+1,12 2,23
