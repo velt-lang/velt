@@ -356,12 +356,15 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.process_env_index(object, index, span) {
             return h;
         }
+        if let Some(h) = self.keyed_read(object, index, want, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let r = self.in_place_receiver(object, obj);
         let h = self.index_of(r.recv, index, want, span);
         let h = self.after_receiver(r.before, h);
         // `o["a"]` narrows like `o.a`: after `if (o["a"] !== null)` or `if (o.a !== null)`.
-        match literal_key(index) {
+        match self.single_key(index) {
             Some(name) => {
                 let prop = ast::Ident {
                     name,
@@ -428,11 +431,18 @@ impl FnCx<'_, '_> {
             // `o["content-type"]`: a constant key names a field, as `o.name` does (JS reads the
             // same property either way; the quoted form allows any name). Only on a type with
             // fields: a `Map` keeps its "use a method" error.
-            _ if literal_key(index).is_some_and(|k| self.has_fields(t, &k)) => {
+            _ if self
+                .single_key(index)
+                .is_some_and(|k| self.has_fields(t, &k)) =>
+            {
                 let prop = ast::Ident {
-                    name: literal_key(index).unwrap_or_default(),
+                    name: self.single_key(index).unwrap_or_default(),
                     span: index.span,
                 };
+                if literal_key(index).is_none() {
+                    // `o[k]` with `const k = "a"`: `k` counts as used.
+                    self.expr(index, None, Want::Borrow);
+                }
                 if crate::reserved_key(&prop.name) {
                     // Not the private field `#x`, a symbol-keyed member or the prototype.
                     self.cx
@@ -591,7 +601,9 @@ impl FnCx<'_, '_> {
 
     /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
     /// converts nothing. `e` is typed in the context of `T`, as for an annotation, so a literal
-    /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`.
+    /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`. A
+    /// literal type (or a union with one, `"c" as "a" | "c" | null`) takes a value that converts
+    /// to it as it is; a wider value (a `string` as `"a" | "b"`) would need a test.
     fn type_assertion(
         &mut self,
         expr: &ast::Expr,
@@ -605,7 +617,13 @@ impl FnCx<'_, '_> {
             Err(h) => {
                 if !self.cx.ty.has_error(h.ty) {
                     let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                    self.cx.err(format!("cannot cast `{s}` as `{d}`"), span);
+                    let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
+                    if self.cx.has_literal_member(target) {
+                        diag = diag.with_note(
+                            "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
+                        );
+                    }
+                    self.cx.error(diag);
                 }
                 self.error_expr(span)
             }

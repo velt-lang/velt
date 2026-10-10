@@ -32,7 +32,7 @@ declare function velt_rt_tcp_close(s: u64);
 /** A bound listening socket. */
 export struct TcpListener {
   /** The real bound port (useful after listening on port 0). */
-  port: i64;
+  port: number;
   private handle: u64;
 
   /** Waits for the next connection (TCP_NODELAY is on). */
@@ -97,7 +97,7 @@ export struct TcpStream {
 /** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */
 export async function listen(addr: string): Promise<TcpListener> {
   const handle = unwrapIo(await velt_rt_tcp_listen(addr));
-  return TcpListener { port: velt_rt_tcp_listener_port(handle) as i64, handle: handle };
+  return TcpListener { port: velt_rt_tcp_listener_port(handle), handle: handle };
 }
 
 /** Connects to "host:port". */

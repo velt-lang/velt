@@ -1,5 +1,6 @@
-//! Type-parameter defaults (`class Box<T, E = never>`, `type Pair<A, B = A>`): checked once, at
-//! the declaration, and stored resolved, in terms of the parameters before each one.
+//! Type-parameter defaults (`class Box<T, E = never>`, `type Pair<A, B = A>`,
+//! `function f<T = string>()`): checked once, at the declaration, and stored resolved, in terms
+//! of the parameters before each one (a function's in its `Generics::defaults`).
 //!
 //! As in TypeScript, a default may only mention the parameters declared before it (not itself,
 //! not a later one), and must not need its own declaration's defaults again (`class S<T = S>`:
@@ -150,17 +151,7 @@ impl Ctx<'_> {
                 out.push(None);
                 continue;
             };
-            if let Some(bad) = not_declared_before(d, &gs[i..]) {
-                let msg = match bad.name == g.name.name {
-                    true => format!("the default of type parameter `{}` refers to itself", g.name.name),
-                    false => format!(
-                        "the default of type parameter `{}` refers to `{}`, which is declared after it",
-                        g.name.name, bad.name
-                    ),
-                };
-                self.error(Diagnostic::error(msg, bad.span).with_note(
-                    "a default may only use the type parameters declared before it (as in TypeScript)",
-                ));
+            if !self.declared_before(d, &gs[i..]) {
                 out.push(Some(self.ty.error));
                 continue;
             }
@@ -176,6 +167,49 @@ impl Ctx<'_> {
         }
         self.type_defaults.resolved.insert(key, out.clone());
         Some(out)
+    }
+
+    /// The defaults of a function's own type parameters `gs` (`function f<T, U = T[]>()`),
+    /// resolved in `env` (the owner's parameters, then the function's): per parameter, `None`
+    /// without one, `Error` when invalid (reported).
+    pub(crate) fn fn_param_defaults(
+        &mut self,
+        gs: &[ast::GenericParam],
+        env: &TyEnv,
+    ) -> Vec<Option<TyId>> {
+        let mut out = vec![];
+        for (i, g) in gs.iter().enumerate() {
+            let t = match &g.default {
+                None => None,
+                Some(d) if !self.declared_before(d, &gs[i..]) => Some(self.ty.error),
+                Some(d) => Some(self.resolve_type(d, env)),
+            };
+            out.push(t);
+        }
+        out
+    }
+
+    /// Does default `d` of the first of `rest` use only the parameters declared before it?
+    /// Reported when not.
+    fn declared_before(&mut self, d: &ast::TypeExpr, rest: &[ast::GenericParam]) -> bool {
+        let Some(bad) = not_declared_before(d, rest) else {
+            return true;
+        };
+        let g = &rest[0];
+        let msg = match bad.name == g.name.name {
+            true => format!(
+                "the default of type parameter `{}` refers to itself",
+                g.name.name
+            ),
+            false => format!(
+                "the default of type parameter `{}` refers to `{}`, which is declared after it",
+                g.name.name, bad.name
+            ),
+        };
+        self.error(Diagnostic::error(msg, bad.span).with_note(
+            "a default may only use the type parameters declared before it (as in TypeScript)",
+        ));
+        false
     }
 }
 

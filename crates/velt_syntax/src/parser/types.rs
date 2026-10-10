@@ -47,8 +47,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Type after `as`. Unions are limited to a trailing `| null` so `x as u8 | y` stays a bit-or,
-    /// and generic arguments are speculative so `a as i64 < b` stays a comparison.
+    /// Type after `as`. Unions are limited to a trailing `| null` and string literals
+    /// (`k as "a" | "b"`) so `x as u8 | y` stays a bit-or, and generic arguments are speculative
+    /// so `a as i64 < b` stays a comparison.
     pub(super) fn parse_cast_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         if self.at_kw(Kw::Const) {
@@ -72,15 +73,30 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_type_no_union()?
         };
-        if self.at(Tok::Pipe) && self.nth(1) == Tok::Kw(Kw::Null) {
+        let strings = matches!(
+            &ty.kind,
+            TypeExprKind::Literal(SignedLit {
+                lit: Lit::Str(_),
+                ..
+            })
+        );
+        let more = |p: &mut Self| {
+            p.at(Tok::Pipe)
+                && (p.nth(1) == Tok::Kw(Kw::Null) || strings && matches!(p.nth(1), Tok::Str(_)))
+        };
+        if more(self) {
             let mut members = vec![ty];
-            while self.at(Tok::Pipe) && self.nth(1) == Tok::Kw(Kw::Null) {
+            while more(self) {
                 self.bump();
-                members.push(TypeExpr {
-                    kind: TypeExprKind::Null,
-                    span: self.cur_span(),
-                });
-                self.bump();
+                if self.at(Tok::Kw(Kw::Null)) {
+                    members.push(TypeExpr {
+                        kind: TypeExprKind::Null,
+                        span: self.cur_span(),
+                    });
+                    self.bump();
+                } else {
+                    members.push(self.parse_type_no_union()?);
+                }
             }
             ty = TypeExpr {
                 kind: TypeExprKind::Union(members),

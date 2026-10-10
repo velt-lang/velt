@@ -62,7 +62,7 @@ machine) plus `ca`. An untrusted certificate fails with `IoError`.
 
 ## `Response`
 
-- `status: i64`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
+- `status: number`, `ok: bool` (200–299), `statusText` (the server's reason phrase, else the
   standard one), `headers: Headers`, `url` (the final URL, after redirects), `redirected`,
   `type` (`"basic"` for a fetched response, `"default"` for one you made, `"error"`),
   `bodyUsed`.

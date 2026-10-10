@@ -45,7 +45,7 @@ export class Datagram {
  */
 export struct UdpSocket {
   /** The bound local port (useful after binding port 0). */
-  port: i64;
+  port: number;
   private handle: u64;
 
   /** Sends one datagram to "host:port"; resolves with the number of bytes sent. */
@@ -78,5 +78,5 @@ export struct UdpSocket {
 /** Binds a UDP socket to "host:port" (port 0 picks a free port; read it from `.port`). */
 export async function bindUdp(addr: string): Promise<UdpSocket> {
   const handle = unwrapIo(await velt_rt_udp_bind(addr));
-  return UdpSocket { port: velt_rt_udp_port(handle) as i64, handle: handle };
+  return UdpSocket { port: velt_rt_udp_port(handle), handle: handle };
 }

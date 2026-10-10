@@ -62,7 +62,7 @@ function pathOf(url: string): string {
 
 async function main() {
   const argv = args();
-  const port = argv.length > 0 ? parseInt(argv[0], 10) as i64 : 8080;
+  const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
   const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
     const path = pathOf(req.url);
     if (path == "/json") {
