@@ -245,6 +245,9 @@ impl FnCx<'_, '_> {
         frame.is_async = is_async;
         // A JS API callback returning a number (a comparator) may return any integer.
         frame.int_returns_number = std_callback.is_some() && ret_ty == Some(self.cx.ty.f64);
+        // A JS API predicate's result is tested like a condition (`xs.filter((n) => n)`).
+        frame.truthy_returns =
+            std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
         let mut declared = vec![];

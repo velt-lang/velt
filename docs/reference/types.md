@@ -779,7 +779,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
-  (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
+  (`xs.map((x, i) => …)`), and may take fewer parameters. A predicate (`filter`, `find`,
+  `findIndex`, `some`, `every`) may return any value, tested for
+  [truthiness](variables.md#conditions-truthiness) as in JS:
+  `[0, 3, 0, 4].filter((n) => n)` is `[3, 4]`. The full list is in the
   [prelude](../std/prelude.md#arrays). Arrays, strings and maps are
   [`Iterable`](control-flow.md#iterables): they convert to `Iterable<T>` values, and
   `xs[Symbol.iterator]()` returns an `Iterator<T>`.
