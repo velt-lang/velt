@@ -198,8 +198,8 @@ collector does ([memory](../reference/memory.md)).
 
 | Member | Notes |
 |---|---|
-| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `null` for a missing key (JS: `undefined`). `set` returns nothing (JS: the map) |
-| `new WeakSet<T>()`; `add(x)`, `has(x)`, `delete(x): bool` | `add` returns nothing (JS: the set) |
+| `new WeakMap<K, V>()`; `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself (an object is shared), and `null` for a missing key (JS: `undefined`). `set` returns the map, so calls chain |
+| `new WeakSet<T>()`; `add(x)`, `has(x)`, `delete(x): bool` | `add` returns the set, so calls chain |
 | `new WeakRef(target)`; `deref(): T \| null` | `null` once the target was freed (JS: `undefined`) |
 
 Differences from JavaScript:
@@ -208,10 +208,10 @@ Differences from JavaScript:
   use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
   Node keeps returning the object until a later garbage collection, and at least until the
   current job ends.
-- **One thread.** A weak collection belongs to the thread that made it: it cannot be passed to
-  a spawned task, sent on a channel, captured by an async closure that may run on another
-  thread, put in `shared(...)` or cloned (an error says so; in JavaScript, `structuredClone`
-  rejects them too).
+- **One task.** A weak collection belongs to the task that made it (it keeps working when an
+  `await` resumes the task on another thread): it cannot be passed to a spawned task, sent on a
+  channel, captured by an async closure that may run on another thread, put in `shared(...)` or
+  cloned (an error says so; in JavaScript, `structuredClone` rejects them too).
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.

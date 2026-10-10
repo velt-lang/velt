@@ -74,4 +74,9 @@ function main() {
   seen.add(a);
   seen.add(a);
   console.log(seen.has(a), seen.has(b), seen.delete(a), seen.has(a), seen.delete(a));
+
+  // `set` and `add` return the collection, so calls chain.
+  const chained = new WeakMap<Key, number>().set(a, 1).set(b, 2);
+  const both = new WeakSet<Key>().add(a).add(b);
+  console.log(chained.get(b), both.has(a), both.has(c));
 }

@@ -1,4 +1,4 @@
-// Prelude: `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` (docs/std/weak.md), on velt_rt's
+// Prelude: `WeakMap<K, V>`, `WeakSet<T>` and `WeakRef<T>` (docs/std/prelude.md#weakmap-weakset-and-weakref), on velt_rt's
 // weak-reference core (docs/internals/design/weak-refs.md, rt_abi.md "Weak references").
 //
 // A key (a `WeakSet` member, a `WeakRef` target) must be an object: a class instance, an object
@@ -42,8 +42,9 @@ export class WeakMap<K, V> {
   }
 
   /** Stores `value` for `key` (replacing a value stored before). */
-  set(key: K, value: V) {
+  set(key: K, value: V): WeakMap<K, V> {
     this.#id = __intrinsic_weakmap_set(this.#id, key, value);
+    return this;
   }
 
   /** Whether `key` has an entry. */
@@ -78,8 +79,9 @@ export class WeakSet<T> {
   }
 
   /** Adds `value` to the set. */
-  add(value: T) {
+  add(value: T): WeakSet<T> {
     this.#id = __intrinsic_weakmap_set(this.#id, value, true);
+    return this;
   }
 
   /** Whether `value` is in the set. */
