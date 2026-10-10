@@ -4,8 +4,8 @@
 //! record keeps a `Map<K, V>` in field 0; with literal keys (`"cpu" | "mem"`, a string enum) a
 //! member whose key is not one of them is skipped, and every key is required. A record is written
 //! in JavaScript's key order (array indices first), walking the positions its `__positions`
-//! method gives, and a decoded one is marked `unordered` (field 1), since it is in document
-//! order.
+//! method gives; a decoded one is in document order, so it is marked `unordered` (field 1) when
+//! a key is an array index (`Record.__decoded`).
 
 use velt_sema::hir::{self, DefId, LitValue, PassMode, TyId, TyKind};
 
@@ -479,12 +479,14 @@ impl FnLower<'_, '_> {
         let map_ty = self.cx.adt_field_tys(ty)[0];
         let map = self.field_place(place, ty, 0);
         self.json_read_map(r, &map, ctx, map_ty, kv, fail);
-        // Document order: readers put array-index keys first.
-        let unordered = self.field_place(place, ty, 1);
-        self.assign(
-            unordered,
-            Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool)),
-        );
+        // Document order: readers put array-index keys first, when there is one.
+        let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
+            ice("Record decoded into a non-ADT type")
+        };
+        let def = self.class_method(d, "__decoded");
+        let f = self.cx.func_for(def, targs);
+        let recv = vec![Operand::Copy(place.clone())];
+        self.call(vir::Callee::Func(f), recv, None, false);
     }
 }
 

@@ -33,10 +33,12 @@ console.log(JSON.stringify(item, ["note", "id"])); // {"note":"x","id":7}
 ```
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
-  of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,
-  written in insertion order (a `Record` in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order), as `JSON.parse` builds an object). A record with literal keys
-  (`Record<"cpu" | "mem", i64>`) needs every key and skips other members. Unlike JavaScript, which writes a `Map` as `{}`,
-  Velt writes its entries. Maps with other key types, functions, interfaces, promises and
+  of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys.
+  A `Map` is written in insertion order. A `Record` is written in JavaScript's key order, as
+  `JSON.parse` builds an object: array-index keys such as `"2"` first, ascending, then the
+  others in insertion order. A record with literal keys (`Record<"cpu" | "mem", i64>`) needs
+  every key and skips other members. Unlike JavaScript, which writes a `Map` as `{}`, Velt
+  writes its entries. Maps with other key types, functions, interfaces, promises and
   `shared` values have no JSON form; using them is a compile error. Values from a fixed set are checked:
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
   enums (from their strings) and numeric enums (from their values). Anything else fails with
@@ -213,13 +215,18 @@ console.log(text, m.cents); // {"cents":250} 250
     `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
     `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
-    of range). `delete` costs O(1) amortized wherever the key is; `get` and `len` stay O(1)
+    of range). An array-index key such as `"2"` goes among the other index keys, ascending,
+    before every other key: in O(1) above the largest or below the smallest, else moving the
+    index keys on the shorter side, as `delete` of one does. `delete` of any other key costs
+    O(1) amortized wherever the key is; `get` and `len` stay O(1)
     after it, and so does `at` on an object emptied from either end. After deletes in the
     middle of a large object (more than 16 members), `at` on it costs O(log n): the first such
     `at` takes O(n) to index the remaining members, and later edits keep that index up to date
     in O(log n) each, until the object is compacted
   - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
-  - `stringify()` (keys in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order), as `JSON.parse` and editing keep them); `clone()` is O(1)
+  - `stringify()`: keys in JavaScript's key order, as `JSON.parse` and editing keep them:
+    array-index keys such as `"2"` first, ascending, then the others in insertion order
+  - `clone()` is O(1)
   - `console.log(v)` prints the value the way node prints the parsed object
     (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
     quoted inside other values), broken across lines like node when it is long, with node's

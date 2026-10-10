@@ -50,7 +50,8 @@ needed.
 - With literal keys, the literal must list every key, so `r[k]` can be total.
 - There is no implicit conversion from a struct or object type.
 
-**Iteration and helpers.** These follow TypeScript, in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order) (#756):
+**Iteration and helpers.** These follow TypeScript, in JavaScript's key order (#756): array-index
+keys such as `"2"` first, ascending, then the others in insertion order.
 
 - `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return arrays.
 - `for (const [k, v] of Object.entries(r))`. A record itself is not iterable (`for (const k of
@@ -76,7 +77,8 @@ methods are internal: calling one outside the prelude is an error.
 
 **JSON.**
 
-- A record reads from and writes to a JSON object, in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order).
+- A record reads from and writes to a JSON object, in JavaScript's key order: array-index keys
+  such as `"2"` first, ascending, then the others in insertion order.
 - With literal keys, a missing key is `expected field "cpu"` and an unknown key follows the
   unknown-key option (#20).
 - Values use the usual rules.

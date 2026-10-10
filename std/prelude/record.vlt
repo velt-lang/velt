@@ -5,12 +5,13 @@
 // `r[k] = v`, `delete r[k]` and object literals typed as a record into calls of the `__`
 // methods below (`__get` for string keys, `__at` for literal keys, which are always present).
 // Entries keep JavaScript's order: keys that are array indices (canonical `"0"` to
-// `"4294967294"`) first, ascending, then the others in insertion order. A key that starts with a
-// digit marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
+// `"4294967294"`) first, ascending, then the others in insertion order. A key that is an array
+// index marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
 // and the JSON and formatting glue through `__positions`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key (`Map.__newestKeyDigit`). JSON reads and writes a record as an object, and
-// `console.log` shows it like one.
+// key (`Map.__newestKeyDigit`, then `arrayIndex` for a key that starts with a digit). JSON reads
+// and writes a record as an object (a decoded record is checked for such keys once,
+// `__decoded`), and `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -43,8 +44,8 @@ function arrayIndex(s: string): i64 {
 export class Record<K, V> {
   // Field 0: the JSON and formatting glue read it directly, in the order `__positions` gives.
   private entries: Map<K, V> = new Map();
-  // Field 1: a key that may be an array index was added (JSON decoding sets it too), so the
-  // entries may not be in JavaScript's order (`__perm`).
+  // Field 1: a key that is an array index was added (or decoded), so the entries may not be in
+  // JavaScript's order (`__perm`).
   private unordered: bool = false;
 
   __get(key: K): V | null {
@@ -60,7 +61,17 @@ export class Record<K, V> {
     const n = this.entries.size;
     this.entries.set(key, value);
     if (this.entries.size != n && !this.unordered) {
-      this.unordered = this.entries.__newestKeyDigit();
+      this.unordered = this.entries.__newestKeyDigit() && arrayIndex(`${key}`) >= 0;
+    }
+  }
+
+  /** After JSON decoding (in document order): `unordered` when a key is an array index. */
+  __decoded() {
+    for (const k of this.entries.keys()) {
+      if (arrayIndex(`${k}`) >= 0) {
+        this.unordered = true;
+        return;
+      }
     }
   }
 

@@ -10,9 +10,15 @@
 //! to date by every delete and insert in O(log n). When the holes outnumber the members the
 //! vector is compacted, so every delete costs O(1) amortized (plus O(log n) while the tree
 //! exists) and the vector stays at most twice the member count.
+//!
+//! Members whose keys are array indexes (`"0"` to `"4294967294"`) come first, ascending, as in
+//! JavaScript. They live apart, in a deque sorted by index ([`Index::ints`]): found by binary
+//! search, appended (or prepended) in O(1), and inserted or deleted in the middle by moving the
+//! members on the shorter side. `JSON.parse` reads every member in document order and moves the
+//! index members there once the object is complete ([`Object::order_indexes`]).
 
 use super::value::{Text, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use positions::Positions;
@@ -23,21 +29,44 @@ pub const INDEX_THRESHOLD: usize = 16;
 /// A member: key (WTF-8, `value::Text`) and value.
 pub type Entry = (Text, Arc<Value>);
 
-/// The live members of an object in order (see [`Object::iter`]).
-pub type Entries<'a> = std::iter::Flatten<std::slice::Iter<'a, Option<Entry>>>;
+/// The live members of an object in order (see [`Object::iter`]): the array-index members,
+/// then the others.
+#[derive(Clone)]
+pub struct Entries<'a> {
+    ints: Option<std::collections::vec_deque::Iter<'a, Entry>>,
+    rest: std::iter::Flatten<std::slice::Iter<'a, Option<Entry>>>,
+}
+
+impl<'a> Iterator for Entries<'a> {
+    type Item = &'a Entry;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a Entry> {
+        if let Some(ints) = &mut self.ints {
+            match ints.next() {
+                Some(e) => return Some(e),
+                None => self.ints = None,
+            }
+        }
+        self.rest.next()
+    }
+}
 
 /// Object members in document order (first-occurrence position, last value wins — like
 /// `JSON.parse`).
 #[derive(Debug, Default, Clone)]
 pub struct Object {
-    /// Members by slot; `None` is a deleted member's hole (only with an index).
+    /// Members by slot; `None` is a deleted member's hole (only with an index). No key here is
+    /// an array index, except while `JSON.parse` reads the object (see the module docs).
     slots: Vec<Option<Entry>>,
     index: Option<Box<Index>>,
 }
 
-/// Lookup structures of a large object.
+/// Lookup structures of a large object, or of one with array-index members.
 #[derive(Debug, Clone)]
 struct Index {
+    /// The array-index members, ascending.
+    ints: VecDeque<Entry>,
     /// Slot of every live key.
     slots: HashMap<Text, usize>,
     /// Slots before `head` are holes; `slots[head]` is live (or `head == slots.len()`).
@@ -71,7 +100,7 @@ impl Object {
     /// Number of members.
     pub fn len(&self) -> usize {
         match &self.index {
-            Some(ix) => self.slots.len() - ix.head - ix.holes,
+            Some(ix) => self.slots.len() - ix.head - ix.holes + ix.ints.len(),
             None => self.slots.len(),
         }
     }
@@ -83,18 +112,34 @@ impl Object {
 
     /// The members in order.
     pub fn iter(&self) -> Entries<'_> {
-        let head = self.index.as_ref().map_or(0, |ix| ix.head);
-        self.slots[head..].iter().flatten()
+        let (head, ints) = match &self.index {
+            Some(ix) => (ix.head, (!ix.ints.is_empty()).then(|| ix.ints.iter())),
+            None => (0, None),
+        };
+        Entries {
+            ints,
+            rest: self.slots[head..].iter().flatten(),
+        }
     }
 
     /// The value of `key`.
     pub fn get(&self, key: &[u8]) -> Option<&Arc<Value>> {
+        if let Some(n) = array_index(key) {
+            let ix = self.index.as_ref()?;
+            return ix.int_pos(n).ok().map(|i| &ix.ints[i].1);
+        }
         let slot = self.find(key)?;
         self.slots[slot].as_ref().map(|(_, v)| v)
     }
 
     /// The `i`-th member.
-    pub fn entry_at(&self, i: usize) -> Option<&Entry> {
+    pub fn entry_at(&self, mut i: usize) -> Option<&Entry> {
+        if let Some(ix) = &self.index {
+            if i < ix.ints.len() {
+                return ix.ints.get(i);
+            }
+            i -= ix.ints.len();
+        }
         let slot = match &self.index {
             None => i,
             Some(ix) if ix.holes == 0 => ix.head.checked_add(i)?,
@@ -122,19 +167,32 @@ impl Object {
     /// JavaScript puts it: an array index (`"0"` to `"4294967294"`) among the other indexes,
     /// ascending, before every other key; any other key last.
     pub fn insert(&mut self, key: Text, value: Arc<Value>) {
+        if let Some(n) = array_index(&key) {
+            return self.insert_int(n, key, value);
+        }
         if let Some(slot) = self.find(&key) {
             if let Some((_, v)) = &mut self.slots[slot] {
                 *v = value;
             }
             return;
         }
-        if let Some(n) = array_index(&key) {
-            let at = self.index_slot(n);
-            if at < self.slots.len() {
-                return self.insert_at(at, key, value);
+        self.push_new(key, value);
+    }
+
+    /// Insert the array-index member `n`: appended or prepended in O(1), else the members on
+    /// the shorter side move.
+    fn insert_int(&mut self, n: u32, key: Text, value: Arc<Value>) {
+        let slots = &self.slots;
+        let ix = self
+            .index
+            .get_or_insert_with(|| Box::new(Index::new(slots)));
+        match ix.int_pos(n) {
+            Ok(i) => ix.ints[i].1 = value,
+            Err(i) => {
+                count_work(i.min(ix.ints.len() - i));
+                ix.ints.insert(i, (key, value));
             }
         }
-        self.push_new(key, value);
     }
 
     /// Insert in document order (`JSON.parse` before [`Object::order_indexes`]): a new key
@@ -150,67 +208,28 @@ impl Object {
         self.push_new(key, value);
     }
 
-    /// Put the members whose keys are array indexes first, ascending, keeping the order of the
-    /// others: JavaScript's order, for an object read in document order that has such a key.
+    /// Move the members whose keys are array indexes to [`Index::ints`], ascending, keeping
+    /// the order of the others: JavaScript's order, for an object read in document order
+    /// (`JSON.parse`) that may have such a key.
     pub(super) fn order_indexes(&mut self) {
-        let sorted = self
-            .iter()
-            .map(|(k, _)| array_index(k))
-            .is_sorted_by(|a, b| match (a, b) {
-                (Some(x), Some(y)) => x <= y,
-                (Some(_), None) | (None, None) => true,
-                (None, Some(_)) => false,
-            });
-        if sorted {
+        if !self.iter().any(|(k, _)| array_index(k).is_some()) {
             return;
         }
-        self.compact_all();
         count_work(self.slots.len());
-        // Stable: members with the same rank (every non-index key) keep their order.
-        self.slots.sort_by_key(|e| {
-            e.as_ref()
-                .and_then(|(k, _)| array_index(k))
-                .map_or(u64::MAX, u64::from)
-        });
-        if self.index.is_some() {
-            self.index = Some(Box::new(Index::new(&self.slots)));
+        let mut ints = self.index.take().map(|ix| ix.ints).unwrap_or_default();
+        let mut named = Vec::with_capacity(self.slots.len());
+        for (k, v) in std::mem::take(&mut self.slots).into_iter().flatten() {
+            match array_index(&k) {
+                Some(_) => ints.push_back((k, v)),
+                None => named.push(Some((k, v))),
+            }
         }
-    }
-
-    /// The slot before which the new index `n` goes: the first live member that is not an
-    /// index or is a larger one (the slots' length when there is none).
-    fn index_slot(&self, n: u32) -> usize {
-        let head = self.index.as_ref().map_or(0, |ix| ix.head);
-        (head..self.slots.len())
-            .find(|&i| match &self.slots[i] {
-                Some((k, _)) => array_index(k).is_none_or(|m| m > n),
-                None => false,
-            })
-            .unwrap_or(self.slots.len())
-    }
-
-    /// Insert the new member `key` before slot `at` (a live slot): O(number of members).
-    fn insert_at(&mut self, at: usize, key: Text, value: Arc<Value>) {
-        let live = self.slots[at].as_ref().map(|(k, _)| k.clone());
-        self.compact_all();
-        let at = match live {
-            Some(k) => self.find(&k).unwrap_or(self.slots.len()),
-            None => self.slots.len(),
-        };
-        count_work(self.slots.len() - at);
-        self.slots.insert(at, Some((key, value)));
-        if self.index.is_some() || self.slots.len() > INDEX_THRESHOLD {
-            self.index = Some(Box::new(Index::new(&self.slots)));
-        }
-    }
-
-    /// Drop every hole, keeping the index (rebuilt) when there is one.
-    fn compact_all(&mut self) {
-        if self.index.is_some() {
-            count_work(self.slots.len());
-            self.slots.retain(Option::is_some);
-            self.index = Some(Box::new(Index::new(&self.slots)));
-        }
+        ints.make_contiguous()
+            .sort_unstable_by_key(|(k, _)| array_index(k).unwrap_or(u32::MAX));
+        self.slots = named;
+        let mut ix = Index::new(&self.slots);
+        ix.ints = ints;
+        self.index = Some(Box::new(ix));
     }
 
     /// Append the new member `key`.
@@ -234,8 +253,23 @@ impl Object {
         self.slots.push(Some((key, value)));
     }
 
-    /// Remove `key`, keeping the order of the others; whether it was there. O(1) amortized.
+    /// Remove `key`, keeping the order of the others; whether it was there. O(1) amortized
+    /// (an array-index member in the middle: the members on the shorter side move).
     pub fn remove(&mut self, key: &[u8]) -> bool {
+        if let Some(n) = array_index(key) {
+            let Some(ix) = &mut self.index else {
+                return false;
+            };
+            let Ok(i) = ix.int_pos(n) else {
+                return false;
+            };
+            count_work(i.min(ix.ints.len() - i));
+            ix.ints.remove(i);
+            if ix.ints.is_empty() && self.slots.len() - ix.head - ix.holes <= INDEX_THRESHOLD {
+                self.compact();
+            }
+            return true;
+        }
         let Some(slot) = self.find(key) else {
             return false;
         };
@@ -274,24 +308,25 @@ impl Object {
         true
     }
 
-    /// Drop the holes (and the index when few members are left).
+    /// Drop the holes (and the index when few members are left and none is an array index).
     fn compact(&mut self) {
-        if self.index.take().is_none() {
+        let Some(old) = self.index.take() else {
             return;
-        }
+        };
         count_work(self.slots.len());
         self.slots.retain(Option::is_some);
-        if self.slots.len() > INDEX_THRESHOLD {
-            self.index = Some(Box::new(Index::new(&self.slots)));
+        if self.slots.len() > INDEX_THRESHOLD || !old.ints.is_empty() {
+            let mut ix = Index::new(&self.slots);
+            ix.ints = old.ints;
+            self.index = Some(Box::new(ix));
         }
     }
 
     /// Move out all values (leaves the object empty).
     pub fn take_values(&mut self) -> Vec<Arc<Value>> {
-        self.index = None;
-        std::mem::take(&mut self.slots)
-            .into_iter()
-            .flatten()
+        let ints = self.index.take().map(|ix| ix.ints).unwrap_or_default();
+        ints.into_iter()
+            .chain(std::mem::take(&mut self.slots).into_iter().flatten())
             .map(|(_, v)| v)
             .collect()
     }
@@ -332,10 +367,23 @@ impl Index {
             .filter_map(|(i, e)| e.as_ref().map(|(k, _)| (k.clone(), i)))
             .collect();
         Index {
+            ints: VecDeque::new(),
             slots: keys,
             head: 0,
             holes: 0,
             positions: OnceLock::new(),
+        }
+    }
+
+    /// Where the array-index member `n` is (`Ok`) or goes (`Err`) in `ints`.
+    #[inline]
+    fn int_pos(&self, n: u32) -> Result<usize, usize> {
+        match self.ints.back() {
+            None => Err(0),
+            Some((k, _)) if array_index(k).is_some_and(|m| m < n) => Err(self.ints.len()),
+            _ => self
+                .ints
+                .binary_search_by_key(&n, |(k, _)| array_index(k).unwrap_or(u32::MAX)),
         }
     }
 }
@@ -569,5 +617,70 @@ mod order_tests {
         }
         let Value::Object(o) = &*v else { panic!() };
         assert_eq!(keys(o), ["2", "y"]);
+    }
+}
+
+#[cfg(test)]
+mod index_member_tests {
+    use super::{Object, WORK};
+    use crate::json::value::Value;
+    use std::sync::Arc;
+
+    fn put(o: &mut Object, k: &str) {
+        o.insert(k.as_bytes().into(), Arc::new(Value::Null));
+    }
+
+    fn work() -> usize {
+        WORK.with(|w| w.get())
+    }
+
+    /// 20,000 index keys set in ascending or descending order, after a named key or not, take
+    /// linear work (each one was a pass over the members, and a rebuilt hash index).
+    #[test]
+    fn many_index_keys_take_linear_work() {
+        for named in [false, true] {
+            for ascending in [true, false] {
+                let mut o = Object::default();
+                if named {
+                    put(&mut o, "name");
+                }
+                let before = work();
+                for i in 0..20_000 {
+                    let n = if ascending { i } else { 19_999 - i };
+                    put(&mut o, &n.to_string());
+                }
+                assert!(work() - before < 1_000, "named {named}, ascending {ascending}");
+                assert_eq!(o.len(), 20_000 + usize::from(named));
+                let first: Vec<&[u8]> = o.iter().take(2).map(|(k, _)| &**k).collect();
+                assert_eq!(first, [&b"0"[..], &b"1"[..]]);
+                let last = o.entry_at(o.len() - 1).map(|(k, _)| &**k);
+                let want: &[u8] = if named { b"name" } else { b"19999" };
+                assert_eq!(last, Some(want));
+                assert!(o.get(b"12345").is_some() && o.get(b"20000").is_none());
+            }
+        }
+    }
+
+    /// Index members and named ones mixed: lookups, positions, deletes and re-inserts.
+    #[test]
+    fn index_members_with_named_ones() {
+        let mut o = Object::default();
+        for k in ["x", "5", "y", "1", "3", "z"] {
+            put(&mut o, k);
+        }
+        let keys = |o: &Object| -> Vec<String> {
+            o.iter()
+                .map(|(k, _)| String::from_utf8(k.to_vec()).unwrap())
+                .collect()
+        };
+        assert_eq!(keys(&o), ["1", "3", "5", "x", "y", "z"]);
+        assert_eq!(o.entry_at(3).map(|(k, _)| &**k), Some(&b"x"[..]));
+        assert!(o.remove(b"3") && !o.remove(b"3") && o.remove(b"y"));
+        put(&mut o, "2");
+        assert_eq!(keys(&o), ["1", "2", "5", "x", "z"]);
+        assert!(o.remove(b"1") && o.remove(b"2") && o.remove(b"5"));
+        assert_eq!(keys(&o), ["x", "z"]);
+        assert_eq!(o.len(), 2);
+        assert_eq!(o.take_values().len(), 2);
     }
 }

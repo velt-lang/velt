@@ -427,6 +427,11 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.
+- `Program::counted_objects` (additive): concrete anonymous object types lowering counts from its
+  first pass, whether or not the code that shares them is lowered. Sema accepted an assignment
+  into such an object whose right-hand side may replace it (`o.inner.v = g()` where `g` assigns
+  `o.inner`, #876) because the program shares the type, so the target must be a counted object
+  that keeps the object it named before the right-hand side ran.
 - `LocalDef::boxed`: a variable living in a counted cell shared by the enclosing function and the
   escaping closures capturing it (set on both the enclosing local and the closures' capture
   locals, transitively). It is never moved from (sema turns such moves into shares or copies);
