@@ -57,6 +57,14 @@ Failing programs are saved under `out/cases/<signature>/` with a `.txt` describi
 mode is re-checked). Shrunk repros go to `tests/golden/bugs/` (with Node's output as `.out`) and
 into an issue.
 
+**Exit status.** `run` and `fuzz` exit with 1 when any program gives a `mismatch` or `crash`.
+`fuzz` also exits with 1 when `velt` rejects more than 2% of the generated programs in one mode
+(rounded down: 4 of 200 seeds pass, 5 fail; a run of fewer than 50 seeds allows none), and
+prints the first three rejections' diagnostics for that mode. The generator writes only programs
+in the shared subset, so a rejection is a generator mistake or a front-end regression. The 2%
+allows for a rare environmental failure that is reported as a rejection, such as a linker that
+finds its output file locked. `run` reports rejections but doesn't fail on them.
+
 ## The normalizer (`src/tsify.rs`)
 
 The TypeScript twin is the `.vlt` source plus:

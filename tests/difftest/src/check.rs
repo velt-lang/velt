@@ -100,8 +100,13 @@ pub enum Verdict {
     /// Node could not run the program (syntax/type/reference error): it is outside the shared
     /// subset, so nothing can be concluded.
     NodeRejected(String),
-    /// Node ran it but `velt` refused to compile it (first diagnostic line).
-    VeltRejected(String),
+    /// Node ran it but `velt` refused to compile it in `mode`: the first diagnostic's first line
+    /// (`message`, the signature) and the whole diagnostic with its notes (`diagnostic`).
+    VeltRejected {
+        mode: Mode,
+        message: String,
+        diagnostic: String,
+    },
     /// The compiler itself crashed (panic, ICE, signal) in `mode`.
     CompilerCrash { mode: Mode, message: String },
     /// A build ran but behaved differently from the oracle.
@@ -123,7 +128,9 @@ impl Verdict {
             Verdict::Agree => "agree".into(),
             Verdict::NodeRejected(_) => "node-rejected".into(),
             Verdict::OracleTimeout => "oracle-timeout".into(),
-            Verdict::VeltRejected(msg) => format!("velt-rejected: {}", strip_location(msg)),
+            Verdict::VeltRejected { message, .. } => {
+                format!("velt-rejected: {}", strip_location(message))
+            }
             Verdict::CompilerCrash { mode, message } => {
                 format!("crash[{}]: {}", mode.name(), strip_location(message))
             }
@@ -254,7 +261,11 @@ fn build_and_run(
         return Ok(Err(Verdict::CompilerCrash { mode, message }));
     }
     if build.status != Status::Exit(0) {
-        return Ok(Err(Verdict::VeltRejected(first_error(&build.stderr))));
+        return Ok(Err(Verdict::VeltRejected {
+            mode,
+            message: first_error(&build.stderr),
+            diagnostic: first_diagnostic(&build.stderr),
+        }));
     }
     let run = exec::run(&mut Command::new(&exe), scratch, cfg.run_timeout)?;
     let behavior = Behavior {
@@ -373,6 +384,22 @@ fn first_error(stderr: &str) -> String {
         .map_or_else(|| first_line(stderr), str::to_string)
 }
 
+/// The first error with the indented lines that belong to it (notes, source excerpts), at most
+/// 12 lines.
+fn first_diagnostic(stderr: &str) -> String {
+    let mut lines = stderr.lines().skip_while(|l| !l.contains("error"));
+    let Some(head) = lines.next() else {
+        return first_line(stderr);
+    };
+    let mut out = vec![head];
+    out.extend(
+        lines
+            .take_while(|l| l.starts_with([' ', '\t', '|']))
+            .take(11),
+    );
+    out.join("\n")
+}
+
 fn first_line(s: &str) -> String {
     s.lines()
         .find(|l| !l.trim().is_empty())
@@ -404,6 +431,16 @@ mod tests {
     }
 
     #[test]
+    fn a_diagnostic_keeps_its_notes_and_stops_at_the_next() {
+        let stderr = "   Compiling\np.vlt:3:4: error: mismatched types\n  \
+                      = note: expected i64, found f64\n\np.vlt:9:1: error: unknown name\n";
+        assert_eq!(
+            first_diagnostic(stderr),
+            "p.vlt:3:4: error: mismatched types\n  = note: expected i64, found f64"
+        );
+    }
+
+    #[test]
     fn ice_signatures_keep_the_detail_line() {
         let stderr = "error: internal compiler error: VIR verification failed:\n  \
                       fn#22 _V2h0 bb9: invalid projection: field 1 out of range for agg#21\n";
@@ -418,8 +455,13 @@ mod tests {
 
     #[test]
     fn signatures_ignore_locations() {
-        let a = Verdict::VeltRejected("a.vlt:3:4: error: mismatched types".into());
-        let b = Verdict::VeltRejected("b.vlt:9:1: error: mismatched types".into());
+        let rejected = |message: &str| Verdict::VeltRejected {
+            mode: Mode::Debug,
+            message: message.into(),
+            diagnostic: String::new(),
+        };
+        let a = rejected("a.vlt:3:4: error: mismatched types");
+        let b = rejected("b.vlt:9:1: error: mismatched types");
         assert_eq!(a.signature(), b.signature());
         assert_eq!(a.signature(), "velt-rejected: error: mismatched types");
     }
