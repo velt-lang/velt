@@ -49,12 +49,14 @@ half).
 
 Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lone surrogate),
 `parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
-`Number(s)`.
+`Number(s)`, and `String(x)`, which writes any printable value as `` `${x}` `` does
+(`String(1e21)` is `"1e+21"`, `String(null)` is `"null"`, `String([[1], [2, 3]])` is `"1,2,3"`).
 
 ## Numbers
 
 - `NaN`, `Infinity`, `isNaN(x)`, `isFinite(x)`.
-- `Number(s)` converts a string; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
+- `Number(x)` converts a string, a number or a boolean (`Number(true)` is `1`), and
+  `Boolean(x)` tests a value's truthiness, as in JS; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
   `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`, `Number.parseFloat(s)` and the
   constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
   `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude

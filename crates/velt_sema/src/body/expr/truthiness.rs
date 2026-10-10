@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `h` tested for truthiness, as a `bool` (an error if its type cannot be tested).
-    fn truthy(&mut self, h: hir::Expr) -> hir::Expr {
+    pub(crate) fn truthy(&mut self, h: hir::Expr) -> hir::Expr {
         let (b, span) = (self.cx.ty.bool_, h.span);
         match self.test_of(h.ty) {
             Test::Bool => self.coerce(h, b),

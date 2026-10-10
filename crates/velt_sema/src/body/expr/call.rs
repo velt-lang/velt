@@ -78,7 +78,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => match &self.cx.info[d.0 as usize] {
+                DefInfo::Fn(_) if self.cx.prelude_fn("Number") == Some(d) => {
+                    self.number_call(d, args, span)
+                }
                 DefInfo::Fn(_) => self.fn_call(d, &id.name, type_args, args, exp, span),
+                DefInfo::Adt(_) if self.cx.prelude_adt("String") == Some(d) => {
+                    self.string_call(args, span)
+                }
                 DefInfo::Adt(_) if self.is_class_def(d) => {
                     self.cx.error(
                         Diagnostic::error(format!("`{}` is a class", id.name), id.span)
