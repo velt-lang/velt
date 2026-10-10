@@ -11,14 +11,15 @@
 //! map value is reached when a value the handler reaches has a type holding a function type of
 //! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
 //! stands for no callback the user stores), and in the direction values flow ([`fits`]: a
-//! `() => void` closure is never a `() => string`). A closure stored straight into an object or
-//! array that one local of its function holds (or through a method keeping it in `this`), and
-//! that never leaves that function, is reached only when that local is ([`held_closures`]):
-//! `other.onChange = …` on an `Input` the handler never sees is not one the handler's `Input`
-//! may hold, and one only ever stored in fields no code a request may run uses is not reached
-//! ([`Bodies`]). Closures made by a request (inside a reached async closure) assign that request's
-//! own variables, and the standard library's closures are not the user's to change, so neither
-//! is reported. A reached closure's assignments include those of the closures it makes.
+//! `() => void` closure is never a `() => string`). A closure only ever stored in fields that
+//! no code a request may run reads (nor any code copies out) is not reached ([`Bodies`]). A variable declared in a request
+//! (a reached async closure, or a closure made inside one) is that request's own, and the
+//! standard library's closures are not the user's to change, so neither is reported. A reached
+//! closure's assignments include those of the closures it makes.
+//!
+//! When in doubt the check reports: a missed case crashes, while a reported one has the
+//! `shared(...)` fix-it. So what a local holds is reached by type, not only when the local is
+//! (what it holds may be shared: a field read out of it, an array handed to a constructor).
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +40,7 @@ mod held;
 mod message;
 
 use bodies::Bodies;
-use held::{held_closures, root};
+use held::{homes, root};
 use message::{call_site, declaration, report};
 
 /// Report the sync closures HTTP handlers reach that assign a variable they captured (module
@@ -69,23 +70,19 @@ pub(super) fn check_handler_callbacks(
     if work.is_empty() && roots.is_empty() {
         return;
     }
-    // Which stored closures of the program are held by one local, and what its bodies do with
-    // fields: only needed when it stores a closure at all.
+    // What the program's bodies do with fields: only needed when it stores a closure at all.
     let user =
         g.nodes.iter().enumerate().any(
             |(n, node)| matches!(node, Node::Lit(c) if flags[n] & STORED != 0 && !in_std(cx, *c)),
         );
-    let (held, homes) = if user {
-        held_closures(cx, g, flags)
-    } else {
-        Default::default()
-    };
     let mut bodies = if user {
         Bodies::new(cx)
     } else {
         Bodies::default()
     };
-    bodies.homes = homes;
+    if user {
+        bodies.homes = homes(cx, g);
+    }
     // Nodes whose values flow somewhere the graph follows.
     let flowing: HashSet<usize> = if user {
         g.srcs.iter().flatten().map(|(n, _)| *n).collect()
@@ -120,8 +117,9 @@ pub(super) fn check_handler_callbacks(
         }
         types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
         rooted = roots.len();
-        // A closure only ever stored in fields that no code a request may run reads
-        // (`w.onClick = …` while the handler reads only `w.name`) is never called by one.
+        // A closure only ever stored in fields that no code a request may run reads, and that
+        // no code copies out (`w.onClick = …` while the handler reads only `w.name`), is never
+        // called by one.
         let reads = if !user {
             None
         } else {
@@ -145,12 +143,6 @@ pub(super) fn check_handler_callbacks(
         };
         for (n, node) in g.nodes.iter().enumerate() {
             if !matches!(node, Node::Lit(_)) || why[n].is_some() || flags[n] & STORED == 0 {
-                continue;
-            }
-            if let Some(&x) = held.get(&n) {
-                if let Some(w) = why[x] {
-                    work.push((n, w));
-                }
                 continue;
             }
             if matches!(node, Node::Lit(c) if unread(n, *c)) {
@@ -188,15 +180,18 @@ pub(super) fn check_handler_callbacks(
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
         };
-        if f.is_async
-            || f.is_generator
-            || handlers.contains_key(&c)
-            || in_std(cx, c)
-            || made_by(g, c, &requests)
-        {
+        if in_std(cx, c) {
             continue;
         }
-        for (cap, at) in assigned_captures(cx, f) {
+        // A request's closure (and a handler) assigning what it captured is reported by
+        // [`super`]; one it makes doing so is reported here.
+        let nested_only = f.is_async || f.is_generator || handlers.contains_key(&c);
+        for (cap, at) in assigned_captures(cx, f, nested_only) {
+            // A variable of the request's own closure (or of a closure it makes) is the
+            // request's own.
+            if request_local(cx, g, c, cap, &requests) {
+                continue;
+            }
             let local = &f.body.locals[cap.0 as usize];
             // An assignment in a closure made inside another reached closure is reported once.
             if cx.ty.kind(local.ty) != &TyKind::Unit && !found.iter().any(|x| x.6 == at) {
@@ -205,13 +200,45 @@ pub(super) fn check_handler_callbacks(
         }
     }
     for (c, ty, w, cap, name, cap_ty, at) in found {
-        let call = call_site(cx, g, &reached, &requests, &bodies, c, ty);
+        // The closure making the assigning one runs in a request itself: no call to show.
+        let call = if requests.contains(&c) || handlers.contains_key(&c) {
+            None
+        } else {
+            call_site(cx, g, &reached, &requests, &bodies, c, ty)
+        };
         let init = declaration(cx, g, c, cap);
         report(cx, &name, cap_ty, at, call, init, w);
     }
 }
 
-/// Is closure `c` made inside one of `requests` (a request's own closure)?
+/// Is capture `cap` of closure `c` a variable declared inside one of `requests` (a request's
+/// closure or a closure made inside one), so that each request has its own? Followed through
+/// the captures of the closures `c` is made in, up to the function declaring the variable.
+fn request_local(
+    cx: &Ctx,
+    g: &Graph,
+    c: DefId,
+    cap: LocalId,
+    requests: &HashSet<DefId>,
+) -> bool {
+    let (mut d, mut l) = (c, cap);
+    for _ in 0..64 {
+        let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+            return false;
+        };
+        match f.captures.iter().find(|k| k.inner == l) {
+            Some(k) => match g.parent.get(&d) {
+                Some(&p) => (d, l) = (p, k.outer),
+                None => return false,
+            },
+            // Declared in `d`: a request's own when `d` is a request or made inside one.
+            None => return requests.contains(&d) || made_by(g, d, requests),
+        }
+    }
+    false
+}
+
+/// Is closure `c` made inside one of `requests`?
 fn made_by(g: &Graph, c: DefId, requests: &HashSet<DefId>) -> bool {
     let mut d = c;
     for _ in 0..64 {
@@ -248,28 +275,31 @@ fn each_expr(b: &Block, f: &mut dyn FnMut(&Expr)) {
 }
 
 /// The captured variables closure `f` assigns (`x = …`, `x += …`, `x++`), itself or in a
-/// closure it makes (`const bump = () => { x++; }`), with the first assignment of each.
-fn assigned_captures(cx: &Ctx, f: &FnDef) -> Vec<(LocalId, Span)> {
+/// closure it makes (`const bump = () => { x++; }`), with the first assignment of each;
+/// `nested_only`: only in the closures it makes.
+fn assigned_captures(cx: &Ctx, f: &FnDef, nested_only: bool) -> Vec<(LocalId, Span)> {
     // `f`'s captures, by the local each one is in the function being searched.
     let caps: HashMap<LocalId, LocalId> = f.captures.iter().map(|c| (c.inner, c.inner)).collect();
     let mut out: Vec<(LocalId, Span)> = vec![];
-    assignments(cx, f, &caps, &mut out, 0);
+    assignments(cx, f, &caps, &mut out, 0, nested_only);
     out
 }
 
 /// The assignments in `f` (and the closures it makes) to locals of `caps`, as the capture of
-/// the outermost closure they stand for.
+/// the outermost closure they stand for; `skip`: not those in `f`'s own body.
 fn assignments(
     cx: &Ctx,
     f: &FnDef,
     caps: &HashMap<LocalId, LocalId>,
     out: &mut Vec<(LocalId, Span)>,
     depth: u32,
+    skip: bool,
 ) {
     let mut inner = vec![];
     each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
         E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
             if let Some(&cap) = match place.kind {
+                _ if skip => None,
                 E::Local(l, _) => caps.get(&l),
                 _ => None,
             } {
@@ -294,7 +324,7 @@ fn assignments(
             .filter_map(|c| caps.get(&c.outer).map(|&cap| (c.inner, cap)))
             .collect();
         if !kcaps.is_empty() {
-            assignments(cx, kf, &kcaps, out, depth + 1);
+            assignments(cx, kf, &kcaps, out, depth + 1, false);
         }
     }
 }

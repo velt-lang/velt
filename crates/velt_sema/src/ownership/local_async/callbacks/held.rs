@@ -1,30 +1,17 @@
-//! Closures held by one local: reached only when that local is (`held_closures`).
+//! Where closures are stored straight into what a local holds (`homes`), for the message:
+//! a call through a field of that local is the call shown first.
 
 use super::*;
 
-/// Closure literals stored straight into an object or array held by one local of the function
-/// making them (`other.onChange = (v) => …`, `cbs.push(() => …)`, `const o = { f: () => … }`,
-/// or through a setter, `e.on(() => …)` with `on(f) { this.listeners.push(f); }`), by literal
-/// node, with that local's node: when the local never leaves the function (it is not stored,
-/// captured, returned or passed to a function of the program, only to the standard library's
-/// and as `this` of methods that keep it too), only that local reaches the closure, so it is
-/// reached exactly when the local is, not by its type. Also returns, per closure, the nodes of
-/// all the locals it is stored into that way (where it is stored, whether or not they leave).
-#[allow(clippy::type_complexity)]
-pub(super) fn held_closures(
-    cx: &Ctx,
-    g: &Graph,
-    flags: &[u8],
-) -> (HashMap<usize, usize>, HashMap<DefId, Vec<usize>>) {
-    let mut outs: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (m, srcs) in g.srcs.iter().enumerate() {
-        for &(n, _) in srcs {
-            outs.entry(n).or_default().push(m);
-        }
-    }
+/// Per closure literal stored straight into an object or array a local holds
+/// (`other.onChange = (v) => …`, `cbs.push(() => …)`, `const o = { f: () => … }`, or through a
+/// setter, `e.on(() => …)` with `on(f) { this.listeners.push(f); }`), the nodes of those locals.
+/// Only the message uses it: which closures a handler reaches does not depend on it, since
+/// what such a local holds may be reached through what it shares (a field read out of it, an
+/// array handed to a constructor), which the graph does not follow.
+pub(super) fn homes(cx: &Ctx, g: &Graph) -> HashMap<DefId, Vec<usize>> {
     let setters = setters(cx);
     let parents: HashSet<DefId> = g.parent.values().copied().collect();
-    let mut out = HashMap::new();
     let mut homes: HashMap<DefId, Vec<usize>> = HashMap::new();
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
@@ -35,58 +22,12 @@ pub(super) fn held_closures(
         let mut sites = vec![];
         walk::block(&f.body.block, &mut Sites(cx, &setters, &mut sites));
         for (c, x) in sites {
-            let (Some(&lit), Some(&local)) =
-                (g.ids.get(&Node::Lit(c)), g.ids.get(&Node::Local(d, x)))
-            else {
-                continue;
-            };
-            homes.entry(c).or_default().push(local);
-            if (x.0 as usize) < f.params.len() {
-                continue;
-            }
-            if flags[local] & STORED == 0
-                && stays(cx, g, &outs, flags, &setters, local, &mut HashSet::new())
-                && stays(cx, g, &outs, flags, &setters, lit, &mut HashSet::new())
-            {
-                out.insert(lit, local);
+            if let Some(&local) = g.ids.get(&Node::Local(d, x)) {
+                homes.entry(c).or_default().push(local);
             }
         }
     }
-    (out, homes)
-}
-
-/// Do the values of node `n` go only to parameters of standard library functions, to setter
-/// parameters (which keep them in their `this`), and as `this` to methods of the program where
-/// they stay too?
-fn stays(
-    cx: &Ctx,
-    g: &Graph,
-    outs: &HashMap<usize, Vec<usize>>,
-    flags: &[u8],
-    setters: &HashMap<DefId, Vec<usize>>,
-    n: usize,
-    seen: &mut HashSet<usize>,
-) -> bool {
-    if !seen.insert(n) || seen.len() > 256 {
-        return seen.len() <= 256;
-    }
-    outs.get(&n)
-        .into_iter()
-        .flatten()
-        .all(|&m| match g.nodes[m] {
-            Node::Local(f, _) if in_std(cx, f) => true,
-            Node::Local(f, l) => match &cx.defs[f.0 as usize] {
-                Some(Def::Fn(ff)) if ff.self_ty.is_some() && ff.captures.is_empty() => {
-                    let k = ff.params.iter().position(|p| p.local == l);
-                    (k.is_some_and(|k| setters.get(&f).is_some_and(|ks| ks.contains(&k))))
-                        || (k == Some(0)
-                            && flags[m] & STORED == 0
-                            && stays(cx, g, outs, flags, setters, m, seen))
-                }
-                _ => false,
-            },
-            _ => false,
-        })
+    homes
 }
 
 /// The methods of the program that only keep some of their parameters in what `this` holds
@@ -143,7 +84,7 @@ fn setters(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
 }
 
 /// The closure literals stored straight into what a local holds, with the local (see
-/// [`held_closures`]).
+/// [`homes`]).
 struct Sites<'a, 'm>(
     &'a Ctx<'m>,
     &'a HashMap<DefId, Vec<usize>>,

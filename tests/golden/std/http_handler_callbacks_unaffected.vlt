@@ -1,13 +1,17 @@
 // What an HTTP handler reaches is only an error when a callback it calls assigns a variable that
 // callback captured (#873): callbacks that only read, a render function, a pool, closures each
-// request makes for itself, a callback of the same type stored in an object the handler never
-// reaches (directly or through a method keeping it, `on(f) { this.listeners.push(f); }`, in a
-// function or a class), and a `() => void` that assigns while the handler calls `() => string`
-// values (a closure returning nothing is never one of those) all compile and run.
+// request makes for itself, a callback stored in a field no request reads (called in `main`),
+// and a `() => void` that assigns while the handler calls `() => string` values (a closure
+// returning nothing is never one of those) all compile and run.
 import { serve } from "velt:http";
 
 class Input {
   onChange: (v: string) => void = (v) => {};
+}
+
+class Widget {
+  name = "w";
+  onClick: () => void = () => {};
 }
 
 class Emitter {
@@ -19,25 +23,6 @@ class Emitter {
     for (const l of this.listeners) {
       l(name);
     }
-  }
-}
-
-class App {
-  async start(): Promise<string> {
-    let started = 0;
-    const boot = new Emitter();
-    boot.on((name: string) => {
-      started++;
-    });
-    boot.emit("boot");
-    const requests = new Emitter();
-    const server = await serve({ port: 0 }, async (req) => {
-      requests.emit("request");
-      return new Response("app");
-    });
-    const text = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
-    await server.shutdown();
-    return `${text} ${started}`;
   }
 }
 
@@ -56,6 +41,12 @@ async function main() {
       console.log("long");
     }
   };
+  let clicks = 0;
+  const w = new Widget();
+  w.onClick = () => {
+    clicks++;
+  };
+  w.onClick();
   const render = (s: string): string => `<b>${s}</b>`;
   const pool = new Pool();
   const hits = shared(0);
@@ -69,12 +60,6 @@ async function main() {
   }
   const routes = new Map<string, () => string>();
   routes.set("/", () => "home");
-  let ready = false;
-  const startup = new Emitter();
-  startup.on((name: string) => {
-    ready = true;
-  });
-  startup.emit("startup");
   const requests = new Emitter();
   requests.on((name: string) => {
     if (routes.size > 5) {
@@ -91,17 +76,11 @@ async function main() {
     bump();
     i.onChange("x");
     hits.add(1);
-    return new Response(render(`${pool.pick(mine)}${r === null ? "" : r()}`));
+    return new Response(render(`${pool.pick(mine)}${r === null ? "" : r()}${w.name}`));
   });
-  let local = 0;
-  const other = new Input();
-  other.onChange = (v: string) => {
-    local += v.length;
-  };
-  other.onChange("abc");
   for (let k = 0; k < 3; k++) {
     console.log(await (await fetch(`http://127.0.0.1:${a.port}/`)).text());
   }
   await a.shutdown();
-  console.log(local, hits.get(), configured, ready, await new App().start());
+  console.log(clicks, hits.get(), configured);
 }
