@@ -51,8 +51,9 @@ pub enum DebugKind {
     Struct { agg: AggId, fields: Vec<DebugField> },
     /// A class: a pointer to its heap object `obj` (fields after the vtable pointer, if any).
     Class { obj: AggId, fields: Vec<DebugField> },
-    /// An enum without payloads: an `I64` whose value is a member's (numeric enums: the
-    /// member's value; string enums: its index).
+    /// An enum without payloads: an integer whose value is a member's (numeric enums: the
+    /// member's value; string enums: its index), naturally an `I64`; as for a scalar, a local's
+    /// own VIR type gives its encoding (optimizations may narrow it).
     Enum { members: Vec<(String, i64)> },
     /// An enum with payloads, a union or a `Result`: the base aggregate `agg` starts with the
     /// tag (the variant index), and variant `i` is laid out as its view aggregate.

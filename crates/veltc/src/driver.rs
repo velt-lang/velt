@@ -41,8 +41,8 @@ pub struct BuildOptions {
     /// `--report numbers`: add the number representation report to [`Session::reports`].
     pub report_numbers: bool,
     /// Describe local variables for debuggers in a debug build (`velt build`, `velt dev --exe`).
-    /// Off for builds that only run (`velt run`, `velt test`): a described variable lives in
-    /// memory rather than a register, which slows hot loops by about a quarter.
+    /// Off for builds that only run (`velt run`, `velt test`): the backend will keep described
+    /// variables in memory rather than registers, which slows hot loops by about a quarter.
     pub debug_vars: bool,
 }
 

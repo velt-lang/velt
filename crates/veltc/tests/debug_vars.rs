@@ -4,7 +4,7 @@
 //! builds describe nothing.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use velt_vir::vir::{DebugKind, Program, Ty};
 use veltc::driver::{self, BuildOptions, Session};
@@ -48,14 +48,39 @@ function main() {
 }
 "#;
 
+/// Types that contain themselves, names a user may write and sema's temporaries, closures.
+const MORE: &str = r#"interface Item {
+  name: string;
+  children: Item[];
+}
+
+type Node = { value: number; next: Node | null };
+
+function main() {
+  const tree: Item = { name: "root", children: [] };
+  const list: Node = { value: 1, next: null };
+  const __mine = 3;
+  const label: string | null = null;
+  const shown = label ?? "none";
+  const base = 10;
+  const addBase = (x: number): number => x + base;
+  const fns: ((x: number) => number)[] = [addBase];
+  console.log(tree.name, list.value, __mine, shown, fns.length, addBase(1));
+}
+"#;
+
 fn compile(release: bool) -> Program {
     compile_with(release, true)
 }
 
 fn compile_with(release: bool, debug_vars: bool) -> Program {
+    compile_source(SRC, release, debug_vars)
+}
+
+fn compile_source(src: &str, release: bool, debug_vars: bool) -> Program {
     let opts = BuildOptions {
         input: PathBuf::from("main.vlt"),
-        root_source: Some(SRC.to_string()),
+        root_source: Some(src.to_string()),
         release,
         debug_vars,
         ..BuildOptions::default()
@@ -191,4 +216,102 @@ fn release_builds_describe_nothing() {
         .funcs
         .iter()
         .all(|f| f.locals.iter().all(|l| l.debug.is_none())));
+}
+
+#[test]
+fn types_that_contain_themselves_are_named_once() {
+    let p = compile_source(MORE, false, true);
+    velt_vir::verify(&p).unwrap();
+    let main = vars(&p, "4main");
+    let ty = |n: &str| main[n].0.as_str();
+    assert_eq!(ty("tree"), "{ name: string; children: { … }[] }");
+    assert_eq!(ty("list"), "{ value: number; next: { … } | null }");
+    assert_eq!(ty("fns"), "function[]");
+}
+
+#[test]
+fn sema_temporaries_are_hidden_and_user_names_are_not() {
+    let p = compile_source(MORE, false, true);
+    let names: Vec<String> = p
+        .funcs
+        .iter()
+        .flat_map(|f| f.locals.iter())
+        .filter(|l| l.debug.is_some())
+        .filter_map(|l| l.name.clone())
+        .collect();
+    assert!(names.iter().any(|n| n == "__mine"), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .all(|n| n.starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '$')),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn closure_captures_are_not_params() {
+    let p = compile_source(MORE, false, true);
+    let closure = p
+        .funcs
+        .iter()
+        .find(|f| {
+            f.symbol.contains("closure")
+                && f.locals.iter().any(|l| l.name.as_deref() == Some("base"))
+        })
+        .expect("the closure");
+    let vars = vars(&p, &closure.symbol);
+    assert!(vars["x"].2, "{vars:?}");
+    assert!(!vars["base"].2, "{vars:?}");
+}
+
+/// Every golden program that compiles also compiles with variables described, and its VIR
+/// verifies (the golden suite builds with `velt run`, which describes none).
+#[test]
+fn every_golden_compiles_with_variables() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
+    let mut programs = vec![];
+    for category in std::fs::read_dir(&root).unwrap().flatten() {
+        let Ok(entries) = std::fs::read_dir(category.path()) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let path = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if path.extension().is_some_and(|x| x == "vlt") && !name.starts_with('_') {
+                programs.push(path);
+            }
+        }
+    }
+    programs.sort();
+    assert!(programs.len() > 100, "found {} goldens", programs.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let failures = std::sync::Mutex::new(vec![]);
+    std::thread::scope(|scope| {
+        for _ in 0..std::thread::available_parallelism().map_or(4, |n| n.get()) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(path) = programs.get(i) else { break };
+                let opts = BuildOptions {
+                    input: path.clone(),
+                    debug_vars: true,
+                    ..BuildOptions::default()
+                };
+                let mut sess = Session::new();
+                let problem = match driver::compile(&mut sess, &opts) {
+                    Ok(p) => velt_vir::verify(&p).err().map(|e| e.join("; ")),
+                    Err(driver::BuildError::Ice(msg)) => Some(msg),
+                    // Programs that don't compile (expected errors, packages) are not this test's.
+                    Err(_) => None,
+                };
+                if let Some(problem) = problem {
+                    failures
+                        .lock()
+                        .unwrap()
+                        .push(format!("{}: {problem}", path.display()));
+                }
+            });
+        }
+    });
+    let failures = failures.into_inner().unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

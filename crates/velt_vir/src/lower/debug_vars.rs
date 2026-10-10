@@ -2,7 +2,7 @@
 //! type of each concrete HIR type, in terms of the layouts lowering builds for it (layout.rs),
 //! and the `LocalDebug` of each VIR local that holds a source variable.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use velt_sema::hir::{self, AdtKind, FloatTy, FnDef, TyId, TyKind};
 
@@ -14,6 +14,10 @@ use crate::vir::{DebugField, DebugKind, DebugTy, DebugTyId, DebugVariant, LocalD
 pub(super) struct DebugTypes {
     pub(super) types: Vec<DebugTy>,
     memo: HashMap<TyId, DebugTyId>,
+    /// Source names by type, and the types being named (a structural type that contains
+    /// itself, `interface Item { children: Item[] }`, is spelled once).
+    names: HashMap<TyId, String>,
+    naming: HashSet<TyId>,
 }
 
 impl Cx<'_> {
@@ -156,8 +160,29 @@ impl Cx<'_> {
         DebugKind::Tagged { agg, variants }
     }
 
-    /// `t` as written in source: `number`, `Point`, `Box<string>`, `number[]`, `T | null`.
+    /// `t` as written in source: `number`, `Point`, `Box<string>`, `number[]`, `T | null`. A
+    /// type reached again inside its own name is `{ … }` (an object type) or its short name.
     fn debug_name(&mut self, t: TyId) -> String {
+        if let Some(name) = self.debug_types().names.get(&t) {
+            return name.clone();
+        }
+        if !self.debug_types().naming.insert(t) {
+            return match self.kind(t) {
+                TyKind::Adt(d, _) if matches!(self.hir.def(d), hir::Def::Adt(a) if a.kind == AdtKind::Anon) => {
+                    "{ … }".into()
+                }
+                _ => self.type_name(t),
+            };
+        }
+        let name = self.spell(t);
+        let d = self.debug_types();
+        d.naming.remove(&t);
+        d.names.insert(t, name.clone());
+        name
+    }
+
+    /// [`debug_name`](Self::debug_name) of a type not being named yet.
+    fn spell(&mut self, t: TyId) -> String {
         match self.kind(t) {
             TyKind::Int(i) => super::keys::int_key(i).into(),
             TyKind::Float(FloatTy::F64) => "number".into(),
@@ -168,8 +193,7 @@ impl Cx<'_> {
             TyKind::Never => "never".into(),
             TyKind::Array(e) => {
                 let elem = self.debug_name(e);
-                let grouped = matches!(self.kind(e), TyKind::Option(_) | TyKind::FnPtr { .. })
-                    || self.is_union(e);
+                let grouped = matches!(self.kind(e), TyKind::Option(_)) || self.is_union(e);
                 match grouped {
                     true => format!("({elem})[]"),
                     false => format!("{elem}[]"),
@@ -227,8 +251,8 @@ impl Cx<'_> {
 
 impl FnLower<'_, '_> {
     /// Describe the locals that hold `f`'s source variables (with `LowerOptions::debug_info`):
-    /// params and named locals, as they are bound once the prologue is done. Locals sema made
-    /// up (`#arg0`, `__index`) stay undescribed.
+    /// params, captures and named locals, as they are bound once the prologue is done. Locals
+    /// sema made up (`#arg0`, `<nullish>`: names no identifier starts with) stay undescribed.
     pub(super) fn describe_locals(&mut self, f: &FnDef, params: usize) {
         if self.cx.debug.is_none() {
             return;
@@ -238,7 +262,10 @@ impl FnLower<'_, '_> {
             let (Some(local), ty, by_ref) = (info.vir, info.ty, info.indirect) else {
                 continue;
             };
-            if ld.name.starts_with('#') || ld.name.starts_with("__") {
+            if !ld
+                .name
+                .starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '$')
+            {
                 continue;
             }
             let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(ld.span)) else {
@@ -248,7 +275,8 @@ impl FnLower<'_, '_> {
                 decl,
                 ty: self.cx.debug_ty(ty),
                 by_ref,
-                param: i < params,
+                // A closure's captures come first among its params; they are not its params.
+                param: (f.captures.len()..params).contains(&i),
             };
             self.locals[local.0 as usize].debug = Some(debug);
         }
