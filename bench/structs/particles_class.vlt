@@ -1,0 +1,50 @@
+// A particle update over `Vec2[]` arrays with classes: every step replaces each position and
+// velocity with a `new Vec2` computed by small methods.
+class Vec2 {
+  x: number;
+  y: number;
+
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+
+  add(o: Vec2): Vec2 {
+    return new Vec2(this.x + o.x, this.y + o.y);
+  }
+
+  scale(k: number): Vec2 {
+    return new Vec2(this.x * k, this.y * k);
+  }
+}
+
+function main() {
+  const n = 10000;
+  const pos: Vec2[] = [];
+  const vel: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    pos.push(new Vec2((i % 100) * 0.1, 1 + (i % 37) * 0.25));
+    vel.push(new Vec2(((i % 7) - 3) * 0.5, (i % 11) * 0.2));
+  }
+  const g = new Vec2(0, -9.81);
+  const dt = 0.001;
+  for (let s = 0; s < 500; s++) {
+    for (let i = 0; i < n; i++) {
+      let v = vel[i].add(g.scale(dt));
+      let p = pos[i].add(v.scale(dt));
+      if (p.y < 0) {
+        p = new Vec2(p.x, -p.y);
+        v = new Vec2(v.x, -v.y * 0.9);
+      }
+      pos[i] = p;
+      vel[i] = v;
+    }
+  }
+  let sx: number = 0;
+  let sy: number = 0;
+  for (let i = 0; i < n; i++) {
+    sx += pos[i].x;
+    sy += pos[i].y + vel[i].y;
+  }
+  console.log(sx.toFixed(6), sy.toFixed(6));
+}

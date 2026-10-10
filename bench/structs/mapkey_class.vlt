@@ -1,0 +1,24 @@
+// A `Map` keyed by a small value, the TypeScript way: class instances compare by identity as
+// `Map` keys, so the key is the cell's string form `"x,y"`. A random walk on a grid counts its
+// visits per cell.
+function main() {
+  const visits = new Map<string, number>();
+  let x: number = 0;
+  let y: number = 0;
+  let seed = 1;
+  for (let i = 0; i < 1000000; i++) {
+    seed = (seed * 48271) % 2147483647;
+    const d = seed % 4;
+    if (d == 0) x += 1;
+    else if (d == 1) x -= 1;
+    else if (d == 2) y += 1;
+    else y -= 1;
+    const k = `${x},${y}`;
+    visits.set(k, (visits.get(k) ?? 0) + 1);
+  }
+  let most: number = 0;
+  for (const n of visits.values()) {
+    if (n > most) most = n;
+  }
+  console.log(visits.size, most);
+}
