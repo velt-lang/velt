@@ -33,7 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
-mod assigned;
+pub(crate) mod assigned;
 mod closure_assigned;
 mod const_borrow;
 mod consume;
@@ -239,6 +239,9 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: HashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `const re = /…/` (or `new RegExp` of literals, or another such local): the number of
+    /// capturing groups and the flags of the regex each such local holds (`regex_args`).
+    pub regex_consts: HashMap<LocalId, (usize, String)>,
     /// `let x;` without a type or initializer, not assigned yet: where each is declared. The
     /// first assignment gives it its type (`untyped_let`).
     pub untyped_lets: HashMap<LocalId, Span>,
@@ -283,6 +286,7 @@ impl Frame {
             closure_assigned: HashMap::new(),
             int_returns_number: false,
             const_lits: HashMap::new(),
+            regex_consts: HashMap::new(),
             untyped_lets: HashMap::new(),
         }
     }
@@ -302,6 +306,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The function whose body is being checked, if it is a declared function (for a nested
     /// one, `Ctx::enclosing_class` gives the class whose body it is in).
     pub body_def: Option<DefId>,
+    /// In a static method using `this` or `super` (`collect::static_this`): the class `this`
+    /// is, and the class declaring the method (whose base `super` is).
+    pub static_this: Option<(DefId, DefId)>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
     /// The body is a local generic arrow function (checked as a nested function).
@@ -363,6 +370,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             fn_name: String::new(),
             owner: None,
             body_def: None,
+            static_this: None,
             enclosing_locals: vec![],
             generic_arrow: false,
             f: frame,

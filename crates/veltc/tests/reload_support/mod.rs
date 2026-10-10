@@ -216,6 +216,20 @@ impl Dev {
     }
 
     /// Poll the log until `done` holds; on timeout return the whole log.
+    /// Everything `velt dev` printed so far, for a failure message.
+    #[allow(dead_code)]
+    pub fn transcript(&self) -> String {
+        let log = self.log.lock().unwrap();
+        format!(
+            "--- stdout ---
+{}
+--- stderr ---
+{}",
+            text(&log.stdout),
+            text(&log.stderr)
+        )
+    }
+
     fn wait(&self, mut done: impl FnMut(&Log) -> bool) -> Result<(), String> {
         let deadline = Instant::now() + TIMEOUT;
         loop {

@@ -1,9 +1,13 @@
-// Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed` on f64, and
+// Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed`,
+// `toExponential` and `toPrecision` on f64, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
+// `digits` < 0: omitted.
+declare function velt_rt_f64_to_exponential(x: f64, digits: i64): string;
+declare function velt_rt_f64_to_precision(x: f64, precision: i64): string;
 
 /**
  * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
@@ -34,6 +38,42 @@ extend f64 {
       panic("RangeError: toFixed() digits argument must be between 0 and 100");
     }
     return velt_rt_f64_to_fixed(this, digits);
+  }
+
+  /**
+   * Exponential notation with `digits` (0 to 100) digits after the point, rounded like JS (to
+   * the nearest, an exact tie away from zero): `(123.456).toExponential(2)` is "1.23e+2". Without
+   * `digits`, as many as it takes to tell the value apart (`(123.456).toExponential()` is
+   * "1.23456e+2"). `digits` is truncated as in JS (2.7 is 2, NaN is 0). `NaN` and ±Infinity are
+   * `String(x)`, whatever `digits` is.
+   */
+  toExponential(digits?: number): string {
+    if (digits == null) {
+      return velt_rt_f64_to_exponential(this, -1);
+    }
+    // Truncates, saturating, and NaN is 0: JavaScript's ToIntegerOrInfinity, clamped.
+    const d = digits as i64;
+    if (isFinite(this) && (d < 0 || d > 100)) {
+      panic("RangeError: toExponential() argument must be between 0 and 100");
+    }
+    return velt_rt_f64_to_exponential(this, d);
+  }
+
+  /**
+   * `precision` (1 to 100) significant digits, rounded like `toExponential`, in fixed notation
+   * unless the exponent is below -6 or at least `precision`: `(123.456).toPrecision(4)` is
+   * "123.5", `(123.456).toPrecision(2)` is "1.2e+2". `precision` is truncated as in JS (2.7 is
+   * 2). Without `precision`, `String(x)`.
+   */
+  toPrecision(precision?: number): string {
+    if (precision == null) {
+      return `${this}`;
+    }
+    const p = precision as i64;
+    if (isFinite(this) && (p < 1 || p > 100)) {
+      panic("RangeError: toPrecision() argument must be between 1 and 100");
+    }
+    return velt_rt_f64_to_precision(this, p);
   }
 }
 

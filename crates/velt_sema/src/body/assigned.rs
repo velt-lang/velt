@@ -13,12 +13,22 @@ pub(crate) type Assigned<'a> = HashMap<&'a str, Span>;
 
 /// Names assigned anywhere in `s`.
 pub(crate) fn assigned_in_stmt<'a>(s: &'a ast::Stmt, out: &mut Assigned<'a>) {
-    Walk { out, direct: true }.stmt(s);
+    Walk {
+        out,
+        direct: true,
+        fields: false,
+    }
+    .stmt(s);
 }
 
 /// Names `e` assigns (also inside closures it creates).
 pub(crate) fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut Assigned<'a>) {
-    Walk { out, direct: true }.expr(e);
+    Walk {
+        out,
+        direct: true,
+        fields: false,
+    }
+    .expr(e);
 }
 
 /// Names that the closures (arrow functions, function expressions, object methods) created in
@@ -31,9 +41,23 @@ pub(crate) fn assigned_by_closures<'a>(
     let mut w = Walk {
         out: &mut out,
         direct: false,
+        fields: false,
     };
     stmts.iter().for_each(|s| w.stmt(s));
     exprs.into_iter().for_each(|e| w.expr(e));
+    out
+}
+
+/// The fields of `this` that `stmts` assign (`this.x = …`) outside closures: a constructor's
+/// assignments (a closure cannot assign a `readonly` field).
+pub(crate) fn this_fields_assigned(stmts: &[ast::Stmt]) -> Assigned<'_> {
+    let mut out = Assigned::new();
+    let mut w = Walk {
+        out: &mut out,
+        direct: false,
+        fields: true,
+    };
+    stmts.iter().for_each(|s| w.stmt(s));
     out
 }
 
@@ -47,6 +71,8 @@ struct Walk<'a, 'o> {
     out: &'o mut Assigned<'a>,
     /// Record assignments outside closures too (not only those closures make).
     direct: bool,
+    /// Record the fields of `this` assigned outside closures, not variables.
+    fields: bool,
 }
 
 impl<'a> Walk<'a, '_> {
@@ -137,6 +163,14 @@ impl<'a> Walk<'a, '_> {
     fn expr(&mut self, e: &'a ast::Expr) {
         use ast::ExprKind as E;
         match &e.kind {
+            E::Arrow { .. } | E::Function(_) if self.fields => return,
+            E::Assign { target, .. } | E::Update { target, .. } if self.fields => {
+                if let E::Member { object, prop, .. } = &target.kind {
+                    if matches!(object.kind, E::This) {
+                        self.out.entry(prop.name.as_str()).or_insert(e.span);
+                    }
+                }
+            }
             E::Assign { target, .. } | E::Update { target, .. } => {
                 if let (true, E::Ident(id)) = (self.direct, &target.kind) {
                     self.out.entry(id.name.as_str()).or_insert(e.span);
@@ -152,7 +186,7 @@ impl<'a> Walk<'a, '_> {
                 return self.closure(names.collect(), defaults.collect(), body);
             }
             E::Function(f) => return self.function(f),
-            E::Object(props) => {
+            E::Object(props) if !self.fields => {
                 for p in props {
                     if let ast::ObjectProp::Method(f) = p {
                         self.function(f);

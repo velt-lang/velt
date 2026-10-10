@@ -119,6 +119,13 @@ pub(crate) struct Ctx<'m> {
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
     pub enclosing_class: HashMap<DefId, DefId>,
+    /// Static methods using `this` or `super`, and their copies: the class `this` is in each
+    /// (`collect::static_this`).
+    pub static_this: HashMap<DefId, DefId>,
+    /// The copy of a static method (using `this`) whose `this` is a given subclass.
+    pub static_copies: HashMap<(DefId, DefId), DefId>,
+    /// For each copy of a static method: the method.
+    pub static_copy_of: HashMap<DefId, DefId>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included
@@ -247,6 +254,9 @@ impl<'m> Ctx<'m> {
             nested: vec![],
             nested_locals: HashMap::new(),
             enclosing_class: HashMap::new(),
+            static_this: HashMap::new(),
+            static_copies: HashMap::new(),
+            static_copy_of: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
             generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),

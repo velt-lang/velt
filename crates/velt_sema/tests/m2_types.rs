@@ -811,3 +811,13 @@ fn super_runs_exactly_once_before_this() {
     assert_eq!(r.matches("error").count(), 1, "{r}");
     assert!(r.contains("`t` is a parameter property of `B`"), "{r}");
 }
+
+#[test]
+fn as_types_a_literal_in_the_asserted_context() {
+    ok_src("function main() { const xs = [[\"a\", 1]] as [string, u8][]; console.log(xs[0][1]); }");
+    ok_src("function main() { const xs = [] as string[]; console.log(xs.length); }");
+    let r = err_src("function main() { const xs = [[\"a\", \"b\"]] as [string, u8][]; }");
+    assert!(r.contains("mismatched types"), "{r}");
+    let r = err_src("class A {} class B {} function main() { const b = new A() as B; }");
+    assert!(r.contains("cannot cast `A` as `B`"), "{r}");
+}

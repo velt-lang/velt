@@ -22,6 +22,7 @@
 
 pub mod case;
 pub mod collate;
+pub mod exponential;
 pub mod fixed;
 pub mod number;
 pub mod replace;

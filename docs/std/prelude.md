@@ -37,7 +37,7 @@ two), and a negative position counts from the end. `Buffer.byteLength(s)` is the
 | `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
-| `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
+| `replace(from, to)`, `replaceAll(from, to)` | `from` is plain text, or a `RegExp` (as in `match`, `matchAll`, `search` and `split` with a regex: [`velt:regex`](regex.md#string-methods-with-a-regex)) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `repeat` panics on a negative `n` (JS's RangeError); the pads fill up to `n` code units |
 | `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
 | `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
@@ -59,7 +59,17 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
   constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
   `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
   class `NumberConstructor`, TypeScript's name for the type of `Number`).
-- `x.toFixed(digits = 0)` on `f64`, rounded like JS.
+- `x.toFixed(digits = 0)`, `x.toExponential(digits?)` and `x.toPrecision(precision?)` on `f64`,
+  with JS's output and rounding (the nearest, an exact tie away from zero):
+
+  ```ts
+  console.log((123.456).toExponential(2), (0).toExponential()); // 1.23e+2 0e+0
+  console.log((123.456).toPrecision(4), (0.000123).toPrecision(2)); // 123.5 0.00012
+  ```
+
+  A digit count is truncated as in JS (`toExponential(2.7)` is `toExponential(2)`); one out of
+  range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100) panics like JS's
+  `RangeError`.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the

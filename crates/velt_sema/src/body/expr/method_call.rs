@@ -26,6 +26,12 @@ impl FnCx<'_, '_> {
         let recv = self.unbrand(recv);
         // `x.toFixed(2)`: a number's method (`literal_locals`).
         self.literal_use_number(&recv);
+        // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
+        if recv.ty == self.cx.ty.str_ {
+            if let Some((prop, args)) = self.regex_string_call(prop, args) {
+                return self.method_call_at(recv, &prop, type_args, &args, exp, span, false);
+            }
+        }
         self.method_call_at(recv, prop, type_args, args, exp, span, false)
     }
 
@@ -46,6 +52,10 @@ impl FnCx<'_, '_> {
             // A receiver narrowed to `never` panics before the call: the call is unreachable.
             let never = recv.ty == self.cx.ty.never;
             return if never { recv } else { self.error_expr(span) };
+        }
+        if self.shadowed_private_name(recv.ty, prop) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
         }
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);

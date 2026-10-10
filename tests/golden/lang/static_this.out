@@ -1,0 +1,6 @@
+hello A a hello B a hello C a
+BBB [ 'C1', 'C2' ]
+A.f
+A.f+B.f(B)
+A.f+B.f(C)+C.f
+hello Box hello NumBox

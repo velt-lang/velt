@@ -186,6 +186,54 @@ impl FnCx<'_, '_> {
             .or_else(|| classes.first().copied())
     }
 
+    /// TS18014: `o.#x` where `o`'s class declares `#x` and this code is in its body, but a class
+    /// nested in it declares its own `#x`, which the name means here. Reports it and returns
+    /// true.
+    pub(crate) fn shadowed_private_name(&mut self, t: TyId, prop: &ast::Ident) -> bool {
+        if !prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return false;
+        }
+        let Some(inner) = self.name_owner(&prop.name) else {
+            return false;
+        };
+        let classes = self.lexical_classes();
+        let mut cur = self.cx.class_of(t).map(|(c, _)| c);
+        let mut shadowed = None;
+        for _ in 0..64 {
+            let Some(c) = cur else { break };
+            if c != inner && classes.contains(&c) && self.cx.declares_private_name(c, &prop.name) {
+                shadowed = Some(c);
+                break;
+            }
+            cur = self
+                .cx
+                .adt(c)
+                .and_then(|a| a.base)
+                .and_then(|b| self.cx.class_of(b))
+                .map(|(c, _)| c);
+        }
+        let Some(outer) = shadowed else {
+            return false;
+        };
+        let name = |s: &Self, d: DefId| s.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        let (tn, inner_name, outer_name) =
+            (self.cx.display(t), name(self, inner), name(self, outer));
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "property `{}` cannot be accessed on type `{tn}` within this class because it is shadowed by another private identifier with the same spelling",
+                    prop.name
+                ),
+                prop.span,
+            )
+            .with_note(format!(
+                "`{inner_name}` declares its own `{}`, which is what the name means in its body; rename one of them to use `{outer_name}`'s",
+                prop.name
+            )),
+        );
+        true
+    }
+
     /// `private` check for field `index` of struct/class values of type `t`.
     pub(crate) fn check_field_private(&mut self, t: TyId, index: u32, name: &ast::Ident) {
         let private_to = self.field_private_to(t, index);
@@ -303,5 +351,69 @@ impl FnCx<'_, '_> {
             .and_then(|g| g.src.owner);
         self.check_private(private_to, &prop.name, prop.span);
         Some(self.global_read(g, want, span))
+    }
+
+    /// `static readonly NAME` of class `d` or of its nearest base class declaring it.
+    pub(crate) fn inherited_static_field(
+        &mut self,
+        d: DefId,
+        prop: &ast::Ident,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let mut cur = d;
+        for _ in 0..64 {
+            if self.cx.adt(cur)?.statics.contains_key(&prop.name) {
+                return self.static_field(cur, prop, want, span);
+            }
+            let base = self.cx.adt(cur)?.base?;
+            cur = self.cx.class_of(base)?.0;
+        }
+        None
+    }
+
+    /// A static method used as a value (`const f = C.kind`): the function, which has no `this`
+    /// (JavaScript calls it with `this` undefined), so one using `this` is an error. `None`:
+    /// class `d` has no static method `prop`.
+    pub(crate) fn static_method_value(
+        &mut self,
+        d: DefId,
+        this_class: DefId,
+        prop: &ast::Ident,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        self.cx.adt(d)?;
+        let (m, owner_generics, owner_args) = self.find_static(d, &prop.name).ok()?;
+        self.cx.rec_ref(prop.span, Target::Def(m.def));
+        let private_to = self.fn_private_to(m.def);
+        self.check_private(private_to, &prop.name, prop.span);
+        let cname = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        let what = format!("{cname}.{}", prop.name);
+        if self.cx.static_this.contains_key(&m.def) {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`{what}` uses `this` or `super`, so it cannot be used as a value"),
+                    span,
+                )
+                .with_note("a static method taken as a value has no `this` (JavaScript calls it with `this` undefined)")
+                .with_note(format!("call it as `{what}()`, or wrap the call: `() => {what}()`")),
+            );
+            return Some(self.error_expr(span));
+        }
+        let def = self.static_def_for(m.def, this_class);
+        crate::body::defaults::param_defaults(self.cx, def);
+        let ret = crate::body::returns::ret_of(self.cx, def, span);
+        let f = self.cx.fn_info(def);
+        let tys: Vec<TyId> = f.params.iter().map(|p| p.ty).chain([ret]).collect();
+        let n = f.generics.len();
+        let mut slots = vec![None; n];
+        for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
+            *slot = Some(a);
+        }
+        for i in self.unused_owner_slots(&tys, owner_generics) {
+            slots[i].get_or_insert(self.cx.ty.unit);
+        }
+        Some(self.fn_ref_slots(def, &what, slots, exp, span))
     }
 }
