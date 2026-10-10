@@ -114,7 +114,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     let (mut values, mut methods) = (Vec::new(), Vec::new());
     let mut shared: Vec<TyId> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
-    for i in 0..cx.defs.len() {
+    for (i, slot) in fns.iter_mut().enumerate() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
             continue;
         };
@@ -157,7 +157,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         if f.self_ty.is_some() {
             methods.push(DefId(i as u32));
         }
-        fns[i] = Some(fx);
+        *slot = Some(fx);
         cx.defs[i] = Some(Def::Fn(f));
     }
     if candidates.is_empty() {
