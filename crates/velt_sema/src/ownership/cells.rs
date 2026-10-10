@@ -232,7 +232,7 @@ fn unshareable(
 
 /// Where function `d` assigns its local `l` first, itself or else through a closure created
 /// in it that captures `l`.
-fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> {
+pub(crate) fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> {
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
         return None;
     };

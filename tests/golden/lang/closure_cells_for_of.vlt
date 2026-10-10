@@ -98,6 +98,36 @@ async function nested() {
   console.log(rs.map((f) => f()).join(","), makers.map((m) => m()()).join(","));
 }
 
+class P {
+  constructor(public n: number) {}
+}
+
+// A closure called on the spot (not stored), or a callback, that assigns the loop variable: the
+// variable has its own copy of the element, so the array is left alone.
+function calledOnTheSpot() {
+  const xs = ["a", "b"];
+  for (let i = 0; i < 3; i++) for (let x of xs) { const f = () => { x = x + "!"; }; f(); }
+  for (let x of xs) [1, 2].forEach(() => { x = x + "?"; });
+  console.log(xs.join(","));
+  const ps: [string, string][] = [["a", "b"], ["c", "d"]];
+  for (let [x, y] of ps) { const g = () => { x = x + y; }; g(); console.log(x); }
+  const named = [{ name: "n", n: 1 }];
+  for (let { name, n } of named) { const g = () => { name = name + n; n = 0; }; g(); console.log(name, n); }
+  let [first, second] = ps[1];
+  const h = () => { first = first + second; };
+  h();
+  console.log(first, JSON.stringify(ps), JSON.stringify(named));
+  const objs = [new P(1), new P(2)];
+  const kept: P[] = [];
+  for (let p of objs) { const g = () => { p = new P(0); }; kept.push(p); g(); kept.push(p); }
+  console.log(objs[0].n, objs[1].n, kept.map((p) => p.n).join(","));
+  const many: P[] = [];
+  for (let i = 0; i < 1000; i++) many.push(new P(i));
+  let sum = 0;
+  for (let p of many) { const g = () => { sum += p.n; p = new P(p.n * 10); }; g(); g(); }
+  console.log(sum, many[999].n);
+}
+
 async function main() {
   await strings();
   await numbers();
@@ -106,4 +136,5 @@ async function main() {
   await forAwait();
   await forAwaitPromises();
   await nested();
+  calledOnTheSpot();
 }
