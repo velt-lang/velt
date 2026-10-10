@@ -24,11 +24,12 @@ declare function velt_rt_weakref_drop(r: u32);
 export class WeakMap<K, V> {
   #id: u32;
 
+  /** An empty map. */
   constructor() {
     this.#id = 0;
   }
 
-  /** The value stored for `key`, or `undefined` if it has none. */
+  /** The value stored for `key`, or `null` if it has none (JS: `undefined`). */
   get(key: K): V | null {
     if (this.#id == 0) {
       return null;
@@ -71,6 +72,7 @@ export class WeakMap<K, V> {
 export class WeakSet<T> {
   #id: u32;
 
+  /** An empty set. */
   constructor() {
     this.#id = 0;
   }
@@ -101,17 +103,18 @@ export class WeakSet<T> {
 
 /**
  * A reference to an object that does not keep it alive. Velt frees an object as soon as its last
- * reference goes, so `deref()` returns `undefined` from then on (Node clears it at a later
+ * reference goes, so `deref()` returns `null` from then on (Node clears it at a later
  * garbage collection).
  */
 export class WeakRef<T> {
   #id: u32;
 
+  /** A reference to `target` that does not keep it alive. */
   constructor(target: T) {
     this.#id = __intrinsic_weakref_new(target);
   }
 
-  /** The target, or `undefined` once it was freed. */
+  /** The target, or `null` once it was freed (JS: `undefined`). */
   deref(): T | null {
     return __intrinsic_weakref_deref<T>(this.#id);
   }
