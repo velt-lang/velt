@@ -57,6 +57,14 @@ Failing programs are saved under `out/cases/<signature>/` with a `.txt` describi
 mode is re-checked). Shrunk repros go to `tests/golden/bugs/` (with Node's output as `.out`) and
 into an issue.
 
+**Exit status.** `run` and `fuzz` exit with 1 when any program gives a `mismatch` or `crash`.
+`fuzz` also exits with 1 when `velt` rejects more than 2% of the generated programs in one mode
+(rounded down: 4 of 200 seeds pass, 5 fail; a run of fewer than 50 seeds allows none), and
+prints the first three rejections' diagnostics for that mode. The generator writes only programs
+in the shared subset, so a rejection is a generator mistake or a front-end regression. The 2%
+allows for a rare environmental failure that is reported as a rejection, such as a linker that
+finds its output file locked. `run` reports rejections but doesn't fail on them.
+
 ## The normalizer (`src/tsify.rs`)
 
 The TypeScript twin is the `.vlt` source plus:
@@ -82,7 +90,10 @@ Differences between the languages that a program must avoid (the generator does 
 - **Numbers.** A `number` is a double in both, `-0` and rounding past 2^53 included, and
   `console.log` prints `-0` in both. Declared integer types (`i64`, `u8`, …) are Velt's: they
   wrap and divide as integers, so programs in the shared subset use them only where values stay
-  small. `Math.hypot` isn't correctly rounded in V8.
+  small. A `number` goes into a declared integer only with `as` (`s.indexOf(t) as i64`, also
+  `xs.length` and a compound expression of literals alone, such as `Math.trunc(7 / 2)`), which
+  TypeScript erases; an array literal is typed with `([1, 2] as i64[])` where no annotation
+  types it (`[1, 2].filter(…)`). `Math.hypot` isn't correctly rounded in V8.
 - **Printing containers.** Velt breaks long values across lines and prints arrays of more
   than 6 short elements in columns, as Node's `util.inspect` does, so both print with Node's
   defaults. Keep nesting shallow (Node shows `[Object]` past depth 2) and arrays under 100

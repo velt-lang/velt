@@ -8,7 +8,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-/// Runs a campaign over `seeds`; returns the number of distinct bug signatures.
+/// The share of generated programs `velt` may reject in one mode before a campaign fails, in
+/// percent of the seeds (rounded down, so a run of fewer than 50 seeds allows none). The
+/// generator only writes programs in the shared subset, so a rejection is a generator mistake or
+/// a front-end regression; the slack covers a rare environmental failure (a file locked at link
+/// time) that is reported as a rejection.
+pub const MAX_REJECTED_PERCENT: usize = 2;
+
+/// How many diagnostics a failing campaign prints for each mode with too many rejections.
+const SHOWN_REJECTIONS: usize = 3;
+
+/// Runs a campaign over `seeds`; returns the number of distinct bug signatures plus one for each
+/// mode in which `velt` rejected more than [`MAX_REJECTED_PERCENT`] of the programs.
 pub fn fuzz(
     cfg: &Config,
     opts: gen::Options,
@@ -32,7 +43,17 @@ pub fn fuzz(
     );
     let mut groups: BTreeMap<String, Vec<(u64, Verdict)>> = BTreeMap::new();
     let mut tally: BTreeMap<String, usize> = BTreeMap::new();
+    let mut rejected: BTreeMap<&'static str, Vec<(u64, String)>> = BTreeMap::new();
     for (&seed, v) in seeds.iter().zip(verdicts) {
+        if let Verdict::VeltRejected {
+            mode, diagnostic, ..
+        } = &v
+        {
+            rejected
+                .entry(mode.name())
+                .or_default()
+                .push((seed, diagnostic.clone()));
+        }
         let kind = v.signature().split(':').next().unwrap_or("").to_string();
         *tally.entry(kind).or_default() += 1;
         if interesting(&v) {
@@ -56,10 +77,42 @@ pub fn fuzz(
         let examples: Vec<String> = g.iter().take(5).map(|(s, _)| s.to_string()).collect();
         println!("  {:>4} × {sig}  (seeds {})", g.len(), examples.join(", "));
     }
-    Ok(groups
+    let bugs = groups
         .keys()
         .filter(|s| s.starts_with("mismatch") || s.starts_with("crash"))
-        .count())
+        .count();
+    Ok(bugs + too_many_rejections(&rejected, seeds.len()))
+}
+
+/// Reports each mode whose rejections exceed [`MAX_REJECTED_PERCENT`] of `total` seeds, with its
+/// first diagnostics; returns how many modes did.
+fn too_many_rejections(rejected: &BTreeMap<&str, Vec<(u64, String)>>, total: usize) -> usize {
+    let allowed = max_rejected(total);
+    let mut failed = 0;
+    for (mode, seeds) in rejected {
+        if seeds.len() <= allowed {
+            continue;
+        }
+        failed += 1;
+        println!(
+            "FAIL: velt rejected {} of {total} generated programs in {mode} mode (at most \
+             {allowed} allowed, {MAX_REJECTED_PERCENT}%): the generator writes programs outside \
+             the language, or the front end rejects valid ones. First diagnostics:",
+            seeds.len()
+        );
+        for (seed, diagnostic) in seeds.iter().take(SHOWN_REJECTIONS) {
+            println!("  seed {seed}:");
+            for line in diagnostic.lines() {
+                println!("    {line}");
+            }
+        }
+    }
+    failed
+}
+
+/// The number of rejected programs a campaign over `total` seeds tolerates in one mode.
+fn max_rejected(total: usize) -> usize {
+    total * MAX_REJECTED_PERCENT / 100
 }
 
 /// Minimizes the program in `file`, keeping its current verdict; prints and saves the result.
@@ -90,7 +143,7 @@ fn check_seed(cfg: &Config, opts: gen::Options, seed: u64, scratch: &Path) -> Ve
 /// Bugs, plus programs `velt` rejects: those are generator mistakes or real front-end gaps, and
 /// either way worth a look.
 fn interesting(v: &Verdict) -> bool {
-    v.is_bug() || matches!(v, Verdict::VeltRejected(_))
+    v.is_bug() || matches!(v, Verdict::VeltRejected { .. })
 }
 
 fn minimize_seed(
@@ -111,7 +164,9 @@ fn minimize_seed(
 /// Shrinks `text` while it keeps `verdict`'s signature, re-checking only the failing mode.
 fn minimize(cfg: &Config, text: &str, verdict: &Verdict, scratch: &Path) -> String {
     let mode = match verdict {
-        Verdict::Mismatch { mode, .. } | Verdict::CompilerCrash { mode, .. } => *mode,
+        Verdict::Mismatch { mode, .. }
+        | Verdict::CompilerCrash { mode, .. }
+        | Verdict::VeltRejected { mode, .. } => *mode,
         _ => Mode::Debug,
     };
     let narrow = Config {
@@ -133,5 +188,29 @@ pub fn parse_seeds(spec: &str) -> Result<Vec<u64>, String> {
             Ok((a..b).collect())
         }
         None => Ok(vec![spec.parse().map_err(|_| bad())?]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejections_fail_past_two_percent_per_mode() {
+        assert_eq!(max_rejected(200), 4);
+        assert_eq!(max_rejected(100), 2);
+        assert_eq!(max_rejected(10), 0);
+        let some = |n: u64| {
+            (0..n)
+                .map(|s| (s, String::from("error")))
+                .collect::<Vec<_>>()
+        };
+        let mut rejected = BTreeMap::new();
+        rejected.insert("debug", some(4));
+        rejected.insert("release", some(1));
+        assert_eq!(too_many_rejections(&rejected, 200), 0);
+        rejected.insert("debug", some(5));
+        assert_eq!(too_many_rejections(&rejected, 200), 1);
+        assert_eq!(too_many_rejections(&rejected, 10), 2);
     }
 }
