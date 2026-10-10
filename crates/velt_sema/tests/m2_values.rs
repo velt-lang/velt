@@ -59,13 +59,14 @@ fn for_of_borrows_or_copies_elements() {
 
 #[test]
 fn for_of_over_a_map_iterates_entries() {
-    // Over a map variable: the live cursor loop (`body/for_map.rs`); over a temporary map: the
-    // array of its entries.
+    // Over a map variable or a call's result: the live cursor loop (`body/for_map.rs`, #877);
+    // over a `new` map: the array of its entries.
     let p = ok_src(
         "function make(): Map<string, i64> { return new Map<string, i64>(); }
          function live() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }
-         function temp() { for (const [k, v] of make()) { console.log(k, v); } }
-         function main() { live(); temp(); }",
+         function called() { for (const [k, v] of make()) { console.log(k, v); } }
+         function temp() { for (const [k, v] of new Map<string, i64>()) { console.log(k, v); } }
+         function main() { live(); called(); temp(); }",
     );
     let method = |name: &str| {
         p.defs
@@ -82,6 +83,8 @@ fn for_of_over_a_map_iterates_entries() {
     assert!(calls_method("live", "Map.__advance"));
     assert!(calls_method("live", "Map.__entryAt"));
     assert!(!calls_method("live", "Map.entries"));
+    assert!(calls_method("called", "Map.__advance"));
+    assert!(!calls_method("called", "Map.entries"));
     assert!(calls_method("temp", "Map.entries"));
 }
 
