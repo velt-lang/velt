@@ -1,16 +1,28 @@
-http_handler_callback_assigns.vlt:50:39: error: this handler calls `next`, which changes `n`; requests run at the same time
-http_handler_callback_assigns.vlt:19:5: `n` is changed here
+http_handler_callback_assigns.vlt:66:39: error: this handler calls `next`, which changes `n`; requests run at the same time
+http_handler_callback_assigns.vlt:20:5: `n` is changed here
   = note: fix: const n = shared(new Mutex(0))  // one value shared by every request, as in Node
   = note: then read it with `n.with((v) => v)` and change it with `n.with((v) => { v = … })`
-http_handler_callback_assigns.vlt:47:5: error: this handler calls `i.onChange`, which changes `last`; requests run at the same time
-http_handler_callback_assigns.vlt:29:5: `last` is changed here
-  = note: fix: const last = shared(new Mutex({ value: "" }))  // one value shared by every request, as in Node
+http_handler_callback_assigns.vlt:62:5: error: this handler calls `i.onChange`, which changes `last`; requests run at the same time
+http_handler_callback_assigns.vlt:30:5: `last` is changed here
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
   = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`
-http_handler_callback_assigns.vlt:48:5: error: this handler calls `w.set`, which changes `state`; requests run at the same time
-http_handler_callback_assigns.vlt:35:5: `state` is changed here
-  = note: fix: const state = shared(new Mutex({ value: "start" }))  // one value shared by every request, as in Node
+http_handler_callback_assigns.vlt:63:5: error: this handler calls `w.set`, which changes `state`; requests run at the same time
+http_handler_callback_assigns.vlt:36:5: `state` is changed here
+  = note: fix: const state = shared(new Mutex<{ value: string }>({ value: "start" }))  // one value shared by every request, as in Node
   = note: then read it with `state.with((v) => v.value)` and change it with `state.with((v) => { v.value = … })`
-http_handler_callback_assigns.vlt:49:5: error: this handler calls `cbs[0]`, which changes `hits`; requests run at the same time
-http_handler_callback_assigns.vlt:42:5: `hits` is changed here
+http_handler_callback_assigns.vlt:64:5: error: this handler calls `cbs[0]`, which changes `hits`; requests run at the same time
+http_handler_callback_assigns.vlt:43:5: `hits` is changed here
   = note: fix: const hits = shared(0)  // one value shared by every request, as in Node
   = note: then read it with `hits.get()` and change it with `hits.set(v)` or `hits.add(1)`
+http_handler_callback_assigns.vlt:65:5: error: this handler calls `p.onChange`, which changes `picked`; requests run at the same time
+http_handler_callback_assigns.vlt:54:5: `picked` is changed here
+  = note: fix: const picked = shared(new Mutex<{ value: string | null }>({ value: null }))  // one value shared by every request, as in Node
+  = note: then read it with `picked.with((v) => v.value)` and change it with `picked.with((v) => { v.value = … })`
+http_handler_callback_assigns.vlt:65:5: error: this handler calls `p.onChange`, which changes `names`; requests run at the same time
+http_handler_callback_assigns.vlt:55:5: `names` is changed here
+  = note: fix: const names = shared(new Mutex<{ value: string[] }>({ value: [] }))  // one value shared by every request, as in Node
+  = note: then read it with `names.with((v) => v.value)` and change it with `names.with((v) => { v.value = … })`
+http_handler_callback_assigns.vlt:65:5: error: this handler calls `p.onChange`, which changes `trail`; requests run at the same time
+http_handler_callback_assigns.vlt:57:7: `trail` is changed here
+  = note: fix: const trail = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+  = note: then read it with `trail.with((v) => v.value)` and change it with `trail.with((v) => { v.value = … })`

@@ -1,7 +1,8 @@
 // An HTTP handler that calls a sync callback which assigns a variable it captured itself: requests
 // run at the same time and share what the handler captured, so they would all assign that one
 // variable at once (#873). The error names the call and the variable, and shows the variable
-// shared with `shared(...)`, as Node shares it.
+// shared with `shared(...)`, as Node shares it, with its type written out where the initializer
+// does not give it.
 import { serve } from "velt:http";
 
 class Input {
@@ -43,10 +44,25 @@ async function main() {
   });
   // A callback reached through a function's result.
   const next = makeCounter();
+  // Variables whose initializer does not give their type (`null`, `[]`): the fix writes it
+  // out. And a closure made inside the callback that assigns what the callback captured.
+  let picked: string | null = null;
+  let names: string[] = [];
+  let trail = "";
+  const p = new Input();
+  p.onChange = (v: string) => {
+    picked = v;
+    names = [v];
+    const bump = () => {
+      trail = `${trail}${v}`;
+    };
+    bump();
+  };
   const a = await serve({ port: 0 }, async (req) => {
     i.onChange("x");
     w.set("y");
     cbs[0]();
+    p.onChange("z");
     return new Response(`${w.get()} ${next()}`);
   });
   await a.shutdown();

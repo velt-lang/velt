@@ -54,16 +54,17 @@ it throws.
   not the caller's object (unlike Node, which shares it; #854). A captured resource
   (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
   ([Async](../reference/async.md#thread-safety)).
-- That includes a variable assigned by a sync callback the handler calls: a function value
-  stored in something it captured (`i.onChange("x")` with `i.onChange = (v) => { last = v; }`),
-  in an array (`cbs[0]()`), or returned by a function (`const next = makeCounter()`). Requests
-  would all assign that one variable at the same time, so it is an error that names the call and
-  the variable, and shows the variable's declaration rewritten to hold one value every request
-  shares, as Node does:
+- That includes a variable assigned by a sync callback the handler calls (or by a closure that
+  callback makes): a function value stored in something it captured (`i.onChange("x")` with
+  `i.onChange = (v) => { last = v; }`), in an array (`cbs[0]()`), a `Map`, a generic box or a
+  `T | null` field, called by a method (`this.cb()`), passed to `setTimeout`, or returned by a
+  function (`const next = makeCounter()`). Requests would all assign that one variable at the
+  same time, so it is an error that names the call and the variable, and shows the variable's
+  declaration rewritten to hold one value every request shares, as Node does:
 
   ```
   error: this handler calls `i.onChange`, which changes `last`; requests run at the same time
-    = note: fix: const last = shared(new Mutex({ value: "" }))  // one value shared by every request, as in Node
+    = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
     = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`
   ```
 
@@ -71,6 +72,18 @@ it throws.
   `boolean` in `shared(new Mutex(0))`. Callbacks that only read what they captured, functions
   the handler calls that change only their own variables, and closures a request makes for
   itself are not affected. Sharing such a variable without `shared(...)` is planned (#885).
+  Changing an object's fields or elements through such a callback (`log.push(v)`) is not an
+  error, but changes each request's copy (#854).
+
+  Callbacks stored in the heap are followed by type: one stored in an object the handler
+  reaches, or of the type of one it calls, counts as reached. A callback stored straight into an
+  object that one local variable holds (`other.onChange = …`, `cbs.push(…)`, or through a method
+  keeping it, `e.on(…)` with `on(f) { this.listeners.push(f); }`) is reached only when that
+  variable is. Otherwise a callback of a type the handler calls is an error even when the
+  handler never gets to it: one stored by a function into an object passed to it
+  (`setup(input)`), in an array passed to a function or iterated with `for...of`, or in an
+  object the handler reaches but whose callback it never calls. Share the variable with
+  `shared(...)` as the fix shows; the program then runs as in Node.
 
   ```ts
   import { serve } from "velt:http";
@@ -80,7 +93,7 @@ it throws.
   }
 
   async function main() {
-    const last = shared(new Mutex({ value: "" }));
+    const last = shared(new Mutex<{ value: string }>({ value: "" }));
     const i = new Input();
     i.onChange = (v: string) => {
       last.with((s) => {

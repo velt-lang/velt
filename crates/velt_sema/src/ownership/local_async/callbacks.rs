@@ -10,12 +10,14 @@
 //! and through the heap by type ([`super::types`]): a sync closure stored in a field, element or
 //! map value is reached when a value the handler reaches has a type holding a function type of
 //! its shape, written without generic parameters (the prelude's `resolve`, a `(T) => void`,
-//! stands for no callback the user stores). A closure stored straight into an object or array
-//! that one local of its function holds, and that never leaves that function, is reached only
-//! when that local is ([`held_closures`]): `other.onChange = …` on an `Input` the handler never
-//! sees is not one the handler's `Input` may hold. Closures made by a request (inside a reached
-//! async closure) assign that request's own variables, and the standard library's closures are
-//! not the user's to change, so neither is reported.
+//! stands for no callback the user stores), and in the direction values flow ([`fits`]: a
+//! `() => void` closure is never a `() => string`). A closure stored straight into an object or
+//! array that one local of its function holds (or through a method keeping it in `this`), and
+//! that never leaves that function, is reached only when that local is ([`held_closures`]):
+//! `other.onChange = …` on an `Input` the handler never sees is not one the handler's `Input`
+//! may hold. Closures made by a request (inside a reached async closure) assign that request's
+//! own variables, and the standard library's closures are not the user's to change, so neither
+//! is reported. A reached closure's assignments include those of the closures it makes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,10 +25,10 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Lit, LocalId, Stmt, StmtKind as S, TyId,
-    TyKind, UnOp,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Intrinsic, Lit, LocalId, Stmt,
+    StmtKind as S, TyId, TyKind, UnOp,
 };
-use crate::visit::{self, VisitMut};
+use crate::ownership::local_closures::walk::{self, Visit};
 
 use super::graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
 use super::types;
@@ -44,7 +46,10 @@ pub(super) fn check_handler_callbacks(
         .seeds
         .iter()
         .filter(|(_, f, _)| *f == CROSSES)
-        .filter_map(|&(n, _, w)| w.filter(|w| w.boundary == Boundary::Handler).map(|w| (n, w)))
+        .filter_map(|&(n, _, w)| {
+            w.filter(|w| w.boundary == Boundary::Handler)
+                .map(|w| (n, w))
+        })
         .collect();
     let mut roots: Vec<(TyId, Why)> = g
         .roots
@@ -55,7 +60,7 @@ pub(super) fn check_handler_callbacks(
     if work.is_empty() && roots.is_empty() {
         return;
     }
-    let held = held_closures(cx, g, flags);
+    let (held, homes) = held_closures(cx, g, flags);
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
     let mut seen = HashSet::new();
     let mut fns: HashMap<TyId, Why> = HashMap::new();
@@ -96,7 +101,7 @@ pub(super) fn check_handler_callbacks(
             }
             let found = fns
                 .iter()
-                .filter(|(t, _)| !mentions_param(cx, **t) && types::may_be(cx, g.tys[n], **t))
+                .filter(|(t, _)| !types::mentions_param(cx, **t) && fits(cx, g.tys[n], **t))
                 .map(|(_, w)| *w)
                 .min_by_key(|w| (w.std, w.span.file, w.span.lo));
             if let Some(w) = found {
@@ -121,7 +126,7 @@ pub(super) fn check_handler_callbacks(
         .filter(|(c, ..)| matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if f.is_async))
         .map(|(c, ..)| *c)
         .collect();
-    let mut found = vec![];
+    let mut found: Vec<(DefId, TyId, Why, LocalId, String, TyId, Span)> = vec![];
     for &(c, ty, w) in &reached {
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
@@ -134,44 +139,44 @@ pub(super) fn check_handler_callbacks(
         {
             continue;
         }
-        for (cap, at) in assigned_captures(f) {
+        for (cap, at) in assigned_captures(cx, f) {
             let local = &f.body.locals[cap.0 as usize];
-            if cx.ty.kind(local.ty) != &TyKind::Unit {
+            // An assignment in a closure made inside another reached closure is reported once.
+            if cx.ty.kind(local.ty) != &TyKind::Unit && !found.iter().any(|x| x.6 == at) {
                 found.push((c, ty, w, cap, local.name.clone(), local.ty, at));
             }
         }
     }
     for (c, ty, w, cap, name, cap_ty, at) in found {
-        let call = call_site(cx, g, &reached, &requests, c, ty);
+        let call = call_site(cx, g, &reached, &requests, &homes, c, ty);
         let init = declaration(cx, g, c, cap);
         report(cx, &name, cap_ty, at, call, init, w);
     }
 }
 
 /// Closure literals stored straight into an object or array held by one local of the function
-/// making them (`other.onChange = (v) => …`, `cbs.push(() => …)`, `const o = { f: () => … }`),
-/// by literal node, with that local's node: when the local never leaves the function (it is
-/// not stored, captured, returned or passed to a function of the program, only to the standard
-/// library's), only that local reaches the closure, so it is reached exactly when the local is,
-/// not by its type.
-fn held_closures(cx: &Ctx, g: &Graph, flags: &[u8]) -> HashMap<usize, usize> {
+/// making them (`other.onChange = (v) => …`, `cbs.push(() => …)`, `const o = { f: () => … }`,
+/// or through a setter, `e.on(() => …)` with `on(f) { this.listeners.push(f); }`), by literal
+/// node, with that local's node: when the local never leaves the function (it is not stored,
+/// captured, returned or passed to a function of the program, only to the standard library's
+/// and as `this` of methods that keep it too), only that local reaches the closure, so it is
+/// reached exactly when the local is, not by its type. Also returns, per closure, the nodes of
+/// all the locals it is stored into that way (where it is stored, whether or not they leave).
+#[allow(clippy::type_complexity)]
+fn held_closures(
+    cx: &Ctx,
+    g: &Graph,
+    flags: &[u8],
+) -> (HashMap<usize, usize>, HashMap<DefId, Vec<usize>>) {
     let mut outs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (m, srcs) in g.srcs.iter().enumerate() {
         for &(n, _) in srcs {
             outs.entry(n).or_default().push(m);
         }
     }
-    // Values of node `n` go only to parameters of standard library functions.
-    let stays = |n: usize| {
-        outs.get(&n)
-            .into_iter()
-            .flatten()
-            .all(|&m| match g.nodes[m] {
-                Node::Local(f, _) => in_std(cx, f),
-                _ => false,
-            })
-    };
+    let setters = setters(cx);
     let mut out = HashMap::new();
+    let mut homes: HashMap<DefId, Vec<usize>> = HashMap::new();
     for (i, def) in cx.defs.iter().enumerate() {
         let d = DefId(i as u32);
         let Some(Def::Fn(f)) = def else { continue };
@@ -179,20 +184,110 @@ fn held_closures(cx: &Ctx, g: &Graph, flags: &[u8]) -> HashMap<usize, usize> {
             continue;
         }
         let mut sites = vec![];
-        let mut block = f.body.block.clone();
-        visit::block(&mut block, &mut Sites(cx, &mut sites));
+        walk::block(&f.body.block, &mut Sites(cx, &setters, &mut sites));
         for (c, x) in sites {
-            if (x.0 as usize) < f.params.len() {
-                continue;
-            }
             let (Some(&lit), Some(&local)) =
                 (g.ids.get(&Node::Lit(c)), g.ids.get(&Node::Local(d, x)))
             else {
                 continue;
             };
-            if flags[local] & STORED == 0 && stays(local) && stays(lit) {
+            homes.entry(c).or_default().push(local);
+            if (x.0 as usize) < f.params.len() {
+                continue;
+            }
+            if flags[local] & STORED == 0
+                && stays(cx, g, &outs, flags, &setters, local, &mut HashSet::new())
+                && stays(cx, g, &outs, flags, &setters, lit, &mut HashSet::new())
+            {
                 out.insert(lit, local);
             }
+        }
+    }
+    (out, homes)
+}
+
+/// Do the values of node `n` go only to parameters of standard library functions, to setter
+/// parameters (which keep them in their `this`), and as `this` to methods of the program where
+/// they stay too?
+fn stays(
+    cx: &Ctx,
+    g: &Graph,
+    outs: &HashMap<usize, Vec<usize>>,
+    flags: &[u8],
+    setters: &HashMap<DefId, Vec<usize>>,
+    n: usize,
+    seen: &mut HashSet<usize>,
+) -> bool {
+    if !seen.insert(n) || seen.len() > 256 {
+        return seen.len() <= 256;
+    }
+    outs.get(&n)
+        .into_iter()
+        .flatten()
+        .all(|&m| match g.nodes[m] {
+            Node::Local(f, _) if in_std(cx, f) => true,
+            Node::Local(f, l) => match &cx.defs[f.0 as usize] {
+                Some(Def::Fn(ff)) if ff.self_ty.is_some() && ff.captures.is_empty() => {
+                    let k = ff.params.iter().position(|p| p.local == l);
+                    (k.is_some_and(|k| setters.get(&f).is_some_and(|ks| ks.contains(&k))))
+                        || (k == Some(0)
+                            && flags[m] & STORED == 0
+                            && stays(cx, g, outs, flags, setters, m, seen))
+                }
+                _ => false,
+            },
+            _ => false,
+        })
+}
+
+/// The methods of the program that only keep some of their parameters in what `this` holds
+/// (`on(f) { this.listeners.push(f); }`, `set cb(f) { this.f = f; }`), with those parameters'
+/// positions (`this` is 0).
+fn setters(cx: &Ctx) -> HashMap<DefId, Vec<usize>> {
+    let mut out = HashMap::new();
+    for (i, def) in cx.defs.iter().enumerate() {
+        let d = DefId(i as u32);
+        let Some(Def::Fn(f)) = def else { continue };
+        if f.self_ty.is_none() || !f.captures.is_empty() || f.params.len() < 2 || in_std(cx, d) {
+            continue;
+        }
+        let this = f.params[0].local;
+        // Per parameter: its uses, and those that keep it in `this`.
+        let mut uses: HashMap<LocalId, (u32, u32)> = HashMap::new();
+        let mut kept = |x: &Expr| {
+            if let E::Local(l, _) = x.kind {
+                uses.entry(l).or_default().1 += 1;
+            }
+        };
+        let mut all = vec![];
+        each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
+            E::Local(l, _) => all.push(*l),
+            E::Assign { place, value }
+                if root(place) == Some(this) && !matches!(place.kind, E::Local(..)) =>
+            {
+                kept(value)
+            }
+            E::Call { callee, args }
+                if std_method(cx, callee) && args.first().and_then(root) == Some(this) =>
+            {
+                args[1..].iter().for_each(&mut kept)
+            }
+            _ => {}
+        });
+        for l in all {
+            uses.entry(l).or_default().0 += 1;
+        }
+        let ks: Vec<usize> = (1..f.params.len())
+            .filter(|&k| {
+                let p = &f.params[k];
+                types::fn_like(cx, p.ty)
+                    && uses
+                        .get(&p.local)
+                        .is_some_and(|(n, kept)| *n == *kept && *kept > 0)
+            })
+            .collect();
+        if !ks.is_empty() {
+            out.insert(d, ks);
         }
     }
     out
@@ -200,10 +295,14 @@ fn held_closures(cx: &Ctx, g: &Graph, flags: &[u8]) -> HashMap<usize, usize> {
 
 /// The closure literals stored straight into what a local holds, with the local (see
 /// [`held_closures`]).
-struct Sites<'a, 'm>(&'a Ctx<'m>, &'a mut Vec<(DefId, LocalId)>);
+struct Sites<'a, 'm>(
+    &'a Ctx<'m>,
+    &'a HashMap<DefId, Vec<usize>>,
+    &'a mut Vec<(DefId, LocalId)>,
+);
 
-impl VisitMut for Sites<'_, '_> {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl Visit for Sites<'_, '_> {
+    fn stmt(&mut self, s: &Stmt) {
         let S::Let {
             local,
             init: Some(init),
@@ -215,37 +314,50 @@ impl VisitMut for Sites<'_, '_> {
         {
             for x in xs {
                 if let E::Closure(c) = x.kind {
-                    self.1.push((c, *local));
+                    self.2.push((c, *local));
                 }
             }
         }
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Assign { place, value } => {
                 if let (E::Closure(c), false) = (&value.kind, matches!(place.kind, E::Local(..))) {
                     if let Some(x) = root(place) {
-                        self.1.push((*c, x));
+                        self.2.push((*c, x));
                     }
                 }
             }
-            E::Call {
-                callee: Callee::Def(g, _),
-                args,
-            } if in_std(self.0, *g) => {
-                let method =
-                    matches!(&self.0.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.self_ty.is_some());
-                if let (true, Some(x)) = (method, args.first().and_then(root)) {
-                    for a in &args[1..] {
-                        if let E::Closure(c) = a.kind {
-                            self.1.push((c, x));
+            E::Call { callee, args } => {
+                let held: Vec<usize> = match callee {
+                    _ if std_method(self.0, callee) => (1..args.len()).collect(),
+                    Callee::Def(g, _) => self.1.get(g).cloned().unwrap_or_default(),
+                    _ => vec![],
+                };
+                if let Some(x) = args.first().and_then(root).filter(|_| !held.is_empty()) {
+                    for k in held {
+                        if let Some(E::Closure(c)) = args.get(k).map(|a| &a.kind) {
+                            self.2.push((*c, x));
                         }
                     }
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// A method of the standard library (`push`, `set`), which may keep its arguments in what its
+/// receiver holds but nowhere else.
+fn std_method(cx: &Ctx, callee: &Callee) -> bool {
+    match callee {
+        Callee::Def(g, _) => {
+            in_std(cx, *g)
+                && matches!(&cx.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.self_ty.is_some())
+        }
+        Callee::Intrinsic(Intrinsic::ArrayPush) => true,
+        _ => false,
     }
 }
 
@@ -275,52 +387,101 @@ fn in_std(cx: &Ctx, d: DefId) -> bool {
     cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
 }
 
-/// Does `t` mention a generic parameter?
-fn mentions_param(cx: &Ctx, t: TyId) -> bool {
-    let mut out = vec![];
-    crate::types::collect_params(&cx.ty, t, &mut out);
-    !out.is_empty()
+/// May a closure literal of type `lit` be a function value of type `f`? As
+/// [`types::may_be`], and in the direction values flow: a closure returning nothing is never
+/// called where a value is expected (`() => void` is not a `() => string`; the reverse is, #776).
+fn fits(cx: &Ctx, lit: TyId, f: TyId) -> bool {
+    let unit = |t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { ret, .. } if cx.ty.kind(*ret) == &TyKind::Unit);
+    types::may_be(cx, lit, f) && (!unit(lit) || unit(f))
 }
 
-/// The captured variables closure `f` assigns (`x = …`, `x += …`, `x++`), with the first
-/// assignment of each.
-fn assigned_captures(f: &FnDef) -> Vec<(LocalId, Span)> {
-    let caps: HashSet<LocalId> = f.captures.iter().map(|c| c.inner).collect();
+/// Calls `f` on every expression of `b`.
+fn each_expr(b: &Block, f: &mut dyn FnMut(&Expr)) {
+    struct Exprs<'a>(&'a mut dyn FnMut(&Expr));
+    impl Visit for Exprs<'_> {
+        fn expr(&mut self, e: &Expr) {
+            (self.0)(e);
+        }
+    }
+    walk::block(b, &mut Exprs(f));
+}
+
+/// The captured variables closure `f` assigns (`x = …`, `x += …`, `x++`), itself or in a
+/// closure it makes (`const bump = () => { x++; }`), with the first assignment of each.
+fn assigned_captures(cx: &Ctx, f: &FnDef) -> Vec<(LocalId, Span)> {
+    // `f`'s captures, by the local each one is in the function being searched.
+    let caps: HashMap<LocalId, LocalId> = f.captures.iter().map(|c| (c.inner, c.inner)).collect();
     let mut out: Vec<(LocalId, Span)> = vec![];
-    let mut block = f.body.block.clone();
-    visit::exprs_mut(&mut block, &mut |e: &mut Expr| {
-        let (E::Assign { place, .. } | E::CompoundAssign { place, .. }) = &e.kind else {
-            return;
-        };
-        if let E::Local(l, _) = place.kind {
-            if caps.contains(&l) && !out.iter().any(|(x, _)| *x == l) {
-                out.push((l, e.span));
+    assignments(cx, f, &caps, &mut out, 0);
+    out
+}
+
+/// The assignments in `f` (and the closures it makes) to locals of `caps`, as the capture of
+/// the outermost closure they stand for.
+fn assignments(
+    cx: &Ctx,
+    f: &FnDef,
+    caps: &HashMap<LocalId, LocalId>,
+    out: &mut Vec<(LocalId, Span)>,
+    depth: u32,
+) {
+    let mut inner = vec![];
+    each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
+        E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
+            if let Some(&cap) = match place.kind {
+                E::Local(l, _) => caps.get(&l),
+                _ => None,
+            } {
+                if !out.iter().any(|(x, _)| *x == cap) {
+                    out.push((cap, e.span));
+                }
             }
         }
+        E::Closure(k) => inner.push(*k),
+        _ => {}
     });
-    out
+    if depth > 16 {
+        return;
+    }
+    for k in inner {
+        let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] else {
+            continue;
+        };
+        let kcaps: HashMap<LocalId, LocalId> = kf
+            .captures
+            .iter()
+            .filter_map(|c| caps.get(&c.outer).map(|&cap| (c.inner, cap)))
+            .collect();
+        if !kcaps.is_empty() {
+            assignments(cx, kf, &kcaps, out, depth + 1);
+        }
+    }
 }
 
 /// Where a handler calls a function value that may be closure `c` (of type `ty`), as written
 /// (`i.onChange`), with the call's span: in a request's closure first, else in another closure
-/// the handler reaches. A call through a variable `c` flows into is preferred, then one through
-/// a function value of `c`'s type, then of its shape.
+/// the handler reaches. A call of a field `c` is stored in, on what `c` was stored into
+/// (`i.onChange` with `i.onChange = …`), is preferred, then of that field on anything, or
+/// through a variable `c` flows into, then a call through a function value of `c`'s type, then
+/// of its shape.
 fn call_site(
     cx: &Ctx,
     g: &Graph,
     reached: &[(DefId, TyId, Why)],
     requests: &HashSet<DefId>,
+    homes: &HashMap<DefId, Vec<usize>>,
     c: DefId,
     ty: TyId,
 ) -> Option<(String, Span)> {
     let mut order: Vec<DefId> = reached.iter().map(|(d, ..)| *d).collect();
     order.sort_by_key(|d| !requests.contains(d));
     let lit = g.ids.get(&Node::Lit(c)).copied();
-    let flows_from = |n: usize| {
+    let homes = homes.get(&c).map(Vec::as_slice).unwrap_or_default();
+    let flows = |n: usize, to: &[usize]| {
         let mut seen = HashSet::new();
         let mut work = vec![n];
         while let Some(m) = work.pop() {
-            if Some(m) == lit {
+            if to.contains(&m) {
                 return true;
             }
             if seen.insert(m) {
@@ -343,8 +504,44 @@ fn call_site(
             continue;
         };
         let request = requests.contains(&d);
-        let mut block = f.body.block.clone();
-        visit::exprs_mut(&mut block, &mut |e: &mut Expr| {
+        // An argument that may be `c`: `tick`, or a closure capturing it (`setTimeout(tick, 0)`
+        // passes the adapter `async () => tick()`).
+        let passes1 = |x: &Expr| match x.kind {
+            E::Local(l, _) => g
+                .ids
+                .get(&Node::Local(d, l))
+                .is_some_and(|&n| flows(n, lit.as_slice())),
+            E::Closure(w) => {
+                matches!(&cx.defs[w.0 as usize], Some(Def::Fn(wf)) if wf.captures.iter().any(|k| {
+                    g.ids
+                        .get(&Node::Local(d, k.outer))
+                        .is_some_and(|&n| flows(n, lit.as_slice()))
+                }))
+            }
+            _ => false,
+        };
+        let passes = |x: &Expr| match &x.kind {
+            // The adapter is made in a block (`{ let f = tick; async () => f() }`).
+            E::Block(b) => b.value.as_ref().is_some_and(|v| passes1(v)),
+            _ => passes1(x),
+        };
+        each_expr(&f.body.block, &mut |e: &Expr| {
+            // `c` passed to the standard library, which calls it.
+            if let E::Call {
+                callee: Callee::Def(s, _),
+                args,
+            } = &e.kind
+            {
+                if in_std(cx, *s) && args.iter().any(passes) {
+                    let key = (1, !request, e.span.lo);
+                    if let Some(text) = shown(cx, f, e) {
+                        if best.as_ref().is_none_or(|b| key < (b.0, b.1, b.2)) {
+                            best = Some((1, !request, e.span.lo, text, e.span));
+                        }
+                    }
+                }
+                return;
+            }
             let E::Call {
                 callee: Callee::Indirect(callee),
                 ..
@@ -359,18 +556,22 @@ fn call_site(
                 },
                 _ => None,
             };
+            let node = |x: &Expr| match root(x) {
+                Some(l) => g.ids.get(&Node::Local(d, l)).copied(),
+                None => None,
+            };
             let rank = match &callee.kind {
-                _ if field == Some(true) => 0,
-                _ if field == Some(false) => return,
-                E::Local(l, _)
-                    if g.ids
-                        .get(&Node::Local(d, *l))
-                        .is_some_and(|&n| flows_from(n)) =>
-                {
-                    0
+                E::Field { base, .. } if field == Some(true) => {
+                    if node(base).is_some_and(|n| flows(n, homes)) {
+                        0
+                    } else {
+                        1
+                    }
                 }
-                _ if callee.ty == ty => 1,
-                _ if types::may_be(cx, ty, callee.ty) && ret(ty) == ret(callee.ty) => 2,
+                _ if field == Some(false) => return,
+                E::Local(..) if node(callee).is_some_and(|n| flows(n, lit.as_slice())) => 1,
+                _ if callee.ty == ty => 2,
+                _ if types::may_be(cx, ty, callee.ty) && ret(ty) == ret(callee.ty) => 3,
                 _ => return,
             };
             let Some(text) = shown(cx, f, callee) else {
@@ -394,8 +595,7 @@ fn field_stores(cx: &Ctx) -> HashMap<DefId, Vec<(DefId, u32)>> {
         if in_std(cx, DefId(i as u32)) {
             continue;
         }
-        let mut block = f.body.block.clone();
-        visit::exprs_mut(&mut block, &mut |e: &mut Expr| match &e.kind {
+        each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
             E::Assign { place, value } => {
                 if let (E::Field { base, index, .. }, E::Closure(c)) = (&place.kind, &value.kind) {
                     if let TyKind::Adt(a, _) = cx.ty.kind(base.ty) {
@@ -477,9 +677,8 @@ fn declaration(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId) -> Option<String> {
             (d, l) = (p, outer);
             continue;
         }
-        let mut block = pf.body.block.clone();
         let mut v = Decl(outer, None);
-        visit::block(&mut block, &mut v);
+        walk::block(&pf.body.block, &mut v);
         return v.1.flatten();
     }
     None
@@ -488,8 +687,8 @@ fn declaration(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId) -> Option<String> {
 /// Finds the initializer of a local's `let`, as written when it is a literal.
 struct Decl(LocalId, Option<Option<String>>);
 
-impl VisitMut for Decl {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl Visit for Decl {
+    fn stmt(&mut self, s: &Stmt) {
         if let S::Let { local, init } = &s.kind {
             if *local == self.0 && self.1.is_none() {
                 self.1 = Some(init.as_ref().and_then(literal));
@@ -530,6 +729,29 @@ fn literal(e: &Expr) -> Option<String> {
     })
 }
 
+/// How a variable is shared: as `shared(…)` itself (a 64-bit integer), in a `Mutex` (a value
+/// that is copied) or in an object in one.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Kind {
+    Int,
+    Copy,
+    Object,
+}
+
+/// The declaration sharing a variable of type `t` initialized with `init` (as written, when a
+/// literal): the type is written out where the initializer alone may not give it (`null`, `[]`,
+/// an object's field, an initializer that is not a literal).
+fn fix(kind: Kind, t: &str, init: Option<&str>) -> String {
+    let typed = matches!(init, None | Some("null" | "[]"));
+    let init = init.unwrap_or("…");
+    match kind {
+        Kind::Int => format!("shared({init})"),
+        Kind::Copy if typed => format!("shared(new Mutex<{t}>({init}))"),
+        Kind::Copy => format!("shared(new Mutex({init}))"),
+        Kind::Object => format!("shared(new Mutex<{{ value: {t} }}>({{ value: {init} }}))"),
+    }
+}
+
 fn report(
     cx: &mut Ctx,
     name: &str,
@@ -551,29 +773,24 @@ fn report(
         )
         .with_label(why.span, "the handler is passed to `serve` here"),
     };
-    let init = init.unwrap_or_else(|| "…".into());
     // `shared` alone holds a 64-bit integer (`add`, `get`, `set`); any other value goes in a
     // `Mutex`, and one that is not copied (a string, an object) in an object there, since a
     // `with` callback can replace the fields of what it gets but not the value itself.
-    let atomic = matches!(
+    let kind = if matches!(
         cx.ty.kind(ty),
         TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::ISize | IntTy::USize)
-    );
-    let (decl, how) = if atomic {
-        (
-            format!("shared({init})"),
-            format!("then read it with `{name}.get()` and change it with `{name}.set(v)` or `{name}.add(1)`"),
-        )
+    ) {
+        Kind::Int
     } else if cx.is_copy(ty) {
-        (
-            format!("shared(new Mutex({init}))"),
-            format!("then read it with `{name}.with((v) => v)` and change it with `{name}.with((v) => {{ v = … }})`"),
-        )
+        Kind::Copy
     } else {
-        (
-            format!("shared(new Mutex({{ value: {init} }}))"),
-            format!("then read it with `{name}.with((v) => v.value)` and change it with `{name}.with((v) => {{ v.value = … }})`"),
-        )
+        Kind::Object
+    };
+    let decl = fix(kind, &cx.display(ty), init.as_deref());
+    let how = match kind {
+        Kind::Int => format!("then read it with `{name}.get()` and change it with `{name}.set(v)` or `{name}.add(1)`"),
+        Kind::Copy => format!("then read it with `{name}.with((v) => v)` and change it with `{name}.with((v) => {{ v = … }})`"),
+        Kind::Object => format!("then read it with `{name}.with((v) => v.value)` and change it with `{name}.with((v) => {{ v.value = … }})`"),
     };
     d = d
         .with_note(format!(
@@ -612,5 +829,28 @@ mod tests {
         assert_eq!(literal(&e(E::ArrayLit(vec![]))).as_deref(), Some("[]"));
         let call = E::ArrayLit(vec![e(E::Lit(Lit::Int(1)))]);
         assert_eq!(literal(&e(call)), None);
+        assert_eq!(literal(&e(E::Lit(Lit::Null))).as_deref(), Some("null"));
+    }
+
+    #[test]
+    fn fix_writes_the_type_where_the_initializer_does_not_give_it() {
+        assert_eq!(fix(Kind::Int, "i64", Some("0")), "shared(0)");
+        assert_eq!(fix(Kind::Copy, "number", Some("0")), "shared(new Mutex(0))");
+        assert_eq!(
+            fix(Kind::Copy, "number", None),
+            "shared(new Mutex<number>(…))"
+        );
+        assert_eq!(
+            fix(Kind::Object, "string", Some("\"\"")),
+            "shared(new Mutex<{ value: string }>({ value: \"\" }))"
+        );
+        assert_eq!(
+            fix(Kind::Object, "string | null", Some("null")),
+            "shared(new Mutex<{ value: string | null }>({ value: null }))"
+        );
+        assert_eq!(
+            fix(Kind::Object, "string[]", Some("[]")),
+            "shared(new Mutex<{ value: string[] }>({ value: [] }))"
+        );
     }
 }
