@@ -338,6 +338,24 @@ impl<'a> Parser<'a> {
         }
         self.reject_protected(&mods, &name);
         self.reject_private_name(&name);
+        if self.at(Tok::Question) && matches!(self.nth(1), Tok::LParen | Tok::Lt) {
+            // `m?(x: T): R`: an optional member of function type, `m?: (x: T) => R`.
+            self.bump();
+            let ty = self.parse_method_sig_type(lo, &name)?;
+            let span = self.span_from(lo);
+            self.expect_member_end()?;
+            decl.fields.push(Field {
+                name,
+                ty: super::types::or_null(ty),
+                default: None,
+                readonly: false,
+                optional: true,
+                is_private: false,
+                is_static: false,
+                span,
+            });
+            return Ok(());
+        }
         if !self.at_method_start() {
             let field = self.parse_field_rest(lo, name, &mods)?;
             if let Some(default) = &field.default {

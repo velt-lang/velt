@@ -1,0 +1,43 @@
+// Method signatures in object types, and optional methods in interfaces and object types
+// (expected output from `node`): `m(x: T): R` is a member of function type `(x: T) => R`, and
+// `m?(x: T): R` an optional one.
+
+type Scope = {
+  stop(): void;
+  size(n: number): number;
+  label?(prefix: string): string;
+};
+
+const scope: Scope = {
+  stop: () => console.log("stopped"),
+  size: (n) => n * 2,
+  label: (p) => p + "!",
+};
+scope.stop();
+console.log(scope.size(4));
+console.log(scope.label?.("hi") ?? "none");
+
+const bare: Scope = { stop: () => {}, size: (n) => n };
+console.log(bare.label == null);
+
+interface HostOps {
+  name: string;
+  querySelector?(selector: string): string | null;
+  remove(id: number): boolean;
+}
+
+class Host implements HostOps {
+  name = "host";
+  querySelector: ((selector: string) => string | null) | null = null;
+  remove(id: number): boolean {
+    return id > 0;
+  }
+}
+const ops: HostOps = new Host();
+console.log(ops.name, ops.remove(3), ops.querySelector === null);
+
+// In an inline parameter type.
+function defineHandler(handler: { test(value: string): boolean; encode(value: string): number }): number {
+  return handler.test("abc") ? handler.encode("abc") : -1;
+}
+console.log(defineHandler({ test: (v) => v.length > 2, encode: (v) => v.length * 10 }));

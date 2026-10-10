@@ -277,8 +277,12 @@ impl<'a> Parser<'a> {
             }
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
-            self.expect(Tok::Colon)?;
-            let mut ty = self.parse_type()?;
+            let mut ty = if self.at(Tok::LParen) || self.at(Tok::Lt) {
+                self.parse_method_sig_type(flo, &name)?
+            } else {
+                self.expect(Tok::Colon)?;
+                self.parse_type()?
+            };
             if optional {
                 ty = or_null(ty);
             }

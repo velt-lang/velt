@@ -441,6 +441,9 @@ console.log(p.len(), q.len());  // 4 4
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
+- An **optional method** `m?(x: T): R` is an optional field of function type
+  (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
+  null`), and a caller writes `o.m?.(x)`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value
   (``generic method `apply` cannot be called on an interface value``): make the calling
