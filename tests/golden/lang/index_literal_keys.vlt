@@ -88,3 +88,49 @@ const mx = new Mixed();
 set(mx, "title");
 set(mx, "count");
 console.log(mx.title, mx.count);
+
+// `o[k] op= v` reads the field before `v` runs, as in JavaScript.
+type AB = { a: number; b: number };
+function bumpA(o: AB): number {
+  o.a = 100;
+  return 1;
+}
+let kab: "a" | "b" = "a";
+const ab: AB = { a: 1, b: 2 };
+ab[kab] += bumpA(ab);
+console.log(ab.a);
+
+// A key that is not a name is evaluated once: a call, an element, a field of a variable.
+type Calls = { n: number };
+function pick(c: Calls): "a" | "b" {
+  c.n += 1;
+  return "b";
+}
+const calls: Calls = { n: 0 };
+const ab2: AB = { a: 1, b: 1 };
+ab2[pick(calls)] += 1;
+console.log(ab2[pick(calls)], calls.n);
+const ks: ("a" | "b")[] = ["a", "b"];
+const ab3: AB = { a: 5, b: 1 };
+ab3[ks[1]] = ab3[ks[1]] + 1;
+console.log(ab3[ks[1]]);
+const holder = { o: { a: 0, b: 1 } as AB, k: "b" as "a" | "b" };
+holder.o[holder.k] += 1;
+console.log(holder.o[holder.k]);
+
+// `++` and `--` through a union key, as statements and as values.
+const ab4: AB = { a: 9, b: 1 };
+let k4: "a" | "b" = "b";
+ab4[k4]++;
+console.log(ab4.b);
+const x1 = ab4[k4]++;
+const x2 = ++ab4[k4];
+const x3 = ab4[pick(calls)]--;
+console.log(x1, x2, x3, ab4.b, ab4.a, calls.n);
+
+// `as` a union of string literals with `null` asserts, as in TypeScript.
+const lit = "a" as "a" | null;
+const lit2 = ("a" as "a" | "b") as "a" | "b" | null;
+const wide: string = "b";
+const lit3 = (wide === "b" ? "b" : "a") as "a" | "b" | null;
+console.log(lit, lit2, lit3);

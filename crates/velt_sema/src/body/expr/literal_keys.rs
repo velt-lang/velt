@@ -7,8 +7,9 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::member::literal_key;
+use super::method_value::{is_path, strip_parens};
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, ExprKind as H, LitValue, TyId};
+use crate::hir::{self, ExprKind as H, LitValue, TyId, TyKind};
 
 /// A synthesized expression (no source node of its own).
 fn synth(kind: ast::ExprKind, span: Span) -> ast::Expr {
@@ -87,6 +88,11 @@ impl FnCx<'_, '_> {
                 let t = self.resolve(ty);
                 self.string_literals(t)
             }
+            // A field of a variable (`h.k`), with its narrowed type.
+            ast::ExprKind::Member { .. } if is_path(e) => {
+                let t = self.peek_ty(e)?;
+                self.string_literals(t)
+            }
             _ => None,
         }
     }
@@ -125,40 +131,31 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> Option<hir::Expr> {
-        let keys = self.union_keys(object, index)?;
-        if want == Want::BorrowMut {
-            self.cx.error(
-                Diagnostic::error(
-                    "cannot change a field through a key that names one of several fields",
-                    index.span,
-                )
-                .with_note("narrow the key first (`if (k === \"a\")`), or assign to the field"),
-            );
-            return Some(self.error_expr(span));
-        }
-        let mut reads: Vec<hir::Expr> = keys
-            .iter()
-            .map(|k| self.expr(&keyed(object, k, span), None, want))
-            .collect();
-        let tys: Vec<TyId> = reads.iter().map(|h| h.ty).collect();
-        let ty = self.cx.union_of(&tys, false, span);
-        let mut out = self.coerce(reads.pop().expect("ICE: several keys"), ty);
-        for (k, read) in keys.iter().zip(reads).rev() {
-            let cond = self.cond(&is_key(index, k));
-            let then = self.coerce(read, ty);
-            let kind = H::If {
-                cond: Box::new(cond),
-                then: Box::new(then),
-                els: Box::new(out),
-            };
-            out = self.mk(kind, ty, span);
-        }
-        Some(out)
+        self.with_union_key(object, index, span, |s, keys, key| {
+            if want == Want::BorrowMut {
+                s.cx.error(
+                    Diagnostic::error(
+                        "cannot change a field through a key that names one of several fields",
+                        index.span,
+                    )
+                    .with_note("narrow the key first (`if (k === \"a\")`), or assign to the field"),
+                );
+                return s.error_expr(span);
+            }
+            let reads: Vec<hir::Expr> = keys
+                .iter()
+                .map(|k| s.expr(&keyed(object, k, span), None, want))
+                .collect();
+            let tys: Vec<TyId> = reads.iter().map(|h| h.ty).collect();
+            let ty = s.cx.union_of(&tys, false, span);
+            let reads = reads.into_iter().map(|h| s.coerce(h, ty)).collect();
+            s.key_chain(keys, key, reads, Some(ty), span)
+        })
     }
 
     /// `object[index] = value` (or `op=`) with an index of several literal keys, every one a field
-    /// of the object (`None` otherwise): the value is computed once and assigned to the field the
-    /// key names at run time. The fields must have one type.
+    /// of the object (`None` otherwise): the field the key names at run time is assigned. The
+    /// fields must have one type.
     pub(super) fn keyed_assign(
         &mut self,
         op: Option<ast::BinaryOp>,
@@ -170,57 +167,140 @@ impl FnCx<'_, '_> {
             object,
             index,
             optional: false,
-        } = &target.kind
+        } = &strip_parens(target).kind
         else {
             return None;
         };
-        let keys = self.union_keys(object, index)?;
+        self.with_union_key(object, index, span, |s, keys, key| {
+            let Some(fty) = s.one_field_ty(object, index, keys) else {
+                s.expr(value, None, Want::Move);
+                return s.error_expr(span);
+            };
+            if op.is_some() {
+                // `if (key === k1) object[k1] op= value; else …`: the field is read before
+                // `value` runs, as in JavaScript, and only one branch runs.
+                let branches = keys
+                    .iter()
+                    .map(|k| s.assign(op, &keyed(object, k, target.span), value, span))
+                    .collect();
+                return s.key_chain(keys, key, branches, None, span);
+            }
+            // `{ const v = value; if (key === k1) object[k1] = v; else … object[kn] = v; }`
+            let init = s.expr(value, Some(fty), Want::Move);
+            let init = s.coerce(init, fty);
+            s.with_temp("<assigned value>", init, value.span, span, |s, v| {
+                let branches = keys
+                    .iter()
+                    .map(|k| s.assign(None, &keyed(object, k, target.span), v, span))
+                    .collect();
+                s.key_chain(keys, key, branches, None, span)
+            })
+        })
+    }
+
+    /// `object[index]++` (or `--`, prefix or postfix) with an index of several literal keys,
+    /// every one a field of the object (`None` otherwise): the field the key names at run time
+    /// is updated. The fields must have one type.
+    pub(crate) fn keyed_update(
+        &mut self,
+        op: ast::UpdateOp,
+        prefix: bool,
+        target: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } = &strip_parens(target).kind
+        else {
+            return None;
+        };
+        self.with_union_key(object, index, span, |s, keys, key| {
+            if s.one_field_ty(object, index, keys).is_none() {
+                return s.error_expr(span);
+            }
+            let branches = keys
+                .iter()
+                .map(|k| s.update(op, prefix, &keyed(object, k, target.span), as_value, span))
+                .collect();
+            s.key_chain(keys, key, branches, None, span)
+        })
+    }
+
+    /// The one type of the fields `keys` of `object`; `None` (reported) when they differ.
+    fn one_field_ty(
+        &mut self,
+        object: &ast::Expr,
+        index: &ast::Expr,
+        keys: &[String],
+    ) -> Option<TyId> {
         let t = self.peek_ty(object)?;
         let field_tys: Vec<TyId> = keys
             .iter()
             .map(|k| self.field_ty(t, k))
             .collect::<Option<_>>()?;
-        if field_tys.iter().any(|t| *t != field_tys[0]) {
-            let list: Vec<String> = keys
-                .iter()
-                .zip(&field_tys)
-                .map(|(k, t)| format!("`{k}`: {}", self.cx.display(*t)))
-                .collect();
-            self.cx.error(
-                Diagnostic::error(
-                    "cannot assign through this key: the fields it may name have different types",
-                    index.span,
-                )
-                .with_note(format!("the fields: {}", list.join(", ")))
-                .with_note("narrow the key first (`if (k === \"a\")`), or assign to the field"),
-            );
-            self.expr(value, None, Want::Move);
-            return Some(self.error_expr(span));
+        if field_tys.iter().all(|t| *t == field_tys[0]) {
+            return Some(field_tys[0]);
         }
-        // `{ const v = value; if (index === k1) object[k1] op= v; else if … else object[kn] op= v; }`
-        self.push_scope();
-        let init = self.expr(value, Some(field_tys[0]), Want::Move);
-        let init = self.coerce(init, field_tys[0]);
-        let name = ast::Ident {
-            name: "<assigned value>".into(),
-            span: value.span,
-        };
-        let local = self.declare_local(&name, field_tys[0], LocalKind::Const);
-        let v = synth(ast::ExprKind::Ident(name), value.span);
-        let assign = |s: &mut Self, k: &str| s.assign(op, &keyed(object, k, target.span), &v, span);
-        let mut chain = assign(self, keys.last().expect("ICE: several keys"));
-        for k in keys.iter().rev().skip(1) {
-            let cond = self.cond(&is_key(index, k));
-            let then = assign(self, k);
-            let ty = then.ty;
+        let list: Vec<String> = keys
+            .iter()
+            .zip(&field_tys)
+            .map(|(k, t)| format!("`{k}`: {}", self.cx.display(*t)))
+            .collect();
+        self.cx.error(
+            Diagnostic::error(
+                "cannot assign through this key: the fields it may name have different types",
+                index.span,
+            )
+            .with_note(format!("the fields: {}", list.join(", ")))
+            .with_note("narrow the key first (`if (k === \"a\")`), or assign to the field"),
+        );
+        None
+    }
+
+    /// `if (key === k1) b1 else if … else bn`, one branch per key, typed `ty` (or as the
+    /// branches are).
+    fn key_chain(
+        &mut self,
+        keys: &[String],
+        key: &ast::Expr,
+        mut branches: Vec<hir::Expr>,
+        ty: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let mut out = branches.pop().expect("ICE: a key chain without keys");
+        for (k, then) in keys.iter().zip(branches).rev() {
+            let cond = self.cond(&is_key(key, k));
+            let t = ty.unwrap_or(then.ty);
             let kind = H::If {
                 cond: Box::new(cond),
                 then: Box::new(then),
-                els: Box::new(chain),
+                els: Box::new(out),
             };
-            chain = self.mk(kind, ty, span);
+            out = self.mk(kind, t, span);
         }
-        let value = chain;
+        out
+    }
+
+    /// `{ const <name> = init; body(<name>) }`.
+    fn with_temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        at: Span,
+        span: Span,
+        body: impl FnOnce(&mut Self, &ast::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        self.push_scope();
+        let name = ast::Ident {
+            name: name.into(),
+            span: at,
+        };
+        let local = self.declare_local(&name, init.ty, LocalKind::Const);
+        let v = synth(ast::ExprKind::Ident(name), at);
+        let value = body(self, &v);
         self.pop_scope();
         let ty = value.ty;
         let stmt = hir::Stmt {
@@ -235,23 +315,65 @@ impl FnCx<'_, '_> {
             value: Some(Box::new(value)),
             span,
         };
-        Some(self.mk(H::Block(block), ty, span))
+        self.mk(H::Block(block), ty, span)
     }
 
-    /// The keys of `object[index]` when the index has several literal keys, both sides can be
-    /// evaluated once per key, and every key is a field of the object.
-    fn union_keys(&mut self, object: &ast::Expr, index: &ast::Expr) -> Option<Vec<String>> {
-        if literal_key(index).is_some() || !repeatable(object) || !repeatable(index) {
+    /// Runs `body` with the keys of `object[index]` and the expression holding the key, when
+    /// the index has literal keys that are all fields of the object (`None` otherwise, for the
+    /// ordinary indexing rules). The object must be a path (evaluated once per key); an index
+    /// that is not (`o[key()]`, `o[ks[1]]`) is evaluated once, into a temporary.
+    fn with_union_key(
+        &mut self,
+        object: &ast::Expr,
+        index: &ast::Expr,
+        span: Span,
+        body: impl FnOnce(&mut Self, &[String], &ast::Expr) -> hir::Expr,
+    ) -> Option<hir::Expr> {
+        if literal_key(index).is_some() || !repeatable(object) {
             return None;
         }
-        let keys = self.literal_keys(index).filter(|k| k.len() > 1)?;
         let t = self.peek_ty(object)?;
         if self.record_args(t).is_some() {
             return None;
         }
-        keys.iter()
-            .all(|k| self.field_ty(t, k).is_some())
-            .then_some(keys)
+        if repeatable(index) {
+            let keys = self.literal_keys(index).filter(|k| k.len() > 1)?;
+            if !keys.iter().all(|k| self.field_ty(t, k).is_some()) {
+                return None;
+            }
+            return Some(body(self, &keys, index));
+        }
+        // Any other index on an object type is an error in the ordinary rules, so the index
+        // can be checked here, once, whatever its type turns out to be.
+        let fields = match self.cx.ty.kind(t) {
+            TyKind::Adt(..) => !self.is_std_class(t, "std/regex::RegExpMatch"),
+            TyKind::Dyn(..) | TyKind::Param(_) => true,
+            _ => false,
+        };
+        if !fields {
+            return None;
+        }
+        let h = self.expr(index, None, Want::Move);
+        if self.cx.ty.has_error(h.ty) {
+            return Some(self.error_expr(span));
+        }
+        let keys = self
+            .string_literals(h.ty)
+            .filter(|keys| keys.iter().all(|k| self.field_ty(t, k).is_some()));
+        let Some(keys) = keys else {
+            let (tn, kn) = (self.cx.display(t), self.cx.display(h.ty));
+            let d = Diagnostic::error(
+                format!("cannot index a value of type `{tn}` with a key of type `{kn}`"),
+                index.span,
+            )
+            .with_note(
+                "the key must have a string literal type, or a union of them, naming fields of the object",
+            );
+            self.cx.error(d);
+            return Some(self.error_expr(span));
+        };
+        let at = index.span;
+        Some(self.with_temp("<key>", h, at, span, |s, key| body(s, &keys, key)))
     }
 
     /// The type of field `name` of a value of type `t` (an object type, struct or class field).

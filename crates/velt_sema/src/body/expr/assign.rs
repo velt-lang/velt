@@ -498,6 +498,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.keyed_update(op, prefix, target, as_value, span) {
+            return h;
+        }
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {

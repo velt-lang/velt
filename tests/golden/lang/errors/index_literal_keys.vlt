@@ -1,5 +1,6 @@
-// Assigning through a key that may name fields of different types is an error, and so is
-// casting a `string` value to a union of string literals (TypeScript accepts the cast unchecked).
+// Assigning through a key that may name fields of different types is an error, and so are
+// casting a `string` value to a union of string literals (TypeScript accepts the cast unchecked)
+// and indexing an object with a computed `string` key.
 class Doc {
   title = "t";
   count = 0;
@@ -11,4 +12,14 @@ function main() {
   d[k] = 5;
   const s: string = "title";
   console.log(d[s as "title" | "count"]);
+}
+
+function title(): string {
+  return "title";
+}
+
+// A key computed by a call must have a string literal type naming fields.
+function other() {
+  const d = new Doc();
+  console.log(d[title()]);
 }
