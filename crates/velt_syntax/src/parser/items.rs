@@ -23,8 +23,21 @@ impl<'a> Parser<'a> {
                 }
                 _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {
-                    Ok(item) => items.push(item),
-                    Err(Fail) => self.sync_item(start),
+                    Ok(item) => {
+                        let exported = item.exported;
+                        items.push(item);
+                        for v in std::mem::take(&mut self.more_vars) {
+                            items.push(Item {
+                                span: v.span,
+                                kind: ItemKind::Var(v),
+                                exported,
+                            });
+                        }
+                    }
+                    Err(Fail) => {
+                        self.more_vars.clear();
+                        self.sync_item(start);
+                    }
                 },
             }
             if self.pos == start {
@@ -184,7 +197,7 @@ impl<'a> Parser<'a> {
         let generics = self.parse_generic_params()?;
         let params = self.parse_params()?;
         let ret = if self.eat(Tok::Colon) {
-            Some(self.parse_type()?)
+            Some(self.parse_ret_type()?)
         } else {
             None
         };
@@ -210,6 +223,11 @@ impl<'a> Parser<'a> {
             return Ok(out);
         }
         while !self.at(Tok::Gt) {
+            // `const T` (TypeScript 5.0): infers literal types for `T`'s arguments. Velt infers
+            // literal types where a type parameter is matched against a literal anyway.
+            if self.at_kw(Kw::Const) && Self::is_ident_like(self.nth(1)) {
+                self.bump();
+            }
             let name = self.parse_ident()?;
             let mut bounds = Vec::new();
             if self.eat_kw(Kw::Extends) {
@@ -382,7 +400,22 @@ impl<'a> Parser<'a> {
             VarKind::Let
         };
         let pattern = self.parse_binding_pattern()?;
-        self.finish_var_decl(lo, kind, pattern)
+        let first = self.finish_var_decl(lo, kind, pattern)?;
+        // `let a = 1, b: T;`: the further declarators wait in `more_vars` for the caller. They
+        // are collected here first: a later initializer can hold a block whose own declarations
+        // go through `more_vars` too (`const a = 1, c = () => { const p = 1, q = 2; ... }`).
+        let mut more = Vec::new();
+        while self.eat(Tok::Comma) {
+            let lo = self.cur_lo();
+            let pattern = self.parse_binding_pattern()?;
+            more.push(self.finish_var_decl(lo, kind, pattern)?);
+        }
+        debug_assert!(
+            self.more_vars.is_empty(),
+            "ICE: declarators of an inner declaration were left behind"
+        );
+        self.more_vars = more;
+        Ok(first)
     }
 
     /// Is the cursor at `using x` or `await using x` (a declaration, not an expression that
@@ -421,6 +454,11 @@ impl<'a> Parser<'a> {
         kind: VarKind,
         pattern: Pattern,
     ) -> PResult<VarDecl> {
+        // `let x!: T`: TypeScript's definite assignment assertion (`x` is assigned before it
+        // is read, in a way its checks cannot see); Velt checks the reads where it can.
+        if self.at(Tok::Bang) && self.nth(1) == Tok::Colon {
+            self.bump();
+        }
         let ty = if self.eat(Tok::Colon) {
             Some(self.parse_type()?)
         } else {

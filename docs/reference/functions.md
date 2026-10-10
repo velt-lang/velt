@@ -135,7 +135,8 @@ against it.
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
 separately, so there is no boxing and bounds resolve to direct calls. Type arguments are
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
-([Generics](classes.md#generics)).
+([Generics](classes.md#generics)). A `const` type parameter (`function tag<const K>(k: K)`,
+TypeScript 5.0) is accepted and treated as an ordinary type parameter.
 
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The

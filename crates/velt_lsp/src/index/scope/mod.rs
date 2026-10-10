@@ -323,6 +323,7 @@ impl<'a> Walker<'a> {
                 throws.iter().for_each(|t| self.ty(t));
             }
             ast::TypeExprKind::Object(fields) => fields.iter().for_each(|f| self.ty(&f.ty)),
+            ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_) | ast::TypeExprKind::Null | ast::TypeExprKind::Void => {}
         }
     }

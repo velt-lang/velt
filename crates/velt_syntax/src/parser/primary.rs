@@ -5,6 +5,7 @@
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Payload, Tok, TplPart};
+use velt_common::Span;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_primary(&mut self) -> PResult<Expr> {
@@ -254,6 +255,23 @@ impl<'a> Parser<'a> {
     /// symbol key (`*[Symbol.iterator]() { ... }`). `None` (nothing consumed) for a property.
     fn try_object_method(&mut self) -> PResult<Option<ObjectProp>> {
         let lo = self.cur_lo();
+        // `get name() { … }` / `set name(v) { … }`: accessors (not `get(…)`, a method named `get`).
+        if (self.at_word("get") || self.at_word("set"))
+            && (Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::Str(_)))
+            && self.nth(2) == Tok::LParen
+        {
+            let kw = self.cur_span();
+            self.bump();
+            let name = self.parse_prop_key()?;
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    "getters and setters in object literals are not supported yet",
+                    Span::new(self.file, kw.lo, name.span.hi),
+                )
+                .with_note("TypeScript allows this; Velt doesn't yet because an object literal is plain data: its fields hold values; store the value in a field, or declare a class with the accessor"),
+            );
+            return self.finish_method_prop(lo, name, false).map(Some);
+        }
         let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
             || (self.at_kw(Kw::Async) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::LParen);
         let off = usize::from(is_async);
@@ -273,10 +291,53 @@ impl<'a> Parser<'a> {
         }
         let name = self.parse_member_name()?;
         self.reject_private_name(&name);
+        if !is_generator && !name.name.starts_with("[Symbol.") {
+            return self.finish_method_prop(lo, name, is_async).map(Some);
+        }
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
         let body = self.parse_block()?;
         Ok(Some(ObjectProp::Method(Box::new(FnDecl { sig, body }))))
+    }
+
+    /// `name(params) { body }` in an object literal, after the name: a property holding the
+    /// function, `name: (params) => { body }`. The parameter types may be left out: they come
+    /// from the object's context, as an arrow's do (a `ProxyHandler`'s `get(obj, prop) {}`).
+    /// `this` in the body is not supported yet (an arrow's `this` is the enclosing one).
+    fn finish_method_prop(&mut self, lo: u32, name: Ident, is_async: bool) -> PResult<ObjectProp> {
+        let type_params = self.parse_generic_params()?;
+        let params = self.parse_arrow_params()?;
+        let (ret, throws) = if self.eat(Tok::Colon) {
+            (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
+        } else {
+            (None, None)
+        };
+        let body = self.parse_block()?;
+        if let Some(at) = this_in_block(&body) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "`this` in the object-literal method `{}` is not supported yet",
+                        name.name
+                    ),
+                    at,
+                )
+                .with_note("TypeScript allows this (`this` is the object the method is called on); Velt doesn't yet because the method is a function stored in a field, which sees the variables around it but not the object; use those variables, or declare a class"),
+            );
+        }
+        let span = self.span_from(lo);
+        let arrow = self.mk_expr(
+            ExprKind::Arrow {
+                type_params,
+                params,
+                ret,
+                throws,
+                body: ArrowBody::Block(body),
+                is_async,
+            },
+            span,
+        );
+        Ok(ObjectProp::KeyValue(name, arrow))
     }
 
     /// `` `a ${x} b` `` — quasis come pre-cooked from the lexer.
@@ -352,4 +413,21 @@ impl Parser<'_> {
         ];
         ExprKind::New { class, args }
     }
+}
+
+/// Where `body` uses `this` (in nested arrows too, which see the same `this`).
+fn this_in_block(body: &Block) -> Option<Span> {
+    struct Find(Option<Span>);
+    impl<'a> crate::visit::Visit<'a> for Find {
+        fn expr(&mut self, e: &'a Expr) {
+            if matches!(e.kind, ExprKind::This) && self.0.is_none() {
+                self.0 = Some(e.span);
+            }
+        }
+    }
+    let mut f = Find(None);
+    for s in &body.stmts {
+        crate::visit::walk_stmt(s, &mut f);
+    }
+    f.0
 }

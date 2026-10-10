@@ -38,6 +38,8 @@ fn golden_m1_files_parse() {
                 | "quoted_property_names_reserved.vlt"
                 | "type_param_defaults_required.vlt"
                 | "class_expression_named.vlt"
+                | "object_literal_accessors.vlt"
+                | "ts_syntax_errors.vlt"
         ) {
             continue;
         }

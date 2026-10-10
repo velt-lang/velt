@@ -246,6 +246,7 @@ fn not_declared_before<'a>(
             .chain(throws.as_deref())
             .find_map(|a| not_declared_before(a, rest)),
         K::Object(fields) => fields.iter().find_map(|f| not_declared_before(&f.ty, rest)),
+        K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
         K::Literal(_) | K::Null | K::Void => None,
     }
 }

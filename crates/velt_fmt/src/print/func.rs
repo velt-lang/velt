@@ -102,11 +102,16 @@ impl<'a> Printer<'a> {
         let docs = generics
             .iter()
             .map(|g| {
+                // `<const T>` (the AST does not keep the `const`).
+                let name = match crate::source::word_before(self.src, g.name.span.lo) {
+                    Some("const") => format!("const {}", g.name.name),
+                    _ => g.name.name.clone(),
+                };
                 let head = if g.bounds.is_empty() {
-                    text(g.name.name.clone())
+                    text(name)
                 } else {
                     let bounds = g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
-                    cat![g.name.name.clone(), " extends ", join(&text(" & "), bounds)]
+                    cat![name, " extends ", join(&text(" & "), bounds)]
                 };
                 match &g.default {
                     Some(d) => cat![head, " = ", self.ty(d)],
@@ -126,6 +131,7 @@ impl<'a> Printer<'a> {
         (ret, throws): (Option<&TypeExpr>, Option<&TypeExpr>),
         body: &ArrowBody,
         is_async: bool,
+        method: Option<Doc>,
     ) -> Doc {
         let body_lo = match body {
             ArrowBody::Block(b) => b.span.lo,
@@ -162,6 +168,18 @@ impl<'a> Printer<'a> {
         let type_params = self.generic_params(type_params);
         let ret = self.return_type(ret);
         let throws = self.throws_clause(throws);
+        // An object-literal method `name(params) { body }` (parsed as `name: (params) => {}`).
+        if let (Some(name), ArrowBody::Block(b)) = (method, body) {
+            let head = cat![
+                asyncness,
+                name,
+                type_params,
+                delimited("(", list, ")", false),
+                ret,
+                throws
+            ];
+            return cat![head, " ", self.block(b)];
+        }
         let head = cat![
             asyncness,
             type_params,
