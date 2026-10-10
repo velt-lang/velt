@@ -55,6 +55,7 @@ mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
 pub(crate) mod recheck;

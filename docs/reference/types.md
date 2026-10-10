@@ -506,6 +506,34 @@ for (const s of shapes) {
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
   union.
 
+## Type predicates
+
+A function whose return type is a type predicate `x is T` (TypeScript's user-defined type
+guard) returns a `boolean`; a call of it in a condition (`if`, `while`, `?:`, `&&`, `||`, `!`)
+narrows the variable passed as `x`, as a `typeof` or `instanceof` test would: to the union
+members that are `T` (or to the subclass `T`), and to the others when the call is false. A
+`T | null` variable narrows to `T`.
+
+```ts
+function isString(v: string | number): v is string {
+  return typeof v === "string";
+}
+
+function show(v: string | number): string {
+  if (isString(v)) {
+    return v.toUpperCase();
+  }
+  return (v + 1).toString();
+}
+console.log(show("ab"), show(41)); // AB 42
+```
+
+- The function must be declared with `function` and not be generic for its calls to narrow; a
+  predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
+  result. `this is T` is accepted and not used for narrowing yet.
+- `asserts x is T` and `asserts x` declare a function that returns nothing (it throws instead
+  of returning `false`); the narrowing after its call is not made yet.
+
 ## Intersection types
 
 `A & B` is the object type with the fields of both `A` and `B`, as in TypeScript. The parts are

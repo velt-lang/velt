@@ -265,6 +265,63 @@ impl<'a> Parser<'a> {
         Ok(out)
     }
 
+    /// A return type: a type, or a type predicate (`x is T`, `this is T`, `asserts x is T`,
+    /// `asserts x`).
+    pub(super) fn parse_ret_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        let asserts = self.at_word("asserts")
+            && (Self::is_ident_like(self.nth(1)) || self.nth(1) == Tok::Kw(Kw::This))
+            && !matches!(self.nth(2), Tok::Lt | Tok::Dot | Tok::LBracket);
+        let off = usize::from(asserts);
+        let named = Self::is_ident_like(self.nth(off)) || self.nth(off) == Tok::Kw(Kw::This);
+        if !(named && (asserts || self.nth_word(off + 1, "is"))) {
+            return self.parse_type();
+        }
+        if asserts {
+            self.bump();
+        }
+        let param = Box::new(self.take_ident());
+        let ty = if self.at_word("is") {
+            self.bump();
+            Some(Box::new(self.parse_type()?))
+        } else {
+            None
+        };
+        Ok(TypeExpr {
+            kind: TypeExprKind::Predicate { param, ty, asserts },
+            span: self.span_from(lo),
+        })
+    }
+
+    /// A method signature in an object type or an optional one in an interface (`m(x: T): R`,
+    /// `m?(x: T): R`), after its name: a field of function type `(x: T) => R`. A generic one is
+    /// not supported yet (function types have no type parameters).
+    pub(super) fn parse_method_sig_type(&mut self, lo: u32, name: &Ident) -> PResult<TypeExpr> {
+        let sig = self.parse_sig_rest(lo, name.clone(), false)?;
+        if let Some(g) = sig.generics.first() {
+            self.error(
+                format!(
+                    "generic method signatures are only supported in interfaces: declare `{}` in an interface",
+                    name.name
+                ),
+                g.name.span,
+            );
+        }
+        let span = self.span_from(lo);
+        let ret = sig.ret.unwrap_or(TypeExpr {
+            kind: TypeExprKind::Void,
+            span: Span::new(span.file, span.hi, span.hi),
+        });
+        Ok(TypeExpr {
+            kind: TypeExprKind::Function {
+                params: sig.params.into_iter().map(|p| p.ty).collect(),
+                ret: Box::new(ret),
+                throws: sig.throws.map(Box::new),
+            },
+            span,
+        })
+    }
+
     /// `(a: A) => R` when `=>` follows the matching `)`, else a parenthesized type `(A | B)`.
     /// Deciding by lookahead (not by trying the function type first) keeps nested parentheses
     /// linear: a failed attempt would re-parse everything inside once more per level.
@@ -301,7 +358,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         self.expect(Tok::FatArrow)?;
-        let ret = self.parse_type()?;
+        let ret = self.parse_ret_type()?;
         let throws = self.parse_throws_clause()?.map(Box::new);
         Ok(TypeExpr {
             kind: TypeExprKind::Function {

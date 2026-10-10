@@ -83,6 +83,13 @@ impl FnCx<'_, '_> {
                 }
             }
             ast::ExprKind::InstanceOf { expr, ty } => self.instanceof_facts(expr, ty),
+            // `isFoo(x)` of a function declared `(v: …): v is Foo`.
+            ast::ExprKind::Call {
+                callee,
+                args,
+                optional: false,
+                ..
+            } => self.predicate_facts(callee, args),
             // `#x in o` is `o instanceof C`, `C` the class declaring `#x`.
             ast::ExprKind::Binary {
                 op: B::In,
@@ -356,7 +363,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts for `e instanceof class`.
-    fn class_facts(&mut self, e: &ast::Expr, class: DefId) -> (Vec<Fact>, Vec<Fact>) {
+    pub(super) fn class_facts(&mut self, e: &ast::Expr, class: DefId) -> (Vec<Fact>, Vec<Fact>) {
         use super::expr::downcast::Instance;
         let found = match self.local_with_members(e) {
             Some(x) => Some(x),
@@ -399,7 +406,7 @@ impl FnCx<'_, '_> {
 
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff
     /// `null_matches`).
-    fn split_facts(
+    pub(super) fn split_facts(
         &mut self,
         l: LocalId,
         nullable: bool,
@@ -443,7 +450,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A named local of the current function: (local, is `T | null`, `T`).
-    fn local_with_members(&mut self, e: &ast::Expr) -> Option<(LocalId, bool, TyId)> {
+    pub(super) fn local_with_members(&mut self, e: &ast::Expr) -> Option<(LocalId, bool, TyId)> {
         let l = self.named_local(e)?;
         let ty = self.local_ty(l);
         Some(match self.cx.ty.opt_payload(ty) {

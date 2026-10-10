@@ -54,6 +54,13 @@ pub(crate) fn written(t: &TypeExpr) -> String {
         }
         T::Null => "null".into(),
         T::Void => "void".into(),
+        T::Predicate { param, ty, asserts } => {
+            let asserts = if *asserts { "asserts " } else { "" };
+            match ty {
+                Some(t) => format!("{asserts}{} is {}", param.name, written(t)),
+                None => format!("{asserts}{}", param.name),
+            }
+        }
     }
 }
 

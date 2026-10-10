@@ -52,6 +52,13 @@ impl<'a> Printer<'a> {
             TypeExprKind::Object(fields) => self.object_type(fields, t.span),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
+            TypeExprKind::Predicate { param, ty, asserts } => {
+                let asserts = if *asserts { "asserts " } else { "" };
+                match ty {
+                    Some(ty) => cat![asserts, param.name.clone(), " is ", self.ty(ty)],
+                    None => cat![asserts, param.name.clone()],
+                }
+            }
         }
     }
 

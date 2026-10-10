@@ -184,7 +184,7 @@ impl<'a> Parser<'a> {
         let generics = self.parse_generic_params()?;
         let params = self.parse_params()?;
         let ret = if self.eat(Tok::Colon) {
-            Some(self.parse_type()?)
+            Some(self.parse_ret_type()?)
         } else {
             None
         };

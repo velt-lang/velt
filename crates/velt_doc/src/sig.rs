@@ -183,6 +183,13 @@ impl Printer<'_> {
             }
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
+            TypeExprKind::Predicate { param, ty, asserts } => {
+                let asserts = if *asserts { "asserts " } else { "" };
+                match ty {
+                    Some(t) => format!("{asserts}{} is {}", param.name, self.ty(t)),
+                    None => format!("{asserts}{}", param.name),
+                }
+            }
         }
     }
 

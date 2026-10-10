@@ -40,6 +40,17 @@ impl Ctx<'_> {
     pub fn resolve_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
         match &t.kind {
             ast::TypeExprKind::Void => self.ty.unit,
+            // `x is T` returns a `boolean`; `asserts x is T` returns nothing (it throws instead
+            // of returning `false`). The narrowing is `body::predicates`.
+            ast::TypeExprKind::Predicate { ty, asserts, .. } => {
+                if let Some(t) = ty {
+                    self.resolve_type(t, env);
+                }
+                match asserts {
+                    true => self.ty.unit,
+                    false => self.ty.bool_,
+                }
+            }
             ast::TypeExprKind::Named { path, args } => self.resolve_named(t, path, args, env),
             ast::TypeExprKind::Array(e) => {
                 let e = self.resolve_type(e, env);
