@@ -91,6 +91,8 @@ fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: 
 fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analysis, bool) {
     let lifted = crate::generic_arrows::lift(modules);
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
+    let overloaded = crate::overloads::rewrite(modules);
+    let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
     let new_cx = |held_borrows: bool| {
         let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
         cx.stack_budget = stack_budget;
@@ -99,9 +101,16 @@ fn analyze(modules: &[SourceModule], root: usize, stack_budget: usize) -> (Analy
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
         }
+        if let Some(o) = &overloaded {
+            cx.has_overloads = true;
+            cx.overloaded_methods = o.methods.clone();
+        }
         cx.ide = Some(Box::default());
         if !modules.is_empty() {
             crate::analyze_bodies(&mut cx);
+        }
+        if let Some(o) = &overloaded {
+            crate::overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
         cx
     };

@@ -197,7 +197,11 @@ impl Root {
     /// be a launcher's root (`toolchains/`), whose `bin/velt` would run the launcher again.
     pub fn link(&self, name: &str, prefix: &Path) -> Result<(), String> {
         check_link_name(name)?;
-        if prefix.join(TOOLCHAINS_DIR).is_dir() {
+        let is_this_root = matches!(
+            (prefix.canonicalize(), self.dir.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        );
+        if is_this_root || prefix.join(TOOLCHAINS_DIR).is_dir() {
             return Err(format!(
                 "{} is the root of a velt launcher, not a toolchain prefix (link one of its \
                  {TOOLCHAINS_DIR}/<version> directories, or the prefix of a build)",

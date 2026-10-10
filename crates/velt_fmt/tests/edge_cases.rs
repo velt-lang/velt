@@ -221,6 +221,46 @@ fn for_comma_lists() {
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
 
+/// `for...in` is parsed as a loop over `Object.keys(o)` and printed back as written.
+#[test]
+fn for_in_prints_as_written() {
+    let src = "function f(o: { a: number }) {
+  for (const k in o) {
+    console.log(k);
+  }
+  for (let k of Object.keys(o)) {}
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
+/// Overload signatures print before their implementation, with the comments between them.
+#[test]
+fn overloads_print_as_written() {
+    let src = "// head
+export function f(a: string): string; // one
+// between
+export function f(a: number): number;
+export function f(a: string | number): string | number {
+  return a;
+}
+
+class C {
+  static m(): void;
+  // mid
+  static m(x?: number): void {}
+  async n(): Promise<void>;
+  async n(x?: number): Promise<void> {}
+}
+
+async function g(): Promise<void>;
+async function g(x?: number): Promise<void> {}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
 /// `bool` and `boolean` name the same type; the formatter keeps the spelling written (#353).
 #[test]
 fn bool_and_boolean_keep_their_spelling() {

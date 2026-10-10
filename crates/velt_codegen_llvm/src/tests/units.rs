@@ -112,10 +112,7 @@ fn huge_callers_import_nothing() {
     for f in [1, 3] {
         let func = &mut p.funcs[f];
         let x = Local(func.locals.len() as u32);
-        func.locals.push(LocalDecl {
-            ty: I64,
-            name: None,
-        });
+        func.locals.push(LocalDecl::new(I64, None));
         for i in 0..5_000 {
             func.blocks[0]
                 .stmts

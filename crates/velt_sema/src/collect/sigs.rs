@@ -474,10 +474,12 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             .as_ref()
             .map(|body| default_method(cx, d, &qual, &generics, m, body, module));
         if methods.iter().any(|x| x.name == key) {
-            cx.err(
-                format!("duplicate {} `{}`", what(m.is_setter), name.name),
-                name.span,
-            );
+            let msg = match m.is_setter || m.body.is_some() {
+                true => format!("duplicate {} `{}`", what(m.is_setter), name.name),
+                // TypeScript's overloads in an interface.
+                false => format!("overloaded interface methods are not supported yet: declare `{}` once, with parameters that take every form (`a: string | number`)", name.name),
+            };
+            cx.err(msg, name.span);
             continue;
         }
         methods.push(IfaceMethod {

@@ -444,6 +444,11 @@ impl FnCx<'_, '_> {
                 Self::push(out, S::Expr(h), span);
                 Self::push(out, S::Return(None), span);
             }
+            // A TypeScript-form overload signature returning its implementation's result.
+            Some(e) if self.signature_body().is_some() => {
+                let h = self.signature_result(e, ret);
+                Self::push(out, S::Return(Some(h)), span);
+            }
             Some(e) => {
                 let h = self.returned(e, ret);
                 Self::push(out, S::Return(Some(h)), span);

@@ -13,7 +13,9 @@ fn main() {
     async_bench::run(async {
         let mut total = 0;
         for round in 0..1_000_000 {
-            let (a, b) = try_join(task(round, 1), task(round, 2)).await.expect("no error");
+            let (a, b) = try_join(task(round, 1), task(round, 2))
+                .await
+                .expect("no error");
             total += a + b;
         }
         println!("{total}");

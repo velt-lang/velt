@@ -1,0 +1,9 @@
+// Several declarations with bodies (Velt's form of overloads) are not supported yet.
+function twice(x: number): number {
+  return x * 2;
+}
+function twice(x: string): string {
+  return x + x;
+}
+
+function main() {}

@@ -1,0 +1,7 @@
+// The variable of a `for...in` loop is declared in its head, as for `for...of`.
+function main() {
+  let k = "";
+  for (k in { a: 1 }) {
+    console.log(k);
+  }
+}

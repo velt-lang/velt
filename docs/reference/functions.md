@@ -44,9 +44,59 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   const p: [string, number] = ["x", 4];
   console.log(label(...p), label(...p, "!")); // x=4 x=4!
   ```
-- There are no overloads.
+- A function or method may have [overloads](#overloads) in TypeScript's form.
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
+
+## Overloads
+
+As in TypeScript, signatures without a body, written right before the implementation, give a
+function or method several forms:
+
+```ts
+function describe(x: string): string;
+function describe(x: number): number;
+function describe(x: string | number): string | number {
+  return typeof x === "string" ? `s:${x}` : x * 2;
+}
+
+function main() {
+  const s: string = describe("a"); // the first signature: a `string`
+  const n: number = describe(21); // the second: a `number`
+  console.log(s, n + 1); // s:a 43
+}
+```
+
+- A call takes the first signature, in order, that accepts its arguments (after inferring its
+  type arguments) and has that signature's result type. When none does, the error lists why
+  each one didn't (TypeScript's TS2769). The implementation's own signature is not one of the
+  forms: `describe(v)` with `v: string | number` is an error, as in TypeScript.
+- Signatures may be generic and have optional and rest parameters. The implementation takes
+  every signature's arguments: a signature it can't take is an error at the signature (TS2394).
+  A signature with fewer parameters, or an optional one left out of a call, leaves the
+  implementation's parameters out, which then take their defaults. A signature's parameters
+  have no defaults of their own (TS2371). A type parameter of the implementation that a
+  signature leaves open is `void` there (TypeScript's `unknown`).
+- A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
+  one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
+  of a base class or an interface, or any of these in a `Promise` of an `async` implementation.
+  The result is then tested, and another value panics
+  (``overload `f` returned a `…` where its signature promises a `…` ``), where TypeScript would
+  trust the implementation. Where the types already agree nothing is tested.
+- Every signature is followed by the next one or by the implementation (TS2391), not by a
+  function of another name (TS2389); all of them are `export`ed or none (TS2383), and a
+  method's are all `static` or none (TS2387, TS2388). Signatures may be `async`, as the
+  implementation is. Methods overload the same way, `static` ones too, and a subclass's
+  override of the implementation is what the signatures call; `override` on the signatures
+  overrides the base class's.
+- `import { f }`, a re-export and an export list (`export { f }`) bring the signatures along.
+  Where a function type is expected (`const h: (s: string) => string = describe`, a callback
+  argument), an overloaded function is the first signature that fits it; elsewhere
+  (`const g = f`) it is its implementation.
+- `velt doc` shows the signatures, not the implementation.
+- Not supported yet: overloaded constructors, overloads of a function declared inside a
+  function, overloaded methods in interfaces, and several declarations of one name that each
+  have a body (overloads in Velt's own form, chosen by the most specific parameter types).
 
 ## Return types
 

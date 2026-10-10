@@ -26,7 +26,10 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
     values);
   - semantic highlighting: types, functions, methods, parameters, properties, enum members;
     `let` bindings carry the `mutable` modifier (to underline them, add
-    `"editor.semanticTokenColorCustomizations": { "rules": { "*.mutable:velt": { "underline": true } } }`).
+    `"editor.semanticTokenColorCustomizations": { "rules": { "*.mutable:velt": { "underline": true } } }`);
+  - **▶ Run | Debug** above `main`.
+- Debugging (F5): breakpoints in `.vlt` files, stepping and the call stack, with nothing to
+  configure. See [Debugging](#debugging).
 
 ## Requirements
 
@@ -57,12 +60,35 @@ code --install-extension velt-0.1.0.vsix
 For development, open `editors/vscode` in VS Code and press F5 to launch an Extension Development
 Host with the extension loaded (run `npx tsc -watch -p .` alongside).
 
+## Debugging
+
+Install a debugger extension: [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
+(recommended; it includes LLDB), LLDB DAP, or Microsoft's C/C++. Then press **F5** in a package
+(a folder with `package.vlt`) or on an open `.vlt` file: the extension runs `velt build --json`,
+shows build errors in *Problems*, and starts the debugger on the program. No `launch.json` is
+needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes one to customize
+(`args`, `env`, `cwd`, `program`, `file`, `build`, `buildArgs`, `stopOnEntry`):
+
+```json
+{ "type": "velt", "request": "launch", "name": "Debug", "args": ["--port", "8080"] }
+```
+
+`velt new` already adds it. On Windows the default build has no line information yet; add
+`"buildArgs": ["--backend", "llvm"]` (needs clang). `templates/` has examples, including
+attaching to a program that `velt dev --exe` restarts on every change.
+
 ## Settings
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `velt.serverPath` | `velt` | The `velt` executable (`~` and `${workspaceFolder}` are expanded). Changing it restarts the server. |
 | `velt.trace.server` | `off` | `messages` / `verbose` log the LSP traffic to the *Velt Language Server* output channel. |
+| `velt.debug.engine` | `auto` | The debugger extension F5 starts: `codelldb`, `lldb-dap`, `cpptools`, or `auto` (the first installed, in that order). |
 
-Command: **Velt: Restart Language Server** (e.g. after rebuilding `velt` or changing a package's
-dependencies, which the server installs once per session).
+Commands: **Velt: Restart Language Server** (e.g. after rebuilding `velt` or changing a package's
+dependencies, which the server installs once per session), **Velt: Run File**, **Velt: Debug
+File** (also as buttons in the editor title) and **Velt: Generate launch.json**.
+
+## Tests
+
+`npm test` compiles and runs the unit tests of the debug configuration logic (`src/test/`).

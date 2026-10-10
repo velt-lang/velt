@@ -5,15 +5,44 @@ use velt_syntax::ast::{ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam,
 
 use super::lists::delimited;
 use super::Printer;
-use crate::doc::{cat, group, indent, join, line, nil, text, Doc};
+use crate::doc::{cat, concat, group, hardline, indent, join, line, nil, text, Doc};
 
 impl<'a> Printer<'a> {
     /// `[async ]<keyword>name<T>(params): R [throws E] { body }` (`keyword` is `function ` or
     /// empty).
     pub(super) fn fn_decl(&mut self, f: &FnDecl, keyword: &str) -> Doc {
+        self.fn_decl_with(f, keyword, "")
+    }
+
+    /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
+    /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
+    pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
+        let mut out = vec![];
+        for (k, o) in f.overloads.iter().enumerate() {
+            let sig = self.fn_sig(o, keyword, o.span.hi);
+            let asyncness = if o.is_async { "async " } else { "" };
+            out.push(cat![mods.to_string(), asyncness, sig, ";"]);
+            // Comments after a signature: on its line, then on lines of their own.
+            let next = f.overloads.get(k + 1).unwrap_or(&f.sig).span.lo;
+            for c in self.comments.take_trailing(self.src, o.span.hi, next, true) {
+                out.push(text(format!(" {}", c.text)));
+            }
+            out.push(hardline());
+            for c in self.comments.take_before(next) {
+                out.push(text(c.text));
+                out.push(hardline());
+            }
+        }
         let asyncness = if f.sig.is_async { "async " } else { "" };
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
-        cat![asyncness, sig, " ", self.block(&f.body)]
+        out.push(cat![
+            mods.to_string(),
+            asyncness,
+            sig,
+            " ",
+            self.block(&f.body)
+        ]);
+        concat(out)
     }
 
     /// Signature without modifiers; `end` bounds the parameter list's comments.

@@ -40,6 +40,7 @@ pub(super) fn parse_build(
             "--release" => b.release = true,
             "-g" => b.debug_info = true,
             "--locked" => b.locked = true,
+            "--json" if cmd == "build" => b.json = true,
             "-v" | "--verbose" => b.verbose = true,
             "--timings" => {
                 b.verbose = true;
@@ -201,6 +202,11 @@ mod tests {
         let b = build(&["build", "a.vlt", "--report", "numbers"]);
         assert!(b.report_numbers);
         assert!(p(&["build", "a.vlt", "--report=speed"]).is_err());
+        assert!(build(&["build", "--json"]).json);
+        assert!(
+            p(&["run", "--json", "a.vlt"]).is_err(),
+            "only `build` prints JSON"
+        );
         let b = build(&["build", "a.vlt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");
         match p(&["run", "--target", "wasm32-wasip1", "a.vlt"]).unwrap() {

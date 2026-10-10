@@ -69,6 +69,13 @@ impl FnCx<'_, '_> {
         if prop.name == crate::collect::DISPOSE && !getter {
             return self.explicit_dispose(recv, args, span);
         }
+        let recv = match self.cx.has_overloads && !getter {
+            true => match self.overloaded_method_call(recv, prop, type_args, args, exp, span) {
+                Ok(h) => return h,
+                Err(recv) => recv,
+            },
+            false => recv,
+        };
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };

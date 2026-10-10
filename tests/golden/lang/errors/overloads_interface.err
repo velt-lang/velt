@@ -1,0 +1,1 @@
+overloads_interface.vlt:4:3: error: overloaded interface methods are not supported yet: declare `m` once, with parameters that take every form (`a: string | number`)

@@ -256,7 +256,14 @@ impl FnCx<'_, '_> {
     fn def_value(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>, want: Want) -> hir::Expr {
         let span = id.span;
         match &self.cx.info[d.0 as usize] {
-            DefInfo::Fn(_) => self.fn_ref(d, id, exp),
+            DefInfo::Fn(_) => {
+                if self.cx.has_overloads {
+                    if let Some(h) = self.overloaded_fn_value(id, exp) {
+                        return h;
+                    }
+                }
+                self.fn_ref(d, id, exp)
+            }
             // `const N = 4;` stands for its literal, as TS types it `4`: `i < N` with `i: i64`
             // compares integers, `N / 3` divides numbers.
             DefInfo::Global(g)
@@ -294,7 +301,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A named function used as a value; generic ones take their type args from `exp`.
-    fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
+    pub(super) fn fn_ref(&mut self, d: DefId, id: &ast::Ident, exp: Option<TyId>) -> hir::Expr {
         let span = id.span;
         let f = self.cx.fn_info(d);
         if f.kind == FnKind::Extern {

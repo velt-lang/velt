@@ -2,7 +2,7 @@
 //! JIT code registered through the GDB JIT interface.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cranelift_codegen::gimli;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -54,9 +54,9 @@ fn all_lines(program: &Program) -> BTreeSet<u64> {
     lines
 }
 
-/// The DWARF of an object or image, read back: (subprogram linkage names, line rows as
-/// (address, file name, line)).
-type Lines = (BTreeSet<String>, Vec<(u64, String, u64)>);
+/// The DWARF of an object or image, read back: (subprogram linkage names with their
+/// `DW_AT_low_pc` as written, line rows as (address, file name, line)).
+type Lines = (BTreeMap<String, u64>, Vec<(u64, String, u64)>);
 
 fn read_dwarf(file: &object::File) -> Lines {
     let load = |id: gimli::SectionId| -> Result<Cow<'_, [u8]>, gimli::Error> {
@@ -69,7 +69,7 @@ fn read_dwarf(file: &object::File) -> Lines {
     };
     let sections = gimli::DwarfSections::load(load).unwrap();
     let dwarf = sections.borrow(|s| gimli::EndianSlice::new(s, gimli::LittleEndian));
-    let (mut names, mut rows) = (BTreeSet::new(), vec![]);
+    let (mut names, mut rows) = (BTreeMap::new(), vec![]);
     let mut units = dwarf.units();
     while let Some(header) = units.next().unwrap() {
         let unit = dwarf.unit(header).unwrap();
@@ -82,7 +82,11 @@ fn read_dwarf(file: &object::File) -> Lines {
                 .attr_value(gimli::DW_AT_linkage_name)
                 .expect("linkage name");
             let name = dwarf.attr_string(&unit, value).unwrap();
-            names.insert(name.to_string_lossy().into_owned());
+            let low_pc = match entry.attr_value(gimli::DW_AT_low_pc) {
+                Some(gimli::AttributeValue::Addr(a)) => a,
+                other => panic!("low_pc {other:?}"),
+            };
+            names.insert(name.to_string_lossy().into_owned(), low_pc);
         }
         let program = unit.line_program.clone().unwrap();
         let mut program_rows = program.rows();
@@ -125,24 +129,47 @@ fn objects_carry_line_tables() {
                 "{triple}"
             );
         }
-        // One address relocation per sequence start, against the function symbols.
-        let symbols: BTreeSet<String> = line_section
-            .relocations()
-            .filter_map(|(_, r)| match r.target() {
-                object::RelocationTarget::Symbol(i) => {
-                    let s = file.symbol_by_index(i).ok()?;
-                    (s.kind() == object::SymbolKind::Text).then(|| s.name().unwrap().to_string())
-                }
-                _ => None,
-            })
-            .collect();
-        let want: BTreeSet<String> = (program.funcs.iter())
-            .map(|f| super::objects::obj_name(fmt, &f.symbol))
-            .collect();
-        assert_eq!(symbols, want, "{triple}");
         let (names, rows) = read_dwarf(&file);
+        if fmt == BinaryFormat::MachO {
+            // Debuggers read Mach-O DWARF in the object without applying relocations: each
+            // function's address is in place, as in the object (section address + offset).
+            // Regression: they were all 0, so LLDB put every line in the first function.
+            for f in &program.funcs {
+                let sym = file
+                    .symbol_by_name(&super::objects::obj_name(fmt, &f.symbol))
+                    .unwrap();
+                assert_eq!(names[&f.symbol], sym.address(), "{triple}: {}", f.symbol);
+            }
+            let starts: BTreeSet<u64> = names.values().copied().collect();
+            assert_eq!(starts.len(), names.len(), "{triple}: {names:?}");
+            // The relocations, for dsymutil, are against the code section.
+            assert!(line_section
+                .relocations()
+                .all(|(_, r)| matches!(r.target(), object::RelocationTarget::Section(_))));
+        } else {
+            // One address relocation per sequence start, against the function symbols.
+            let symbols: BTreeSet<String> = line_section
+                .relocations()
+                .filter_map(|(_, r)| match r.target() {
+                    object::RelocationTarget::Symbol(i) => {
+                        let s = file.symbol_by_index(i).ok()?;
+                        (s.kind() == object::SymbolKind::Text)
+                            .then(|| s.name().unwrap().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let want: BTreeSet<String> = (program.funcs.iter())
+                .map(|f| super::objects::obj_name(fmt, &f.symbol))
+                .collect();
+            assert_eq!(symbols, want, "{triple}");
+        }
         let symbols: BTreeSet<String> = program.funcs.iter().map(|f| f.symbol.clone()).collect();
-        assert_eq!(names, symbols, "{triple}");
+        assert_eq!(
+            names.keys().cloned().collect::<BTreeSet<_>>(),
+            symbols,
+            "{triple}"
+        );
         let lines: BTreeSet<u64> = rows.iter().map(|r| r.2).filter(|&l| l > 0).collect();
         assert!(lines.is_subset(&all_lines(&program)), "{triple}: {lines:?}");
         assert!(rows.iter().all(|r| r.1 == "fib.vlt"), "{triple}: {rows:?}");

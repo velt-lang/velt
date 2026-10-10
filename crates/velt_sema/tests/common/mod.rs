@@ -412,6 +412,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         kind: ItemKind::Function(FnDecl {
             sig,
             body: blk(body),
+            overloads: vec![],
         }),
         exported: false,
         span: D,

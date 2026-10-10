@@ -18,8 +18,12 @@ On Windows, in PowerShell:
 irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 ```
 
-The installer puts the toolchain in `~/.velt/toolchain` (`%LOCALAPPDATA%\velt` on Windows) and
-adds its `bin` directory to your `PATH`. Open a new terminal and check the installation:
+The installer puts the toolchain in `~/.velt/toolchains/<version>` and the `velt` launcher in
+`~/.velt/bin`, which it adds to your `PATH` (on Windows `%LOCALAPPDATA%\velt\toolchains\<version>`
+and `%LOCALAPPDATA%\velt\bin`, added to your user `Path`). Several versions can be installed side
+by side; each package runs the one its manifest names (below). To uninstall, delete `~/.velt`
+(`%LOCALAPPDATA%\velt`) and remove its `bin` directory from your `PATH`. Open a new terminal and
+check the installation:
 
 ```sh
 velt doctor
@@ -42,8 +46,9 @@ cargo build --release -p veltc -p velt_rt
 ./target/release/velt doctor
 ```
 
-Put `target/release` on your `PATH`, or build a self-contained toolchain directory with `scripts/package.sh` (Linux,
-macOS) or `scripts/package.ps1` (Windows) and install it with the matching `install` script
+Put `target/release` on your `PATH`, or build a self-contained toolchain directory with
+`scripts/package.sh` (Linux, macOS) or `scripts/package.ps1` (Windows) and install it with the
+matching `install` script, beside released versions
 ([Platforms and installation](../tooling/platforms.md)).
 
 ## Your first program
@@ -98,8 +103,8 @@ export const pkg: Package = { name: "hello", version: "0.1.0", velt: "0.1" };
 
 The manifest is written in Velt but holds only data: `velt` reads it without running it
 ([`package.vlt`](../tooling/manifest.md)). `velt: "0.1"` records the velt version the package
-was made with; once the velt launcher (#948) installs versions side by side, a newer velt
-doesn't change how the package builds. In an editor, the language server completes its
+was made with: the `velt` command runs that version, so installing a newer velt doesn't change
+how the package builds ([`velt toolchain`](../tooling/cli.md#velt-toolchain)). In an editor, the language server completes its
 fields, explains them on hover and reports the same errors `velt` would.
 
 `src/main.vlt` imports the greeting from its own module and the program arguments from the
@@ -134,7 +139,10 @@ client), `--template lib` (a library to publish).
 
 Install the VS Code extension from `editors/vscode` for highlighting, diagnostics as you type,
 go-to-definition, completion and quick fixes, or point any LSP client at `velt lsp`
-([Editors](../tooling/editors.md)).
+([Editors](../tooling/editors.md)). With a debugger extension such as CodeLLDB installed too,
+F5 builds the package and stops on breakpoints (on Linux and macOS; on Windows see
+[Debugging](../tooling/debugging.md#vs-code)): `velt new` writes the `.vscode/launch.json` for
+it, and `velt init --editor vscode` adds one to an existing package.
 
 ## Next steps
 

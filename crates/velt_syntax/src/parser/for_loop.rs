@@ -1,5 +1,5 @@
-//! `for` statements: C-style `for (init; cond; update)`, `for (const x of xs)` and
-//! `for await (const x of xs)`.
+//! `for` statements: C-style `for (init; cond; update)`, `for (const x of xs)`,
+//! `for await (const x of xs)` and `for (const k in o)`.
 //!
 //! Comma lists in the head (`for (let i = 0, j = n; i < j; i++, j--)`) have no AST node of
 //! their own; the parser desugars them into constructs the rest of the compiler knows:
@@ -9,7 +9,12 @@
 //! - several update expressions become an immediately called arrow `(() => { i++; j--; })()`
 //!   (captured variables are borrowed, so the updates act on the loop variables).
 //!
-//! Both desugarings are recognizable, so `velt fmt` prints the comma form back: the block
+//! - `for (const k in o)` becomes `for (const k of Object.keys(o))`: JavaScript's `for...in`
+//!   visits the same keys in the same order (an object's own enumerable string keys; Velt
+//!   objects inherit no enumerable ones). The callee `Object.keys` has empty spans and the
+//!   call has the span of `o`.
+//!
+//! These desugarings are recognizable, so `velt fmt` prints the comma form back: the block
 //! starts at the `for` keyword (a source block starts at `{`), and the synthesized arrow and
 //! its parentheses have empty spans (a source expression's span is never empty).
 
@@ -30,6 +35,16 @@ impl<'a> Parser<'a> {
         let init = match self.parse_for_init()? {
             ForInit::Of(kind, pattern) => {
                 return self.finish_for_of(kind, pattern, await_span.is_some())
+            }
+            ForInit::In(kind, pattern) => {
+                if let Some(span) = await_span {
+                    self.error(
+                        "`for await` needs `of`: `for await (const x in o)` is not JavaScript",
+                        span,
+                    );
+                    return Err(Fail);
+                }
+                return self.finish_for_in(kind, pattern);
             }
             ForInit::Stmts(stmts) => stmts,
         };
@@ -103,6 +118,15 @@ impl<'a> Parser<'a> {
                 if stmts.is_empty() && self.eat_kw(Kw::Of) {
                     return Ok(ForInit::Of(kind, pattern));
                 }
+                if stmts.is_empty() && self.at_kw(Kw::In) {
+                    if !matches!(pattern.kind, PatternKind::Ident(_)) {
+                        let span = pattern.span;
+                        self.error("the variable of a `for...in` loop is a single name (each key is a `string`)", span);
+                        return Err(Fail);
+                    }
+                    self.bump();
+                    return Ok(ForInit::In(kind, pattern));
+                }
                 let decl = self.finish_var_decl(lo, kind, pattern)?;
                 stmts.push(Stmt {
                     span: decl.span,
@@ -115,10 +139,10 @@ impl<'a> Parser<'a> {
         } else {
             loop {
                 let e = self.parse_expr()?;
-                if self.at_kw(Kw::Of) {
+                if self.at_kw(Kw::Of) || self.at_kw(Kw::In) {
                     let span = self.cur_span();
                     self.error(
-                        "`for...of` requires `const` or `let` before the loop variable",
+                        "`for...of` and `for...in` require `const` or `let` before the loop variable",
                         span,
                     );
                     return Err(Fail);
@@ -194,10 +218,45 @@ impl<'a> Parser<'a> {
     }
 }
 
+impl Parser<'_> {
+    /// After `for (const k in`: the loop over `Object.keys(o)`.
+    fn finish_for_in(&mut self, kind: VarKind, pattern: Pattern) -> PResult<StmtKind> {
+        let object = self.parse_expr()?;
+        self.expect(Tok::RParen)?;
+        let body = self.parse_body()?;
+        let span = object.span;
+        let empty = velt_common::Span::new(span.file, span.lo, span.lo);
+        let name = |n: &str| Ident {
+            name: n.into(),
+            span: empty,
+        };
+        let callee = ExprKind::Member {
+            object: Box::new(self.mk_expr(ExprKind::Ident(name("Object")), empty)),
+            prop: name("keys"),
+            optional: false,
+        };
+        let call = ExprKind::Call {
+            callee: Box::new(self.mk_expr(callee, empty)),
+            type_args: vec![],
+            args: vec![object],
+            optional: false,
+        };
+        Ok(StmtKind::ForOf {
+            kind,
+            pattern,
+            iter: self.mk_expr(call, span),
+            body,
+            is_await: false,
+        })
+    }
+}
+
 /// What precedes the condition of a `for`.
 enum ForInit {
     /// `for (<kind> <pattern> of …`
     Of(VarKind, Pattern),
+    /// `for (<kind> <name> in …`
+    In(VarKind, Pattern),
     /// C-style init statements (none, one, or a comma list), `;` consumed.
     Stmts(Vec<Stmt>),
 }
