@@ -6,6 +6,8 @@ mod bench;
 mod ephemeron;
 mod ops;
 mod soak;
+mod threads;
+mod values;
 
 use super::*;
 use crate::mem::{velt_rt_alloc, velt_rt_free};
@@ -115,6 +117,11 @@ pub(super) unsafe extern "C" fn trace_obj(obj: *mut u8, visit: VisitFn, ctx: *mu
     }
 }
 
+/// `RetainFn` for `Obj` values.
+pub(super) unsafe extern "C" fn retain_value(v: u64) {
+    retain(v as *mut u8);
+}
+
 /// `ReleaseFn` for `Obj` values.
 pub(super) unsafe extern "C" fn release_value(v: u64) {
     release(v as *mut u8);
@@ -124,6 +131,7 @@ pub(super) unsafe extern "C" fn release_value(v: u64) {
 pub(super) fn obj_map() -> MapId {
     velt_rt_weakmap_new(
         Some(TraceFn(trace_obj)),
+        Some(retain_value),
         Some(release_value),
         Some(TraceFn(trace_obj)),
     )
@@ -134,6 +142,7 @@ pub(super) fn set(m: MapId, key: *mut u8, value: *mut u8) {
     unsafe { velt_rt_weakmap_set(m, key, value as u64) }
 }
 
+/// `map.get(key)`: a new reference to the value (for maps of `Obj` values).
 pub(super) fn get(m: MapId, key: *mut u8) -> Option<*mut u8> {
     let mut found = 0;
     // SAFETY: `found` is a local.
@@ -145,7 +154,7 @@ pub(super) fn get(m: MapId, key: *mut u8) -> Option<*mut u8> {
 /// (retained) and `handler`, cached. Returns a new reference to the proxy.
 pub(super) fn proxy_of(cache: MapId, raw: *mut u8, handler: *mut u8) -> *mut u8 {
     if let Some(p) = get(cache, raw) {
-        return retain(p);
+        return p;
     }
     let p = new_obj(&[retain(raw), handler]);
     set(cache, raw, retain(p));

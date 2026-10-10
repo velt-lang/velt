@@ -217,7 +217,7 @@ pub(super) fn run(s: &State, start: usize) -> Trial {
     trial
 }
 
-/// The map references of object `i`: to its entries' values (as a key) and from the keys of the
+/// The map references of object `i`: to its entries' traced values (as a key) and from the keys of the
 /// entries it belongs to (whose own edges then count those references as internal).
 fn add_entry_edges(s: &State, g: &mut Graph, i: u32) {
     let obj = g.objs[i as usize];
@@ -225,13 +225,18 @@ fn add_entry_edges(s: &State, g: &mut Graph, i: u32) {
         return;
     };
     for &m in &node.keyed_in {
+        // Only traced values join the graph: a value left out (untraced, or 0) can only make
+        // what it refers to look referenced from outside, which keeps it alive (safe).
         let map = s.map(m);
-        if map.value_release.is_none() {
+        let Some(trace) = map.value_trace else {
             continue;
-        }
-        if let Some(e) = map.entries.get(&obj) {
-            let j = g.add(e.value as usize, map.value_trace);
-            g.edge(i, j);
+        };
+        match map.entries.get(&obj) {
+            Some(e) if e.value != 0 => {
+                let j = g.add(e.value as usize, Some(trace));
+                g.edge(i, j);
+            }
+            _ => {}
         }
     }
     for &(m, k) in &node.member_of {

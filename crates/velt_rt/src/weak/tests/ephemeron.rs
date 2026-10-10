@@ -73,11 +73,9 @@ fn a_value_kept_alive_keeps_its_key() {
         release(raw);
         assert_eq!(live(), before);
         assert_eq!(field(p, 0), raw);
-        assert_eq!(
-            get(m, raw),
-            Some(p),
-            "the entry stays while its key is reachable"
-        );
+        let got = get(m, raw);
+        assert_eq!(got, Some(p), "the entry stays while its key is reachable");
+        release(p);
         release(p);
         assert_eq!(live(), before - 2);
         finish(&[m]);
@@ -109,7 +107,9 @@ fn holding_the_end_of_a_chain_keeps_it_all() {
         release(a);
         release(b);
         assert_eq!(weakmap_len(m), 2);
-        assert_eq!(get(m, a), Some(b));
+        let got = get(m, a);
+        assert_eq!(got, Some(b));
+        release(b);
         release(c);
         assert_eq!(weakmap_len(m), 0);
         finish(&[m]);
@@ -265,6 +265,7 @@ fn a_path_added_after_the_last_trial_delays_the_free() {
         let raw = new_obj(&[]);
         release(proxy_of(m, raw, std::ptr::null_mut()));
         let p = get(m, raw).expect("the key is held");
+        release(p); // the entry keeps it
         set_field(p, 2, retain(raw));
         let before = live();
         release(raw);

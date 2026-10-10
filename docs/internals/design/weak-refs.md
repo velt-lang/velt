@@ -19,11 +19,14 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
 - **A per-thread side table** from object address to a record: the maps the object is a key
   of, the entries whose value graph refers to it, its `WeakRef` slots, and two small counts
-  used by the ephemeron rule (`hint`, `observed`). Counted objects never cross threads, so the
-  table is thread-local and unlocked.
+  used by the ephemeron rule (`hint`, `observed`). Counted objects do cross threads (a transfer
+  moves an object whose count is 1 in place, [semantics-stage2.md](semantics-stage2.md) §6), but
+  weakly held ones must not: the compiler keeps weak-capable types and weak handles on their
+  thread (rules below), so the table is thread-local and unlocked.
 - **Weak maps** are runtime-owned hash tables keyed by object address (the key is not counted),
-  with the value's release and trace glue given at creation. A `WeakSet` is a weak map whose
-  values are plain words. A **`WeakRef`** is a slot holding the target's address, cleared when
+  with the value's retain, release and trace glue given at creation. A value word of a map with
+  release glue is 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings
+  and unions stored as such values. A `WeakSet` is a weak map whose values are plain words. A **`WeakRef`** is a slot holding the target's address, cleared when
   the target is freed.
 
 ## Release paths and their cost
@@ -69,12 +72,42 @@ Neither touches types that are not weak-capable, which is every type of every pr
 their code is unchanged, so `bench/` is unaffected. A release of a weakly held object is a call
 and a hash probe, 86 instructions more than today's.
 
+## Rules for the compiler
+
+The runtime relies on these; the compiler must keep them when it lowers weak references
+(#823 step B):
+
+- **Uniqueness tests compare the whole word.** A test of whether a weak-capable object is unique
+  (copy-on-write, in-place transfer, `release` itself) compares the whole count word with 1. A
+  weakly held object's word is never exactly 1 (`RC_WEAK` is set), so it is never taken as
+  unique; masking the flag off first would be wrong.
+- **Every raw decrement site uses the weak-capable sequence.** Code that decrements a count
+  without the release sequence (`c - 1` where it knows the count is above 1) would leave
+  `RC_WEAK | 0` behind for a weakly held object. For weak-capable types each such site emits the
+  sequence above instead: today's sites are `velt_vir/src/lower/rc.rs`,
+  `lower/glue/drop_chain.rs` (`take`, which decrements when the count is not 1),
+  `lower/glue/transfer.rs` (releasing the sender's reference after a deep copy) and
+  `lower/glue/transfer_env.rs` (the same for a closure environment).
+- **Weak handles and weakly held objects are thread-bound.** The side table is per thread, so a
+  `WeakMap`, `WeakSet` or `WeakRef` handle is used only on the thread that made it: sema rejects
+  them in transfers (spawn arguments and captures, channel sends, promise results), or the
+  transfer glue panics. A weak-capable object that is weakly held is never transferred in place
+  either (its count word is never 1, so the transfer deep-copies it, and the copy is not weakly
+  held). If one is released on another thread anyway, `velt_rt_weak_release` finds no record and
+  panics with an `ICE:` message before it touches the count word, instead of freeing an object
+  the first thread's entries and `WeakRef`s still point to.
+- **Weak-capable types are never `shared<T>` or atomic.** The flag and the side table assume
+  plain counts on one thread.
+
 ## Weak maps and `WeakRef`
 
 - `set(k, v)` records `k` in the side table (setting its flag), stores `v` (the map owns one
   reference), and runs the insert-time ephemeron analysis below when the map's values can refer
   to objects.
-- `get`, `has` and `delete` are hash probes; `get` returns the value borrowed.
+- `get`, `has` and `delete` are hash probes. `get` returns the value counted (retained with the
+  map's value glue; the caller releases it), like `deref()`: any later release of a weakly held
+  object may run a trial that deletes the entry and frees its value, so a borrowed result would
+  not survive `const p = cache.get(raw); raw = null; use(p)`.
 - When a key's last reference goes, the cold release removes its entries from every map and
   releases their values, then the object is freed as usual. Dropping a map releases its values
   and unmarks keys held by no other map.

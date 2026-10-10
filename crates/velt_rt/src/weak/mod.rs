@@ -54,6 +54,9 @@ pub type VisitFn = unsafe extern "C" fn(ctx: *mut c_void, child: *mut u8, trace:
 /// Releases one reference to a map value (the value's full release sequence).
 pub type ReleaseFn = unsafe extern "C" fn(value: u64);
 
+/// Retains a map value (the value's retain: `count += 1`, or its type's own sequence).
+pub type RetainFn = unsafe extern "C" fn(value: u64);
+
 /// The count word of the counted object `obj`.
 ///
 /// # Safety
@@ -63,16 +66,24 @@ pub(crate) unsafe fn rc_word(obj: *mut u8) -> *mut u64 {
     (obj as *mut u64).sub(1)
 }
 
-/// A new, empty weak map: `key_trace` is the keys' trace glue, `value_release` releases a value
-/// (`None`: values are plain words, as for `WeakMap<K, number>` and `WeakSet`), `value_trace`
-/// traces a value (`None`: values never refer back to keys, so entries are never ephemerons).
+/// A new, empty weak map: `key_trace` is the keys' trace glue, `value_retain` and
+/// `value_release` retain and release a value (both `None`: values are plain words, as for
+/// `WeakMap<K, number>` and `WeakSet`), `value_trace` traces a value (`None`: values never refer
+/// back to keys, so entries are never ephemerons). A value word of a map with `value_release` is
+/// 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings and unions.
 #[no_mangle]
 pub extern "C" fn velt_rt_weakmap_new(
     key_trace: Option<TraceFn>,
+    value_retain: Option<RetainFn>,
     value_release: Option<ReleaseFn>,
     value_trace: Option<TraceFn>,
 ) -> MapId {
-    table::with(|s| s.new_map(key_trace, value_release, value_trace))
+    assert!(
+        value_retain.is_some() == value_release.is_some()
+            && (value_trace.is_none() || value_release.is_some()),
+        "ICE: weak map values need both retain and release glue, and trace glue only with them"
+    );
+    table::with(|s| s.new_map(key_trace, value_retain, value_release, value_trace))
 }
 
 /// `map.set(key, value)`: takes over the caller's reference to `value`; the key is not counted.
@@ -86,16 +97,22 @@ pub unsafe extern "C" fn velt_rt_weakmap_set(map: MapId, key: *mut u8, value: u6
     table::release_values(old);
 }
 
-/// `map.get(key)`: the value, borrowed (the caller retains what it keeps), and whether there was
-/// one in `*found`.
+/// `map.get(key)`: the value, counted (retained with the map's `value_retain`, like
+/// [`velt_rt_weakref_deref`]; the caller releases it), and whether there was one in `*found`.
+/// Counted because any later release of a weakly held object may run a trial that deletes the
+/// entry and frees its value.
 ///
 /// # Safety
 /// `map` is live; `found` is writable.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_get(map: MapId, key: *mut u8, found: *mut u8) -> u64 {
-    let v = table::with(|s| s.get(map, key));
+    let (v, retain) = table::with(|s| (s.get(map, key), s.map(map).value_retain));
     *found = u8::from(v.is_some());
-    v.unwrap_or(0)
+    let v = v.unwrap_or(0);
+    if let (Some(retain), true) = (retain, v != 0) {
+        retain(v);
+    }
+    v
 }
 
 /// `map.has(key)`.
@@ -111,8 +128,8 @@ pub extern "C" fn velt_rt_weakmap_has(map: MapId, key: *mut u8) -> u8 {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_delete(map: MapId, key: *mut u8) -> u8 {
     let old = table::with(|s| s.delete(map, key));
-    let found = u8::from(!old.is_empty());
-    table::release_values(old);
+    let found = u8::from(old.is_some());
+    table::release_values(old.unwrap_or_default());
     found
 }
 
@@ -163,21 +180,45 @@ pub unsafe extern "C" fn velt_rt_weakref_drop(r: RefId) {
 /// count above 1 means another reference, and a cycle's last outside reference is never the
 /// one being released by the code that holds it).
 ///
+/// Weakly held objects are thread-bound: one released on a thread whose side table has no
+/// record of it is an internal compiler error (the compiler keeps weak-capable types off other
+/// threads), reported before the count word changes.
+///
 /// # Safety
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
 #[cold]
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_weak_release(obj: *mut u8) -> u8 {
+    u8::from(weak_release(obj))
+}
+
+/// [`velt_rt_weak_release`], unwinding on an internal error (for tests).
+///
+/// # Safety
+/// As for [`velt_rt_weak_release`].
+#[inline]
+pub(crate) unsafe fn weak_release(obj: *mut u8) -> bool {
     let rc = rc_word(obj);
+    debug_assert!(
+        *rc & RC_COUNT >= 1,
+        "ICE: release of a weakly held object with count 0"
+    );
     if *rc & RC_COUNT == 1 {
-        let values = table::with(|s| s.forget(obj));
+        let values = table::with(|s| s.forget(obj)).unwrap_or_else(|| not_held_here(obj));
         *rc = 1;
         table::release_values(values);
-        return 1;
+        return true;
     }
-    *rc -= 1;
-    table::after_decrement(obj);
-    0
+    table::decrement(obj);
+    false
+}
+
+/// A weakly held object released on a thread with no record of it.
+#[cold]
+pub(crate) fn not_held_here(obj: *mut u8) -> ! {
+    panic!(
+        "ICE: weakly held object {obj:p} released on a thread that does not hold it          (weak-capable objects are thread-bound)"
+    )
 }
 
 /// The number of objects in this thread's side table (tests and leak checks).

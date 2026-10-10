@@ -1,11 +1,13 @@
 //! The per-thread side table: weakly held objects, the weak maps and the `WeakRef` slots.
 //!
-//! Counted objects never cross threads, so the table is thread-local and unlocked. No borrow of
-//! it is held while generated code runs (value releases, trace glue runs only inside `trial`,
-//! which reads the table and never re-enters it).
+//! Weakly held objects and weak handles are thread-bound (the compiler keeps weak-capable types
+//! out of transfers and `shared<T>`; a release on another thread finds no record and is an ICE),
+//! so the table is thread-local and unlocked. No borrow of it is held while generated code runs
+//! (value retains and releases; trace glue runs only inside `trial`, which reads the table and
+//! never re-enters it).
 
 use super::trial::{self, Contribution};
-use super::{rc_word, ReleaseFn, TraceFn, RC_COUNT, RC_WEAK};
+use super::{not_held_here, rc_word, ReleaseFn, RetainFn, TraceFn, RC_COUNT, RC_WEAK};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -73,6 +75,7 @@ pub(super) struct Entry {
 /// A weak map.
 pub(super) struct MapData {
     pub(super) key_trace: Option<TraceFn>,
+    pub(super) value_retain: Option<RetainFn>,
     pub(super) value_release: Option<ReleaseFn>,
     pub(super) value_trace: Option<TraceFn>,
     pub(super) entries: AddrMap<Entry>,
@@ -117,11 +120,13 @@ impl State {
     pub(super) fn new_map(
         &mut self,
         key_trace: Option<TraceFn>,
+        value_retain: Option<RetainFn>,
         value_release: Option<ReleaseFn>,
         value_trace: Option<TraceFn>,
     ) -> MapId {
         let data = MapData {
             key_trace,
+            value_retain,
             value_release,
             value_trace,
             entries: AddrMap::default(),
@@ -174,13 +179,14 @@ impl State {
 
     /// Inserts or replaces an entry; returns the values to release.
     pub(super) fn set(&mut self, m: MapId, key: *mut u8, value: u64) -> Vec<(ReleaseFn, u64)> {
-        let old = self.delete(m, key);
+        let old = self.delete(m, key).unwrap_or_default();
         let k = key as usize;
         let map = self.map(m);
         let key_trace = map.key_trace;
-        let members = match (map.value_release, map.value_trace) {
-            // SAFETY: `value` is a live counted object owned by the map from here on.
-            (Some(_), Some(trace)) => unsafe { trial::members(key, value as *mut u8, trace) },
+        let members = match map.value_trace {
+            // SAFETY: a nonzero value of a map with value glue is a live counted object, owned
+            // by the map from here on.
+            Some(trace) if value != 0 => unsafe { trial::members(key, value as *mut u8, trace) },
             _ => Vec::new(),
         };
         self.node(k, key_trace).keyed_in.push(m);
@@ -193,22 +199,17 @@ impl State {
         old
     }
 
-    /// Removes `key`'s entry from `m`; returns its value to release (none if there was no entry).
-    pub(super) fn delete(&mut self, m: MapId, key: *mut u8) -> Vec<(ReleaseFn, u64)> {
+    /// Removes `key`'s entry from `m`; returns its value to release (`None`: there was no entry).
+    pub(super) fn delete(&mut self, m: MapId, key: *mut u8) -> Option<Vec<(ReleaseFn, u64)>> {
         let k = key as usize;
-        let Some(entry) = self.map_mut(m).entries.remove(&k) else {
-            return Vec::new();
-        };
+        let entry = self.map_mut(m).entries.remove(&k)?;
         if let Some(node) = self.nodes.get_mut(&k) {
             remove_one(&mut node.keyed_in, &m);
         }
         self.unlink(m, k, &entry);
         self.settle(k);
-        self.map(m)
-            .value_release
-            .map(|r| (r, entry.value))
-            .into_iter()
-            .collect()
+        let release = self.map(m).value_release.filter(|_| entry.value != 0);
+        Some(release.map(|r| (r, entry.value)).into_iter().collect())
     }
 
     /// Takes `entry`'s contributions off its members' records.
@@ -227,7 +228,7 @@ impl State {
         let keys: Vec<usize> = self.map(m).entries.keys().copied().collect();
         let old = keys
             .into_iter()
-            .flat_map(|k| self.delete(m, k as *mut u8))
+            .flat_map(|k| self.delete(m, k as *mut u8).unwrap_or_default())
             .collect();
         self.maps[m as usize] = None;
         self.free_maps.push(m);
@@ -235,12 +236,10 @@ impl State {
     }
 
     /// `obj` is about to be freed: it leaves every map, entry record and `WeakRef`. Returns the
-    /// values of its entries to release.
-    pub(super) fn forget(&mut self, obj: *mut u8) -> Vec<(ReleaseFn, u64)> {
+    /// values of its entries to release (`None`: this thread has no record of `obj`).
+    pub(super) fn forget(&mut self, obj: *mut u8) -> Option<Vec<(ReleaseFn, u64)>> {
         let o = obj as usize;
-        let Some(node) = self.nodes.remove(&o) else {
-            return Vec::new();
-        };
+        let node = self.nodes.remove(&o)?;
         for (m, k) in &node.member_of {
             if let Some(e) = self.map_mut(*m).entries.get_mut(k) {
                 e.members.retain(|c| c.obj != o);
@@ -253,9 +252,9 @@ impl State {
         let mut old = Vec::new();
         for m in node.keyed_in {
             // The record is gone, so `delete` leaves the object's count word alone.
-            old.extend(self.delete(m, obj));
+            old.extend(self.delete(m, obj).unwrap_or_default());
         }
-        old
+        Some(old)
     }
 
     pub(super) fn new_ref(&mut self, obj: *mut u8) -> RefId {
@@ -301,7 +300,7 @@ fn remove_one<T: PartialEq>(v: &mut Vec<T>, x: &T) {
     }
 }
 
-/// Releases map values with no borrow of the table held. Trials that releases make due wait
+/// Releases map values with no borrow of the table held. Trials that these releases cause wait
 /// until the outermost release ends, so a trial never sees a cycle half released.
 pub(super) fn release_values(values: Vec<(ReleaseFn, u64)>) {
     if values.is_empty() {
@@ -323,11 +322,19 @@ pub(super) fn release_values(values: Vec<(ReleaseFn, u64)>) {
     }
 }
 
-/// `obj`'s count was just decremented and is not zero: if it is at or below its hint, try
-/// whether its cycle is garbage (now, or once the cascade under way ends).
-pub(super) fn after_decrement(obj: *mut u8) {
+/// Decrements the count of `obj` (weakly held, count above 1); if that leaves it at or below its
+/// hint, tries whether its cycle is garbage (now, or once the cascade under way ends). A thread
+/// with no record of `obj` is an ICE, reported before the count changes.
+///
+/// # Safety
+/// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
+pub(super) unsafe fn decrement(obj: *mut u8) {
     let o = obj as usize;
-    if !at_hint(o) {
+    let hint = with(|s| s.nodes.get(&o).map(|n| n.hint.max(n.observed)));
+    let Some(hint) = hint else { not_held_here(obj) };
+    let rc = rc_word(obj);
+    *rc -= 1;
+    if *rc & RC_COUNT > u64::from(hint) {
         return;
     }
     if CASCADE.with(Cell::get) > 0 {
@@ -364,7 +371,8 @@ fn try_free(o: usize) {
             s.node(c.obj, c.trace).observed = c.refs;
         }
         let dead = trial.dead.into_iter();
-        dead.flat_map(|(m, k)| s.delete(m, k as *mut u8)).collect()
+        dead.flat_map(|(m, k)| s.delete(m, k as *mut u8).unwrap_or_default())
+            .collect()
     });
     release_values(values);
 }

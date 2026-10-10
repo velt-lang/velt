@@ -11,6 +11,8 @@ fn set_get_has_delete() {
         assert_eq!(get(m, k), None);
         set(m, k, retain(v));
         assert_eq!(get(m, k), Some(v));
+        assert_eq!(count(v), 3, "get returns a counted reference");
+        release(v);
         assert_eq!(velt_rt_weakmap_has(m, k), 1);
         assert_eq!(count(k), 1, "a weak key is not counted");
         assert_eq!(count(v), 2, "the map holds its value");
@@ -92,8 +94,8 @@ fn a_key_in_two_maps_leaves_both() {
 #[test]
 fn plain_values_and_weak_sets() {
     no_leak(|| {
-        let numbers = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None);
-        let set_ = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None);
+        let numbers = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None, None);
+        let set_ = velt_rt_weakmap_new(Some(TraceFn(trace_obj)), None, None, None);
         let k = new_obj(&[]);
         // SAFETY: plain words need no ownership.
         unsafe {
@@ -102,6 +104,16 @@ fn plain_values_and_weak_sets() {
         }
         assert_eq!(get(numbers, k), Some(42 as *mut u8));
         assert_eq!(velt_rt_weakmap_has(set_, k), 1);
+        // SAFETY: the maps are live.
+        unsafe {
+            assert_eq!(
+                velt_rt_weakmap_delete(set_, k),
+                1,
+                "delete finds a plain entry"
+            );
+            assert_eq!(velt_rt_weakmap_delete(set_, k), 0);
+            velt_rt_weakmap_set(set_, k, 0);
+        }
         release(k);
         assert_eq!(weakmap_len(numbers) + weakmap_len(set_), 0);
         finish(&[numbers, set_]);
