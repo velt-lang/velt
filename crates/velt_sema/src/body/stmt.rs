@@ -253,6 +253,9 @@ impl FnCx<'_, '_> {
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
             return self.simple_decl(v, name, ann, span, out);
         }
+        if v.kind == ast::VarKind::Let {
+            self.cx.pattern_bindings.push(v.pattern.span);
+        }
         let Some(e) = &v.init else {
             self.cx.err(
                 "destructuring declarations must be initialized",

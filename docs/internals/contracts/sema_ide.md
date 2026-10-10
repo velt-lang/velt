@@ -53,6 +53,7 @@ nothing; after that each call is a hash lookup, so a tool can ask once per AST n
 | `view(&TypeRef) -> TypeView` | One level of its structure (below). |
 | `fields(&TypeRef) -> Vec<FieldView>` | Fields of a class (inherited ones first), struct, interface or object type, with the type's arguments substituted: `FieldView { name, ty: TypeRef, optional }`. `optional` is `name?: T` in a class, struct or interface; an object type doesn't keep it (`{ a?: T }` is `{ a: T \| null }`). Empty for other types. |
 | `declares_method(&TypeRef, name) -> bool` | The class or struct declares instance method `name` itself (inherited methods don't count), or the interface has it. |
+| `is_error(&TypeRef) -> bool` | The type is the prelude's `Error` or a class that extends it (at any depth). |
 | `show_type(&TypeRef) -> String` | As `type_at` spells types, arguments substituted. |
 
 `TypeRef` is an opaque handle (`Clone`); generic arguments travel in it and are substituted when

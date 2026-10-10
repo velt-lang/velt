@@ -1,0 +1,34 @@
+// A `Map` loop's destructured value and a `Set` loop's value, assigned by a closure created
+// inside a closure and read by the loop body afterwards (Node prints 23 and p?q?): such a
+// variable does not live in a shared cell yet, so this is rejected rather than run wrong.
+async function main() {
+  const m = new Map<string, number>([["a", 1], ["b", 2]]);
+  let total = 0;
+  const fs: (() => void)[] = [];
+  for (let [k, v] of m) {
+    const f = () => {
+      const g = () => {
+        v += 10;
+      };
+      g();
+    };
+    fs.push(f);
+    f();
+    total += v;
+  }
+  console.log(total);
+  const st = new Set<string>(["p", "q"]);
+  let out = "";
+  for (let s of st) {
+    const f = () => {
+      const g = () => {
+        s += "?";
+      };
+      g();
+    };
+    fs.push(f);
+    f();
+    out += s;
+  }
+  console.log(out);
+}
