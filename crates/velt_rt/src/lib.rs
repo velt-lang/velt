@@ -25,6 +25,7 @@ pub mod drop_depth;
 pub mod entry;
 pub mod fmt;
 pub mod fnv;
+pub mod freed;
 pub mod fs;
 pub mod handle;
 pub mod hash;

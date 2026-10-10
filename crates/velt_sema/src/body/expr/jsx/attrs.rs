@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
         for a in el.attrs.iter().filter(|a| !is_key(a)) {
             match a {
                 ast::JsxAttr::Spread { expr, span } => {
-                    for (name, h) in self.spread_source(expr, lets) {
+                    for (name, h, _) in self.spread_source(expr, lets) {
                         let Ok(fty) = self.attr_field(p, tag_attrs.as_ref(), &name, *span) else {
                             continue;
                         };

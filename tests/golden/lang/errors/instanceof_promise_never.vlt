@@ -1,0 +1,7 @@
+// `x instanceof Promise` on a union without a promise member is always false.
+function main() {
+  const x: string | i64 = "a";
+  if (x instanceof Promise) {
+    console.log("promise");
+  }
+}

@@ -1,0 +1,53 @@
+// Async arrows where a `void` function is expected (event handler fields, `(() => void) | null`
+// parameters): as in TS they are accepted, and each call starts a promise that runs to
+// completion on its own. Against a union of function types (`(() => void) | (() => Promise<void>)`)
+// an arrow is typed by the member that fits: a sync arrow by the void one (the only member it
+// fits here), an async arrow by the promise one.
+
+import { delay } from "velt:timers";
+
+type Attrs = { id: string; onClick?: () => void };
+
+function click(a: Attrs) {
+  const h = a.onClick;
+  if (h != null) {
+    h();
+  }
+  console.log(`clicked ${a.id}`);
+}
+
+function fire(h: (() => void) | null) {
+  if (h != null) {
+    h();
+  }
+}
+
+type Handler = (() => void) | (() => Promise<void>);
+
+// Which member an arrow became.
+function kind(h: Handler | null): string {
+  if (h == null) {
+    return "none";
+  }
+  return "a handler";
+}
+
+async function main() {
+  let count = 0.0;
+  click({ id: "sync", onClick: () => count++ });
+  click({
+    id: "async",
+    onClick: async () => {
+      await delay(5);
+      console.log("async onClick finished");
+    },
+  });
+  fire(async () => {
+    await delay(1);
+    console.log("async fire finished");
+  });
+  console.log(kind(() => count++), kind(async () => {}), kind(null));
+  console.log(`count ${count}`);
+  await delay(20);
+  console.log("done");
+}

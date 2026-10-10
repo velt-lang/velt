@@ -32,14 +32,19 @@ use super::graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
 use super::types;
 
 /// Report the sync closures HTTP handlers reach that assign a variable they captured (module
-/// docs). `flags` are the propagated node flags of [`super`] (`STORED` is used).
-pub(super) fn check_handler_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) {
-    let handler = |w: &Option<Why>| matches!(w, Some(w) if w.boundary == Boundary::Handler);
+/// docs). `flags` are the propagated node flags of [`super`] (`STORED` is used); `handlers`
+/// are the sync closures passed to `serve` as handlers, checked as handlers themselves.
+pub(super) fn check_handler_callbacks(
+    cx: &mut Ctx,
+    g: &Graph,
+    flags: &[u8],
+    handlers: &HashMap<DefId, Option<Why>>,
+) {
     let mut work: Vec<(usize, Why)> = g
         .seeds
         .iter()
-        .filter(|(_, f, w)| *f == CROSSES && handler(w))
-        .map(|&(n, _, w)| (n, w.expect("handler seed")))
+        .filter(|(_, f, _)| *f == CROSSES)
+        .filter_map(|&(n, _, w)| w.filter(|w| w.boundary == Boundary::Handler).map(|w| (n, w)))
         .collect();
     let mut roots: Vec<(TyId, Why)> = g
         .roots
@@ -121,7 +126,12 @@ pub(super) fn check_handler_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) {
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
         };
-        if f.is_async || f.is_generator || in_std(cx, c) || made_by(g, c, &requests) {
+        if f.is_async
+            || f.is_generator
+            || handlers.contains_key(&c)
+            || in_std(cx, c)
+            || made_by(g, c, &requests)
+        {
             continue;
         }
         for (cap, at) in assigned_captures(f) {

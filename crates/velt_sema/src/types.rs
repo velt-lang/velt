@@ -153,7 +153,7 @@ impl Types {
         found
     }
 
-    fn visit(&self, t: TyId, f: &mut dyn FnMut(&TyKind)) {
+    pub(crate) fn visit(&self, t: TyId, f: &mut dyn FnMut(&TyKind)) {
         let k = self.kind(t);
         f(k);
         for c in children(k) {

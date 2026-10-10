@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use crate::body::FnCx;
 use crate::collect::export_of;
 use crate::ctx::{Ctx, Item};
-use crate::hir::{DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
+use crate::hir::{AdtKind, DefId, ExprKind as H, Lit, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The SSR precompile exports (docs/internals/contracts/jsx.md "SSR precompile"); a runtime has all
@@ -48,6 +48,9 @@ pub(crate) struct Provider {
     /// `jsxVoidElements`: the tags whose children are an error (they have no end tag), and that
     /// templates write without one; `None` without the export (templates use HTML's list).
     pub void_elements: Option<Vec<String>>,
+    /// `JSX.IntrinsicAttributes`: attributes every component element accepts besides its props
+    /// (sigx's `client:load`), passed to `jsxComponentAttributes`.
+    pub component_attrs: Option<ComponentAttrs>,
     /// `JSX.Element`: the type of every JSX expression.
     pub element: TyId,
     /// `JSX.Child`: what each child is converted to.
@@ -58,6 +61,15 @@ pub(crate) struct Provider {
     pub intrinsics: TyId,
     /// The props field receiving component children (`JSX.ElementChildrenAttribute`).
     pub children_field: String,
+}
+
+/// `JSX.IntrinsicAttributes` with fields besides `key` (docs/internals/contracts/jsx.md
+/// "Attributes of every component").
+pub(crate) struct ComponentAttrs {
+    /// The exported type (an object type).
+    pub ty: TyId,
+    /// `jsxComponentAttributes(C, props, key, name, names, values)`.
+    pub call: DefId,
 }
 
 /// The children field when the runtime has no `ElementChildrenAttribute`.
@@ -72,9 +84,78 @@ impl FnCx<'_, '_> {
         if let Some(p) = self.cx.jsx_providers.get(&self.module) {
             return p.clone();
         }
-        let p = load(self.cx, self.module, at).map(Rc::new);
+        let p = load(self.cx, self.module, at)
+            .filter(|p| self.component_attrs_fit(p, at))
+            .map(Rc::new);
         self.cx.jsx_providers.insert(self.module, p.clone());
         p
+    }
+
+    /// `jsxComponentAttributes` takes what the compiler passes (`key`, `name`, `names`,
+    /// `values`), and every field of `JSX.IntrinsicAttributes` converts to `JSX.AttrValue`:
+    /// checked once when the provider is loaded, so a mismatch is one error, not one per element.
+    fn component_attrs_fit(&mut self, p: &Provider, at: Span) -> bool {
+        let Some(attrs) = &p.component_attrs else {
+            return true;
+        };
+        let source = &p.source;
+        let mut ok = true;
+        let params: Vec<TyId> = self
+            .cx
+            .try_fn(attrs.call)
+            .map(|f| f.params.iter().map(|q| q.ty).collect())
+            .unwrap_or_default();
+        let str_ = self.cx.ty.str_;
+        let passed = [
+            ("key", self.cx.ty.option(str_)),
+            ("name", str_),
+            ("names", self.cx.ty.array(str_)),
+            ("values", self.cx.ty.array(p.attr_value)),
+        ];
+        for ((what, arg), param) in passed.into_iter().zip(params.iter().skip(2)) {
+            if !self.fits(arg, *param) {
+                let (a, t) = (self.cx.display(arg), self.cx.display(*param));
+                self.cx.err(
+                    format!("`jsxComponentAttributes` of the JSX provider '{source}' must take `{what}` as `{a}`, not `{t}`"),
+                    at,
+                );
+                ok = false;
+            }
+        }
+        let Some((d, fields)) = self.object_fields(attrs.ty) else {
+            return ok;
+        };
+        let optional: Vec<bool> = self
+            .cx
+            .adt(d)
+            .map(|a| a.fields.iter().map(|f| f.optional).collect())
+            .unwrap_or_default();
+        for (i, (name, ty)) in fields.into_iter().enumerate() {
+            if name == "key" {
+                continue;
+            }
+            // An optional field's value is passed as is (`null` when absent); the message names
+            // the type as written.
+            let shown = match optional.get(i).copied().unwrap_or(false) {
+                true => self.cx.ty.opt_payload(ty).unwrap_or(ty),
+                false => ty,
+            };
+            if !self.fits(ty, p.attr_value) {
+                let (t, v) = (self.cx.display(shown), self.cx.display(p.attr_value));
+                self.cx.err(
+                    format!("`JSX.IntrinsicAttributes` field {name:?} of the JSX provider '{source}' has type `{t}`, which does not convert to `JSX.AttrValue` (`{v}`)"),
+                    at,
+                );
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    /// Does a value of type `from` convert to `to`?
+    fn fits(&mut self, from: TyId, to: TyId) -> bool {
+        let probe = self.mk(H::Lit(Lit::Unit), from, Span::DUMMY);
+        self.try_coerce(probe, to).is_ok()
     }
 }
 
@@ -139,7 +220,9 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         "the compiler reads the tags at compile time",
     )?
     .map(|list| list.split_whitespace().map(str::to_string).collect());
+    let component_attrs = component_attrs(cx, t, &source, at)?;
     Some(Provider {
+        component_attrs,
         async_component: function(cx, t, "jsxAsyncComponent"),
         precompile,
         text_separator,
@@ -155,6 +238,58 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         intrinsics: intrinsics?,
         children_field,
     })
+}
+
+/// `IntrinsicAttributes` and `jsxComponentAttributes`: `Some(None)` without the type (or with only
+/// `key`), `None` once a malformed export was reported.
+fn component_attrs(
+    cx: &mut Ctx,
+    t: usize,
+    source: &str,
+    at: Span,
+) -> Option<Option<ComponentAttrs>> {
+    if export_of(cx, t, "IntrinsicAttributes").is_none() {
+        return Some(None);
+    }
+    let ty = type_export(cx, t, "IntrinsicAttributes", at)?;
+    let fields = match cx.ty.kind(ty).clone() {
+        TyKind::Adt(d, _) => cx
+            .adt(d)
+            .filter(|a| matches!(a.kind, AdtKind::Anon | AdtKind::Struct))
+            .map(|a| a.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>()),
+        _ => None,
+    };
+    let Some(fields) = fields else {
+        cx.error(Diagnostic::error(
+            format!(
+                "`JSX.IntrinsicAttributes` of the JSX provider '{source}' must be an object type"
+            ),
+            at,
+        ));
+        return None;
+    };
+    if fields.iter().all(|f| f == "key") {
+        return Some(None);
+    }
+    let Some(call) = function(cx, t, "jsxComponentAttributes") else {
+        cx.error(
+            Diagnostic::error(
+                format!("the JSX provider '{source}' declares `IntrinsicAttributes` but has no `jsxComponentAttributes`"),
+                at,
+            )
+            .with_note("a component element with such an attribute (`<Card client:load />`) is passed to `jsxComponentAttributes(component, props, key, name, names, values)` (docs/internals/contracts/jsx.md)"),
+        );
+        return None;
+    };
+    let arity = cx.try_fn(call).map_or(0, |f| f.params.len());
+    if arity != 6 {
+        cx.error(Diagnostic::error(
+            format!("`jsxComponentAttributes` of the JSX provider '{source}' must take 6 parameters (component, props, key, name, names, values), not {arity}"),
+            at,
+        ));
+        return None;
+    }
+    Some(Some(ComponentAttrs { ty, call }))
 }
 
 /// Exported function `name` of module `t`.

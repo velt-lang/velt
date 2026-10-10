@@ -20,6 +20,8 @@ pub fn init() {
     crate::process::init_clock();
     crate::process::init_script();
     ignore_sigpipe();
+    #[cfg(all(debug_assertions, not(velt_rt_host)))]
+    crate::debug_alloc::claim_faults();
 }
 
 /// Writing to a socket whose peer is gone must fail with `EPIPE`, not kill the process: tokio
