@@ -1,0 +1,16 @@
+// A computed member name must be a key the compiler knows: a module constant holding a symbol
+// (`Symbol("...")`, `Symbol.for("...")`) or a string, or a well-known symbol. A symbol made at
+// run time cannot name a member of a fixed-layout object (TypeScript: TS1166/TS2464 in types,
+// a `symbol`-indexed type elsewhere); `in` needs such a key too.
+const KEY = Symbol("key");
+
+const COUNT = 42;
+
+type T = { [COUNT]: number };
+
+function main() {
+  const local = Symbol("local");
+  const o = { [local]: 1 };
+  const p = { a: 1 };
+  console.log(o, local in p, KEY in p);
+}

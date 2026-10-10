@@ -1,0 +1,16 @@
+Symbol(a) Symbol(a) Symbol() symbol
+false true true true
+Symbol(a) Symbol(a) a Symbol()
+string symbol number
+brand a anonymous
+true false app.key true
+Symbol(Symbol.iterator) true
+[ Symbol(a), Symbol(Symbol.toStringTag), Symbol(brand) ]
+first second registered false
+Map(3) {
+  Symbol(a) => 'first',
+  Symbol(a) => 'second',
+  Symbol(app.key) => 'registered'
+}
+2 true false
+Symbol(brand) true

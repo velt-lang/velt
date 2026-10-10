@@ -7,7 +7,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::ctx::{Ctx, Item};
-use crate::hir;
+use crate::hir::{self, TyKind};
 
 /// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
 /// `[Symbol.<name>]`.
@@ -92,6 +92,23 @@ impl FnCx<'_, '_> {
             return place;
         }
         self.member_of(obj, &prop, want, span)
+    }
+
+    /// Reports a symbol converted to a string implicitly (a template literal part, an operand of
+    /// `+`), which JavaScript rejects with a `TypeError` (TypeScript: TS2731); true if `h` is one.
+    pub(crate) fn reject_symbol_text(&mut self, h: &hir::Expr) -> bool {
+        let inner = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        if !matches!(self.cx.ty.kind(inner), TyKind::Symbol) {
+            return false;
+        }
+        self.cx.error(
+            Diagnostic::error(
+                "a symbol cannot be converted to a string implicitly: JavaScript throws a `TypeError`",
+                h.span,
+            )
+            .with_note("write `String(s)`, `s.toString()` or `s.description`"),
+        );
+        true
     }
 
     /// `key in o` with a symbol key (a symbol constant or a well-known symbol): whether the

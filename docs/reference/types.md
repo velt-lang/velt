@@ -6,6 +6,7 @@
 | `f32 f64`; `number` | floats; `number` is `f64`, a JavaScript number ([Numbers](#numbers)) |
 | `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable text, indexed in UTF-16 code units (stored as UTF-8), a value ([Strings](#strings)) |
+| `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
@@ -238,6 +239,59 @@ console.log(label("Zoë", 1), label("😀", 2));
 // Zoë: 1 (3 units, 4 bytes) 😀: 2 (2 units, 4 bytes)
 ```
 
+## Symbols
+
+`Symbol(description?)` makes a new `symbol`, a value different from every other one and
+compared by identity; `Symbol.for(key)` returns the registry's symbol for `key` (the same one on
+every call), and `Symbol.keyFor(s)` its key. A symbol has a `description` (`null` where Node
+says `undefined`) and `toString()` (`Symbol(description)`); `typeof s` is `"symbol"`, and
+`console.log` shows it as Node does. Symbols are `Map` keys and `Set` members. The well-known
+symbols are values too (`Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.toStringTag`, …).
+Converting a symbol to a string implicitly (`${s}`, `"k" + s`) is an error, as JavaScript throws
+a `TypeError` there; `String(s)` is allowed. The API is [`Symbol`](../std/symbol.md).
+
+A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
+a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
+initialized with `Symbol("...")` or `Symbol.for("...")` (TypeScript's `unique symbol`;
+`const KEY: unique symbol = Symbol("k")` declares the same), or with another such constant, and
+may be imported. Velt objects have fixed fields, so the compiler resolves these members while
+compiling: reading `o[KEY]` costs what reading a named field does. A key known only at run time
+(a symbol made in a function, a string variable) is an error: use a `Map`. A module constant
+holding a string literal names that field the same way (`const NAME = "name"`, `[NAME]: T`).
+`KEY in o` is decided from `o`'s type (on a union, from the member it holds). `console.log`
+shows a symbol-keyed member after the others as `[Symbol(description)]: v`, and
+`JSON.stringify` and `Object.keys` leave it out, as in Node.
+
+```ts
+const VNODE: unique symbol = Symbol("vnode");
+const MODEL = Symbol.for("app.model");
+
+interface VNode {
+  type: string;
+  [VNODE]: true;
+}
+
+function isVNode(v: VNode | string): boolean {
+  return typeof v !== "string" && v[VNODE] === true;
+}
+
+function main() {
+  const n: VNode = { type: "div", [VNODE]: true };
+  console.log(n, isVNode(n), VNODE in n); // { type: 'div', [Symbol(vnode)]: true } true true
+  console.log(JSON.stringify(n), MODEL === Symbol.for("app.model")); // {"type":"div"} true
+  const tokens = new Map<symbol, string>();
+  tokens.set(MODEL, "model");
+  console.log(tokens.get(Symbol.for("app.model")), typeof VNODE); // model symbol
+}
+```
+
+A module constant initialized with `Symbol(...)` is one symbol for the whole program (module
+constants are otherwise evaluated at each use). A symbol `Symbol(...)` makes at run time lives
+until the program ends. **Planned**: a symbol brand added with `Object.defineProperty(o, KEY,
+…)` as an optional symbol-keyed field of `o`'s type
+([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
+for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+
 ## Equality and comparison
 
 - `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
@@ -418,9 +472,9 @@ the nullable type; `void` cannot be a member.
   union. A literal takes the member it belongs to; add a suffix (`5i32`) when several number
   members match.
 - **Narrowing**: using a member's fields or methods needs that member.
-  - `typeof x === "string" | "number" | "boolean" | "object" | "function"` (and `!==`): all
-    number types are `"number"`; classes, structs, arrays, maps and `null` are `"object"`;
-    closures are `"function"`. An impossible tag is an error.
+  - `typeof x === "string" | "number" | "boolean" | "symbol" | "object" | "function"` (and
+    `!==`): all number types are `"number"`; classes, structs, arrays, maps and `null` are
+    `"object"`; closures are `"function"`. An impossible tag is an error.
   - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
     class of `C`, or an interface value, is tested at run time and narrows to `C`
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the

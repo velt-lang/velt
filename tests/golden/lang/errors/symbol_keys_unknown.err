@@ -1,0 +1,3 @@
+symbol_keys_unknown.vlt:13:16: error: `[local]` is not a member name the compiler knows: `local` must be a module constant holding a symbol or a string
+symbol_keys_unknown.vlt:15:18: error: the left operand of `in` must be a symbol the compiler knows
+symbol_keys_unknown.vlt:9:13: error: `[COUNT]` is not a member name the compiler knows: `COUNT` must be a module constant holding a symbol or a string

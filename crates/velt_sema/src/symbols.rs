@@ -60,8 +60,19 @@ impl Ctx<'_> {
     /// The symbol module constant `d` holds when its initializer is a call of the global
     /// `Symbol` with constant arguments: `Symbol()`, `Symbol("d")` or `Symbol.for("k")`.
     pub(crate) fn known_symbol(&self, d: DefId) -> Option<KnownSymbol> {
+        self.known_symbol_depth(d, 0)
+    }
+
+    fn known_symbol_depth(&self, d: DefId, depth: u32) -> Option<KnownSymbol> {
         let g = self.global(d)?;
         let init = g.src.init?;
+        // `const ALIAS = KEY`: the same symbol.
+        if let ast::ExprKind::Ident(x) = &init.kind {
+            return match self.lookup_item(g.module, &x.name) {
+                Some(Item::Def(e)) if depth < 16 => self.known_symbol_depth(e, depth + 1),
+                _ => None,
+            };
+        }
         if !self.names_global_symbol(g.module) {
             return None;
         }
@@ -88,13 +99,14 @@ impl Ctx<'_> {
     /// The initializer of module constant `d` when it is `Symbol()` / `Symbol("d")` and its
     /// annotation (if any) is `symbol`: the record the compiler emits for it.
     pub(crate) fn own_symbol_init(&mut self, d: DefId, ann: Option<TyId>) -> Option<hir::Expr> {
+        // Interned only for a symbol constant: a program without symbols keeps its type ids.
+        let KnownSymbol::Own(_, desc) = self.known_symbol(d)? else {
+            return None;
+        };
         let sym = self.ty.intern(TyKind::Symbol);
         if ann.is_some_and(|t| t != sym) {
             return None;
         }
-        let KnownSymbol::Own(_, desc) = self.known_symbol(d)? else {
-            return None;
-        };
         let span = self.global(d)?.src.init?.span;
         let lit = |l: hir::Lit, ty| hir::Expr {
             kind: H::Lit(l),

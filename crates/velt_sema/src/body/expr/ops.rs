@@ -282,6 +282,12 @@ impl FnCx<'_, '_> {
         };
         // `"k" + n`: the number is written as `String(n)` writes it.
         let s = self.cx.ty.str_;
+        if op == B::Add
+            && (l.ty == s) != (r.ty == s)
+            && (self.reject_symbol_text(&l) || self.reject_symbol_text(&r))
+        {
+            return self.error_expr(span);
+        }
         let (l, r) = if op == B::Add && (l.ty == s) != (r.ty == s) {
             self.concat_operands(l, r)
         } else {
