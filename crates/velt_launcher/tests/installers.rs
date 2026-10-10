@@ -1,14 +1,17 @@
-//! scripts/get-velt.sh (and get-velt.ps1 where PowerShell is installed) against fake releases
-//! (#948): versions install side by side under `<root>/toolchains/`, the launcher goes into
+//! scripts/get-velt.sh (and get-velt.ps1 on Windows) against fake releases (#948): versions
+//! install side by side under `<root>/toolchains/`, the launcher goes into
 //! `<root>/bin`, the first version becomes the default, and a download is checked against the
 //! signed SHA256SUMS.
 
 mod support;
 
+#[cfg(unix)]
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+#[cfg(unix)]
 use std::sync::Arc;
 
 use support::fake_velt;
@@ -25,6 +28,7 @@ fn host() -> String {
 
 /// `velt-<version>-<host>.tar.gz` like a release's: the fake toolchain, the launcher (unless
 /// `launcher` is false) and `std/VERSION`.
+#[cfg(unix)]
 fn archive(version: &str, launcher: bool) -> Vec<u8> {
     let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     let mut tar = tar::Builder::new(gz);
@@ -49,6 +53,7 @@ fn archive(version: &str, launcher: bool) -> Vec<u8> {
 }
 
 /// get-velt.sh with `args`, HOME in `home` (so no profile of the machine's is touched).
+#[cfg(unix)]
 fn get_velt(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut c = Command::new("sh");
     c.arg(repo().join("scripts/get-velt.sh"))
@@ -246,7 +251,9 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
     }
 }
 
-/// get-velt.ps1, where PowerShell is installed (CI's Windows machines).
+/// get-velt.ps1 on Windows, the only OS it installs for (PowerShell on Linux or macOS can run it,
+/// but it installs `velt.exe`).
+#[cfg(windows)]
 #[test]
 fn get_velt_ps1_installs_versions_side_by_side() {
     let Ok(probe) = Command::new("pwsh")
