@@ -14,6 +14,9 @@ declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
+declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
+declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
+declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
 declare function velt_rt_str_byte_length(s: string): u64;
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
@@ -92,6 +95,24 @@ extend Array<u8> {
   /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
   copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
     velt_rt_bytes_copy_within(this, target, start, end);
+  }
+
+  /** The bytes in [start, end) as a new array (JS `slice`: negative positions count from the end). */
+  slice(start: i64 = 0, end: i64 = 9223372036854775807): u8[] {
+    return velt_rt_bytes_slice(this, start, end);
+  }
+
+  /** New array with this array's bytes followed by `other`'s. */
+  concat(other: u8[]): u8[] {
+    return velt_rt_bytes_concat(this, other);
+  }
+
+  /**
+   * XORs the bytes in [start, end) with the four bytes of `mask` (most significant first),
+   * repeating from `start`: WebSocket masking (RFC 6455 §5.3). Applying it twice restores them.
+   */
+  xorMask(mask: u32, start: i64 = 0, end: i64 = 9223372036854775807) {
+    velt_rt_bytes_xor_mask(this, mask, start, end);
   }
 
   /** Sets the bytes in [start, end) to `byte` (memset). */
