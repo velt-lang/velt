@@ -137,6 +137,16 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if self.static_this.is_some() && self.lookup_local("this", span).is_none() {
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` in a static method can only be used to call or read its class's static members",
+                    span,
+                )
+                .with_note("`this` is the class the method was called on: use `this.f()` or `this.NAME`"),
+            );
+            return self.error_expr(span);
+        }
         match self.lookup_local("this", span) {
             Some(l) => {
                 self.rec_local(span, l);
@@ -294,14 +304,27 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let (n, params, is_async) = (
-            f.generics.len(),
+        let slots = vec![None; f.generics.len()];
+        self.fn_ref_slots(d, &id.name, slots, exp, span)
+    }
+
+    /// Function `d` (named `name` in messages) used as a value: the type arguments in `slots`,
+    /// the others from `exp`.
+    pub(crate) fn fn_ref_slots(
+        &mut self,
+        d: DefId,
+        name: &str,
+        mut slots: Vec<Option<TyId>>,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let f = self.cx.fn_info(d);
+        let (params, is_async) = (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.is_async,
         );
         let ret = crate::body::returns::ret_of(self.cx, d, span);
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
-        let mut slots = vec![None; n];
         if let Some(e) = self.hint(exp) {
             self.cx.match_ty(fn_ty, e, &mut slots);
         }
@@ -312,7 +335,7 @@ impl FnCx<'_, '_> {
         if slots.iter().any(Option::is_none) {
             self.cx.error(
                 Diagnostic::error(
-                    format!("cannot infer the type arguments of generic function `{}`", id.name),
+                    format!("cannot infer the type arguments of generic function `{name}`"),
                     span,
                 )
                 .with_note("use it where a function type is expected, e.g. `const f: (x: i64) => i64 = ...`"),

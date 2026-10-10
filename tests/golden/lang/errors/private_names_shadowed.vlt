@@ -1,0 +1,18 @@
+// A class nested in a method that declares its own `#x` shadows the outer class's `#x`: inside
+// it, `o.#x` on an outer-class value is TypeScript's TS18014 (and a `TypeError` in JavaScript).
+class Outer {
+  #x = 1;
+  #m(): number { return 1; }
+  run(): number {
+    class Inner {
+      #x = 2;
+      #m(): number { return 2; }
+      read(o: Outer): number { return o.#x; }
+      write(o: Outer): void { o.#x = 5; }
+      call(o: Outer): number { return o.#m(); }
+      own(i: Inner): number { return i.#x + i.#m(); }
+    }
+    return new Inner().read(this);
+  }
+}
+console.log(new Outer().run());

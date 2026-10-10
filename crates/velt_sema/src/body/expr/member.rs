@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
     }
 
     fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
-        if self.private_accessor_outside(t, prop, false) {
+        if self.private_accessor_outside(t, prop, false) || self.shadowed_private_name(t, prop) {
             return;
         }
         if self.has_setter(t, &prop.name) {
@@ -211,6 +211,25 @@ impl FnCx<'_, '_> {
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
+        if let (ast::ExprKind::This, Some((this, declaring))) = (&object.kind, self.static_this) {
+            // `this.NAME` / `this.f` in a static method: the class it was called on.
+            if let Some(h) = self.this_static_field(this, declaring, prop, want, span) {
+                return h;
+            }
+            if let Some(h) = self.static_method_value(this, this, prop, exp, span) {
+                return h;
+            }
+            let cname = self
+                .cx
+                .adt(this)
+                .map(|a| a.name.clone())
+                .unwrap_or_default();
+            self.cx.err(
+                format!("`{cname}` has no static member `{}`", prop.name),
+                prop.span,
+            );
+            return self.error_expr(span);
+        }
         if let ast::ExprKind::Ident(id) = &object.kind {
             if !self.is_local_name(&id.name) {
                 if matches!(
@@ -247,6 +266,9 @@ impl FnCx<'_, '_> {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
                     if let Some(h) = self.static_field(d, prop, want, span) {
+                        return h;
+                    }
+                    if let Some(h) = self.static_method_value(d, d, prop, exp, span) {
                         return h;
                     }
                     if self.cx.adt(d).is_some() {
@@ -382,6 +404,14 @@ impl FnCx<'_, '_> {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `m[1]` on a match of `s.matchAll(re)`: its group (std/regex `__index`).
+            TyKind::Adt(..) if self.is_std_class(t, "std/regex::RegExpMatch") => {
+                let prop = ast::Ident {
+                    name: "__index".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
             // `s[i]` is `s.charAt(i)` (a string, as in JS).
             TyKind::Str => {
                 let prop = ast::Ident {
@@ -521,6 +551,9 @@ impl FnCx<'_, '_> {
         if let Some(base) = self.cx.brand_base(target) {
             return self.brand_cast(expr, target, base, want, span);
         }
+        if !self.cx.ty.is_numeric(target) && target != self.cx.ty.bool_ {
+            return self.type_assertion(expr, target, want, span);
+        }
         // An integer literal cast to an integer type is an exact integer first, so the cast
         // wraps it: `300 as u8` is `44`, `-1 as u8` is `255`.
         let hint = (untyped_int(expr) && self.cx.ty.is_int(target)).then_some(self.cx.ty.i64);
@@ -554,6 +587,29 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.mk(H::Cast(Box::new(inner)), target, span)
+    }
+
+    /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
+    /// converts nothing. `e` is typed in the context of `T`, as for an annotation, so a literal
+    /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`.
+    fn type_assertion(
+        &mut self,
+        expr: &ast::Expr,
+        target: TyId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
+        let inner = self.expr(expr, Some(target), want);
+        match self.try_coerce(inner, target) {
+            Ok(h) => h,
+            Err(h) => {
+                if !self.cx.ty.has_error(h.ty) {
+                    let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                    self.cx.err(format!("cannot cast `{s}` as `{d}`"), span);
+                }
+                self.error_expr(span)
+            }
+        }
     }
 
     /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to

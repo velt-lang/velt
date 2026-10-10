@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
 
 use super::listeners::Handover;
@@ -83,6 +83,24 @@ impl Running {
         // Reaped: the pid may be reused from now on.
         super::interrupt::untrack(self.id());
         Some(code)
+    }
+
+    /// How the program ended, waiting up to `within` for it to end; `None` if it still runs.
+    pub fn wait_status(&mut self, within: Duration) -> Option<ExitStatus> {
+        let deadline = Instant::now() + within;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    // Reaped: the pid may be reused from now on.
+                    super::interrupt::untrack(self.id());
+                    return Some(status);
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                _ => return None,
+            }
+        }
     }
 
     /// Stop the program: ask it to stop (SIGTERM on Unix, `stop` on its stop channel on
