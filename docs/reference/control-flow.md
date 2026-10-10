@@ -25,11 +25,15 @@
 
 `for (const k in o)` visits the keys of an object, as in JavaScript: the same keys, in the same
 order, as [`Object.keys(o)`](types.md#objects-arrays-tuples-and-maps), and it is that loop
-(`for (const k of Object.keys(o))`). `k` is a `string`.
+(`for (const k of Object.keys(o))`, with the built-in `Object` even where a local one hides
+it). `k` is a `string`.
 
 - `o` is an object type, a struct or class instance or a `Record`. A record's keys come in
   insertion order; an object's fields in declaration order, a base class's first. An optional
   field (`label?: string`) is visited only while it is present. Methods are not keys.
+- The keys are listed when the loop starts: a key added during the loop is not visited. A key
+  of a `Record<string, V>` deleted during the loop is not visited either, as in JavaScript,
+  when `o` is a name or a property of one (`r`, `this.scores`).
 - `let k` makes the variable assignable in the body; the loop variable must be declared in the
   head (`for (k in o)` with an outer `k` is an error, as for `for...of`).
 - For a `Map`, iterate `m.keys()` with `for...of`; `for...in` over a number or string is an

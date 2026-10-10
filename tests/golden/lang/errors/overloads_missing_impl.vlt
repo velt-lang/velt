@@ -1,4 +1,5 @@
-// An overload signature must be followed by the implementation (TS2391).
+// An overload signature must be followed by the implementation (TS2391), not by a function of
+// another name (TS2389).
 function lonely(x: string): string;
 
 function other(x: number): number;

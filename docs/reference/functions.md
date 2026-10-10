@@ -73,18 +73,27 @@ function main() {
   forms: `describe(v)` with `v: string | number` is an error, as in TypeScript.
 - Signatures may be generic and have optional and rest parameters. The implementation takes
   every signature's arguments: a signature it can't take is an error at the signature (TS2394).
-  A signature with fewer parameters leaves the implementation's last ones out, which then take
-  their defaults (`null` for an optional one).
+  A signature with fewer parameters, or an optional one left out of a call, leaves the
+  implementation's parameters out, which then take their defaults. A signature's parameters
+  have no defaults of their own (TS2371). A type parameter of the implementation that a
+  signature leaves open is `void` there (TypeScript's `unknown`).
 - A signature may promise a narrower result than the implementation's: `T` out of `T | null`,
-  or one member of a union. The result is then tested, and a value of another member panics
+  one member of a union, a literal type out of its base (`"U"` out of `string`), a class out
+  of a base class or an interface, or any of these in a `Promise` of an `async` implementation.
+  The result is then tested, and another value panics
   (``overload `f` returned a `…` where its signature promises a `…` ``), where TypeScript would
   trust the implementation. Where the types already agree nothing is tested.
-- Every signature is followed by the next one or by the implementation (TS2391); all of them are
-  `export`ed or none (TS2383). An overload signature is not `async`: it returns the
-  `Promise<T>` the `async` implementation returns. Methods overload the same way, `static` ones
-  too, and a subclass's override of the implementation is what the signatures call.
-- `import { f }` (and a re-export) brings the signatures along. As a value (`const g = f`),
-  an overloaded function is its implementation.
+- Every signature is followed by the next one or by the implementation (TS2391), not by a
+  function of another name (TS2389); all of them are `export`ed or none (TS2383), and a
+  method's are all `static` or none (TS2387, TS2388). Signatures may be `async`, as the
+  implementation is. Methods overload the same way, `static` ones too, and a subclass's
+  override of the implementation is what the signatures call; `override` on the signatures
+  overrides the base class's.
+- `import { f }`, a re-export and an export list (`export { f }`) bring the signatures along.
+  Where a function type is expected (`const h: (s: string) => string = describe`, a callback
+  argument), an overloaded function is the first signature that fits it; elsewhere
+  (`const g = f`) it is its implementation.
+- `velt doc` shows the signatures, not the implementation.
 - Not supported yet: overloaded constructors, overloads of a function declared inside a
   function, overloaded methods in interfaces, and several declarations of one name that each
   have a body (overloads in Velt's own form, chosen by the most specific parameter types).

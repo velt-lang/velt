@@ -1,0 +1,4 @@
+overloads_declarations.vlt:4:10: error: overload signatures must all be exported or non-exported (TypeScript's TS2383)
+overloads_declarations.vlt:11:3: error: this method's overload signatures are `static`, so it must be `static` too (TypeScript's TS2387)
+overloads_declarations.vlt:18:10: error: this method's overload signatures are not `static`, so it must not be `static` either (TypeScript's TS2388)
+overloads_declarations.vlt:23:23: error: a parameter default is only allowed in a function or method implementation, not in an overload signature (TypeScript's TS2371)

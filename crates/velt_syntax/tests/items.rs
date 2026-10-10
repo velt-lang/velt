@@ -320,13 +320,23 @@ fn overload_signatures_attach_to_the_implementation() {
 #[test]
 fn overload_signature_errors() {
     let errs = errors("function f(a: string): string;\nfunction g() {}");
+    assert!(errs[0].contains("name must be `f`"), "{errs:?}");
+    let errs = errors("function f(a: string): string;\nfunction g(): void;\nfunction g() {}");
     assert!(errs[0].contains("implementation is missing"), "{errs:?}");
+    let errs = errors(
+        "function f(a: string, n: number = 1): string;\nfunction f(a: string, n?: number): string { return a; }",
+    );
+    assert!(errs[0].contains("TS2371"), "{errs:?}");
+    let m = parse_ok(
+        "async function f(a: string): Promise<string>;\nasync function f(a: string): Promise<string> { return a; }",
+    );
+    assert_eq!(m.items.len(), 1);
     let errs = errors(
         "export function f(a: string): string;\nfunction f(a: string): string { return a; }",
     );
     assert!(errs[0].contains("all be exported"), "{errs:?}");
     let errs = errors("class C { m(): void; static m(): void {} }");
-    assert!(errs[0].contains("all be static"), "{errs:?}");
+    assert!(errs[0].contains("must not be `static` either"), "{errs:?}");
     let errs = errors("class C { m(): void; }");
     assert!(errs[0].contains("implementation is missing"), "{errs:?}");
     let errs = errors("class C { constructor(a: string); constructor(a: string) {} }");

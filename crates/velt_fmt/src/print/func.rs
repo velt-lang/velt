@@ -20,7 +20,8 @@ impl<'a> Printer<'a> {
         let mut out = vec![];
         for (k, o) in f.overloads.iter().enumerate() {
             let sig = self.fn_sig(o, keyword, o.span.hi);
-            out.push(cat![mods.to_string(), sig, ";"]);
+            let asyncness = if o.is_async { "async " } else { "" };
+            out.push(cat![mods.to_string(), asyncness, sig, ";"]);
             // Comments after a signature: on its line, then on lines of their own.
             let next = f.overloads.get(k + 1).unwrap_or(&f.sig).span.lo;
             for c in self.comments.take_trailing(self.src, o.span.hi, next, true) {

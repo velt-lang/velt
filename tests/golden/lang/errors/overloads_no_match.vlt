@@ -6,8 +6,11 @@ function describe(x: string | number): string | number {
   return x;
 }
 
+function both(v: string | number) {
+  describe(v);
+}
+
 function main() {
   describe(true);
-  const v: string | number = "a";
-  describe(v);
+  both("a");
 }

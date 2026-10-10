@@ -151,23 +151,20 @@ impl<'a> Parser<'a> {
         if mods.is_getter || mods.is_setter {
             self.error("an accessor cannot be overloaded", sig.name.span);
         }
-        if sig.is_async {
-            self.error(
-                "an overload signature cannot be `async`: write its return type as a `Promise<T>`",
-                sig.name.span,
-            );
-        }
+        self.signature_defaults(&sig);
         if self.at(Tok::RBrace) || self.at(Tok::Eof) {
             self.missing_implementation(&sig.name);
             return Err(Fail);
         }
         match self.parse_member()? {
             Member::Method(mut m) if m.decl.sig.name.name == sig.name.name => {
-                if m.is_static != mods.is_static {
-                    self.error(
-                        "overload signatures must all be static or all be instance methods (TypeScript's TS2387)",
-                        sig.name.span,
-                    );
+                // TypeScript's TS2387 / TS2388, at the implementation.
+                if m.is_static != mods.is_static && m.decl.overloads.is_empty() {
+                    let msg = match mods.is_static {
+                        true => "this method's overload signatures are `static`, so it must be `static` too (TypeScript's TS2387)",
+                        false => "this method's overload signatures are not `static`, so it must not be `static` either (TypeScript's TS2388)",
+                    };
+                    self.error(msg, m.decl.sig.name.span);
                 }
                 if m.is_private != mods.is_private {
                     self.error(
@@ -176,6 +173,10 @@ impl<'a> Parser<'a> {
                     );
                 }
                 m.decl.overloads.insert(0, sig);
+                Ok(Member::Method(m))
+            }
+            Member::Method(m) => {
+                self.wrong_implementation_name(&sig.name, m.decl.sig.name.span);
                 Ok(Member::Method(m))
             }
             other => {

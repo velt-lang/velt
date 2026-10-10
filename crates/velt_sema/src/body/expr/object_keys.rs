@@ -41,6 +41,86 @@ struct Key {
 }
 
 impl FnCx<'_, '_> {
+    /// `for (const k in r) body` over an open record (`Record<string, V>`, the only kind of
+    /// object `delete` removes keys from), written with an object expression that is safe to
+    /// evaluate again: the body starting with `if (!r.__has(k)) continue;`, so that a key
+    /// deleted during the loop is not visited, as in JavaScript. `None` for any other loop.
+    pub(crate) fn for_in_presence_test(
+        &mut self,
+        pattern: &ast::Pattern,
+        iter: &ast::Expr,
+        body: &ast::Block,
+    ) -> Option<ast::Block> {
+        let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
+            return None;
+        };
+        let (ast::ExprKind::Member { prop, .. }, [obj], ast::PatternKind::Ident(k)) =
+            (&callee.kind, args.as_slice(), &pattern.kind)
+        else {
+            return None;
+        };
+        if callee.span.lo != callee.span.hi || prop.name != "keys" || !reevaluable(obj) {
+            return None;
+        }
+        // The object's type, checked as a try (rolled back).
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let temps = self.call_temps.len();
+        let ty = self.expr(obj, None, Want::Borrow).ty;
+        mark.rollback(self.cx);
+        self.cx.diags.truncate(diags);
+        self.call_temps.truncate(temps);
+        self.restore_trial_frames(frames);
+        let (key, _) = self.record_args(ty)?;
+        if key != self.cx.ty.str_ {
+            return None;
+        }
+        let empty = velt_common::Span::new(iter.span.file, iter.span.lo, iter.span.lo);
+        let e = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span: empty,
+        };
+        let has = e(ast::ExprKind::Call {
+            callee: Box::new(e(ast::ExprKind::Member {
+                object: Box::new(obj.clone()),
+                prop: ast::Ident {
+                    name: "__has".to_string(),
+                    span: empty,
+                },
+                optional: false,
+            })),
+            type_args: vec![],
+            args: vec![e(ast::ExprKind::Ident(k.clone()))],
+            optional: false,
+        });
+        let test = ast::Stmt {
+            kind: ast::StmtKind::If {
+                cond: e(ast::ExprKind::Unary {
+                    op: ast::UnaryOp::Not,
+                    expr: Box::new(has),
+                }),
+                then: ast::Block {
+                    stmts: vec![ast::Stmt {
+                        kind: ast::StmtKind::Continue(None),
+                        span: empty,
+                    }],
+                    span: empty,
+                },
+                els: None,
+            },
+            span: empty,
+        };
+        let mut stmts = Vec::with_capacity(body.stmts.len() + 1);
+        stmts.push(test);
+        stmts.extend(body.stmts.iter().cloned());
+        Some(ast::Block {
+            stmts,
+            span: body.span,
+        })
+    }
+
     /// `Object.keys(x)`, `Object.values(x)` or `Object.entries(x)` of the prelude's `Object`
     /// (`None`: another call, or an object literal for `values` / `entries`, which the generic
     /// signature reads as a record).
@@ -64,7 +144,10 @@ impl FnCx<'_, '_> {
             return None;
         };
         let keys = prop.name == "keys";
-        if o.name != "Object" || self.is_local_name("Object") {
+        // `for (const k in o)` is a loop over the built-in `Object.keys(o)`, whose callee the
+        // parser writes with an empty span, whatever `Object` names here.
+        let for_in = keys && callee.span.lo == callee.span.hi;
+        if o.name != "Object" || (!for_in && self.is_local_name("Object")) {
             return None;
         }
         if !keys && (!matches!(prop.name.as_str(), "values" | "entries") || is_object_lit(arg)) {
@@ -72,6 +155,7 @@ impl FnCx<'_, '_> {
         }
         let prelude = self.cx.prelude_adt("Object")?;
         match self.cx.lookup_item_at(self.module, "Object", o.span) {
+            _ if for_in => {}
             Some(Item::Def(d)) if d == prelude => {}
             _ => return None,
         }
@@ -84,7 +168,7 @@ impl FnCx<'_, '_> {
             let h = self.object_keys(obj, span);
             // `for (const k in o)` is parsed as a loop over `Object.keys(o)` whose callee has an
             // empty span: say what the loop needs (TypeScript's TS2407).
-            if callee.span.lo == callee.span.hi {
+            if for_in {
                 for d in &mut self.cx.diags[mark..] {
                     if let Some(found) = d.message.strip_prefix(NOT_AN_OBJECT) {
                         d.message = format!("the object of a `for...in` loop must be an object, a class or struct instance or a `Record`{found}");
@@ -435,4 +519,19 @@ fn is_object_lit(e: &ast::Expr) -> bool {
 /// An ES private field (`#x`): `Object.keys` does not list it, as in JavaScript.
 fn is_private_name(name: &str) -> bool {
     name.starts_with(ast::PRIVATE_NAME_PREFIX)
+}
+
+/// Can `e` be evaluated a second time to the same object without side effects (a name,
+/// `this`, or a property of one)?
+fn reevaluable(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Paren(inner) => reevaluable(inner),
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => reevaluable(object),
+        _ => false,
+    }
 }

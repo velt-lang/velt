@@ -59,7 +59,9 @@ impl FnCx<'_, '_> {
     /// `r.__name(...)` written in user code: the record's internal methods are reserved for the
     /// record syntax (and the prelude). Reports and returns `true` if `recv` is such a call.
     pub(super) fn record_internal_call(&mut self, recv: &hir::Expr, prop: &ast::Ident) -> bool {
+        // A call the compiler wrote (a `for...in` loop's key test) has an empty span.
         if !prop.name.starts_with("__")
+            || prop.span.lo == prop.span.hi
             || self.record_args(recv.ty).is_none()
             || self.cx.scopes[self.module].is_std
         {

@@ -250,7 +250,12 @@ class C {
   static m(): void;
   // mid
   static m(x?: number): void {}
+  async n(): Promise<void>;
+  async n(x?: number): Promise<void> {}
 }
+
+async function g(): Promise<void>;
+async function g(x?: number): Promise<void> {}
 ";
     holds(src);
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));

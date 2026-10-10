@@ -16,8 +16,8 @@ use crate::ctx::Item;
 use crate::hir::{self, ExprKind as H, PatKind as P, TyId, UseMode};
 use crate::overloads::{sig_name, sig_of};
 
-/// Why each signature rejected a call (its first error), in order.
-type Misfits = Vec<String>;
+/// Why each signature rejected a call (its first error, and where), in order.
+type Misfits = Vec<(String, Span)>;
 
 impl FnCx<'_, '_> {
     /// Is the body being checked signature `name#k` of an overload set, whose calls of `name`
@@ -72,6 +72,57 @@ impl FnCx<'_, '_> {
             Ok(k) => self.named_call(&sigs[k], type_args, args, exp, span),
             Err(misfits) => self.no_overload(&id.name, misfits, args, span),
         })
+    }
+
+    /// Overloaded function `name` used as a value where a function type is expected: the
+    /// first signature `name#k` that converts to that type, as `tsc` picks it (`None`: `name`
+    /// has no signatures, no function type is expected, or none fits; the implementation is
+    /// the value then).
+    pub(crate) fn overloaded_fn_value(
+        &mut self,
+        id: &ast::Ident,
+        exp: Option<TyId>,
+    ) -> Option<hir::Expr> {
+        let want = self.hint(exp)?;
+        if !matches!(self.cx.ty.kind(want), hir::TyKind::FnPtr { .. })
+            || self.in_signature_of(&id.name)
+        {
+            return None;
+        }
+        let mut sigs = vec![];
+        loop {
+            let name = sig_name(&id.name, sigs.len());
+            match self.cx.lookup_item_at(self.module, &name, id.span) {
+                Some(Item::Def(d)) => sigs.push((
+                    d,
+                    ast::Ident {
+                        name,
+                        span: id.span,
+                    },
+                )),
+                _ => break,
+            }
+        }
+        let value = |s: &mut Self, k: usize| {
+            let (d, ident) = &sigs[k];
+            let h = s.fn_ref(*d, ident, Some(want));
+            match s.try_coerce(h, want) {
+                Ok(h) => Some(h),
+                Err(_) => None,
+            }
+        };
+        let picked = (0..sigs.len()).find(|&k| {
+            let mark = crate::body::recheck::Mark::here(self.cx);
+            let frames = self.trial_frames();
+            let diags = self.cx.diags.len();
+            let fits =
+                value(self, k).is_some() && !self.cx.diags[diags..].iter().any(|d| d.is_error());
+            mark.rollback(self.cx);
+            self.cx.diags.truncate(diags);
+            self.restore_trial_frames(frames);
+            fits
+        })?;
+        value(self, picked)
     }
 
     /// `recv.name(args)` where the receiver's type has signatures `name#k`: `Ok` with the call
@@ -172,7 +223,8 @@ impl FnCx<'_, '_> {
                         Some(note) => format!("{} ({note})", d.message),
                         None => d.message.clone(),
                     };
-                    why.replace(&sig_name(name, k), name)
+                    let at = d.labels.first().map_or(Span::DUMMY, |l| l.span);
+                    (why.replace(&sig_name(name, k), name), at)
                 });
             mark.rollback(self.cx);
             self.cx.diags.truncate(diags);
@@ -186,7 +238,8 @@ impl FnCx<'_, '_> {
         Err(misfits)
     }
 
-    /// TS2769: no signature of `name` accepts the call.
+    /// TS2769: no signature of `name` accepts the call; reported at the argument the first
+    /// signature rejected, as `tsc` does (at the call when it rejected another part of it).
     fn no_overload(
         &mut self,
         name: &str,
@@ -195,8 +248,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let n = misfits.len();
-        let mut d = Diagnostic::error(format!("no overload of `{name}` matches this call"), span);
-        for (k, why) in misfits.into_iter().enumerate() {
+        let at = misfits
+            .first()
+            .and_then(|(_, at)| {
+                args.iter()
+                    .find(|a| a.span.file == at.file && a.span.lo <= at.lo && at.hi <= a.span.hi)
+            })
+            .map_or(span, |a| a.span);
+        let mut d = Diagnostic::error(format!("no overload of `{name}` matches this call"), at);
+        for (k, (why, _)) in misfits.into_iter().enumerate() {
             d = d.with_note(format!("overload {} of {n}: {why}", k + 1));
         }
         self.cx.error(d);
@@ -290,7 +350,23 @@ impl FnCx<'_, '_> {
                 }
                 Err(_) => {
                     let member = self.cx.display(*m);
-                    panic_arm(self, member)
+                    match self.tested_conversion(b, *m, target, span) {
+                        Some(mut tested) => {
+                            fits = true;
+                            tested.push(hir::Arm {
+                                pat: self.pat(P::Wildcard, *m, span),
+                                guard: None,
+                                body: panic_arm(self, member),
+                            });
+                            let scrutinee = self.mk(H::Local(b, UseMode::Borrow), *m, span);
+                            let kind = H::Match {
+                                scrutinee: Box::new(scrutinee),
+                                arms: tested,
+                            };
+                            self.mk(kind, target, span)
+                        }
+                        None => panic_arm(self, member),
+                    }
                 }
             };
             arms.push(hir::Arm {
@@ -312,5 +388,61 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, target, span)
+    }
+
+    /// The arms that convert local `b` of type `m` to `target` after a test, when one can tell:
+    /// `"a"` out of a `string` by comparing (each literal of `target` whose base is `m`), a
+    /// class out of a base class or an interface by `instanceof`. `None` when neither applies.
+    fn tested_conversion(
+        &mut self,
+        b: hir::LocalId,
+        m: TyId,
+        target: TyId,
+        span: Span,
+    ) -> Option<Vec<hir::Arm>> {
+        let mut arms = vec![];
+        let lits = match self.cx.lit_value(target) {
+            Some(_) => vec![target],
+            None => self.cx.union_members(target).unwrap_or_default(),
+        };
+        for t in lits {
+            let Some(v) = self.cx.lit_value(t) else {
+                continue;
+            };
+            if self.cx.lit_base(&v) != m {
+                continue;
+            }
+            let lit = match v {
+                hir::LitValue::Str(s) => hir::Lit::Str(s),
+                hir::LitValue::Bool(x) => hir::Lit::Bool(x),
+                hir::LitValue::Int(_, n) if n >= 0 => hir::Lit::Int(n as u128),
+                _ => continue,
+            };
+            let value = self.lit_const(t, span);
+            let Ok(body) = self.try_coerce(value, target) else {
+                continue;
+            };
+            arms.push(hir::Arm {
+                pat: self.pat(P::Lit(lit), m, span),
+                guard: None,
+                body,
+            });
+        }
+        if let Some((class, _)) = self.cx.class_of(target) {
+            if let Ok(crate::body::expr::downcast::Instance::Maybe(sub)) =
+                self.instance_kind(m, class)
+            {
+                let read = self.mk(H::Local(b, UseMode::Move), m, span);
+                let down = self.mk(H::Downcast(Box::new(read)), sub, span);
+                if let Ok(body) = self.try_coerce(down, target) {
+                    arms.push(hir::Arm {
+                        pat: self.pat(P::InstanceOf(class), m, span),
+                        guard: None,
+                        body,
+                    });
+                }
+            }
+        }
+        (!arms.is_empty()).then_some(arms)
     }
 }

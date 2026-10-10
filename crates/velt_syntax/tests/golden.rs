@@ -40,6 +40,7 @@ fn golden_m1_files_parse() {
                 | "class_expression_named.vlt"
                 | "for_in_outer_variable.vlt"
                 | "overloads_missing_impl.vlt"
+                | "overloads_declarations.vlt"
         ) {
             continue;
         }
