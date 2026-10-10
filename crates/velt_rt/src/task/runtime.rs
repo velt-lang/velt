@@ -190,24 +190,26 @@ fn start_workers() -> Vec<Worker> {
 
 /// The worker an unpinned spawn from this thread starts on (see the module docs).
 fn place(workers: &[Worker]) -> usize {
-    let loads: Vec<usize> = workers
-        .iter()
-        .map(|w| w.load.load(Ordering::Relaxed))
-        .collect();
-    pick(&loads, current_worker())
+    pick(
+        workers.len(),
+        |i| workers[i].load.load(Ordering::Relaxed),
+        current_worker(),
+    )
 }
 
 /// Steal before start: the spawning worker `current` keeps the task unless it runs
-/// [`STEAL_MARGIN`] more tasks than the least loaded worker, which then takes it; a spawn from
-/// outside the workers goes to the least loaded one (the first of equals).
-fn pick(loads: &[usize], current: Option<usize>) -> usize {
-    let (least, least_load) = loads
-        .iter()
-        .enumerate()
-        .min_by_key(|&(i, &l)| (l, i))
-        .map_or((0, 0), |(i, &l)| (i, l));
+/// [`STEAL_MARGIN`] more tasks than the least loaded of the `n` workers, which then takes it; a
+/// spawn from outside the workers goes to the least loaded one (the first of equals).
+fn pick(n: usize, load: impl Fn(usize) -> usize, current: Option<usize>) -> usize {
+    let (mut least, mut least_load) = (0, usize::MAX);
+    for i in 0..n {
+        let l = load(i);
+        if l < least_load {
+            (least, least_load) = (i, l);
+        }
+    }
     match current {
-        Some(i) if loads[i] < least_load + STEAL_MARGIN => i,
+        Some(i) if load(i) < least_load.saturating_add(STEAL_MARGIN) => i,
         _ => least,
     }
 }
@@ -339,13 +341,14 @@ mod tests {
 
     #[test]
     fn placement_keeps_tasks_local_until_a_worker_is_clearly_busier() {
+        let p = |loads: &[usize], current| pick(loads.len(), |i| loads[i], current);
         // Off the workers: the least loaded (the first of equals).
-        assert_eq!(pick(&[0, 0, 0], None), 0);
-        assert_eq!(pick(&[3, 1, 2], None), 1);
+        assert_eq!(p(&[0, 0, 0], None), 0);
+        assert_eq!(p(&[3, 1, 2], None), 1);
         // On a worker: stay unless it runs STEAL_MARGIN more than the least loaded.
-        assert_eq!(pick(&[1, 0, 0], Some(0)), 0);
-        assert_eq!(pick(&[2, 0, 1], Some(0)), 1);
-        assert_eq!(pick(&[5, 4, 5], Some(2)), 2);
-        assert_eq!(pick(&[5, 3, 6], Some(2)), 1);
+        assert_eq!(p(&[1, 0, 0], Some(0)), 0);
+        assert_eq!(p(&[2, 0, 1], Some(0)), 1);
+        assert_eq!(p(&[5, 4, 5], Some(2)), 2);
+        assert_eq!(p(&[5, 3, 6], Some(2)), 1);
     }
 }
