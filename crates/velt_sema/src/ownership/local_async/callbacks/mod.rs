@@ -214,13 +214,7 @@ pub(super) fn check_handler_callbacks(
 /// Is capture `cap` of closure `c` a variable declared inside one of `requests` (a request's
 /// closure or a closure made inside one), so that each request has its own? Followed through
 /// the captures of the closures `c` is made in, up to the function declaring the variable.
-fn request_local(
-    cx: &Ctx,
-    g: &Graph,
-    c: DefId,
-    cap: LocalId,
-    requests: &HashSet<DefId>,
-) -> bool {
+fn request_local(cx: &Ctx, g: &Graph, c: DefId, cap: LocalId, requests: &HashSet<DefId>) -> bool {
     let (mut d, mut l) = (c, cap);
     for _ in 0..64 {
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
