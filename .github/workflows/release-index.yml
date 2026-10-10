@@ -1,0 +1,47 @@
+# The index of releases the velt launcher reads (#948, velt_toolchain::release): releases.json and
+# its signature releases.json.sig on the permanent `index` release, a pre-release so it never
+# becomes "latest". release.yml runs this after publishing; run it by hand after a change to
+# .github/release-yanks.json (yanking or unyanking a version). See CONTRIBUTING.md "Releases".
+name: release-index
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: release-index
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    # The signing key is a secret of this environment, which only `main` and `v*` tags may use.
+    environment: release
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The yanks file and the scripts as they are on main.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: write releases.json
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | {tag: .tag_name, draft, assets: [.assets[].name]}' > releases.ndjson
+          scripts/release-index.sh releases.ndjson .github/release-yanks.json > releases.json
+          cat releases.json
+      - name: sign it
+        env:
+          VELT_RELEASE_SIGNING_KEY: ${{ secrets.VELT_RELEASE_SIGNING_KEY }}
+        run: scripts/release-sign.sh releases.json
+      - name: upload it to the index release
+        run: |
+          if ! gh release view index >/dev/null 2>&1; then
+            gh release create index --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Velt release index" \
+              --notes "The list of Velt releases the velt launcher installs from (releases.json, signed: releases.json.sig). Not a release of Velt."
+          fi
+          gh release upload index releases.json releases.json.sig --clobber

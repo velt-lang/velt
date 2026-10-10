@@ -1,0 +1,2 @@
+// Re-exports an overloaded function under another name.
+export { label as tag } from "../_overloads_lib";

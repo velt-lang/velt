@@ -213,3 +213,44 @@ fn for_comma_lists() {
     assert!(matches!(b.stmts[0].kind, StmtKind::Expr(_)));
     assert!(matches!(b.stmts[2].kind, StmtKind::For { init: None, .. }));
 }
+
+/// `for (const k in o)` is a loop over `Object.keys(o)`, whose callee has an empty span.
+#[test]
+fn for_in_is_a_loop_over_object_keys() {
+    let m = parse_ok("function f() { for (const k in o) { g(k); } for (let k in a.b) {} }");
+    let s = body(&m);
+    let StmtKind::ForOf {
+        kind: VarKind::Const,
+        pattern,
+        iter,
+        is_await: false,
+        ..
+    } = &s[0].kind
+    else {
+        panic!()
+    };
+    assert_eq!(pat(pattern), "k");
+    assert_eq!(sx(iter), "(call (. Object keys) [o])");
+    let ExprKind::Call { callee, args, .. } = &iter.kind else {
+        panic!()
+    };
+    assert_eq!(callee.span.lo, callee.span.hi);
+    assert_eq!(iter.span, args[0].span);
+    assert!(matches!(
+        s[1].kind,
+        StmtKind::ForOf {
+            kind: VarKind::Let,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn for_in_needs_a_declared_name() {
+    let errs = errors("function f() { for (k in o) {} }");
+    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
+    let errs = errors("function f() { for (const [a, b] in o) {} }");
+    assert!(errs[0].contains("a single name"), "{errs:?}");
+    let errs = errors("async function f() { for await (const k in o) {} }");
+    assert!(errs[0].contains("needs `of`"), "{errs:?}");
+}

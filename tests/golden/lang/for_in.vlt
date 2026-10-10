@@ -1,0 +1,64 @@
+// `for...in` visits an object's keys in `Object.keys` order: a record's in insertion order, an
+// object type's or class's in declaration order (base class first). Absent optional fields are
+// skipped; methods are not keys. The loop variable is a `string`.
+interface Point {
+  x: number;
+  y: number;
+  label?: string;
+}
+
+class Base {
+  a = 1;
+  b = "two";
+}
+
+class Derived extends Base {
+  c = true;
+  greet(): string {
+    return "hi";
+  }
+}
+
+function keysOf(p: Point): string {
+  let out = "";
+  for (const k in p) {
+    out += k + ";";
+  }
+  return out;
+}
+
+function main() {
+  const scores: Record<string, number> = {};
+  scores["zed"] = 1;
+  scores["mid"] = 2;
+  scores["alpha"] = 3;
+  for (const k in scores) {
+    console.log(k, scores[k]);
+  }
+  console.log(keysOf({ x: 1, y: 2 }));
+  console.log(keysOf({ x: 1, y: 2, label: "p" }));
+  for (const k in new Derived()) {
+    console.log("field", k);
+  }
+  let n = 0;
+  for (let k in { one: 1, two: 2, three: 3 }) {
+    k = k.toUpperCase();
+    if (k === "TWO") {
+      continue;
+    }
+    n += k.length;
+  }
+  console.log(n);
+  const empty: Record<string, string> = {};
+  for (const k in empty) {
+    console.log("never", k);
+  }
+  outer: for (const a in { p: 1, q: 2 }) {
+    for (const b in { r: 1, s: 2 }) {
+      if (b === "s") {
+        continue outer;
+      }
+      console.log(a + b);
+    }
+  }
+}

@@ -1,7 +1,9 @@
 //! `for` loops. The parser desugars comma lists in a C-style head (velt_syntax
 //! `parser/for_loop.rs`): several declarations become a block around the loop that starts at
 //! the `for` keyword, and several updates become `(() => { u1; u2; })()` with empty spans on the
-//! arrow and its parentheses. Both are printed back in the comma form the user wrote.
+//! arrow and its parentheses. Both are printed back in the comma form the user wrote. A
+//! `for (const k in o)` is a `for...of` over `Object.keys(o)` whose callee has an empty span,
+//! printed back as `for...in`.
 
 use velt_syntax::ast::{ArrowBody, Block, Expr, ExprKind, Pattern, Stmt, StmtKind, VarKind};
 
@@ -47,11 +49,15 @@ impl<'a> Printer<'a> {
         body: &Block,
         is_await: bool,
     ) -> Doc {
+        let (word, iter) = match for_in_object(iter) {
+            Some(object) => (" in ", object),
+            None => (" of ", iter),
+        };
         let head = cat![
             kind.keyword(),
             " ",
             self.pattern(pattern),
-            " of ",
+            word,
             self.expr(iter)
         ];
         let open = if is_await { "for await (" } else { "for (" };
@@ -131,4 +137,17 @@ fn update_sequence(update: &Expr) -> Option<&[Stmt]> {
     let synthesized =
         args.is_empty() && callee.span.lo == callee.span.hi && arrow.span.lo == arrow.span.hi;
     synthesized.then_some(b.stmts.as_slice())
+}
+
+/// The object of a desugared `for (const k in o)`: the loop's iterable is `Object.keys(o)` with
+/// an empty-span callee (a source expression's span is never empty).
+fn for_in_object(iter: &Expr) -> Option<&Expr> {
+    let ExprKind::Call { callee, args, .. } = &iter.kind else {
+        return None;
+    };
+    let [object] = args.as_slice() else {
+        return None;
+    };
+    (callee.span.lo == callee.span.hi && matches!(callee.kind, ExprKind::Member { .. }))
+        .then_some(object)
 }

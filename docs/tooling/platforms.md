@@ -37,14 +37,44 @@ installing, with no Visual Studio Build Tools, Xcode or `cc` ([The bundled linke
 Building Velt itself needs Rust (stable) and the system C toolchain above; see
 [Getting started](../book/getting-started.md#install).
 
+## Toolchain versions
+
+Several Velt versions live side by side in one **root**, `~/.velt` (`%LOCALAPPDATA%\velt` on
+Windows), which the installers set up:
+
+```
+<root>/
+  bin/velt[.exe]          the launcher: the only directory on PATH
+  toolchains/<version>/   one toolchain per installed version (a prefix, below)
+  links/<name>            a prefix built elsewhere, used as <name> (`velt toolchain link`)
+  default                 the version used outside a package, or by one without a pin
+  index-seen/             the newest index of releases seen, per release key
+```
+
+The launcher runs one toolchain's `bin/velt` with the same arguments, so every command behaves
+as that version's. Which one: `velt +<toolchain>` or `$VELT_TOOLCHAIN` for one command, else the
+[`velt` field](manifest.md#velt) of the nearest `package.vlt` (the newest installed version it
+accepts; `velt new` writes the creating version's `"0.1"`), else the default. A version the
+package pins that isn't installed is downloaded and installed on first use: the launcher reads
+the release's `SHA256SUMS` after checking its signature with the velt release key built into
+it, and installs the archive only if its hash matches, so a mirror or a replaced file can't
+substitute a toolchain. [`velt toolchain`](cli.md#velt-toolchain) lists, installs, removes and
+selects versions.
+
+Installing a version never changes how a project pinned to another one builds, and the
+programs it built keep working. Removing a version (`velt toolchain remove`) breaks the debug
+executables it built, which load its shared runtime; rebuild them.
+
 ## The toolchain layout
 
-A Velt toolchain is one self-contained directory (the **prefix**). Nothing is registered
-globally: put `<prefix>/bin` on `PATH` and run `velt doctor`.
+A Velt toolchain is one self-contained directory (the **prefix**): the installers put each
+version's in `<root>/toolchains/<version>`, and an unpacked release archive works anywhere. A
+prefix needs nothing registered globally: its `bin/velt` finds everything relative to itself.
 
 ```
 <prefix>/
   bin/velt[.exe]          the CLI (compiler, runner, package manager, test runner, fmt, lsp)
+  bin/velt-launcher[.exe] the launcher, which the installers copy to <root>/bin/velt
   lib/velt_rt.lib         runtime static library (Windows)
   lib/libvelt_rt.a        runtime static library (Linux, macOS)
   lib/velt_rt_shared.dll, lib/velt_rt_shared.dll.lib
@@ -154,8 +184,9 @@ velt target remove x86_64-pc-windows-msvc
 ## Installing a release
 
 Every [GitHub release](https://github.com/velt-lang/velt/releases) carries a toolchain archive
-per platform, `SHA256SUMS`, and two installers that download the archive for this machine,
-check its checksum and install it:
+per platform, `SHA256SUMS` and its signature `SHA256SUMS.sig`, and two installers that download
+the archive for this machine, check it and install it into the root
+([Toolchain versions](#toolchain-versions)):
 
 ```sh
 curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
@@ -171,7 +202,25 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 | `velt-<version>-aarch64-unknown-linux-gnu.tar.gz` | Linux arm64, glibc 2.31 or newer |
 | `velt-<version>-aarch64-apple-darwin.tar.gz` | macOS 11 or newer on Apple silicon |
 | `velt-<version>-x86_64-apple-darwin.tar.gz` | macOS 10.12 or newer on Intel |
-| `velt-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 (also used on Windows arm64, under emulation) |
+| `velt-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 (also used on Windows arm64, under emulation); the launcher installs the same toolchain from `velt-<version>-x86_64-pc-windows-msvc.tar.gz` |
+
+**Checks.** `get-velt.sh` checks the archive against `SHA256SUMS` and, where OpenSSL can check
+Ed25519 signatures (OpenSSL 3.0 or newer; macOS's own LibreSSL and the OpenSSL 1.1 of Ubuntu 20.04, Debian 11 and RHEL 8 can't), `SHA256SUMS` against
+its signature with the velt release key. `get-velt.ps1` checks the hash only. The hash shows the
+download is intact; the signature that the velt project published it, whatever served it. The
+launcher the installers put in place checks the signature of everything it downloads after
+that. velt 0.1.0 was published before signing and before the launcher; the installers and the
+launcher install later releases.
+
+**The index of releases.** The launcher learns which versions exist (to install the newest one
+`"0.1"` accepts, and to list them with `velt toolchain list --available`) from
+`releases.json` and its signature `releases.json.sig`, on a permanent release tagged `index`
+(<https://github.com/velt-lang/velt/releases/tag/index>; a pre-release, so it is never
+"latest"). The release workflow rewrites it for every release and every yank. It lists the
+signed releases, which ones are yanked (withdrawn for a serious bug: a requirement no longer
+selects them, though `=<version>` still installs one), the time it was written (a launcher
+refuses an index older than one it has seen, so a mirror can't hide later releases), and the
+newest launcher (an older launcher says to run the installer again).
 
 Each release also has a **target pack** per target, `velt-<version>-target-<triple>.tar.gz`
 (also for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`), which
@@ -181,33 +230,45 @@ anywhere with the musl target packs.
 
 | `get-velt.sh` | `get-velt.ps1` | Environment variable | Meaning |
 |---|---|---|---|
-| `--version <v>` | `-Version <v>` | `VELT_INSTALL_VERSION` | the release to install (`0.1.0`); default: the release the installer belongs to |
-| `--prefix <dir>` | `-Prefix <dir>` | `VELT_INSTALL_PREFIX` | where to install; default `~/.velt/toolchain`, `%LOCALAPPDATA%\velt` |
+| `--version <v>` | `-Version <v>` | `VELT_INSTALL_VERSION` | the release to install (`0.1.1`); default: the release the installer belongs to |
+| `--prefix <dir>` | `-Prefix <dir>` | `VELT_INSTALL_PREFIX` | the root; default `~/.velt`, `%LOCALAPPDATA%\velt` |
+| `--default` | `-Default` | | make this version the default (the first one installed always is) |
+| `--force` | `-Force` | | reinstall a version that is already installed |
 | `--archive <file>` | `-Archive <file>` | | install an archive you downloaded instead of downloading one |
 | `--no-modify-path` | `-NoModifyPath` | | leave `PATH` alone |
 | | | `VELT_INSTALL_BASE_URL` | the repository to download from (default `https://github.com/velt-lang/velt`) |
+| | | `VELT_INSTALL_PUBLIC_KEY` | the release key to check signatures with (64 hex digits), for another build's releases |
 
 Pass options through the pipe with `sh -s --`, for example
-`curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.0`; in PowerShell set the environment
-variables before `irm ... | iex`. Re-running the installer upgrades (or downgrades) in place: it
-replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix. To uninstall, delete the prefix
-and the `PATH` line.
+`curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.1`; in PowerShell set the environment
+variables before `irm ... | iex`. Running the installer again with another version adds it
+beside the others; the launcher is updated when the new version's is newer. To uninstall a
+version, run `velt toolchain remove <version>`; to uninstall Velt, delete the root and the
+`PATH` line.
 
-`PATH`: `get-velt.sh` appends `export PATH="<prefix>/bin:$PATH"` to `~/.profile`, to
+`PATH`: `get-velt.sh` appends `export PATH="<root>/bin:$PATH"` to `~/.profile`, to
 `~/.bashrc`, `~/.bash_profile` and `~/.zshrc` when they exist (or `~/.zshrc` when your shell is
 zsh), and adds `~/.config/fish/conf.d/velt.fish` when fish is set up; `get-velt.ps1` adds
-`<prefix>\bin` to the user `Path`. Open a new terminal afterwards.
+`<root>\bin` to the user `Path`. Open a new terminal afterwards.
+
+An install from an installer before the launcher (velt 0.1.0) is a single toolchain:
+`get-velt.ps1` moves the one in `%LOCALAPPDATA%\velt` into `toolchains\<its version>`, where
+`velt +0.1.0` still runs it (the new version becomes the default); on Linux and macOS it stays in
+`~/.velt/toolchain`, so the debug executables it built keep running, until you delete it and its
+`PATH` line (`get-velt.sh` says so).
 
 ## Building and installing a distribution
 
 From a source checkout:
 
 ```sh
-pwsh scripts/package.ps1        # Windows → dist/velt-<version>-<host triple>/ + .zip
+pwsh scripts/package.ps1        # Windows → dist/velt-<version>-<host triple>/ + .zip, .tar.gz
 scripts/package.sh              # Linux, macOS → dist/velt-<version>-<host triple>/ + .tar.gz
 
-pwsh scripts/install.ps1 -Dist dist\velt-0.1.0-x86_64-pc-windows-msvc [-Prefix <dir>]
-scripts/install.sh dist/velt-0.1.0-x86_64-unknown-linux-gnu [<prefix>]
+pwsh scripts/install.ps1 -Dist dist\velt-0.1.1-x86_64-pc-windows-msvc [-Prefix <root>]
+scripts/install.sh dist/velt-0.1.1-x86_64-unknown-linux-gnu [<root>]
+
+velt toolchain link dev dist/velt-0.1.1-x86_64-unknown-linux-gnu   # or use it in place
 ```
 
 The package scripts run `cargo build --release` and assemble the layout above (options:
@@ -215,12 +276,14 @@ The package scripts run `cargo build --release` and assemble the layout above (o
 the lld given with `-Lld`/`--lld`, or build one with `scripts/build-lld.*` (CMake and Ninja or
 Visual Studio; 20–60 minutes, cached under `~/.cache/velt` or `%LOCALAPPDATA%\velt`), and the
 link kits; `-NoBundledLinker`/`--no-bundled-linker` leaves both out. On Windows they also link
-`velt.exe` and `velt_rt_shared.dll` with the bundled linker, so the toolchain itself needs no
-Visual C++ redistributable. The default
-prefix is `%LOCALAPPDATA%\velt` on Windows and `~/.velt/toolchain` on Linux and macOS. The
-installer replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix and prints the command
-that adds `<prefix>/bin` to `PATH`; it never edits `PATH` itself. An unpacked archive also works
-in place.
+`velt.exe`, `velt-launcher.exe` and `velt_rt_shared.dll` with the bundled linker, so the
+toolchain itself needs no Visual C++ redistributable. The install scripts put the distribution
+into the root (default `%LOCALAPPDATA%\velt` on Windows, `~/.velt` on Linux and macOS) as
+`toolchains/<version>`, replacing that version if it is there (a rebuild), and its launcher as
+`bin/velt`; the first version becomes the default. They print the command that adds
+`<root>/bin` to `PATH` and never edit `PATH` themselves. To try a build without installing it,
+link it (`velt toolchain link dev <dist dir>`) and run it with `velt +dev …`; an unpacked
+archive's `bin/velt` also works in place.
 
 ## Windows notes
 

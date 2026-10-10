@@ -18,8 +18,12 @@ On Windows, in PowerShell:
 irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 ```
 
-The installer puts the toolchain in `~/.velt/toolchain` (`%LOCALAPPDATA%\velt` on Windows) and
-adds its `bin` directory to your `PATH`. Open a new terminal and check the installation:
+The installer puts the toolchain in `~/.velt/toolchains/<version>` and the `velt` launcher in
+`~/.velt/bin`, which it adds to your `PATH` (on Windows `%LOCALAPPDATA%\velt\toolchains\<version>`
+and `%LOCALAPPDATA%\velt\bin`, added to your user `Path`). Several versions can be installed side
+by side; each package runs the one its manifest names (below). To uninstall, delete `~/.velt`
+(`%LOCALAPPDATA%\velt`) and remove its `bin` directory from your `PATH`. Open a new terminal and
+check the installation:
 
 ```sh
 velt doctor
@@ -42,8 +46,9 @@ cargo build --release -p veltc -p velt_rt
 ./target/release/velt doctor
 ```
 
-Put `target/release` on your `PATH`, or build a self-contained toolchain directory with `scripts/package.sh` (Linux,
-macOS) or `scripts/package.ps1` (Windows) and install it with the matching `install` script
+Put `target/release` on your `PATH`, or build a self-contained toolchain directory with
+`scripts/package.sh` (Linux, macOS) or `scripts/package.ps1` (Windows) and install it with the
+matching `install` script, beside released versions
 ([Platforms and installation](../tooling/platforms.md)).
 
 ## Your first program
