@@ -20,7 +20,6 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::spread_args::evaluated_anywhere;
 use crate::body::places::{is_path, is_place, place_root, set_place_mode};
 use crate::body::LocalKind;
 use crate::body::{FnCx, Want};
@@ -50,12 +49,14 @@ impl FnCx<'_, '_> {
         self.use_mutably(&mut recv, "call a mutating method on");
         let mut stmts = vec![];
         self.hoist_object(&mut recv, &mut stmts);
+        // A later item with effects (a getter read is a call) may change what this one reads.
+        let mut later_pure = vec![true; args.len()];
+        for k in (0..args.len().saturating_sub(1)).rev() {
+            later_pure[k] = later_pure[k + 1] && self.evaluated_anywhere(unspread(&args[k + 1]));
+        }
         let mut items = vec![];
         for (k, a) in args.iter().enumerate() {
-            // A later item with effects may change what this one reads.
-            let bind = !args[k + 1..]
-                .iter()
-                .all(|b| evaluated_anywhere(unspread(b)));
+            let bind = !later_pure[k];
             let item = match &a.kind {
                 ast::ExprKind::Spread(inner) => {
                     self.push_spread(inner, elem, &recv, bind, &mut stmts)

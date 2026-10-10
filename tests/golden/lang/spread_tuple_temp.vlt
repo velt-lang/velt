@@ -47,6 +47,25 @@ function getf(): (a: number, b: number) => number {
   return add;
 }
 
+class AdderHolder {
+  get adder(): Adder {
+    console.log("get adder");
+    return new Adder();
+  }
+  get five(): number {
+    console.log("get five");
+    return 5;
+  }
+}
+
+function addWith(a: Adder, b: number, c: number): number {
+  return a.add(b, c);
+}
+
+function add3(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+
 function main() {
   const g = new Grid();
   console.log(f(0, ...g.pair));
@@ -58,4 +77,11 @@ function main() {
   // A function or receiver that is a call runs before the spread is read.
   console.log(mk().add(...pair()));
   console.log(getf()(...pair()));
+  // A receiver or an argument before the spread read through a getter (a call) runs first too.
+  const h = new AdderHolder();
+  console.log(h.adder.add(...pair()));
+  console.log(addWith(h.adder, ...pair()));
+  console.log(add3(h.five, ...pair()));
+  const t: [number, number] = [7, 8];
+  console.log(addWith(h.adder, ...t));
 }

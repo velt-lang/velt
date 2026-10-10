@@ -10,6 +10,13 @@ function next(log: string[], label: string, v: number): number {
   return v;
 }
 
+class PopSource {
+  src: number[] = [1, 2, 3];
+  get popget(): number {
+    return this.src.pop() ?? -1;
+  }
+}
+
 function main() {
   const xs = [1, 2];
   const ys = [3, 4];
@@ -66,6 +73,11 @@ function main() {
   console.log(out, src);
   src.push(...src, src.pop() ?? -1);
   console.log(src);
+  // A getter is a call: one after a spread that changes it runs after the spread is read.
+  const hs = new PopSource();
+  const outs: number[] = [];
+  outs.push(...hs.src, hs.popget);
+  console.log(outs, hs.src);
   // A variable is read before a later item assigns it.
   let a = 1;
   const nums: number[] = [];

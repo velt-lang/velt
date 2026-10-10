@@ -13,3 +13,14 @@ call pair
 call getf
 call pair
 7
+get adder
+call pair
+7
+get adder
+call pair
+7
+get five
+call pair
+12
+get adder
+15

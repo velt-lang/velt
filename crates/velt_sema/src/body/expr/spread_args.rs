@@ -7,7 +7,8 @@
 //! A tuple that is not stored (`f(0, ...g.pair)` through a getter, `f(...pair())`) is held in
 //! a hidden temporary evaluated before the call, once, as JS reads it. A function or receiver
 //! that is a call (`getf()(...pair())`, `mk().m(...pair())`) is held in one before it, as JS
-//! evaluates it first.
+//! evaluates it first; so is a receiver or a leading argument read through a getter
+//! (`h.g.m(...pair())`, `f(h.g, ...pair())`), since a getter read is a call.
 //!
 //! A spread of an array type (`T[]`) can only fill a rest parameter: its length is known only at
 //! run time, and JS would bind `undefined` to the parameters it leaves out, which Velt has no
@@ -18,7 +19,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::args::Callable;
-use crate::body::places::is_path;
+use crate::body::places::{is_path, is_place};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, TyId, TyKind};
 
@@ -42,7 +43,7 @@ impl FnCx<'_, '_> {
                 object,
                 prop,
                 optional: false,
-            } if is_call(object) => {
+            } if is_call(object) || self.is_getter_value(object) => {
                 let (object, _) = self.hidden_temp(object, true);
                 let kind = ast::ExprKind::Member {
                     object: Box::new(object),
@@ -54,7 +55,16 @@ impl FnCx<'_, '_> {
             _ if is_call(callee) => self.hidden_temp(callee, true).0,
             _ => callee.clone(),
         };
-        let effects = (!evaluated_anywhere(&callee)).then_some(span);
+        // A method's receiver: reading the method itself is not a call.
+        let pure = match &callee.kind {
+            ast::ExprKind::Member {
+                object,
+                optional: false,
+                ..
+            } => self.evaluated_anywhere(object),
+            _ => self.evaluated_anywhere(&callee),
+        };
+        let effects = (!pure).then_some(span);
         let outer = std::mem::replace(&mut self.callee_effects, effects);
         let h = self.call(&callee, type_args, args, false, exp, span);
         self.callee_effects = outer;
@@ -73,17 +83,22 @@ impl FnCx<'_, '_> {
             return Ok(None);
         }
         let callee_pure = self.callee_effects != Some(span);
+        let args = &self.hold_getter_args(args)[..];
         let mut out = vec![];
         let mut left = vec![];
         let mut failed = false;
+        let mut earlier_pure = true;
         for (k, a) in args.iter().enumerate() {
+            if k > 0 && earlier_pure {
+                earlier_pure = self.evaluated_anywhere(&args[k - 1]);
+            }
             let ast::ExprKind::Spread(inner) = &a.kind else {
                 out.push(a.clone());
                 continue;
             };
             let after = if !callee_pure {
                 Some(CALLEE_EFFECTS)
-            } else if !args[..k].iter().all(evaluated_anywhere) {
+            } else if !earlier_pure {
                 Some(ARG_EFFECTS)
             } else {
                 None
@@ -153,13 +168,7 @@ impl FnCx<'_, '_> {
 
     /// Is `e` (not a variable or field path) of a tuple type? Checked as a trial, rolled back.
     fn tuple_by_trial(&mut self, e: &ast::Expr) -> bool {
-        let mark = crate::body::recheck::Mark::here(self.cx);
-        let frames = self.trial_frames();
-        let diags = self.cx.diags.len();
-        let h = self.expr(e, None, Want::Move);
-        mark.rollback(self.cx);
-        self.cx.diags.truncate(diags);
-        self.restore_trial_frames(frames);
+        let h = self.trial_expr(e);
         matches!(self.cx.ty.kind(h.ty), TyKind::Tuple(_))
     }
 
@@ -197,7 +206,7 @@ impl FnCx<'_, '_> {
     /// A spread of a tuple that is not a variable or a field (a call, a getter) after an
     /// argument (or a function or receiver) with effects (`after`): reported.
     fn tuple_not_stored(&mut self, e: &ast::Expr, after: &str) {
-        let shown = crate::body::switch::cases::source_text(e);
+        let shown = shown(e);
         let first = match after {
             CALLEE_EFFECTS => "the function and its receiver",
             _ => "the arguments before it",
@@ -241,13 +250,90 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// An argument whose evaluation has no effect, so evaluating a later one first keeps JS's
-/// order: a literal, an arrow, a variable or a field path.
-pub(super) fn evaluated_anywhere(e: &ast::Expr) -> bool {
+impl FnCx<'_, '_> {
+    /// Does evaluating `e` have no effect, so evaluating a later expression first keeps JS's
+    /// order? A literal, an arrow, a variable or a field path; not a getter read (`o.g`), which
+    /// is a call (told by checking `e` as a trial).
+    pub(super) fn evaluated_anywhere(&mut self, e: &ast::Expr) -> bool {
+        let e = unparen(e);
+        match &e.kind {
+            ast::ExprKind::Lit(_)
+            | ast::ExprKind::Arrow { .. }
+            | ast::ExprKind::Ident(_)
+            | ast::ExprKind::This => true,
+            _ if !super::setters::side_effect_free(e) => false,
+            _ => {
+                let h = self.trial_expr(e);
+                read_without_effects(&h)
+            }
+        }
+    }
+
+    /// Is `e` a member chain read through a getter (`h.g`), whose value is not a place, so it
+    /// can be held in a temporary?
+    fn is_getter_value(&mut self, e: &ast::Expr) -> bool {
+        let e = unparen(e);
+        if !is_member_chain(e) || self.evaluated_anywhere(e) {
+            return false;
+        }
+        let h = self.trial_expr(e);
+        !is_place(&h) && !self.cx.ty.is_bottom(h.ty)
+    }
+
+    /// `e` checked as a trial, rolled back.
+    fn trial_expr(&mut self, e: &ast::Expr) -> hir::Expr {
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let h = self.expr(e, None, Want::Borrow);
+        mark.rollback(self.cx);
+        self.cx.diags.truncate(diags);
+        self.restore_trial_frames(frames);
+        h
+    }
+
+    /// `args` with each getter read (`h.g`) before the last spread held in a hidden temporary
+    /// evaluated before the call, so it runs before a spread's temporary, as in JS. Only the
+    /// leading arguments up to the first other one with effects are held: a later getter would
+    /// otherwise run before it.
+    fn hold_getter_args(&mut self, args: &[ast::Expr]) -> Vec<ast::Expr> {
+        let mut out = args.to_vec();
+        let Some(last) = args.iter().rposition(is_spread) else {
+            return out;
+        };
+        for a in &mut out[..last] {
+            if self.evaluated_anywhere(a) {
+                continue;
+            }
+            if is_spread(a) || !self.is_getter_value(a) {
+                break;
+            }
+            *a = self.hidden_temp(a, false).0;
+        }
+        out
+    }
+}
+
+/// A checked read with no effects: a variable, a constant, a field path of one, or a literal
+/// index into one (narrowing projections included); not a call (a getter).
+fn read_without_effects(h: &hir::Expr) -> bool {
+    match &h.kind {
+        hir::ExprKind::Local(..) | hir::ExprKind::Global(_) | hir::ExprKind::Lit(_) => true,
+        hir::ExprKind::Field { base, .. }
+        | hir::ExprKind::UnwrapSome(base, _)
+        | hir::ExprKind::UnwrapVariant { expr: base, .. }
+        | hir::ExprKind::Downcast(base) => read_without_effects(base),
+        hir::ExprKind::Index { base, index, .. } => {
+            matches!(index.kind, hir::ExprKind::Lit(_)) && read_without_effects(base)
+        }
+        _ => false,
+    }
+}
+
+fn unparen(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
-        ast::ExprKind::Lit(_) | ast::ExprKind::Arrow { .. } => true,
-        ast::ExprKind::Paren(x) => evaluated_anywhere(x),
-        _ => super::setters::side_effect_free(e),
+        ast::ExprKind::Paren(x) => unparen(x),
+        _ => e,
     }
 }
 
@@ -303,5 +389,26 @@ fn index(object: &ast::Expr, k: usize) -> ast::Expr {
             optional: false,
         },
         span,
+    }
+}
+
+/// `e` as written, for a note: a call of a name or member chain with arguments shown that way
+/// too (`pair()`, `o.pair(1)`); `the value` otherwise.
+fn shown(e: &ast::Expr) -> String {
+    use crate::body::switch::cases::source_text;
+    match &unparen(e).kind {
+        ast::ExprKind::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } if is_member_chain(callee) => {
+            let args: Vec<String> = args.iter().map(source_text).collect();
+            if args.iter().any(|a| a == "the value") {
+                return "the value".into();
+            }
+            format!("{}({})", source_text(callee), args.join(", "))
+        }
+        _ => source_text(e),
     }
 }
