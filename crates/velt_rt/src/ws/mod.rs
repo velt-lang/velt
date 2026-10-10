@@ -11,11 +11,14 @@
 //! - **Reading** (one `receive` at a time, behind a lock): the read buffer is allocated once data
 //!   has arrived and dropped once every byte in it is used, so an idle connection holds none.
 //!   Frames are unmasked eight bytes at a time; text is checked as UTF-8.
-//! - **Writing**: `send` encodes the frame into the connection's queue and returns once it is
-//!   queued (as in Bun and Node); a writer task per connection sends everything queued in one
-//!   write. So the replies to messages that arrived together, or a broadcast to many sockets,
-//!   cost one syscall per batch and socket. Past [`HIGH_WATER`] queued bytes, `send` waits until
-//!   the writer has caught up (backpressure). A failed write is reported by the next `send`.
+//! - **Writing**: `send` encodes the frame into the connection's queue when it is called, so
+//!   frames go out in call order, also before a server-side upgrade has completed, and returns
+//!   once it is queued (as in Bun and Node); a writer task per connection sends everything queued
+//!   in one write. So the replies to messages that arrived together, or a broadcast to many
+//!   sockets, cost one syscall per batch and socket. Past [`HIGH_WATER`] queued bytes a `send`
+//!   completes only once the writer has caught up (backpressure). A failed write is reported by
+//!   the next `send`. Once the connection is closing or was dropped, the writer gives the peer
+//!   [`CLOSE_FLUSH`] to take what is queued, then shuts the socket down.
 //! - Pings are answered automatically; a close frame from the peer is answered and ends the
 //!   connection (`receive` → kind 0).
 
@@ -42,8 +45,14 @@ use tokio::sync::{Mutex, Notify, OnceCell};
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
 
-/// Queued bytes past which `send` waits for the writer.
+/// Queued bytes past which a `send` completes only once the writer has caught up.
 const HIGH_WATER: usize = 1 << 20;
+/// How long the writer keeps flushing once the connection is closing or was dropped (a peer that
+/// stopped reading must not keep the socket and its queue alive): 30 s, as the `ws` package.
+#[cfg(not(test))]
+const CLOSE_FLUSH: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(test)]
+const CLOSE_FLUSH: std::time::Duration = std::time::Duration::from_millis(300);
 /// Largest message accepted (tungstenite's default).
 const MAX_MESSAGE: usize = 64 << 20;
 /// Bytes read at a time.
@@ -100,8 +109,9 @@ struct Reader {
     half: ReadHalf,
     buf: Vec<u8>,
     pos: usize,
-    /// Opcode and payload of a fragmented message so far.
-    partial: Option<(Op, Vec<u8>)>,
+    /// Opcode and payload of a fragmented message so far, and how much of a text payload is
+    /// known to be valid UTF-8 (checked fragment by fragment, so bad text fails early).
+    partial: Option<(Op, Vec<u8>, usize)>,
     /// The peer's close frame was seen (or the stream ended): every later `receive` is kind 0.
     done: bool,
 }
@@ -161,16 +171,112 @@ struct Queue {
 }
 
 struct Writer {
+    role: Role,
     q: SyncMutex<Queue>,
     /// Bytes were queued.
     ready: Notify,
-    /// The writer drained the queue (or stopped).
+    /// The writer took the queue (it is empty now) or stopped.
     drained: Notify,
+    /// The connection started closing or was dropped: a write in progress gets [`CLOSE_FLUSH`].
+    ending: Notify,
 }
 
 impl Writer {
+    /// The queue of a connection that isn't running yet: frames sent before a server-side
+    /// upgrade completes wait here, in order, until [`Conn::start`] starts the writer.
+    fn new(role: Role) -> Arc<Writer> {
+        Arc::new(Writer {
+            role,
+            q: SyncMutex::new(Queue {
+                buf: Vec::new(),
+                closing: false,
+                stopped: None,
+                writer_running: false,
+                dropped: false,
+            }),
+            ready: Notify::new(),
+            drained: Notify::new(),
+            ending: Notify::new(),
+        })
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Queue> {
         self.q.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Encodes one frame into the queue now (call order is wire order); true if more than
+    /// [`HIGH_WATER`] bytes are queued after it (the send then completes in [`Writer::room`]).
+    fn enqueue(&self, op: Op, payload: &[u8]) -> io::Result<bool> {
+        let over = {
+            let mut q = self.lock();
+            if let Some(kind) = q.stopped {
+                return Err(stopped_error(kind));
+            }
+            if q.closing {
+                return Err(closed_error());
+            }
+            frame::encode(&mut q.buf, op, payload, self.role == Role::Client);
+            if op == Op::Close {
+                q.closing = true;
+            }
+            q.writer_running = true;
+            q.buf.len() > HIGH_WATER
+        };
+        self.ready.notify_one();
+        if op == Op::Close {
+            self.ending.notify_waiters();
+        }
+        Ok(over)
+    }
+
+    /// Waits until at most [`HIGH_WATER`] bytes are queued; an error if the writer stopped first.
+    async fn room(&self) -> io::Result<()> {
+        loop {
+            let mut drained = std::pin::pin!(self.drained.notified());
+            drained.as_mut().enable();
+            {
+                let q = self.lock();
+                if let Some(kind) = q.stopped {
+                    return Err(stopped_error(kind));
+                }
+                if q.buf.len() <= HIGH_WATER {
+                    return Ok(());
+                }
+            }
+            drained.await;
+        }
+    }
+
+    /// Stops the writer before it ran (the upgrade failed): queued sends report `kind`.
+    fn abort(&self, kind: io::ErrorKind) {
+        self.lock().stopped.get_or_insert(kind);
+        self.drained.notify_waiters();
+    }
+}
+
+/// Writes `data`; once the connection is closing or was dropped (also while this write is in
+/// progress: a peer that stopped reading), at most [`CLOSE_FLUSH`] more.
+async fn write_bounded(writer: &Writer, half: &mut WriteHalf, data: &[u8]) -> io::Result<()> {
+    let timed_out = || io::Error::new(io::ErrorKind::TimedOut, "the peer stopped reading");
+    let mut ending = std::pin::pin!(writer.ending.notified());
+    ending.as_mut().enable();
+    let already = {
+        let q = writer.lock();
+        q.closing || q.dropped
+    };
+    if already {
+        return tokio::time::timeout(CLOSE_FLUSH, half.write_all(data))
+            .await
+            .unwrap_or_else(|_| Err(timed_out()));
+    }
+    let write = std::pin::pin!(half.write_all(data));
+    match futures_util::future::select(write, ending).await {
+        futures_util::future::Either::Left((r, _)) => r,
+        futures_util::future::Either::Right(((), write)) => {
+            tokio::time::timeout(CLOSE_FLUSH, write)
+                .await
+                .unwrap_or_else(|_| Err(timed_out()))
+        }
     }
 }
 
@@ -199,6 +305,7 @@ async fn write_loop(writer: Arc<Writer>, mut half: WriteHalf) {
                 }
             } else {
                 std::mem::swap(&mut out, &mut q.buf);
+                q.writer_running = true;
                 Step::Write { closing: q.closing }
             }
         };
@@ -214,8 +321,11 @@ async fn write_loop(writer: Arc<Writer>, mut half: WriteHalf) {
             }
             Step::Write { closing } => closing,
         };
+        // The queue is empty now: sends waiting for room may complete.
+        writer.drained.notify_waiters();
         if !out.is_empty() {
-            if let Err(e) = half.write_all(&out).await {
+            if let Err(e) = write_bounded(&writer, &mut half, &out).await {
+                half.shutdown().await;
                 {
                     let mut q = writer.lock();
                     q.stopped = Some(e.kind());
@@ -246,35 +356,23 @@ async fn write_loop(writer: Arc<Writer>, mut half: WriteHalf) {
 
 /// An open connection.
 struct Conn {
-    role: Role,
     rx: Mutex<Reader>,
     tx: Arc<Writer>,
 }
 
 impl Conn {
-    /// Starts a connection over a raw TCP stream or another transport; `prefix` holds bytes
-    /// already read past the handshake.
+    /// Starts a connection over a raw TCP stream or another transport, with the queue `tx` (which
+    /// may already hold frames sent before the upgrade completed); `prefix` holds bytes already
+    /// read past the handshake.
     fn start(
-        role: Role,
+        tx: Arc<Writer>,
         tcp: Option<TcpStream>,
         other: Option<Box<dyn Transport>>,
         prefix: Vec<u8>,
     ) -> Conn {
         let (r, w) = split(tcp, other);
-        let tx = Arc::new(Writer {
-            q: SyncMutex::new(Queue {
-                buf: Vec::new(),
-                closing: false,
-                stopped: None,
-                writer_running: true,
-                dropped: false,
-            }),
-            ready: Notify::new(),
-            drained: Notify::new(),
-        });
         crate::task::runtime::handle().spawn(write_loop(tx.clone(), w));
         Conn {
-            role,
             rx: Mutex::new(Reader {
                 half: r,
                 buf: prefix,
@@ -286,68 +384,13 @@ impl Conn {
         }
     }
 
-    /// Queues one frame now if there is room: `Some(result)`, or `None` when more than
-    /// [`HIGH_WATER`] bytes are queued (the caller then waits in [`Conn::send`]).
-    fn try_send_now(&self, op: Op, payload: &[u8]) -> Option<io::Result<()>> {
-        {
-            let mut q = self.tx.lock();
-            if let Some(kind) = q.stopped {
-                return Some(Err(stopped_error(kind)));
-            }
-            if q.closing {
-                return Some(Err(closed_error()));
-            }
-            if q.buf.len() > HIGH_WATER {
-                return None;
-            }
-            frame::encode(&mut q.buf, op, payload, self.role == Role::Client);
-            q.writer_running = true;
-        }
-        self.tx.ready.notify_one();
-        Some(Ok(()))
-    }
-
-    /// Queues one frame; waits while more than [`HIGH_WATER`] bytes are queued.
-    async fn send(&self, op: Op, payload: &[u8]) -> io::Result<()> {
-        loop {
-            let wait = {
-                let mut q = self.tx.lock();
-                if let Some(kind) = q.stopped {
-                    return Err(stopped_error(kind));
-                }
-                if q.closing {
-                    return Err(closed_error());
-                }
-                if q.buf.len() > HIGH_WATER {
-                    // Register before unlocking, so the writer's notify cannot be missed.
-                    Some(self.tx.drained.notified())
-                } else {
-                    frame::encode(&mut q.buf, op, payload, self.role == Role::Client);
-                    if op == Op::Close {
-                        q.closing = true;
-                    }
-                    q.writer_running = true;
-                    None
-                }
-            };
-            match wait {
-                Some(drained) => drained.await,
-                None => {
-                    self.tx.ready.notify_one();
-                    return Ok(());
-                }
-            }
-        }
-    }
-
     /// Queues the close frame (unless one was queued) and waits until it has been written.
     async fn close(&self, code: u16, reason: &str) -> io::Result<()> {
         let mut payload = code.to_be_bytes().to_vec();
         payload.extend_from_slice(close_reason(reason).as_bytes());
-        match self.send(Op::Close, &payload).await {
-            Ok(()) => {}
+        if self.tx.enqueue(Op::Close, &payload).is_err() {
             // Already closing or closed (by us or after the peer's close): fine.
-            Err(_) => return Ok(()),
+            return Ok(());
         }
         loop {
             let drained = self.tx.drained.notified();
@@ -365,7 +408,7 @@ impl Conn {
     /// every `receive` reports the connection closed; returns the error for this `receive`.
     async fn fail(&self, r: &mut Reader, code: u16, what: &str) -> io::Error {
         r.done = true;
-        let _ = self.send(Op::Close, &code.to_be_bytes()).await;
+        let _ = self.tx.enqueue(Op::Close, &code.to_be_bytes());
         protocol_error(what)
     }
 
@@ -378,7 +421,7 @@ impl Conn {
             }
             let parsed = {
                 let Reader { buf, pos, .. } = &mut *r;
-                frame::parse(&mut buf[*pos..], self.role == Role::Server, MAX_MESSAGE)
+                frame::parse(&mut buf[*pos..], self.tx.role == Role::Server, MAX_MESSAGE)
             };
             let f = match parsed {
                 Err(e) => {
@@ -408,7 +451,7 @@ impl Conn {
                     let payload = r.buf[at..at + len].to_vec();
                     r.release_if_drained();
                     // A pong for a connection that is closing is not needed.
-                    let _ = self.send(Op::Pong, &payload).await;
+                    let _ = self.tx.enqueue(Op::Pong, &payload);
                 }
                 Op::Pong => r.release_if_drained(),
                 Op::Close => {
@@ -432,19 +475,19 @@ impl Conn {
                             }
                         }
                     };
-                    let _ = self.send(Op::Close, &reply.to_be_bytes()).await;
+                    let _ = self.tx.enqueue(Op::Close, &reply.to_be_bytes());
                     return Ok(message(0, vec![], vec![]));
                 }
                 Op::Text | Op::Binary | Op::Continuation => {
                     let data = r.buf[at..at + len].to_vec();
                     r.release_if_drained();
-                    let (op, data) = match (op, r.partial.take()) {
-                        (Op::Continuation, Some((first, mut so_far))) => {
+                    let (op, data, checked) = match (op, r.partial.take()) {
+                        (Op::Continuation, Some((first, mut so_far, checked))) => {
                             if so_far.len() + data.len() > MAX_MESSAGE {
                                 return Err(self.fail(&mut r, 1009, frame::TOO_LONG).await);
                             }
                             so_far.extend_from_slice(&data);
-                            (first, so_far)
+                            (first, so_far, checked)
                         }
                         (Op::Continuation, None) => {
                             let e = "continuation without a message";
@@ -454,17 +497,28 @@ impl Conn {
                             let e = "new message inside a fragmented one";
                             return Err(self.fail(&mut r, 1002, e).await);
                         }
-                        (op, None) => (op, data),
+                        (op, None) => (op, data, 0),
                     };
+                    let mut checked = checked;
+                    if op == Op::Text {
+                        // Invalid UTF-8 fails at the fragment that has it (§8.1); a character
+                        // split across fragments is merely incomplete until the last one.
+                        match std::str::from_utf8(&data[checked..]) {
+                            Ok(_) => checked = data.len(),
+                            Err(e) if e.error_len().is_none() && !fin => {
+                                checked += e.valid_up_to();
+                            }
+                            Err(_) => {
+                                let e = "invalid UTF-8 in a text message";
+                                return Err(self.fail(&mut r, 1007, e).await);
+                            }
+                        }
+                    }
                     if !fin {
-                        r.partial = Some((op, data));
+                        r.partial = Some((op, data, checked));
                         continue;
                     }
                     if op == Op::Text {
-                        if std::str::from_utf8(&data).is_err() {
-                            let e = "invalid UTF-8 in a text message";
-                            return Err(self.fail(&mut r, 1007, e).await);
-                        }
                         return Ok(message(1, data, vec![]));
                     }
                     return Ok(message(2, vec![], data));
@@ -478,6 +532,7 @@ impl Drop for Conn {
     fn drop(&mut self) {
         self.tx.lock().dropped = true;
         self.tx.ready.notify_one();
+        self.tx.ending.notify_waiters();
     }
 }
 
@@ -529,6 +584,8 @@ pub struct WsObj {
     /// Server side: the pending HTTP upgrade, taken by the first operation.
     pending: SyncMutex<Option<OnUpgrade>>,
     conn: OnceCell<Conn>,
+    /// The send queue, there from the start so that sends keep call order across the upgrade.
+    tx: Arc<Writer>,
 }
 
 /// Opaque connection handle.
@@ -554,6 +611,7 @@ impl WsObj {
     fn open(conn: Conn) -> WsObj {
         WsObj {
             pending: SyncMutex::new(None),
+            tx: conn.tx.clone(),
             conn: OnceCell::new_with(Some(conn)),
         }
     }
@@ -562,30 +620,39 @@ impl WsObj {
         WsObj {
             pending: SyncMutex::new(Some(on)),
             conn: OnceCell::new(),
+            tx: Writer::new(Role::Server),
         }
     }
 
     async fn conn(&self) -> io::Result<&Conn> {
-        self.conn
-            .get_or_try_init(|| accept::finish(&self.pending))
-            .await
+        let r = self
+            .conn
+            .get_or_try_init(|| accept::finish(&self.pending, self.tx.clone()))
+            .await;
+        if let Err(e) = &r {
+            // Frames queued before the upgrade will never go out.
+            self.tx.abort(e.kind());
+        }
+        r
     }
 }
 
-/// A send on an open connection with room in its queue happens right away, encoded straight
-/// from the caller's bytes (no copy kept, the leaf is already complete); otherwise (the upgrade
-/// is still pending, or the queue is full) the bytes are copied and the send waits.
+/// A send is encoded into the queue at the call, so frames go out in call order. On an open
+/// connection with room in its queue the leaf is already complete; otherwise it completes once
+/// the upgrade is done (server side) and the writer has made room.
 fn send_leaf(ws: WsHandle, op: Op, payload: &[u8]) -> *mut VeltFut {
     SOCKETS.op::<()>(ws, |obj| {
-        if let Some(conn) = obj.conn.get() {
-            if let Some(r) = conn.try_send_now(op, payload) {
-                return new_leaf(std::future::ready(IoResult::from_io(r, |()| ())));
-            }
+        let over = match obj.tx.enqueue(op, payload) {
+            Ok(over) => over,
+            Err(e) => return new_leaf(std::future::ready(IoResult::from_io(Err(e), |()| ()))),
+        };
+        if !over && obj.conn.get().is_some() {
+            return new_leaf(std::future::ready(IoResult::ok(())));
         }
-        let payload = payload.to_vec();
         new_leaf(async move {
             let r = match obj.conn().await {
-                Ok(c) => c.send(op, &payload).await,
+                Ok(_) if over => obj.tx.room().await,
+                Ok(_) => Ok(()),
                 Err(e) => Err(e),
             };
             IoResult::from_io(r, |()| ())
@@ -631,6 +698,14 @@ pub unsafe extern "C" fn velt_rt_ws_close(
     code: u32,
     reason: *const VeltStr,
 ) -> *mut VeltFut {
+    // Codes a peer may receive (RFC 6455 §7.4); 1005, 1006, 1015 and reserved ones never go on the
+    // wire.
+    if code > u16::MAX as u32 || !valid_close_code(code as u16) {
+        let e = invalid(format!(
+            "invalid WebSocket close code {code} (1000-1003, 1007-1014 or 3000-4999)"
+        ));
+        return new_leaf(std::future::ready(IoResult::<()>::err(e)));
+    }
     let Some(obj) = SOCKETS.get(ws) else {
         return new_leaf(async { IoResult::ok(()) });
     };
@@ -666,9 +741,165 @@ mod tests {
         let addr = l.local_addr().unwrap();
         let accept = tokio::spawn(async move { l.accept().await.unwrap().0 });
         let client = TcpStream::connect(addr).await.unwrap();
-        let server = Conn::start(Role::Server, Some(accept.await.unwrap()), None, Vec::new());
-        let client = Conn::start(Role::Client, Some(client), None, Vec::new());
+        let server = Conn::start(
+            Writer::new(Role::Server),
+            Some(accept.await.unwrap()),
+            None,
+            vec![],
+        );
+        let client = Conn::start(Writer::new(Role::Client), Some(client), None, Vec::new());
         (server, client)
+    }
+
+    /// A server connection whose peer is a raw socket that never reads, and that peer.
+    async fn unread_pair() -> (Conn, TcpStream) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let accept = tokio::spawn(async move { l.accept().await.unwrap().0 });
+        let peer = TcpStream::connect(addr).await.unwrap();
+        let server = Conn::start(
+            Writer::new(Role::Server),
+            Some(accept.await.unwrap()),
+            None,
+            vec![],
+        );
+        (server, peer)
+    }
+
+    /// What a `send` does: queue now, then wait for room if more than HIGH_WATER is queued.
+    async fn send(c: &Conn, op: Op, payload: &[u8]) -> io::Result<()> {
+        if c.tx.enqueue(op, payload)? {
+            c.tx.room().await
+        } else {
+            Ok(())
+        }
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn sends_keep_call_order_past_the_high_water_mark() {
+        rt().block_on(async {
+            let (server, client) = pair().await;
+            // The first send leaves more than HIGH_WATER queued (it would have waited before
+            // queueing); the second must still go out after it.
+            let big = vec![b'x'; HIGH_WATER + 1];
+            assert!(server.tx.enqueue(Op::Binary, &big).unwrap());
+            assert!(server.tx.enqueue(Op::Text, b"after").unwrap());
+            let first = client.receive().await.unwrap();
+            assert_eq!(
+                (first.kind, unsafe { first.data.as_bytes() }.len()),
+                (2, big.len())
+            );
+            assert_eq!(text(&client.receive().await.unwrap()), "after");
+            server.tx.room().await.unwrap();
+        });
+    }
+
+    #[test]
+    fn frames_queued_before_the_writer_starts_go_out_in_order() {
+        rt().block_on(async {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = l.local_addr().unwrap();
+            let accept = tokio::spawn(async move { l.accept().await.unwrap().0 });
+            let peer = TcpStream::connect(addr).await.unwrap();
+            // A server-side queue before its upgrade completed.
+            let tx = Writer::new(Role::Server);
+            tx.enqueue(Op::Text, b"a").unwrap();
+            tx.enqueue(Op::Text, b"b").unwrap();
+            let _server = Conn::start(tx, Some(accept.await.unwrap()), None, vec![]);
+            let client = Conn::start(Writer::new(Role::Client), Some(peer), None, vec![]);
+            assert_eq!(text(&client.receive().await.unwrap()), "a");
+            assert_eq!(text(&client.receive().await.unwrap()), "b");
+        });
+    }
+
+    #[test]
+    fn close_and_drop_are_bounded_when_the_peer_does_not_read() {
+        rt().block_on(async {
+            let (server, _peer) = unread_pair().await;
+            // Far more than the socket buffers take: the writer blocks in a write.
+            for _ in 0..64 {
+                let _ = server.tx.enqueue(Op::Binary, &vec![0u8; 256 * 1024]);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let t = std::time::Instant::now();
+            server.close(1000, "").await.unwrap();
+            assert!(
+                t.elapsed() < CLOSE_FLUSH * 4,
+                "close took {:?}",
+                t.elapsed()
+            );
+            // Dropped with data still queued: the writer gives up and lets the socket go.
+            let (server, _peer) = unread_pair().await;
+            for _ in 0..64 {
+                let _ = server.tx.enqueue(Op::Binary, &vec![0u8; 256 * 1024]);
+            }
+            let tx = server.tx.clone();
+            drop(server);
+            let t = std::time::Instant::now();
+            while Arc::strong_count(&tx) > 1 {
+                assert!(
+                    t.elapsed() < CLOSE_FLUSH * 4,
+                    "the writer outlived its connection"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+    }
+
+    #[test]
+    fn invalid_utf8_fails_at_its_fragment() {
+        rt().block_on(async {
+            let (server, client) = pair().await;
+            // A first fragment with an invalid byte; no final fragment ever follows.
+            let mut f = Vec::new();
+            frame::encode(&mut f, Op::Text, b"ok \xff", true);
+            f[0] = 0x01; // FIN clear, text
+            client.tx.lock().buf.extend_from_slice(&f);
+            client.tx.ready.notify_one();
+            match server.receive().await {
+                Err(e) => assert!(e.to_string().contains("UTF-8"), "{e}"),
+                Ok(m) => panic!("expected an error, got kind {}", m.kind),
+            }
+            // A character split across fragments is fine.
+            let (server, client) = pair().await;
+            let euro = "€".as_bytes(); // 3 bytes
+            for (fin, op, part) in [(false, 1u8, &euro[..1]), (true, 0, &euro[1..])] {
+                let mut f = Vec::new();
+                frame::encode(&mut f, Op::Text, part, true);
+                f[0] = if fin { 0x80 } else { 0 } | op;
+                client.tx.lock().buf.extend_from_slice(&f);
+            }
+            client.tx.ready.notify_one();
+            assert_eq!(text(&server.receive().await.unwrap()), "€");
+        });
+    }
+
+    #[test]
+    fn invalid_close_codes_are_rejected() {
+        for code in [0u32, 999, 1004, 1005, 1006, 1015, 2000, 2999, 5000, 70000] {
+            // SAFETY: a null handle and a valid string; the leaf is complete and freed below.
+            unsafe {
+                let reason = VeltStr::from_bytes(b"");
+                let f = velt_rt_ws_close(WsHandle::NULL, code, &reason);
+                let out =
+                    &*((f as *const u8).add(crate::task::FUT_RESULT_OFFSET) as *const IoResult<()>);
+                let ready = ((*f).poll)(f, std::ptr::null_mut());
+                assert_eq!(ready, crate::task::READY);
+                assert_eq!(out.err.code, code::INVALID_INPUT, "close code {code}");
+                ((*f).drop)(f);
+            }
+        }
+        for code in [1000, 1001, 1003, 1007, 1014, 3000, 4999] {
+            assert!(valid_close_code(code));
+        }
     }
 
     fn text(m: &VeltWsMessage) -> String {
@@ -686,8 +917,7 @@ mod tests {
         rt.block_on(async {
             let (server, client) = pair().await;
             for i in 0..1000 {
-                server
-                    .send(Op::Text, format!("m{i}").as_bytes())
+                send(&server, Op::Text, format!("m{i}").as_bytes())
                     .await
                     .unwrap();
             }
@@ -696,9 +926,9 @@ mod tests {
                 assert_eq!((m.kind, text(&m)), (1, format!("m{i}")));
             }
             // Client to server (masked), then a binary message larger than one read.
-            client.send(Op::Text, "héllo ✓".as_bytes()).await.unwrap();
+            send(&client, Op::Text, "héllo ✓".as_bytes()).await.unwrap();
             let big: Vec<u8> = (0..200_000u32).map(|i| i as u8).collect();
-            client.send(Op::Binary, &big).await.unwrap();
+            send(&client, Op::Binary, &big).await.unwrap();
             let m = server.receive().await.unwrap();
             assert_eq!((m.kind, text(&m).as_str()), (1, "héllo ✓"));
             let m = server.receive().await.unwrap();
@@ -707,7 +937,7 @@ mod tests {
             server.close(1000, "bye").await.unwrap();
             assert_eq!(client.receive().await.unwrap().kind, 0);
             assert_eq!(client.receive().await.unwrap().kind, 0);
-            assert!(server.send(Op::Text, b"late").await.is_err());
+            assert!(send(&server, Op::Text, b"late").await.is_err());
         });
     }
 

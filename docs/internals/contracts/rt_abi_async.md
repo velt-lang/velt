@@ -1000,7 +1000,8 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 
 `VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
 RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
-and completes once it is queued; a writer task per connection sends everything queued in one
+at the call (call order is wire order, also before a server-side upgrade completes) and
+completes once it is queued; a writer task per connection sends everything queued in one
 write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
 reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
 Pings are answered automatically. No callbacks are stored.
@@ -1018,7 +1019,7 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 | `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
 | `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
 | `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written; closing a closed connection succeeds |
+| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
 | `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)

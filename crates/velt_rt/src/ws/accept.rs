@@ -1,6 +1,6 @@
 //! Server side: accepting a WebSocket upgrade requested through the HTTP server.
 
-use super::{invalid, Conn, Role, WsHandle, WsObj};
+use super::{invalid, Conn, Writer, WsHandle, WsObj};
 use crate::http::body::RespBody;
 use crate::http::response::{RespHandle, RespObj};
 use crate::http::upgrade;
@@ -28,7 +28,10 @@ pub struct VeltWsAccept {
 /// Waits for the parked upgrade to complete and starts the connection: over the raw TCP stream
 /// when the connection was plain TCP (bytes hyper read past the request come along), else over
 /// the upgraded connection (TLS).
-pub(super) async fn finish(pending: &std::sync::Mutex<Option<OnUpgrade>>) -> io::Result<Conn> {
+pub(super) async fn finish(
+    pending: &std::sync::Mutex<Option<OnUpgrade>>,
+    tx: std::sync::Arc<Writer>,
+) -> io::Result<Conn> {
     let on = pending
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -43,17 +46,14 @@ pub(super) async fn finish(pending: &std::sync::Mutex<Option<OnUpgrade>>) -> io:
     Ok(
         match hyper_util::server::conn::auto::upgrade::downcast::<TokioIo<TcpStream>>(upgraded) {
             Ok(parts) => Conn::start(
-                Role::Server,
+                tx,
                 Some(parts.io.into_inner()),
                 None,
                 parts.read_buf.to_vec(),
             ),
-            Err(upgraded) => Conn::start(
-                Role::Server,
-                None,
-                Some(Box::new(TokioIo::new(upgraded))),
-                Vec::new(),
-            ),
+            Err(upgraded) => {
+                Conn::start(tx, None, Some(Box::new(TokioIo::new(upgraded))), Vec::new())
+            }
         },
     )
 }

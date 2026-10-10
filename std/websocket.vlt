@@ -101,8 +101,9 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   }
 
   /**
-   * Sends a close frame (`code` 1000 = normal closure) after everything queued, waits until it is
-   * written, and releases the handle. Closing a connection the peer already closed, or closing
+   * Sends a close frame (`code` 1000 = normal closure; 1000-1003, 1007-1014 or 3000-4999, else
+   * `IoError` "EINVAL" and nothing is sent) after everything queued, waits until it is written,
+   * and releases the handle. Closing a connection the peer already closed, or closing
    * twice, is fine; other operations on the handle (through any copy) throw `IoError` `EBADF`
    * afterwards.
    */

@@ -55,10 +55,11 @@ pub(super) struct Frame {
 }
 
 /// The frame at the start of `buf`, unmasking its payload in place; `Ok(None)` if `buf` holds
-/// only part of it. `must_mask`: a server rejects unmasked frames (RFC 6455 §5.1).
+/// only part of it. `from_client`: a server requires every frame masked, a client requires none
+/// masked (RFC 6455 §5.1).
 pub(super) fn parse(
     buf: &mut [u8],
-    must_mask: bool,
+    from_client: bool,
     max: usize,
 ) -> Result<Option<Frame>, &'static str> {
     if buf.len() < 2 {
@@ -71,8 +72,11 @@ pub(super) fn parse(
     let op = Op::from_code(b0 & 0x0f).ok_or("unknown opcode")?;
     let fin = b0 & 0x80 != 0;
     let masked = b1 & 0x80 != 0;
-    if must_mask && !masked {
+    if from_client && !masked {
         return Err("unmasked frame from a client");
+    }
+    if !from_client && masked {
+        return Err("masked frame from a server");
     }
     let mut at = 2;
     let len = match b1 & 0x7f {
@@ -88,7 +92,12 @@ pub(super) fn parse(
                 return Ok(None);
             }
             at = 10;
-            u64::from_be_bytes(buf[2..10].try_into().unwrap())
+            let n = u64::from_be_bytes(buf[2..10].try_into().unwrap());
+            // §5.2: the most significant bit of a 64-bit length must be 0.
+            if n >> 63 != 0 {
+                return Err("frame length with the top bit set");
+            }
+            n
         }
         n => n as u64,
     };
@@ -109,18 +118,19 @@ pub(super) fn parse(
     } else {
         None
     };
-    if buf.len() < at + len {
+    let end = at.checked_add(len).ok_or(TOO_LONG)?;
+    if buf.len() < end {
         return Ok(None);
     }
     if let Some(m) = mask {
-        unmask(&mut buf[at..at + len], m);
+        unmask(&mut buf[at..end], m);
     }
     Ok(Some(Frame {
         fin,
         op,
         start: at,
         len,
-        consumed: at + len,
+        consumed: end,
     }))
 }
 
@@ -162,23 +172,24 @@ pub(super) fn encode(out: &mut Vec<u8>, op: Op, payload: &[u8], mask: bool) {
     }
 }
 
-/// A fresh masking key (RFC 6455 §5.3: unpredictable; a per-thread xorshift seeded from the OS).
+/// A fresh masking key: unpredictable, from the OS random source (RFC 6455 §5.3, §10.3), taken
+/// from a per-thread buffer refilled 64 keys at a time.
 fn mask_key() -> [u8; 4] {
-    use std::cell::Cell;
+    use std::cell::RefCell;
     thread_local! {
-        static STATE: Cell<u64> = Cell::new({
-            let mut seed = [0u8; 8];
-            let _ = getrandom::fill(&mut seed);
-            u64::from_ne_bytes(seed) | 1
-        });
+        static KEYS: RefCell<([u8; 256], usize)> = const { RefCell::new(([0; 256], 256)) };
     }
-    STATE.with(|s| {
-        let mut x = s.get();
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        s.set(x);
-        (x as u32).to_ne_bytes()
+    KEYS.with(|k| {
+        let (buf, used) = &mut *k.borrow_mut();
+        if *used == buf.len() {
+            if let Err(e) = getrandom::fill(buf) {
+                panic!("ICE: the OS random source failed: {e}");
+            }
+            *used = 0;
+        }
+        let key = [buf[*used], buf[*used + 1], buf[*used + 2], buf[*used + 3]];
+        *used += 4;
+        key
     })
 }
 
@@ -228,5 +239,33 @@ mod tests {
         let mut reserved = masked(Op::Text, b"x");
         reserved[0] |= 0x40;
         assert!(parse(&mut reserved, true, 1 << 20).is_err());
+    }
+
+    #[test]
+    fn client_rules() {
+        // A client rejects masked frames from the server (§5.1) and takes unmasked ones.
+        assert!(parse(&mut masked(Op::Text, b"hi"), false, 1 << 20).is_err());
+        let mut plain = Vec::new();
+        encode(&mut plain, Op::Text, b"hi", false);
+        assert!(parse(&mut plain, false, 1 << 20).unwrap().is_some());
+    }
+
+    #[test]
+    fn length_top_bit_and_overflow() {
+        // 127 + an 8-byte length with the top bit set: rejected (§5.2), whatever the limit.
+        let mut top = vec![0x82, 127, 0x80, 0, 0, 0, 0, 0, 0, 1];
+        assert!(parse(&mut top, false, usize::MAX).is_err());
+        // The largest legal length with no limit: `at + len` must not overflow.
+        let mut huge = vec![0x82, 127, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        assert!(matches!(
+            parse(&mut huge, false, usize::MAX),
+            Ok(None) | Err(_)
+        ));
+    }
+
+    #[test]
+    fn mask_keys_vary() {
+        let keys: std::collections::HashSet<[u8; 4]> = (0..200).map(|_| mask_key()).collect();
+        assert!(keys.len() > 190, "{} distinct keys of 200", keys.len());
     }
 }

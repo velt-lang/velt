@@ -1,6 +1,6 @@
 //! Client side: `connectWebSocket("ws://…" | "wss://…")` over TCP or TLS (rustls, §14.8).
 
-use super::{Conn, Role, Transport, WsObj};
+use super::{Conn, Role, Transport, Writer, WsObj};
 use crate::net::tcp::text_arg;
 use crate::result::{code, IoResult, VeltErr};
 use crate::str::VeltStr;
@@ -83,23 +83,62 @@ async fn handshake<S: Transport + ?Sized>(
         }
     };
     let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+    check_response(&head, &key).map_err(|e| handshake_failed(&e))?;
+    Ok(buf[end + 4..].to_vec())
+}
+
+/// Checks a `101` response head to an upgrade request with `key` (RFC 6455 §4.1): the status,
+/// `Upgrade: websocket`, `Connection: upgrade`, the accept key, and no extension or subprotocol
+/// (this client asks for none). The error says what is wrong.
+fn check_response(head: &str, key: &str) -> Result<(), String> {
     let mut lines = head.split("\r\n");
     let status = lines.next().unwrap_or("");
-    let code = status.split_whitespace().nth(1).unwrap_or("");
-    if code != "101" {
-        return Err(handshake_failed(&format!(
-            "HTTP error: {}",
-            status.split_once(' ').map_or(status, |(_, rest)| rest)
-        )));
+    if status.split_whitespace().nth(1) != Some("101") {
+        let reason = status.split_once(' ').map_or(status, |(_, rest)| rest);
+        return Err(format!("HTTP error: {reason}"));
     }
-    let accept = lines
+    let headers: Vec<(String, &str)> = lines
         .filter_map(|l| l.split_once(':'))
-        .find(|(name, _)| name.trim().eq_ignore_ascii_case("sec-websocket-accept"))
-        .map(|(_, v)| v.trim().to_string());
-    if accept.as_deref() != Some(derive_accept_key(key.as_bytes()).as_str()) {
-        return Err(handshake_failed("wrong Sec-WebSocket-Accept"));
+        .map(|(n, v)| (n.trim().to_ascii_lowercase(), v.trim()))
+        .collect();
+    let get = |name: &str| -> Vec<&str> {
+        headers
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| *v)
+            .collect()
+    };
+    if !get("upgrade")
+        .into_iter()
+        .any(|v| v.eq_ignore_ascii_case("websocket"))
+    {
+        return Err("no Upgrade: websocket".into());
     }
-    Ok(buf[end + 4..].to_vec())
+    let tokens = |v: &str| {
+        v.split(',')
+            .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
+    };
+    if !get("connection").into_iter().any(tokens) {
+        return Err("no Connection: upgrade".into());
+    }
+    if get("sec-websocket-accept").first().copied()
+        != Some(derive_accept_key(key.as_bytes()).as_str())
+    {
+        return Err("wrong Sec-WebSocket-Accept".into());
+    }
+    if get("sec-websocket-extensions")
+        .into_iter()
+        .any(|v| !v.is_empty())
+    {
+        return Err("the server chose an extension that wasn't requested".into());
+    }
+    if get("sec-websocket-protocol")
+        .into_iter()
+        .any(|v| !v.is_empty())
+    {
+        return Err("the server chose a subprotocol that wasn't requested".into());
+    }
+    Ok(())
 }
 
 async fn open(url: String, ca: Vec<u8>) -> Result<Conn, VeltErr> {
@@ -111,7 +150,12 @@ async fn open(url: String, ca: Vec<u8>) -> Result<Conn, VeltErr> {
     let _ = tcp.set_nodelay(true);
     if !secure {
         let rest = handshake(&mut tcp, &uri, &host, port, false).await?;
-        return Ok(Conn::start(Role::Client, Some(tcp), None, rest));
+        return Ok(Conn::start(
+            Writer::new(Role::Client),
+            Some(tcp),
+            None,
+            rest,
+        ));
     }
     let config = crate::tls::client_config(&ca).map_err(|e| invalid(&e))?;
     let name = ServerName::try_from(host.clone()).map_err(|_| invalid("invalid host name"))?;
@@ -122,7 +166,12 @@ async fn open(url: String, ca: Vec<u8>) -> Result<Conn, VeltErr> {
             .map_err(|e| VeltErr::from_io(&e))?,
     );
     let rest = handshake(&mut *tls, &uri, &host, port, true).await?;
-    Ok(Conn::start(Role::Client, None, Some(tls), rest))
+    Ok(Conn::start(
+        Writer::new(Role::Client),
+        None,
+        Some(tls),
+        rest,
+    ))
 }
 
 /// `connectWebSocket(url, { ca })` → `IoResult<VeltWs*>`. `ca` = extra trusted PEM CA
@@ -140,4 +189,34 @@ pub unsafe extern "C" fn velt_rt_ws_connect(
             Err(e) => IoResult::err(e),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn head(extra: &str) -> String {
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        format!(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: {}{extra}",
+            derive_accept_key(key.as_bytes())
+        )
+    }
+
+    #[test]
+    fn checks_the_response_head() {
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        assert_eq!(check_response(&head(""), key), Ok(()));
+        let bad = |h: &str| check_response(h, key).unwrap_err();
+        assert!(bad("HTTP/1.1 404 Not Found").contains("404 Not Found"));
+        assert!(bad(&head("").replace("Upgrade: WebSocket\r\n", "")).contains("Upgrade"));
+        assert!(bad(&head("").replace("keep-alive, Upgrade", "keep-alive")).contains("Connection"));
+        assert!(check_response(&head(""), "AAAAAAAAAAAAAAAAAAAAAA==")
+            .unwrap_err()
+            .contains("Accept"));
+        assert!(
+            bad(&head("\r\nSec-WebSocket-Extensions: permessage-deflate")).contains("extension")
+        );
+        assert!(bad(&head("\r\nSec-WebSocket-Protocol: chat")).contains("subprotocol"));
+    }
 }
