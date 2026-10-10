@@ -20,10 +20,7 @@ pub(super) fn promote(frame: &Frame, func: &mut Function, slots: Vec<SlotUse>) {
     let promoted: Vec<Promoted> = slots
         .into_iter()
         .map(|slot| {
-            func.locals.push(LocalDecl {
-                ty: slot.ty,
-                name: None,
-            });
+            func.locals.push(LocalDecl::new(slot.ty, None));
             let local = Local(func.locals.len() as u32 - 1);
             Promoted { slot, local }
         })
