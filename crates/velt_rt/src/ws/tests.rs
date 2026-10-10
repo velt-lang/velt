@@ -158,7 +158,8 @@ fn invalid_close_codes_are_rejected() {
             let f = velt_rt_ws_close(WsHandle::NULL, code, &reason);
             let out =
                 &*((f as *const u8).add(crate::task::FUT_RESULT_OFFSET) as *const IoResult<()>);
-            let ready = ((*f).poll)(f, std::ptr::null_mut());
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            let ready = ((*f).poll)(f, crate::task::raw_cx(&mut cx));
             assert_eq!(ready, crate::task::READY);
             assert_eq!(out.err.code, code::INVALID_INPUT, "close code {code}");
             ((*f).drop)(f);
