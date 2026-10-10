@@ -401,13 +401,20 @@ impl<'a> Parser<'a> {
         };
         let pattern = self.parse_binding_pattern()?;
         let first = self.finish_var_decl(lo, kind, pattern)?;
-        // `let a = 1, b: T;`: the further declarators wait in `more_vars` for the caller.
+        // `let a = 1, b: T;`: the further declarators wait in `more_vars` for the caller. They
+        // are collected here first: a later initializer can hold a block whose own declarations
+        // go through `more_vars` too (`const a = 1, c = () => { const p = 1, q = 2; ... }`).
+        let mut more = Vec::new();
         while self.eat(Tok::Comma) {
             let lo = self.cur_lo();
             let pattern = self.parse_binding_pattern()?;
-            let decl = self.finish_var_decl(lo, kind, pattern)?;
-            self.more_vars.push(decl);
+            more.push(self.finish_var_decl(lo, kind, pattern)?);
         }
+        debug_assert!(
+            self.more_vars.is_empty(),
+            "ICE: declarators of an inner declaration were left behind"
+        );
+        self.more_vars = more;
         Ok(first)
     }
 
