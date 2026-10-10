@@ -73,7 +73,6 @@ export class Record<K, V> {
     this.unordered = this.entries.size != n;
   }
 
-
   /**
    * The order of the live entries (indexes into `keys()` / `values()`) in JavaScript's order:
    * array indices first, ascending, then the other keys in insertion order (a stable sort).
