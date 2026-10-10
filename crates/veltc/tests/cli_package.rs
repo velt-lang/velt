@@ -519,10 +519,13 @@ fn ts_and_tsx_modules_in_a_package() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     let manifest = s.read("app/package.vlt").replacen(
-        "version: \"0.1.0\"",
-        "version: \"0.1.0\", jsx: { importSource: \"./ui\" }",
+        "{ name: \"app\", ",
+        "{\n  name: \"app\",\n  jsx: { importSource: \"./ui\" },\n  ",
         1,
     );
+    let manifest = manifest
+        .replacen(", velt:", ",\n  velt:", 1)
+        .replacen(" };", ",\n};", 1);
     s.write("app/package.vlt", &manifest);
     s.write(
         "app/src/model.ts",

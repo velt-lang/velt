@@ -1,0 +1,21 @@
+[package]
+name = "velt_toolchain"
+version.workspace = true
+edition.workspace = true
+# Side-by-side toolchain versions (#948): the `velt` pin of package.vlt, the installed versions
+# under `<root>/toolchains/`, and downloading a release. Shared by the launcher (`velt-launcher`),
+# vpm (it checks the pin) and veltc (`velt target add` reuses the download and install code),
+# so it stays small: no compiler crates and no vpm.
+
+[dependencies]
+velt_common.workspace = true
+velt_syntax.workspace = true
+velt_http = { path = "../velt_http" }
+semver = "1.0.28"
+serde_json = "1"
+sha2 = "0.10"
+flate2 = "1.1.10"
+tar = "0.4"
+
+[dev-dependencies]
+tempfile = "3.27.0"

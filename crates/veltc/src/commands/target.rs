@@ -4,15 +4,11 @@
 //! (`velt_link::kit`). It is installed into `<prefix>/lib/targets/<triple>/`, where `velt_link`
 //! looks for both.
 
-use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use velt_toolchain::install::{check_sha256, install_dir, sha256_entry};
 
 use crate::cli::target::TargetAction;
-
-/// Where releases are downloaded from (`$VELT_INSTALL_BASE_URL`, as for the installers).
-const DEFAULT_BASE_URL: &str = "https://github.com/velt-lang/velt";
 
 pub fn target_command(action: &TargetAction) -> Result<(), String> {
     match action {
@@ -147,13 +143,9 @@ fn add(target: &str, from: Option<&Path>, unverified: bool) -> Result<(), String
             bytes
         }
         None => {
-            let base = std::env::var("VELT_INSTALL_BASE_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| DEFAULT_BASE_URL.into());
             let release = format!(
                 "{}/releases/download/v{}",
-                base.trim_end_matches('/'),
+                velt_toolchain::release::base_url(),
                 env!("CARGO_PKG_VERSION")
             );
             // The expected hash first, so a pack the release lacks fails before a long download.
@@ -190,157 +182,28 @@ fn pack_name(target: &str) -> String {
     format!("velt-{}-target-{target}.tar.gz", env!("CARGO_PKG_VERSION"))
 }
 
-/// GET `url`, following redirects (release downloads redirect to a storage host), over
-/// `https://` only (or `http://` to this machine).
+/// GET `url` ([`velt_toolchain::install::download`]); a missing file is a pack this velt's
+/// release does not have.
 fn download(url: &str) -> Result<Vec<u8>, String> {
-    let mut url = url.to_string();
-    for _ in 0..5 {
-        if !vpm::remote::is_tls_or_loopback(&url) {
-            return Err(format!("refusing to download over plain http: {url}"));
-        }
-        let response = velt_http::fetch("GET", &url, &[("User-Agent", "velt")], &[])
-            .map_err(|e| format!("cannot download {url}: {e}"))?;
-        match response.status {
-            200 => return Ok(response.body),
-            301 | 302 | 303 | 307 | 308 => {
-                url = response
-                    .header("Location")
-                    .ok_or_else(|| format!("{url}: a redirect without a Location"))?
-                    .to_string();
-            }
-            404 => {
-                return Err(format!(
-                    "{url} does not exist (HTTP 404): this velt's release ({}) has no such \
-                     target pack; a toolchain built from source installs packs with `--from`",
-                    env!("CARGO_PKG_VERSION")
-                ))
-            }
-            status => return Err(format!("cannot download {url}: HTTP {status}")),
-        }
-    }
-    Err(format!("too many redirects downloading {url}"))
-}
-
-/// The hash for `name` in a `SHA256SUMS`-style file (`<hex>  <name>`, or `*<name>`).
-fn sha256_entry(sums: &str, name: &str) -> Option<String> {
-    sums.lines().find_map(|line| {
-        let (hash, file) = line.split_once(char::is_whitespace)?;
-        (file.trim().trim_start_matches('*') == name).then(|| hash.to_ascii_lowercase())
+    velt_toolchain::install::download(url)?.ok_or_else(|| {
+        format!(
+            "{url} does not exist (HTTP 404): this velt's release ({}) has no such \
+             target pack; a toolchain built from source installs packs with `--from`",
+            env!("CARGO_PKG_VERSION")
+        )
     })
-}
-
-/// Check `bytes` against the line for `name` in a `SHA256SUMS`-style file.
-fn check_sha256(bytes: &[u8], sums: &str, name: &str) -> Result<(), String> {
-    let expected =
-        sha256_entry(sums, name).ok_or_else(|| format!("SHA256SUMS has no entry for {name}"))?;
-    let actual: String = Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    if actual != expected {
-        return Err(format!(
-            "{name} has SHA-256 {actual}, but the expected one is {expected}"
-        ));
-    }
-    Ok(())
 }
 
 /// Unpack a pack (a `.tar.gz` of `<target>/...`) into `<dir>/<target>`, replacing an installed
 /// one only once the new one is complete.
 fn install(archive: &[u8], target: &str, dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let staging = dir.join(format!(".{target}.{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&staging);
-    let result =
-        unpack(archive, target, &staging).and_then(|()| match pack_problem(&staging, target) {
-            Some(why) => Err(format!(
-                "the target pack for {target} cannot be used: {why}"
-            )),
-            None => Ok(()),
-        });
-    if let Err(e) = result {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(e);
-    }
-    swap_into_place(&staging, &dir.join(target))
-}
-
-/// Move the complete pack `staging` to `dest`: an installed pack is renamed aside first and
-/// deleted only once the new one is in place, and put back when the move fails, so `dest` is
-/// never half deleted (a file of the old pack still open, as Windows forbids deleting, only
-/// leaves the renamed copy behind).
-fn swap_into_place(staging: &Path, dest: &Path) -> Result<(), String> {
-    let name = dest.file_name().unwrap_or_default().to_string_lossy();
-    let old = dest.with_file_name(format!(".{name}.old.{}", std::process::id()));
-    let had_old = dest.exists();
-    if had_old {
-        if let Err(e) = std::fs::rename(dest, &old) {
-            let _ = std::fs::remove_dir_all(staging);
-            return Err(format!("cannot replace {} (in use?): {e}", dest.display()));
-        }
-    }
-    if let Err(e) = std::fs::rename(staging, dest) {
-        if had_old {
-            let _ = std::fs::rename(&old, dest);
-        }
-        let _ = std::fs::remove_dir_all(staging);
-        return Err(format!("cannot install into {}: {e}", dest.display()));
-    }
-    if had_old {
-        let _ = std::fs::remove_dir_all(&old);
-    }
-    Ok(())
-}
-
-/// Extract the regular files under `<target>/` into `into`; any other path (absolute, `..`,
-/// another top directory) or entry type (links, devices) is refused.
-fn unpack(archive: &[u8], target: &str, into: &Path) -> Result<(), String> {
-    let gz = flate2::read::GzDecoder::new(archive);
-    let mut tar = tar::Archive::new(gz);
-    let entries = tar
-        .entries()
-        .map_err(|e| format!("not a target pack (.tar.gz): {e}"))?;
-    let bad = |path: &Path, why: &str| format!("the target pack holds {}: {why}", path.display());
-    for entry in entries {
-        let mut entry = entry.map_err(|e| format!("cannot read the target pack: {e}"))?;
-        let path = entry
-            .path()
-            .map_err(|e| format!("cannot read the target pack: {e}"))?
-            .into_owned();
-        // macOS `tar` adds AppleDouble metadata (`._<name>`) beside each file; it is not ours.
-        if path
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with("._"))
-        {
-            continue;
-        }
-        let mut parts = path.components();
-        if parts.next() != Some(Component::Normal(target.as_ref())) {
-            return Err(bad(&path, &format!("everything must be under {target}/")));
-        }
-        let rel: PathBuf = parts.collect();
-        if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
-            return Err(bad(&path, "not a plain relative path"));
-        }
-        let kind = entry.header().entry_type();
-        if kind.is_dir() {
-            continue;
-        }
-        if !kind.is_file() {
-            return Err(bad(&path, "only files may be in a target pack"));
-        }
-        let out = into.join(&rel);
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-        }
-        let mut bytes = vec![];
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("cannot read {} from the target pack: {e}", path.display()))?;
-        std::fs::write(&out, bytes).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
-    }
-    Ok(())
+    install_dir(
+        archive,
+        target,
+        &dir.join(target),
+        "target pack",
+        |staging| pack_problem(staging, target),
+    )
 }
 
 fn remove(target: &str) -> Result<(), String> {
@@ -458,30 +321,6 @@ mod tests {
     }
 
     #[test]
-    fn sha256_sums() {
-        let data = b"pack";
-        let hash: String = Sha256::digest(data)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let sums = format!("0000  other.tar.gz\n{hash}  velt-1-target-x.tar.gz\n");
-        check_sha256(data, &sums, "velt-1-target-x.tar.gz").unwrap();
-        assert!(check_sha256(b"tampered", &sums, "velt-1-target-x.tar.gz")
-            .unwrap_err()
-            .contains("expected"));
-        assert!(check_sha256(data, &sums, "missing.tar.gz")
-            .unwrap_err()
-            .contains("no entry"));
-        // `sha256sum -b` writes `*<name>`.
-        check_sha256(
-            data,
-            &format!("{hash} *velt-1-target-x.tar.gz\n"),
-            "velt-1-target-x.tar.gz",
-        )
-        .unwrap();
-    }
-
-    #[test]
     fn remove_takes_target_names_only() {
         let tmp = tempfile::tempdir().unwrap();
         let targets = tmp.path().join("lib/targets");
@@ -507,24 +346,6 @@ mod tests {
         assert!(remove_from(t, &targets)
             .unwrap_err()
             .contains("not installed"));
-    }
-
-    #[test]
-    fn a_replaced_pack_is_swapped_whole() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (staging, dest) = (tmp.path().join(".t.1"), tmp.path().join("t"));
-        std::fs::create_dir_all(&dest).unwrap();
-        std::fs::write(dest.join("old"), b"").unwrap();
-        std::fs::create_dir_all(&staging).unwrap();
-        std::fs::write(staging.join("new"), b"").unwrap();
-        swap_into_place(&staging, &dest).unwrap();
-        assert!(dest.join("new").exists() && !dest.join("old").exists());
-        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().collect();
-        assert_eq!(left.len(), 1, "{left:?}");
-        // A failed move puts the old pack back.
-        let missing = tmp.path().join(".gone");
-        assert!(swap_into_place(&missing, &dest).is_err());
-        assert!(dest.join("new").exists());
     }
 
     #[test]

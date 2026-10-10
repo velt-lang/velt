@@ -9,6 +9,7 @@ import type { Package } from "velt:package";
 export const pkg: Package = {
   name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
   version: "0.1.0",             // semver, required
+  velt: "0.1",                  // optional: the toolchain versions that build it (additive)
   entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
   dependencies: {
     json: "1.2",                // registry package, semver requirement
@@ -191,3 +192,19 @@ Contract: [native_abi.md](native_abi.md).
   target is an error.
 - Cache: `<cache>/native/<name>-<version>/<triple>/` (verified prebuilt bundles) and
   `<triple>-source/` (built from source); `<cache>` is vpm's package cache (`$VELT_HOME/cache`).
+
+## Toolchain requirement (additive, #948)
+```ts ignore
+velt: "0.1",
+```
+- `velt` is a `velt_toolchain::Requirement`: a version without an operator (`X`, `X.Y`,
+  `X.Y.Z`, optionally with a pre-release) means `~` that version (the newest patch of its minor;
+  `"1"` is any `1.x`); any other text is a `semver::VersionReq` (`=0.1.3`, `>=0.1, <0.3`, `^1.2`).
+  A value that is neither is an error at the value: "velt `<text>` is not a version requirement".
+- `velt new` / `velt init` write `velt: "<major>.<minor>"` of the toolchain that runs them
+  (`vpm::scaffold::this_toolchain_pin`). `to_vlt` writes the field after `version`, and
+  `velt manifest --json` prints it as `"velt"` when present.
+- The reader only checks the syntax. Choosing the toolchain is the launcher's job (#948), which
+  reads this one field with `velt_toolchain::pin::find_pin` (the nearest `package.vlt` above the
+  working directory; a manifest that does not parse counts as no pin, and the toolchain then
+  reports it).

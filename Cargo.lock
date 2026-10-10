@@ -2350,6 +2350,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_toolchain"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "semver",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "velt_common",
+ "velt_http",
+ "velt_syntax",
+]
+
+[[package]]
 name = "velt_tscompat"
 version = "0.1.0"
 dependencies = [
@@ -2378,7 +2393,6 @@ dependencies = [
  "lsp-types",
  "notify",
  "serde_json",
- "sha2 0.10.9",
  "tar",
  "tempfile",
  "velt_codegen_cl",
@@ -2394,6 +2408,7 @@ dependencies = [
  "velt_rt_host",
  "velt_sema",
  "velt_syntax",
+ "velt_toolchain",
  "velt_tscompat",
  "velt_vir",
  "vpm",
@@ -2421,6 +2436,7 @@ dependencies = [
  "velt_fmt",
  "velt_http",
  "velt_syntax",
+ "velt_toolchain",
  "windows-sys 0.61.2",
 ]
 

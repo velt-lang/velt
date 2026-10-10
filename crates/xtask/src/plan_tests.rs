@@ -17,7 +17,8 @@ fn graph() -> Graph {
         krate("velt_sema", &["velt_syntax"]),
         krate("velt_fmt", &["velt_syntax"]),
         krate("velt_lsp", &["velt_sema", "velt_fmt"]),
-        krate("vpm", &["velt_fmt"]),
+        krate("velt_toolchain", &["velt_syntax"]),
+        krate("vpm", &["velt_fmt", "velt_toolchain"]),
         krate("velt_rt", &[]),
         krate("velt_rt_host", &[]),
         krate("velt_rt_shared", &[]),
@@ -106,6 +107,18 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
         wasm.veltc,
         Veltc::Some(set(&["playground", "wasm_goldens"]))
     );
+}
+
+#[test]
+fn the_toolchain_crate_runs_with_vpm_on_every_os() {
+    let p = plan(&["crates/velt_toolchain/src/release.rs"]);
+    assert_eq!(p.packages, set(&["velt_toolchain", "vpm"]));
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    assert!(binaries.contains("cli_package") && binaries.contains("install_layout"));
+    // It unpacks files and renames directories, which differ by OS.
+    assert!(p.other_os.is_some());
 }
 
 #[test]

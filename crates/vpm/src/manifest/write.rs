@@ -13,6 +13,9 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         format!("name: {}", string_lit(&m.package.name)),
         format!("version: {}", string_lit(&m.package.version)),
     ];
+    if let Some(toolchain) = &m.toolchain {
+        fields.push(format!("velt: {}", string_lit(toolchain)));
+    }
     if let Some(description) = &m.package.description {
         fields.push(format!("description: {}", string_lit(description)));
     }
@@ -76,6 +79,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     let mut out = Map::new();
     out.insert("name".into(), json!(m.package.name));
     out.insert("version".into(), json!(m.package.version));
+    if let Some(toolchain) = &m.toolchain {
+        out.insert("velt".into(), json!(toolchain));
+    }
     if let Some(description) = &m.package.description {
         out.insert("description".into(), json!(description));
     }

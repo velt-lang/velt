@@ -115,6 +115,12 @@ fn check_request(method: &str, url: &str, headers: &[(&str, &str)]) -> Result<()
     Ok(())
 }
 
+/// Whether `url` is `https://`, or plain `http://` to this machine (`localhost` or a loopback
+/// address): where the tools send credentials and download releases from.
+pub fn is_tls_or_loopback(url: &str) -> bool {
+    url_host(url).is_ok_and(|h| h.tls || h.is_loopback())
+}
+
 /// The host part of a URL as this client reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UrlHost<'a> {

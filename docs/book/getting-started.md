@@ -82,7 +82,7 @@ Hello, world!
 
 ```
 hello/
-  package.vlt           the manifest: name, version, dependencies
+  package.vlt           the manifest: name, version, the velt version, dependencies
   src/main.vlt          the entry point: `velt run` builds and runs it
   src/greet.vlt         a module, imported by main and by the tests
   tests/greet.test.vlt  tests: every exported `test_*` function
@@ -93,11 +93,12 @@ hello/
 ```ts ignore
 import type { Package } from "velt:package";
 
-export const pkg: Package = { name: "hello", version: "0.1.0" };
+export const pkg: Package = { name: "hello", version: "0.1.0", velt: "0.1" };
 ```
 
 The manifest is written in Velt but holds only data: `velt` reads it without running it
-([`package.vlt`](../tooling/manifest.md)). In an editor, the language server completes its
+([`package.vlt`](../tooling/manifest.md)). `velt: "0.1"` records the velt version the package
+was made with, so a newer velt doesn't change how it builds. In an editor, the language server completes its
 fields, explains them on hover and reports the same errors `velt` would.
 
 `src/main.vlt` imports the greeting from its own module and the program arguments from the

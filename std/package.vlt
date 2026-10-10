@@ -15,6 +15,10 @@ export type Package = {
   name: string;
   /// A semantic version, such as `"0.1.0"`.
   version: string;
+  /// The velt versions that build the package, such as `"0.1"`: the newest installed `0.1.x`
+  /// (`"0.1.3"`: at least `0.1.3`; `"=0.1.3"`: exactly). The launcher runs that toolchain,
+  /// downloading it when it is missing.
+  velt?: string;
   /// One line about the package, shown by `velt search` and registry listings: at most 300
   /// characters, no line breaks, no surrounding whitespace.
   description?: string;
