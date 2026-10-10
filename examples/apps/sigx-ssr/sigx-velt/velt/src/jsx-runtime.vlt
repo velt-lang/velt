@@ -9,6 +9,7 @@ import { Element, Builder } from "./node";
 import type { Child, Text } from "./node";
 
 export { Element } from "./node";
+import { Island } from "./node";
 export type { Child, Text } from "./node";
 
 export type ElementChildrenAttribute = { children: Child };
@@ -136,6 +137,55 @@ export function jsxComponent<P>(
   name: string,
 ): Element {
   return component(props);
+}
+
+// --- Islands (sigx `client:*` directives) ---
+
+// The attributes every component takes (TypeScript's `JSX.IntrinsicAttributes`): sigx's island
+// directives. They are checked like props; `jsxComponentAttributes` receives them.
+export type IntrinsicAttributes = {
+  /** Hydrate as soon as the page loads. */
+  "client:load"?: boolean;
+  /** Hydrate when the browser is idle. */
+  "client:idle"?: boolean;
+  /** Hydrate when the island scrolls into view. */
+  "client:visible"?: boolean;
+  /** Hydrate on the first interaction with the island. */
+  "client:interaction"?: boolean;
+  /** Render in the browser only; the server sends a placeholder. */
+  "client:only"?: boolean;
+  /** Hydrate when the media query matches. */
+  "client:media"?: string;
+};
+
+// sigx's order: the first of these written decides how the island hydrates.
+const STRATEGIES = "load idle visible interaction only media";
+
+// `<Counter client:load start={1} />`: the component renders as usual and is marked as an
+// island, recorded with its props (which must be data: they are sent to the browser as JSON).
+export function jsxComponentAttributes<P>(
+  component: (props: P) => Element,
+  props: P,
+  key: string | null,
+  name: string,
+  names: string[],
+  values: AttrValue[],
+): Element {
+  const json = JSON.stringify(props);
+  const el = component(props);
+  // `name` is "<module>#<Name>": an island is known by its export name.
+  const component_name = name.slice(name.lastIndexOf("#") + 1);
+  for (const strategy of STRATEGIES.split(" ")) {
+    for (let i = 0; i < names.length; i++) {
+      if (names[i] == `client:${strategy}`) {
+        const v = values[i];
+        const media = strategy == "media" && typeof v === "string" ? v : null;
+        el.island = new Island(strategy, media, component_name, json);
+        return el;
+      }
+    }
+  }
+  return el;
 }
 
 // --- SSR precompile ---
