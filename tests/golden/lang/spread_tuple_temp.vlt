@@ -56,6 +56,15 @@ class AdderHolder {
     console.log("get five");
     return 5;
   }
+  get fnget(): (a: number, b: number) => number {
+    console.log("get fnget");
+    return add;
+  }
+}
+
+function holder(): AdderHolder {
+  console.log("call holder");
+  return new AdderHolder();
 }
 
 function addWith(a: Adder, b: number, c: number): number {
@@ -86,4 +95,8 @@ function main() {
   console.log(addWith(h.adder, ...t));
   // An element of a stored tuple has no effects: the spread's temporary may come first.
   console.log(add3(t[0], ...pair()));
+  // A function returned by a getter: the getter runs before the spread is read.
+  console.log(h.fnget(...pair()));
+  console.log(holder().fnget(...pair()));
+  console.log(h.fnget(...t));
 }

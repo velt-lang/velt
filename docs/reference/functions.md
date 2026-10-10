@@ -34,7 +34,7 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   hidden temporary before the call, as JS reads it once, after the function or receiver
   (`getf()(...pair())` and `mk().m(...pair())` call `getf` and `mk` first; a receiver or a
   leading argument read through a getter, `h.g.m(...pair())` or `f(h.g, ...pair())`, is read
-  first too). After another argument with effects (`f(next(), ...pair())`), which JS evaluates
+  first too, and so is a function a getter returns, `h.fnget(...pair())`). After another argument with effects (`f(next(), ...pair())`), which JS evaluates
   first, store it in a variable first (`const t = pair(); f(next(), ...t);`).
 
   ```ts

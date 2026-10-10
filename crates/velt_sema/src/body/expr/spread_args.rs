@@ -8,7 +8,8 @@
 //! a hidden temporary evaluated before the call, once, as JS reads it. A function or receiver
 //! that is a call (`getf()(...pair())`, `mk().m(...pair())`) is held in one before it, as JS
 //! evaluates it first; so is a receiver or a leading argument read through a getter
-//! (`h.g.m(...pair())`, `f(h.g, ...pair())`), since a getter read is a call.
+//! (`h.g.m(...pair())`, `f(h.g, ...pair())`), and a function a getter returns
+//! (`h.fnget(...pair())`), since a getter read is a call.
 //!
 //! A spread of an array type (`T[]`) can only fill a rest parameter: its length is known only at
 //! run time, and JS would bind `undefined` to the parameters it leaves out, which Velt has no
@@ -39,6 +40,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let callee = match &callee.kind {
+            // A function read through a getter (`h.fnget(...pair())`): the getter is a call.
+            ast::ExprKind::Member {
+                object,
+                prop,
+                optional: false,
+            } if self.is_getter_member(object, prop) => self.hidden_temp(callee, true).0,
             ast::ExprKind::Member {
                 object,
                 prop,
@@ -289,6 +296,12 @@ impl FnCx<'_, '_> {
         }
         let h = self.trial_expr(e);
         !is_place(&h) && !self.cx.ty.is_bottom(h.ty)
+    }
+
+    /// Is `object.prop` a getter (not a field or a method), so reading it is a call?
+    fn is_getter_member(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
+        let h = self.trial_expr(object);
+        !self.cx.ty.is_bottom(h.ty) && self.has_getter(h.ty, &prop.name)
     }
 
     /// `e` checked as a trial, rolled back.
