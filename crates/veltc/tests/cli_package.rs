@@ -401,6 +401,65 @@ fn test_runner_reports_passes_and_failures() {
     assert!(Path::new(&s.dir.join("app/target/velt/test")).is_dir());
 }
 
+/// `--filter` runs the matching tests; `--no-run --json` builds their harness without running
+/// it and names it, for a debugger ("Debug test" in VS Code).
+#[test]
+fn test_filter_and_no_run() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.write(
+        "app/src/math.test.vlt",
+        "export function test_add() { console.log(\"add ran\"); }\n\
+         export function test_add_more() { assert(1 + 1 == 2); }\n\
+         export function test_bad() { assertEq(1, 2); }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "add"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{stdout}");
+    for want in ["ok test_add", "ok test_add_more", "2 passed; 0 failed"] {
+        assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
+    }
+    assert!(!stdout.contains("test_bad"), "{stdout}");
+
+    let o = s.velt(
+        "app",
+        &[
+            "test",
+            "src/math.test.vlt",
+            "--filter",
+            "test_bad",
+            "--no-run",
+            "--json",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(out["errors"], 0, "{out}");
+    let harnesses = out["harnesses"].as_array().unwrap();
+    assert_eq!(harnesses.len(), 1, "{out}");
+    let h = &harnesses[0];
+    assert_eq!(h["tests"], serde_json::json!(["test_bad"]), "{out}");
+    assert!(
+        h["file"].as_str().unwrap().ends_with("math.test.vlt"),
+        "{out}"
+    );
+    // Built, not run: running it fails the assertion.
+    let exe = Path::new(h["executable"].as_str().unwrap());
+    let run = std::process::Command::new(exe).output().unwrap();
+    assert_eq!(run.status.code(), Some(101));
+
+    // A test that does not build is reported in the JSON.
+    s.write(
+        "app/src/broken.test.vlt",
+        "export function test_x() { const n: number = \"no\"; }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "test_x", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    assert_eq!(out["harnesses"], serde_json::json!([]), "{out}");
+}
+
 #[test]
 fn manifest_json_prints_the_validated_manifest() {
     let s = sandbox();

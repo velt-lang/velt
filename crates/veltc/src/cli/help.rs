@@ -212,18 +212,28 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
-        usage: &["test [<file|dir>] [--release] [--locked] [--watch]"],
+        usage: &[
+            "test [<file|dir>] [--filter <text>] [--release] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text>] --no-run [--json]",
+        ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed.",
         options: &[
+            ("--filter <text>", "only the tests whose name contains <text>"),
             ("--release", "build the tests optimized"),
             LOCKED,
             ("--watch", "rerun on every change"),
+            (
+                "--no-run",
+                "build the test programs without running them, and print their paths",
+            ),
+            ("--json", "with --no-run: print the programs and their tests as JSON"),
         ],
         examples: &[
             ("velt test", "every test of the package (or under the current directory)"),
             ("velt test tests/api.test.vlt", "one file"),
+            ("velt test --filter parse", "the tests whose name contains `parse`"),
             ("velt test --watch", "rerun on every change"),
         ],
     },

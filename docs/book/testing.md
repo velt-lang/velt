@@ -75,13 +75,17 @@ FAILED test_uncaught (exit code 1)
 ```sh
 velt test                       # every *.test.vlt (.ts, .tsx) of the package (or under the current directory)
 velt test tests/api.test.vlt    # one file
+velt test --filter parse        # the tests whose name contains `parse`
 velt test --release             # optimized build
 velt test --watch               # rerun on every change
+velt test --no-run              # build the test programs without running them
 ```
 
 The runner prints `ok <name>` or `FAILED <name>` per test and a summary, and exits with 1 if any
 test failed, so it works in CI as is. `--watch` reruns the tests whenever a file they import, a
-test file or the manifest changes.
+test file or the manifest changes. `--no-run` prints the paths of the test programs, to run one
+under a debugger (`--json` describes them for tools). In VS Code, **▶ Run test | Debug test**
+above a test runs or debugs just that test ([Debugging](../tooling/debugging.md#vs-code)).
 
 ## Testing servers
 

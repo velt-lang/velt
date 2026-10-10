@@ -72,6 +72,16 @@
         "icon": "$(debug-alt)"
       },
       {
+        "command": "velt.runTest",
+        "title": "Run Test",
+        "category": "Velt"
+      },
+      {
+        "command": "velt.debugTest",
+        "title": "Debug Test",
+        "category": "Velt"
+      },
+      {
         "command": "velt.generateLaunchJson",
         "title": "Generate launch.json",
         "category": "Velt"
@@ -131,6 +141,16 @@
       }
     },
     "menus": {
+      "commandPalette": [
+        {
+          "command": "velt.runTest",
+          "when": "false"
+        },
+        {
+          "command": "velt.debugTest",
+          "when": "false"
+        }
+      ],
       "editor/title/run": [
         {
           "command": "velt.runFile",
@@ -190,6 +210,10 @@
                 "type": "boolean",
                 "default": true,
                 "description": "Build with `velt build` before debugging."
+              },
+              "test": {
+                "type": "string",
+                "description": "Debug this test of `file` (an exported `test_*` function): its harness is built with `velt test --no-run`."
               },
               "buildArgs": {
                 "type": "array",
