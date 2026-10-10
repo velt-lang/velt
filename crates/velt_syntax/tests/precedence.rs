@@ -58,6 +58,8 @@ fn as_binds_like_relational() {
     check("a as i64 < b", "(< (as a i64) b)");
     check("x as u8 | y", "(| (as x u8) y)");
     check("x as T | null", "(as x (T | null))");
+    check("k as \"a\" | \"b\" | null", "(as k (\"a\" | \"b\" | null))");
+    check("x as 1 | y", "(| (as x 1) y)");
     check("-x as f64", "(as (- x) f64)");
     check(
         "(small as i64) * 100000",

@@ -64,7 +64,7 @@ impl FnCx<'_, '_> {
                 }
                 // `c["v"] = x` with a constant key is `c.v = x`: a setter or a getter-only
                 // accessor is handled the same way.
-                if let Some(name) = super::member::literal_key(index) {
+                if let Some(name) = self.single_key(index) {
                     let prop = ast::Ident {
                         name,
                         span: index.span,
@@ -276,6 +276,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        if let Some(h) = self.keyed_assign(op, target, value, span) {
+            return (h, false);
+        }
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
             let checked = self.assign_target(target, span);
             if let Some(AssignTarget::Setter(obj)) = checked {
@@ -495,6 +498,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.keyed_update(op, prefix, target, as_value, span) {
+            return h;
+        }
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {

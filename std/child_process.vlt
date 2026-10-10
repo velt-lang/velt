@@ -76,11 +76,11 @@ export struct ExecOptions {
 /** What a finished program produced (output decoded as UTF-8, invalid bytes as U+FFFD). */
 export class ExecResult {
   /** Exit code; `128 + n` when killed by signal `n` (Unix). */
-  code: i64;
+  code: number;
   stdout: string;
   stderr: string;
 
-  constructor(code: i64, stdout: string, stderr: string) {
+  constructor(code: number, stdout: string, stderr: string) {
     this.code = code;
     this.stdout = stdout;
     this.stderr = stderr;
@@ -135,7 +135,7 @@ function specOf(
 }
 
 function resultOf(raw: RawOutput): ExecResult {
-  return new ExecResult(raw.code as i64, raw.stdout, raw.stderr);
+  return new ExecResult(raw.code, raw.stdout, raw.stderr);
 }
 
 /** Runs `program` with `args` to completion; resolves with its exit code and output. */
@@ -206,7 +206,7 @@ function signalNumber(name: string): i32 {
  */
 export struct ChildProcess {
   /** The OS process id. */
-  pid: i64;
+  pid: number;
   private handle: u64;
 
   /** Writes to stdin (spawned with `stdin: "pipe"`); resolves once everything is written. */
@@ -269,5 +269,5 @@ export function spawn(program: string, args: string[] = [], opts: SpawnOptions =
   const stdio = stdioBits(opts.stdin, 0) | stdioBits(opts.stdout, 2) | stdioBits(opts.stderr, 4);
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, stdio);
   const handle = unwrapIo(velt_rt_child_spawn(spec));
-  return ChildProcess { pid: velt_rt_child_pid(handle) as i64, handle: handle };
+  return ChildProcess { pid: velt_rt_child_pid(handle), handle: handle };
 }

@@ -5,7 +5,7 @@ structs around a handle, like file descriptors. Release each handle with `close(
 
 - `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port.
   `connect(addr): Promise<TcpStream>`.
-- `TcpListener { port }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
+- `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
 - `TcpStream`:
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed

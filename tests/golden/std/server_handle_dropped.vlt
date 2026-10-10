@@ -2,7 +2,7 @@
 import { serve } from "velt:http";
 import { exit } from "velt:process";
 
-async function start(): Promise<i64> {
+async function start(): Promise<number> {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     return new Response(`still serving ${new URL(req.url).pathname}`);
   });

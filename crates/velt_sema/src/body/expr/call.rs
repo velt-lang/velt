@@ -119,7 +119,7 @@ impl FnCx<'_, '_> {
             js_numbers,
             js_api,
             rest,
-            defaults: vec![],
+            defaults: f.generics.defaults.clone(),
         };
         if async_call {
             c.ret = self.async_call_ret(d, c.ret);
@@ -131,27 +131,49 @@ impl FnCx<'_, '_> {
         c
     }
 
-    /// Explicit `<T, U>` type args fill the trailing `own` slots.
+    /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take
+    /// their `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not
+    /// inferred.
     pub(super) fn explicit_type_args(
         &mut self,
         slots: &mut [Option<TyId>],
         own: usize,
         type_args: &[ast::TypeExpr],
+        defaults: &[Option<TyId>],
         span: Span,
     ) {
         if type_args.is_empty() {
             return;
         }
-        if type_args.len() != own {
+        let start = slots.len() - own;
+        let required = (start..slots.len())
+            .rposition(|k| defaults.get(k).is_none_or(|d| d.is_none()))
+            .map_or(0, |i| i + 1);
+        if type_args.len() < required || type_args.len() > own {
+            let expected = match required == own {
+                true => format!("{own}"),
+                false => format!("{required} to {own}"),
+            };
             self.cx.err(
-                format!("expected {own} type argument(s), found {}", type_args.len()),
+                format!(
+                    "expected {expected} type argument(s), found {}",
+                    type_args.len()
+                ),
                 span,
             );
             return;
         }
-        let start = slots.len() - own;
         for (i, t) in type_args.iter().enumerate() {
             slots[start + i] = Some(self.resolve(t));
+        }
+        for k in start + type_args.len()..slots.len() {
+            let Some(Some(d)) = defaults.get(k) else {
+                break;
+            };
+            let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
+                break;
+            };
+            slots[k] = Some(self.cx.subst(*d, &before));
         }
     }
 
@@ -167,7 +189,7 @@ impl FnCx<'_, '_> {
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, span);
+        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
         self.std_callback_arg(d, args);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.void_task = None;
@@ -408,12 +430,15 @@ impl FnCx<'_, '_> {
         let mut c = self.fn_callable(def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;
+        if self.declares_static(d, &prop.name, m.def) {
+            self.owner_defaults(&mut c, d, owner_generics);
+        }
         self.default_unused_owner_slots(&mut c, owner_generics);
         let mut slots = vec![None; n];
         for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
             *slot = Some(a);
         }
-        self.explicit_type_args(&mut slots, own, type_args, span);
+        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -422,6 +447,27 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// A static method of class `d` (whose `owner` first slots are `d`'s type parameters) called
+    /// with slots nothing infers: they take `d`'s defaults, as a `new` does.
+    fn owner_defaults(&mut self, c: &mut Callable, d: DefId, owner: usize) {
+        let defaults = self.cx.adt_param_defaults(d);
+        if defaults.len() != owner || defaults.iter().all(Option::is_none) {
+            return;
+        }
+        c.defaults.resize(c.slot_names.len(), None);
+        c.defaults[..owner].copy_from_slice(&defaults);
+    }
+
+    /// Does class `d` itself declare the static method `name` as `m` (not inherit it or take it
+    /// from an `extend` block)?
+    fn declares_static(&self, d: DefId, name: &str, m: DefId) -> bool {
+        let a = self.cx.adt(d).expect("ICE: adt");
+        a.methods
+            .get(&crate::defs::static_key(name))
+            .or_else(|| a.methods.get(name))
+            .is_some_and(|x| x.is_static && x.def == m)
     }
 
     /// The static method `name` of class `d`: its own (in the class, then in an `extend`

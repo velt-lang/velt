@@ -101,7 +101,7 @@ async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room>>) {
 }
 
 /// Serves the chat on `port` (0 = any free port): WebSocket `/chat`, a hint on other paths.
-export async function startChat(port: i64): Promise<Server> {
+export async function startChat(port: number): Promise<Server> {
   const room = shared(new Mutex<Room>(new Room()));
   const ids = shared(0);
   return await serve({ port }, async (req) => {

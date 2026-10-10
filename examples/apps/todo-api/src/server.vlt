@@ -55,7 +55,7 @@ async function handle<S extends TodoRepository>(
   // `.clone()`: moving a nested field (`out.res.body`) out of a local frees it twice today
   // (garbage body, then a hang).
   return new Response(out.res.body.clone(), {
-    status: out.res.status,
+    status: out.res.status as number,
     headers: { "content-type": "application/json" },
   });
 }
@@ -66,7 +66,7 @@ async function serveStore<S extends TodoRepository>(
   port: i64,
 ): Promise<Server> {
   const sharedStore = shared(new Mutex<S>(store));
-  return await serve({ port }, async (req) => await handle(req, sharedStore, file));
+  return await serve({ port: port as number }, async (req) => await handle(req, sharedStore, file));
 }
 
 // Serves the todo API on `port` (0 = any free port), persisting to `file` (see the header).
