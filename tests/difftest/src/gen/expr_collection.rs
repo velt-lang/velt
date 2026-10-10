@@ -146,7 +146,8 @@ impl Gen {
         d: u32,
     ) -> String {
         let i = self.int(d);
-        let elem = format!("{xs}[(({i} + {INDEX_OFFSET}) as usize) % ({xs}.length as usize)]{then}");
+        let elem =
+            format!("{xs}[(({i} + {INDEX_OFFSET}) as usize) % ({xs}.length as usize)]{then}");
         let elem = if wrap { format!("`${{{elem}}}`") } else { elem };
         format!("({xs}.length > 0 ? {elem} : {fallback})")
     }

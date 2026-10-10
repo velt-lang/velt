@@ -24,7 +24,10 @@ fn literals_only(e: &str) -> bool {
 
 /// `7` or `(-7)`.
 fn is_literal(e: &str) -> bool {
-    let e = e.strip_prefix("(-").and_then(|e| e.strip_suffix(')')).unwrap_or(e);
+    let e = e
+        .strip_prefix("(-")
+        .and_then(|e| e.strip_suffix(')'))
+        .unwrap_or(e);
     !e.is_empty() && e.chars().all(|c| c.is_ascii_digit())
 }
 

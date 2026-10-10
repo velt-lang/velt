@@ -89,7 +89,9 @@ impl Gen {
             ));
             self.scope.declare(&j, Ty::Int, false, false);
         } else {
-            self.open(&format!("{prefix}for (let {i}: i64 = 0; {i} < {n}; {i}++) {{"));
+            self.open(&format!(
+                "{prefix}for (let {i}: i64 = 0; {i} < {n}; {i}++) {{"
+            ));
         }
         self.scope.declare(&i, Ty::Int, false, false);
         self.labels.push(label);
