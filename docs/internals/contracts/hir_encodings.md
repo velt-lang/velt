@@ -412,6 +412,11 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   the call runs (lowering counts the type or borrows values of it inside counted objects, so
   params of it are never `noalias`). The array callback methods re-check the length after a
   callback only then.
+  `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
+  borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
+  instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
+  `-0` and `NaN`, strings at `""`, nullables at `null` or a falsy payload, unions by their
+  member, enums at a `0` / `""` member, other values always truthy.
   `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
   to `f.env == null`. Only closures without captures and named functions have a null env (a
   program that compares function values gives every closure one), so true means `f` reaches no

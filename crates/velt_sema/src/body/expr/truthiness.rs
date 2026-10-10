@@ -4,7 +4,8 @@
 //! A nullable is truthy when it is not `null` and its payload is truthy; `if (!user) return;`
 //! narrows like `if (user === null) return;`. Each test is one compare: `x != 0` on an integer,
 //! `x != 0 && x == x` on a float (one ordered compare once optimized), `s.length != 0` on a
-//! string. `void` and generic values are not conditions.
+//! string. A value of a type parameter `T` is tested by `Intrinsic::Truthy`, which lowering
+//! turns into the test of each instantiation's type. `void` values are not conditions.
 //!
 //! `&&` / `||` are logical (a `bool`) when a `bool` is expected or both sides are `bool`s.
 //! Otherwise they return an operand like JS: `a || b` is `a` when `a` is truthy, else `b`;
@@ -43,7 +44,9 @@ enum Test {
     Const(bool),
     /// Objects, arrays, functions, ...: always truthy.
     Object,
-    /// `void`, a type parameter, an enum with payloads: not a condition.
+    /// A type parameter: the test of the type it is instantiated with (`Intrinsic::Truthy`).
+    Generic,
+    /// `void`, an enum with payloads: not a condition.
     Rejected,
 }
 
@@ -80,6 +83,7 @@ impl FnCx<'_, '_> {
             Test::Enum(d) => self.enum_truthy(h, d),
             Test::Const(c) => self.then_const(h, c),
             Test::Object => self.then_const(h, true),
+            Test::Generic => self.generic_truthy(h),
             Test::Rejected => {
                 self.report_condition(&h);
                 self.error_expr(span)
@@ -113,7 +117,8 @@ impl FnCx<'_, '_> {
                     None => Test::Object,
                 }
             }
-            TyKind::Unit | TyKind::Param(_) | TyKind::Result(..) => Test::Rejected,
+            TyKind::Param(_) => Test::Generic,
+            TyKind::Unit | TyKind::Result(..) => Test::Rejected,
             _ => Test::Object,
         }
     }
@@ -171,6 +176,29 @@ impl FnCx<'_, '_> {
         };
         let both = self.mk(kind, self.cx.ty.bool_, span);
         self.with_temps_value(stmts, both)
+    }
+
+    /// `Truthy(x)` on a value of a type parameter (an expression is first held in a temporary,
+    /// which the test borrows).
+    fn generic_truthy(&mut self, h: hir::Expr) -> hir::Expr {
+        let (ty, span) = (h.ty, h.span);
+        let b = self.cx.ty.bool_;
+        if crate::body::places::is_place(&h) {
+            return self.intrinsic(Intrinsic::Truthy, vec![h], b, span);
+        }
+        let mut h = h;
+        self.force_move(&mut h);
+        let t = self.new_local("<truthy>", ty, false, span, LocalKind::Temp);
+        let stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: t,
+                init: Some(h),
+            },
+            span,
+        }];
+        let x = self.mk(H::Local(t, UseMode::Borrow), ty, span);
+        let test = self.intrinsic(Intrinsic::Truthy, vec![x], b, span);
+        self.with_temps_value(stmts, test)
     }
 
     /// `match (h) { x => <x is truthy>, null => false }` for a `T | null` value.
@@ -288,7 +316,6 @@ impl FnCx<'_, '_> {
         let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
         let note = match self.cx.ty.kind(t) {
             TyKind::Unit => "a `void` value is never a condition",
-            TyKind::Param(_) => "the test would depend on the type argument: compare explicitly",
             _ => "compare explicitly, e.g. with `===`",
         };
         let d = Diagnostic::error(

@@ -117,6 +117,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
             }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
+            (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);
