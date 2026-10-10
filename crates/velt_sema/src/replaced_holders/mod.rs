@@ -303,12 +303,11 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let shared = close_shared(cx, shared);
-    let type_args = type_args_closure(cx, type_args);
     let program = Program {
         fns,
         values,
         methods,
-        type_args,
+        type_args: (type_args, std::cell::OnceCell::new()),
         shared,
     };
     let mut counted = Vec::new();
@@ -374,8 +373,9 @@ struct Program {
     values: Vec<DefId>,
     /// Methods (functions with a `this`), by member name.
     methods: Vec<(String, DefId)>,
-    /// Types the program uses as type arguments ([`type_args_closure`]).
-    type_args: HashSet<TyId>,
+    /// The type arguments the program passes, and every type nested in them or in those of the
+    /// types it uses ([`type_args_closure`], computed when first needed).
+    type_args: (Vec<TyId>, std::cell::OnceCell<HashSet<TyId>>),
     /// Types shared values hold inline ([`close_shared`]).
     shared: HashSet<TyId>,
 }
@@ -478,7 +478,11 @@ impl Program {
             return p == t;
         }
         match (cx.ty.kind(p).clone(), cx.ty.kind(t).clone()) {
-            (TyKind::Param(_), _) => self.type_args.contains(&t),
+            (TyKind::Param(_), _) => {
+                let (passed, all) = &self.type_args;
+                all.get_or_init(|| type_args_closure(cx, passed.clone()))
+                    .contains(&t)
+            }
             (TyKind::Adt(d, a), TyKind::Adt(e, b)) if d == e => self.pairs(cx, &a, &b, depth),
             (TyKind::Adt(d, a), TyKind::Adt(e, b))
                 if adt_kind(cx, d) == Some(AdtKind::Anon)

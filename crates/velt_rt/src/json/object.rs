@@ -124,9 +124,12 @@ impl Object {
 
     /// The value of `key`.
     pub fn get(&self, key: &[u8]) -> Option<&Arc<Value>> {
-        if let Some(n) = array_index(key) {
-            let ix = self.index.as_ref()?;
-            return ix.int_pos(n).ok().map(|i| &ix.ints[i].1);
+        // An array-index key is never in the slots (outside `JSON.parse`): without index
+        // members, `find` misses it.
+        if let Some(ix) = self.index.as_ref().filter(|ix| !ix.ints.is_empty()) {
+            if let Some(n) = array_index(key) {
+                return ix.int_pos(n).ok().map(|i| &ix.ints[i].1);
+            }
         }
         let slot = self.find(key)?;
         self.slots[slot].as_ref().map(|(_, v)| v)
