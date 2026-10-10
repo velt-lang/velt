@@ -10,7 +10,7 @@
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 
-use crate::install::download;
+use crate::install::{download, MAX_SMALL_FILE};
 
 /// The velt release key: an Ed25519 public key, hex. The private half signs releases in
 /// `.github/workflows/release.yml` (secret `VELT_RELEASE_SIGNING_KEY`).
@@ -69,10 +69,10 @@ pub fn signed_sums(release_url: &str, key: &[u8]) -> Result<Option<String>, Stri
 /// The text at `url`, checked against its signature at `<url>.sig` with `key`; `None` when
 /// `url` does not exist.
 pub fn signed_text(url: &str, key: &[u8]) -> Result<Option<String>, String> {
-    let Some(data) = download(url)? else {
+    let Some(data) = download(url, MAX_SMALL_FILE)? else {
         return Ok(None);
     };
-    let signature = download(&format!("{url}{SIG_SUFFIX}"))?.ok_or_else(|| {
+    let signature = download(&format!("{url}{SIG_SUFFIX}"), MAX_SMALL_FILE)?.ok_or_else(|| {
         format!("{url} has no signature ({url}{SIG_SUFFIX}), so it cannot be checked; refusing it")
     })?;
     verify(&data, &signature, key).map_err(|e| format!("{url}: {e}; refusing it"))?;

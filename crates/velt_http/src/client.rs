@@ -15,7 +15,7 @@ use crate::message::{read_response, Response};
 /// Largest response body accepted (packages and API answers are far smaller).
 const MAX_RESPONSE: usize = 256 << 20;
 
-/// How long a request may take.
+/// How long a request may take, and how large its answer may be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// Connecting to one address of the host.
@@ -25,14 +25,18 @@ pub struct Limits {
     /// The whole exchange, from connecting to the last byte of the answer: a server that sends
     /// a byte now and then can't hold a fetch forever.
     pub total: Duration,
+    /// The largest response body (bytes): a larger `Content-Length` is refused before anything
+    /// is allocated, and a body without one stops there.
+    pub max_body: usize,
 }
 
 impl Limits {
-    /// The limits of [`fetch`]: 10 s to connect, 60 s of silence, 10 minutes in all.
+    /// The limits of [`fetch`]: 10 s to connect, 60 s of silence, 10 minutes in all, 256 MiB.
     pub const DEFAULT: Limits = Limits {
         connect: Duration::from_secs(10),
         idle: Duration::from_secs(60),
         total: Duration::from_secs(600),
+        max_body: MAX_RESPONSE,
     };
 }
 
@@ -296,7 +300,7 @@ fn plain(
 ) -> Result<Response, String> {
     let (host, path) = split(rest);
     let stream = connect(host, 80, limits, deadline)?;
-    exchange(stream, method, host, path, headers, body)
+    exchange(stream, method, host, path, headers, body, limits.max_body)
 }
 
 /// One request over TLS, verified with `config`, within the default limits.
@@ -333,7 +337,7 @@ fn https_within(
         ServerName::try_from(name.to_string()).map_err(|_| format!("invalid host `{name}`"))?;
     let conn = ClientConnection::new(config, server_name).map_err(|e| format!("TLS: {e}"))?;
     let stream = StreamOwned::new(conn, connect(host, 443, limits, deadline)?);
-    exchange(stream, method, host, path, headers, body)
+    exchange(stream, method, host, path, headers, body, limits.max_body)
 }
 
 fn exchange(
@@ -343,6 +347,7 @@ fn exchange(
     path: &str,
     headers: &[(&str, &str)],
     body: &[u8],
+    max_body: usize,
 ) -> Result<Response, String> {
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -357,7 +362,7 @@ fn exchange(
         .and_then(|()| stream.write_all(body))
         .and_then(|()| stream.flush())
         .map_err(|e| format!("cannot send: {e}"))?;
-    read_response(&mut BufReader::new(stream), MAX_RESPONSE)
+    read_response(&mut BufReader::new(stream), max_body)
 }
 
 #[cfg(test)]
@@ -473,6 +478,7 @@ mod tests {
             connect: Duration::from_secs(5),
             idle: Duration::from_secs(5),
             total: Duration::from_millis(700),
+            ..Limits::DEFAULT
         };
         let err = fetch_within("GET", &format!("http://{addr}/"), &[], b"", limits).unwrap_err();
         assert!(err.contains("took too long"), "{err}");
@@ -510,5 +516,38 @@ mod tests {
         assert!(err.contains("a line break"), "{err}");
         assert!(err.contains("in the request line"), "{err}");
         assert!(listener.accept().is_err(), "no connection was made");
+    }
+
+    #[test]
+    fn a_body_over_the_limit_is_refused() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for (len, header) in [(1000, true), (1000, false), (50, true)] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0; 1024];
+                let _ = stream.read(&mut buf);
+                let head = if header {
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n")
+                } else {
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string()
+                };
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&vec![b'x'; len]);
+            }
+        });
+        let limits = Limits {
+            max_body: 100,
+            ..Limits::DEFAULT
+        };
+        let url = format!("http://{addr}/");
+        let err = fetch_within("GET", &url, &[], b"", limits).unwrap_err();
+        assert!(err.contains("exceeds the limit of 100"), "{err}");
+        let err = fetch_within("GET", &url, &[], b"", limits).unwrap_err();
+        assert!(err.contains("exceeds the limit of 100"), "{err}");
+        let ok = fetch_within("GET", &url, &[], b"", limits).unwrap();
+        assert_eq!(ok.body.len(), 50);
+        server.join().unwrap();
     }
 }

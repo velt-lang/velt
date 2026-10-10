@@ -25,15 +25,38 @@ impl UnpackLimits {
 
 use sha2::{Digest, Sha256};
 
+/// The most a toolchain archive or target pack may be (they are under 100 MiB).
+pub const MAX_ARCHIVE: usize = 256 << 20;
+/// The most a `SHA256SUMS`, a signature or the index of releases may be.
+pub const MAX_SMALL_FILE: usize = 1 << 20;
+
+/// `Err` unless `url` is `https://`, or `http://` to this machine; the message names what it is.
+pub fn check_download_url(url: &str) -> Result<(), String> {
+    if velt_http::is_tls_or_loopback(url) {
+        return Ok(());
+    }
+    let what = match url.split_once("://") {
+        Some(("http", _)) => "plain http:// to another machine".to_string(),
+        Some((scheme, _)) => format!("a {scheme}:// URL"),
+        None => "not a URL".to_string(),
+    };
+    Err(format!(
+        "refusing to download {url}: {what} (only https://, or http:// to this machine)"
+    ))
+}
+
 /// GET `url`, following redirects (release downloads redirect to a storage host), over
-/// `https://` only (or `http://` to this machine). `None` when it does not exist (HTTP 404).
-pub fn download(url: &str) -> Result<Option<Vec<u8>>, String> {
+/// `https://` only (or `http://` to this machine), refusing a body over `max_body` bytes.
+/// `None` when it does not exist (HTTP 404).
+pub fn download(url: &str, max_body: usize) -> Result<Option<Vec<u8>>, String> {
     let mut url = url.to_string();
+    let limits = velt_http::Limits {
+        max_body,
+        ..velt_http::Limits::DEFAULT
+    };
     for _ in 0..5 {
-        if !velt_http::is_tls_or_loopback(&url) {
-            return Err(format!("refusing to download over plain http: {url}"));
-        }
-        let response = velt_http::fetch("GET", &url, &[("User-Agent", "velt")], &[])
+        check_download_url(&url)?;
+        let response = velt_http::fetch_within("GET", &url, &[("User-Agent", "velt")], &[], limits)
             .map_err(|e| format!("cannot download {url}: {e}"))?;
         match response.status {
             200 => return Ok(Some(response.body)),
@@ -137,7 +160,7 @@ pub fn install_dir(
 }
 
 /// `<pid>-<n>`: a name no other install, in this process or another, is using.
-fn unique() -> String {
+pub(crate) fn unique() -> String {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     format!("{}-{n}", std::process::id())
@@ -483,6 +506,27 @@ pub(crate) mod tests {
         assert_eq!(mode("suid"), 0o755);
         assert_eq!(mode("exe"), 0o755);
         assert_eq!(mode("plain") & 0o7111, 0, "{:o}", mode("plain"));
+    }
+
+    #[test]
+    fn only_https_or_loopback_urls_are_downloaded() {
+        for ok in [
+            "https://x.example/a",
+            "http://127.0.0.1:8080/a",
+            "http://localhost/a",
+        ] {
+            check_download_url(ok).unwrap();
+        }
+        let refused = |url: &str| check_download_url(url).unwrap_err();
+        assert!(refused("http://x.example/a").contains("plain http:// to another machine"));
+        assert!(refused("file:///etc/passwd").contains("a file:// URL"));
+        assert!(refused("ftp://x.example/a").contains("a ftp:// URL"));
+        assert!(refused("/tmp/a").contains("not a URL"));
+        let err = download("file:///etc/passwd", MAX_SMALL_FILE).unwrap_err();
+        assert!(
+            err.starts_with("refusing to download file:///etc/passwd"),
+            "{err}"
+        );
     }
 
     #[test]

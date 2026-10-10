@@ -193,15 +193,28 @@ impl Root {
         write_file(&self.dir.join(DEFAULT_FILE), &format!("{toolchain}\n"))
     }
 
-    /// Link `name` to the toolchain prefix `prefix` (which must hold `bin/velt`).
+    /// Link `name` to the toolchain prefix `prefix`: it must hold `bin/velt` and `std/`, and not
+    /// be a launcher's root (`toolchains/`), whose `bin/velt` would run the launcher again.
     pub fn link(&self, name: &str, prefix: &Path) -> Result<(), String> {
         check_link_name(name)?;
-        if !velt_exe(prefix).is_file() {
+        if prefix.join(TOOLCHAINS_DIR).is_dir() {
             return Err(format!(
-                "{} is not a toolchain prefix: it has no {}",
-                prefix.display(),
-                velt_exe(Path::new("")).display()
+                "{} is the root of a velt launcher, not a toolchain prefix (link one of its \
+                 {TOOLCHAINS_DIR}/<version> directories, or the prefix of a build)",
+                prefix.display()
             ));
+        }
+        for (needed, is) in [
+            (velt_exe(Path::new("")), velt_exe(prefix).is_file()),
+            (PathBuf::from("std"), prefix.join("std").is_dir()),
+        ] {
+            if !is {
+                return Err(format!(
+                    "{} is not a toolchain prefix: it has no {}",
+                    prefix.display(),
+                    needed.display()
+                ));
+            }
         }
         let prefix = std::path::absolute(prefix)
             .map_err(|e| format!("cannot resolve {}: {e}", prefix.display()))?;
@@ -211,22 +224,40 @@ impl Root {
         )
     }
 
-    /// Remove an installed version or a link (a link's prefix stays).
+    /// Remove an installed version or a link (a link's prefix stays). A version is renamed
+    /// aside first and then deleted, so it is gone whole or not at all: a rename that fails
+    /// (Windows: a file of it is open) reports it in use and leaves it complete.
     pub fn remove(&self, toolchain: &Toolchain) -> Result<(), String> {
-        let path = match toolchain {
-            Toolchain::Version(v) => self.version_dir(v),
-            Toolchain::Linked(name) => self.dir.join(LINKS_DIR).join(name),
-        };
-        let result = match toolchain {
-            Toolchain::Version(_) => std::fs::remove_dir_all(&path),
-            Toolchain::Linked(_) => std::fs::remove_file(&path),
-        };
-        match result {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err(format!("toolchain {toolchain} is not installed"))
+        let not_installed = || format!("toolchain {toolchain} is not installed");
+        match toolchain {
+            Toolchain::Linked(name) => {
+                let path = self.dir.join(LINKS_DIR).join(name);
+                std::fs::remove_file(&path).map_err(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound => not_installed(),
+                    _ => format!("cannot remove {}: {e}", path.display()),
+                })
             }
-            Err(e) => Err(format!("cannot remove {}: {e}", path.display())),
+            Toolchain::Version(v) => {
+                let path = self.version_dir(v);
+                if !path.exists() {
+                    return Err(not_installed());
+                }
+                let aside = self
+                    .toolchains_dir()
+                    .join(format!(".{v}.removing.{}", crate::install::unique()));
+                std::fs::rename(&path, &aside).map_err(|e| {
+                    format!(
+                        "velt {v} is in use (a running velt, or a program it built, has a file of \
+                         it open), so it was left as it is; stop it and try again ({e})"
+                    )
+                })?;
+                std::fs::remove_dir_all(&aside).map_err(|e| {
+                    format!(
+                        "velt {v} is removed, but {} is left behind: {e}",
+                        aside.display()
+                    )
+                })
+            }
         }
     }
 }
@@ -257,6 +288,7 @@ mod tests {
 
     pub(crate) fn fake_prefix(prefix: &Path) {
         std::fs::create_dir_all(prefix.join(BIN_DIR)).unwrap();
+        std::fs::create_dir_all(prefix.join("std")).unwrap();
         std::fs::write(velt_exe(prefix), b"").unwrap();
     }
 
@@ -297,6 +329,18 @@ mod tests {
         assert_eq!(root.prefix(&dev_tc).unwrap(), dev);
         assert!(root.is_installed(&dev_tc));
         assert!(root.link("0.1.0", &dev).is_err() && root.link("../x", &dev).is_err());
+        // A launcher's root is not a toolchain: its bin/velt would run the launcher again.
+        std::fs::create_dir_all(root.dir().join(BIN_DIR)).unwrap();
+        std::fs::write(velt_exe(root.dir()), b"").unwrap();
+        let err = root.link("loop", root.dir()).unwrap_err();
+        assert!(err.contains("is the root of a velt launcher"), "{err}");
+        let no_std = tmp.path().join("no-std");
+        std::fs::create_dir_all(no_std.join(BIN_DIR)).unwrap();
+        std::fs::write(velt_exe(&no_std), b"").unwrap();
+        assert!(root
+            .link("x", &no_std)
+            .unwrap_err()
+            .contains("it has no std"));
 
         root.set_default(&Toolchain::Version(v("0.2.0"))).unwrap();
         assert_eq!(
@@ -311,6 +355,13 @@ mod tests {
         assert!(!root.is_installed(&dev_tc));
         root.remove(&Toolchain::Version(v("0.1.0"))).unwrap();
         assert_eq!(root.versions(), [v("0.2.0"), v("0.10.0")]);
+        // Nothing renamed aside is left.
+        let hidden: Vec<_> = std::fs::read_dir(root.toolchains_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("removing"))
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?}");
         assert!(root
             .remove(&Toolchain::Version(v("0.1.0")))
             .unwrap_err()

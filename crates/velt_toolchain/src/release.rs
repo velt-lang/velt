@@ -25,8 +25,10 @@
 //! ```
 //!
 //! - `generated`: when the workflow wrote it (Unix seconds). The newest one seen is kept in
-//!   `<root>/index-seen`, and an older index is refused: its signature is valid, but a mirror
-//!   serving it (behind, or on purpose) would hide later releases and yanks.
+//!   `<root>/index-seen/<release key>`, and an older index signed with that key is refused: its
+//!   signature is valid, but a mirror serving it (behind, or on purpose) would hide later
+//!   releases and yanks. Per key, so another build's releases (`$VELT_INSTALL_PUBLIC_KEY`) and
+//!   their times don't block the official ones.
 //! - `launcher`: the newest launcher's version (optional); an older launcher says to run the
 //!   installer again, so launchers already out there learn about newer ones.
 //!
@@ -37,7 +39,9 @@ use std::path::PathBuf;
 
 use semver::Version;
 
-use crate::install::{check_sha256, download, install_dir, sha256_entry, Existing};
+use crate::install::{
+    check_download_url, check_sha256, download, install_dir, sha256_entry, Existing, MAX_ARCHIVE,
+};
 use crate::layout::{velt_exe, Root};
 use crate::signature::{public_key, signed_sums, signed_text};
 
@@ -103,8 +107,8 @@ impl Index {
     }
 }
 
-/// The file in the root that remembers the newest index seen.
-pub const INDEX_SEEN_FILE: &str = "index-seen";
+/// The directory in the root that remembers the newest index seen, one file per release key.
+pub const INDEX_SEEN_DIR: &str = "index-seen";
 
 /// A version in the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,9 +190,7 @@ pub fn fetch_index(root: &Root, base: &str) -> Result<Index, String> {
 /// [`fetch_index`] checking with `key` instead of [`public_key`].
 pub fn fetch_index_with_key(root: &Root, base: &str, key: Option<&[u8]>) -> Result<Index, String> {
     let url = index_url(base);
-    if !velt_http::is_tls_or_loopback(&url) {
-        return Err(format!("refusing to download over plain http: {url}"));
-    }
+    check_download_url(&url)?;
     let key = match key {
         Some(key) => key.to_vec(),
         None => public_key()?,
@@ -196,13 +198,15 @@ pub fn fetch_index_with_key(root: &Root, base: &str, key: Option<&[u8]>) -> Resu
     let text =
         signed_text(&url, &key)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
     let index = parse_index(&text)?;
-    remember_index(root, &index, &url)?;
+    remember_index(root, &index, &url, &key)?;
     Ok(index)
 }
 
-/// Refuse an index older than the newest `root` has seen; remember a newer one.
-fn remember_index(root: &Root, index: &Index, url: &str) -> Result<(), String> {
-    let seen_file = root.dir().join(INDEX_SEEN_FILE);
+/// Refuse an index older than the newest `root` has seen signed with `key`; remember a newer
+/// one.
+fn remember_index(root: &Root, index: &Index, url: &str, key: &[u8]) -> Result<(), String> {
+    let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    let seen_file = root.dir().join(INDEX_SEEN_DIR).join(key_hex);
     let seen: u64 = std::fs::read_to_string(&seen_file)
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -259,9 +263,7 @@ pub fn install_toolchain_with_key(
         format!("velt {version} has no {what} at {release} (is {version} a published release?)")
     };
     // The expected hash first, so an archive the release lacks fails before a long download.
-    if !velt_http::is_tls_or_loopback(&release) {
-        return Err(format!("refusing to download over plain http: {release}"));
-    }
+    check_download_url(&release)?;
     let key = match key {
         Some(key) => key.to_vec(),
         None => public_key()?,
@@ -272,7 +274,8 @@ pub fn install_toolchain_with_key(
             "velt {version} has no toolchain for {triple} (its {SUMS_FILE} lists no {name})"
         ));
     }
-    let archive = download(&format!("{release}/{name}"))?.ok_or_else(|| missing(&name))?;
+    let archive =
+        download(&format!("{release}/{name}"), MAX_ARCHIVE)?.ok_or_else(|| missing(&name))?;
     check_sha256(&archive, &sums, &name)?;
     let dest = root.version_dir(version);
     // A version never changes: one installed meanwhile (another launcher) is kept, not
@@ -491,8 +494,20 @@ mod tests {
         let newer = index_server(signed_index(20, &signer), true);
         fetch(&newer).unwrap();
         newer.stop();
-        let seen = std::fs::read_to_string(root.dir().join(INDEX_SEEN_FILE)).unwrap();
+        let seen = std::fs::read_to_string(root.dir().join(INDEX_SEEN_DIR).join(&public)).unwrap();
         assert_eq!(seen.trim(), "20");
+        // Another key's releases have times of their own.
+        let (other_signer, other_public) = key_pair();
+        let other_key: Vec<u8> = (0..64)
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&other_public[i..i + 2], 16).unwrap())
+            .collect();
+        let fork = index_server(signed_index(3, &other_signer), true);
+        fetch_index_with_key(&root, &format!("http://{}", fork.addr()), Some(&other_key)).unwrap();
+        fork.stop();
+        let official = index_server(signed_index(20, &signer), true);
+        fetch(&official).unwrap();
+        official.stop();
     }
 
     #[test]
@@ -505,7 +520,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("refusing to download over plain http"),
+            err.contains("refusing to download http://releases.example")
+                && err.contains("plain http:// to another machine"),
             "{err}"
         );
     }

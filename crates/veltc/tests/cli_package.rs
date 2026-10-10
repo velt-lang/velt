@@ -671,3 +671,43 @@ fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("asks for velt"), "{err}");
 }
+
+#[test]
+fn target_add_from_an_unsigned_release_names_the_way_out() {
+    // A toolchain built from source carries no pack hashes, so `velt target add` needs the
+    // release's signed SHA256SUMS; a release without a signature (v0.1.0) says what to do.
+    let version = env!("CARGO_PKG_VERSION");
+    let target = "x86_64-pc-windows-msvc";
+    let dir = format!("/releases/download/v{version}");
+    let files: std::collections::HashMap<String, Vec<u8>> = [(
+        format!("{dir}/SHA256SUMS"),
+        format!("00  velt-{version}-target-{target}.tar.gz\n").into_bytes(),
+    )]
+    .into_iter()
+    .collect();
+    let handler = std::sync::Arc::new(move |req: velt_http::Request| match files.get(&req.path) {
+        Some(b) => velt_http::Response::bytes(200, "text/plain", b.clone()),
+        None => velt_http::Response::text(404, "not found"),
+    });
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = velt_http::Server::start(listener, handler, 1 << 20).unwrap();
+    let s = sandbox();
+    let base = format!("http://{}", server.addr());
+    let out = s.velt_with(
+        "",
+        &["target", "add", target],
+        &[("VELT_INSTALL_BASE_URL", &base)],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    server.stop();
+    if String::from_utf8_lossy(&out.stdout).contains("is this machine") {
+        return; // a Windows x64 host has no pack to add for itself
+    }
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("SHA256SUMS has no signature"), "{err}");
+    assert!(
+        err.contains(&format!("velt target add {target} --from <file>"))
+            && err.contains("--unverified"),
+        "{err}"
+    );
+}

@@ -154,17 +154,26 @@ fn add(target: &str, from: Option<&Path>, unverified: bool) -> Result<(), String
                 None => {
                     // A toolchain without pack hashes (built from source): the release's own
                     // `SHA256SUMS`, which its signature shows the velt project published.
-                    let key = velt_toolchain::signature::public_key()?;
-                    let sums = velt_toolchain::signature::signed_sums(&release, &key)?.ok_or_else(
-                        || {
+                    // Releases before signing (v0.1.0) have no signature to check.
+                    let way_out = |e: String| {
+                        format!(
+                            "{e}\nthis toolchain carries no pack hashes, so the pack can't be \
+                             checked; download {name} and the release's SHA256SUMS beside it and \
+                             run `velt target add {target} --from <file>`, or add `--unverified` \
+                             to install a pack nothing can check"
+                        )
+                    };
+                    let key = velt_toolchain::signature::public_key().map_err(way_out)?;
+                    let sums = velt_toolchain::signature::signed_sums(&release, &key)
+                        .map_err(way_out)?
+                        .ok_or_else(|| {
                             format!(
                                 "{release}/SHA256SUMS does not exist (HTTP 404): this velt's \
                                  release ({}) has no target packs; a toolchain built from source \
                                  installs packs with `--from`",
                                 env!("CARGO_PKG_VERSION")
                             )
-                        },
-                    )?;
+                        })?;
                     sha256_entry(&sums, &name)
                         .ok_or_else(|| format!("the release's SHA256SUMS has no {name}"))?;
                     sums
@@ -191,7 +200,7 @@ fn pack_name(target: &str) -> String {
 /// GET `url` ([`velt_toolchain::install::download`]); a missing file is a pack this velt's
 /// release does not have.
 fn download(url: &str) -> Result<Vec<u8>, String> {
-    velt_toolchain::install::download(url)?.ok_or_else(|| {
+    velt_toolchain::install::download(url, velt_toolchain::install::MAX_ARCHIVE)?.ok_or_else(|| {
         format!(
             "{url} does not exist (HTTP 404): this velt's release ({}) has no such \
              target pack; a toolchain built from source installs packs with `--from`",
