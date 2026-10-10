@@ -232,7 +232,7 @@ impl Root {
 }
 
 /// Write `text` to `path` through a temporary file, so a reader never sees half of it.
-fn write_file(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;

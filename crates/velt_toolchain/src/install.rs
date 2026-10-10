@@ -79,14 +79,25 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// What [`install_dir`] does when `dest` is already there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Existing {
+    /// Swap it out for the new one (a target pack added again).
+    Replace,
+    /// Keep it and drop the new one: what is there is the same thing, installed by another
+    /// process meanwhile (a toolchain version never changes), and may be in use.
+    Keep,
+}
+
 /// Unpack `archive` (a `.tar.gz` of `<top>/...`, a `what` such as "target pack") into `dest`,
-/// replacing what is there only once the new directory is complete and `problem` finds nothing
+/// putting it in place only once the new directory is complete and `problem` finds nothing
 /// wrong with it.
 pub fn install_dir(
     archive: &[u8],
     top: &str,
     dest: &Path,
     what: &str,
+    existing: Existing,
     problem: impl FnOnce(&Path) -> Option<String>,
 ) -> Result<(), String> {
     let parent = dest
@@ -95,7 +106,7 @@ pub fn install_dir(
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
-    let staging = parent.join(format!(".{name}.{}", std::process::id()));
+    let staging = parent.join(format!(".{name}.{}", unique()));
     let _ = std::fs::remove_dir_all(&staging);
     let result = unpack(archive, top, &staging, what).and_then(|()| match problem(&staging) {
         Some(why) => Err(format!("the {what} cannot be used: {why}")),
@@ -105,7 +116,31 @@ pub fn install_dir(
         let _ = std::fs::remove_dir_all(&staging);
         return Err(e);
     }
-    swap_into_place(&staging, dest)
+    match existing {
+        Existing::Replace => swap_into_place(&staging, dest),
+        Existing::Keep => {
+            // A rename onto an existing directory fails (it is never empty), so whichever
+            // process renames first wins and the others keep its copy.
+            let moved = if dest.exists() {
+                Ok(())
+            } else {
+                std::fs::rename(&staging, dest)
+            };
+            let _ = std::fs::remove_dir_all(&staging);
+            match moved {
+                Err(_) if dest.exists() => Ok(()),
+                Err(e) => Err(format!("cannot install into {}: {e}", dest.display())),
+                Ok(()) => Ok(()),
+            }
+        }
+    }
+}
+
+/// `<pid>-<n>`: a name no other install, in this process or another, is using.
+fn unique() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", std::process::id())
 }
 
 /// Move the complete directory `staging` to `dest`: an installed one is renamed aside first and
@@ -114,7 +149,7 @@ pub fn install_dir(
 /// leaves the renamed copy behind).
 pub fn swap_into_place(staging: &Path, dest: &Path) -> Result<(), String> {
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
-    let old = dest.with_file_name(format!(".{name}.old.{}", std::process::id()));
+    let old = dest.with_file_name(format!(".{name}.old.{}", unique()));
     let had_old = dest.exists();
     if had_old {
         if let Err(e) = std::fs::rename(dest, &old) {
@@ -252,7 +287,7 @@ pub(crate) mod tests {
             ("top/bin/velt", b"exe", 0o755),
             ("top/std/x.vlt", b"", 0o644),
         ]);
-        install_dir(&a, "top", &dest, "toolchain", |_| None).unwrap();
+        install_dir(&a, "top", &dest, "toolchain", Existing::Replace, |_| None).unwrap();
         assert!(dest.join("std/x.vlt").is_file());
         #[cfg(unix)]
         {
@@ -267,10 +302,13 @@ pub(crate) mod tests {
             assert_eq!(mode("std/x.vlt") & 0o111, 0);
         }
         std::fs::write(dest.join("stale"), b"").unwrap();
-        install_dir(&a, "top", &dest, "toolchain", |_| None).unwrap();
+        install_dir(&a, "top", &dest, "toolchain", Existing::Replace, |_| None).unwrap();
         assert!(!dest.join("stale").exists());
         // A rejected one leaves the installed one alone, and nothing half-installed behind.
-        let err = install_dir(&a, "top", &dest, "toolchain", |_| Some("no".into())).unwrap_err();
+        let err = install_dir(&a, "top", &dest, "toolchain", Existing::Replace, |_| {
+            Some("no".into())
+        })
+        .unwrap_err();
         assert_eq!(err, "the toolchain cannot be used: no");
         assert!(dest.join("bin/velt").is_file());
         let left: Vec<_> = std::fs::read_dir(tmp.path().join("d")).unwrap().collect();
@@ -306,7 +344,15 @@ pub(crate) mod tests {
     /// Refused, with nothing left in `dir` (the staging directory is gone, no file escaped).
     fn refused(archive: &[u8], dir: &Path, expect: &str) {
         let dest = dir.join("t");
-        let err = install_dir(archive, "top", &dest, "toolchain", |_| None).unwrap_err();
+        let err = install_dir(
+            archive,
+            "top",
+            &dest,
+            "toolchain",
+            Existing::Replace,
+            |_| None,
+        )
+        .unwrap_err();
         assert!(err.contains(expect), "expected `{expect}` in: {err}");
         let left: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -390,7 +436,10 @@ pub(crate) mod tests {
         // macOS metadata entries are skipped, not refused.
         let dest = dir.join("t");
         let meta = archive(&[("top/a", b"", 0o644), ("._top", b"meta", 0o644)]);
-        install_dir(&meta, "top", &dest, "toolchain", |_| None).unwrap();
+        install_dir(&meta, "top", &dest, "toolchain", Existing::Replace, |_| {
+            None
+        })
+        .unwrap();
         assert!(dest.join("a").is_file());
     }
 
@@ -455,6 +504,43 @@ pub(crate) mod tests {
             "velt-1-target-x.tar.gz",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_version_installed_meanwhile_is_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("0.1.0");
+        std::fs::create_dir_all(dest.join("bin")).unwrap();
+        std::fs::write(dest.join("bin/velt"), b"first").unwrap();
+        let a = archive(&[("top/bin/velt", b"second", 0o755)]);
+        install_dir(&a, "top", &dest, "toolchain", Existing::Keep, |_| None).unwrap();
+        assert_eq!(std::fs::read(dest.join("bin/velt")).unwrap(), b"first");
+        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "{left:?}");
+        // Without one there, it is installed.
+        let fresh = tmp.path().join("0.2.0");
+        install_dir(&a, "top", &fresh, "toolchain", Existing::Keep, |_| None).unwrap();
+        assert_eq!(std::fs::read(fresh.join("bin/velt")).unwrap(), b"second");
+    }
+
+    #[test]
+    fn concurrent_installs_of_one_version_all_succeed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("0.1.0");
+        let a = archive(&[
+            ("top/bin/velt", b"exe", 0o755),
+            ("top/std/x", &[7; 4096], 0o644),
+        ]);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    install_dir(&a, "top", &dest, "toolchain", Existing::Keep, |_| None).unwrap()
+                });
+            }
+        });
+        assert!(dest.join("std/x").is_file());
+        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "{left:?}");
     }
 
     #[test]

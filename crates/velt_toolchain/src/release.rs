@@ -18,9 +18,17 @@
 //!
 //! ```json
 //! { "format": 1,
+//!   "generated": 1760100000,
+//!   "launcher": "0.2.0",
 //!   "releases": [ { "version": "0.1.0" },
 //!                 { "version": "0.1.1", "yanked": "miscompiles closures; use 0.1.2" } ] }
 //! ```
+//!
+//! - `generated`: when the workflow wrote it (Unix seconds). The newest one seen is kept in
+//!   `<root>/index-seen`, and an older index is refused: its signature is valid, but a mirror
+//!   serving it (behind, or on purpose) would hide later releases and yanks.
+//! - `launcher`: the newest launcher's version (optional); an older launcher says to run the
+//!   installer again, so launchers already out there learn about newer ones.
 //!
 //! Fields this launcher doesn't know are ignored, so later ones (advisories, dates) can be added
 //! without breaking it; a higher `format` is a change it must not misread, and is refused.
@@ -29,7 +37,7 @@ use std::path::PathBuf;
 
 use semver::Version;
 
-use crate::install::{check_sha256, download, install_dir, sha256_entry};
+use crate::install::{check_sha256, download, install_dir, sha256_entry, Existing};
 use crate::layout::{velt_exe, Root};
 use crate::signature::{public_key, signed_sums, signed_text};
 
@@ -77,6 +85,27 @@ pub fn archive_stem(version: &Version, triple: &str) -> String {
     format!("velt-{version}-{triple}")
 }
 
+/// The index of releases.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Index {
+    /// When it was written (Unix seconds).
+    pub generated: u64,
+    /// The newest launcher's version.
+    pub launcher: Option<Version>,
+    /// Oldest first.
+    pub releases: Vec<Published>,
+}
+
+impl Index {
+    /// The newest launcher, when it is newer than `own`.
+    pub fn newer_launcher(&self, own: &Version) -> Option<&Version> {
+        self.launcher.as_ref().filter(|l| *l > own)
+    }
+}
+
+/// The file in the root that remembers the newest index seen.
+pub const INDEX_SEEN_FILE: &str = "index-seen";
+
 /// A version in the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Published {
@@ -90,8 +119,8 @@ pub fn index_url(base: &str) -> String {
     format!("{base}/releases/download/{INDEX_TAG}/{INDEX_FILE}")
 }
 
-/// The releases in a `releases.json`, oldest first.
-pub fn parse_index(text: &str) -> Result<Vec<Published>, String> {
+/// A `releases.json`.
+pub fn parse_index(text: &str) -> Result<Index, String> {
     let bad = |why: String| format!("{INDEX_FILE} is not an index of releases: {why}");
     let value: serde_json::Value = serde_json::from_str(text).map_err(|e| bad(e.to_string()))?;
     match value.get("format").and_then(|f| f.as_u64()) {
@@ -104,6 +133,17 @@ pub fn parse_index(text: &str) -> Result<Vec<Published>, String> {
         }
         None => return Err(bad("no `format` number".into())),
     }
+    let generated = value
+        .get("generated")
+        .and_then(|g| g.as_u64())
+        .ok_or_else(|| bad("no `generated` time".into()))?;
+    let launcher = match value.get("launcher") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(v)) => {
+            Some(Version::parse(v).map_err(|e| bad(format!("`launcher` `{v}`: {e}")))?)
+        }
+        Some(other) => return Err(bad(format!("`launcher` is {other}, not a version"))),
+    };
     let list = value
         .get("releases")
         .and_then(|v| v.as_array())
@@ -130,16 +170,21 @@ pub fn parse_index(text: &str) -> Result<Vec<Published>, String> {
         .collect::<Result<Vec<_>, String>>()?;
     releases.sort_by(|a, b| a.version.cmp(&b.version));
     releases.dedup_by(|a, b| a.version == b.version);
-    Ok(releases)
+    Ok(Index {
+        generated,
+        launcher,
+        releases,
+    })
 }
 
-/// The published releases, from the signed index ([`index_url`]), checked with the release key.
-pub fn fetch_index(base: &str) -> Result<Vec<Published>, String> {
-    fetch_index_with_key(base, None)
+/// The signed index of releases ([`index_url`]), checked with the release key and against the
+/// newest index `root` has seen, which it then remembers.
+pub fn fetch_index(root: &Root, base: &str) -> Result<Index, String> {
+    fetch_index_with_key(root, base, None)
 }
 
 /// [`fetch_index`] checking with `key` instead of [`public_key`].
-pub fn fetch_index_with_key(base: &str, key: Option<&[u8]>) -> Result<Vec<Published>, String> {
+pub fn fetch_index_with_key(root: &Root, base: &str, key: Option<&[u8]>) -> Result<Index, String> {
     let url = index_url(base);
     if !velt_http::is_tls_or_loopback(&url) {
         return Err(format!("refusing to download over plain http: {url}"));
@@ -150,7 +195,31 @@ pub fn fetch_index_with_key(base: &str, key: Option<&[u8]>) -> Result<Vec<Publis
     };
     let text =
         signed_text(&url, &key)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
-    parse_index(&text)
+    let index = parse_index(&text)?;
+    remember_index(root, &index, &url)?;
+    Ok(index)
+}
+
+/// Refuse an index older than the newest `root` has seen; remember a newer one.
+fn remember_index(root: &Root, index: &Index, url: &str) -> Result<(), String> {
+    let seen_file = root.dir().join(INDEX_SEEN_FILE);
+    let seen: u64 = std::fs::read_to_string(&seen_file)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    if index.generated < seen {
+        return Err(format!(
+            "{url} is older than an index seen before (written at {}, the newest seen at {seen}): \
+             the mirror is behind, or is hiding newer releases; use an up-to-date one, or delete \
+             {} to accept it",
+            index.generated,
+            seen_file.display()
+        ));
+    }
+    if index.generated > seen {
+        crate::layout::write_file(&seen_file, &format!("{}\n", index.generated))?;
+    }
+    Ok(())
 }
 
 /// The newest release `req` accepts that is not yanked (an exact requirement may name a yanked
@@ -206,15 +275,24 @@ pub fn install_toolchain_with_key(
     let archive = download(&format!("{release}/{name}"))?.ok_or_else(|| missing(&name))?;
     check_sha256(&archive, &sums, &name)?;
     let dest = root.version_dir(version);
-    install_dir(&archive, &stem, &dest, "toolchain archive", |dir| {
-        let exe = velt_exe(dir);
-        (!exe.is_file()).then(|| {
-            format!(
-                "it has no {}",
-                exe.strip_prefix(dir).unwrap_or(&exe).display()
-            )
-        })
-    })?;
+    // A version never changes: one installed meanwhile (another launcher) is kept, not
+    // swapped out from under the commands running it.
+    install_dir(
+        &archive,
+        &stem,
+        &dest,
+        "toolchain archive",
+        Existing::Keep,
+        |dir| {
+            let exe = velt_exe(dir);
+            (!exe.is_file()).then(|| {
+                format!(
+                    "it has no {}",
+                    exe.strip_prefix(dir).unwrap_or(&exe).display()
+                )
+            })
+        },
+    )?;
     Ok(dest)
 }
 
@@ -224,8 +302,8 @@ mod tests {
 
     #[test]
     fn index() {
-        let releases = parse_index(
-            r#"{"format": 1, "later": true, "releases": [
+        let index = parse_index(
+            r#"{"format": 1, "generated": 5, "launcher": "0.2.0", "later": true, "releases": [
                 {"version": "0.2.0"}, {"version": "0.1.0"}, {"version": "0.1.0"},
                 {"version": "0.2.0-rc.1", "date": "2026-10-01"},
                 {"version": "0.1.1", "yanked": "miscompiles closures; use 0.1.2"},
@@ -233,6 +311,11 @@ mod tests {
             ]}"#,
         )
         .unwrap();
+        assert_eq!(index.generated, 5);
+        let v = |s: &str| Version::parse(s).unwrap();
+        assert_eq!(index.newer_launcher(&v("0.1.9")), Some(&v("0.2.0")));
+        assert_eq!(index.newer_launcher(&v("0.2.0")), None);
+        let releases = index.releases;
         let shown: Vec<String> = releases.iter().map(|r| r.version.to_string()).collect();
         assert_eq!(shown, ["0.1.0", "0.1.1", "0.1.2", "0.2.0-rc.1", "0.2.0"]);
         assert_eq!(
@@ -242,10 +325,13 @@ mod tests {
         for bad in [
             "[]",
             "{}",
-            r#"{"format": 1}"#,
-            r#"{"format": 1, "releases": [1]}"#,
-            r#"{"format": 1, "releases": [{"version": "x"}]}"#,
-            r#"{"format": 1, "releases": [{"version": "0.1.0", "yanked": true}]}"#,
+            r#"{"format": 1, "generated": 1}"#,
+            r#"{"format": 1, "releases": []}"#,
+            r#"{"format": 1, "generated": "now", "releases": []}"#,
+            r#"{"format": 1, "generated": 1, "launcher": 2, "releases": []}"#,
+            r#"{"format": 1, "generated": 1, "releases": [1]}"#,
+            r#"{"format": 1, "generated": 1, "releases": [{"version": "x"}]}"#,
+            r#"{"format": 1, "generated": 1, "releases": [{"version": "0.1.0", "yanked": true}]}"#,
             r#"{"versions": ["0.1.0"]}"#,
             "nope",
         ] {
@@ -262,10 +348,11 @@ mod tests {
     #[test]
     fn yanked_releases_are_selected_only_by_name() {
         let releases = parse_index(
-            r#"{"format": 1, "releases": [{"version": "0.1.0"},
+            r#"{"format": 1, "generated": 1, "releases": [{"version": "0.1.0"},
                 {"version": "0.1.1", "yanked": "broken"}]}"#,
         )
-        .unwrap();
+        .unwrap()
+        .releases;
         let newest = |req: &str| {
             newest_match(&releases, &crate::Requirement::parse(req).unwrap())
                 .map(|r| r.version.to_string())
@@ -362,30 +449,50 @@ mod tests {
         );
         signed.stop();
 
-        // The index: signed, on the `index` release.
-        let index = br#"{"format": 1, "releases": [{"version": "0.3.0"}]}"#.to_vec();
+        // The index: signed, on the `index` release, never older than one seen before.
+        let signed_index = |generated: u64, by: &ring::signature::Ed25519KeyPair| {
+            let text = format!(
+                r#"{{"format": 1, "generated": {generated}, "releases": [{{"version": "0.3.0"}}]}}"#
+            );
+            let sig = by.sign(text.as_bytes()).as_ref().to_vec();
+            (text.into_bytes(), sig)
+        };
         let path = "/releases/download/index/releases.json".to_string();
-        let good = serve(vec![
-            (path.clone(), index.clone()),
-            (format!("{path}.sig"), signer.sign(&index).as_ref().to_vec()),
-        ]);
-        let releases =
-            fetch_index_with_key(&format!("http://{}", good.addr()), Some(&key)).unwrap();
-        assert_eq!(releases[0].version, v);
+        let index_server = |index: (Vec<u8>, Vec<u8>), signed: bool| {
+            let mut files = vec![(path.clone(), index.0)];
+            if signed {
+                files.push((format!("{path}.sig"), index.1));
+            }
+            serve(files)
+        };
+        let fetch = |server: &velt_http::Server| {
+            fetch_index_with_key(&root, &format!("http://{}", server.addr()), Some(&key))
+        };
+        let good = index_server(signed_index(10, &signer), true);
+        assert_eq!(fetch(&good).unwrap().releases[0].version, v);
         good.stop();
-        let unsigned = serve(vec![(path.clone(), index.clone())]);
-        let err =
-            fetch_index_with_key(&format!("http://{}", unsigned.addr()), Some(&key)).unwrap_err();
+        let unsigned = index_server(signed_index(11, &signer), false);
+        let err = fetch(&unsigned).unwrap_err();
         assert!(err.contains("releases.json has no signature"), "{err}");
         unsigned.stop();
-        let forged = serve(vec![
-            (path.clone(), index.clone()),
-            (format!("{path}.sig"), forger.sign(&index).as_ref().to_vec()),
-        ]);
-        let err =
-            fetch_index_with_key(&format!("http://{}", forged.addr()), Some(&key)).unwrap_err();
+        let forged = index_server(signed_index(12, &forger), true);
+        let err = fetch(&forged).unwrap_err();
         assert!(err.contains("does not match the release key"), "{err}");
         forged.stop();
+        // A forged one is not remembered: the same time again is fine, an older one is not.
+        let same = index_server(signed_index(10, &signer), true);
+        fetch(&same).unwrap();
+        same.stop();
+        let old = index_server(signed_index(9, &signer), true);
+        let err = fetch(&old).unwrap_err();
+        assert!(err.contains("is older than an index seen before"), "{err}");
+        assert!(err.contains("index-seen"), "{err}");
+        old.stop();
+        let newer = index_server(signed_index(20, &signer), true);
+        fetch(&newer).unwrap();
+        newer.stop();
+        let seen = std::fs::read_to_string(root.dir().join(INDEX_SEEN_FILE)).unwrap();
+        assert_eq!(seen.trim(), "20");
     }
 
     #[test]

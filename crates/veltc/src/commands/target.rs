@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use velt_toolchain::install::{check_sha256, install_dir, sha256_entry};
+use velt_toolchain::install::{check_sha256, install_dir, sha256_entry, Existing};
 
 use crate::cli::target::TargetAction;
 
@@ -208,6 +208,7 @@ fn install(archive: &[u8], target: &str, dir: &Path) -> Result<(), String> {
         target,
         &dir.join(target),
         "target pack",
+        Existing::Replace,
         |staging| pack_problem(staging, target),
     )
 }
