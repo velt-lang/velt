@@ -28,10 +28,8 @@ velt_rt_host = { path = "../velt_rt_host" }
 # `velt check --json`.
 serde_json = "1.0.151"
 notify = "8"
-# `velt target add`: target packs are .tar.gz files checked against the release's SHA256SUMS.
-flate2 = "1.1.10"
-tar = "0.4"
-sha2 = "0.10"
+# `velt target add` downloads, checks and unpacks target packs with the toolchain installer's code.
+velt_toolchain.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # Stopping the supervised program with SIGTERM.
@@ -42,6 +40,9 @@ libc = "0.2.189"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading"] }
 
 [dev-dependencies]
+# Target packs (.tar.gz) for the `velt target add` tests.
+flate2 = "1.1.10"
+tar = "0.4"
 lsp-server = "0.10.0"
 lsp-types = "0.95"
 tempfile = "3.27.0"

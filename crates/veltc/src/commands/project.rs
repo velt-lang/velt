@@ -49,6 +49,7 @@ impl Project {
     pub fn open(root: &Path, opts: InstallOptions) -> Result<Project, String> {
         let root = vpm::relpath::absolute(root);
         let manifest = Manifest::from_dir(&root)?;
+        warn_toolchain_mismatch(&manifest);
         let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
         super::package::warn_yanked(&installed);
         Ok(Project {
@@ -177,9 +178,57 @@ pub fn check_input_file(file: &Path) -> Result<(), String> {
     Err(msg)
 }
 
+/// Warn when the package's `velt` field doesn't accept this velt (#948): it was started
+/// directly, or the launcher ran it for `$VELT_TOOLCHAIN`, which the user chose.
+pub fn warn_toolchain_mismatch(manifest: &Manifest) {
+    if std::env::var_os("VELT_LAUNCHER").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+    if let Some(warning) = toolchain_mismatch(manifest, env!("CARGO_PKG_VERSION")) {
+        crate::style::warning(&warning);
+    }
+}
+
+/// The warning for `manifest` run by velt `version`, if its `velt` field doesn't accept it.
+fn toolchain_mismatch(manifest: &Manifest, version: &str) -> Option<String> {
+    let pin = manifest.toolchain.as_deref()?;
+    let req = velt_toolchain::Requirement::parse(pin).ok()?;
+    let version = velt_toolchain::Version::parse(version).ok()?;
+    (!req.matches(&version)).then(|| {
+        format!(
+            "{} asks for velt \"{pin}\", but this is velt {version}; it may not build the package",
+            vpm::manifest::MANIFEST_FILE
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
+        let manifest = |pin: &str| {
+            let src = format!(
+                "import type {{ Package }} from \"velt:package\";\nexport const pkg: Package = \
+                 {{ name: \"a\", version: \"1.0.0\"{pin} }};\n"
+            );
+            Manifest::read(velt_common::FileId(0), &src).unwrap()
+        };
+        assert_eq!(toolchain_mismatch(&manifest(""), "0.1.0"), None);
+        assert_eq!(
+            toolchain_mismatch(&manifest(", velt: \"0.1\""), "0.1.4"),
+            None
+        );
+        assert_eq!(
+            toolchain_mismatch(&manifest(", velt: \"0.2\""), "0.1.0").as_deref(),
+            Some(
+                "package.vlt asks for velt \"0.2\", but this is velt 0.1.0; it may not build the \
+                 package"
+            )
+        );
+        assert!(toolchain_mismatch(&manifest(", velt: \"=0.1.3\""), "0.1.4").is_some());
+    }
 
     #[test]
     fn missing_input_hints() {

@@ -28,8 +28,8 @@ use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, T
 
 use super::{
     check_dependency, check_dependency_name, check_description, check_entry, check_import_source,
-    check_keyword, check_name, check_registry, check_version, default_entry, schema, Dependency,
-    DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
+    check_keyword, check_name, check_registry, check_toolchain, check_version, default_entry,
+    schema, Dependency, DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
 };
 
 /// File name of the manifest written in Velt.
@@ -274,6 +274,7 @@ impl Reader<'_> {
                 keywords: vec![],
                 entry: default_entry(),
             },
+            toolchain: None,
             dependencies: BTreeMap::new(),
             paths: BTreeMap::new(),
             native: None,
@@ -298,6 +299,12 @@ impl Reader<'_> {
                     if let Some(s) = self.string(v, "version") {
                         self.check(check_version(s).map_err(|e| format!("version {e}")), v.span);
                         manifest.package.version = s.to_string();
+                    }
+                }
+                "velt" => {
+                    if let Some(s) = self.string(v, "velt") {
+                        self.check(check_toolchain(s).map_err(|e| format!("velt {e}")), v.span);
+                        manifest.toolchain = Some(s.to_string());
                     }
                 }
                 "description" => {

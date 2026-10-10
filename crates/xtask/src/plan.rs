@@ -52,6 +52,11 @@ const TOOLING: &[(&str, &[&str])] = &[
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),
     ("velt_http", &["registry_cli", "cli_package"]),
+    // `velt target add`, and the `velt` field `velt new` writes and every command checks.
+    (
+        "velt_toolchain",
+        &["cli_package", "templates", "install_layout"],
+    ),
     ("velt_rt_wasm", &["wasm_goldens", "playground"]),
 ];
 

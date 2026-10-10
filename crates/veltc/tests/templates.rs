@@ -140,6 +140,20 @@ fn template_lib() {
 }
 
 #[test]
+fn new_packages_pin_this_toolchain() {
+    // `velt: "<major>.<minor>"`, so a newer velt installed later does not build them (#948).
+    let s = sandbox();
+    s.ok("", &["new", "pinned"]);
+    let manifest = std::fs::read_to_string(s.path("pinned").join("package.vlt")).unwrap();
+    let version = env!("CARGO_PKG_VERSION");
+    let minor = version.rsplit_once('.').unwrap().0;
+    assert!(
+        manifest.contains(&format!("velt: \"{minor}\"")),
+        "{manifest}"
+    );
+}
+
+#[test]
 fn default_template_runs() {
     let s = sandbox();
     s.ok("", &["new", "hello"]);

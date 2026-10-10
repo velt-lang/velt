@@ -20,6 +20,7 @@ const LIMITS: velt_http::Limits = velt_http::Limits {
     connect: Duration::from_secs(5),
     idle: Duration::from_secs(10),
     total: Duration::from_secs(15),
+    ..velt_http::Limits::DEFAULT
 };
 /// Most fetches running at once (a slow registry must not collect a thread per keystroke).
 const MAX_FETCHES: usize = 4;

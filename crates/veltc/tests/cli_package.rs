@@ -23,14 +23,22 @@ fn sandbox() -> Sandbox {
 
 impl Sandbox {
     fn velt(&self, cwd: &str, args: &[&str]) -> Output {
+        self.velt_with(cwd, args, &[])
+    }
+
+    fn velt_with(&self, cwd: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         let cwd = self.dir.join(cwd);
-        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        command
             .args(args)
             .current_dir(&cwd)
             .env("VELT_HOME", self.dir.join("home"))
             .env_remove("VELT_REGISTRY")
-            .output()
-            .unwrap()
+            .env_remove("VELT_LAUNCHER");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().unwrap()
     }
 
     /// Run and assert success; returns stderr (status lines).
@@ -519,10 +527,13 @@ fn ts_and_tsx_modules_in_a_package() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     let manifest = s.read("app/package.vlt").replacen(
-        "version: \"0.1.0\"",
-        "version: \"0.1.0\", jsx: { importSource: \"./ui\" }",
+        "{ name: \"app\", ",
+        "{\n  name: \"app\",\n  jsx: { importSource: \"./ui\" },\n  ",
         1,
     );
+    let manifest = manifest
+        .replacen(", velt:", ",\n  velt:", 1)
+        .replacen(" };", ",\n};", 1);
     s.write("app/package.vlt", &manifest);
     s.write(
         "app/src/model.ts",
@@ -635,6 +646,68 @@ fn a_package_written_in_typescript_needs_no_entry() {
     let err = s.fail("app", &["run"]);
     assert!(
         err.contains("more than one `src/main` module: `src/main.vlt`, `src/main.ts`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
+    // #948: until the launcher selects toolchains, velt says when a package asks for another.
+    let s = sandbox();
+    std::fs::create_dir_all(s.dir.join("app")).unwrap();
+    s.write(
+        "app/package.vlt",
+        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
+    );
+    let out = s.velt("app", &["manifest"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(
+        err.contains("package.vlt asks for velt \"9.9\", but this is velt"),
+        "{err}"
+    );
+    // Run by the launcher, the choice was made there.
+    let out = s.velt_with("app", &["manifest"], &[("VELT_LAUNCHER", "/x/bin/velt")]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("asks for velt"), "{err}");
+}
+
+#[test]
+fn target_add_from_an_unsigned_release_names_the_way_out() {
+    // A toolchain built from source carries no pack hashes, so `velt target add` needs the
+    // release's signed SHA256SUMS; a release without a signature (v0.1.0) says what to do.
+    let version = env!("CARGO_PKG_VERSION");
+    let target = "x86_64-pc-windows-msvc";
+    let dir = format!("/releases/download/v{version}");
+    let files: std::collections::HashMap<String, Vec<u8>> = [(
+        format!("{dir}/SHA256SUMS"),
+        format!("00  velt-{version}-target-{target}.tar.gz\n").into_bytes(),
+    )]
+    .into_iter()
+    .collect();
+    let handler = std::sync::Arc::new(move |req: velt_http::Request| match files.get(&req.path) {
+        Some(b) => velt_http::Response::bytes(200, "text/plain", b.clone()),
+        None => velt_http::Response::text(404, "not found"),
+    });
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = velt_http::Server::start(listener, handler, 1 << 20).unwrap();
+    let s = sandbox();
+    let base = format!("http://{}", server.addr());
+    let out = s.velt_with(
+        "",
+        &["target", "add", target],
+        &[("VELT_INSTALL_BASE_URL", &base)],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    server.stop();
+    if String::from_utf8_lossy(&out.stdout).contains("is this machine") {
+        return; // a Windows x64 host has no pack to add for itself
+    }
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("SHA256SUMS has no signature"), "{err}");
+    assert!(
+        err.contains(&format!("velt target add {target} --from <file>"))
+            && err.contains("--unverified"),
         "{err}"
     );
 }
