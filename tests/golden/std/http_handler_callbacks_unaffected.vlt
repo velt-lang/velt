@@ -50,14 +50,6 @@ async function main() {
   const render = (s: string): string => `<b>${s}</b>`;
   const pool = new Pool();
   const hits = shared(0);
-  let configured = 0;
-  const setupSteps: (() => void)[] = [];
-  setupSteps.push(() => {
-    configured++;
-  });
-  for (const step of setupSteps) {
-    step();
-  }
   const routes = new Map<string, () => string>();
   routes.set("/", () => "home");
   const requests = new Emitter();
@@ -82,5 +74,5 @@ async function main() {
     console.log(await (await fetch(`http://127.0.0.1:${a.port}/`)).text());
   }
   await a.shutdown();
-  console.log(clicks, hits.get(), configured);
+  console.log(clicks, hits.get());
 }

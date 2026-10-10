@@ -78,14 +78,15 @@ it throws.
   Callbacks stored in the heap are followed by type: one stored in an object the handler
   reaches, or of the type of one it calls, counts as reached, unless it is only stored in fields
   that no code a request may run reads and that no code copies out (`w.onClick = …` while the
-  handler reads only `w.name`; calling `w.onClick()` in `main` is fine, `const h = w.onClick`
-  is not). The check errs on the side of rejecting, since a missed case can crash: a callback
-  of a type the handler calls is an error even when the handler never gets to it. That includes
-  one stored in another object of the same class (`other.onChange = …` while the handler calls
+  handler reads only `w.name`; calling `w.onClick()` in `main` is fine, `const h = w.onClick` is
+  not). The check errs on the side of rejecting, since a missed case can crash: a callback of a
+  type the handler calls is an error even when the handler never gets to it. That includes one
+  stored in another object of the same class (`other.onChange = …` while the handler calls
   `i.onChange`), in another emitter (`startup.on(() => { ready = true; })` while the handler
-  calls `requests.emit(…)` on an `Emitter` of the same class), one stored by a function into
-  an object passed to it (`setup(input)`), and one in a field any method reads, even a method
-  no request calls (`fire() { this.onChange("x"); }`). Share the variable
+  calls `requests.emit(…)` on an `Emitter` of the same class), one in an array only `main` uses
+  (`steps.push(() => { done++; })` while the handler reaches any `() => void` value), one stored
+  by a function into an object passed to it (`setup(input)`), and one in a field any method
+  reads, even a method no request calls (`fire() { this.onChange("x"); }`). Share the variable
   with `shared(...)` as the fix shows; the program then runs as in Node.
 
   ```ts
