@@ -62,7 +62,7 @@ x86_64, 10^6 iterations), instructions per iteration of the loop:
 
 | Loop | Today's release | Weak-capable, signed compare | Weak-capable, separate bit test | Weakly held object |
 |---|---|---|---|---|
-| retain + release (shared path) | 10.00 | 10.00 | 14.00 | 96.00 |
+| retain + release (shared path) | 10.00 | 10.00 | 14.00 | 88.00 |
 | allocate + release (drop, free) | 93.69 | 95.69 | 93.69 | — |
 
 The signed compare leaves the shared release as it is and costs two instructions per free (+2.1%
@@ -70,7 +70,7 @@ on the allocate/free loop, which is mostly mimalloc); a separate bit test after 
 free path unchanged but costs four per shared release, so the signed compare is the proposal.
 Neither touches types that are not weak-capable, which is every type of every program today:
 their code is unchanged, so `bench/` is unaffected. A release of a weakly held object is a call
-and a hash probe, 86 instructions more than today's.
+and a hash probe, 78 instructions more than today's.
 
 ## Rules for the compiler
 
@@ -167,7 +167,12 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 - nested reactive objects (`raw1.child = raw2`, both proxied in the same cache);
 - a handler whose closure captures the target (an object on the path back to the key);
 - a shared handler outside the cycles, a key mapped to itself, 10,000 entries;
-- a value that gains a second path to its key after insert (found by the next trial).
+- a value that gains a second path to its key after insert (found by the next trial);
+- null values and values of maps without trace glue next to a cycle (`src/weak/tests/values.rs`);
+- a `get` result held across the release of its key's last outside reference.
+
+A release on another thread than the object's records is an ICE, reported before the count
+changes (`src/weak/tests/threads.rs`).
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that
