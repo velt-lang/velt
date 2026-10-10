@@ -1,7 +1,7 @@
 {
   "name": "velt",
   "displayName": "Velt",
-  "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`).",
+  "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`), and F5 debugging.",
   "version": "0.1.0",
   "publisher": "velt-lang",
   "license": "MIT OR Apache-2.0",
@@ -11,7 +11,8 @@
   },
   "categories": [
     "Programming Languages",
-    "Formatters"
+    "Formatters",
+    "Debuggers"
   ],
   "keywords": [
     "velt",
@@ -19,8 +20,18 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:velt"
+    "onLanguage:velt",
+    "onDebugResolve:velt",
+    "onDebugDynamicConfigurations:velt",
+    "onDebugInitialConfigurations",
+    "workspaceContains:package.vlt"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Velt runs the `velt` executable (which `velt.serverPath` may name) to analyze, build and debug the workspace."
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -47,6 +58,23 @@
         "command": "velt.restartServer",
         "title": "Restart Language Server",
         "category": "Velt"
+      },
+      {
+        "command": "velt.runFile",
+        "title": "Run File",
+        "category": "Velt",
+        "icon": "$(play)"
+      },
+      {
+        "command": "velt.debugFile",
+        "title": "Debug File",
+        "category": "Velt",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "velt.generateLaunchJson",
+        "title": "Generate launch.json",
+        "category": "Velt"
       }
     ],
     "configuration": {
@@ -66,6 +94,23 @@
           ],
           "default": "off",
           "description": "Log the JSON-RPC traffic with the language server to the 'Velt Language Server' output channel."
+        },
+        "velt.debug.engine": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "codelldb",
+            "lldb-dap",
+            "cpptools"
+          ],
+          "enumDescriptions": [
+            "The first installed of CodeLLDB, lldb-dap and the C/C++ extension.",
+            "CodeLLDB (vadimcn.vscode-lldb); it includes LLDB.",
+            "LLDB DAP (llvm-vs-code-extensions.lldb-dap); needs lldb-dap from an LLVM install.",
+            "C/C++ (ms-vscode.cpptools): LLDB on macOS, GDB on Linux, the Visual Studio debugger on Windows."
+          ],
+          "default": "auto",
+          "markdownDescription": "The debugger extension the `velt` debug type starts."
         }
       }
     },
@@ -84,11 +129,148 @@
       "[velt]": {
         "editor.semanticHighlighting.enabled": true
       }
-    }
+    },
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "velt.runFile",
+          "when": "resourceLangId == velt",
+          "group": "navigation@0"
+        },
+        {
+          "command": "velt.debugFile",
+          "when": "resourceLangId == velt",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "debuggers": [
+      {
+        "type": "velt",
+        "label": "Velt",
+        "languages": [
+          "velt"
+        ],
+        "variables": {
+          "pickProcess": "velt.pickProcess"
+        },
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The program to debug (default: what `velt build` produces)."
+              },
+              "file": {
+                "type": "string",
+                "description": "Build and debug this file instead of the package (e.g. \"${file}\")."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Arguments passed to the program."
+              },
+              "cwd": {
+                "type": "string",
+                "default": "${workspaceFolder}",
+                "description": "Working directory of the build and the program."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "default": {},
+                "description": "Environment variables of the program."
+              },
+              "build": {
+                "type": "boolean",
+                "default": true,
+                "description": "Build with `velt build` before debugging."
+              },
+              "buildArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (line information on Windows, which the default build lacks yet)."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stop at the program's entry point."
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "pid"
+            ],
+            "properties": {
+              "pid": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "default": "${command:pickProcess}",
+                "description": "Process id to attach to."
+              },
+              "program": {
+                "type": "string",
+                "description": "The program's executable (needed by the C/C++ extension)."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "velt",
+            "request": "launch",
+            "name": "Debug"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Velt: Debug package",
+            "description": "Build the package and debug it",
+            "body": {
+              "type": "velt",
+              "request": "launch",
+              "name": "Debug package"
+            }
+          },
+          {
+            "label": "Velt: Debug current file",
+            "description": "Build the open file and debug it",
+            "body": {
+              "type": "velt",
+              "request": "launch",
+              "name": "Debug current file",
+              "file": "^\"\\${file}\""
+            }
+          },
+          {
+            "label": "Velt: Attach to process",
+            "description": "Attach to a running Velt program (e.g. one started by `velt dev --exe`)",
+            "body": {
+              "type": "velt",
+              "request": "attach",
+              "name": "Attach to process",
+              "pid": "^\"\\${command:pickProcess}\""
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test out/test/debugConfig.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {

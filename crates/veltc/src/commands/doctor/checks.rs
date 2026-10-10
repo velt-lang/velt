@@ -22,6 +22,7 @@ pub fn environment() -> Vec<Check> {
         targets(&host),
         wasm_linker(),
         clang(),
+        lldb_script(),
         velt_home(),
         toolchain(),
     ]
@@ -55,6 +56,24 @@ fn toolchain_from(launcher: Option<&Path>, selected: Option<String>) -> Check {
         LABEL,
         format!("{selected}; launcher {}, {default}", launcher.display()),
     )
+}
+
+/// The LLDB formatters are optional: without them the debugger shows Velt values as raw words.
+fn lldb_script() -> Check {
+    const LABEL: &str = "debugger scripts";
+    match crate::debugger::lldb_script() {
+        Some(path) => Check::ok(LABEL, path.display().to_string()),
+        None => Check::bad(
+            LABEL,
+            Status::Warn,
+            format!("{} not found", crate::debugger::LLDB_SCRIPT),
+            format!(
+                "an installed toolchain keeps it in <prefix>/share/velt/lldb/{}; reinstall, or \
+                 set $VELT_SHARE to the directory holding `lldb/`",
+                crate::debugger::LLDB_SCRIPT
+            ),
+        ),
+    }
 }
 
 fn runtime_lib(host: &str) -> Check {

@@ -12,7 +12,7 @@
 #   --no-modify-path  do not add <prefix>/bin to PATH in your shell profiles
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests).
 #
-# The prefix's bin/, lib/ and std/ are replaced wholesale (docs/tooling/platforms.md).
+# The prefix's bin/, lib/, std/ and share/velt/ are replaced wholesale (docs/tooling/platforms.md).
 set -eu
 
 # The release workflow replaces this with the version it publishes.
@@ -143,9 +143,9 @@ done
 
 mkdir -p "$prefix" || err "cannot create $prefix"
 prefix=$(cd "$prefix" && pwd)
-for d in bin lib std; do
+for d in bin lib std share/velt; do
     rm -rf "${prefix:?}/$d"
-    if [ -d "$dist/$d" ]; then cp -R "$dist/$d" "$prefix/$d"; fi
+    if [ -d "$dist/$d" ]; then mkdir -p "$(dirname "$prefix/$d")" && cp -R "$dist/$d" "$prefix/$d"; fi
 done
 for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE; do
     if [ -f "$dist/$f" ]; then cp "$dist/$f" "$prefix/"; fi

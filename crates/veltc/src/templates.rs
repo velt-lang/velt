@@ -1,7 +1,8 @@
 //! Project templates for `velt new` / `velt init`, embedded in the binary. The sources live in
 //! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.vlt`
 //! and `.gitignore`, which are generated); `{{name}}` in a file stands for the package name.
-//! `tests/templates.rs` builds, tests and format-checks every template.
+//! `tests/templates.rs` builds, tests and format-checks every template. Every template also gets
+//! the editor files of [`Editor::files`] (`.vscode/`), which `velt init --editor` adds alone.
 
 use vpm::scaffold::{IfExists, ScaffoldFile, GITIGNORE};
 
@@ -19,6 +20,68 @@ pub enum Template {
     Websocket,
     /// Library: exports, doc comments, tests.
     Lib,
+}
+
+/// An editor `velt init --editor` configures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Editor {
+    /// Visual Studio Code: `.vscode/launch.json` (F5 builds and debugs the package with the Velt
+    /// extension) and `.vscode/extensions.json` (recommends the Velt and CodeLLDB extensions).
+    VsCode,
+}
+
+/// `.vscode/launch.json`: one configuration of the Velt extension's `velt` debug type, which
+/// builds the package (or the open file) and starts the debugger the extension finds.
+const VSCODE_LAUNCH: &str = r#"{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "velt",
+      "request": "launch",
+      "name": "Debug"
+    }
+  ]
+}
+"#;
+
+/// `.vscode/extensions.json`: the Velt extension, and CodeLLDB (the debugger it prefers; it
+/// bundles LLDB, so nothing else needs installing).
+const VSCODE_EXTENSIONS: &str = r#"{
+  "recommendations": ["velt-lang.velt", "vadimcn.vscode-lldb"]
+}
+"#;
+
+impl Editor {
+    /// Editor names accepted by `velt init --editor`.
+    pub const NAMES: &[&str] = &["vscode"];
+
+    /// The editor called `name` (`code` is VS Code).
+    pub fn parse(name: &str) -> Result<Editor, String> {
+        match name {
+            "vscode" | "code" => Ok(Editor::VsCode),
+            _ => Err(format!(
+                "unknown editor `{name}` (expected {})",
+                Editor::NAMES.join(", ")
+            )),
+        }
+    }
+
+    /// The editor's project files; existing ones are always kept.
+    pub fn files(self) -> Vec<ScaffoldFile> {
+        let files = match self {
+            Editor::VsCode => [
+                (".vscode/launch.json", VSCODE_LAUNCH),
+                (".vscode/extensions.json", VSCODE_EXTENSIONS),
+            ],
+        };
+        files
+            .into_iter()
+            .map(|(path, text)| ScaffoldFile {
+                if_exists: IfExists::Keep,
+                ..ScaffoldFile::new(path, text.to_string())
+            })
+            .collect()
+    }
 }
 
 /// One embedded file: path relative to the package root, and its text.
@@ -107,7 +170,8 @@ impl Template {
     }
 
     /// The files of package `name` made from this template: `package.vlt`, `.gitignore` (merged
-    /// into an existing one), `README.md` (an existing one is kept) and the sources.
+    /// into an existing one), `README.md` and the VS Code files (existing ones are kept) and the
+    /// sources.
     pub fn files(self, name: &str) -> Vec<ScaffoldFile> {
         let mut files = vec![
             ScaffoldFile::new(
@@ -135,6 +199,7 @@ impl Template {
                 _ => file,
             });
         }
+        files.extend(Editor::VsCode.files());
         files
     }
 }
@@ -171,6 +236,24 @@ mod tests {
             );
             let readme = files.iter().find(|f| f.path == "README.md").unwrap();
             assert!(readme.contents.starts_with("# demo-pkg\n"), "{t:?}");
+            assert!(paths.contains(&".vscode/launch.json"), "{t:?}: {paths:?}");
+        }
+    }
+
+    #[test]
+    fn vscode_files_are_kept_json() {
+        assert_eq!(Editor::parse("code"), Ok(Editor::VsCode));
+        assert!(Editor::parse("vim")
+            .unwrap_err()
+            .contains("expected vscode"));
+        for f in Editor::VsCode.files() {
+            assert_eq!(f.if_exists, IfExists::Keep, "{}", f.path);
+            let json: serde_json::Value = serde_json::from_str(&f.contents).unwrap();
+            if f.path.ends_with("launch.json") {
+                assert_eq!(json["configurations"][0]["type"], "velt");
+            } else {
+                assert_eq!(json["recommendations"][0], "velt-lang.velt");
+            }
         }
     }
 }

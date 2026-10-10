@@ -4,7 +4,7 @@
 //! `--emit`, the shells of `completions`, the commands of `help`, and otherwise files.
 
 use super::help::{command_names, CommandHelp, COMMANDS};
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// A shell `velt completions` can generate a script for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +55,7 @@ fn option_values() -> Vec<(&'static str, Vec<&'static str>)> {
             "--template",
             Template::ALL.iter().map(|t| t.name()).collect(),
         ),
+        ("--editor", Editor::NAMES.to_vec()),
         ("--backend", vec!["cranelift", "llvm"]),
         ("--emit", vec!["vir", "llvm", "obj", "exe"]),
     ]

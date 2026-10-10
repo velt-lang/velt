@@ -6,7 +6,7 @@
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
-#   std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
+#   std/**  share/velt/lldb/velt_lldb.py  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: scripts/package.sh [--std-dir <dir>] [--skip-build] [--no-archive] [--lld <path>]
 #                           [--no-bundled-linker] [--no-musl]
@@ -78,11 +78,12 @@ name="velt-$version-$host"
 dist="$repo/dist"
 out="$dist/$name"
 rm -rf "$out"
-mkdir -p "$out/bin" "$out/lib" "$out/std"
+mkdir -p "$out/bin" "$out/lib" "$out/std" "$out/share/velt/lldb"
 
 cp "$release/velt" "$out/bin/"
 cp "$release/libvelt_rt.a" "$release/$shared_rt" "$out/lib/"
 cp "$repo/crates/velt_rt/NATIVE_LIBS.md" "$out/lib/"
+cp "$repo/editors/lldb/velt_lldb.py" "$out/share/velt/lldb/"
 if [ -d "$std_dir" ]; then
     cp -R "$std_dir/." "$out/std/"
 else
@@ -100,7 +101,7 @@ Then add \`<prefix>/bin\` to PATH and run \`velt doctor\`.
     velt new app && cd app && velt run
 
 Layout: bin/ (the velt CLI), lib/ (runtime library linked into every program),
-std/ (standard library sources). Full guide: docs/tooling/platforms.md in the Velt repository.
+std/ (standard library sources), share/ (debugger scripts). Full guide: docs/tooling/platforms.md in the Velt repository.
 EOF
 
 cp "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$repo/NOTICE" "$out/"
