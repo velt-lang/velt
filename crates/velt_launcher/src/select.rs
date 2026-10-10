@@ -15,6 +15,8 @@ use crate::{ENV_AUTO_INSTALL, ENV_TOOLCHAIN};
 pub struct Context {
     pub root: Root,
     pub cwd: PathBuf,
+    /// `velt +<toolchain> …`.
+    pub plus: Option<String>,
     /// `$VELT_TOOLCHAIN`.
     pub env_toolchain: Option<String>,
     /// Unless `$VELT_TOOLCHAIN_AUTO_INSTALL` is `0` (or `false`, `no`, `off`).
@@ -37,6 +39,7 @@ impl Context {
         Ok(Context {
             root,
             cwd,
+            plus: None,
             env_toolchain: var(ENV_TOOLCHAIN),
             auto_install,
             base: release::base_url(),
@@ -47,6 +50,8 @@ impl Context {
 /// What selected the toolchain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reason {
+    /// `velt +<toolchain>`.
+    Plus(String),
     Env,
     Pin(Pin),
     Default,
@@ -55,6 +60,7 @@ pub enum Reason {
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Reason::Plus(name) => write!(f, "+{name}"),
             Reason::Env => write!(f, "${ENV_TOOLCHAIN}"),
             Reason::Pin(pin) => write!(
                 f,
@@ -90,8 +96,15 @@ pub struct Selection {
     pub reason: Reason,
 }
 
-/// `$VELT_TOOLCHAIN`, else the package's pin, else the default.
+/// `+<toolchain>`, else `$VELT_TOOLCHAIN`, else the package's pin, else the default.
 pub fn select(ctx: &Context) -> Result<Selection, String> {
+    if let Some(name) = &ctx.plus {
+        let toolchain = Toolchain::parse(name).map_err(|e| format!("`+{name}`: {e}"))?;
+        return Ok(Selection {
+            wanted: Wanted::Toolchain(toolchain),
+            reason: Reason::Plus(name.clone()),
+        });
+    }
     if let Some(text) = &ctx.env_toolchain {
         let toolchain = Toolchain::parse(text).map_err(|e| format!("${ENV_TOOLCHAIN}: {e}"))?;
         return Ok(Selection {
@@ -206,10 +219,25 @@ fn not_installed(wanted: &Wanted, reason: &Reason) -> String {
     )
 }
 
+/// The signed index of releases; says so when it names a newer launcher than this one.
+pub fn index(ctx: &Context) -> Result<release::Index, String> {
+    let index = release::fetch_index(&ctx.root, &ctx.base)?;
+    let own = Version::parse(env!("CARGO_PKG_VERSION")).expect("ICE: the crate version");
+    if let Some(newer) = index.newer_launcher(&own) {
+        eprintln!(
+            "velt: a newer velt launcher ({newer}) is available; run the installer again to \
+             update {} (this one is {own})",
+            ctx.root.dir().join("bin").display()
+        );
+    }
+    Ok(index)
+}
+
 /// The newest published version `req` accepts (not a yanked one, unless `req` names exactly it).
 pub fn newest_published(ctx: &Context, req: &Requirement) -> Result<Version, String> {
-    let published = release::fetch_index(&ctx.base)
-        .map_err(|e| format!("the list of published versions is unavailable: {e}"))?;
+    let published = index(ctx)
+        .map_err(|e| format!("the list of published versions is unavailable: {e}"))?
+        .releases;
     if let Some(release) = release::newest_match(&published, req) {
         return Ok(release.version.clone());
     }

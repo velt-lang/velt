@@ -351,8 +351,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         about: "Versions are installed side by side in <root>/toolchains/<version>/, and the \
                 `velt` on PATH (<root>/bin/velt, the launcher) runs the one a package pins with \
                 `velt: \"0.1\"` in package.vlt, else the default, installing it on first use. \
-                $VELT_TOOLCHAIN (a version or a linked name) overrides the choice for one \
-                command. The launcher implements this command, the same for every version.",
+                `velt +<toolchain> <command>` or $VELT_TOOLCHAIN (a version or a linked name) \
+                overrides the choice for one command. The launcher implements this command, the same for every version.",
         options: &[
             ("--available", "with list: the published versions"),
             ("--default", "with install: make it the default"),

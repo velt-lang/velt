@@ -233,7 +233,8 @@ Several velt versions can be installed side by side, each in `<root>/toolchains/
 (`<root>` is `~/.velt`, or `%LOCALAPPDATA%\velt` on Windows). The `velt` on your `PATH` is a
 small launcher, `<root>/bin/velt`, that runs one of them with the same arguments:
 
-1. `$VELT_TOOLCHAIN`, a version (`0.1.3`) or a linked name, for one command;
+1. `velt +<toolchain> <command>` (`velt +0.2.0 build`), or `$VELT_TOOLCHAIN`, a version
+   (`0.1.3`) or a linked name, for one command;
 2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
    version it accepts;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a

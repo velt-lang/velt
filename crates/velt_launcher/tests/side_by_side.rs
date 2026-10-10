@@ -55,6 +55,8 @@ struct Releases {
     /// The public key, hex (`$VELT_INSTALL_PUBLIC_KEY`).
     key: String,
     signer: ring::signature::Ed25519KeyPair,
+    /// The index's `generated` time, increased with each new index.
+    generated: std::sync::atomic::AtomicU64,
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -104,6 +106,7 @@ impl Releases {
             server: Some(server),
             key,
             signer,
+            generated: std::sync::atomic::AtomicU64::new(1_000),
             files,
             requests,
         };
@@ -114,6 +117,21 @@ impl Releases {
 
     /// Publish the signed index of releases: (version, why it was yanked).
     fn index(&self, releases: &[(&str, Option<&str>)]) {
+        self.index_with(releases, None, None);
+    }
+
+    /// [`Releases::index`] naming the newest launcher, and written at `generated` (default:
+    /// later than the last one).
+    fn index_with(
+        &self,
+        releases: &[(&str, Option<&str>)],
+        launcher: Option<&str>,
+        generated: Option<u64>,
+    ) {
+        use std::sync::atomic::Ordering;
+        let generated =
+            generated.unwrap_or_else(|| self.generated.fetch_add(1, Ordering::Relaxed) + 1);
+        let launcher = launcher.map_or(String::new(), |l| format!("\"launcher\": \"{l}\", "));
         let entries: Vec<String> = releases
             .iter()
             .map(|(v, yanked)| match yanked {
@@ -121,7 +139,10 @@ impl Releases {
                 None => format!("{{\"version\": \"{v}\"}}"),
             })
             .collect();
-        let index = format!("{{\"format\": 1, \"releases\": [{}]}}", entries.join(", "));
+        let index = format!(
+            "{{\"format\": 1, \"generated\": {generated}, {launcher}\"releases\": [{}]}}",
+            entries.join(", ")
+        );
         let path = "/releases/download/index/releases.json";
         let mut files = self.files.lock().unwrap();
         files.insert(
@@ -510,4 +531,44 @@ fn yanked_releases_are_skipped_unless_named() {
     m.ok(&fresh, &["build"]);
     let err = m.fail(&m.work, &["toolchain", "install", "0.1"], &[]);
     assert!(err.contains("does not match the release key"), "{err}");
+}
+
+#[test]
+fn a_plus_argument_picks_the_toolchain_for_one_command() {
+    let releases = Releases::new(&["0.1.0", "0.2.0"]);
+    let m = Machine::new(&releases);
+    let pkg = m.package("app", Some("0.1"));
+    let stdout = m.ok(&pkg, &["+0.2.0", "build", "--release"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.0")), "{stdout}");
+    assert!(stdout.contains("selected=0.2.0 (+0.2.0)"), "{stdout}");
+    // The `+` argument is the launcher's: the toolchain gets the rest.
+    assert!(stdout.contains("args=build --release\n"), "{stdout}");
+    // It wins over $VELT_TOOLCHAIN, and works for `velt toolchain` too.
+    let stdout = m.ok_with(&pkg, &["+0.2.0", "run"], &[("VELT_TOOLCHAIN", "0.1.0")]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.0")));
+    let which = m.ok(&pkg, &["+0.2.0", "toolchain", "which"]);
+    assert!(which.starts_with("0.2.0 (+0.2.0)"), "{which}");
+    let err = m.fail(&pkg, &["+0.x", "build"], &[]);
+    assert!(err.contains("`+0.x`: `0.x` is neither a version"), "{err}");
+    let err = m.fail(&pkg, &["+nightly", "build"], &[]);
+    assert!(err.contains("no toolchain is linked as `nightly`"), "{err}");
+}
+
+#[test]
+fn an_index_names_a_newer_launcher_and_is_never_older_than_one_seen() {
+    let releases = Releases::new(&["0.1.0"]);
+    releases.index_with(&[("0.1.0", None)], Some("99.0.0"), Some(5_000));
+    let m = Machine::new(&releases);
+    let out = m.run(&m.work, &["toolchain", "list", "--available"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(stdout, "0.1.0\n");
+    assert!(
+        stderr.contains("a newer velt launcher (99.0.0) is available"),
+        "{stderr}"
+    );
+    // A mirror serving an older (signed) index is refused.
+    releases.index_with(&[("0.1.0", None)], None, Some(4_000));
+    let err = m.fail(&m.work, &["toolchain", "list", "--available"], &[]);
+    assert!(err.contains("is older than an index seen before"), "{err}");
 }

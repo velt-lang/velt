@@ -192,7 +192,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (`<exe>.link-stamp` beside it).
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
-  For every command but `toolchain` it selects `$VELT_TOOLCHAIN` (a version or a link name),
+  A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
+  a toolchain's own `velt` given one exits 1 saying it is the launcher's. For every command but
+  `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (a version or a link name),
   else the `velt` requirement of the nearest `package.vlt` above the cwd
   (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin), else
   `<root>/default`; none → exit 1 naming `velt toolchain install`. A requirement selects the
@@ -209,12 +211,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   on stderr. It then runs `<prefix>/bin/velt` with the same arguments (Unix: `exec`; Windows:
   waits, exits with its code, ignores Ctrl-C itself), with `VELT_LAUNCHER=<launcher path>` and
   `VELT_TOOLCHAIN_SELECTED=<toolchain> (<reason>)` set; `<reason>` is `$VELT_TOOLCHAIN`,
-  `velt: "<req>" in <manifest>:<line>` or `the default`. `velt doctor` reports both
+  `velt: "<req>" in <manifest>:<line>`, `+<toolchain>` or `the default`. `velt doctor` reports both
   (`toolchain`), or "started directly". `velt toolchain` in a toolchain's own `velt` exits 1
   saying it is the launcher's. `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
-  newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones. `install <spec>`: a full version is exact,
+  newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
+  Reading the index refuses one whose `generated` is older than `<root>/index-seen`, and prints
+  `velt: a newer velt launcher (<v>) is available; …` on stderr when its `launcher` is newer than
+  the running launcher. `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
   `--force`. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and

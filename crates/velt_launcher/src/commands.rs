@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use semver::Version;
-use velt_toolchain::{release, Requirement, Toolchain};
+use velt_toolchain::{Requirement, Toolchain};
 
 use crate::select::{self, Context, Wanted};
 
@@ -26,8 +26,8 @@ Commands:
   link <name> <prefix>         use a toolchain built elsewhere (a checkout) as <name>
   unlink <name>                remove a link (the prefix stays)
 
-A package selects versions with `velt: \"0.1\"` in package.vlt; $VELT_TOOLCHAIN (a version or a
-link) overrides it for one command. Missing versions are installed on first use unless
+A package selects versions with `velt: \"0.1\"` in package.vlt; `velt +<toolchain> <command>` or
+$VELT_TOOLCHAIN (a version or a link) overrides it for one command. Missing versions are installed on first use unless
 $VELT_TOOLCHAIN_AUTO_INSTALL=0; $VELT_INSTALL_BASE_URL names a mirror.
 ";
 
@@ -132,7 +132,7 @@ fn list(ctx: &Context, available: bool) -> Result<(), String> {
     let root = &ctx.root;
     let installed = root.versions();
     if available {
-        for release in release::fetch_index(&ctx.base)?.iter().rev() {
+        for release in select::index(ctx)?.releases.iter().rev() {
             let v = &release.version;
             let mut state = String::new();
             if installed.contains(v) {

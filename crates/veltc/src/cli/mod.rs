@@ -285,6 +285,12 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
 }
 
 fn unknown_command(sub: &str) -> String {
+    if sub.starts_with('+') {
+        return format!(
+            "`velt {sub} …` picks a toolchain, which the velt launcher does (<root>/bin/velt, \
+             which the installer puts on PATH); this velt was started directly"
+        );
+    }
     let mut msg = format!("unknown command `{sub}`");
     if sub.starts_with('-') {
         msg = format!("unknown option `{sub}`");
@@ -408,6 +414,7 @@ mod tests {
         assert_eq!(p(&[]).unwrap(), Command::Help(None));
         assert_eq!(p(&["doctor"]).unwrap(), Command::Doctor);
         assert_eq!(p(&["toolchain", "list"]).unwrap(), Command::Toolchain);
+        assert!(p(&["+0.2", "build"]).unwrap_err().contains("velt launcher"));
         assert_eq!(p(&["clean"]).unwrap(), Command::Clean);
         assert!(p(&["doctor", "-x"])
             .unwrap_err()

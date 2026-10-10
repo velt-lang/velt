@@ -143,6 +143,11 @@ The extension adds syntax highlighting and starts `velt lsp`.
 | `velt.serverPath` | `velt` | the `velt` executable (`~` and `${workspaceFolder}` are expanded); changing it restarts the server |
 | `velt.trace.server` | `off` | `messages` / `verbose` log the LSP traffic to the output channel |
 
+With the default `velt.serverPath`, the `velt` on `PATH` is the launcher, which starts the
+language server of the toolchain the first workspace folder's package pins
+([`velt toolchain`](cli.md#velt-toolchain)). A window holding packages pinned to different
+versions uses that one for all of them; open each in its own window to get its own.
+
 The command **Velt: Restart Language Server** restarts it, for example after rebuilding `velt`.
 For debugging configurations, see [Debugging](debugging.md#vs-code).
 
