@@ -508,11 +508,12 @@ Classes, structs, interfaces and functions take type parameters (`class Stack<T>
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
 interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. Classes, structs, interfaces and type aliases may give type parameters **defaults**
-(`interface Iterator<T, E = never>`), used when a type leaves the argument out (`Iterator<i64>`
-is `Iterator<i64, never>`) and when nothing infers it in a `new` (`new D(1)` of
-`class D<T = i64>` is a `D<i64>`); functions and methods cannot. As in TypeScript, a default
-may use only the parameters declared before it, and must not need its own declaration's
+types. Type parameters may have **defaults** (`interface Iterator<T, E = never>`), used when a
+type leaves the argument out (`Iterator<i64>` is `Iterator<i64, never>`) and when nothing infers
+it in a `new` or a static method call (`new D(1)` of `class D<T = i64>` is a `D<i64>`);
+functions and methods take them too ([Generic functions](functions.md#generic-functions)). As
+in TypeScript, a default may use only the parameters declared before it, a parameter without a
+default may not follow one with a default, and a default must not need its own declaration's
 defaults again (``type parameter `T` has a circular default`` for `class S<T = S>`).
 
 ```ts

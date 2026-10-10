@@ -4,7 +4,7 @@ import { channel } from "velt:channel";
 import { utf8DecodeLossy } from "velt:encoding";
 import { startServer } from "./src/server";
 
-async function get(port: i64, path: string) {
+async function get(port: number, path: string) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`);
   const status = res.status;
   const type = res.headers.get("content-type") ?? "-";

@@ -12,10 +12,10 @@ export class NewItemBody {
 /// Every error the API turns into a JSON error response: `status` is the HTTP status, `code` a
 /// stable machine-readable name. One base class, so `catch (e)` can read both.
 export class ApiError extends Error {
-  status: i64;
+  status: number;
   code: string;
 
-  constructor(status: i64, code: string, message: string) {
+  constructor(status: number, code: string, message: string) {
     super(message);
     this.status = status;
     this.code = code;

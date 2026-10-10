@@ -201,19 +201,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `<T, U extends A & B>` (empty when there is no `<`) of a function, method or arrow:
-    /// type parameter defaults are reported.
+    /// `<T, U extends A & B = U>` (empty when there is no `<`) of a function, method, arrow,
+    /// class, struct, interface or type alias: parameters may have defaults (`T = Default`), and
+    /// a parameter without one may not follow one.
     pub(super) fn parse_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
-        self.generic_params(false)
-    }
-
-    /// `<T, E = never>` of a class, struct, interface or type alias: parameters may have
-    /// defaults (`T = Default`), and a parameter without one may not follow one.
-    pub(super) fn parse_type_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
-        self.generic_params(true)
-    }
-
-    fn generic_params(&mut self, defaults: bool) -> PResult<Vec<GenericParam>> {
         let mut out: Vec<GenericParam> = Vec::new();
         if !self.eat(Tok::Lt) {
             return Ok(out);
@@ -227,13 +218,7 @@ impl<'a> Parser<'a> {
                     bounds.push(self.parse_type_no_union()?);
                 }
             }
-            let default = match defaults {
-                true => self.type_param_default(&out, &name)?,
-                false => {
-                    self.reject_type_param_default()?;
-                    None
-                }
-            };
+            let default = self.type_param_default(&out, &name)?;
             out.push(GenericParam {
                 name,
                 bounds,
@@ -271,7 +256,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `= Default` after a type parameter of a type declaration (`prev`: the parameters before).
+    /// `= Default` after a type parameter (`prev`: the parameters before).
     fn type_param_default(
         &mut self,
         prev: &[GenericParam],
@@ -293,22 +278,6 @@ impl<'a> Parser<'a> {
             );
         }
         Ok(None)
-    }
-
-    /// `<T = Default>` on a function, method or arrow: not supported. Reported (even while
-    /// speculating: a failed attempt rewinds it) and the default type skipped.
-    fn reject_type_param_default(&mut self) -> PResult<()> {
-        if !self.at(Tok::Eq) {
-            return Ok(());
-        }
-        let span = self.cur_span();
-        self.diags.push(
-            velt_common::Diagnostic::error("type parameter defaults are not supported", span)
-                .with_note("remove the default and pass the type argument explicitly"),
-        );
-        self.bump();
-        self.parse_type()?;
-        Ok(())
     }
 
     /// `( name: Type [= default], ... )`
@@ -396,7 +365,7 @@ impl<'a> Parser<'a> {
     fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
-        let generics = self.parse_type_generic_params()?;
+        let generics = self.parse_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
         self.expect_semi()?;

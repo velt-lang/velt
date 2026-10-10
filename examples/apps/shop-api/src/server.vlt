@@ -14,7 +14,7 @@ async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Respon
   const body = method === "GET" ? "" : await req.text();
   const out = store.with((s) => route(s, method, path, query, body));
   return new Response(out.body, {
-    status: out.status,
+    status: out.status as number,
     headers: { "content-type": "application/json" },
   });
 }
@@ -22,5 +22,5 @@ async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Respon
 /// Serves `store` on `port` (0 = any free port).
 export async function startServer(store: Store, port: i64): Promise<Server> {
   const shop = shared(new Mutex<Store>(store));
-  return await serve({ port }, async (req) => await handle(req, shop));
+  return await serve({ port: port as number }, async (req) => await handle(req, shop));
 }

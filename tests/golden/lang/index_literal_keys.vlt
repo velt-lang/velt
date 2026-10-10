@@ -1,0 +1,136 @@
+// Indexing with a key whose type is a string literal or a union of them, as in TypeScript: a
+// constant names one field, a union key reads the field it holds when it runs (typed as the
+// union of the fields' types), and assigning through it works when the fields have one type.
+type H = { "a-b": number; c: number; name: string };
+type Key = "a-b" | "c";
+
+class Counter {
+  hits = 0;
+  misses = 0;
+
+  bump(which: "hits" | "misses"): number {
+    this[which] += 1;
+    return this[which];
+  }
+}
+
+class Doc {
+  title = "t";
+  body = "b";
+  tags: string[] = [];
+  notes: string[] = [];
+}
+
+type Part = "title" | "body";
+
+class Mixed {
+  title = "t";
+  count = 0;
+}
+
+// A key narrowed to one member assigns that field's type.
+function set(m: Mixed, k: "title" | "count") {
+  if (k === "title") {
+    m[k] = "x";
+  } else if (k === "count") {
+    m[k] = 3;
+  }
+}
+
+function read(h: H, k: Key): number {
+  return h[k];
+}
+
+function either(h: H, k: "c" | "name"): string {
+  const v = h[k];
+  return `${v}`;
+}
+
+function show(d: Doc, p: Part): string {
+  const s = d[p];
+  return s + "!";
+}
+
+const h: H = { "a-b": 1, c: 2, name: "n" };
+const k = "a-b";
+console.log(h[k]);
+const j = "c" as ("a-b" | "c");
+console.log(h[j]);
+console.log(read(h, "a-b"), read(h, "c"));
+console.log(either(h, "c"), either(h, "name"));
+let key: Key = "a-b";
+h[key] = 10;
+h[key] += 5;
+key = "c";
+h[key] = 20;
+console.log(h["a-b"], h.c);
+const name = "name";
+h[name] = "m";
+console.log(h.name);
+const ctr = new Counter();
+ctr.bump("hits");
+ctr.bump("misses");
+console.log(ctr.bump("hits"), ctr.hits, ctr.misses);
+const d = new Doc();
+console.log(show(d, "title"), show(d, "body"));
+let p: Part = "body";
+d[p] = "changed";
+console.log(d.body, d[p], `${d[p]}`);
+const which = "tags" as ("tags" | "notes");
+console.log(d[which].length);
+d[which].push("x");
+d[which].push("y");
+console.log(d.tags, d.notes);
+const mixed = { a: 1, b: "x" };
+const mk = "b" as ("a" | "b");
+console.log(mixed[mk]);
+const mx = new Mixed();
+set(mx, "title");
+set(mx, "count");
+console.log(mx.title, mx.count);
+
+// `o[k] op= v` reads the field before `v` runs, as in JavaScript.
+type AB = { a: number; b: number };
+function bumpA(o: AB): number {
+  o.a = 100;
+  return 1;
+}
+let kab: "a" | "b" = "a";
+const ab: AB = { a: 1, b: 2 };
+ab[kab] += bumpA(ab);
+console.log(ab.a);
+
+// A key that is not a name is evaluated once: a call, an element, a field of a variable.
+type Calls = { n: number };
+function pick(c: Calls): "a" | "b" {
+  c.n += 1;
+  return "b";
+}
+const calls: Calls = { n: 0 };
+const ab2: AB = { a: 1, b: 1 };
+ab2[pick(calls)] += 1;
+console.log(ab2[pick(calls)], calls.n);
+const ks: ("a" | "b")[] = ["a", "b"];
+const ab3: AB = { a: 5, b: 1 };
+ab3[ks[1]] = ab3[ks[1]] + 1;
+console.log(ab3[ks[1]]);
+const holder = { o: { a: 0, b: 1 } as AB, k: "b" as "a" | "b" };
+holder.o[holder.k] += 1;
+console.log(holder.o[holder.k]);
+
+// `++` and `--` through a union key, as statements and as values.
+const ab4: AB = { a: 9, b: 1 };
+let k4: "a" | "b" = "b";
+ab4[k4]++;
+console.log(ab4.b);
+const x1 = ab4[k4]++;
+const x2 = ++ab4[k4];
+const x3 = ab4[pick(calls)]--;
+console.log(x1, x2, x3, ab4.b, ab4.a, calls.n);
+
+// `as` a union of string literals with `null` asserts, as in TypeScript.
+const lit = "a" as "a" | null;
+const lit2 = ("a" as "a" | "b") as "a" | "b" | null;
+const wide: string = "b";
+const lit3 = (wide === "b" ? "b" : "a") as "a" | "b" | null;
+console.log(lit, lit2, lit3);

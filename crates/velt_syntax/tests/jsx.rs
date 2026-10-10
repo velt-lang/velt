@@ -248,11 +248,24 @@ fn ts_style_generic_arrows() {
 }
 
 #[test]
-fn type_parameter_defaults_are_reported() {
-    let errs = errors("const f = <T = string>(x: T) => x;");
-    assert_eq!(errs, vec!["type parameter defaults are not supported"]);
-    let errs = errors("function f<T, U = T>(x: T): T { return x; }");
-    assert_eq!(errs, vec!["type parameter defaults are not supported"]);
+fn functions_and_arrows_take_type_parameter_defaults() {
+    let m = parse_ok("function f<T, U = T>(x: T): T { return x; }");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!("function")
+    };
+    let defaults: Vec<bool> = f.sig.generics.iter().map(|g| g.default.is_some()).collect();
+    assert_eq!(defaults, [false, true]);
+    assert!(errors("const f = <T = string>(x: T) => x;").is_empty());
+    let errs = errors("function g<T = string, U>(x: U): U { return x; }");
+    assert_eq!(
+        errs,
+        vec!["type parameter `U` needs a default: it follows one that has a default"]
+    );
+    let errs = errors("extend<T = i64> Box<T> {}");
+    assert_eq!(
+        errs,
+        vec!["an `extend` block's type parameters cannot have defaults"]
+    );
 }
 
 #[test]

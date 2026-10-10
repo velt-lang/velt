@@ -75,8 +75,8 @@ export struct RedisConnectOptions {
  * exist (`nx`) or only if it does (`xx`).
  */
 export struct SetOptions {
-  ex?: i64;
-  px?: i64;
+  ex?: number;
+  px?: number;
   nx?: bool;
   xx?: bool;
 }
