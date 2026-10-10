@@ -204,9 +204,10 @@ collector does ([memory](../reference/memory.md)).
 
 Differences from JavaScript:
 
-- **Freed at once.** Velt frees an object when its last reference goes, so a `WeakRef`'s
-  `deref()` returns `null` right after, where Node keeps returning the object until a later
-  garbage collection.
+- **Freed at once.** Velt frees an object when its last reference goes (which can be the last
+  use of the variable holding it), so a `WeakRef`'s `deref()` returns `null` right after, where
+  Node keeps returning the object until a later garbage collection, and at least until the
+  current job ends.
 - **One thread.** A weak collection belongs to the thread that made it: it cannot be passed to
   a spawned task, sent on a channel, captured by an async closure that may run on another
   thread, put in `shared(...)` or cloned (an error says so; in JavaScript, `structuredClone`
