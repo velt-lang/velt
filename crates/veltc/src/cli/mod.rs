@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 use crate::backend::Backend;
 use crate::playground::PlaygroundArgs;
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 pub use check::CheckArgs;
 use completions::Shell;
 
@@ -86,6 +86,9 @@ pub struct BuildArgs {
     pub locked: bool,
     /// `--report numbers`: list the `number` variables in loops that stay doubles.
     pub report_numbers: bool,
+    /// `velt build --json`: the result (output path, debug info, diagnostics) as one JSON
+    /// document on stdout instead of text on stderr.
+    pub json: bool,
 }
 
 /// How `velt dev` runs each version of the program.
@@ -154,6 +157,12 @@ pub enum Command {
         /// Overwrite existing files.
         force: bool,
     },
+    /// `velt init --editor <e> [--dir <d>]`: only the editor's files, in `dir`, else at the root
+    /// of the current package (or in the current directory).
+    InitEditor {
+        editor: Editor,
+        dir: Option<PathBuf>,
+    },
     /// `velt clean`: remove the package's `target/`.
     Clean,
     /// `velt completions <shell>`.
@@ -214,6 +223,9 @@ pub enum Command {
     },
     /// `velt target list|add|remove`: target packs for cross-compiling.
     Target(target::TargetAction),
+    /// `velt toolchain …`: the launcher's command (#948); a toolchain started directly only
+    /// says so.
+    Toolchain,
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -275,12 +287,19 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "owner" => registry::parse_owner(rest),
         "search" => registry::parse_search(rest),
         "target" => target::parse_target(rest),
+        "toolchain" => Ok(Command::Toolchain),
         "login" | "logout" => registry::parse_login(sub, rest),
         _ => Err(unknown_command(sub)),
     }
 }
 
 fn unknown_command(sub: &str) -> String {
+    if sub.starts_with('+') {
+        return format!(
+            "`velt {sub} …` picks a toolchain, which the velt launcher does (<root>/bin/velt, \
+             which the installer puts on PATH); this velt was started directly"
+        );
+    }
     let mut msg = format!("unknown command `{sub}`");
     if sub.starts_with('-') {
         msg = format!("unknown option `{sub}`");
@@ -403,6 +422,8 @@ mod tests {
         assert_eq!(p(&["--version"]).unwrap(), Command::Version);
         assert_eq!(p(&[]).unwrap(), Command::Help(None));
         assert_eq!(p(&["doctor"]).unwrap(), Command::Doctor);
+        assert_eq!(p(&["toolchain", "list"]).unwrap(), Command::Toolchain);
+        assert!(p(&["+0.2", "build"]).unwrap_err().contains("velt launcher"));
         assert_eq!(p(&["clean"]).unwrap(), Command::Clean);
         assert!(p(&["doctor", "-x"])
             .unwrap_err()

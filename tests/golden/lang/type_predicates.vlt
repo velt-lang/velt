@@ -1,0 +1,59 @@
+// Type predicates (expected output from `node`): a function returning `x is T` returns a
+// boolean, and a call of it in a condition narrows the variable it is passed, as `typeof` and
+// `instanceof` tests do.
+
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+class Dog extends Animal {
+  bark(): string {
+    return this.name + " woof";
+  }
+}
+
+function isDog(a: Animal): a is Dog {
+  return a instanceof Dog;
+}
+function isString(v: string | number): v is string {
+  return typeof v === "string";
+}
+function isPresent(v: string | null): v is string {
+  return v !== null;
+}
+const isEven = (n: number): n is number => n % 2 === 0;
+
+function show(v: string | number): string {
+  if (isString(v)) {
+    return "string " + v.toUpperCase();
+  } else {
+    return "number " + (v + 1);
+  }
+}
+console.log(show("ab"), show(41));
+
+const pets: Animal[] = [new Dog("rex"), new Animal("tom")];
+for (const p of pets) {
+  if (isDog(p)) console.log(p.bark());
+  else console.log("not a dog:", p.name);
+}
+
+const found: string | null = pets.length > 5 ? null : "here";
+console.log(isPresent(found) ? found.length : -1);
+
+const v: string | number = 3;
+console.log(!isString(v) && v > 2);
+console.log(isEven(4), isEven(3));
+
+type Check = (x: string | number) => x is string;
+const check: Check = isString;
+console.log(check("s"), check(1));
+
+// `asserts n` returns only when `n` is truthy (no narrowing after it yet).
+function assertPositive(n: number): asserts n {
+  if (n <= 0) throw new Error("not positive");
+}
+assertPositive(2);
+console.log("asserted");

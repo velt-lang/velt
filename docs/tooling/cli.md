@@ -7,7 +7,7 @@ prints every command's options and examples.
 | Command | What it does |
 |---|---|
 | `velt new <name>` | create a package in a new directory from a template |
-| `velt init` | turn the current directory into a package |
+| `velt init` | turn the current directory into a package; `--editor vscode` only adds the VS Code files |
 | `velt build` | compile a file or the current package |
 | `velt run` | build and run a file or the current package |
 | `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)); `--ts-compat` lints code shared with TypeScript ([below](#code-shared-with-typescript---ts-compat)) |
@@ -24,6 +24,7 @@ prints every command's options and examples.
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
 | `velt target list`, `add`, `remove` | the targets `velt build --target` builds for: install or remove target packs ([Cross-compiling](platforms.md#cross-compiling)) |
+| `velt toolchain list`, `install`, `remove`, `default`, `which`, `link` | the velt versions installed side by side, and which one runs ([`velt toolchain`](#velt-toolchain)) |
 | `velt doctor` | check the installation and run a hello world |
 | `velt completions <shell>` | print a completion script for bash, zsh, fish or PowerShell |
 
@@ -43,13 +44,13 @@ Every build command works on a single file or on a package:
 
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings] [--report numbers]
+           [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
            [--locked] [-v] [--timings] [--report numbers] [-- <program args>...]
 ```
 
 - **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
-  on Linux (macOS untested; function symbols on Windows).
+  on Linux and macOS (function symbols on Windows).
 - **`--release`** runs Velt's optimizer, then LLVM `-O3` when clang 16 or newer is found
   (`VELT_CLANG`, `PATH`, the standard install directories); otherwise Cranelift, with a
   one-line note. `-g` keeps debug info in a release build ([Debugging](debugging.md)).
@@ -67,6 +68,14 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
+- `build --json` prints one JSON document on stdout instead of diagnostics on stderr, for
+  editors (the VS Code extension's F5 runs it): `{"executable", "debugInfo", "lldbScript",
+  "diagnostics", "errors", "warnings"}`. `executable` is the absolute path of the program
+  (`null` if the build failed or made none, as with `--emit obj`); `debugInfo` says whether it
+  has line information for debuggers (`false` for the default build on Windows, which has
+  none yet); `lldbScript` is the toolchain's LLDB script for Velt values
+  (`share/velt/lldb/velt_lldb.py`, `null` if missing); the diagnostics are those of
+  [`velt check --json`](#velt-check). It exits like `velt build`.
 - `--report numbers` lists, on stderr, the `number` variables assigned inside loops that the
   optimizer keeps as doubles, with the first reason it found for not storing each one as an
   integer:
@@ -179,6 +188,7 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
 ```
 velt new <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init [--template <t>] [--name <name>] [--force]
+velt init --editor vscode [--dir <dir>]
 ```
 
 | Template | What you get |
@@ -192,6 +202,12 @@ velt init [--template <t>] [--name <name>] [--force]
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
 existing `README.md`, and names the package after the directory unless `--name` is given.
+
+Packages also get `.vscode/launch.json`, so F5 in VS Code builds and debugs the program, and
+`.vscode/extensions.json`, which recommends the Velt and CodeLLDB extensions
+([Debugging](debugging.md#vs-code)); existing ones are kept. `velt init --editor vscode` adds
+only those two files, to the root of the current package (or to the current directory outside
+a package, or to `--dir`), and never overwrites one.
 
 ## `velt doc`
 
@@ -226,15 +242,60 @@ the standard library. The output has one page per module and a client-side searc
   deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
   the text; a URL target becomes a link. Other tags stay in the text as written.
 
+## `velt toolchain`
+
+Several velt versions can be installed side by side, each in `<root>/toolchains/<version>/`
+(`<root>` is `~/.velt`, or `%LOCALAPPDATA%\velt` on Windows). The `velt` on your `PATH` is a
+small launcher, `<root>/bin/velt`, that runs one of them with the same arguments. (The
+installers set this layout up from the next release on, #948; a velt 0.1.0 install is a single
+toolchain in `~/.velt/toolchain`, without a launcher.)
+
+1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
+   a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
+2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
+   version it accepts;
+3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
+   package use.
+
+A version the package pins that isn't installed is downloaded from the release on first use and
+installed, with a message on stderr. The release's `SHA256SUMS` and the list of releases are
+signed with the velt release key, which is built into velt, so a mirror or a replaced file can't
+substitute a toolchain. A requirement such as `"0.1"` picks the newest release it accepts that
+hasn't been yanked (withdrawn for a serious bug). Set
+`VELT_TOOLCHAIN_AUTO_INSTALL=0` to turn that off: the command then fails and names the
+`velt toolchain install` command to run.
+
+```
+$ velt toolchain which
+0.1.4 (velt: "0.1" in /home/me/app/package.vlt:5)
+/home/me/.velt/toolchains/0.1.4
+$ velt toolchain list
+*  0.2.0
+ > 0.1.4
+```
+
+| Command | What it does |
+|---|---|
+| `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
+| `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
+| `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
+| `default [<toolchain>]` | show or set the default |
+| `which` | the toolchain this directory runs, why, and its directory |
+| `link <name> <prefix>`, `unlink <name>` | use a toolchain prefix built elsewhere (a checkout's; it holds `bin/velt` and `std/`) as `<name>`: `velt +dev test` |
+
+The launcher runs `velt toolchain` itself, so it works the same whichever version a package
+pins. A toolchain's own `bin/velt`, started directly, says so instead.
+
 ## `velt doctor`
 
 Checks the runtime library, the standard library, the linker (the bundled lld with the
 target's link kit, or the system linker and why the bundled one is not used), the installed
 target packs (`velt target`), the WebAssembly
-linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
-`VELT_HOME` is writable, then compiles and runs a hello world (debug, plus release through LLVM
-when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
-It exits with 0 when every required check passes.
+linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, the
+debugger scripts (`share/velt/lldb/velt_lldb.py`, optional), that `VELT_HOME` is writable, and
+which toolchain version runs and why (`velt toolchain`), then compiles and runs a hello world
+(debug, plus release through LLVM when clang is found). Problems are marked `✗` (required) or
+`!` (optional) with a `fix:` hint. It exits with 0 when every required check passes.
 
 ```
 $ velt doctor
@@ -244,7 +305,9 @@ $ velt doctor
 ✓ linker           bundled C:\Users\me\AppData\Local\velt\lib\velt\lld.exe (kit C:\Users\me\AppData\Local\velt\lib\targets\x86_64-pc-windows-msvc)
 ✓ wasm linker      C:\Users\me\AppData\Local\velt\lib\velt\lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
+✓ debugger scripts C:\Users\me\AppData\Local\velt\share\velt\lldb\velt_lldb.py
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
+✓ toolchain        0.1.0 (the default); launcher C:\Users\me\AppData\Local\velt\bin\velt.exe, default 0.1.0
 ✓ hello (debug)    built with Cranelift and ran
 ✓ hello (release)  built with LLVM and ran
 ```
@@ -273,6 +336,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | Variable | Meaning |
 |---|---|
 | `VELT_STD` | standard library directory |
+| `VELT_SHARE` | directory of the debugger scripts (`<it>/lldb/velt_lldb.py`; default `<prefix>/share/velt`) |
 | `VELT_HOME` | package manager home (default `~/.velt`: `cache/`, `registry/`) |
 | `VELT_REGISTRY` | package registry: a directory (default `$VELT_HOME/registry`) or an `http(s)://` URL |
 | `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |
@@ -284,7 +348,10 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
 | `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
-| `VELT_INSTALL_BASE_URL` | the repository whose releases `velt target add` (and the installers) download from (default `https://github.com/velt-lang/velt`) |
+| `VELT_INSTALL_BASE_URL` | the repository whose releases the launcher, `velt toolchain install`, `velt target add` and the installers download from (default `https://github.com/velt-lang/velt`) |
+| `VELT_TOOLCHAIN` | the toolchain the launcher runs for this command: a version or a linked name, overriding the package's `velt` field ([`velt toolchain`](#velt-toolchain)) |
+| `VELT_TOOLCHAIN_AUTO_INSTALL` | `0`: the launcher fails instead of installing a missing version |
+| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 key (64 hex digits) release signatures (`SHA256SUMS.sig`) are checked with, instead of the velt release key: for the releases of another build |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |

@@ -29,6 +29,11 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             }
         }
         T::Object(fields) => fields.iter().for_each(|f| walk_type(&f.ty, v)),
+        T::Predicate { ty, .. } => {
+            if let Some(t) = ty {
+                walk_type(t, v);
+            }
+        }
         T::Literal(_) | T::Null | T::Void => {}
     }
 }

@@ -73,6 +73,7 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
             keywords: vec![],
             entry: DEFAULT_ENTRY.into(),
         },
+        toolchain: Some(this_toolchain_pin()),
         dependencies: BTreeMap::new(),
         paths: BTreeMap::new(),
         native: None,
@@ -80,6 +81,14 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
         ts_compat: vec![],
     }
     .to_vlt()
+}
+
+/// The `velt` field of a new package: this toolchain's `major.minor`, so a newer velt installed
+/// later does not change what builds it.
+pub fn this_toolchain_pin() -> String {
+    let version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .expect("ICE: the crate version is a semver version");
+    velt_toolchain::requirement::pin_for(&version)
 }
 
 /// `Err` with an actionable message unless `name` is a valid package name.

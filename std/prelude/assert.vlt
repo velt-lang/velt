@@ -42,3 +42,11 @@ export function assertThrows<R, E>(f: () => R throws E, msg: string = "expected 
   }
   panic(msg);
 }
+
+/**
+ * `value satisfies T` (TypeScript): `value`, checked against `T` with `T` as its context, as an
+ * annotated initializer is. The parser writes the operator as a call of this function.
+ */
+export function __satisfies<T>(value: T): T {
+  return value;
+}

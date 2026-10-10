@@ -222,6 +222,71 @@ an extern parameter or result whose type holds boxed values crosses as an unboxe
 or is boxed after the call (results). Closure environments on the heap are counted blocks too; the
 drop function in their header releases one reference.
 
+**Debug check of captured variables' cells** (#916). A captured variable that a closure assigns
+lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
+transfer glue gives a value crossing to another task cells of its own, and sema rejects the
+shapes that would share one (#901). Debug programs built by a debug compiler (as every debug
+golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
+records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
+which is not a race. The first use by a task other than the owner prints `velt debug-cells:
+captured variable <name> was used by two tasks: …` (both tasks and their threads, and the fix:
+`shared(...)`) to stderr and aborts. A cell made outside any task is claimed by the first task
+that uses it; uses outside any task (runtime clean-up, an HTTP request's set-up) are not checked. Release builds emit none of these
+calls and the cell layout is the same; the release runtime keeps the symbols as empty functions
+(and so does the WebAssembly runtime, which has one thread).
+
+| Symbol | Signature | Emitted |
+|---|---|---|
+| `velt_rt_cell_new` | `(void* cell, const VeltStr* name)` | a new cell of variable `name`: owned by the current task (unowned outside a task) |
+| `velt_rt_cell_use` | `(void* cell)` | before each count change of a cell, and on entry to a closure that assigns the captured variable: claims an unowned cell, aborts if another task owns it |
+| `velt_rt_cell_give` | `(void* cell)` | the transfer glue moves the only reference to another task: unowned until the receiver uses it |
+| `velt_rt_cell_copy` | `(void* cell, void* from)` | the transfer glue's fresh copy of the shared cell `from`: unowned |
+| `velt_rt_cell_free` | `(void* cell)` | before the cell's last reference frees it |
+
+## Weak references (proposed)
+**Proposed (#823, #11); not used by the compiler yet.** `velt_rt` exports these functions
+(`src/weak/`) for the compiler to lower `WeakMap`, `WeakSet`, `WeakRef` and `weak T` to; they
+may change until it does. Design:
+[weak-refs.md](../design/weak-refs.md).
+
+- **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
+  held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
+- **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
+  targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if velt_rt_weak_release(obj) { drop;
+  free }` (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release as
+  today.
+- **Trace glue** per counted type that can be a weak key or value, or be reached from one:
+  `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
+  for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
+  retained with `void retain(uint64_t value)` and released with `void release(uint64_t value)`.
+- **Map values.** A value word of a map with `value_release` is 0 (`null`, `undefined`) or a
+  counted object pointer; strings and unions stored as such values are boxed. The runtime never
+  retains, releases or traces a 0 value.
+- **Threads.** Handles (`MapId`, `RefId`) are `uint32_t`, valid on the creating thread until
+  dropped; the compiler keeps `WeakMap`, `WeakSet` and `WeakRef` values out of transfers (sema
+  rejects them, or the transfer glue panics). Weak-capable types are never `shared<T>` or
+  atomic. A weakly held object released on a thread with no record of it is an ICE
+  (`velt_rt_weak_release` panics before it changes the count).
+- **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
+  1 (a weakly held object is never unique), and every site that decrements a count directly
+  (`c - 1`: `lower/rc.rs`, `lower/glue/drop_chain.rs`, `lower/glue/transfer.rs`,
+  `lower/glue/transfer_env.rs` in `velt_vir` today) uses the release sequence above instead.
+
+| Symbol | Signature | Semantics |
+|---|---|---|
+| `velt_rt_weakmap_new` | `(TraceFn key_trace, RetainFn value_retain, ReleaseFn value_release, TraceFn value_trace) -> uint32_t` | a new map; null `value_retain` and `value_release` (both or neither) mean values are plain words (`WeakMap<K, number>`, `WeakSet`), a null `value_trace` that values never refer to keys (a `value_trace` needs value glue) |
+| `velt_rt_weakmap_set` | `(uint32_t m, uint8_t* key, uint64_t value)` | takes over the value's reference; the key is not counted; releases a replaced value |
+| `velt_rt_weakmap_get` | `(uint32_t m, uint8_t* key, uint8_t* found) -> uint64_t` | the value, counted (retained with `value_retain`; the caller releases it), or 0; `*found` = 1 if present |
+| `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
+| `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
+| `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
+| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj` |
+| `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
+| `velt_rt_weakref_drop` | `(uint32_t r)` | |
+| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) on a thread without the object's record |
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

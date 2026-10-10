@@ -191,7 +191,7 @@ pub fn check_transport(url: &str, what: &str) -> Result<(), String> {
 /// address). The host is read by [`velt_http::url_host`], the HTTP client's own parser, so the
 /// rule and the connection agree on it; a URL it refuses is neither.
 pub fn is_tls_or_loopback(url: &str) -> bool {
-    velt_http::url_host(url).is_ok_and(|h| h.tls || h.is_loopback())
+    velt_http::is_tls_or_loopback(url)
 }
 
 #[cfg(test)]

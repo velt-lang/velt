@@ -1,0 +1,3 @@
+ts_syntax_errors.vlt:3:10: error: 'readonly' type modifier is only permitted on array and tuple literal types
+ts_syntax_errors.vlt:6:23: error: initializers are not allowed in ambient contexts
+ts_syntax_errors.vlt:9:16: error: generic method signatures are only supported in interfaces: declare `run` in an interface

@@ -1,0 +1,3 @@
+overloads_missing_impl.vlt:3:10: error: function implementation is missing or not immediately following the declaration of `lonely`
+overloads_missing_impl.vlt:6:10: error: function implementation name must be `other` (TypeScript's TS2389)
+overloads_missing_impl.vlt:11:3: error: function implementation is missing or not immediately following the declaration of `m`

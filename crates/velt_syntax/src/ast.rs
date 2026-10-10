@@ -151,6 +151,13 @@ pub struct FnSig {
 pub struct FnDecl {
     pub sig: FnSig,
     pub body: Block,
+    /// TypeScript-form overloads: the bodiless signatures written right before this
+    /// implementation (`function f(a: string): A;` `function f(a: number): B;` then
+    /// `function f(a: string | number): A | B { ... }`), in order. Calls choose among them;
+    /// the implementation's own signature is not callable from outside. Empty for a function
+    /// without overloads, and always for function expressions, object-literal methods and
+    /// constructors.
+    pub overloads: Vec<FnSig>,
 }
 
 #[derive(Clone, Debug)]
@@ -305,6 +312,15 @@ pub enum TypeExprKind {
     Null,
     /// `void`
     Void,
+    /// A type predicate as a return type (TypeScript's user-defined type guards):
+    /// `x is T` (the function returns a `boolean` that is `true` when parameter `x` is a `T`),
+    /// `this is T`, `asserts x is T` (the function returns only when `x` is a `T`) and
+    /// `asserts x` (only when `x` is truthy; `ty: None`).
+    Predicate {
+        param: Box<Ident>,
+        ty: Option<Box<TypeExpr>>,
+        asserts: bool,
+    },
 }
 
 /// `name: T` / `name?: T` / `readonly name: T` in an object type.

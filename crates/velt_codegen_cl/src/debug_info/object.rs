@@ -4,14 +4,22 @@
 //! sections (abbreviations, lines, strings, ranges) are relocations against those sections on
 //! ELF, whose linker concatenates them with the runtime's own debug info; Mach-O leaves DWARF in
 //! the objects (debuggers find it through the executable's debug map), so there they are plain.
+//!
+//! On Mach-O, debuggers read code addresses as they stand in the object (LLDB maps them to the
+//! executable through the debug map without applying relocations), so the value in place must
+//! be the function's address in the object: its `__text` section's address plus its offset. The
+//! relocation (against the section, as clang emits for local code) keeps it valid for
+//! `dsymutil`.
 
 use cranelift_codegen::gimli::write::{Address, EndianVec, Sections, Writer};
 use cranelift_codegen::gimli::{self, RunTimeEndian, SectionId};
+use cranelift_object::object::write::SymbolSection;
 use cranelift_object::object::write::{Relocation, StandardSegment, SymbolId};
 use cranelift_object::object::{
     BinaryFormat, RelocationEncoding, RelocationFlags, RelocationKind, SectionKind,
 };
 use cranelift_object::ObjectProduct;
+use object::{Object, ObjectSection};
 
 use super::{build_unit, FunctionLines};
 use crate::CodegenResult;
@@ -41,6 +49,11 @@ pub(crate) fn add_debug_info(
         .write(&mut sections)
         .map_err(|e| format!("codegen: writing debug info: {e}"))?;
 
+    // Mach-O: the addresses the code sections get in the object.
+    let addresses = match format {
+        BinaryFormat::MachO => Some(section_addresses(&product.object)?),
+        _ => None,
+    };
     let obj = &mut product.object;
     // Every non-empty section first, so offsets can refer to any of them.
     let mut ids = vec![];
@@ -62,19 +75,34 @@ pub(crate) fn add_debug_info(
         let Some(w) = sections.get(id) else { continue };
         obj.set_section_data(section, w.data.slice().to_vec(), 1);
         for reloc in &w.relocs {
-            let (symbol, size) = match reloc.target {
-                Target::Symbol(i) => (symbols[i], reloc.size),
+            let (symbol, addend, size) = match reloc.target {
+                Target::Symbol(i) => match &addresses {
+                    Some(addresses) => {
+                        let sym = obj.symbol(symbols[i]);
+                        let SymbolSection::Section(section) = sym.section else {
+                            return Err("ICE: debug info for a function without code".into());
+                        };
+                        let name = obj.section(section).name().unwrap_or_default();
+                        let base = addresses
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .map_or(0, |(_, a)| *a);
+                        let address = (base + sym.value) as i64 + reloc.addend;
+                        (obj.section_symbol(section), address, reloc.size)
+                    }
+                    None => (symbols[i], reloc.addend, reloc.size),
+                },
                 Target::Section(_) if format == BinaryFormat::MachO => continue,
                 Target::Section(target) => {
                     let target =
                         section_of(target).ok_or("ICE: debug info refers to an empty section")?;
-                    (obj.section_symbol(target), reloc.size)
+                    (obj.section_symbol(target), reloc.addend, reloc.size)
                 }
             };
             let relocation = Relocation {
                 offset: reloc.offset,
                 symbol,
-                addend: reloc.addend,
+                addend,
                 flags: RelocationFlags::Generic {
                     kind: RelocationKind::Absolute,
                     encoding: RelocationEncoding::Generic,
@@ -86,6 +114,22 @@ pub(crate) fn add_debug_info(
         }
     }
     Ok(())
+}
+
+/// The address of each section in the Mach-O object as it will be written: `__text` comes after
+/// any section created before it (constants). The debug sections are added after all of these,
+/// so the addresses do not change.
+fn section_addresses(
+    obj: &cranelift_object::object::write::Object,
+) -> CodegenResult<Vec<(String, u64)>> {
+    let bytes = obj
+        .write()
+        .map_err(|e| format!("codegen: debug info: {e}"))?;
+    let file = object::File::parse(&*bytes).map_err(|e| format!("codegen: debug info: {e}"))?;
+    Ok(file
+        .sections()
+        .map(|s| (s.name().unwrap_or_default().to_string(), s.address()))
+        .collect())
 }
 
 /// `.debug_info` on ELF, `__debug_info` (in the `__DWARF` segment) on Mach-O.

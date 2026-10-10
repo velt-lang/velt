@@ -82,7 +82,7 @@ Hello, world!
 
 ```
 hello/
-  package.vlt           the manifest: name, version, dependencies
+  package.vlt           the manifest: name, version, the velt version, dependencies
   src/main.vlt          the entry point: `velt run` builds and runs it
   src/greet.vlt         a module, imported by main and by the tests
   tests/greet.test.vlt  tests: every exported `test_*` function
@@ -93,11 +93,13 @@ hello/
 ```ts ignore
 import type { Package } from "velt:package";
 
-export const pkg: Package = { name: "hello", version: "0.1.0" };
+export const pkg: Package = { name: "hello", version: "0.1.0", velt: "0.1" };
 ```
 
 The manifest is written in Velt but holds only data: `velt` reads it without running it
-([`package.vlt`](../tooling/manifest.md)). In an editor, the language server completes its
+([`package.vlt`](../tooling/manifest.md)). `velt: "0.1"` records the velt version the package
+was made with: the `velt` command runs that version, so installing a newer velt doesn't change
+how the package builds ([`velt toolchain`](../tooling/cli.md#velt-toolchain)). In an editor, the language server completes its
 fields, explains them on hover and reports the same errors `velt` would.
 
 `src/main.vlt` imports the greeting from its own module and the program arguments from the
@@ -132,7 +134,10 @@ client), `--template lib` (a library to publish).
 
 Install the VS Code extension from `editors/vscode` for highlighting, diagnostics as you type,
 go-to-definition, completion and quick fixes, or point any LSP client at `velt lsp`
-([Editors](../tooling/editors.md)).
+([Editors](../tooling/editors.md)). With a debugger extension such as CodeLLDB installed too,
+F5 builds the package and stops on breakpoints (on Linux and macOS; on Windows see
+[Debugging](../tooling/debugging.md#vs-code)): `velt new` writes the `.vscode/launch.json` for
+it, and `velt init --editor vscode` adds one to an existing package.
 
 ## Next steps
 

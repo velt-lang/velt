@@ -96,10 +96,13 @@ try {
 
     New-Item -ItemType Directory -Force $Prefix | Out-Null
     $Prefix = (Resolve-Path $Prefix).Path
-    foreach ($d in @("bin", "lib", "std")) {
+    foreach ($d in @("bin", "lib", "std", "share\velt")) {
         $Dest = Join-Path $Prefix $d
         if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
-        if (Test-Path (Join-Path $Dist $d)) { Copy-Item -Recurse (Join-Path $Dist $d) $Dest }
+        if (Test-Path (Join-Path $Dist $d)) {
+            New-Item -ItemType Directory -Force (Split-Path $Dest) | Out-Null
+            Copy-Item -Recurse (Join-Path $Dist $d) $Dest
+        }
     }
     foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
         if (Test-Path (Join-Path $Dist $f)) { Copy-Item -Force (Join-Path $Dist $f) $Prefix }

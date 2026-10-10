@@ -4,13 +4,32 @@
 //! operands of a reduced `+`/`-` or a division) (bitwise ops on values reduced `% 10007`)
 //! and every intermediate below 2³¹: binary results are reduced `% 10007`, shifts only see operands
 //! reduced `% 1000`. That keeps i64 wrapping and JS's 32-bit bitwise operators out of the picture.
-//! Integer division is written `Math.trunc(a / k)`, Velt's integer division, which truncates
-//! identically in both languages (exact in JS doubles: every operand is below 2^53). JS integers
+//! Integer division is written `(Math.trunc(a / k) as i64)`, Velt's integer division for an
+//! `i64` `a` (a `number` division, converted, when `a` is only literals), which truncates
+//! identically in both languages (exact in JS doubles: every operand is below 2^53). Values the
+//! JavaScript API returns as `number` (`indexOf`, `charCodeAt`, `length`) are converted with
+//! `as i64`, which TypeScript erases. JS integers
 //! are doubles, so `*`, `%`, `/` and negation can produce `-0`, which `console.log` prints as
 //! `-0`; those results are normalized with `| 0` (identity on i64).
 
 use super::scope::Ty;
 use super::Gen;
+
+/// Whether `e` names nothing but `true` and `false`: no variable, call or member.
+fn literals_only(e: &str) -> bool {
+    e.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
+        .all(|w| w == "true" || w == "false")
+}
+
+/// `7` or `(-7)`.
+fn is_literal(e: &str) -> bool {
+    let e = e
+        .strip_prefix("(-")
+        .and_then(|e| e.strip_suffix(')'))
+        .unwrap_or(e);
+    !e.is_empty() && e.chars().all(|c| c.is_ascii_digit())
+}
 
 const FLOATS: [&str; 14] = [
     "0.5", "1.5", "2.25", "0.1", "0.2", "3.0", "100.0", "1e21", "1e-7", "123.456", "0.3", "7.0",
@@ -28,7 +47,21 @@ impl Gen {
     }
 
     /// An `i64` expression within ±10007 (after its own reduction).
+    ///
+    /// `number` is a JS number in Velt: a literal takes the `i64` it meets, but a compound
+    /// expression of literals alone (`(~(true ? 3 : 4))`, `Math.trunc(7 / 2)`) is a `number`
+    /// where nothing gives it a type (an operand of `~`, a union `i64 | string`). Such an
+    /// expression is converted with `as i64`: exact (its value is a small integer), and
+    /// TypeScript erases the `as`.
     pub(super) fn int(&mut self, d: u32) -> String {
+        let e = self.int_expr(d);
+        match !self.wild && literals_only(&e) && !is_literal(&e) {
+            true => format!("({e} as i64)"),
+            false => e,
+        }
+    }
+
+    fn int_expr(&mut self, d: u32) -> String {
         if d == 0 || self.rng.chance(25) {
             return self.int_atom();
         }
@@ -47,11 +80,11 @@ impl Gen {
             3 => format!("(({} % {}) | 0)", self.int(d), self.nonzero_lit()),
             4 if self.rng.chance(25) => {
                 let (w, k) = (self.wide_lit(), self.nonzero_lit());
-                self.reduce(&format!("Math.trunc({w} / {k})"))
+                self.reduce(&format!("(Math.trunc({w} / {k}) as i64)"))
             }
             4 => {
                 let (a, k) = (self.int(d), self.nonzero_lit());
-                format!("(Math.trunc({a} / {k}) | 0)")
+                format!("((Math.trunc({a} / {k}) as i64) | 0)")
             }
             5 => {
                 let op = *self.rng.pick(&["&", "|", "^"]);
@@ -157,8 +190,8 @@ impl Gen {
         let s = self.string(d).text;
         match self.rng.below(3) {
             0 => format!("({s}.length as i64)"),
-            1 => format!("{s}.indexOf({})", self.string_lit()),
-            _ => format!("({s}.length > 0 ? {s}.charCodeAt(0) : (-1))"),
+            1 => format!("({s}.indexOf({}) as i64)", self.string_lit()),
+            _ => format!("({s}.length > 0 ? ({s}.charCodeAt(0) as i64) : (-1))"),
         }
     }
 

@@ -21,6 +21,8 @@ pub(super) struct Modifiers {
     is_protected: bool,
     is_getter: bool,
     is_setter: bool,
+    /// `declare name: T;` (a class field TypeScript emits no initializer for).
+    is_declare: bool,
 }
 
 impl Modifiers {
@@ -32,6 +34,7 @@ impl Modifiers {
             || self.is_override
             || self.is_getter
             || self.is_setter
+            || self.is_declare
     }
 
     fn ctor_visibility(&self) -> CtorVisibility {
@@ -70,6 +73,7 @@ impl<'a> Parser<'a> {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,
                 Some(Kw::Async) => &mut m.is_async,
+                Some(Kw::Declare) => &mut m.is_declare,
                 None if self.at_word("mut") => {
                     self.reject_mut_modifier();
                     continue;
@@ -123,18 +127,73 @@ impl<'a> Parser<'a> {
         if mods.readonly {
             self.error("`readonly` is not allowed on methods", name.span);
         }
+        if mods.is_declare {
+            self.error(
+                "'declare' modifier cannot appear on class elements of this kind",
+                name.span,
+            );
+        }
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
         sig.is_generator = star.is_some();
         self.check_accessor(&sig, &mods);
+        if self.at(Tok::Semi) {
+            return self.method_overload(sig, &mods);
+        }
         let body = self.parse_block()?;
         Ok(Member::Method(Method {
-            decl: FnDecl { sig, body },
+            decl: FnDecl {
+                sig,
+                body,
+                overloads: vec![],
+            },
             is_static: mods.is_static,
             is_private: mods.is_private,
             is_getter: mods.is_getter,
             is_setter: mods.is_setter,
             is_override: mods.is_override,
         }))
+    }
+
+    /// After a method signature ending in `;`: a TypeScript-form overload, attached to the
+    /// method of the same name that follows (`FnDecl::overloads`).
+    fn method_overload(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
+        while self.eat(Tok::Semi) {}
+        if mods.is_getter || mods.is_setter {
+            self.error("an accessor cannot be overloaded", sig.name.span);
+        }
+        self.signature_defaults(&sig);
+        if self.at(Tok::RBrace) || self.at(Tok::Eof) {
+            self.missing_implementation(&sig.name);
+            return Err(Fail);
+        }
+        match self.parse_member()? {
+            Member::Method(mut m) if m.decl.sig.name.name == sig.name.name => {
+                // TypeScript's TS2387 / TS2388, at the implementation.
+                if m.is_static != mods.is_static && m.decl.overloads.is_empty() {
+                    let msg = match mods.is_static {
+                        true => "this method's overload signatures are `static`, so it must be `static` too (TypeScript's TS2387)",
+                        false => "this method's overload signatures are not `static`, so it must not be `static` either (TypeScript's TS2388)",
+                    };
+                    self.error(msg, m.decl.sig.name.span);
+                }
+                if m.is_private != mods.is_private {
+                    self.error(
+                        "overload signatures must all be private or all be public (TypeScript's TS2385)",
+                        sig.name.span,
+                    );
+                }
+                m.decl.overloads.insert(0, sig);
+                Ok(Member::Method(m))
+            }
+            Member::Method(m) => {
+                self.wrong_implementation_name(&sig.name, m.decl.sig.name.span);
+                Ok(Member::Method(m))
+            }
+            other => {
+                self.missing_implementation(&sig.name);
+                Ok(other)
+            }
+        }
     }
 
     /// A member named `#x` is private (ES private name): `private` / `public` on it are errors
@@ -225,6 +284,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let (true, Some(d)) = (mods.is_declare, &default) {
+            self.error("initializers are not allowed in ambient contexts", d.span);
+        }
         let span = self.span_from(lo);
         self.expect_member_end()?;
         Ok(Field {
@@ -283,6 +345,13 @@ impl<'a> Parser<'a> {
             self.parse_type()?;
         }
         let throws = self.parse_throws_clause()?;
+        if self.at(Tok::Semi) {
+            self.error(
+                "constructor overloads are not supported yet: write one constructor whose parameters take every form (`a: string | number`)",
+                name.span,
+            );
+            return Err(Fail);
+        }
         let sig = FnSig {
             name,
             generics: vec![],
@@ -295,7 +364,14 @@ impl<'a> Parser<'a> {
         };
         let mut body = self.parse_block()?;
         self.store_param_props(&mut body, &fields);
-        Ok((FnDecl { sig, body }, fields))
+        Ok((
+            FnDecl {
+                sig,
+                body,
+                overloads: vec![],
+            },
+            fields,
+        ))
     }
 
     /// Interface member: a field (`name[?]: T;`) or a method signature, optionally with a
@@ -325,6 +401,24 @@ impl<'a> Parser<'a> {
         }
         self.reject_protected(&mods, &name);
         self.reject_private_name(&name);
+        if self.at(Tok::Question) && matches!(self.nth(1), Tok::LParen | Tok::Lt) {
+            // `m?(x: T): R`: an optional member of function type, `m?: (x: T) => R`.
+            self.bump();
+            let ty = self.parse_method_sig_type(lo, &name, true)?;
+            let span = self.span_from(lo);
+            self.expect_member_end()?;
+            decl.fields.push(Field {
+                name,
+                ty: super::types::or_null(ty),
+                default: None,
+                readonly: false,
+                optional: true,
+                is_private: false,
+                is_static: false,
+                span,
+            });
+            return Ok(());
+        }
         if !self.at_method_start() {
             let field = self.parse_field_rest(lo, name, &mods)?;
             if let Some(default) = &field.default {

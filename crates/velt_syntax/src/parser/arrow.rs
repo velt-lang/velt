@@ -136,6 +136,19 @@ impl<'a> Parser<'a> {
 
     /// `( params ) [: Ret [throws E]] =>`
     fn parse_arrow_head(&mut self) -> PResult<ArrowHead> {
+        let params = self.parse_arrow_params()?;
+        let (ret, throws) = if self.eat(Tok::Colon) {
+            (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
+        } else {
+            (None, None)
+        };
+        self.expect(Tok::FatArrow)?;
+        Ok((params, ret, throws))
+    }
+
+    /// `( params )` of an arrow or an object-literal method: types may be left out (they come
+    /// from the context).
+    pub(super) fn parse_arrow_params(&mut self) -> PResult<Vec<ArrowParam>> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         while !self.at(Tok::RParen) {
@@ -179,13 +192,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
-        let (ret, throws) = if self.eat(Tok::Colon) {
-            (Some(self.parse_type()?), self.parse_throws_clause()?)
-        } else {
-            (None, None)
-        };
-        self.expect(Tok::FatArrow)?;
-        Ok((params, ret, throws))
+        Ok(params)
     }
 
     /// Body after `=>`: a block, or an assignment-level expression.

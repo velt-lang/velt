@@ -20,6 +20,7 @@
 mod analysis;
 mod callable;
 mod code_actions;
+mod code_lens;
 mod completion;
 mod definition;
 mod diagnostics;

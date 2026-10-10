@@ -55,6 +55,10 @@ pub struct Manifest {
     pub registry: Option<String>,
     /// `name`, `version` and `entry` (`[package]` in `velt.toml`).
     pub package: Package,
+    /// `velt`: the toolchain versions that build the package, a [`velt_toolchain::Requirement`]
+    /// (`"0.1"`); the launcher runs the newest installed one it accepts.
+    #[serde(default, rename = "velt", skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<String>,
     /// `dependencies`, keyed by package name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: BTreeMap<String, Dependency>,
@@ -376,6 +380,11 @@ fn check_version(version: &str) -> Result<(), String> {
     semver::Version::parse(version)
         .map(drop)
         .map_err(|e| format!("`{version}` is not a semver version: {e}"))
+}
+
+/// The message names the value, not the field: callers prefix it.
+fn check_toolchain(requirement: &str) -> Result<(), String> {
+    velt_toolchain::Requirement::parse(requirement).map(drop)
 }
 
 /// The message names the value, not the table: callers prefix it.

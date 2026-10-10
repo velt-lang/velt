@@ -50,6 +50,7 @@ pub fn execute(cmd: Command) -> ExitCode {
         }
         Command::Clean => clean::clean_command(),
         Command::Target(action) => target::target_command(&action),
+        Command::Toolchain => toolchain_without_launcher(),
         Command::Build(args) => return build::build_command(&args),
         Command::Run {
             build: args,
@@ -76,6 +77,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             template,
             force,
         } => create::init_package(name.as_deref(), template, force),
+        Command::InitEditor { editor, dir } => create::init_editor(editor, dir.as_deref()),
         Command::Add {
             name,
             version,
@@ -123,4 +125,16 @@ pub fn execute(cmd: Command) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `velt toolchain` reached a toolchain: it was started directly, not through the launcher
+/// (which runs that command itself).
+fn toolchain_without_launcher() -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "velt".into());
+    Err(format!(
+        "`velt toolchain` is run by the velt launcher (<root>/bin/velt, which the installer puts \
+         on PATH); this velt ({exe}) was started directly"
+    ))
 }

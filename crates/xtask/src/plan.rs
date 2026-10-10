@@ -52,6 +52,13 @@ const TOOLING: &[(&str, &[&str])] = &[
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),
     ("velt_http", &["registry_cli", "cli_package"]),
+    // `velt target add`, and the `velt` field `velt new` writes and every command checks.
+    (
+        "velt_toolchain",
+        &["cli_package", "templates", "install_layout"],
+    ),
+    // A separate binary; its tests run the launcher against fake releases.
+    ("velt_launcher", &[]),
     ("velt_rt_wasm", &["wasm_goldens", "playground"]),
 ];
 
@@ -122,6 +129,8 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
+    // The LLDB script the toolchain ships (`install_layout` installs it and asks for its path).
+    ("editors/lldb/", &[], &["install_layout"]),
     // `example_apps` runs `velt test` for examples/apps/*/ (the compiler, runtime and std run
     // it too: they select every `veltc` test).
     (

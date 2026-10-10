@@ -204,7 +204,7 @@ fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
 /// `{"diagnostics": [...], "errors": n, "warnings": n}`; a non-source failure (unreadable root,
 /// broken package) becomes an error diagnostic without a location. `--ts-compat` findings
 /// follow the check's diagnostics, with their `code` and `fix` (both `null` elsewhere).
-fn report_json(sess: &Session, failure: Option<&str>, findings: &[Finding]) -> Value {
+pub(crate) fn report_json(sess: &Session, failure: Option<&str>, findings: &[Finding]) -> Value {
     let mut diagnostics: Vec<Value> = sess
         .diagnostics
         .iter()

@@ -283,3 +283,62 @@ function f() { const D = class { m() {} }; }",
     };
     assert_eq!((d.name.name.as_str(), d.methods.len()), ("D", 1));
 }
+
+/// TypeScript-form overloads: the bodiless signatures before an implementation are its
+/// `overloads`, in order.
+#[test]
+fn overload_signatures_attach_to_the_implementation() {
+    let m = parse_ok(
+        "export function f(a: string): string;
+         export function f<T>(a: T[], ...rest: T[]): T;
+         export function f(a: string | number[], ...rest: number[]): string | number { return a; }
+         class C {
+           static m(): void;
+           static m(x?: number): void {}
+           n(a: string): string;
+           n(a: string): string { return a; }
+         }",
+    );
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(m.items.len(), 2);
+    assert!(m.items[0].exported);
+    assert_eq!(f.overloads.len(), 2);
+    assert_eq!(f.overloads[1].generics.len(), 1);
+    assert!(f.overloads[1].params[1].rest);
+    assert_eq!(f.body.stmts.len(), 1);
+    let ItemKind::Class(c) = &m.items[1].kind else {
+        panic!()
+    };
+    assert_eq!(c.methods.len(), 2);
+    assert_eq!(c.methods[0].decl.overloads.len(), 1);
+    assert!(c.methods[0].is_static);
+    assert_eq!(c.methods[1].decl.overloads[0].name.name, "n");
+}
+
+#[test]
+fn overload_signature_errors() {
+    let errs = errors("function f(a: string): string;\nfunction g() {}");
+    assert!(errs[0].contains("name must be `f`"), "{errs:?}");
+    let errs = errors("function f(a: string): string;\nfunction g(): void;\nfunction g() {}");
+    assert!(errs[0].contains("implementation is missing"), "{errs:?}");
+    let errs = errors(
+        "function f(a: string, n: number = 1): string;\nfunction f(a: string, n?: number): string { return a; }",
+    );
+    assert!(errs[0].contains("TS2371"), "{errs:?}");
+    let m = parse_ok(
+        "async function f(a: string): Promise<string>;\nasync function f(a: string): Promise<string> { return a; }",
+    );
+    assert_eq!(m.items.len(), 1);
+    let errs = errors(
+        "export function f(a: string): string;\nfunction f(a: string): string { return a; }",
+    );
+    assert!(errs[0].contains("all be exported"), "{errs:?}");
+    let errs = errors("class C { m(): void; static m(): void {} }");
+    assert!(errs[0].contains("must not be `static` either"), "{errs:?}");
+    let errs = errors("class C { m(): void; }");
+    assert!(errs[0].contains("implementation is missing"), "{errs:?}");
+    let errs = errors("class C { constructor(a: string); constructor(a: string) {} }");
+    assert!(errs[0].contains("constructor overloads"), "{errs:?}");
+}

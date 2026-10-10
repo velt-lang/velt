@@ -16,6 +16,7 @@ pub mod bigint;
 pub mod build_profile;
 pub mod bytes;
 pub mod bytes_ops;
+pub mod cell_owner;
 pub mod child;
 pub mod db_json;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
@@ -63,6 +64,7 @@ pub mod task;
 pub mod timer;
 pub mod tls;
 pub mod transfer_map;
+pub mod weak;
 pub mod ws;
 
 pub use crate::str::VeltStr;

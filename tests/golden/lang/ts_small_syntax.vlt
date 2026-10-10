@@ -1,0 +1,50 @@
+// Smaller TypeScript syntax (expected output from `node`): `satisfies`, definite assignment
+// `let x!: T`, `const` type parameters, labeled tuple elements, several declarators in one
+// declaration and `declare` class fields.
+
+type CopyStamp = { version: string; url: string; warned: boolean };
+
+// `satisfies` checks the value against the type and keeps it.
+const stamp = { version: "1.2", url: "https://x.test", warned: false } satisfies CopyStamp;
+const holder = { value: { version: "2", url: "u", warned: true } satisfies CopyStamp };
+console.log(stamp.version, stamp.url, stamp.warned, holder.value.warned);
+
+// `let x!: T`: assigned before it is read.
+let entry!: number;
+entry = 41;
+console.log(entry + 1);
+
+// `const` type parameters.
+function tag<const K>(k: K): K[] {
+  return [k, k];
+}
+console.log(tag("key"));
+
+// Tuple labels document the elements.
+type BytesWire = [kind: string, b64: string];
+const wire: BytesWire = ["bytes", "AAE="];
+console.log(wire[0], wire[1]);
+
+// Several declarators, typed or not, at the top level and in a block.
+let i: number, j: number = 2, u = 3;
+i = 1;
+console.log(i, j, u);
+function swap(a: number, b: number): number[] {
+  const x = b, y = a;
+  let t: number, s: string = "s";
+  t = x * 10 + y;
+  return [t, s.length];
+}
+console.log(swap(1, 2));
+
+// `declare` fields get no initializer of their own.
+class Parent {
+  label: string | null = null;
+}
+class Child extends Parent {
+  declare readonly code?: string;
+  constructor() {
+    super();
+  }
+}
+console.log(new Child().label);

@@ -1,0 +1,120 @@
+// TypeScript-form overloads: bodiless signatures, then one implementation. A call takes the
+// first signature that accepts its arguments and has that signature's result type.
+function describe(x: string): string;
+function describe(x: number): number;
+function describe(x: string | number): string | number {
+  if (typeof x === "string") {
+    return "s:" + x;
+  }
+  return x * 2;
+}
+
+function pad(s: string): string;
+function pad(s: string, width: number): string;
+function pad(s: string, width?: number): string {
+  let out = s;
+  const w = width ?? 6;
+  while (out.length < w) {
+    out = "." + out;
+  }
+  return out;
+}
+
+function sum(...xs: number[]): number;
+function sum(...xs: number[]): number {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+interface Box<T> {
+  value: T;
+}
+
+function wrap(v: string): Box<string>;
+function wrap(v: number): Box<number>;
+function wrap(v: string | number): Box<string> | Box<number> {
+  if (typeof v === "string") {
+    return { value: v.toUpperCase() };
+  }
+  return { value: v + 1 };
+}
+
+// Generic signatures; the second promises `T` where the implementation returns `T | null`.
+function firstOr<T>(xs: T[]): T | null;
+function firstOr<T>(xs: T[], fallback: T): T;
+function firstOr<T>(xs: T[], fallback?: T): T | null {
+  if (xs.length > 0) {
+    return xs[0];
+  }
+  return fallback ?? null;
+}
+
+class Greeter {
+  prefix = "hi";
+  greet(name: string): string;
+  greet(name: string, times: number): string;
+  greet(name: string, times?: number): string {
+    return (this.prefix + " " + name + " ").repeat(times ?? 1).trim();
+  }
+  static make(): Greeter;
+  static make(prefix: string): Greeter;
+  static make(prefix?: string): Greeter {
+    const g = new Greeter();
+    if (prefix != null) {
+      g.prefix = prefix;
+    }
+    return g;
+  }
+}
+
+// An async implementation: the signatures return its promise.
+function load(id: number): Promise<string>;
+function load(id: string): Promise<string>;
+async function load(id: number | string): Promise<string> {
+  return `loaded ${id}`;
+}
+
+class Shape {
+  scale(by: number): string;
+  scale(x: number, y: number): string;
+  scale(x: number, y?: number): string {
+    return `${this.name()} ${x}x${y ?? x}`;
+  }
+  name(): string {
+    return "shape";
+  }
+}
+
+class Square extends Shape {
+  override name(): string {
+    return "square";
+  }
+}
+
+async function main() {
+  const a: string = describe("x");
+  const b: number = describe(21);
+  console.log(a.length, b + 1);
+  console.log(pad("ab"), pad("ab", 4));
+  console.log(sum(), sum(1, 2, 3));
+  const w1 = wrap("abc");
+  const w2 = wrap(41);
+  console.log(w1.value.length, w2.value + 0.5);
+  const g = Greeter.make("hello");
+  console.log(g.greet("ann"), g.greet("bo", 2));
+  console.log(Greeter.make().greet("cy"));
+  const n: number = firstOr([], 7);
+  const m: string | null = firstOr(["p", "q"]);
+  console.log(n + 1, m, firstOr<string>([]));
+  console.log(await load(1), await load("x"));
+  const shapes: Shape[] = [new Shape(), new Square()];
+  for (const sh of shapes) {
+    console.log(sh.scale(2), sh.scale(2, 3));
+  }
+  // As a value, an overloaded function is its implementation.
+  const d = describe;
+  console.log(d("v"), d(4));
+}

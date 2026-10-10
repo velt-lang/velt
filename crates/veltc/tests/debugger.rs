@@ -1,7 +1,8 @@
-//! Debugger support: the VS Code templates in `editors/vscode/templates` are consistent (every
-//! `preLaunchTask` exists, programs match the builds the tasks make), and with clang and LLDB
-//! installed a `velt build --backend llvm` executable resolves breakpoints on `.vlt` lines
-//! (checked without running the program, so no debugger permission is needed).
+//! Debugger support: the VS Code templates in `editors/vscode/templates` use the extension's
+//! `velt` debug type and existing tasks, and with LLDB installed an executable of the default
+//! (Cranelift) build, and with clang one of `--backend llvm`, resolves breakpoints on `.vlt` lines
+//! in the right functions (checked without running the program, so no debugger permission is
+//! needed). On macOS the debug info stays in the object, which the executable's debug map names.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,7 +28,7 @@ fn template(name: &str) -> Value {
 }
 
 #[test]
-fn launch_configs_use_existing_tasks() {
+fn launch_configs_use_the_velt_debug_type() {
     let tasks = template("tasks.json");
     let labels: Vec<&str> = tasks["tasks"]
         .as_array()
@@ -37,23 +38,20 @@ fn launch_configs_use_existing_tasks() {
         .collect();
     let launch = template("launch.json");
     let configs = launch["configurations"].as_array().expect("configurations");
-    for kind in ["lldb", "cppvsdbg"] {
+    for request in ["launch", "attach"] {
         assert!(
-            configs.iter().any(|c| c["type"] == kind),
-            "no {kind} config"
+            configs.iter().any(|c| c["request"] == request),
+            "no {request} config"
         );
     }
     for c in configs {
+        // The extension builds and picks the debugger; nothing names a build or a debugger.
+        assert_eq!(c["type"], "velt", "{c}");
         if let Some(task) = c["preLaunchTask"].as_str() {
             assert!(labels.contains(&task), "unknown task `{task}`");
-            let program = c["program"].as_str().expect("program");
-            assert!(
-                program.starts_with("${workspaceFolder}/target/velt/"),
-                "{program}"
-            );
         }
     }
-    // Line-level debugging needs the LLVM backend (Cranelift emits symbols only).
+    // No build needs clang: debugging uses the default (Cranelift) build.
     for t in tasks["tasks"].as_array().unwrap() {
         let args: Vec<&str> = t["args"]
             .as_array()
@@ -61,12 +59,7 @@ fn launch_configs_use_existing_tasks() {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        if args.first() == Some(&"build") {
-            assert!(
-                args.windows(2).any(|w| w == ["--backend", "llvm"]),
-                "{args:?}"
-            );
-        }
+        assert!(!args.contains(&"--backend"), "{args:?}");
     }
 }
 
@@ -91,33 +84,53 @@ fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
     Some(out)
 }
 
-#[test]
-fn lldb_resolves_breakpoints_on_velt_lines() {
-    if cfg!(windows) || !velt_codegen_llvm::available() {
-        eprintln!("note: needs clang and LLDB on macOS/Linux; skipping");
-        return;
-    }
-    let lldb_runs = crate::no_window::command("lldb")
+const PROGRAM: &str = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";
+
+fn lldb_runs() -> bool {
+    let runs = crate::no_window::command("lldb")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
-    if !lldb_runs {
+    if !runs {
         eprintln!("note: lldb not installed; skipping");
-        return;
     }
+    runs
+}
+
+/// Build `PROGRAM` as `app.vlt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
+/// (in `main`) with LLDB; its output.
+fn breakpoints(work_name: &str, args: &[&str]) -> String {
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = work_dir::work_dir(&root, "golden-work-debugger");
+    let work = work_dir::work_dir(&root, work_name);
     std::fs::create_dir_all(&work).expect("work dir");
-    let src = work.join("app.vlt");
-    let program = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";
-    std::fs::write(&src, program).expect("write source");
+    std::fs::write(work.join("app.vlt"), PROGRAM).expect("write source");
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "app.vlt", "--backend", "llvm"])
+        .args(["build", "app.vlt"])
+        .args(args)
         .current_dir(&work)
         .output()
         .expect("velt build");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let exe = work.join("target/velt/app");
+    if cfg!(target_os = "macos") {
+        // The debug info stays in the object; the debug map must name it by its absolute path.
+        let map = crate::no_window::command("nm")
+            .args(["-ap"])
+            .arg(&exe)
+            .output()
+            .expect("nm");
+        let map = String::from_utf8_lossy(&map.stdout);
+        let object = work.join("target/velt/app.o");
+        assert!(
+            map.lines().any(|l| l.contains(" OSO ")
+                && l.split(" OSO ").nth(1).is_some_and(|p| {
+                    Path::new(p.trim()).canonicalize().ok() == object.canonicalize().ok()
+                })),
+            "no debug map entry for {}:\n{map}",
+            object.display()
+        );
+    }
     let out = output_within(
         crate::no_window::command("lldb")
             .args([
@@ -127,11 +140,45 @@ fn lldb_resolves_breakpoints_on_velt_lines() {
                 "-o",
                 "breakpoint set -f app.vlt -l 7",
             ])
-            .arg(work.join("target/velt/app")),
+            .arg(&exe),
         Duration::from_secs(60),
     )
     .expect("lldb finished");
     let _ = std::fs::remove_dir_all(&work);
+    out
+}
+
+/// What F5 in VS Code debugs: the default build, which needs no clang.
+#[test]
+fn lldb_resolves_breakpoints_in_the_default_build() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let out = breakpoints("golden-work-debugger-cl", &[]);
+    // Each in its own function (regression: on macOS line 2 resolved to `add` at line 7, the
+    // rows of `main`).
+    let first = out.lines().find(|l| l.starts_with("Breakpoint 1:"));
+    assert!(
+        first.is_some_and(|l| l.contains("add") && l.contains("at app.vlt:2")),
+        "{out}"
+    );
+    assert!(out.contains("at app.vlt:7"), "{out}");
+}
+
+#[test]
+fn lldb_resolves_breakpoints_in_llvm_builds() {
+    if cfg!(windows) || !velt_codegen_llvm::available() {
+        eprintln!("note: needs clang and LLDB on macOS/Linux; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let out = breakpoints("golden-work-debugger", &["--backend", "llvm"]);
     assert!(out.contains("at app.vlt:2"), "{out}");
     assert!(out.contains("at app.vlt:7"), "{out}");
 }

@@ -17,7 +17,9 @@ fn graph() -> Graph {
         krate("velt_sema", &["velt_syntax"]),
         krate("velt_fmt", &["velt_syntax"]),
         krate("velt_lsp", &["velt_sema", "velt_fmt"]),
-        krate("vpm", &["velt_fmt"]),
+        krate("velt_toolchain", &["velt_syntax"]),
+        krate("velt_launcher", &["velt_toolchain"]),
+        krate("vpm", &["velt_fmt", "velt_toolchain"]),
         krate("velt_rt", &[]),
         krate("velt_rt_host", &[]),
         krate("velt_rt_shared", &[]),
@@ -106,6 +108,23 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
         wasm.veltc,
         Veltc::Some(set(&["playground", "wasm_goldens"]))
     );
+}
+
+#[test]
+fn the_toolchain_crate_runs_with_vpm_on_every_os() {
+    let p = plan(&["crates/velt_toolchain/src/release.rs"]);
+    assert_eq!(p.packages, set(&["velt_launcher", "velt_toolchain", "vpm"]));
+    let Veltc::Some(binaries) = &p.veltc else {
+        panic!("{:?}", p.veltc)
+    };
+    assert!(binaries.contains("cli_package") && binaries.contains("install_layout"));
+    // It unpacks files and renames directories, which differ by OS.
+    assert!(p.other_os.is_some());
+    // The launcher depends on it but has no veltc tests of its own.
+    let launcher = plan(&["crates/velt_launcher/src/select.rs"]);
+    assert_eq!(launcher.veltc, Veltc::Some(set(&[])));
+    assert_eq!(launcher.goldens, Goldens::None);
+    assert!(launcher.other_os.is_some(), "exec and Ctrl-C differ by OS");
 }
 
 #[test]
@@ -211,6 +230,14 @@ fn the_tsc_oracle_runs_the_lint_tests() {
     let p = plan(&["tests/tscompat-oracle/rejected/struct.ts"]);
     assert_eq!(p.packages, set(&["velt_tscompat"]));
     assert_eq!(p.veltc, Veltc::Some(set(&["ts_compat"])));
+    assert_eq!(p.goldens, Goldens::None);
+}
+
+#[test]
+fn the_lldb_script_runs_the_install_layout_test() {
+    let p = plan(&["editors/lldb/velt_lldb.py"]);
+    assert!(p.packages.is_empty());
+    assert_eq!(p.veltc, Veltc::Some(set(&["install_layout"])));
     assert_eq!(p.goldens, Goldens::None);
 }
 

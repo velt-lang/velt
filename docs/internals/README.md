@@ -94,6 +94,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
 | `vpm`, `velt_registry` | package manager, registry server |
 | `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
+| `velt_toolchain` | side-by-side toolchain versions: the `velt` pin of `package.vlt`, installed versions, downloading a release |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
 | `xtask` | repository tooling: the quality gate and its check selection (`cargo xtask`) |
 
@@ -153,6 +154,9 @@ Decisions and their rationale, including what is still planned:
   (implemented, issue #62).
 - [Doc comments](design/doc-comments.md): JSDoc `/** … */` and `///` comments with tags, read
   by `velt doc` and the editor; std migrated from plain `//` (implemented, issue #513).
+- [Weak references without a collector](design/weak-refs.md): the weak flag, the per-thread
+  side table and the ephemeron rule under `WeakMap`, `WeakSet`, `WeakRef` and `weak T` (runtime
+  prototype, issues #823 and #11).
 
 ## Testing
 

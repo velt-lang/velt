@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::style;
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// `velt new <name> [--template <t>]` in the current directory.
 pub fn new_package(name: &str, template: Template) -> Result<(), String> {
@@ -53,6 +53,31 @@ pub fn init_package(name: Option<&str>, template: Template, force: bool) -> Resu
         eprintln!("             kept existing {}", written.kept.join(", "));
     }
     next_steps(None, template);
+    Ok(())
+}
+
+/// `velt init --editor <e> [--dir <d>]`: the editor's files in `dir` (an editor names its
+/// workspace folder), else at the root of the current package (or in the current directory
+/// outside a package), keeping the ones that exist.
+pub fn init_editor(editor: Editor, dir: Option<&Path>) -> Result<(), String> {
+    let root = match dir {
+        Some(dir) if dir.is_dir() => dir.to_path_buf(),
+        Some(dir) => return Err(format!("`{}` is not a directory", dir.display())),
+        None => {
+            let cwd = current_dir()?;
+            vpm::manifest::find_package_root(&cwd).unwrap_or(cwd)
+        }
+    };
+    let written = vpm::scaffold::write_files(&root, &editor.files(), false)?;
+    if !written.created.is_empty() {
+        style::status(
+            "Created",
+            &format!("{} in {}", written.created.join(", "), root.display()),
+        );
+    }
+    if !written.kept.is_empty() {
+        eprintln!("             kept existing {}", written.kept.join(", "));
+    }
     Ok(())
 }
 

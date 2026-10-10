@@ -4,7 +4,7 @@
 #   bin/velt.exe  lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
 # and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
-#   std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
+#   std/**  share/velt/lldb/velt_lldb.py  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # With the bundled linker, velt.exe and velt_rt_shared.dll are linked with it too (lld-link, the
 # kit's startup object and the Universal CRT), so neither needs the Visual C++ runtime
@@ -41,7 +41,7 @@ $Name = "velt-$Version-$HostTriple"
 $Dist = Join-Path $Repo "dist"
 $Out = Join-Path $Dist $Name
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
-foreach ($d in @("bin", "lib", "std")) { New-Item -ItemType Directory -Force (Join-Path $Out $d) | Out-Null }
+foreach ($d in @("bin", "lib", "std", "share\velt\lldb")) { New-Item -ItemType Directory -Force (Join-Path $Out $d) | Out-Null }
 
 if (-not $SkipBuild) {
     Write-Host "building release velt + velt_rt + velt_rt_shared + velt-kit..."
@@ -97,6 +97,7 @@ Copy-Item $Exe (Join-Path $Out "bin")
 Copy-Item $RtLib (Join-Path $Out "lib")
 foreach ($f in $SharedRt) { Copy-Item $f (Join-Path $Out "lib") }
 Copy-Item (Join-Path $Repo "crates/velt_rt/NATIVE_LIBS.md") (Join-Path $Out "lib")
+Copy-Item (Join-Path $Repo "editors/lldb/velt_lldb.py") (Join-Path $Out "share\velt\lldb")
 if (Test-Path $StdDir -PathType Container) {
     Copy-Item -Recurse (Join-Path $StdDir "*") (Join-Path $Out "std")
 } else {

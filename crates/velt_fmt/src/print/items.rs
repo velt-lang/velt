@@ -38,7 +38,7 @@ impl<'a> Printer<'a> {
         let export = if item.exported { "export " } else { "" };
         let body = match &item.kind {
             ItemKind::Import(import) => self.import(import, item.exported),
-            ItemKind::Function(f) => self.fn_decl(f, "function "),
+            ItemKind::Function(f) => return self.fn_decl_with(f, "function ", export),
             ItemKind::Struct(decl) => self.type_decl("struct ", decl),
             ItemKind::Class(decl) => self.type_decl("class ", decl),
             ItemKind::Interface(decl) => self.interface(decl),
@@ -124,6 +124,12 @@ impl<'a> Printer<'a> {
     /// `pattern: T = init`: a declaration without its keyword (`for (let a = 1, b = 2; …)`).
     pub(super) fn declarator(&mut self, var: &VarDecl) -> Doc {
         let mut lhs = self.pattern(&var.pattern);
+        // `let x!: T` (TypeScript's definite assignment assertion; the AST does not keep it).
+        if var.ty.is_some()
+            && crate::source::chars_after(self.src, var.pattern.span.hi) == (Some('!'), Some(':'))
+        {
+            lhs = cat![lhs, "!"];
+        }
         if let Some(ty) = &var.ty {
             lhs = cat![lhs, ": ", self.ty(ty)];
         }

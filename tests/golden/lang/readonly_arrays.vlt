@@ -1,0 +1,22 @@
+// `readonly T[]`, `ReadonlyArray<T>` and `readonly [A, B]` (expected output from `node`): array
+// and tuple types read through; a `T[]` is passed where one is expected.
+
+function total(values: readonly number[]): number {
+  let sum = 0;
+  for (const v of values) sum += v;
+  return sum;
+}
+
+const NO_HANDLERS: readonly string[] = [];
+const pair: readonly [string, number] = ["a", 1];
+const KINDS: readonly (readonly [string, number])[] = [["u8", 1], ["u16", 2]];
+
+function count(patterns: ReadonlyArray<string | readonly number[]>): number {
+  return patterns.length;
+}
+
+const xs = [1, 2, 3];
+console.log(total(xs), total([4]), NO_HANDLERS.length);
+console.log(pair[0], pair[1]);
+console.log(KINDS.map((k) => k[0] + "=" + k[1]).join(","));
+console.log(count(["a", [1, 2]]), xs.slice(1));

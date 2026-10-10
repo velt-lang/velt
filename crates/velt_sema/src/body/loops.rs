@@ -121,6 +121,11 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
+                let tested = match is_await {
+                    true => None,
+                    false => self.for_in_presence_test(pattern, iter, body),
+                };
+                let body = tested.as_ref().unwrap_or(body);
                 let parts = ForOfParts {
                     kind: *kind,
                     pattern,

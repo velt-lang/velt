@@ -1,0 +1,1 @@
+TypeError: the type predicate `isString` returned false for a value that is `string`
