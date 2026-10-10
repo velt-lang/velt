@@ -43,8 +43,6 @@ use super::args::as_arrow;
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::collect::ret_infer::stmt_returns_value;
-use crate::ctx::Item;
-use crate::defs::DefInfo;
 use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 /// What a callee does with a callback argument (`FnCx::std_callback_arg`).
@@ -81,16 +79,6 @@ enum Wrap {
 
 /// The timer functions whose first parameter is the callback.
 const TIMERS: [&str; 3] = ["setTimeout", "setInterval", "setImmediate"];
-
-/// What a callback adapter needs to know about the function a name refers to.
-struct FnSig {
-    /// Its parameters, and how many of them must be passed (the rest are optional or have
-    /// defaults).
-    params: usize,
-    required: usize,
-    /// Its result type (`None` when not asked for).
-    ret: Option<TyId>,
-}
 
 /// An expression with `span` and no node of its own.
 fn synth(kind: ast::ExprKind, span: velt_common::Span) -> ast::Expr {
@@ -266,6 +254,17 @@ impl FnCx<'_, '_> {
     /// (it can't be reassigned, and a call by name fills in defaults), a local's value read
     /// once (a closure `const` keeps filling in its parameters' defaults).
     fn callback_callee(&mut self, arg: &ast::Expr) -> Callee {
+        // `C.f` / `this.f` naming a static method (`static_method_sig`): called by name, as
+        // `this` in a static method can't be a value.
+        if matches!(
+            &arg.kind,
+            ast::ExprKind::Member {
+                optional: false,
+                ..
+            }
+        ) {
+            return Callee::Named(arg.clone());
+        }
         if let ast::ExprKind::Ident(id) = &arg.kind {
             if !self.is_local_name(&id.name) {
                 return Callee::Named(arg.clone());
@@ -367,61 +366,6 @@ impl FnCx<'_, '_> {
                 .cx
                 .union_members(inner)
                 .is_some_and(|ms| ms.contains(&ret))
-    }
-
-    /// The parameters (and with `with_ret` the result type, inferring it from the body if
-    /// needed) of the function `arg` names: a local of function type (a closure `const` knows
-    /// which of its parameters have defaults), or a non-generic module-level function.
-    fn named_fn_sig(&mut self, arg: &ast::Expr, with_ret: bool) -> Option<FnSig> {
-        let ast::ExprKind::Ident(id) = &arg.kind else {
-            return None;
-        };
-        if let Some(t) = self.peek_local_ty(&id.name) {
-            let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(t).clone() else {
-                return None;
-            };
-            let closure = self.local_closure_const(&id.name);
-            let required = match closure {
-                Some(c) => {
-                    let ps = &self.cx.fn_info(c).params;
-                    ps.iter().take_while(|p| p.default.is_none()).count()
-                }
-                None => params.len(),
-            };
-            return Some(FnSig {
-                params: params.len(),
-                required,
-                ret: Some(ret),
-            });
-        }
-        match self.cx.lookup_item_at(self.module, &id.name, id.span)? {
-            Item::Def(d) if matches!(self.cx.info[d.0 as usize], DefInfo::Fn(_)) => {
-                let f = self.cx.fn_info(d);
-                if f.generics.len() != 0 {
-                    return None;
-                }
-                let params = f.params.len();
-                let required = f.params.iter().take_while(|p| p.default.is_none()).count();
-                let ret = with_ret.then(|| self.callee_ret(d, id.span));
-                Some(FnSig {
-                    params,
-                    required,
-                    ret,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    /// What calling the named function `d` gives: its result type, a promise of it for an
-    /// `async` function.
-    fn callee_ret(&mut self, d: DefId, span: velt_common::Span) -> TyId {
-        let r = crate::body::returns::ret_of(self.cx, d, span);
-        if self.is_async_fn(d) {
-            self.async_call_ret(d, r)
-        } else {
-            r
-        }
     }
 
     /// An `async` arrow where the function type returns `void` or a union with one promise

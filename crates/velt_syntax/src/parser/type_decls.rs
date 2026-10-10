@@ -33,6 +33,42 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
         let name = self.parse_binding_ident()?;
+        self.parse_type_decl_rest(name, is_class)
+    }
+
+    /// At `const K = class` / `let K = class`: a class expression bound to a variable.
+    pub(super) fn at_class_binding(&mut self) -> bool {
+        Self::is_ident_like(self.nth(1))
+            && self.nth(2) == Tok::Eq
+            && self.nth(3) == Tok::Kw(Kw::Class)
+    }
+
+    /// `const K = class [K] … { … };`: the class `K`. A class expression's own name, if any,
+    /// must be the variable's (it names the class, also in `console.log`).
+    pub(super) fn parse_class_binding(&mut self) -> PResult<TypeDecl> {
+        self.bump(); // const / let
+        let name = self.parse_binding_ident()?;
+        self.bump(); // =
+        self.bump(); // class
+        if self.at_ident_like() && !self.at_kw(Kw::Extends) && !self.at_kw(Kw::Implements) {
+            let own = self.take_ident();
+            if own.name != name.name {
+                self.error(
+                    format!(
+                        "a named class expression must have the name of the variable it initializes: declare `class {} {{ … }}`, or write `const {} = class {{ … }}`",
+                        own.name, name.name
+                    ),
+                    own.span,
+                );
+            }
+        }
+        let decl = self.parse_type_decl_rest(name, true)?;
+        // The `;` after the class body may be left out, as after a declaration.
+        self.eat(Tok::Semi);
+        Ok(decl)
+    }
+
+    fn parse_type_decl_rest(&mut self, name: Ident, is_class: bool) -> PResult<TypeDecl> {
         let generics = self.parse_type_generic_params()?;
         let extends = self.parse_class_extends(is_class)?;
         let mut implements = Vec::new();

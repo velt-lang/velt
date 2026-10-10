@@ -1,0 +1,15 @@
+// `this` in a static method is the class it was called on, usable to reach its static members.
+// A static method using `this` (or `super`) is not a value: JavaScript would call it with
+// `this` undefined.
+class A {
+  static kind(): string { return "A"; }
+  static hello(): string { return "hello " + this.kind(); }
+  static self(): number { const c = this; return 1; }
+  static missing(): string { return this.nope(); }
+}
+class B extends A {
+  static g(): string { return super.nothing(); }
+}
+const h = A.hello;
+const i = B.hello;
+console.log(h(), i());

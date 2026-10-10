@@ -7,7 +7,8 @@
 //!    variants, interface members, `implements` lists.
 //! 3. [`sigs`]: function / method / constructor / `extend` / interface-default signatures;
 //!    [`iface_extends`] flattens interface inheritance.
-//! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules.
+//! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules;
+//!    [`static_this`]: copies of the static methods using `this` per subclass.
 //! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
 //!    defining `compareTo` implement the builtin `Comparable<T>`; [`iterable`]: those defining
 //!    `[Symbol.iterator](): Iterator<T, E>` implement `Iterable<T, E>`.
@@ -36,6 +37,7 @@ mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 mod sigs;
+mod static_this;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
@@ -63,6 +65,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     iface_extends::flatten_all(cx);
     field_only::fill(cx);
     classes::check_classes(cx);
+    static_this::copy_statics(cx);
     impls::build_impls(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
