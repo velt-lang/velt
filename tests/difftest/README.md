@@ -82,7 +82,10 @@ Differences between the languages that a program must avoid (the generator does 
 - **Numbers.** A `number` is a double in both, `-0` and rounding past 2^53 included, and
   `console.log` prints `-0` in both. Declared integer types (`i64`, `u8`, …) are Velt's: they
   wrap and divide as integers, so programs in the shared subset use them only where values stay
-  small. `Math.hypot` isn't correctly rounded in V8.
+  small. A `number` goes into a declared integer only with `as` (`s.indexOf(t) as i64`, also
+  `xs.length` and a compound expression of literals alone, such as `Math.trunc(7 / 2)`), which
+  TypeScript erases; an array literal is typed with `([1, 2] as i64[])` where no annotation
+  types it (`[1, 2].filter(…)`). `Math.hypot` isn't correctly rounded in V8.
 - **Printing containers.** Velt breaks long values across lines and prints arrays of more
   than 6 short elements in columns, as Node's `util.inspect` does, so both print with Node's
   defaults. Keep nesting shallow (Node shows `[Object]` past depth 2) and arrays under 100

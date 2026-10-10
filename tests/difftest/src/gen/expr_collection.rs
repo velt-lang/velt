@@ -69,7 +69,12 @@ impl Gen {
                 _ => self.owned(elem, d),
             })
             .collect();
-        format!("[{}]", items.join(", "))
+        match ty {
+            // `as i64[]` types the literal's elements, also where no annotation does
+            // (a receiver: `[1, 2].filter(…)`); TypeScript erases it.
+            Ty::IntArr => format!("([{}] as i64[])", items.join(", ")),
+            _ => format!("[{}]", items.join(", ")),
+        }
     }
 
     /// `xs.map(...)` producing an array of type `ty` from a source array of any element type.
@@ -77,7 +82,7 @@ impl Gen {
         let src = *self.rng.pick(&[Ty::IntArr, Ty::StrArr, Ty::FloatArr]);
         let xs = self.array(src, d).text;
         let f = match ty {
-            Ty::IntArr => self.callback(&xs, src, |g, d| g.int(d), d),
+            Ty::IntArr => self.callback(&xs, src, |g, d| format!("({} as i64)", g.int(d)), d),
             Ty::StrArr => self.callback(&xs, src, |g, d| g.owned_string(d), d),
             _ => self.callback(&xs, src, |g, d| g.float(d), d),
         };
@@ -141,7 +146,7 @@ impl Gen {
         d: u32,
     ) -> String {
         let i = self.int(d);
-        let elem = format!("{xs}[(({i} + {INDEX_OFFSET}) as usize) % {xs}.length]{then}");
+        let elem = format!("{xs}[(({i} + {INDEX_OFFSET}) as usize) % ({xs}.length as usize)]{then}");
         let elem = if wrap { format!("`${{{elem}}}`") } else { elem };
         format!("({xs}.length > 0 ? {elem} : {fallback})")
     }
@@ -168,8 +173,8 @@ impl Gen {
         let xs = self.array(ty, d).text;
         match (self.rng.below(5), ty) {
             (0, _) => format!("({xs}.length as i64)"),
-            (1, Ty::IntArr) => format!("{xs}.indexOf({})", self.int(d)),
-            (1, Ty::StrArr) => format!("{xs}.indexOf({})", self.string(d).text),
+            (1, Ty::IntArr) => format!("({xs}.indexOf({}) as i64)", self.int(d)),
+            (1, Ty::StrArr) => format!("({xs}.indexOf({}) as i64)", self.string(d).text),
             (2, Ty::IntArr) => {
                 let fallback = self.int(d);
                 self.index_read(&xs, "", false, fallback, d)
@@ -191,7 +196,7 @@ impl Gen {
             }
             _ => {
                 let pred = self.callback(&xs, ty, |g, d| g.boolean(d), d);
-                format!("{xs}.findIndex({pred})")
+                format!("({xs}.findIndex({pred}) as i64)")
             }
         }
     }

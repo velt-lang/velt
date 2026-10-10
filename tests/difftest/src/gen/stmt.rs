@@ -139,7 +139,7 @@ impl Gen {
         let i = self.int(D);
         let sep = if suffix.starts_with('=') { " " } else { "." };
         format!(
-            "if ({xs}.length > 0) {{ {xs}[(({i} + 20000) as usize) % {xs}.length]{sep}{suffix}; }}"
+            "if ({xs}.length > 0) {{ {xs}[(({i} + 20000) as usize) % ({xs}.length as usize)]{sep}{suffix}; }}"
         )
     }
 

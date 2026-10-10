@@ -85,11 +85,11 @@ impl Gen {
             // Comma-separated declarations and updates.
             let j = self.scope.fresh("j");
             self.open(&format!(
-                "{prefix}for (let {i} = 0, {j} = {n}; {i} < {j}; {i}++, {j}--) {{"
+                "{prefix}for (let {i}: i64 = 0, {j}: i64 = {n}; {i} < {j}; {i}++, {j}--) {{"
             ));
             self.scope.declare(&j, Ty::Int, false, false);
         } else {
-            self.open(&format!("{prefix}for (let {i} = 0; {i} < {n}; {i}++) {{"));
+            self.open(&format!("{prefix}for (let {i}: i64 = 0; {i} < {n}; {i}++) {{"));
         }
         self.scope.declare(&i, Ty::Int, false, false);
         self.labels.push(label);
@@ -106,7 +106,7 @@ impl Gen {
     fn while_stmt(&mut self) {
         let w = self.scope.fresh("w");
         let n = self.rng.range(0, 6);
-        self.line(&format!("let {w} = 0;"));
+        self.line(&format!("let {w}: i64 = 0;"));
         self.scope.declare(&w, Ty::Int, false, false);
         let label = self.new_label();
         let prefix = label.as_ref().map_or(String::new(), |l| format!("{l}: "));
