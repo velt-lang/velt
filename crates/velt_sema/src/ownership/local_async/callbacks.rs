@@ -15,7 +15,8 @@
 //! array that one local of its function holds (or through a method keeping it in `this`), and
 //! that never leaves that function, is reached only when that local is ([`held_closures`]):
 //! `other.onChange = …` on an `Input` the handler never sees is not one the handler's `Input`
-//! may hold. Closures made by a request (inside a reached async closure) assign that request's
+//! may hold, and one only ever stored in fields no code a request may run uses is not reached
+//! ([`Bodies`]). Closures made by a request (inside a reached async closure) assign that request's
 //! own variables, and the standard library's closures are not the user's to change, so neither
 //! is reported. A reached closure's assignments include those of the closures it makes.
 
@@ -25,8 +26,8 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Intrinsic, Lit, LocalId, Stmt,
-    StmtKind as S, TyId, TyKind, UnOp,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, IntTy, Intrinsic, Lit, LocalId, Pat,
+    PatKind, Stmt, StmtKind as S, TyId, TyKind, UnOp,
 };
 use crate::ownership::local_closures::walk::{self, Visit};
 
@@ -61,6 +62,10 @@ pub(super) fn check_handler_callbacks(
         return;
     }
     let (held, homes) = held_closures(cx, g, flags);
+    let mut bodies = Bodies::new(cx);
+    bodies.homes = homes;
+    // Nodes whose values flow somewhere the graph follows.
+    let flowing: HashSet<usize> = g.srcs.iter().flatten().map(|(n, _)| *n).collect();
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
     let mut seen = HashSet::new();
     let mut fns: HashMap<TyId, Why> = HashMap::new();
@@ -89,6 +94,26 @@ pub(super) fn check_handler_callbacks(
         }
         types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
         rooted = roots.len();
+        // A closure only ever stored in fields that no code a request may run reads
+        // (`w.onClick = …` while the handler reads only `w.name`) is never called by one.
+        let reads =
+            bodies.request_reads(g.nodes.iter().enumerate().filter_map(|(n, node)| {
+                match (node, why[n]) {
+                    (Node::Lit(c), Some(_)) => Some(*c),
+                    _ => None,
+                }
+            }));
+        let unread = |n: usize, c: DefId| {
+            let Some(reads) = &reads else { return false };
+            !flowing.contains(&n)
+                && bodies.stores.get(&c).is_some_and(|fs| {
+                    fs.iter().all(|&(a, k)| {
+                        cx.adt(a)
+                            .and_then(|i| i.fields.get(k as usize))
+                            .is_some_and(|f| !reads.contains(&f.name))
+                    })
+                })
+        };
         for (n, node) in g.nodes.iter().enumerate() {
             if !matches!(node, Node::Lit(_)) || why[n].is_some() || flags[n] & STORED == 0 {
                 continue;
@@ -97,6 +122,9 @@ pub(super) fn check_handler_callbacks(
                 if let Some(w) = why[x] {
                     work.push((n, w));
                 }
+                continue;
+            }
+            if matches!(node, Node::Lit(c) if unread(n, *c)) {
                 continue;
             }
             let found = fns
@@ -148,7 +176,7 @@ pub(super) fn check_handler_callbacks(
         }
     }
     for (c, ty, w, cap, name, cap_ty, at) in found {
-        let call = call_site(cx, g, &reached, &requests, &homes, c, ty);
+        let call = call_site(cx, g, &reached, &requests, &bodies, c, ty);
         let init = declaration(cx, g, c, cap);
         report(cx, &name, cap_ty, at, call, init, w);
     }
@@ -469,14 +497,14 @@ fn call_site(
     g: &Graph,
     reached: &[(DefId, TyId, Why)],
     requests: &HashSet<DefId>,
-    homes: &HashMap<DefId, Vec<usize>>,
+    bodies: &Bodies,
     c: DefId,
     ty: TyId,
 ) -> Option<(String, Span)> {
     let mut order: Vec<DefId> = reached.iter().map(|(d, ..)| *d).collect();
     order.sort_by_key(|d| !requests.contains(d));
     let lit = g.ids.get(&Node::Lit(c)).copied();
-    let homes = homes.get(&c).map(Vec::as_slice).unwrap_or_default();
+    let homes = bodies.homes.get(&c).map(Vec::as_slice).unwrap_or_default();
     let flows = |n: usize, to: &[usize]| {
         let mut seen = HashSet::new();
         let mut work = vec![n];
@@ -494,7 +522,7 @@ fn call_site(
         TyKind::FnPtr { ret, .. } => Some(*ret),
         _ => None,
     };
-    let fields = field_stores(cx);
+    let fields = &bodies.stores;
     let mut best: Option<(u8, bool, u32, String, Span)> = None;
     for d in order {
         if d == c || in_std(cx, d) {
@@ -586,34 +614,152 @@ fn call_site(
     best.map(|b| (b.3, b.4))
 }
 
-/// The fields each closure literal is assigned to (`i.onChange = (v) => …`, `{ f: () => … }`),
-/// as `(class or object type, field)`.
-fn field_stores(cx: &Ctx) -> HashMap<DefId, Vec<(DefId, u32)>> {
-    let mut out: HashMap<DefId, Vec<(DefId, u32)>> = HashMap::new();
-    for (i, def) in cx.defs.iter().enumerate() {
-        let Some(Def::Fn(f)) = def else { continue };
-        if in_std(cx, DefId(i as u32)) {
-            continue;
+/// What the bodies of the program's functions do with fields, read once.
+#[derive(Default)]
+struct Bodies {
+    /// The fields each closure literal is assigned to (`i.onChange = (v) => …`,
+    /// `{ f: () => … }`), as `(class or object type, field)`.
+    stores: HashMap<DefId, Vec<(DefId, u32)>>,
+    /// Per function: the names of the fields it reads (or writes), or `None` when it uses one
+    /// whose name is not known.
+    reads: HashMap<DefId, Option<HashSet<String>>>,
+    /// Per function: the functions of the program it calls directly.
+    calls: HashMap<DefId, Vec<DefId>>,
+    /// The program's methods and the functions it uses as values (`const f = poke`): any of
+    /// them may run in a request.
+    entries: Vec<DefId>,
+    /// Per closure: the nodes of the locals it is stored into ([`held_closures`]).
+    homes: HashMap<DefId, Vec<usize>>,
+}
+
+impl Bodies {
+    fn new(cx: &Ctx) -> Bodies {
+        let mut out = Bodies::default();
+        for (i, def) in cx.defs.iter().enumerate() {
+            let d = DefId(i as u32);
+            let Some(Def::Fn(f)) = def else { continue };
+            if in_std(cx, d) {
+                continue;
+            }
+            if f.self_ty.is_some() {
+                out.entries.push(d);
+            }
+            let mut reads = Some(HashSet::new());
+            walk::block(
+                &f.body.block,
+                &mut FieldUses {
+                    cx,
+                    reads: &mut reads,
+                },
+            );
+            let mut calls = vec![];
+            each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
+                E::Assign { place, value } => {
+                    if let (E::Field { base, index, .. }, E::Closure(c)) =
+                        (&place.kind, &value.kind)
+                    {
+                        if let TyKind::Adt(a, _) = cx.ty.kind(base.ty) {
+                            out.stores.entry(*c).or_default().push((*a, *index));
+                        }
+                    }
+                }
+                E::AdtLit { def, fields, .. } => {
+                    for (k, x) in fields.iter().enumerate() {
+                        if let E::Closure(c) = x.kind {
+                            out.stores.entry(c).or_default().push((*def, k as u32));
+                        }
+                    }
+                }
+                E::Call {
+                    callee: Callee::Def(g, _),
+                    ..
+                } if !in_std(cx, *g) => calls.push(*g),
+                E::FnRef(g, _) if !in_std(cx, *g) => out.entries.push(*g),
+                _ => {}
+            });
+            out.reads.insert(d, reads);
+            out.calls.insert(d, calls);
         }
-        each_expr(&f.body.block, &mut |e: &Expr| match &e.kind {
-            E::Assign { place, value } => {
-                if let (E::Field { base, index, .. }, E::Closure(c)) = (&place.kind, &value.kind) {
-                    if let TyKind::Adt(a, _) = cx.ty.kind(base.ty) {
-                        out.entry(*c).or_default().push((*a, *index));
-                    }
-                }
-            }
-            E::AdtLit { def, fields, .. } => {
-                for (k, x) in fields.iter().enumerate() {
-                    if let E::Closure(c) = x.kind {
-                        out.entry(c).or_default().push((*def, k as u32));
-                    }
-                }
-            }
-            _ => {}
-        });
+        out
     }
-    out
+
+    /// The names of the fields that code a request may run uses: the closures `reached`, the
+    /// program's methods and functions used as values, and what they call. `None`: unknown.
+    fn request_reads(&self, reached: impl Iterator<Item = DefId>) -> Option<HashSet<String>> {
+        let mut work: Vec<DefId> = reached.chain(self.entries.iter().copied()).collect();
+        let mut seen = HashSet::new();
+        let mut out = HashSet::new();
+        while let Some(d) = work.pop() {
+            if !seen.insert(d) {
+                continue;
+            }
+            match self.reads.get(&d) {
+                Some(Some(names)) => out.extend(names.iter().cloned()),
+                Some(None) => return None,
+                None => {}
+            }
+            work.extend(self.calls.get(&d).into_iter().flatten().copied());
+        }
+        Some(out)
+    }
+}
+
+/// Collects the names of the fields a body uses, in expressions and patterns.
+struct FieldUses<'a, 'm> {
+    cx: &'a Ctx<'m>,
+    reads: &'a mut Option<HashSet<String>>,
+}
+
+impl FieldUses<'_, '_> {
+    fn field(&mut self, ty: TyId, index: u32) {
+        let name = match self.cx.ty.kind(ty) {
+            TyKind::Adt(a, _) => self
+                .cx
+                .adt(*a)
+                .and_then(|i| i.fields.get(index as usize))
+                .map(|f| f.name.clone()),
+            _ => None,
+        };
+        match (name, self.reads.as_mut()) {
+            (Some(n), Some(reads)) => {
+                reads.insert(n);
+            }
+            _ => *self.reads = None,
+        }
+    }
+
+    fn pat(&mut self, p: &Pat) {
+        match &p.kind {
+            PatKind::Adt { fields } => {
+                for (k, sub) in fields {
+                    self.field(p.ty, *k);
+                    self.pat(sub);
+                }
+            }
+            PatKind::Variant { args: xs, .. }
+            | PatKind::Tuple(xs)
+            | PatKind::Or(xs)
+            | PatKind::Array { elems: xs, .. } => xs.iter().for_each(|x| self.pat(x)),
+            PatKind::Some(x) => self.pat(x),
+            _ => {}
+        }
+    }
+}
+
+impl Visit for FieldUses<'_, '_> {
+    fn stmt(&mut self, s: &Stmt) {
+        if let S::LetPat { pat, .. } = &s.kind {
+            self.pat(pat);
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) {
+        match &e.kind {
+            E::Field { base, index, .. } => self.field(base.ty, *index),
+            E::Match { arms, .. } => arms.iter().for_each(|a| self.pat(&a.pat)),
+            _ => {}
+        }
+    }
 }
 
 /// `e` as written, for a callee: a variable, a field, an element or a call of one.

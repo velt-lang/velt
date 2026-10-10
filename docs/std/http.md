@@ -76,14 +76,15 @@ it throws.
   error, but changes each request's copy (#854).
 
   Callbacks stored in the heap are followed by type: one stored in an object the handler
-  reaches, or of the type of one it calls, counts as reached. A callback stored straight into an
-  object that one local variable holds (`other.onChange = …`, `cbs.push(…)`, or through a method
-  keeping it, `e.on(…)` with `on(f) { this.listeners.push(f); }`) is reached only when that
-  variable is. Otherwise a callback of a type the handler calls is an error even when the
-  handler never gets to it: one stored by a function into an object passed to it
-  (`setup(input)`), in an array passed to a function or iterated with `for...of`, or in an
-  object the handler reaches but whose callback it never calls. Share the variable with
-  `shared(...)` as the fix shows; the program then runs as in Node.
+  reaches, or of the type of one it calls, counts as reached, unless it is only stored in fields
+  that no code a request may run uses (`w.onClick = …` while the handler reads only `w.name`). A
+  callback stored straight into an object that one local variable holds (`other.onChange = …`,
+  `cbs.push(…)`, or through a method keeping it, `e.on(…)` with
+  `on(f) { this.listeners.push(f); }`) is reached only when that variable is. Otherwise a
+  callback of a type the handler calls is an error even when the handler never gets to it: one
+  stored by a function into an object passed to it (`setup(input)`), or in an array passed to a
+  function or iterated with `for...of`. Share the variable with `shared(...)` as the fix shows;
+  the program then runs as in Node.
 
   ```ts
   import { serve } from "velt:http";
