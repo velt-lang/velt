@@ -50,6 +50,7 @@ impl FnCx<'_, '_> {
                 }
                 e
             }
+            "Boolean" => self.boolean_call(args, span),
             "spawn" => self.spawn_call(args, exp, span),
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),

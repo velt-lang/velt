@@ -1,0 +1,60 @@
+// Truthiness of a value of a type parameter is the test of each instantiation's type (#867).
+enum Level {
+  Off,
+  Low,
+}
+
+enum Mode {
+  None = "",
+  Fast = "fast",
+}
+
+class Box {
+  v = 0;
+}
+
+function describe<T>(x: T): string {
+  if (!x) {
+    return "falsy";
+  }
+  return x ? "truthy" : "?";
+}
+
+function firstTruthy<T>(xs: T[]): number {
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function orDefault<T>(x: T, d: T): T {
+  return x || d;
+}
+
+function make<T>(x: T): T {
+  return x;
+}
+
+const nan = NaN;
+const nz = -0;
+const maybe: string | null = null;
+const some: number | null = 3;
+const u: number | string = "";
+const u2: number | string = 0;
+const u3: number | string = 4;
+console.log(describe(0), describe(1), describe(nz), describe(nan), describe(""), describe("a"));
+console.log(describe(true), describe(false), describe(maybe), describe(some), describe(new Box()));
+console.log(
+  describe(u),
+  describe(u2),
+  describe(u3),
+  describe([]),
+  describe(Level.Off),
+  describe(Level.Low),
+);
+console.log(describe(Mode.None), describe(Mode.Fast));
+console.log(firstTruthy([0, 0, 5]), firstTruthy(["", "x"]), firstTruthy([false, false]));
+console.log(orDefault(0, 7), orDefault("", "d"), orDefault("v", "d"));
+console.log(describe(make(0)), describe(make("s")));

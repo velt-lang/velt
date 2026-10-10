@@ -301,28 +301,34 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.expr(e, None, Want::Borrow);
-                let h = self.unbrand(h);
-                let h = self.own_to_string(h, "toString");
-                let h = self.narrowed_for_print(h);
-                let t = h.ty;
-                if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
-                    parts.push(h);
-                } else if self.reject_js_list(t, "a template literal", h.span) {
-                    parts.push(self.error_expr(h.span));
-                } else if self.printable(t) {
-                    let hs = h.span;
-                    parts.push(self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs));
-                } else {
-                    let tn = self.cx.display(t);
-                    self.cx.err(
-                        format!("cannot format a value of type `{tn}` in a template literal"),
-                        h.span,
-                    );
-                    parts.push(self.error_expr(h.span));
-                }
+                parts.push(self.js_text(h, "a template literal"));
             }
         }
         self.concat_parts(parts, span)
+    }
+
+    /// `h` as JS's `String(h)` writes it (a template literal part, `String(x)`; `what` names
+    /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
+    pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
+        let h = self.unbrand(h);
+        let h = self.own_to_string(h, "toString");
+        let h = self.narrowed_for_print(h);
+        let t = h.ty;
+        if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
+            h
+        } else if self.reject_js_list(t, what, h.span) {
+            self.error_expr(h.span)
+        } else if self.printable(t) {
+            let hs = h.span;
+            self.intrinsic(Intrinsic::ToString, vec![h], self.cx.ty.str_, hs)
+        } else {
+            let tn = self.cx.display(t);
+            self.cx.err(
+                format!("cannot format a value of type `{tn}` in {what}"),
+                h.span,
+            );
+            self.error_expr(h.span)
+        }
     }
 
     /// `h.<method>()` when `h` is a class or struct value with its own `method` (a template

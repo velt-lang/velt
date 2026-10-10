@@ -1,0 +1,298 @@
+[
+  {
+    "id": 1,
+    "tags": [
+      "a",
+      "b"
+    ],
+    "meta": {
+      "a": 1,
+      "b": []
+    }
+  },
+  {
+    "id": 2,
+    "tags": [],
+    "meta": {
+      "a": 2,
+      "b": [
+        3,
+        4
+      ]
+    }
+  }
+]
+[
+	{
+		"id": 1,
+		"tags": [
+			"a",
+			"b"
+		],
+		"meta": {
+			"a": 1,
+			"b": []
+		}
+	},
+	{
+		"id": 2,
+		"tags": [],
+		"meta": {
+			"a": 2,
+			"b": [
+				3,
+				4
+			]
+		}
+	}
+]
+[
+--{
+----"id": 1,
+----"tags": [
+------"a",
+------"b"
+----],
+----"meta": {
+------"a": 1,
+------"b": []
+----}
+--},
+--{
+----"id": 2,
+----"tags": [],
+----"meta": {
+------"a": 2,
+------"b": [
+--------3,
+--------4
+------]
+----}
+--}
+]
+[{"id":1,"tags":["a","b"],"meta":{"a":1,"b":[]}},{"id":2,"tags":[],"meta":{"a":2,"b":[3,4]}}]
+[{"id":1,"tags":["a","b"],"meta":{"a":1,"b":[]}},{"id":2,"tags":[],"meta":{"a":2,"b":[3,4]}}]
+[
+  {
+    "id": 1,
+    "tags": [
+      "a",
+      "b"
+    ],
+    "meta": {
+      "a": 1,
+      "b": []
+    }
+  },
+  {
+    "id": 2,
+    "tags": [],
+    "meta": {
+      "a": 2,
+      "b": [
+        3,
+        4
+      ]
+    }
+  }
+]
+[
+          {
+                    "id": 1,
+                    "tags": [
+                              "a",
+                              "b"
+                    ],
+                    "meta": {
+                              "a": 1,
+                              "b": []
+                    }
+          },
+          {
+                    "id": 2,
+                    "tags": [],
+                    "meta": {
+                              "a": 2,
+                              "b": [
+                                        3,
+                                        4
+                              ]
+                    }
+          }
+]
+[{"id":1,"tags":["a","b"],"meta":{"a":1,"b":[]}},{"id":2,"tags":[],"meta":{"a":2,"b":[3,4]}}]
+[
+abcdefghij{
+abcdefghijabcdefghij"id": 1,
+abcdefghijabcdefghij"tags": [
+abcdefghijabcdefghijabcdefghij"a",
+abcdefghijabcdefghijabcdefghij"b"
+abcdefghijabcdefghij],
+abcdefghijabcdefghij"meta": {
+abcdefghijabcdefghijabcdefghij"a": 1,
+abcdefghijabcdefghijabcdefghij"b": []
+abcdefghijabcdefghij}
+abcdefghij},
+abcdefghij{
+abcdefghijabcdefghij"id": 2,
+abcdefghijabcdefghij"tags": [],
+abcdefghijabcdefghij"meta": {
+abcdefghijabcdefghijabcdefghij"a": 2,
+abcdefghijabcdefghijabcdefghij"b": [
+abcdefghijabcdefghijabcdefghijabcdefghij3,
+abcdefghijabcdefghijabcdefghijabcdefghij4
+abcdefghijabcdefghijabcdefghij]
+abcdefghijabcdefghij}
+abcdefghij}
+]
+[] [
+  [],
+  [
+    1
+  ],
+  []
+]
+{
+    "x": 1,
+    "y": 2,
+    "label": "pé \"q\"\n\t "
+}
+{} "sé" 5
+[{"id":1,"meta":{"a":1}},{"id":2,"meta":{"a":2}}]
+[
+ {
+  "meta": {
+   "b": []
+  },
+  "id": 1
+ },
+ {
+  "meta": {
+   "b": [
+    3,
+    4
+   ]
+  },
+  "id": 2
+ }
+]
+{
+	"y": 2,
+	"x": 1
+}
+{}
+{
+  "label": "pé \"q\"\n\t "
+}
+{"1":1,"0":"zero"}
+[{"id":1,"tags":["a","b"],"meta":{"a":1,"b":[]}},{"id":2,"tags":[],"meta":{"a":2,"b":[3,4]}}]
+[
+ null,
+ 1.5,
+ 0,
+ 1e+21
+]
+"x"
+[
+😀😀😀😀😀1
+]
+[
+{
+"id": 1,
+"tags": [
+"a",
+"b"
+],
+"meta": {
+"a": 1,
+"b": []
+}
+},
+{
+"id": 2,
+"tags": [],
+"meta": {
+"a": 2,
+"b": [
+3,
+4
+]
+}
+}
+]
+[
+{
+"id": 1,
+"tags": [
+"a",
+"b"
+],
+"meta": {
+"a": 1,
+"b": []
+}
+},
+{
+"id": 2,
+"tags": [],
+"meta": {
+"a": 2,
+"b": [
+3,
+4
+]
+}
+}
+]
+[
+{
+"id": 1,
+"tags": [
+"a",
+"b"
+],
+"meta": {
+"a": 1,
+"b": []
+}
+},
+{
+"id": 2,
+"tags": [],
+"meta": {
+"a": 2,
+"b": [
+3,
+4
+]
+}
+}
+]
+[
+{
+"id": 1,
+"tags": [
+"a",
+"b"
+],
+"meta": {
+"a": 1,
+"b": []
+}
+},
+{
+"id": 2,
+"tags": [],
+"meta": {
+"a": 2,
+"b": [
+3,
+4
+]
+}
+}
+]
+{
+"y": 2,
+"x": 1
+} [1]
