@@ -245,6 +245,8 @@ fn repeated_swaps_keep_redirecting_old_code() {
 /// which returns `generation`. Earlier helpers stay, so every version is a swap.
 fn growing(generation: i64) -> Program {
     let (mut pb, _) = ProgramBuilder::new();
+    // `answer` comes before the helper it newly calls: its slot is set first.
+    let answer = pb.reserve();
     let helpers: Vec<FuncId> = (1..=generation)
         .map(|g| pb.add(constant_fn(&format!("helper_{g}"), g)))
         .collect();
@@ -258,7 +260,7 @@ fn growing(generation: i64) -> Program {
         Some(Place::local(r)),
     );
     fb.term(next, Terminator::Return(copy_local(r)));
-    let answer = pb.add(fb.finish());
+    pb.set(answer, fb.finish());
     // `velt_main` and what it calls count as `main` (never swapped): `run` keeps `answer` out.
     let mut fb = FuncBuilder::internal("run", &[], I64);
     let r = fb.local(I64);

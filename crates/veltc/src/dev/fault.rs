@@ -83,9 +83,10 @@ unsafe extern "system" fn on_fault(info: *mut EXCEPTION_POINTERS) -> i32 {
 
 /// Walk the stack from `context` with the system's unwind tables (the JIT registers its own).
 unsafe fn walk(mut context: CONTEXT, out: &mut String) {
-    for _ in 0..MAX_FRAMES {
+    for frame in 0..MAX_FRAMES {
         let pc = context.Rip;
-        if pc == 0 {
+        // A call through a null pointer faults at 0: its caller's return address is on top.
+        if pc == 0 && frame > 0 {
             break;
         }
         let _ = writeln!(out, "    {pc:#x} {}", place(pc));
