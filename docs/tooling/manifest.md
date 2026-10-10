@@ -88,7 +88,9 @@ A version without an operator stays within its minor version, also after 1.0: `"
 `1.2.5` but not `1.3.0`, unlike the same requirement in `dependencies`. A major version alone
 (`"1"`) accepts any `1.x`. Pre-releases match only
 a requirement that names one (`"0.2.0-rc.1"`). Leave the field out to build with any velt.
-`velt manifest` and every other command check that the value is a requirement.
+`velt manifest` and every other command check that the value is a requirement. The `velt` on
+your `PATH` runs the newest installed version the field accepts, installing one first when none
+is ([`velt toolchain`](cli.md#velt-toolchain)).
 
 ## `dependencies`
 

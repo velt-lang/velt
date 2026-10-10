@@ -23,6 +23,7 @@ velt playground [--port <n>] [--host <addr>]   # browser playground (default 127
 velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
+velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | default [<t>] | which | link <name> <prefix> | unlink <name>   # the launcher's (#948)
 velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
@@ -189,6 +190,35 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that link fails). A link whose inputs (objects, runtime library, settings, the linker:
   `velt_link::linker_identity`) are unchanged since the executable was last linked is skipped
   (`<exe>.link-stamp` beside it).
+- The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
+  `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
+  For every command but `toolchain` it selects `$VELT_TOOLCHAIN` (a version or a link name),
+  else the `velt` requirement of the nearest `package.vlt` above the cwd
+  (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin), else
+  `<root>/default`; none → exit 1 naming `velt toolchain install`. A requirement selects the
+  newest installed version it accepts (`<root>/toolchains/<v>/` with a `bin/velt`). When none
+  is installed: with `$VELT_TOOLCHAIN_AUTO_INSTALL` `0`/`false`/`no`/`off`, exit 1 naming
+  `velt toolchain install <requirement or version>`; else an exact version, or the newest
+  version of `$VELT_INSTALL_BASE_URL/releases/latest/download/releases.json` the requirement
+  accepts (none → exit 1 listing the published versions), is installed
+  (`velt_toolchain::release::install_toolchain`: `SHA256SUMS` then
+  `velt-<v>-<host>.tar.gz` of `releases/download/v<v>/`, checked, unpacked under
+  `velt-<v>-<host>/`, swapped into place) after `velt: installing velt <v> (<reason>) from <base>`
+  on stderr. It then runs `<prefix>/bin/velt` with the same arguments (Unix: `exec`; Windows:
+  waits, exits with its code, ignores Ctrl-C itself), with `VELT_LAUNCHER=<launcher path>` and
+  `VELT_TOOLCHAIN_SELECTED=<toolchain> (<reason>)` set; `<reason>` is `$VELT_TOOLCHAIN`,
+  `velt: "<req>" in <manifest>:<line>` or `the default`. `velt doctor` reports both
+  (`toolchain`), or "started directly". `velt toolchain` in a toolchain's own `velt` exits 1
+  saying it is the launcher's. `velt toolchain` (`velt_launcher::commands`): `list` prints a
+  line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
+  marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
+  newest first, `  (installed)` after installed ones. `install <spec>`: a full version is exact,
+  anything else a requirement resolved against the index; the first installed toolchain (no
+  `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
+  `--force`. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and
+  the prefix, or `<wanted> (<reason>): not installed; …`. `link <name> <prefix>` (`name`:
+  `[a-z][a-z0-9._-]*`) requires `<prefix>/bin/velt` and writes the absolute prefix to
+  `<root>/links/<name>`.
 - `--emit vir` prints VIR (`Display`) to stdout and stops. `-v` prints per-stage timings;
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with

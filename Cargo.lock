@@ -2138,6 +2138,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_launcher"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "semver",
+ "tar",
+ "tempfile",
+ "velt_http",
+ "velt_toolchain",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "velt_link"
 version = "0.1.0"
 dependencies = [

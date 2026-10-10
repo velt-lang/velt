@@ -74,6 +74,8 @@ fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .env_remove("VELT_RT_LIB")
         .env_remove("VELT_RT_LINK")
         .env_remove("VELT_REGISTRY")
+        .env_remove("VELT_LAUNCHER")
+        .env_remove("VELT_TOOLCHAIN_SELECTED")
         .output()
         .unwrap()
 }
@@ -106,6 +108,17 @@ fn installed_prefix_runs_doctor_and_programs() {
         "std not from the prefix:\n{report}"
     );
     assert!(report.contains("✓ hello (debug)"), "{report}");
+    // Not run by the launcher (#948): doctor says so, and `velt toolchain` points at it.
+    assert!(
+        report.contains("toolchain") && report.contains("started directly"),
+        "{report}"
+    );
+    let o = velt(&prefix, &work, &home, &["toolchain", "list"]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        !o.status.success() && err.contains("is run by the velt launcher"),
+        "{err}"
+    );
     if prefix.join("lib").join(SHARED_RUNTIME[0]).is_file() {
         let shared = prefix.join("lib").join(SHARED_RUNTIME.last().unwrap());
         assert!(
