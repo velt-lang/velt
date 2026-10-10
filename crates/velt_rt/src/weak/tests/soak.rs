@@ -72,11 +72,11 @@ fn soak(n: u64, window: usize) {
              live objects at most {max_live}, side-table records at most {max_tracked}"
         );
         let entries: usize = alive.iter().map(|r| r.refs.len() / 2).sum();
-        assert_eq!(velt_rt_weakmap_len(cache) as usize, entries);
+        assert_eq!(weakmap_len(cache) as usize, entries);
         for r in alive {
             r.refs.into_iter().for_each(release);
         }
-        assert_eq!(velt_rt_weakmap_len(cache), 0);
+        assert_eq!(weakmap_len(cache), 0);
         finish(&[cache]);
     });
 }

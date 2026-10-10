@@ -77,21 +77,20 @@ pub(super) fn is_marked(obj: *mut u8) -> bool {
 }
 
 /// The release sequence for a weak-capable type (module docs of `weak`), inline as generated
-/// code has it.
+/// code has it: with `RC_WEAK` the sign bit, one signed compare sends both the unique and the
+/// weakly held case off the shared path, which stays as short as today's.
 #[inline(always)]
 pub(super) fn release(obj: *mut u8) {
     // SAFETY: tests own the reference they release.
     unsafe {
         let rc = rc_word(obj);
         let c = *rc;
-        if c == 1 {
-            destroy(obj);
-        } else if c & RC_WEAK != 0 {
-            if velt_rt_weak_release(obj) != 0 {
-                destroy(obj);
-            }
-        } else {
+        if c as i64 > 1 {
             *rc = c - 1;
+        } else if c == 1 {
+            destroy(obj);
+        } else if velt_rt_weak_release(obj) != 0 {
+            destroy(obj);
         }
     }
 }

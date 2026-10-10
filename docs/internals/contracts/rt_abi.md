@@ -223,17 +223,18 @@ or is boxed after the call (results). Closure environments on the heap are count
 drop function in their header releases one reference.
 
 ## Weak references (proposed)
-**Proposed (#823, #11); not used by the compiler yet.** The functions exist in `velt_rt`
-(`src/weak/`) with these signatures but without `#[no_mangle]`; they are exported when the
-compiler lowers `WeakMap`, `WeakSet`, `WeakRef` and `weak T` to them. Design:
+**Proposed (#823, #11); not used by the compiler yet.** `velt_rt` exports these functions
+(`src/weak/`) for the compiler to lower `WeakMap`, `WeakSet`, `WeakRef` and `weak T` to; they
+may change until it does. Design:
 [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
-  targets and every type reachable from a weak map's key and value types): `c = count; if c == 1 {
-  drop; free } else if c & RC_WEAK { if velt_rt_weak_release(obj) { drop; free } } else { count =
-  c - 1 }`. Other types release as today.
+  targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if velt_rt_weak_release(obj) { drop;
+  free }` (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release as
+  today.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
   for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are

@@ -4,14 +4,15 @@
 //!
 //! A counted object (`[count: u64][value]`, the value pointer is the block + 8) that is weakly
 //! held has [`RC_WEAK`] set in its count word and a record in this thread's side table
-//! (`table`). Retain stays `count += 1`. Release, for the types the compiler marks weak-capable,
-//! gains one test on the shared path:
+//! (`table`). Retain stays `count += 1`. [`RC_WEAK`] is the sign bit, so release, for the types
+//! the compiler marks weak-capable, keeps today's single compare on the shared path (signed
+//! instead of `== 1`) and tells the unique and the weakly held case apart off it:
 //!
 //! ```text
 //! c = *rc
-//! if c == 1                { drop the fields; free }          // unchanged unique path
-//! else if c & RC_WEAK != 0 { if weak_release(obj) { drop the fields; free } }   // cold
-//! else                     { *rc = c - 1 }
+//! if c as i64 > 1 { *rc = c - 1 }                                      // shared path
+//! else if c == 1  { drop the fields; free }                            // unique path
+//! else            { if weak_release(obj) { drop the fields; free } }   // RC_WEAK set: cold
 //! ```
 //!
 //! Types that are never weakly held keep today's two-way release. `weak_release` removes a dying
@@ -19,8 +20,8 @@
 //! only by its own entries' values (the `raw -> proxy` ephemeron), runs a bounded trial deletion
 //! (`trial`) that frees the cycle when nothing outside refers to it.
 //!
-//! Nothing here is called by generated code yet: the functions have the C ABI they will be
-//! exported with (`#[no_mangle]`) once the compiler lowers `WeakMap`/`WeakSet`/`WeakRef` to them.
+//! Nothing here is called by generated code yet: the functions are exported with the proposed
+//! ABI, for the compiler to lower `WeakMap`/`WeakSet`/`WeakRef` to.
 
 mod table;
 mod trial;
@@ -65,6 +66,7 @@ pub(crate) unsafe fn rc_word(obj: *mut u8) -> *mut u64 {
 /// A new, empty weak map: `key_trace` is the keys' trace glue, `value_release` releases a value
 /// (`None`: values are plain words, as for `WeakMap<K, number>` and `WeakSet`), `value_trace`
 /// traces a value (`None`: values never refer back to keys, so entries are never ephemerons).
+#[no_mangle]
 pub extern "C" fn velt_rt_weakmap_new(
     key_trace: Option<TraceFn>,
     value_release: Option<ReleaseFn>,
@@ -78,6 +80,7 @@ pub extern "C" fn velt_rt_weakmap_new(
 ///
 /// # Safety
 /// `map` is live; `key` is a live counted object; `value` is owned by the caller.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_set(map: MapId, key: *mut u8, value: u64) {
     let old = table::with(|s| s.set(map, key, value));
     table::release_values(old);
@@ -88,6 +91,7 @@ pub unsafe extern "C" fn velt_rt_weakmap_set(map: MapId, key: *mut u8, value: u6
 ///
 /// # Safety
 /// `map` is live; `found` is writable.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_get(map: MapId, key: *mut u8, found: *mut u8) -> u64 {
     let v = table::with(|s| s.get(map, key));
     *found = u8::from(v.is_some());
@@ -95,6 +99,7 @@ pub unsafe extern "C" fn velt_rt_weakmap_get(map: MapId, key: *mut u8, found: *m
 }
 
 /// `map.has(key)`.
+#[no_mangle]
 pub extern "C" fn velt_rt_weakmap_has(map: MapId, key: *mut u8) -> u8 {
     u8::from(table::with(|s| s.get(map, key)).is_some())
 }
@@ -103,6 +108,7 @@ pub extern "C" fn velt_rt_weakmap_has(map: MapId, key: *mut u8) -> u8 {
 ///
 /// # Safety
 /// `map` is live.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_delete(map: MapId, key: *mut u8) -> u8 {
     let old = table::with(|s| s.delete(map, key));
     let found = u8::from(!old.is_empty());
@@ -114,13 +120,14 @@ pub unsafe extern "C" fn velt_rt_weakmap_delete(map: MapId, key: *mut u8) -> u8 
 ///
 /// # Safety
 /// `map` is live and not used again.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakmap_drop(map: MapId) {
     let old = table::with(|s| s.drop_map(map));
     table::release_values(old);
 }
 
 /// The number of entries in `map` (tests and `--inspect`; JavaScript has no `WeakMap.size`).
-pub extern "C" fn velt_rt_weakmap_len(map: MapId) -> u64 {
+pub fn weakmap_len(map: MapId) -> u64 {
     table::with(|s| s.map_len(map)) as u64
 }
 
@@ -128,11 +135,13 @@ pub extern "C" fn velt_rt_weakmap_len(map: MapId) -> u64 {
 ///
 /// # Safety
 /// `obj` is a live counted object.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakref_new(obj: *mut u8) -> RefId {
     table::with(|s| s.new_ref(obj))
 }
 
 /// `ref.deref()`: the target with its count raised by one, or null once it was freed.
+#[no_mangle]
 pub extern "C" fn velt_rt_weakref_deref(r: RefId) -> *mut u8 {
     table::with(|s| s.deref(r))
 }
@@ -141,6 +150,7 @@ pub extern "C" fn velt_rt_weakref_deref(r: RefId) -> *mut u8 {
 ///
 /// # Safety
 /// `r` is live and not used again.
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weakref_drop(r: RefId) {
     table::with(|s| s.drop_ref(r))
 }
@@ -156,6 +166,7 @@ pub unsafe extern "C" fn velt_rt_weakref_drop(r: RefId) {
 /// # Safety
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
 #[cold]
+#[no_mangle]
 pub unsafe extern "C" fn velt_rt_weak_release(obj: *mut u8) -> u8 {
     let rc = rc_word(obj);
     if *rc & RC_COUNT == 1 {

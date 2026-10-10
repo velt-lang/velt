@@ -36,10 +36,10 @@ fn an_entry_vanishes_with_its_key() {
         set(m, k, v);
         let k2 = retain(k);
         release(k);
-        assert_eq!(velt_rt_weakmap_len(m), 1, "still referenced");
+        assert_eq!(weakmap_len(m), 1, "still referenced");
         let before = live();
         release(k2);
-        assert_eq!(velt_rt_weakmap_len(m), 0);
+        assert_eq!(weakmap_len(m), 0);
         assert_eq!(live(), before - 2, "the key and its value are freed");
         finish(&[m]);
     });
@@ -54,7 +54,7 @@ fn set_replaces_and_releases_the_old_value() {
         set(m, k, new_obj(&[]));
         set(m, k, new_obj(&[]));
         assert_eq!(live(), before + 1);
-        assert_eq!(velt_rt_weakmap_len(m), 1);
+        assert_eq!(weakmap_len(m), 1);
         release(k);
         finish(&[m]);
     });
@@ -84,7 +84,7 @@ fn a_key_in_two_maps_leaves_both() {
         set(a, k, new_obj(&[]));
         set(b, k, new_obj(&[]));
         release(k);
-        assert_eq!(velt_rt_weakmap_len(a) + velt_rt_weakmap_len(b), 0);
+        assert_eq!(weakmap_len(a) + weakmap_len(b), 0);
         finish(&[a, b]);
     });
 }
@@ -103,7 +103,7 @@ fn plain_values_and_weak_sets() {
         assert_eq!(get(numbers, k), Some(42 as *mut u8));
         assert_eq!(velt_rt_weakmap_has(set_, k), 1);
         release(k);
-        assert_eq!(velt_rt_weakmap_len(numbers) + velt_rt_weakmap_len(set_), 0);
+        assert_eq!(weakmap_len(numbers) + weakmap_len(set_), 0);
         finish(&[numbers, set_]);
     });
 }

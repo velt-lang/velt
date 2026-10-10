@@ -29,7 +29,7 @@ fn in_every_order(n: usize, build: impl Fn(MapId) -> Vec<*mut u8>) {
             for &i in &order {
                 release(refs[i]);
             }
-            assert_eq!(velt_rt_weakmap_len(m), 0, "order {order:?}");
+            assert_eq!(weakmap_len(m), 0, "order {order:?}");
             finish(&[m]);
         });
     }
@@ -108,10 +108,10 @@ fn holding_the_end_of_a_chain_keeps_it_all() {
         set(m, b, retain(c));
         release(a);
         release(b);
-        assert_eq!(velt_rt_weakmap_len(m), 2);
+        assert_eq!(weakmap_len(m), 2);
         assert_eq!(get(m, a), Some(b));
         release(c);
-        assert_eq!(velt_rt_weakmap_len(m), 0);
+        assert_eq!(weakmap_len(m), 0);
         finish(&[m]);
     });
 }
@@ -150,7 +150,7 @@ fn a_shared_handler_outside_the_cycle() {
             release(raw);
             release(p);
         }
-        assert_eq!(velt_rt_weakmap_len(m), 0);
+        assert_eq!(weakmap_len(m), 0);
         assert_eq!(count(handler), 1);
         release(handler);
         finish(&[m]);
@@ -173,7 +173,7 @@ fn a_key_that_holds_its_proxy_leaves_a_strong_cycle() {
             for &i in &order {
                 release(refs[i]);
             }
-            assert_eq!(velt_rt_weakmap_len(m), 0, "order {order:?}");
+            assert_eq!(weakmap_len(m), 0, "order {order:?}");
             assert_eq!(live(), before, "the strong cycle remains");
             set_field(raw, 0, std::ptr::null_mut()); // what `weak` would do
             assert_eq!(live(), before - 2);
@@ -189,7 +189,7 @@ fn a_key_mapped_to_itself() {
         let k = new_obj(&[]);
         set(m, k, retain(k));
         release(k);
-        assert_eq!(velt_rt_weakmap_len(m), 0);
+        assert_eq!(weakmap_len(m), 0);
         finish(&[m]);
     });
 }
@@ -205,7 +205,7 @@ fn many_entries() {
                 (raw, proxy_of(m, raw, retain(handler)))
             })
             .collect();
-        assert_eq!(velt_rt_weakmap_len(m), 10_000);
+        assert_eq!(weakmap_len(m), 10_000);
         for (i, &(raw, p)) in pairs.iter().enumerate() {
             if i % 2 == 0 {
                 release(raw);
@@ -215,7 +215,7 @@ fn many_entries() {
                 release(raw);
             }
         }
-        assert_eq!(velt_rt_weakmap_len(m), 0);
+        assert_eq!(weakmap_len(m), 0);
         release(handler);
         finish(&[m]);
     });
