@@ -77,6 +77,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             template,
             force,
         } => create::init_package(name.as_deref(), template, force),
+        Command::InitEditor(editor) => create::init_editor(editor),
         Command::Add {
             name,
             version,

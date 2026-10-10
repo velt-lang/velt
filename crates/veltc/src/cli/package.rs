@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::build::take_value;
 use super::{strings, Command};
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// Parse subcommand `name` with its arguments `rest`.
 pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> {
@@ -30,6 +30,10 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
                 flags.name = Some(take_value(inline.as_deref(), &mut it, "--name")?)
             }
             ("init", "--force") => flags.force = true,
+            ("init", "--editor") => {
+                let e = take_value(inline.as_deref(), &mut it, "--editor")?;
+                flags.editor = Some(Editor::parse(&e)?);
+            }
             ("add", "--path") => {
                 flags.path = Some(take_value(inline.as_deref(), &mut it, "--path")?)
             }
@@ -56,6 +60,7 @@ struct Flags {
     template: Option<Template>,
     name: Option<String>,
     force: bool,
+    editor: Option<Editor>,
     locked: bool,
     release: bool,
     watch: bool,
@@ -85,6 +90,16 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             )?,
             template: flags.template.unwrap_or_default(),
         }),
+        "init" if flags.editor.is_some() => {
+            if flags.template.is_some() || flags.name.is_some() || flags.force {
+                return Err(
+                    "`velt init --editor` only adds the editor's files; it takes no --template, \
+                     --name or --force"
+                        .into(),
+                );
+            }
+            Ok(Command::InitEditor(flags.editor.unwrap()))
+        }
         "init" => Ok(Command::Init {
             name: flags.name,
             template: flags.template.unwrap_or_default(),
@@ -170,6 +185,20 @@ mod tests {
                 force: true
             }
         );
+        assert_eq!(
+            p(&["init", "--editor", "vscode"]).unwrap(),
+            Command::InitEditor(Editor::VsCode)
+        );
+        assert_eq!(
+            p(&["init", "--editor=code"]).unwrap(),
+            Command::InitEditor(Editor::VsCode)
+        );
+        assert!(p(&["init", "--editor", "vscode", "--force"])
+            .unwrap_err()
+            .contains("only adds the editor's files"));
+        assert!(p(&["init", "--editor", "emacs"])
+            .unwrap_err()
+            .contains("unknown editor"));
         assert_eq!(
             p(&["init"]).unwrap(),
             Command::Init {

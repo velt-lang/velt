@@ -12,6 +12,8 @@ cranelift-native = "0.132.3"
 cranelift-object = "0.132.3"
 target-lexicon = "0.13.5"
 velt_vir.workspace = true
+# Reading back an object's layout (the address of `__text` for Mach-O debug info).
+object = { version = "0.39", default-features = false, features = ["read_core", "macho"] }
 
 [target.'cfg(windows)'.dependencies]
 # Registering unwind info for JIT code (RtlAddFunctionTable).

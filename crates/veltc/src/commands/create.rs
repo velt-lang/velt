@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::style;
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 
 /// `velt new <name> [--template <t>]` in the current directory.
 pub fn new_package(name: &str, template: Template) -> Result<(), String> {
@@ -53,6 +53,24 @@ pub fn init_package(name: Option<&str>, template: Template, force: bool) -> Resu
         eprintln!("             kept existing {}", written.kept.join(", "));
     }
     next_steps(None, template);
+    Ok(())
+}
+
+/// `velt init --editor <e>`: the editor's files at the root of the current package (or in the
+/// current directory outside a package), keeping the ones that exist.
+pub fn init_editor(editor: Editor) -> Result<(), String> {
+    let cwd = current_dir()?;
+    let root = vpm::manifest::find_package_root(&cwd).unwrap_or(cwd);
+    let written = vpm::scaffold::write_files(&root, &editor.files(), false)?;
+    if !written.created.is_empty() {
+        style::status(
+            "Created",
+            &format!("{} in {}", written.created.join(", "), root.display()),
+        );
+    }
+    if !written.kept.is_empty() {
+        eprintln!("             kept existing {}", written.kept.join(", "));
+    }
     Ok(())
 }
 

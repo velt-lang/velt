@@ -16,6 +16,9 @@ pub(crate) const SCRIPT_VAR: &str = "VELT_SCRIPT";
 
 /// `velt build`.
 pub fn build_command(args: &BuildArgs) -> ExitCode {
+    if args.json {
+        return build_json(args);
+    }
     match build(args) {
         Ok(Artifact::Vir(text) | Artifact::Llvm(text)) => {
             let mut out = std::io::stdout().lock();
@@ -113,16 +116,67 @@ fn build_with_input(args: &BuildArgs) -> Result<(Artifact, std::path::PathBuf), 
     let result = driver::build(&mut sess, &opts);
     report(&sess, args.verbose);
     let artifact = result.map_err(|e| failure_code(&e))?;
-    if let Artifact::Executable(module) = &artifact {
-        super::wasm::write_glue(&opts.target(), module).map_err(|msg| {
-            crate::style::error(&msg);
-            ExitCode::from(1)
-        })?;
-        if opts.release {
-            warn_debug_runtime(&opts.target());
-        }
+    finish_executable(&opts, &artifact).map_err(|msg| {
+        crate::style::error(&msg);
+        ExitCode::from(1)
+    })?;
+    if opts.release && matches!(artifact, Artifact::Executable(_)) {
+        warn_debug_runtime(&opts.target());
     }
     Ok((artifact, opts.input.clone()))
+}
+
+/// What a linked program needs beside it: the JavaScript glue of a WebAssembly module.
+fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), String> {
+    match artifact {
+        Artifact::Executable(module) => super::wasm::write_glue(&opts.target(), module),
+        _ => Ok(()),
+    }
+}
+
+/// `velt build --json`: `{"executable", "debugInfo", "lldbScript", "diagnostics", "errors",
+/// "warnings"}` on stdout, for editors (the VS Code debugger runs the executable it names, with
+/// the LLDB formatters loaded). `executable` is the absolute path of the linked program, `null`
+/// when the build failed or made no program (`--emit obj|vir|llvm`); `debugInfo` says whether it
+/// carries debug info; `lldbScript` is the toolchain's `velt_lldb.py` (`null` if missing). Exit
+/// codes are those of `velt build`.
+fn build_json(args: &BuildArgs) -> ExitCode {
+    let mut sess = Session::new();
+    let checked = match &args.input {
+        Some(file) => super::project::check_input_file(file),
+        None => Ok(()),
+    };
+    let (debug_info, result) = match checked.and_then(|()| build_options(args)) {
+        Ok(opts) => {
+            let result = driver::build(&mut sess, &opts).and_then(|artifact| {
+                finish_executable(&opts, &artifact).map_err(BuildError::Failed)?;
+                Ok(artifact)
+            });
+            (Some(opts.wants_debug_info()), result)
+        }
+        Err(msg) => (None, Err(BuildError::Failed(msg))),
+    };
+    let failure = match &result {
+        Err(BuildError::Failed(msg)) => Some(msg.clone()),
+        Err(BuildError::Ice(msg)) => Some(format!("internal compiler error: {msg}")),
+        _ => None,
+    };
+    let mut out = super::check::report_json(&sess, failure.as_deref(), &[]);
+    out["executable"] = match &result {
+        Ok(Artifact::Executable(exe)) => {
+            serde_json::json!(vpm::relpath::absolute(exe).to_string_lossy())
+        }
+        _ => serde_json::Value::Null,
+    };
+    out["debugInfo"] = serde_json::json!(debug_info);
+    out["lldbScript"] =
+        serde_json::json!(crate::debugger::lldb_script().map(|p| p.to_string_lossy().into_owned()));
+    println!("{out}");
+    match result {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(BuildError::Ice(_)) => ExitCode::from(101),
+        Err(_) => ExitCode::from(1),
+    }
 }
 
 /// A release build linked against a debug runtime is several times slower with no other sign

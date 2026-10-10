@@ -134,7 +134,10 @@ client), `--template lib` (a library to publish).
 
 Install the VS Code extension from `editors/vscode` for highlighting, diagnostics as you type,
 go-to-definition, completion and quick fixes, or point any LSP client at `velt lsp`
-([Editors](../tooling/editors.md)).
+([Editors](../tooling/editors.md)). With a debugger extension such as CodeLLDB installed too,
+F5 builds the package and stops on breakpoints: `velt new` writes the `.vscode/launch.json` for
+it, and `velt init --editor vscode` adds one to an existing package
+([Debugging](../tooling/debugging.md#vs-code)).
 
 ## Next steps
 

@@ -2,46 +2,6 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "velt: build current file (debug, LLVM)",
-      "type": "shell",
-      "command": "velt",
-      "args": ["build", "${file}", "--backend", "llvm"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "build",
-      "problemMatcher": {
-        "owner": "velt",
-        "fileLocation": ["autoDetect", "${workspaceFolder}"],
-        "pattern": {
-          "regexp": "^(.+\\.vlt):(\\d+):(\\d+): (error|warning): (.*)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "message": 5
-        }
-      }
-    },
-    {
-      "label": "velt: build package (debug, LLVM)",
-      "type": "shell",
-      "command": "velt",
-      "args": ["build", "--backend", "llvm"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": "build",
-      "problemMatcher": {
-        "owner": "velt",
-        "fileLocation": ["autoDetect", "${workspaceFolder}"],
-        "pattern": {
-          "regexp": "^(.+\\.vlt):(\\d+):(\\d+): (error|warning): (.*)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "message": 5
-        }
-      }
-    },
-    {
       "label": "velt: dev --exe (current file)",
       "type": "shell",
       "command": "velt",

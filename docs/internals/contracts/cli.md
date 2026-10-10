@@ -1,7 +1,7 @@
 # `velt` CLI — CONTRACT
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [--json] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
@@ -9,6 +9,7 @@ velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>..
 velt test  [<file|dir>] [--release] [--locked] [--watch]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
+velt init  --editor vscode             # only .vscode/launch.json + extensions.json, kept if present
 velt clean
 velt completions bash|zsh|fish|powershell
 velt help  [<command>]                 # = velt <command> --help
@@ -30,6 +31,20 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   current dir, object file next to it. If the file lives inside a package, its deps are installed first.
 - **Package mode** (no file argument): finds `package.vlt` upward from the cwd, builds its entry, output
   `<pkg>/target/velt/<name>[.exe]`. Library-only packages can't be run.
+- `build --json` (additive): instead of diagnostics on stderr, one JSON document on stdout:
+  `{"executable": string|null, "debugInfo": bool|null, "lldbScript": string|null, "diagnostics",
+  "errors", "warnings"}`. `executable` is the absolute path of the linked program (`null` on
+  failure or with `--emit obj|vir|llvm`); `debugInfo` is whether the build carries debug info
+  (`null` if the options could not be resolved); `lldbScript` is the absolute path of the
+  toolchain's `share/velt/lldb/velt_lldb.py` (`null` if missing). The diagnostics are those of
+  `check --json`, with a non-source failure (linker, missing runtime) as an error with
+  `location: null`. Exit codes as for `build`. The VS Code extension's `velt` debug type relies
+  on it.
+- `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
+  `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
+  `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, at
+  the root of the package around the cwd (or in the cwd outside one), never overwriting, and
+  takes no other option.
 - Backends: default `llvm` for `--release` when clang is found (`$VELT_CLANG`, PATH, standard install
   dirs), else `cranelift` (with a one-line stderr note). `--emit llvm` prints LLVM IR (no clang needed).
   Release builds run `velt_opt` (Speed) before either backend.

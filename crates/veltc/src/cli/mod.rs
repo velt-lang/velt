@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 use crate::backend::Backend;
 use crate::playground::PlaygroundArgs;
-use crate::templates::Template;
+use crate::templates::{Editor, Template};
 pub use check::CheckArgs;
 use completions::Shell;
 
@@ -86,6 +86,9 @@ pub struct BuildArgs {
     pub locked: bool,
     /// `--report numbers`: list the `number` variables in loops that stay doubles.
     pub report_numbers: bool,
+    /// `velt build --json`: the result (output path, debug info, diagnostics) as one JSON
+    /// document on stdout instead of text on stderr.
+    pub json: bool,
 }
 
 /// How `velt dev` runs each version of the program.
@@ -154,6 +157,8 @@ pub enum Command {
         /// Overwrite existing files.
         force: bool,
     },
+    /// `velt init --editor <e>`: only the editor's files, in the current package (or directory).
+    InitEditor(Editor),
     /// `velt clean`: remove the package's `target/`.
     Clean,
     /// `velt completions <shell>`.

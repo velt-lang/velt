@@ -283,3 +283,44 @@ fn completion_after_a_dot_lists_members() {
     assert_eq!(complete(&mut client, "Color."), ["Red", "Green"]);
     client.shutdown();
 }
+
+/// "▶ Run" and "Debug" sit above `main`, with the document as the commands' argument; a module
+/// without `main` gets none.
+#[test]
+fn code_lenses_run_and_debug_main() {
+    let (mut client, app) = open_app();
+    let params = json!({ "textDocument": { "uri": app } });
+    let lenses = client.request("textDocument/codeLens", params);
+    let main_line = APP
+        .lines()
+        .position(|l| l.starts_with("function main"))
+        .unwrap();
+    let got: Vec<(String, String, u64)> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            assert_eq!(l["command"]["arguments"], json!([app]));
+            (
+                l["command"]["title"].as_str().unwrap().to_string(),
+                l["command"]["command"].as_str().unwrap().to_string(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let line = main_line as u64;
+    assert_eq!(
+        got,
+        [
+            ("▶ Run".into(), "velt.runFile".into(), line),
+            ("Debug".into(), "velt.debugFile".into(), line)
+        ]
+    );
+    let util = uri("nav_util.vlt");
+    let none = client.request(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": util } }),
+    );
+    assert_eq!(none, json!([]));
+    client.shutdown();
+}

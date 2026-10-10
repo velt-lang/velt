@@ -5,18 +5,20 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use lsp_server::{ErrorCode, Request, Response};
 use lsp_types::request::{
-    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
-    GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request as LspRequest,
-    ResolveCompletionItem, SemanticTokensFullDeltaRequest, SemanticTokensFullRequest,
-    SemanticTokensRangeRequest, SignatureHelpRequest, WorkspaceSymbolRequest,
+    CodeActionRequest, CodeLensRequest, Completion, DocumentHighlightRequest,
+    DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest, References,
+    Rename, Request as LspRequest, ResolveCompletionItem, SemanticTokensFullDeltaRequest,
+    SemanticTokensFullRequest, SemanticTokensRangeRequest, SignatureHelpRequest,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionItem,
-    CompletionOptions, Documentation, GotoDefinitionResponse, HoverProviderCapability, Location,
-    MarkupContent, MarkupKind, OneOf, SemanticTokensFullOptions, SemanticTokensOptions,
-    SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
+    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CodeLensOptions,
+    CompletionItem, CompletionOptions, Documentation, GotoDefinitionResponse,
+    HoverProviderCapability, Location, MarkupContent, MarkupKind, OneOf, SemanticTokensFullOptions,
+    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities,
+    SignatureHelpOptions, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkspaceEdit,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -26,8 +28,8 @@ use super::Server;
 use crate::index::scope;
 use crate::line_index::LineIndex;
 use crate::{
-    definition, highlight, hover, inlay_hints, manifest, references, sema_query, semantic_tokens,
-    signature_help, symbols,
+    code_lens, definition, highlight, hover, inlay_hints, manifest, references, sema_query,
+    semantic_tokens, signature_help, symbols,
 };
 
 /// What the server supports.
@@ -60,6 +62,9 @@ pub fn capabilities() -> ServerCapabilities {
             ..Default::default()
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        code_lens_provider: Some(CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             retrigger_characters: None,
@@ -176,13 +181,19 @@ impl Server<'_> {
         }
     }
 
-    /// Editing aids: code actions, inlay hints, signature help, semantic tokens, highlights and
-    /// workspace symbols.
+    /// Editing aids: code actions, code lenses, inlay hints, signature help, semantic tokens,
+    /// highlights and workspace symbols.
     fn dispatch_more(&mut self, method: &str, params: Value) -> Result<Value, RequestError> {
         match method {
             CodeActionRequest::METHOD => {
                 let p: lsp_types::CodeActionParams = parse(params)?;
                 Ok(json(self.code_actions(&p)))
+            }
+            CodeLensRequest::METHOD => {
+                let p: lsp_types::CodeLensParams = parse(params)?;
+                let uri = p.text_document.uri;
+                let lenses = self.analysis(&uri).map(|a| code_lens::code_lenses(a, &uri));
+                Ok(json(lenses))
             }
             InlayHintRequest::METHOD => {
                 let p: lsp_types::InlayHintParams = parse(params)?;

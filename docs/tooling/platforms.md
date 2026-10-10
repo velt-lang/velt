@@ -58,6 +58,8 @@ globally: put `<prefix>/bin` on `PATH` and run `velt doctor`.
                           startup objects; for other targets (target packs, `velt target add`)
                           also their runtime library
   std/**                  standard library sources
+  share/velt/lldb/velt_lldb.py
+                          LLDB support for Velt programs (the VS Code extension loads it)
   README.md, LICENSE-MIT, LICENSE-APACHE, NOTICE
 ```
 
@@ -69,6 +71,7 @@ How `velt` finds its parts (first match wins):
 | shared runtime (debug builds) | not used with `$VELT_RT_LIB` or `$VELT_RT_LINK=static` → next to the `velt` executable → its parent directory → `<exe dir>/../lib`; not found → debug builds link the static runtime |
 | standard library | `$VELT_STD` → `<exe dir>/../std` when the executable is in a `bin/` directory → the `std/` of the source checkout it was built in → `<exe dir>/std` |
 | linker | `$VELT_LINKER` (`bundled`, `system` or a linker program) → the bundled lld (`<exe dir>/../lib/velt/lld`, in a checkout the Rust toolchain's `rust-lld`) with the target's kit (`lib/targets/<triple>/`) → the system linker: Windows: MSVC `link.exe` found through the registry and vswhere; Linux and macOS: `cc` (Linux static links use `-fuse-ld=mold` / `lld` when `mold` / `ld.lld` is on `PATH`) |
+| debugger scripts | `$VELT_SHARE/lldb/velt_lldb.py` → `<exe dir>/../share/velt/lldb/` when the executable is in a `bin/` directory → `editors/lldb/` of the source checkout it was built in |
 | clang (`--release`) | `$VELT_CLANG` → `clang` on `PATH` → standard install directories (`C:\Program Files\LLVM\bin`, Homebrew, `/usr/bin`, `clang-NN` on `PATH`); versions older than 16 are skipped |
 
 **Debug builds link the shared runtime** (milliseconds instead of the seconds a static link of
@@ -187,7 +190,7 @@ anywhere with the musl target packs.
 Pass options through the pipe with `sh -s --`, for example
 `curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.0`; in PowerShell set the environment
 variables before `irm ... | iex`. Re-running the installer upgrades (or downgrades) in place: it
-replaces `bin/`, `lib/` and `std/` in the prefix. To uninstall, delete the prefix and the `PATH`
+replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix. To uninstall, delete the prefix and the `PATH`
 line.
 
 `PATH`: `get-velt.sh` appends `export PATH="<prefix>/bin:$PATH"` to `~/.profile`, to
@@ -215,7 +218,7 @@ link kits; `-NoBundledLinker`/`--no-bundled-linker` leaves both out. On Windows 
 `velt.exe` and `velt_rt_shared.dll` with the bundled linker, so the toolchain itself needs no
 Visual C++ redistributable. The default
 prefix is `%LOCALAPPDATA%\velt` on Windows and `~/.velt/toolchain` on Linux and macOS. The
-installer replaces `bin/`, `lib/` and `std/` in the prefix and prints the command that adds
+installer replaces `bin/`, `lib/`, `std/` and `share/velt/` in the prefix and prints the command that adds
 `<prefix>/bin` to `PATH`; it never edits `PATH` itself. An unpacked archive also works in place.
 
 ## Windows notes

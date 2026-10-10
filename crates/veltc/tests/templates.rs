@@ -82,7 +82,13 @@ fn check_template(template: &str, has_main: bool) {
     let out = s.ok("", &["new", &name, "--template", template]);
     assert!(out.contains(&format!("({template} template)")), "{out}");
     let root = s.path(&name);
-    for file in ["package.vlt", ".gitignore", "README.md"] {
+    for file in [
+        "package.vlt",
+        ".gitignore",
+        "README.md",
+        ".vscode/launch.json",
+        ".vscode/extensions.json",
+    ] {
         assert!(root.join(file).is_file(), "{template}: no {file}");
     }
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
@@ -228,6 +234,42 @@ fn init_keeps_readme_and_takes_a_name() {
     assert!(s
         .fail("w/sub", &["init"])
         .contains("already inside package"));
+}
+
+/// `velt init --editor vscode` in an existing package: only the missing `.vscode` files, at the
+/// package root, never overwriting one.
+#[test]
+fn init_editor_adds_only_missing_vscode_files() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    let vscode = s.path("app/.vscode");
+    std::fs::remove_file(vscode.join("extensions.json")).unwrap();
+    std::fs::write(vscode.join("launch.json"), "// mine\n").unwrap();
+    std::fs::create_dir_all(s.path("app/src/deep")).unwrap();
+
+    let out = s.ok("app/src/deep", &["init", "--editor", "vscode"]);
+    assert!(
+        out.contains(".vscode/extensions.json")
+            && out.contains("kept existing .vscode/launch.json"),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(vscode.join("launch.json")).unwrap(),
+        "// mine\n"
+    );
+    assert!(vscode.join("extensions.json").is_file());
+    assert!(
+        !s.path("app/src/deep/.vscode").exists(),
+        "written at the package root"
+    );
+    // Nothing else of a package is (re)written.
+    assert!(!s.path("app/src/deep/package.vlt").exists());
+
+    // Outside a package: into the current directory.
+    std::fs::create_dir_all(s.path("loose")).unwrap();
+    s.ok("loose", &["init", "--editor", "vscode"]);
+    assert!(s.path("loose/.vscode/launch.json").is_file());
+    assert!(!s.path("loose/package.vlt").exists());
 }
 
 #[test]
