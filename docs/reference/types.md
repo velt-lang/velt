@@ -175,6 +175,12 @@ usable and no copy method is needed.
   `s += n` appends. The number is written as `String(n)` and `console.log` write it (`1.5`,
   `1e+21`, `NaN`, `Infinity`, `0` for `-0`). Any other value next to a string is a compile
   error; build that text with a template literal (`` `Total: ${xs}` ``).
+- `String(x)` converts any value that can be printed to its text, exactly as `` `${x}` ``
+  writes it (`String(1.5)` is `"1.5"`, `String(null)` is `"null"`, `String([1, 2])` is
+  `"1,2"`). `Number(x)` converts a string (as JS: the whole trimmed string, `""` is `0`, else
+  `NaN`), a number or a boolean (`1` / `0`); `Boolean(x)` is `x`'s
+  [truthiness](variables.md#conditions-truthiness). They are called as functions, not as values
+  (`xs.map(String)` is not supported yet: write `xs.map((x) => String(x))`).
 - A template literal writes `${x}` as JS's `String(x)` does ([Lexical structure](lexical.md)):
   an array's elements joined with `,` (`${[1, 2]}` is `1,2`, nested arrays the same way, `null`
   elements as empty text, a class instance through its `toString()`, another object as
@@ -196,7 +202,7 @@ usable and no copy method is needed.
   one element), as JS's string iterator does; `s.split("")` gives code units.
 - Methods: `slice substring indexOf lastIndexOf includes startsWith endsWith split trim
   trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd charAt at
-  charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
+  charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat`, `String(x)` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
 - `<`, `>` and `sort()` without a comparator compare by code units, as JS (`"～" < "😀"` is
   `false`); `==` compares content.
@@ -782,13 +788,18 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
-  `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
+  `index out of bounds: the len is L but the index is I`), `push` (any number of items:
+  `xs.push(a, b)`, `xs.push(...ys)`, all evaluated before the first is pushed, as in JS),
+  `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
   reverse isEmpty entries fill`, `join` and `toString()` (any elements, written as
   `${xs}` writes them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
-  (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
+  (`xs.map((x, i) => …)`), and may take fewer parameters. A predicate (`filter`, `find`,
+  `findIndex`, `some`, `every`) may return any value, tested for
+  [truthiness](variables.md#conditions-truthiness) as in JS:
+  `[0, 3, 0, 4].filter((n) => n)` is `[3, 4]`. The full list is in the
   [prelude](../std/prelude.md#arrays). Arrays, strings and maps are
   [`Iterable`](control-flow.md#iterables): they convert to `Iterable<T>` values, and
   `xs[Symbol.iterator]()` returns an `Iterator<T>`.

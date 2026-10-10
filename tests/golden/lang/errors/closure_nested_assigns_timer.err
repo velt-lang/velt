@@ -1,0 +1,2 @@
+closure_nested_assigns_timer.vlt:13:7: error: this async closure modifies captured `k`, so it must stay on the task that created it
+  = note: the spawned task runs it on another thread, with its own copy of what it captured: pass `k` as a parameter instead, or share it with `shared`: `const k = shared(...)` and `k.add(1)` / `k.set(v)`

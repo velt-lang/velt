@@ -1,16 +1,16 @@
-//! Read-only traversal of HIR bodies for this pass (`crate::visit` takes them mutably, and
-//! the pass reads bodies while the closure definitions are borrowed).
+//! Read-only traversal of HIR bodies for this pass and `local_async` (`crate::visit` takes them
+//! mutably, and these passes read bodies while the closure definitions are borrowed).
 
 use crate::hir::{Block, Callee, Expr, ExprKind as E, Stmt, StmtKind as S};
 
 /// What a traversal does at each statement and expression (pre-order).
-pub(super) trait Visit {
+pub(in crate::ownership) trait Visit {
     fn stmt(&mut self, _s: &Stmt) {}
     fn expr(&mut self, _e: &Expr) {}
 }
 
 /// Every statement and expression of `b`, nested blocks included.
-pub(super) fn block(b: &Block, v: &mut dyn Visit) {
+pub(in crate::ownership) fn block(b: &Block, v: &mut dyn Visit) {
     for s in &b.stmts {
         stmt(s, v);
     }
@@ -67,7 +67,7 @@ fn stmt(s: &Stmt, v: &mut dyn Visit) {
 }
 
 /// `e` and everything inside it.
-pub(super) fn expr(e: &Expr, v: &mut dyn Visit) {
+pub(in crate::ownership) fn expr(e: &Expr, v: &mut dyn Visit) {
     v.expr(e);
     match &e.kind {
         E::Block(b) => block(b, v),

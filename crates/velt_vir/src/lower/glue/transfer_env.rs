@@ -7,6 +7,7 @@ use velt_sema::hir::{DefId, PassMode, TyId};
 
 use crate::lower::closure::closure_name;
 use crate::lower::operand::proj;
+use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -163,11 +164,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let fp = lw.operand_place(fresh.clone(), Ty::Ptr);
             let copy = lw.thread_copy(Operand::Copy(value.clone()), ty);
             lw.store(proj(&fp, Proj::Deref(vt)), copy);
+            lw.cell_check(Rt::CellCopy, vec![fresh.clone(), cell.clone()]);
             fresh
         });
         self.assign(slot, Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
+        self.cell_check(Rt::CellGive, vec![cell.clone()]);
         let cp = self.operand_place(cell, Ty::Ptr);
         self.transfer_in_place(proj(&cp, Proj::Deref(vt)), ty);
         self.goto(done);

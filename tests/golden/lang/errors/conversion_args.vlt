@@ -1,0 +1,4 @@
+// `String`, `Number` and `Boolean` take one argument; `Number` converts strings, numbers and
+// booleans.
+const o = { a: 1 };
+console.log(String(1, 2), Number(o), Boolean(1, 2));

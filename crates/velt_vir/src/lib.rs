@@ -155,6 +155,11 @@ pub struct LowerOptions<'a> {
     /// Native libraries of packages (docs/internals/contracts/native_abi.md): `velt_main` starts
     /// by calling each one's init function with the runtime's table, in this order.
     pub native_inits: &'a [NativeInit],
+    /// Debug builds against a debug runtime: report the creation, count changes and transfers
+    /// of captured variables' cells, and calls of closures assigning them, to the runtime
+    /// (`velt_rt_cell_*`, rt_abi.md "Counted objects"), which aborts when two tasks use one
+    /// cell (#916). Off, the generated code is unchanged.
+    pub cell_checks: bool,
 }
 
 /// One native library to initialize before `main` runs.

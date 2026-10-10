@@ -1,0 +1,4 @@
+http_handler_reach_unread_field.vlt:16:32: error: an HTTP handler can call this function, which changes `last`; requests run at the same time
+http_handler_reach_unread_field.vlt:17:19: the handler is passed to `serve` here
+  = note: fix: const last = shared(new Mutex<{ value: string }>({ value: "" }))  // one value shared by every request, as in Node
+  = note: then read it with `last.with((v) => v.value)` and change it with `last.with((v) => { v.value = … })`

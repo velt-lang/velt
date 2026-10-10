@@ -229,15 +229,25 @@ extend string {
 
 /**
  * The static members of JS's `String` (`String.fromCharCode`). The methods of strings are on
- * `string` itself. Unlike JS, `String(x)` is not a conversion: write `x.toString()` or `${x}`.
+ * `string` itself. `String(x)` converts any printable value as `${x}` does (the compiler
+ * writes it).
  */
 export class String {
   /**
-   * JS `String.fromCharCode(code)` for one code unit (`ToUint16`); a surrogate gives a string
-   * holding that lone surrogate, as in JS.
+   * JS `String.fromCharCode(...codes)`: the string of these UTF-16 code units (`ToUint16`
+   * each: the code modulo 2^16, NaN and the infinities 0). A lone surrogate gives a string
+   * holding that lone surrogate, and a high surrogate followed by a low one their character,
+   * as in JS.
    */
-  static fromCharCode(code: i64): string {
-    return velt_rt_str_from_char_code(code);
+  static fromCharCode(...codes: f64[]): string {
+    if (codes.length == 1) {
+      return velt_rt_str_from_char_code((codes[0] % 65536) as i64);
+    }
+    let s = "";
+    for (const code of codes) {
+      s += velt_rt_str_from_char_code((code % 65536) as i64);
+    }
+    return s;
   }
 }
 
@@ -251,7 +261,10 @@ export function parseFloat(s: string): f64 {
   return velt_rt_parse_float(s);
 }
 
-/** Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN. */
+/**
+ * Exact JS `Number(s)`: the whole trimmed string must be a number ("" is 0), else NaN. The
+ * compiler converts a number or a boolean argument itself, as JS does.
+ */
 export function Number(s: string): f64 {
   return velt_rt_str_to_number(s);
 }

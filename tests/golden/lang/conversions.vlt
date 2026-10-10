@@ -1,0 +1,74 @@
+// `String(x)`, `Number(x)` and `Boolean(x)` convert values as in JavaScript (#806).
+class P {
+  x: number = 1;
+  toString(): string {
+    return "P(" + this.x + ")";
+  }
+}
+
+class Q {
+  y: number = 2;
+}
+
+const n: number = -0;
+const big: number = 1e21;
+const arr: number[] = [1, 2, 3];
+const nested: (number[] | string)[] = [[1, 2], "a"];
+const maybe: string | null = null;
+console.log(String(1.5), String(n), String(big), String(0.1 + 0.2));
+console.log(String(true), String(false), String(null), String(maybe));
+console.log(String("s"), String(arr), String([]), String(new P()), String(new Q()));
+console.log(String(NaN), String(-Infinity), String(123456789012), String());
+const u: number | string = 3;
+console.log(String(u), String(nested).length);
+const s: string = String(42) + "!";
+console.log(s);
+console.log(
+  Number("12"),
+  Number(true),
+  Number(false),
+  Number(null),
+  Number(7),
+  Number(""),
+  Number(" 3 "),
+);
+console.log(
+  Boolean(0),
+  Boolean(1),
+  Boolean(""),
+  Boolean("x"),
+  Boolean(null),
+  Boolean(NaN),
+  Boolean(new Q()),
+);
+
+enum Color {
+  Red,
+  Green,
+}
+
+enum Dir {
+  Up = "UP",
+}
+
+const m = new Map<string, number>();
+m.set("a", 1);
+const xs: number[][] = [[1, 2], [], [3]];
+const strs: string[] = ["a", "b"];
+const o = { a: 1 };
+const t: [number, string] = [1, "x"];
+console.log(String(Color.Green), String(Dir.Up), String(m), String(xs), String(strs));
+console.log(String(o), String(t), String(-1e-7), String(2 ** 53), String(1 / 3));
+const s3 = String(123);
+console.log(s3.length, typeof String(1), String("abc") === "abc");
+console.log(
+  Number("0x1f"),
+  Number("abc"),
+  Number(" "),
+  Number(2.5),
+  Boolean([]),
+  Boolean({}),
+  Boolean(-0),
+);
+const maybeN: number | null = null;
+console.log(String(maybeN), Boolean(maybeN));

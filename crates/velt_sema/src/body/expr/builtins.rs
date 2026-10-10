@@ -50,6 +50,7 @@ impl FnCx<'_, '_> {
                 }
                 e
             }
+            "Boolean" => self.boolean_call(args, span),
             "spawn" => self.spawn_call(args, exp, span),
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),
@@ -277,6 +278,13 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let many = args.len() != 1
+            || args
+                .iter()
+                .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        if b == BuiltinMethod::Push && many && self.cx.ty.array_elem(recv.ty).is_some() {
+            return self.push_items(recv, args, span);
+        }
         let (i, name) = match b {
             BuiltinMethod::Push => (Intrinsic::ArrayPush, "push"),
             BuiltinMethod::Pop => (Intrinsic::ArrayPop, "pop"),

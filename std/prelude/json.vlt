@@ -45,6 +45,12 @@ declare function velt_rt_json_value_set(slot: JsonHandleSlot, key: string, v: u6
 declare function velt_rt_json_value_delete(slot: JsonHandleSlot, key: string): bool;
 declare function velt_rt_json_value_push(slot: JsonHandleSlot, v: u64): bool;
 declare function velt_rt_json_value_set_at(slot: JsonHandleSlot, i: u64, v: u64): bool;
+declare function velt_rt_json_relayout(
+  text: string,
+  keys: string,
+  flags: u8,
+  indent: string,
+): string;
 
 // `velt_rt_json_value_kind` results.
 const KIND_NULL: u32 = 1;
@@ -97,8 +103,9 @@ function jsonMaxDepth(options: JsonParseOptions | null): i64 {
 /**
  * Converts values to and from the JavaScript Object Notation (JSON) format. Unlike JS, it is
  * typed: `stringify` and `parse` are generated for the static type at compile time, `parse<T>`
- * checks the text against `T` and throws `JsonError` instead of returning `any`, and there are
- * no `reviver`, `replacer` or `space` arguments. `parseValue` reads a document of any shape.
+ * checks the text against `T` and throws `JsonError` instead of returning `any`, and there is
+ * no `reviver`. `stringify` takes JS's `replacer` as an array of keys (or `null`) and its
+ * `space`. `parseValue` reads a document of any shape.
  */
 export class JSON {
   /**
@@ -107,6 +114,8 @@ export class JSON {
   static stringify<T>(value: T): string {
     return __intrinsic_json_stringify(value);
   }
+  // `JSON.stringify(value, replacer, space)` is written by the compiler: the text above, laid
+  // out again by `jsonRelayout` (below).
 
   /**
    * Decodes `text` into a `T` (throws `JsonError`); unknown object keys are skipped unless
@@ -348,4 +357,58 @@ export class JsonValue {
     velt_rt_json_value_free(this.#handle);
     this.#handle = 0;
   }
+}
+
+// `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
+// `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
+// the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
+function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {
+  if (!filter && gap.length == 0) {
+    return text;
+  }
+  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, gap.length > 0), gap);
+}
+
+// The same for a number `space`: as in V8, any `space > 0` breaks lines, so one below 1 gives
+// line breaks with an empty indent.
+function jsonRelayoutNumber(text: string, keys: string, filter: bool, space: f64): string {
+  if (!(space > 0)) {
+    return jsonRelayout(text, keys, filter, "");
+  }
+  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, true), jsonGapOfNumber(space));
+}
+
+// `velt_rt_json_relayout`'s flags: bit 0 filters by `keys`, bit 1 breaks lines.
+function jsonLayoutFlags(filter: bool, pretty: bool): u8 {
+  let flags: u8 = 0;
+  if (filter) {
+    flags = flags + 1;
+  }
+  if (pretty) {
+    flags = flags + 2;
+  }
+  return flags;
+}
+
+// A replacer array of strings as the runtime reads it.
+function jsonKeys(keys: string[]): string {
+  return JSON.stringify(keys);
+}
+
+// A replacer array of numbers: JS lists each as `String(n)`.
+function jsonNumberKeys(keys: f64[]): string {
+  return JSON.stringify(keys.map((k) => `${k}`));
+}
+
+// JS's gap for a number `space`: `min(10, trunc(space))` spaces, empty below 1 (or for NaN).
+function jsonGapOfNumber(space: f64): string {
+  if (!(space >= 1)) {
+    return "";
+  }
+  return " ".repeat(space >= 10 ? 10 : (space as i64));
+}
+
+// JS's gap for a string `space`: its first 10 code units.
+function jsonGapOfString(space: string): string {
+  return space.slice(0, 10);
 }

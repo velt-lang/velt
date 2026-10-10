@@ -1,0 +1,13 @@
+// A spawned async closure whose own closure assigns a captured string: the spawned task runs on
+// another thread with its own copy of `s`, so this is the error for the task modifying `s`.
+async function main() {
+  let s = "a";
+  const t = spawn(async () => {
+    const g = () => {
+      s = s + "b";
+    };
+    g();
+    return s;
+  });
+  console.log(await t);
+}

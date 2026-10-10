@@ -25,6 +25,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
+    let mut parents = None;
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
@@ -37,10 +38,22 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
+        let mut copy: Vec<bool> = f.body.locals.iter().map(|l| cx.is_copy(l.ty)).collect();
+        // A capture of a variable a pattern declares is not shared in a cell (#799): it keeps
+        // the error below.
+        if !cx.pattern_bindings.is_empty() && f.captures.iter().any(|c| copy[c.inner.0 as usize]) {
+            let parents = parents.get_or_insert_with(|| super::cells::enclosing_fns(cx));
+            for c in &f.captures {
+                if copy[c.inner.0 as usize] && captures_pattern(cx, parents, d, c.outer) {
+                    copy[c.inner.0 as usize] = false;
+                }
+            }
+        }
         let v = Validator {
             cx,
             f: &f,
             kinds: &kinds,
+            copy: &copy,
             fixed,
             keeps_fn_params,
             shared: &shared,
@@ -143,12 +156,37 @@ fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId,
         .collect()
 }
 
+/// Is local `l` of the function enclosing closure `d` a variable a pattern declares, or a
+/// capture of one (`super::cells::pattern_bound`)?
+fn captures_pattern(cx: &Ctx, parents: &HashMap<DefId, DefId>, d: DefId, l: LocalId) -> bool {
+    let (mut d, mut l) = match parents.get(&d) {
+        Some(&p) => (p, l),
+        None => return false,
+    };
+    // A closure is created once, inside its enclosing function: the chain ends.
+    for _ in 0..=parents.len() {
+        let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+            return false;
+        };
+        match f.captures.iter().find(|c| c.inner == l) {
+            Some(c) => match parents.get(&d) {
+                Some(&p) => (d, l) = (p, c.outer),
+                None => return false,
+            },
+            None => return super::cells::pattern_bound(cx, d, l),
+        }
+    }
+    false
+}
+
 struct Validator<'a, 'c, 'm> {
     cx: &'c Ctx<'m>,
     f: &'a FnDef,
     kinds: &'a [LocalKind],
     /// Shared captures per closure created in the body.
     shared: &'a HashMap<DefId, Vec<LocalId>>,
+    /// Per local: is its type copyable?
+    copy: &'a [bool],
     fixed: bool,
     /// See `FnInfo::keeps_fn_params`.
     keeps_fn_params: bool,
@@ -211,9 +249,12 @@ impl Validator<'_, '_, '_> {
                                 )
                             })
                             .flatten();
+                        // A copyable variable the closure assigns: copied, or shared in a cell
+                        // when the assignment must reach it (`crate::moves`, #904).
+                        let copied = self.copy[cap.outer.0 as usize];
                         if let Some(err) = kept {
                             errors.push(err);
-                        } else if !shared.contains(&cap.outer) {
+                        } else if !shared.contains(&cap.outer) && !copied {
                             self.root(cap.outer, None, e.span, errors);
                         }
                     }

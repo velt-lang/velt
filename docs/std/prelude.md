@@ -47,18 +47,23 @@ a pair is allowed everywhere: `"😀".slice(0, 1)` is a lone surrogate, which ou
 U+FFFD, and the searches can match half of a pair (`"😀".indexOf(lo)` is 1 when `lo` is the low
 half).
 
-Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lone surrogate),
+Conversions: `String.fromCharCode(...codes)` (any number of code units, each taken modulo
+2^16 as in JS, with `NaN` and the infinities 0; a lone surrogate gives a lone surrogate, a
+surrogate pair its character),
 `parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
-`Number(s)`.
+`Number(s)`, and `String(x)`, which writes any printable value as `` `${x}` `` does
+(`String(1e21)` is `"1e+21"`, `String(null)` is `"null"`, `String([[1], [2, 3]])` is `"1,2,3"`).
 
 ## Numbers
 
 - `NaN`, `Infinity`, `isNaN(x)`, `isFinite(x)`.
-- `Number(s)` converts a string; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
-  `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`, `Number.parseFloat(s)` and the
-  constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
-  `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
-  class `NumberConstructor`, TypeScript's name for the type of `Number`).
+- `Number(x)` converts a string, a number or a boolean (`Number(true)` is `1`), and
+  `Boolean(x)` tests a value's truthiness, as in JS; `Number.isInteger(x)`, `Number.isNaN(x)`,
+  `Number.isFinite(x)`, `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`,
+  `Number.parseFloat(s)` and the constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`,
+  `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's,
+  on `f64` (they live in the prelude class `NumberConstructor`, TypeScript's name for the type
+  of `Number`).
 - `x.toFixed(digits = 0)`, `x.toExponential(digits?)` and `x.toPrecision(precision?)` on `f64`,
   with JS's output and rounding (the nearest, an exact tie away from zero):
 

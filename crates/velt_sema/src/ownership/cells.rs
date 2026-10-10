@@ -10,6 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use velt_common::{Diagnostic, Span};
+
 use crate::body::places::{place_root, set_place_mode};
 use crate::ctx::Ctx;
 use crate::hir::{Def, DefId, Expr, ExprKind as E, LocalId, UseMode};
@@ -18,17 +20,284 @@ use crate::visit;
 use super::soft::{is_moved_place, make_share};
 
 /// Mark the variables of `boxed` (per function) and the captures of them as cells.
-pub(crate) fn box_cells(cx: &mut Ctx, boxed: &HashMap<DefId, HashSet<LocalId>>) {
+///
+/// A cell is one variable shared by every function that sees it, so marking a closure's
+/// capture local also marks the variable it captured in the enclosing function (#904: a
+/// closure created in a closure assigns a variable the outer one captured), and from there the
+/// captures of it in every other closure. `per_iteration` are the `for (let …)` variables the
+/// loop's head declares (`crate::moves::Outcome::per_iteration`): each iteration has its own,
+/// so none of them becomes one cell from below. Nor does a variable a pattern declares
+/// ([`pattern_bound`], #799): the closure keeps its copy, as when nothing else sees the
+/// variable afterwards (`crate::moves` reports it otherwise).
+pub(crate) fn box_cells(
+    cx: &mut Ctx,
+    boxed: &HashMap<DefId, HashSet<LocalId>>,
+    per_iteration: &HashSet<(DefId, LocalId)>,
+) {
     let mut work: Vec<(DefId, LocalId)> = boxed
         .iter()
         .flat_map(|(d, ls)| ls.iter().map(move |l| (*d, *l)))
         .collect();
+    if work.is_empty() {
+        return;
+    }
+    let parents = enclosing_fns(cx);
+    let mut threaded = None;
     let mut done = HashSet::new();
     while let Some((d, l)) = work.pop() {
-        if done.insert((d, l)) {
-            work.extend(box_local(cx, d, l));
+        if !done.insert((d, l)) {
+            continue;
+        }
+        work.extend(box_local(cx, d, l));
+        let Some(&p) = parents.get(&d) else { continue };
+        let up: Vec<LocalId> = match &cx.defs[d.0 as usize] {
+            Some(Def::Fn(f)) => f
+                .captures
+                .iter()
+                .filter(|cap| cap.inner == l)
+                .map(|cap| cap.outer)
+                .collect(),
+            _ => vec![],
+        };
+        for outer in up {
+            if done.contains(&(p, outer)) {
+                continue;
+            }
+            // A cell the enclosing function makes anyway (`crate::moves`) is shared.
+            if boxed.get(&p).is_some_and(|ls| ls.contains(&outer)) {
+                work.push((p, outer));
+                continue;
+            }
+            let threaded = threaded.get_or_insert_with(|| crate::moves::async_captured(cx));
+            let why = if threaded.contains(&(p, outer)) {
+                Some(Unshareable::Threaded)
+            } else if !boxable_local(cx, p, outer) {
+                Some(Unshareable::Promise)
+            } else if per_iteration.contains(&(p, outer)) {
+                Some(Unshareable::PerIteration)
+            } else if pattern_bound(cx, p, outer) {
+                // Each closure keeps its own copy, as without the closure created inside it:
+                // `crate::moves` reports the variable when its function would need the cell.
+                done.insert((p, outer));
+                continue;
+            } else {
+                None
+            };
+            let Some(why) = why else {
+                work.push((p, outer));
+                continue;
+            };
+            done.insert((p, outer));
+            if !(why == Unshareable::Threaded && reported_threaded(cx, &parents, p, outer)) {
+                unshareable(cx, (d, l), (p, outer), why);
+            }
         }
     }
+}
+
+/// The headline of the error for a variable that a closure created inside another closure
+/// assigns and that cannot live in a cell, after the variable's name.
+pub(crate) const NESTED_ASSIGN: &str =
+    "is assigned by a closure created inside another closure, and cannot be shared with it";
+
+/// Why a variable a nested closure assigns cannot live in a cell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unshareable {
+    /// An async closure that may run on another thread captures it.
+    Threaded,
+    /// It holds a promise (`crate::moves`: not boxable).
+    Promise,
+    /// A `for (let …)` variable: one per iteration.
+    PerIteration,
+}
+
+/// The note explaining `why` variable `name` cannot be shared.
+pub(crate) fn unshareable_note(name: &str, why: Unshareable) -> String {
+    match why {
+        Unshareable::Threaded => format!(
+            "a closure that runs on several threads (an HTTP handler, a spawned async closure) captures `{name}` too, and each of its runs would see its own copy; share it with `shared(...)`"
+        ),
+        Unshareable::Promise => format!(
+            "`{name}` holds a promise, which cannot be shared; assign it in the function that declares it"
+        ),
+        Unshareable::PerIteration => format!(
+            "each iteration of the `for` loop has its own `{name}`, which is copied into the next one; assign a variable declared in the loop body instead"
+        ),
+    }
+}
+
+/// Is local `l` of function `d` declared by a destructuring `let` or a `for (let … of …)` loop
+/// (`Ctx::pattern_bindings`)? Such a variable cannot yet be a cell made from below (#799).
+pub(crate) fn pattern_bound(cx: &Ctx, d: DefId, l: LocalId) -> bool {
+    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+        return false;
+    };
+    let at = f.body.locals[l.0 as usize].span;
+    cx.pattern_bindings
+        .iter()
+        .any(|p| p.file == at.file && p.lo <= at.lo && at.hi <= p.hi)
+}
+
+/// May local `l` of function `d` live in a cell (`crate::moves`: not a promise)?
+fn boxable_local(cx: &mut Ctx, d: DefId, l: LocalId) -> bool {
+    let ty = match &cx.defs[d.0 as usize] {
+        Some(Def::Fn(f)) => f.body.locals[l.0 as usize].ty,
+        _ => return false,
+    };
+    cx.is_copy(ty) || cx.is_shared_value(ty)
+}
+
+/// Was a closure created in `p` that captures `outer` already reported for modifying it
+/// (`crate::ownership::local_async`, which counts the closures created inside it)? Then the
+/// threaded case says nothing more.
+fn reported_threaded(cx: &Ctx, parents: &HashMap<DefId, DefId>, p: DefId, outer: LocalId) -> bool {
+    let Some(Def::Fn(f)) = &cx.defs[p.0 as usize] else {
+        return false;
+    };
+    let name = &f.body.locals[outer.0 as usize].name;
+    parents.iter().filter(|(_, q)| **q == p).any(|(c, _)| {
+        let captures = match &cx.defs[c.0 as usize] {
+            Some(Def::Fn(cf)) => cf.captures.iter().any(|cap| cap.outer == outer),
+            _ => false,
+        };
+        let span = cx.def_spans.get(c.0 as usize);
+        captures
+            && cx
+                .reported_captures
+                .iter()
+                .any(|(n, s)| n == name && Some(s) == span)
+    })
+}
+
+/// The `for (let …)` variables (`(function, local)`) that `crate::moves` found need a cell only
+/// because a closure created inside an escaping closure assigns them (`writers`, those assigning
+/// them themselves: `own`), which they cannot be: each iteration has its own.
+pub(crate) fn unshareable_nested(
+    cx: &mut Ctx,
+    vars: &[(DefId, LocalId)],
+    writers: &HashMap<DefId, HashSet<LocalId>>,
+    own: &HashMap<DefId, HashSet<LocalId>>,
+) {
+    let parents = enclosing_fns(cx);
+    let why = Unshareable::PerIteration;
+    for &(p, l) in vars {
+        let mut by: Vec<(DefId, LocalId)> = parents
+            .iter()
+            .filter(|(c, q)| {
+                **q == p
+                    && writers.get(c).is_some_and(|w| w.contains(&l))
+                    && !own.get(c).is_some_and(|w| w.contains(&l))
+            })
+            .filter_map(|(c, _)| match &cx.defs[c.0 as usize] {
+                Some(Def::Fn(f)) => f
+                    .captures
+                    .iter()
+                    .find(|cap| cap.outer == l)
+                    .map(|cap| (*c, cap.inner)),
+                _ => None,
+            })
+            .collect();
+        by.sort_by_key(|(c, _)| c.0);
+        match by.first() {
+            Some(&inner) => unshareable(cx, inner, (p, l), why),
+            None => {
+                let Some(Def::Fn(f)) = &cx.defs[p.0 as usize] else {
+                    continue;
+                };
+                let local = &f.body.locals[l.0 as usize];
+                let (name, at) = (local.name.clone(), local.span);
+                cx.error(
+                    Diagnostic::error(format!("`{name}` {NESTED_ASSIGN}"), at)
+                        .with_note(unshareable_note(&name, why)),
+                );
+            }
+        }
+    }
+}
+
+/// A closure created in a closure assigns variable `outer` of `p` (through `inner`, the capture
+/// of it by closure `d`), which cannot live in a cell (`why`).
+fn unshareable(
+    cx: &mut Ctx,
+    (d, inner): (DefId, LocalId),
+    (p, outer): (DefId, LocalId),
+    why: Unshareable,
+) {
+    let Some(Def::Fn(f)) = &cx.defs[p.0 as usize] else {
+        return;
+    };
+    let local = &f.body.locals[outer.0 as usize];
+    let name = local.name.clone();
+    let declared = local.span;
+    let at = assignment_in(cx, d, inner)
+        .or_else(|| cx.def_spans.get(d.0 as usize).copied())
+        .unwrap_or(declared);
+    let message = format!("`{name}` {NESTED_ASSIGN}");
+    // `crate::moves` reports the variable when the enclosing function would make the cell.
+    let reported = cx
+        .diags
+        .iter()
+        .any(|d| d.message == message && d.labels.first().is_some_and(|l| l.span == at));
+    if reported {
+        return;
+    }
+    cx.error(
+        Diagnostic::error(format!("`{name}` {NESTED_ASSIGN}"), at)
+            .with_label(declared, format!("`{name}` is declared here"))
+            .with_note(unshareable_note(&name, why)),
+    );
+}
+
+/// Where function `d` assigns its local `l` first, itself or else through a closure created
+/// in it that captures `l`.
+fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> {
+    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+        return None;
+    };
+    let mut found: Option<Span> = None;
+    let mut closures = vec![];
+    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+        E::Assign { place, .. } | E::CompoundAssign { place, .. } if matches!(place.kind, E::Local(x, _) if x == l) => {
+            if found.is_none_or(|s| e.span.lo < s.lo) {
+                found = Some(e.span);
+            }
+        }
+        E::Closure(c) => closures.push(*c),
+        _ => {}
+    });
+    cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    if found.is_some() {
+        return found;
+    }
+    let inner: Vec<(DefId, LocalId)> = closures
+        .into_iter()
+        .filter_map(|c| match &cx.defs[c.0 as usize] {
+            Some(Def::Fn(cf)) => cf
+                .captures
+                .iter()
+                .find(|cap| cap.outer == l)
+                .map(|cap| (c, cap.inner)),
+            _ => None,
+        })
+        .collect();
+    inner.into_iter().find_map(|(c, i)| assignment_in(cx, c, i))
+}
+
+/// Per closure: the function that creates it.
+pub(super) fn enclosing_fns(cx: &mut Ctx) -> HashMap<DefId, DefId> {
+    let mut out = HashMap::new();
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+            continue;
+        };
+        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            if let E::Closure(c) = e.kind {
+                out.insert(c, DefId(i as u32));
+            }
+        });
+        cx.defs[i] = Some(Def::Fn(f));
+    }
+    out
 }
 
 /// Make local `l` of function `d` a cell; returns the capture locals of the closures created in

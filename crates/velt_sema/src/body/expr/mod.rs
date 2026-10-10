@@ -17,6 +17,7 @@ mod closure;
 mod closure_sig;
 mod coerce;
 mod construct;
+mod conversions;
 mod discriminated;
 mod dispose_call;
 mod division;
@@ -31,6 +32,7 @@ mod in_place_chain;
 mod int32;
 mod intrinsics;
 mod js_list;
+mod json_layout;
 pub(crate) mod jsx;
 mod lit;
 mod literal_keys;
@@ -52,6 +54,7 @@ mod ordering;
 mod process;
 mod promise_new;
 mod promise_reads;
+mod push_items;
 mod record;
 mod record_call;
 mod record_compound;
@@ -109,7 +112,10 @@ impl FnCx<'_, '_> {
     }
 
     pub fn expr(&mut self, e: &ast::Expr, exp: Option<TyId>, want: Want) -> hir::Expr {
+        let outer = std::mem::take(&mut self.call_temps);
         let h = self.expr_kind(e, exp, want);
+        let temps = std::mem::replace(&mut self.call_temps, outer);
+        let h = self.with_lets(temps, h);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
         if self.cx.recording() {
@@ -146,6 +152,14 @@ impl FnCx<'_, '_> {
             A::Assign { op, target, value } => self.assign_value(*op, target, value, exp, span),
             A::Update { op, prefix, target } => self.update(*op, *prefix, target, true, span),
             A::Cond { cond, then, els } => self.ternary(cond, then, els, exp, span),
+            A::Call {
+                callee,
+                type_args,
+                args,
+                optional,
+            } if !*optional && args.iter().any(|a| matches!(a.kind, A::Spread(_))) => {
+                self.call_spreading(callee, type_args, args, exp, span)
+            }
             A::Call {
                 callee,
                 type_args,

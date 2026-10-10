@@ -1,5 +1,3 @@
-truthiness_errors.vlt:6:11: error: an expression of type `T` cannot be tested for truthiness
-the test would depend on the type argument: compare explicitly
-truthiness_errors.vlt:10:7: error: an expression of type `void` cannot be tested for truthiness
+truthiness_errors.vlt:6:7: error: an expression of type `void` cannot be tested for truthiness
 a `void` value is never a condition
-truthiness_errors.vlt:13:13: error: an expression of type `void` cannot be tested for truthiness
+truthiness_errors.vlt:9:13: error: an expression of type `void` cannot be tested for truthiness

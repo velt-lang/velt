@@ -32,6 +32,7 @@
 //! glue/transfer_env.rs), and a local closure that becomes callable from several threads at
 //! once panics in the many-threads check (glue/many.rs).
 
+mod callbacks;
 mod graph;
 mod types;
 
@@ -106,6 +107,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         }
     }
     let handlers = sync_handlers(cx, &g, &p);
+    callbacks::check_handler_callbacks(cx, &g, &p.flags, &handlers);
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let why = p.why[n][0].or(p.why[n][1]);

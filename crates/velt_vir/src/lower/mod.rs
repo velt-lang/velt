@@ -74,6 +74,7 @@ mod strings;
 mod template;
 mod track_caller;
 mod transfer;
+mod truthy;
 mod types;
 mod widen;
 
@@ -109,6 +110,7 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
     for _ in 0..MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
+        cx.cell_checks = opts.cell_checks;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -228,6 +230,9 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
+    /// `LowerOptions::cell_checks`).
+    cell_checks: bool,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,

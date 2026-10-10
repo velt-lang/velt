@@ -266,6 +266,15 @@ impl Analysis {
         })
     }
 
+    /// Whether `t` is the prelude's `Error` or a class that extends it.
+    pub fn is_error(&self, t: &TypeRef) -> bool {
+        let t = self.resolve(t);
+        match self.names.table.kind(t.ty) {
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) => self.members.errors.contains(d),
+            _ => false,
+        }
+    }
+
     /// `t` with a generic parameter replaced by its argument, when it has one.
     fn resolve<'t>(&self, t: &'t TypeRef) -> std::borrow::Cow<'t, TypeRef> {
         let mut cur = std::borrow::Cow::Borrowed(t);

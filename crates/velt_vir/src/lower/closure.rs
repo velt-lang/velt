@@ -17,6 +17,7 @@
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
 
 use super::operand::proj;
+use super::rt::Rt;
 use super::{cfunc, cint, FnLower, LInfo, LState, ThunkKind, Work};
 use crate::vir::{BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -182,7 +183,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     .vir
                     .unwrap_or_else(|| super::ice("cell"));
                 let p = Operand::Copy(Place::local(ptr));
-                self.retain(p.clone());
+                self.retain_cell(p.clone());
                 self.assign(slot, Rvalue::Use(p));
                 continue;
             }
@@ -231,6 +232,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     _ => Rvalue::AddrOf(slot),
                 };
                 self.assign(Place::local(l), ptr);
+                // A call of a closure that assigns a captured cell uses it (cells.rs).
+                if cell && f.body.locals[c.inner.0 as usize].mutable {
+                    self.cell_check(Rt::CellUse, vec![Operand::Copy(Place::local(l))]);
+                }
                 l
             });
             let mut li = LInfo::new(vir, ty, true, false, LState::Init);
@@ -371,7 +376,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         // A copy of the closure still shares the captured variables' cells.
         for (field, _) in lw.cell_captures(def) {
-            lw.retain(Operand::Copy(proj(&dst, Proj::Field(field))));
+            lw.retain_cell(Operand::Copy(proj(&dst, Proj::Field(field))));
         }
         lw.terminate(Terminator::Return(new));
         let sym = format!(

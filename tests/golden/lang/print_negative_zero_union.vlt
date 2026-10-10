@@ -1,0 +1,12 @@
+// `console.log` prints a `-0` held by a union or a nullable as `-0`, as Node does (#865).
+const z = -0;
+console.log(z && "y");
+const u: number | string = -0;
+console.log(u);
+console.log([z && "y"]);
+const v: number | string | null = -0;
+console.log(v, `${v}`, `${u}`, `${z}` === "0");
+const w: number | null = -0;
+console.log(w, `${w}`);
+const e: number | boolean = -0;
+console.log(e);

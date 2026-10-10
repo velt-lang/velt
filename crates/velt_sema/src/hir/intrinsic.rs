@@ -88,6 +88,11 @@ pub enum Intrinsic {
     /// reference while the call runs (lowering counts the type, or borrows values of it inside
     /// counted objects)? Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, JS truthiness of a value
+    /// whose type is a type parameter (`!x`, `if (x)` on a `T`), the test chosen by lowering
+    /// per instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`,
+    /// `0`, `-0`, `NaN` and `""` are falsy, a union by its member, objects always truthy.
+    Truthy,
     /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values

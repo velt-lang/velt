@@ -1,0 +1,37 @@
+// A method value or a function may take fewer parameters than the callback type passes, like
+// an arrow: `reduce` passes the accumulator, the element and its index.
+
+class P {
+  constructor(public scale: number) {}
+  add(a: number, b: number): number {
+    return a + b;
+  }
+  join(acc: string, s: string): string {
+    return acc === "" ? s : `${acc}-${s}`;
+  }
+  scaled(a: number, b: number): number {
+    return a + this.scale * b;
+  }
+  total(xs: number[]): number {
+    return xs.reduce(this.scaled.bind(this), 0);
+  }
+}
+
+function plus(a: number, b: number): number {
+  return a + b;
+}
+
+function main() {
+  const p = new P(1);
+  console.log([1, 2, 3].reduce(p.add, 0));
+  console.log(["a", "b", "c"].reduce(p.join, ""));
+  console.log(new P(10).total([1, 2]));
+  const q = new P(2);
+  console.log([4, 5].reduce(q.scaled.bind(q), 1));
+  // Functions and function values.
+  console.log([1, 2, 3].reduce(plus, 10));
+  const times = (a: number, b: number) => a * b;
+  console.log([1, 2, 3, 4].reduce(times, 1));
+  const scaled = q.scaled.bind(q);
+  console.log([1, 2, 3].reduce(scaled, 100));
+}

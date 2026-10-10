@@ -1,0 +1,16 @@
+// A `for (let …)` variable that the loop's update assigns, assigned by a closure created inside
+// a closure the loop stores: each iteration has its own `i` in JS (Node prints 10 11 12), so
+// it cannot become one shared variable for all iterations.
+async function main() {
+  const fs: (() => number)[] = [];
+  for (let i = 0; i < 3; i++) {
+    fs.push(() => {
+      const g = () => {
+        i += 10;
+      };
+      g();
+      return i;
+    });
+  }
+  for (const f of fs) console.log(f());
+}
