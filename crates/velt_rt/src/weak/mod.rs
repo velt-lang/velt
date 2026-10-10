@@ -155,6 +155,7 @@ pub unsafe extern "C" fn velt_rt_weakref_drop(r: RefId) {
 ///
 /// # Safety
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
+#[cold]
 pub unsafe extern "C" fn velt_rt_weak_release(obj: *mut u8) -> u8 {
     let rc = rc_word(obj);
     if *rc & RC_COUNT == 1 {

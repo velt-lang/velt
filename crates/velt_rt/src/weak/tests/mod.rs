@@ -76,7 +76,9 @@ pub(super) fn is_marked(obj: *mut u8) -> bool {
     unsafe { *rc_word(obj) & RC_WEAK != 0 }
 }
 
-/// The release sequence for a weak-capable type (module docs of `weak`).
+/// The release sequence for a weak-capable type (module docs of `weak`), inline as generated
+/// code has it.
+#[inline(always)]
 pub(super) fn release(obj: *mut u8) {
     // SAFETY: tests own the reference they release.
     unsafe {
@@ -94,7 +96,8 @@ pub(super) fn release(obj: *mut u8) {
     }
 }
 
-/// Drops the fields and frees the block.
+/// Drops the fields and frees the block (drop glue: a call, as in generated code).
+#[inline(never)]
 unsafe fn destroy(obj: *mut u8) {
     let fields = (*(obj as *mut Obj)).fields;
     for f in fields {

@@ -28,17 +28,21 @@ fn retain_inline(obj: *mut u8) {
     unsafe { *rc_word(obj) += 1 };
 }
 
-/// Shared path (retain + release, the count never reaches zero) and unique path (allocate,
-/// release: drop and free), `n` times each.
-macro_rules! bench_loop {
-    ($name:ident, $release:path) => {
+/// The shared path (retain + release; the count never reaches zero) and the unique path
+/// (allocate, release: drop and free), `n` times each, with release sequence `$release`.
+macro_rules! bench_loops {
+    ($shared:ident, $unique:ident, $release:path) => {
         #[inline(never)]
-        fn $name(obj: *mut u8, n: u64) {
+        fn $shared(obj: *mut u8, n: u64) {
             for _ in 0..n {
                 let o = black_box(obj);
                 retain_inline(o);
                 $release(o);
             }
+        }
+
+        #[inline(never)]
+        fn $unique(n: u64) {
             for _ in 0..n {
                 $release(black_box(new_obj(&[])));
             }
@@ -46,12 +50,12 @@ macro_rules! bench_loop {
     };
 }
 
-bench_loop!(bench_plain, release_plain);
-bench_loop!(bench_capable, release);
+bench_loops!(bench_plain_shared, bench_plain_unique, release_plain);
+bench_loops!(bench_capable_shared, bench_capable_unique, release);
 
 /// The shared path on a weakly held object (each release is a call and a table probe).
 #[inline(never)]
-fn bench_weak(obj: *mut u8, n: u64) {
+fn bench_weak_shared(obj: *mut u8, n: u64) {
     for _ in 0..n {
         let o = black_box(obj);
         retain_inline(o);
@@ -68,11 +72,13 @@ fn rc_paths() {
         .unwrap_or(1_000_000);
     no_leak(|| {
         let obj = new_obj(&[]);
-        bench_plain(obj, n);
-        bench_capable(obj, n);
+        bench_plain_shared(obj, n);
+        bench_plain_unique(n);
+        bench_capable_shared(obj, n);
+        bench_capable_unique(n);
         let m = obj_map();
         set(m, obj, new_obj(&[]));
-        bench_weak(obj, n);
+        bench_weak_shared(obj, n);
         release(obj);
         finish(&[m]);
     });
