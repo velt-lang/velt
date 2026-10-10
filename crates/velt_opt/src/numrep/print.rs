@@ -90,10 +90,7 @@ pub(super) fn as_integer(env: &Env, func: &mut Function, bi: usize, f: Fact) -> 
     }
     let pos = number_arg(env, int);
     let x = args[pos].clone();
-    func.locals.push(LocalDecl {
-        ty: Ty::I64,
-        name: None,
-    });
+    func.locals.push(LocalDecl::new(Ty::I64, None));
     let t = Local(func.locals.len() as u32 - 1);
     let at = func.term_loc(bi);
     push_stmt(

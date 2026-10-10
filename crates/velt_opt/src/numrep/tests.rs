@@ -581,10 +581,7 @@ fn a_counter_used_as_an_index_is_64_bits() {
     let (mut p, _, k) = counter_program(0.0, 1000.0);
     let f = &mut p.funcs[0];
     let idx = Local(f.locals.len() as u32);
-    f.locals.push(LocalDecl {
-        ty: Ty::U64,
-        name: None,
-    });
+    f.locals.push(LocalDecl::new(Ty::U64, None));
     let body = f
         .blocks
         .iter()

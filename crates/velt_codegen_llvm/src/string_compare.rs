@@ -154,7 +154,7 @@ mod tests {
 
     /// `f(s)`: `z = { &static, w1, w2 }; p = &z; velt_rt_str_cmp(s, p)` (or `(p, s)`).
     fn function(w1: i128, w2: i128, literal_first: bool) -> (Function, Vec<Operand>) {
-        let local = |ty| LocalDecl { ty, name: None };
+        let local = |ty| LocalDecl::new(ty, None);
         let (s, z, p) = (Local(0), Local(1), Local(2));
         let stmts = vec![
             Stmt::Assign(
@@ -171,18 +171,12 @@ mod tests {
             Stmt::Assign(Place::local(p), Rvalue::AddrOf(Place::local(z))),
         ];
         let f = Function {
-            symbol: "f".into(),
-            params: vec![Ty::Ptr],
-            ret: Ty::Unit,
             locals: vec![local(Ty::Ptr), local(Ty::Agg(STR_AGG)), local(Ty::Ptr)],
             blocks: vec![BasicBlock {
                 stmts,
                 term: Terminator::Return(Operand::Const(Const::Unit, Ty::Unit)),
             }],
-            linkage: Linkage::Internal,
-            locs: vec![],
-            param_attrs: vec![],
-            is_poll: false,
+            ..Function::new("f".into(), vec![Ty::Ptr], Ty::Unit, Linkage::Internal)
         };
         let (s, p) = (
             Operand::Copy(Place::local(s)),

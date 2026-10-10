@@ -61,7 +61,7 @@ impl FnLower<'_, '_> {
         if ty == Ty::Unit {
             ice("attempted to create a Unit local");
         }
-        self.locals.push(LocalDecl { ty, name });
+        self.locals.push(LocalDecl::new(ty, name));
         Local(self.locals.len() as u32 - 1)
     }
 
@@ -185,15 +185,10 @@ impl FnLower<'_, '_> {
             }
         }
         Function {
-            symbol,
-            params,
-            ret,
             locals: self.locals,
             blocks,
-            linkage: Linkage::Internal,
             locs,
-            param_attrs: vec![],
-            is_poll: false,
+            ..Function::new(symbol, params, ret, Linkage::Internal)
         }
     }
 

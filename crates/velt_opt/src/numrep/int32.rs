@@ -41,7 +41,7 @@ pub(super) fn guarded_sums(env: &Env, func: &mut Function) -> bool {
 }
 
 fn new_temp(func: &mut Function, ty: Ty) -> Local {
-    func.locals.push(LocalDecl { ty, name: None });
+    func.locals.push(LocalDecl::new(ty, None));
     Local(func.locals.len() as u32 - 1)
 }
 

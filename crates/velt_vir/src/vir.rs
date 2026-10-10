@@ -122,7 +122,11 @@ pub struct AggLayout {
 /// text there, and aggregate copies need not preserve padding.
 pub const STR_AGG: AggId = AggId(0);
 
-#[derive(Clone, Debug)]
+/// `Program::default()` is the empty program, a starting point for builders and struct update
+/// syntax (`Program { aggs, funcs, ..Default::default() }`) where a new field gets its "no
+/// information" default. It is not a valid program: callers supply `aggs` with the string
+/// layout first (`STR_AGG`) and `funcs` with the exported `velt_main` (invariant 5).
+#[derive(Clone, Debug, Default)]
 pub struct Program {
     pub aggs: Vec<AggLayout>,
     pub funcs: Vec<Function>,
@@ -217,6 +221,26 @@ impl ParamAttrs {
 }
 
 impl Function {
+    /// A function with one unnamed local per param and no blocks, source locations or param
+    /// facts. It is not valid until the caller supplies the blocks, entry block first
+    /// (invariants 4 and 6), and any further locals after the params' (or replaces `locals`
+    /// with its own, still starting with one per param). Build the rest with struct update
+    /// syntax (`Function { locals, blocks, ..Function::new(..) }`), so adding a field touches
+    /// only this constructor, where it gets its "no information" default.
+    pub fn new(symbol: String, params: Vec<Ty>, ret: Ty, linkage: Linkage) -> Self {
+        Function {
+            symbol,
+            locals: params.iter().map(|&ty| LocalDecl::new(ty, None)).collect(),
+            params,
+            ret,
+            blocks: Vec::new(),
+            linkage,
+            locs: Vec::new(),
+            param_attrs: Vec::new(),
+            is_poll: false,
+        }
+    }
+
     /// Attributes of param `i` (the empty set when the function has none).
     pub fn param_attr(&self, i: usize) -> ParamAttrs {
         self.param_attrs.get(i).copied().unwrap_or_default()
@@ -245,6 +269,13 @@ pub struct LocalDecl {
     pub ty: Ty,
     /// Source name for debugging, if any.
     pub name: Option<String>,
+}
+
+impl LocalDecl {
+    /// A local of type `ty`, named `name` in the source (`None` for temporaries).
+    pub fn new(ty: Ty, name: Option<String>) -> Self {
+        LocalDecl { ty, name }
+    }
 }
 
 #[derive(Clone, Debug)]

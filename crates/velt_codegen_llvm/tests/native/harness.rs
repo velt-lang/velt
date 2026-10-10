@@ -94,21 +94,12 @@ fn prepare(program: &Program, runs: &[(String, Vec<u64>)]) -> Program {
 fn main_stub() -> Function {
     use velt_vir::vir::{BasicBlock, Const, LocalDecl, Operand, Terminator};
     Function {
-        symbol: "velt_main".into(),
-        params: vec![],
-        ret: Ty::I32,
-        locals: vec![LocalDecl {
-            ty: Ty::I32,
-            name: None,
-        }],
+        locals: vec![LocalDecl::new(Ty::I32, None)],
         blocks: vec![BasicBlock {
             stmts: vec![],
             term: Terminator::Return(Operand::Const(Const::Int(0), Ty::I32)),
         }],
-        linkage: Linkage::Export,
-        locs: vec![],
-        param_attrs: vec![],
-        is_poll: false,
+        ..Function::new("velt_main".into(), vec![], Ty::I32, Linkage::Export)
     }
 }
 
