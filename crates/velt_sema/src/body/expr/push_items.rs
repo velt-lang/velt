@@ -53,7 +53,7 @@ impl FnCx<'_, '_> {
         }
         for item in items {
             let stmt = match item {
-                Item::One(v) => self.push_to(recv.clone(), v),
+                Item::One(v) => self.push_onto(recv.clone(), v),
                 Item::All(src, et) => self.push_all_to(recv.clone(), src, (et, elem), span),
             };
             stmts.push(stmt);

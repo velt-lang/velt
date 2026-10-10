@@ -204,11 +204,11 @@ impl FnCx<'_, '_> {
 
     fn push_stmt(&mut self, out: hir::LocalId, arr_ty: TyId, v: hir::Expr) -> hir::Stmt {
         let target = self.mk(H::Local(out, UseMode::BorrowMut), arr_ty, v.span);
-        self.push_to(target, v)
+        self.push_onto(target, v)
     }
 
     /// `target.push(v);` (`target` used mutably).
-    pub(super) fn push_to(&mut self, target: hir::Expr, v: hir::Expr) -> hir::Stmt {
+    pub(super) fn push_onto(&mut self, target: hir::Expr, v: hir::Expr) -> hir::Stmt {
         let span = v.span;
         let unit = self.cx.ty.unit;
         let call = self.intrinsic(Intrinsic::ArrayPush, vec![target, v], unit, span);
@@ -273,7 +273,7 @@ impl FnCx<'_, '_> {
             self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
         };
         let value = self.coerce(value, elem);
-        let push = self.push_to(target, value);
+        let push = self.push_onto(target, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),
             ty: src_elem,
