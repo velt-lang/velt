@@ -351,6 +351,8 @@ jobs:
   # velt is built with: checked on every run, so a mismatch shows before a tag is pushed.
   signing-key:
     runs-on: ubuntu-latest
+    # The signing key is a secret of this environment, which only `main` and `v*` tags may use.
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - name: sign and check a file
@@ -364,6 +366,7 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [version, build, clean-machine, cross-run, signing-key]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:

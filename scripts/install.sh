@@ -27,6 +27,8 @@ mkdir -p "$root/toolchains" "$root/bin"
 root=$(cd "$root" && pwd)
 dest="$root/toolchains/$version"
 staging="$root/toolchains/.$version.$$"
+# A failed install leaves no partial toolchain behind.
+trap 'if [ -n "$staging" ]; then rm -rf "$staging"; fi' EXIT INT TERM
 rm -rf "$staging"
 cp -R "$dist" "$staging"
 if [ -d "$dest" ]; then
@@ -34,6 +36,7 @@ if [ -d "$dest" ]; then
     rm -rf "$root/toolchains/.$version.old.$$"
 fi
 mv "$staging" "$dest"
+staging=
 cp "$dist/bin/velt-launcher" "$root/bin/.velt.$$"
 chmod +x "$root/bin/.velt.$$"
 mv -f "$root/bin/.velt.$$" "$root/bin/velt"

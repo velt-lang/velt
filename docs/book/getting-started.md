@@ -18,10 +18,12 @@ On Windows, in PowerShell:
 irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
 ```
 
-The installer puts the toolchain in `~/.velt/toolchains/<version>` (`%LOCALAPPDATA%\velt` on
-Windows) and the `velt` launcher in `~/.velt/bin`, which it adds to your `PATH`. Several versions
-can be installed side by side; each package runs the one its manifest names (below). Open a new
-terminal and check the installation:
+The installer puts the toolchain in `~/.velt/toolchains/<version>` and the `velt` launcher in
+`~/.velt/bin`, which it adds to your `PATH` (on Windows `%LOCALAPPDATA%\velt\toolchains\<version>`
+and `%LOCALAPPDATA%\velt\bin`, added to your user `Path`). Several versions can be installed side
+by side; each package runs the one its manifest names (below). To uninstall, delete `~/.velt`
+(`%LOCALAPPDATA%\velt`) and remove its `bin` directory from your `PATH`. Open a new terminal and
+check the installation:
 
 ```sh
 velt doctor

@@ -303,10 +303,29 @@ fn get_velt_ps1_installs_versions_side_by_side() {
             .env_remove("VELT_TOOLCHAIN");
         c.output().unwrap()
     };
+    // An install from before the launcher: the compiler in bin\, beside lib\ and std\. It
+    // moves into toolchains\<its version>; the fake compiler answers `toolchain --version`
+    // with something else than a launcher's version, so it is replaced by the launcher.
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::create_dir_all(root.join("std")).unwrap();
+    std::fs::copy(fake_velt(), root.join("bin/velt.exe")).unwrap();
+    std::fs::write(root.join("std/VERSION"), "0.1.0").unwrap();
+    std::fs::write(root.join("README.md"), "old").unwrap();
     let a = zip("0.1.1");
     let b = zip("0.2.0");
     let out = ok(install(&a, &[]));
+    assert!(
+        out.contains("moving the earlier install of velt 0.1.0"),
+        "{out}"
+    );
     assert!(out.contains("velt 0.1.1 is the default"), "{out}");
+    assert!(root.join("toolchains/0.1.0/bin/velt.exe").is_file());
+    assert!(root.join("toolchains/0.1.0/std/VERSION").is_file());
+    assert!(root.join("toolchains/0.1.0/README.md").is_file());
+    assert!(!root.join("std").exists() && !root.join("lib").exists());
+    let old = velt(&root, tmp.path(), &["+0.1.0", "--version"]);
+    assert!(old.starts_with("velt 0.1.0 "), "{old}");
     ok(install(&b, &[]));
     assert!(root
         .join(format!("toolchains/0.1.1/bin/velt{EXE}"))
@@ -472,4 +491,120 @@ fn install_sh_installs_a_dist_directory_as_a_version() {
     assert!(version.starts_with("velt 0.1.1 "), "{version}");
     let list = velt(&root, tmp.path(), &["toolchain", "list"]);
     assert!(list.contains("0.2.0") && list.contains("0.1.1"), "{list}");
+}
+
+/// The launcher in `<root>/bin` is replaced unless it is a newer velt's: a pre-release is older
+/// than its release, and anything that doesn't answer `velt-launcher <version>` is replaced.
+#[cfg(unix)]
+#[test]
+fn get_velt_sh_replaces_the_launcher_only_with_a_newer_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let bin = home.join(".velt/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // A launcher that says it is `<says>`, and runs the real one (from the same bin/) otherwise.
+    std::fs::copy(env!("CARGO_BIN_EXE_velt-launcher"), bin.join("real")).unwrap();
+    let pretend = |says: &str| {
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1 $2\" = \"toolchain --version\" ]; then echo '{says}'; exit 0; fi\n\
+             exec \"$(dirname \"$0\")/real\" \"$@\"\n"
+        );
+        std::fs::write(bin.join("velt"), script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(bin.join("velt"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let is_pretend = || {
+        std::fs::read(bin.join("velt"))
+            .unwrap()
+            .starts_with(b"#!/bin/sh")
+    };
+    let install = |version: &str| {
+        let file = tmp.path().join(format!("{version}.tar.gz"));
+        std::fs::write(&file, archive(version, true)).unwrap();
+        ok(get_velt(
+            &home,
+            &["--no-modify-path", "--archive", file.to_str().unwrap()],
+            &[],
+        ))
+    };
+
+    pretend("velt-launcher 0.2.0");
+    install("0.2.0-rc.1");
+    assert!(
+        is_pretend(),
+        "a pre-release replaced its release's launcher"
+    );
+    install("0.1.9");
+    assert!(is_pretend(), "an older version replaced the launcher");
+    install("0.2.0");
+    assert!(
+        !is_pretend(),
+        "the same version did not replace the launcher"
+    );
+
+    pretend("velt 0.9.0 (abc x86_64-apple-darwin)");
+    install("0.1.8");
+    assert!(!is_pretend(), "something that is not a launcher was kept");
+    pretend("velt-launcher 0.3.0-rc.1");
+    install("0.3.0");
+    assert!(
+        !is_pretend(),
+        "a release did not replace its pre-release's launcher"
+    );
+}
+
+/// The base URL is https, or http to this machine; nothing else is downloaded from.
+#[cfg(unix)]
+#[test]
+fn get_velt_sh_downloads_only_over_https_or_from_this_machine() {
+    let tmp = tempfile::tempdir().unwrap();
+    for base in [
+        "http://releases.example",
+        "file:///tmp/releases",
+        "ftp://x.example",
+    ] {
+        let out = get_velt(
+            tmp.path(),
+            &["--version", "0.3.0"],
+            &[("VELT_INSTALL_BASE_URL", base)],
+        );
+        assert!(!out.status.success());
+        assert!(
+            text(&out).contains("VELT_INSTALL_BASE_URL must be an https:// URL"),
+            "{base}: {}",
+            text(&out)
+        );
+    }
+}
+
+/// musl is the C library `ldd` reports, not a musl loader installed beside glibc.
+#[cfg(target_os = "linux")]
+#[test]
+fn get_velt_sh_asks_the_c_library_whether_it_is_musl() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_bin = tmp.path().join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let path = format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap());
+    let with_ldd = |says: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        let ldd = fake_bin.join("ldd");
+        std::fs::write(&ldd, format!("#!/bin/sh\necho '{says}' >&2\n")).unwrap();
+        std::fs::set_permissions(&ldd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A closed port: a glibc machine gets as far as the download.
+        get_velt(
+            tmp.path(),
+            &["--no-modify-path", "--version", "0.3.0"],
+            &[
+                ("PATH", &path),
+                ("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9"),
+            ],
+        )
+    };
+    let musl = text(&with_ldd("musl libc (x86_64)"));
+    assert!(musl.contains("no prebuilt Velt for musl"), "{musl}");
+    let glibc = text(&with_ldd("ldd (Debian GLIBC 2.36-9) 2.36"));
+    assert!(
+        !glibc.contains("musl") && glibc.contains("download failed"),
+        "{glibc}"
+    );
 }

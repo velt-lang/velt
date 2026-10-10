@@ -17,8 +17,9 @@
 #   -NoModifyPath    do not add <root>\bin to the user PATH
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests).
 #
-# A download is checked against the release's SHA256SUMS. PowerShell cannot check its Ed25519
-# signature; the installed launcher checks the signature of everything it downloads later.
+# A download is checked against the release's SHA256SUMS, over https only (redirects included;
+# plain http only to this machine). PowerShell cannot check SHA256SUMS's Ed25519 signature; the
+# installed launcher checks the signature of everything it downloads later.
 param(
     [string]$Version = $env:VELT_INSTALL_VERSION,
     [string]$Prefix = $env:VELT_INSTALL_PREFIX,
@@ -27,6 +28,10 @@ param(
     [switch]$Force,
     [switch]$NoModifyPath
 )
+
+# In a script block, so `irm | iex` leaves no variables or preferences in the caller's session
+# (only `$env:Path`, which it is meant to update).
+& {
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is very slow with a progress bar
 
@@ -41,8 +46,73 @@ function Fail([string]$Message) {
     throw "velt install failed: $Message"
 }
 
+# https, or http to this machine (tests, local mirrors): the launcher's rule.
+function Test-AllowedUrl([Uri]$Uri) {
+    $Uri.Scheme -eq "https" -or ($Uri.Scheme -eq "http" -and $Uri.IsLoopback)
+}
+if (-not (Test-AllowedUrl ([Uri]$BaseUrl))) {
+    Fail "VELT_INSTALL_BASE_URL must be an https:// URL (or http:// to this machine): $BaseUrl"
+}
+
+# Download $Url to $File, refusing a redirect to anything but https (or loopback http).
+function Get-File([string]$Url, [string]$File) {
+    $Response = Invoke-WebRequest -UseBasicParsing $Url -OutFile $File -PassThru
+    $Final = if ($Response.BaseResponse.ResponseUri) {
+        $Response.BaseResponse.ResponseUri                  # Windows PowerShell 5.1
+    } else {
+        $Response.BaseResponse.RequestMessage.RequestUri    # PowerShell 7
+    }
+    if ($Final -and -not (Test-AllowedUrl $Final)) {
+        Remove-Item -Force $File -ErrorAction SilentlyContinue
+        Fail "$Url redirected to $Final, which is not https: refusing it"
+    }
+}
+
+# `velt-launcher <version>` from `<launcher> toolchain --version`, else $null: an older velt.exe
+# there (the compiler of an install before the launcher) or anything else is not a launcher.
+function Get-LauncherVersion([string]$Exe) {
+    try {
+        $Out = & $Exe toolchain --version 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+    } catch {
+        return $null
+    }
+    foreach ($Line in @($Out)) {
+        if ("$Line" -match '^velt-launcher (\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') { return $Matches[1] }
+    }
+    $null
+}
+
+# -1, 0 or 1: semver order of release versions, a pre-release before its release.
+function Compare-Version([string]$A, [string]$B) {
+    $CoreA = [version]($A -split "-", 2)[0]
+    $CoreB = [version]($B -split "-", 2)[0]
+    if ($CoreA -ne $CoreB) { return $CoreA.CompareTo($CoreB) }
+    $PreA = if ($A.Contains("-")) { ($A -split "-", 2)[1] } else { $null }
+    $PreB = if ($B.Contains("-")) { ($B -split "-", 2)[1] } else { $null }
+    if ($PreA -eq $PreB) { return 0 }
+    if (-not $PreA) { return 1 }
+    if (-not $PreB) { return -1 }
+    [string]::CompareOrdinal($PreA, $PreB)
+}
+
+# `velt <version> (<commit> <triple>)` → <version>.
+function Get-ToolchainVersion([string]$Exe) {
+    try {
+        $Out = & $Exe --version 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+    } catch {
+        return $null
+    }
+    foreach ($Line in @($Out)) {
+        if ("$Line" -match '^velt (\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?) ') { return $Matches[1] }
+    }
+    $null
+}
+
 $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("velt-install-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force $Tmp | Out-Null
+$Staging = $null
 try {
     if ($Archive) {
         if (-not (Test-Path $Archive -PathType Leaf)) { Fail "no such archive: $Archive" }
@@ -75,15 +145,15 @@ try {
         $Archive = Join-Path $Tmp "$Name.zip"
         Write-Host "downloading Velt $Version for $Target"
         try {
-            Invoke-WebRequest -UseBasicParsing "$Url/$Name.zip" -OutFile $Archive
+            Get-File "$Url/$Name.zip" $Archive
         } catch {
-            Fail "download failed: $Url/$Name.zip (is $Version a release with a $Target build?)"
+            Fail "download failed: $Url/$Name.zip (is $Version a release with a $Target build?) $_"
         }
         $Sums = Join-Path $Tmp "SHA256SUMS"
         try {
-            Invoke-WebRequest -UseBasicParsing "$Url/SHA256SUMS" -OutFile $Sums
+            Get-File "$Url/SHA256SUMS" $Sums
         } catch {
-            Fail "download failed: $Url/SHA256SUMS"
+            Fail "download failed: $Url/SHA256SUMS $_"
         }
         $Expected = $null
         foreach ($Line in Get-Content $Sums) {
@@ -107,26 +177,29 @@ try {
     if (-not (Test-Path $NewLauncher -PathType Leaf)) {
         Fail "$Archive has no launcher (bin\velt-launcher.exe): velt 0.1.0 predates it; this installer installs later releases"
     }
-    # `velt <version> (<commit> <triple>)`
-    $Installed = & (Join-Path $Dist "bin\velt.exe") --version
-    if ($LASTEXITCODE -ne 0) { Fail "the velt.exe in $Archive does not run" }
-    $Version = ($Installed -split "\s+")[1]
-    if (-not $Version) { Fail "cannot read the version of the velt.exe in $Archive" }
+    $Version = Get-ToolchainVersion (Join-Path $Dist "bin\velt.exe")
+    if (-not $Version) { Fail "the velt.exe in $Archive does not run, or does not say its version" }
 
     New-Item -ItemType Directory -Force $Prefix | Out-Null
     $Root = (Resolve-Path $Prefix).Path
     $Bin = Join-Path $Root "bin"
     $Toolchains = Join-Path $Root "toolchains"
 
-    # A single toolchain installed into the root by an installer from before the launcher: its
-    # bin\velt.exe is the compiler, which the launcher replaces. Not moved: removed.
+    # A single toolchain an installer before the launcher put into the root: its bin\velt.exe is
+    # the compiler. It moves into toolchains\<its version>, where the launcher runs it; the new
+    # version becomes the default (there is no default file yet).
     if ((Test-Path (Join-Path $Root "std")) -and -not (Test-Path $Toolchains)) {
-        Write-Host "replacing the earlier single-toolchain install in $Root"
-        foreach ($d in @("lib", "std")) {
-            Remove-Item -Recurse -Force (Join-Path $Root $d) -ErrorAction SilentlyContinue
+        $OldVelt = Join-Path $Root "bin\velt.exe"
+        $OldVersion = if (Test-Path $OldVelt) { Get-ToolchainVersion $OldVelt } else { $null }
+        if (-not $OldVersion) {
+            Fail "$Root holds an earlier install whose bin\velt.exe does not say its version; remove $Root\bin\velt.exe, $Root\lib and $Root\std, then run this again"
         }
-        foreach ($f in @("README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
-            Remove-Item -Force (Join-Path $Root $f) -ErrorAction SilentlyContinue
+        $Moved = Join-Path $Toolchains $OldVersion
+        Write-Host "moving the earlier install of velt $OldVersion into $Moved"
+        New-Item -ItemType Directory -Force (Join-Path $Moved "bin") | Out-Null
+        Move-Item $OldVelt (Join-Path $Moved "bin\velt.exe")
+        foreach ($d in @("lib", "std", "share", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE")) {
+            if (Test-Path (Join-Path $Root $d)) { Move-Item (Join-Path $Root $d) (Join-Path $Moved $d) }
         }
     }
     New-Item -ItemType Directory -Force $Toolchains, $Bin | Out-Null
@@ -145,27 +218,22 @@ try {
             Remove-Item -Recurse -Force $Old -ErrorAction SilentlyContinue
         }
         Rename-Item $Staging $Dest
-        Write-Host "installed $Installed into $Dest"
+        $Staging = $null
+        Write-Host "installed velt $Version into $Dest"
     }
 
     # The launcher: replaced unless the one installed belongs to a newer velt. A running
     # velt.exe can be renamed but not overwritten, so the old one is renamed aside first.
     $Launcher = Join-Path $Bin "velt.exe"
-    $Current = $null
-    if (Test-Path $Launcher) {
-        $Out = & $Launcher toolchain --version 2>$null
-        if ($LASTEXITCODE -eq 0 -and $Out) { $Current = ($Out -split "\s+")[1] }
-    }
-    $Release = { param($v) [version](($v -split "-")[0]) }
-    if (-not $Current -or (& $Release $Version) -ge (& $Release $Current)) {
+    $Current = if (Test-Path $Launcher) { Get-LauncherVersion $Launcher } else { $null }
+    if (-not $Current -or (Compare-Version $Version $Current) -ge 0) {
         if (Test-Path $Launcher) {
             $Aside = Join-Path $Bin (".velt.exe.old-" + [guid]::NewGuid().ToString("N"))
             Rename-Item $Launcher $Aside
-            Remove-Item -Force $Aside -ErrorAction SilentlyContinue
         }
         Copy-Item $NewLauncher $Launcher
     }
-    Get-ChildItem $Bin -Filter ".velt.exe.old-*" -ErrorAction SilentlyContinue |
+    Get-ChildItem $Bin -Filter ".velt.exe.old-*" -Force -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
 
     $DefaultFile = Join-Path $Root "default"
@@ -182,6 +250,8 @@ try {
         Remove-Item Env:VELT_TOOLCHAIN -ErrorAction SilentlyContinue
     }
 } finally {
+    # A failed install leaves no partial toolchain behind.
+    if ($Staging) { Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue }
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }
 
@@ -205,9 +275,8 @@ if (-not $NoModifyPath) {
     if (-not $OnPath) { $env:Path = "$Bin;$env:Path" }
 }
 
-Write-Host ""
-Write-Host "Velt links programs with the MSVC linker: install the Build Tools for Visual Studio"
-Write-Host "(""Desktop development with C++"") if you have not; ``velt doctor`` checks for it."
+# The toolchain links programs with its bundled linker: no Visual Studio needed (`velt doctor`
+# says what is missing, if anything).
 if (-not $OnPath -and $NoModifyPath) {
     Write-Host ""
     Write-Host "Add Velt to your PATH for this session:"
@@ -215,3 +284,4 @@ if (-not $OnPath -and $NoModifyPath) {
 }
 Write-Host ""
 Write-Host "Then check the installation with:  velt doctor"
+}

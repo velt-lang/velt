@@ -251,7 +251,11 @@ builds and smoke-tests the archives and keeps them as workflow artifacts, and ch
 signing key matches the key velt is built with.
 
 **Signing.** `scripts/release-sign.sh` signs `SHA256SUMS` and `releases.json` with the release
-key, the repository secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM), and checks
+key, the secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM) of the GitHub
+environment `release` (Settings → Environments), which allows only `main` and tags `v*` to use
+it, so a workflow run from another branch, with changed scripts, can't read the key. The jobs that
+sign (`signing-key` and `publish` in `release.yml`, `index` in `release-index.yml`) run in that
+environment. The script checks
 each signature against the public key velt is built with
 (`velt_toolchain::signature::RELEASE_PUBLIC_KEY`, also embedded in `scripts/get-velt.sh`; a test
 keeps them in line). The launcher and `velt target add` refuse what doesn't match it. Keep a

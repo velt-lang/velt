@@ -22,7 +22,8 @@
 #
 # A download is checked against the release's SHA256SUMS, and that file against its signature
 # (SHA256SUMS.sig) with the velt release key when OpenSSL can check Ed25519 signatures (OpenSSL
-# 1.1.1 or newer; not macOS's LibreSSL). The installed launcher checks every later download itself.
+# 3.0 or newer; not macOS's LibreSSL). The installed launcher checks every later download itself.
+# Downloads are https only (with every redirect), or http to this machine (tests).
 set -eu
 
 # The release workflow replaces this with the version it publishes.
@@ -71,7 +72,8 @@ detect_target() {
     esac
     case "$os" in
         Linux)
-            if ls /lib/ld-musl-* >/dev/null 2>&1 || (ldd --version 2>&1 | grep -qi musl); then
+            # The C library itself: glibc systems can have musl installed too (/lib/ld-musl-*).
+            if ldd --version 2>&1 | grep -qi musl; then
                 err "no prebuilt Velt for musl (Alpine); build it from source (docs/tooling/platforms.md)"
             fi
             echo "$arch-unknown-linux-gnu" ;;
@@ -88,10 +90,22 @@ detect_target() {
 }
 
 # --- downloads ----------------------------------------------------------------------------------
+# https only, redirects included, as the launcher downloads (velt_toolchain::install); plain http
+# only to this machine, for tests and local mirrors.
+case "$base_url" in
+    https://*) protocols='=https' ;;
+    http://localhost:*|http://localhost/*|http://127.0.0.1:*|http://127.0.0.1/*|http://\[::1\]:*|http://\[::1\]/*)
+        protocols='=http' ;;
+    *) err "VELT_INSTALL_BASE_URL must be an https:// URL (or http:// to this machine): $base_url" ;;
+esac
 if command -v curl >/dev/null 2>&1; then
-    fetch() { curl --proto '=https,http' -fsSL --retry 3 -o "$2" "$1"; }
+    fetch() { curl --proto "$protocols" --proto-redir "$protocols" -fsSL --retry 3 -o "$2" "$1"; }
 elif command -v wget >/dev/null 2>&1; then
-    fetch() { wget -q --tries=3 -O "$2" "$1"; }
+    if [ "$protocols" = '=https' ]; then
+        fetch() { wget -q --https-only --tries=3 -O "$2" "$1"; }
+    else
+        fetch() { wget -q --tries=3 -O "$2" "$1"; }
+    fi
 else
     fetch() { err "neither curl nor wget is installed"; }
 fi
@@ -99,7 +113,8 @@ fi
 # The tag of the latest release, from the redirect of <base>/releases/latest to .../tag/<tag>.
 latest_tag() {
     if command -v curl >/dev/null 2>&1; then
-        url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$base_url/releases/latest") || return 1
+        url=$(curl --proto "$protocols" --proto-redir "$protocols" -fsSLI -o /dev/null \
+            -w '%{url_effective}' "$base_url/releases/latest") || return 1
     else
         url=$(wget -q -S --max-redirect=0 --spider "$base_url/releases/latest" 2>&1 |
             sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\r' | tail -n 1)
@@ -126,8 +141,11 @@ check_signature() { # <release url>
     if ! command -v openssl >/dev/null 2>&1 ||
         ! printf '%s\n' "$release_key" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
         ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
-        say "note: no OpenSSL that checks Ed25519 signatures here, so only the checksum was checked" \
-            "(it shows the archive is intact, not who published it)" >&2
+        if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
+            err "VELT_INSTALL_PUBLIC_KEY is set, but no OpenSSL here checks Ed25519 signatures (OpenSSL 3.0 or newer)"
+        fi
+        say "note: no OpenSSL that checks Ed25519 signatures here (OpenSSL 3.0 or newer), so only" \
+            "the checksum was checked (it shows the archive is intact, not who published it)" >&2
         return 0
     fi
     if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
@@ -155,7 +173,8 @@ check_signature() { # <release url>
 }
 
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t velt)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+staging=
+trap 'rm -rf "$tmp"; if [ -n "$staging" ]; then rm -rf "$staging"; fi' EXIT INT TERM
 
 if [ -n "$archive" ]; then
     [ -f "$archive" ] || err "no such archive: $archive"
@@ -219,13 +238,27 @@ else
         rm -rf "$root/toolchains/.$version.old.$$"
     fi
     mv "$staging" "$dest"
+    staging=
     say "installed $installed into $dest"
 fi
 
-# The launcher: replaced unless the one installed belongs to a newer velt.
-launcher_version() { "$1" toolchain --version 2>/dev/null | awk '{ print $2 }'; }
-newer_or_same() { # <a> <b>: a >= b, by version order
-    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)" = "$1" ]
+# The launcher: replaced unless the one installed belongs to a newer velt. Anything that doesn't
+# answer `velt-launcher <version>` is not a launcher, and is replaced.
+launcher_version() {
+    "$1" toolchain --version 2>/dev/null |
+        sed -n 's/^velt-launcher \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\(-[0-9A-Za-z.-]*\)\{0,1\}\)$/\1/p' |
+        head -n 1
+}
+# <version> as a sortable key: major.minor.patch, then 1 for a release or 0 for a pre-release
+# (which comes before its release), then the pre-release text.
+version_key() {
+    core=${1%%-*}
+    case "$1" in *-*) pre=0; tag=${1#*-} ;; *) pre=1; tag= ;; esac
+    printf '%s.%s %s\n' "$core" "$pre" "$tag"
+}
+newer_or_same() { # <a> <b>: a >= b
+    [ "$(printf '%s\n%s\n' "$(version_key "$1")" "$(version_key "$2")" |
+        sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1)" = "$(version_key "$1")" ]
 }
 current=
 if [ -x "$root/bin/velt" ]; then current=$(launcher_version "$root/bin/velt" || true); fi
@@ -267,14 +300,8 @@ if [ "$modify_path" = 1 ]; then
 fi
 
 # --- next steps ---------------------------------------------------------------------------------
-if ! command -v cc >/dev/null 2>&1; then
-    say ""
-    say "Velt links programs with the system C toolchain, which is missing:"
-    case "$(uname -s)" in
-        Darwin) say "  xcode-select --install" ;;
-        *) say "  sudo apt install build-essential    (or: sudo dnf install gcc)" ;;
-    esac
-fi
+# The toolchain links programs with its bundled linker: no C compiler needed (`velt doctor` says
+# what is missing, if anything).
 say ""
 if [ "$on_path" = 0 ]; then
     if [ "$modify_path" = 1 ]; then

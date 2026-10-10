@@ -18,6 +18,8 @@ permissions:
 jobs:
   index:
     runs-on: ubuntu-latest
+    # The signing key is a secret of this environment, which only `main` and `v*` tags may use.
+    environment: release
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

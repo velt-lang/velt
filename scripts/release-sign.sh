@@ -7,7 +7,7 @@
 #
 # Usage: VELT_RELEASE_SIGNING_KEY=<PEM private key> scripts/release-sign.sh <file>...
 #        scripts/release-sign.sh --public-key     (prints the built-in public key, PEM)
-# Needs OpenSSL 1.1.1 or newer.
+# Needs OpenSSL 3.0 or newer (`pkeyutl -rawin`).
 set -eu
 
 repo=$(cd "$(dirname "$0")/.." && pwd)

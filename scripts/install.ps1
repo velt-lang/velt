@@ -28,13 +28,18 @@ $Root = (Resolve-Path $Prefix).Path
 $Dest = Join-Path $Root "toolchains\$Version"
 $Staging = Join-Path $Root "toolchains\.$Version.$PID"
 if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging }
-Copy-Item -Recurse $Dist $Staging
-if (Test-Path $Dest) {
-    $Old = Join-Path $Root "toolchains\.$Version.old.$PID"
-    Rename-Item $Dest $Old
-    Remove-Item -Recurse -Force $Old -ErrorAction SilentlyContinue
+try {
+    Copy-Item -Recurse $Dist $Staging
+    if (Test-Path $Dest) {
+        $Old = Join-Path $Root "toolchains\.$Version.old.$PID"
+        Rename-Item $Dest $Old
+        Remove-Item -Recurse -Force $Old -ErrorAction SilentlyContinue
+    }
+    Rename-Item $Staging $Dest
+} finally {
+    # A failed install leaves no partial toolchain behind.
+    if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue }
 }
-Rename-Item $Staging $Dest
 # A running velt.exe can be renamed but not overwritten.
 $Launcher = Join-Path $Root "bin\velt.exe"
 if (Test-Path $Launcher) {

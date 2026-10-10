@@ -205,7 +205,7 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 | `velt-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 (also used on Windows arm64, under emulation); the launcher installs the same toolchain from `velt-<version>-x86_64-pc-windows-msvc.tar.gz` |
 
 **Checks.** `get-velt.sh` checks the archive against `SHA256SUMS` and, where OpenSSL can check
-Ed25519 signatures (OpenSSL 1.1.1 or newer; macOS's own LibreSSL can't), `SHA256SUMS` against
+Ed25519 signatures (OpenSSL 3.0 or newer; macOS's own LibreSSL and the OpenSSL 1.1 of Ubuntu 20.04, Debian 11 and RHEL 8 can't), `SHA256SUMS` against
 its signature with the velt release key. `get-velt.ps1` checks the hash only. The hash shows the
 download is intact; the signature that the velt project published it, whatever served it. The
 launcher the installers put in place checks the signature of everything it downloads after
@@ -252,8 +252,10 @@ zsh), and adds `~/.config/fish/conf.d/velt.fish` when fish is set up; `get-velt.
 `<root>\bin` to the user `Path`. Open a new terminal afterwards.
 
 An install from an installer before the launcher (velt 0.1.0) is a single toolchain:
-`get-velt.ps1` replaces the one in `%LOCALAPPDATA%\velt` with the new layout; on Linux and macOS
-it stays in `~/.velt/toolchain` until you delete it and its `PATH` line (`get-velt.sh` says so).
+`get-velt.ps1` moves the one in `%LOCALAPPDATA%\velt` into `toolchains\<its version>`, where
+`velt +0.1.0` still runs it (the new version becomes the default); on Linux and macOS it stays in
+`~/.velt/toolchain`, so the debug executables it built keep running, until you delete it and its
+`PATH` line (`get-velt.sh` says so).
 
 ## Building and installing a distribution
 
