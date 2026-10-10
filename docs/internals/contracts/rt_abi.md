@@ -222,6 +222,37 @@ an extern parameter or result whose type holds boxed values crosses as an unboxe
 or is boxed after the call (results). Closure environments on the heap are counted blocks too; the
 drop function in their header releases one reference.
 
+## Weak references (proposed)
+**Proposed (#823, #11); not used by the compiler yet.** The functions exist in `velt_rt`
+(`src/weak/`) with these signatures but without `#[no_mangle]`; they are exported when the
+compiler lowers `WeakMap`, `WeakSet`, `WeakRef` and `weak T` to them. Design:
+[weak-refs.md](../design/weak-refs.md).
+
+- **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
+  held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
+- **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
+  targets and every type reachable from a weak map's key and value types): `c = count; if c == 1 {
+  drop; free } else if c & RC_WEAK { if velt_rt_weak_release(obj) { drop; free } } else { count =
+  c - 1 }`. Other types release as today.
+- **Trace glue** per counted type that can be a weak key or value, or be reached from one:
+  `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
+  for each counted reference `obj` owns (`child_trace` may be null: opaque). Map values are
+  released with `void release(uint64_t value)`.
+- Handles (`MapId`, `RefId`) are `uint32_t`, valid on the creating thread until dropped.
+
+| Symbol | Signature | Semantics |
+|---|---|---|
+| `velt_rt_weakmap_new` | `(TraceFn key_trace, ReleaseFn value_release, TraceFn value_trace) -> uint32_t` | a new map; a null `value_release` means values are plain words (`WeakMap<K, number>`, `WeakSet`), a null `value_trace` that values never refer to keys |
+| `velt_rt_weakmap_set` | `(uint32_t m, uint8_t* key, uint64_t value)` | takes over the value's reference; the key is not counted; releases a replaced value |
+| `velt_rt_weakmap_get` | `(uint32_t m, uint8_t* key, uint8_t* found) -> uint64_t` | the value, borrowed; `*found` = 1 if present |
+| `velt_rt_weakmap_has` | `(uint32_t m, uint8_t* key) -> uint8_t` | |
+| `velt_rt_weakmap_delete` | `(uint32_t m, uint8_t* key) -> uint8_t` | 1 if there was an entry; its value is released |
+| `velt_rt_weakmap_drop` | `(uint32_t m)` | releases every value |
+| `velt_rt_weakref_new` | `(uint8_t* obj) -> uint32_t` | does not count `obj` |
+| `velt_rt_weakref_deref` | `(uint32_t r) -> uint8_t*` | the target with count + 1, or null once freed |
+| `velt_rt_weakref_drop` | `(uint32_t r)` | |
+| `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed) |
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 
