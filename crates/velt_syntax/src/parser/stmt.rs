@@ -34,8 +34,12 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_stmt_recovering(&mut self, out: &mut Vec<Stmt>) {
         let start = self.pos;
         match self.parse_stmt() {
-            Ok(s) => out.push(s),
+            Ok(s) => {
+                out.push(s);
+                out.extend(self.more_var_stmts());
+            }
             Err(Fail) => {
+                self.more_vars.clear();
                 self.sync_stmt(start);
                 if self.pos == start {
                     self.bump();
@@ -50,10 +54,24 @@ impl<'a> Parser<'a> {
             return self.parse_block();
         }
         let s = self.parse_stmt()?;
+        let mut stmts = vec![s];
+        stmts.extend(self.more_var_stmts());
         Ok(Block {
-            span: s.span,
-            stmts: vec![s],
+            span: stmts[0].span,
+            stmts,
         })
+    }
+
+    /// The further declarators of the declaration just parsed (`let a = 1, b = 2;`), as
+    /// statements.
+    pub(super) fn more_var_stmts(&mut self) -> Vec<Stmt> {
+        std::mem::take(&mut self.more_vars)
+            .into_iter()
+            .map(|v| Stmt {
+                span: v.span,
+                kind: StmtKind::Var(v),
+            })
+            .collect()
     }
 
     fn parse_stmt(&mut self) -> PResult<Stmt> {

@@ -26,7 +26,13 @@ enum BinTok {
     Op(BinaryOp),
     As,
     InstanceOf,
+    /// `e satisfies T`
+    Satisfies,
 }
+
+/// The prelude function `e satisfies T` is parsed as a call of: `__satisfies<T>(e)` checks `e`
+/// against `T` (with `T` as its context, like an annotated initializer) and returns it.
+pub(crate) const SATISFIES_FN: &str = "__satisfies";
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self) -> PResult<Expr> {
@@ -182,6 +188,9 @@ impl<'a> Parser<'a> {
             Tok::LtEq => (LtEq, PREC_REL, 1),
             Tok::Kw(Kw::As) => return Some((BinTok::As, PREC_REL, 1)),
             Tok::Kw(Kw::Instanceof) => return Some((BinTok::InstanceOf, PREC_REL, 1)),
+            Tok::Ident if self.at_word("satisfies") => {
+                return Some((BinTok::Satisfies, PREC_REL, 1))
+            }
             Tok::Shl => (Shl, PREC_SHIFT, 1),
             Tok::Plus => (Add, PREC_ADD, 1),
             Tok::Minus => (Sub, PREC_ADD, 1),
@@ -236,6 +245,23 @@ impl<'a> Parser<'a> {
                     expr: Box::new(lhs),
                     ty: self.parse_instanceof_type()?,
                 },
+                BinTok::Satisfies => {
+                    let callee_span = self.span_from(lo);
+                    let ty = self.parse_cast_type()?;
+                    let callee = self.mk_expr(
+                        ExprKind::Ident(Ident {
+                            name: SATISFIES_FN.into(),
+                            span: callee_span,
+                        }),
+                        callee_span,
+                    );
+                    ExprKind::Call {
+                        callee: Box::new(callee),
+                        type_args: vec![ty],
+                        args: vec![lhs],
+                        optional: false,
+                    }
+                }
                 BinTok::Op(op) => {
                     let next_min = if op == BinaryOp::Pow { prec } else { prec + 1 };
                     let rhs = self.guarded(|p| p.parse_binary(next_min))?;

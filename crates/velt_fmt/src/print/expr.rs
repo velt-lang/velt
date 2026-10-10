@@ -55,6 +55,16 @@ impl<'a> Printer<'a> {
                 }
             }
             ExprKind::Cond { cond, then, els } => self.conditional(cond, then, els),
+            // `e satisfies T`, which the parser writes as a call of the prelude's `__satisfies`.
+            ExprKind::Call {
+                callee,
+                type_args,
+                args,
+                ..
+            } if self.is_satisfies(callee) && type_args.len() == 1 && args.len() == 1 => {
+                let inner = self.expr(&args[0]);
+                cat![inner, " satisfies ", self.ty_cast(&type_args[0])]
+            }
             ExprKind::Call {
                 callee,
                 type_args,
@@ -212,6 +222,15 @@ fn leading_sign(mut e: &Expr) -> Option<char> {
             | ExprKind::Update { target: first, .. } => first,
             _ => return None,
         };
+    }
+}
+
+impl Printer<'_> {
+    /// Is `callee` the `__satisfies` of a `satisfies` operator (its span starts at the
+    /// operand, not at a written `__satisfies`)?
+    fn is_satisfies(&self, callee: &Expr) -> bool {
+        matches!(&callee.kind, ExprKind::Ident(id) if id.name == "__satisfies")
+            && !crate::source::slice(self.src, callee.span).starts_with("__satisfies")
     }
 }
 

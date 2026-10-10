@@ -14,7 +14,9 @@ hidden classes and no runtime shape checks.
   a return value, `new (class { … })()`) are not supported yet.
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
+  in the `constructor`. A `declare` field (`declare readonly code?: string;`, TypeScript's field
+  without an emitted initializer) is declared like one without `declare`; it cannot have an
+  initializer. `new C(…)` allocates the object on the heap and constructs it in
   JavaScript's order: a class's field initializers run once its base class is constructed
   (right after `super(…)` returns, or after the inherited constructor when the class has no
   constructor of its own), in declaration order, before the rest of its constructor body. So for

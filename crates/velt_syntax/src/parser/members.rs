@@ -21,6 +21,8 @@ pub(super) struct Modifiers {
     is_protected: bool,
     is_getter: bool,
     is_setter: bool,
+    /// `declare name: T;` (a class field TypeScript emits no initializer for).
+    is_declare: bool,
 }
 
 impl Modifiers {
@@ -32,6 +34,7 @@ impl Modifiers {
             || self.is_override
             || self.is_getter
             || self.is_setter
+            || self.is_declare
     }
 
     fn ctor_visibility(&self) -> CtorVisibility {
@@ -70,6 +73,7 @@ impl<'a> Parser<'a> {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,
                 Some(Kw::Async) => &mut m.is_async,
+                Some(Kw::Declare) => &mut m.is_declare,
                 None if self.at_word("mut") => {
                     self.reject_mut_modifier();
                     continue;
@@ -122,6 +126,12 @@ impl<'a> Parser<'a> {
         }
         if mods.readonly {
             self.error("`readonly` is not allowed on methods", name.span);
+        }
+        if mods.is_declare {
+            self.error(
+                "'declare' modifier cannot appear on class elements of this kind",
+                name.span,
+            );
         }
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
         sig.is_generator = star.is_some();
@@ -225,6 +235,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let (true, Some(d)) = (mods.is_declare, &default) {
+            self.error("initializers are not allowed in ambient contexts", d.span);
+        }
         let span = self.span_from(lo);
         self.expect_member_end()?;
         Ok(Field {

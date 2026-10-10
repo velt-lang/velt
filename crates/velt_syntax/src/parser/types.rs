@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
             }
             Tok::LBracket => {
                 self.bump();
-                let elems = self.parse_type_seq(Tok::RBracket)?;
+                let elems = self.parse_tuple_elems()?;
                 self.expect(Tok::RBracket)?;
                 Ok(TypeExpr {
                     kind: TypeExprKind::Tuple(elems),
@@ -300,10 +300,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Comma-separated types up to (not including) `close`.
-    fn parse_type_seq(&mut self, close: Tok) -> PResult<Vec<TypeExpr>> {
+    /// Tuple element types up to (not including) `]`. Element labels (`[kind: string, b64:
+    /// string]`) are documentation in TypeScript and are dropped.
+    fn parse_tuple_elems(&mut self) -> PResult<Vec<TypeExpr>> {
         let mut out = Vec::new();
-        while !self.at(close) {
+        while !self.at(Tok::RBracket) {
+            if Self::is_name(self.peek()) && self.nth(1) == Tok::Colon {
+                self.bump();
+                self.bump();
+            }
             out.push(self.parse_type()?);
             if !self.eat(Tok::Comma) {
                 break;
