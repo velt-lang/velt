@@ -716,6 +716,34 @@ const b: { v: string } = box("hi"); // `Box<string>` is `{ v: string }`
 console.log(b.v); // hi
 ```
 
+- **Methods in object literals**: `{ name(x: T): R { ... } }` is a property holding the function,
+  as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
+  arrow, the parameter types may be left out where the literal's type gives them. `this` in such
+  a method, and getters and setters in object literals (`get x() {}`), are not supported yet
+  (an object literal is plain data); generator methods only as `*[Symbol.iterator]()`
+  ([Iterable object literals](#iterable-object-literals)).
+- **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
+  fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
+  `label?(p: string): string` an optional one (`(p: string) => string | null` with the field
+  left out as `null`; call it as `o.label?.(p)`). A generic method signature
+  (`run<T>(f: () => T): T`) is supported in interfaces only.
+
+```ts
+type Handler = {
+  get(target: string, key: string): number;
+  label?(prefix: string): string;
+};
+
+const h: Handler = {
+  get(target, key) {
+    return target.length + key.length;
+  },
+};
+console.log(h.get("ab", "c"), h.label?.("x") ?? "none"); // 3 none
+```
+
+- **`satisfies`**: `value satisfies T` checks `value` against `T`, with `T` as its context (as
+  an annotation `const x: T = value` does), and is `value`: `{ version: "1" } satisfies Stamp`.
 - **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
   (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without
@@ -928,9 +956,10 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   *[Symbol.asyncIterator](): AsyncGenerator<T>` makes an `AsyncIterable<T>` for
   [`for await`](control-flow.md#for-await). The method uses the variables around it, as a
   [generator function expression](functions.md#generator-function-expressions) does.
-- Object literals are plain data in Velt, so this is their only method. The literal can have no
-  other members, and `this` in the method is an error (in TS it is the object): use variables,
-  or declare a class that `implements Iterable<T>` and reads its fields. Other methods in object
-  literals are errors too: write a property holding an arrow function.
+- Object literals are plain data in Velt, so this method holds the iterable's whole state. The
+  literal can have no other members, and `this` in the method is an error (in TS it is the
+  object): use variables, or declare a class that `implements Iterable<T>` and reads its
+  fields. Other generator methods in object literals are errors too: write a property holding a
+  generator function.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
