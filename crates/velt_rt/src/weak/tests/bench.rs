@@ -1,9 +1,9 @@
 //! Cost of the weak flag on retain/release/free, measured in instructions (valgrind, see
 //! `crates/velt_rt/scripts/weak_rc_cost.sh`). Each loop inlines the release sequence the compiler
-//! would emit: `plain` is today's (a type never weakly held), `capable` is the proposed sequence for a
+//! would emit: `plain` is today's (a type never weakly held), `capable` the proposed one for a
 //! weak-capable type whose object is not weakly held (a signed compare), `bittest` the
-//! alternative (a separate test of the flag), and `weak_shared` runs the `capable` loop
-//! on an object that is a weak key (the cold path).
+//! alternative (a separate test of the flag), and `weak_shared` runs the `capable` loop on an
+//! object that is a weak key (the cold path).
 
 use super::*;
 use std::hint::black_box;

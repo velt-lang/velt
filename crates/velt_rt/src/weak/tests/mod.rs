@@ -87,9 +87,7 @@ pub(super) fn release(obj: *mut u8) {
         let c = *rc;
         if c as i64 > 1 {
             *rc = c - 1;
-        } else if c == 1 {
-            destroy(obj);
-        } else if velt_rt_weak_release(obj) != 0 {
+        } else if c == 1 || velt_rt_weak_release(obj) != 0 {
             destroy(obj);
         }
     }
