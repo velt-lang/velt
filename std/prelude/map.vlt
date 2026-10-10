@@ -262,6 +262,19 @@ export class Map<K, V> {
     return out;
   }
 
+  /**
+   * Whether the newest entry's key starts with a digit (a `Record` key that may be an array
+   * index): `${key}` reads a string or a string enum member's value.
+   */
+  __newestKeyDigit(): bool {
+    const n = this.entryKeys.length;
+    if (n == 0) {
+      return false;
+    }
+    const c = `${this.entryKeys[n - 1]}`.charCodeAt(0);
+    return c >= 48 && c <= 57;
+  }
+
   /** The positions of the live entries in `entryKeys` / `entryValues` (a record's glue). */
   __livePositions(): usize[] {
     const out: usize[] = __intrinsic_array_with_capacity(this._size);

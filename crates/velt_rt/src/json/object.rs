@@ -138,6 +138,7 @@ impl Object {
 
     /// Insert in document order (`JSON.parse` before [`Object::order_indexes`]): a new key
     /// goes last.
+    #[inline]
     pub(super) fn insert_last(&mut self, key: Text, value: Arc<Value>) {
         if let Some(slot) = self.find(&key) {
             if let Some((_, v)) = &mut self.slots[slot] {
@@ -212,6 +213,7 @@ impl Object {
     }
 
     /// Append the new member `key`.
+    #[inline]
     fn push_new(&mut self, key: Text, value: Arc<Value>) {
         let slot = self.slots.len();
         match &mut self.index {

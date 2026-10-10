@@ -9,20 +9,13 @@
 // digit marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
 // and the JSON and formatting glue through `__positions`) sort the entries they read, without
 // changing the record (they borrow it). A record without such keys pays one byte test per new
-// key. JSON reads and writes a record as an object, and
+// key (`Map.__newestKeyDigit`). JSON reads and writes a record as an object, and
 // `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 // The rank of a key that is not an array index: after every index.
 const NOT_INDEX: i64 = 4294967296;
-
-// Does `key` (a string, or a string enum member's value) start with a digit, so that it may be
-// an array index?
-function digitFirst<K>(key: K): bool {
-  const c = `${key}`.charCodeAt(0);
-  return c >= 48 && c <= 57;
-}
 
 // The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1.
 function arrayIndex(s: string): i64 {
@@ -64,13 +57,11 @@ export class Record<K, V> {
   }
 
   __set(key: K, value: V) {
-    if (this.unordered || !digitFirst(key)) {
-      this.entries.set(key, value);
-      return;
-    }
     const n = this.entries.size;
     this.entries.set(key, value);
-    this.unordered = this.entries.size != n;
+    if (this.entries.size != n && !this.unordered) {
+      this.unordered = this.entries.__newestKeyDigit();
+    }
   }
 
   /**
