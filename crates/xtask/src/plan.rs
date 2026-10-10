@@ -57,6 +57,8 @@ const TOOLING: &[(&str, &[&str])] = &[
         "velt_toolchain",
         &["cli_package", "templates", "install_layout"],
     ),
+    // A separate binary; its tests run the launcher against fake releases.
+    ("velt_launcher", &[]),
     ("velt_rt_wasm", &["wasm_goldens", "playground"]),
 ];
 

@@ -24,6 +24,7 @@ prints every command's options and examples.
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
 | `velt target list`, `add`, `remove` | the targets `velt build --target` builds for: install or remove target packs ([Cross-compiling](platforms.md#cross-compiling)) |
+| `velt toolchain list`, `install`, `remove`, `default`, `which`, `link` | the velt versions installed side by side, and which one runs ([`velt toolchain`](#velt-toolchain)) |
 | `velt doctor` | check the installation and run a hello world |
 | `velt completions <shell>` | print a completion script for bash, zsh, fish or PowerShell |
 
@@ -226,13 +227,57 @@ the standard library. The output has one page per module and a client-side searc
   deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
   the text; a URL target becomes a link. Other tags stay in the text as written.
 
+## `velt toolchain`
+
+Several velt versions can be installed side by side, each in `<root>/toolchains/<version>/`
+(`<root>` is `~/.velt`, or `%LOCALAPPDATA%\velt` on Windows). The `velt` on your `PATH` is a
+small launcher, `<root>/bin/velt`, that runs one of them with the same arguments. (The
+installers set this layout up from the next release on, #948; a velt 0.1.0 install is a single
+toolchain in `~/.velt/toolchain`, without a launcher.)
+
+1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
+   a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
+2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
+   version it accepts;
+3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
+   package use.
+
+A version the package pins that isn't installed is downloaded from the release on first use and
+installed, with a message on stderr. The release's `SHA256SUMS` and the list of releases are
+signed with the velt release key, which is built into velt, so a mirror or a replaced file can't
+substitute a toolchain. A requirement such as `"0.1"` picks the newest release it accepts that
+hasn't been yanked (withdrawn for a serious bug). Set
+`VELT_TOOLCHAIN_AUTO_INSTALL=0` to turn that off: the command then fails and names the
+`velt toolchain install` command to run.
+
+```
+$ velt toolchain which
+0.1.4 (velt: "0.1" in /home/me/app/package.vlt:5)
+/home/me/.velt/toolchains/0.1.4
+$ velt toolchain list
+*  0.2.0
+ > 0.1.4
+```
+
+| Command | What it does |
+|---|---|
+| `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
+| `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
+| `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
+| `default [<toolchain>]` | show or set the default |
+| `which` | the toolchain this directory runs, why, and its directory |
+| `link <name> <prefix>`, `unlink <name>` | use a toolchain prefix built elsewhere (a checkout's; it holds `bin/velt` and `std/`) as `<name>`: `velt +dev test` |
+
+The launcher runs `velt toolchain` itself, so it works the same whichever version a package
+pins. A toolchain's own `bin/velt`, started directly, says so instead.
+
 ## `velt doctor`
 
 Checks the runtime library, the standard library, the linker (the bundled lld with the
 target's link kit, or the system linker and why the bundled one is not used), the installed
 target packs (`velt target`), the WebAssembly
 linker (the bundled lld, or the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
-`VELT_HOME` is writable, then compiles and runs a hello world (debug, plus release through LLVM
+`VELT_HOME` is writable, and which toolchain version runs and why (`velt toolchain`), then compiles and runs a hello world (debug, plus release through LLVM
 when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
 It exits with 0 when every required check passes.
 
@@ -245,6 +290,7 @@ $ velt doctor
 ✓ wasm linker      C:\Users\me\AppData\Local\velt\lib\velt\lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
+✓ toolchain        0.1.0 (the default); launcher C:\Users\me\AppData\Local\velt\bin\velt.exe, default 0.1.0
 ✓ hello (debug)    built with Cranelift and ran
 ✓ hello (release)  built with LLVM and ran
 ```
@@ -284,7 +330,9 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_RT_LINK` | `static`: debug builds link the static runtime instead of the shared one ([Platforms](platforms.md)) |
 | `VELT_NATIVE_FROM_SOURCE` | `1`: build a package's native library from source when no prebuilt one exists ([Packages](packages.md)) |
 | `VELT_DEV_POLL`, `VELT_DEV_DEBUG_INFO`, `VELT_DEV_STOP_GRACE_MS` | `velt dev`: check files by polling, turn off JIT debug info (`0`), how long a stopped program may finish in-flight work in milliseconds (default 1500) ([`velt dev`](dev.md)) |
-| `VELT_INSTALL_BASE_URL` | the repository whose releases `velt target add` (and the installers) download from (default `https://github.com/velt-lang/velt`) |
+| `VELT_INSTALL_BASE_URL` | the repository whose releases the launcher, `velt toolchain install`, `velt target add` and the installers download from (default `https://github.com/velt-lang/velt`) |
+| `VELT_TOOLCHAIN` | the toolchain the launcher runs for this command: a version or a linked name, overriding the package's `velt` field ([`velt toolchain`](#velt-toolchain)) |
+| `VELT_TOOLCHAIN_AUTO_INSTALL` | `0`: the launcher fails instead of installing a missing version |
 | `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 key (64 hex digits) release signatures (`SHA256SUMS.sig`) are checked with, instead of the velt release key: for the releases of another build |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |

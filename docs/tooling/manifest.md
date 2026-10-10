@@ -69,9 +69,10 @@ the velt that created the package (a pre-release writes its whole version, such 
 `"0.2.0-rc.1"`), so installing a newer velt doesn't change how it builds: pre-1.0 minors may
 change the language, and a toolchain's standard library and runtime belong to it.
 
-Choosing the toolchain by this field comes with the velt launcher, which installs versions side
-by side (#948). Until then the field records the version, the velt that runs checks that it is a
-requirement, and it warns when its own version is not one the field accepts:
+The `velt` on your `PATH`, the launcher, runs the newest installed version the field accepts,
+installing one first when none is ([`velt toolchain`](cli.md#velt-toolchain); the installers
+set the launcher up from the release after 0.1.0, #948). A toolchain's
+own `velt` started directly warns when its version is not one the field accepts:
 
 ```text
 warning: package.vlt asks for velt "0.2", but this is velt 0.1.0; it may not build the package
