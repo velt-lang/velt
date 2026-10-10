@@ -33,7 +33,7 @@ async function startWith<E>(
   return await serve({ port: 0 }, h);
 }
 
-async function get(port: i64, path: string): Promise<string> {
+async function get(port: number, path: string): Promise<string> {
   const r = await fetch(`http://127.0.0.1:${port}${path}`);
   return `${r.status} ${await r.text()}`;
 }

@@ -361,14 +361,13 @@ impl FnCx<'_, '_> {
             .string_literals(h.ty)
             .filter(|keys| keys.iter().all(|k| self.field_ty(t, k).is_some()));
         let Some(keys) = keys else {
-            let (tn, kn) = (self.cx.display(t), self.cx.display(h.ty));
-            let d = Diagnostic::error(
-                format!("cannot index a value of type `{tn}` with a key of type `{kn}`"),
-                index.span,
-            )
-            .with_note(
-                "the key must have a string literal type, or a union of them, naming fields of the object",
-            );
+            // As the ordinary rules report it (`o[s]` with `s: string`).
+            let tn = self.cx.display(t);
+            let mut d =
+                Diagnostic::error(format!("cannot index a value of type `{tn}`"), object.span);
+            if self.cx.class_of(t).is_some() {
+                d = d.with_note("use a method such as `m.get(key)`");
+            }
             self.cx.error(d);
             return Some(self.error_expr(span));
         };
