@@ -38,8 +38,20 @@ fn top_depth() -> Operand {
 }
 
 impl FnLower<'_, '_> {
-    /// Append the top-level (`console.log` argument) text of the value at `place`.
+    /// Append the top-level text of the value at `place` as `String(x)` writes it (a template
+    /// literal part): a number as JS converts it to a string (`-0` is `0`).
     pub(in crate::lower) fn format_top(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        self.format_top_as(buf, place, ty, false);
+    }
+
+    /// Append the text of the `console.log` argument at `place`: as [`Self::format_top`], but a
+    /// number (also one held by a nullable or a union) is printed as `console.log` prints it
+    /// (`-0`).
+    pub(in crate::lower) fn log_top(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        self.format_top_as(buf, place, ty, true);
+    }
+
+    fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
             return self.push_enum_str(buf, place, &strings, false, false);
         }
@@ -59,14 +71,14 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
-                self.format_top(buf, &payload, e);
+                self.format_top_as(buf, &payload, e, log);
                 self.goto(done);
                 self.switch_to(done);
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
-                self.format_top(buf, &inner, e);
+                self.format_top_as(buf, &inner, e, log);
             }
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
                 self.format_json_value(buf, place, ty, true, &top_depth())
@@ -77,11 +89,14 @@ impl FnLower<'_, '_> {
                         lw.push_literal(buf, &l, false);
                     }
                     for (pp, pt) in parts {
-                        lw.format_top(buf, &pp, pt);
+                        lw.format_top_as(buf, &pp, pt, log);
                     }
                 });
             }
-            // A number is `String(x)` (`${-0}` is `0`); `console.log` prints `-0` itself.
+            // `console.log` prints `-0`; `String(x)` writes `0` (`${-0}` is `0`).
+            TyKind::Float(_) if log => {
+                self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
+            }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             _ => {

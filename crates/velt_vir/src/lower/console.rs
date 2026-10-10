@@ -92,7 +92,7 @@ impl FnLower<'_, '_> {
                 _ => {}
             }
             let p = self.place_of(v, t);
-            self.format_top(&bp, &p, t);
+            self.log_top(&bp, &p, t);
         }
         self.push_text(&bp, "\n");
         self.call_rt(Rt::WriteStr, vec![stream, bp.clone()], None);
