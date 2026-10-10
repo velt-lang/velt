@@ -133,6 +133,10 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
+`VELT_SCHEDULER=per-core` (experimental, #211) makes every worker a `current_thread` runtime with
+its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
+starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
+(`task/runtime.rs`). The default, `stealing`, is one multi-thread runtime.
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
 64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).

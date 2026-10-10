@@ -204,8 +204,11 @@ pub fn write_through(bytes: &[u8]) {
     os_write(bytes);
 }
 
-/// Idle-worker hook: write the shared buffer if it holds anything.
+/// Idle-worker hook: publish what this thread still holds (output from code that ran outside a
+/// task poll, such as a future dropped after it finished, has no end-of-poll publish), then write
+/// the shared buffer if it holds anything.
 pub fn flush_idle() {
+    publish_if_buffered();
     if DIRTY.load(Ordering::Relaxed) {
         write_shared(&mut lock_shared());
     }

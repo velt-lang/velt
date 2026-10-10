@@ -230,7 +230,7 @@ struct Orphan {
 impl Orphan {
     fn spawn(set: SetPtr) {
         super::runtime::keep_alive_acquire();
-        super::runtime::handle().spawn(Orphan { set });
+        super::runtime::spawn(Orphan { set });
     }
 }
 

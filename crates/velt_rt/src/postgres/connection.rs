@@ -43,7 +43,7 @@ pub struct Conn {
 /// Connect with `config` (TLS per its `sslmode`).
 pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
     let (client, connection, wire) = super::socket::connect(&config.inner, &tls).await?;
-    crate::task::runtime::handle().spawn(async move {
+    crate::task::runtime::spawn(async move {
         // The task ends when the client is dropped or the server goes away; errors surface
         // on the client's next call ("connection closed").
         let _ = connection.await;

@@ -24,7 +24,7 @@ pub(crate) fn install() {
     INSTALL.call_once(|| {
         let (tx, _) = watch::channel(false);
         let _ = STOP.set(tx);
-        tokio::spawn(watch_stop());
+        crate::task::runtime::spawn(watch_stop());
     });
 }
 
