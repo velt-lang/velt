@@ -312,6 +312,15 @@ pub enum TypeExprKind {
     Null,
     /// `void`
     Void,
+    /// A type predicate as a return type (TypeScript's user-defined type guards):
+    /// `x is T` (the function returns a `boolean` that is `true` when parameter `x` is a `T`),
+    /// `this is T`, `asserts x is T` (the function returns only when `x` is a `T`) and
+    /// `asserts x` (only when `x` is truthy; `ty: None`).
+    Predicate {
+        param: Box<Ident>,
+        ty: Option<Box<TypeExpr>>,
+        asserts: bool,
+    },
 }
 
 /// `name: T` / `name?: T` / `readonly name: T` in an object type.

@@ -119,6 +119,9 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_no_union(&mut self) -> PResult<TypeExpr> {
         self.guarded(|p| {
             let lo = p.cur_lo();
+            if p.at_readonly_type() {
+                return p.parse_readonly_type();
+            }
             let prim = p.parse_type_prim()?;
             let mut ty = p.parse_array_suffixes(lo, prim);
             // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
@@ -138,6 +141,50 @@ impl<'a> Parser<'a> {
             }
             Ok(ty)
         })
+    }
+
+    /// `readonly` as a type operator: before an array or tuple type (`readonly T[]`,
+    /// `readonly [A, B]`), not a type named `readonly`.
+    fn at_readonly_type(&mut self) -> bool {
+        self.at(Tok::Kw(Kw::Readonly))
+            && (Self::is_ident_like(self.nth(1))
+                || matches!(self.nth(1), Tok::LBracket | Tok::LParen | Tok::LBrace)
+                || self.nth(1) == Tok::Kw(Kw::Void)
+                || self.nth(1) == Tok::Kw(Kw::Null))
+    }
+
+    /// `readonly T[]` (TypeScript's `ReadonlyArray<T>`, which it is parsed as) or
+    /// `readonly [A, B]` (the tuple type: Velt tuples have no mutating methods). On any other
+    /// type it is TypeScript's error TS1354.
+    fn parse_readonly_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        let kw = self.cur_span();
+        self.bump(); // readonly
+        let inner = self.parse_type_no_union()?;
+        let span = self.span_from(lo);
+        match inner.kind {
+            TypeExprKind::Array(elem) => Ok(TypeExpr {
+                kind: TypeExprKind::Named {
+                    path: vec![Ident {
+                        name: "ReadonlyArray".into(),
+                        span: kw,
+                    }],
+                    args: vec![*elem],
+                },
+                span,
+            }),
+            TypeExprKind::Tuple(_) => Ok(TypeExpr {
+                kind: inner.kind,
+                span,
+            }),
+            _ => {
+                self.error(
+                    "'readonly' type modifier is only permitted on array and tuple literal types",
+                    kw,
+                );
+                Ok(inner)
+            }
+        }
     }
 
     fn parse_array_suffixes(&mut self, lo: u32, mut ty: TypeExpr) -> TypeExpr {
@@ -172,7 +219,7 @@ impl<'a> Parser<'a> {
             }
             Tok::LBracket => {
                 self.bump();
-                let elems = self.parse_type_seq(Tok::RBracket)?;
+                let elems = self.parse_tuple_elems()?;
                 self.expect(Tok::RBracket)?;
                 Ok(TypeExpr {
                     kind: TypeExprKind::Tuple(elems),
@@ -230,8 +277,12 @@ impl<'a> Parser<'a> {
             }
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
-            self.expect(Tok::Colon)?;
-            let mut ty = self.parse_type()?;
+            let mut ty = if self.at(Tok::LParen) || self.at(Tok::Lt) {
+                self.parse_method_sig_type(flo, &name, optional)?
+            } else {
+                self.expect(Tok::Colon)?;
+                self.parse_type()?
+            };
             if optional {
                 ty = or_null(ty);
             }
@@ -253,16 +304,88 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Comma-separated types up to (not including) `close`.
-    fn parse_type_seq(&mut self, close: Tok) -> PResult<Vec<TypeExpr>> {
+    /// Tuple element types up to (not including) `]`. Element labels (`[kind: string, b64:
+    /// string]`) are documentation in TypeScript and are dropped.
+    fn parse_tuple_elems(&mut self) -> PResult<Vec<TypeExpr>> {
         let mut out = Vec::new();
-        while !self.at(close) {
+        while !self.at(Tok::RBracket) {
+            if Self::is_name(self.peek()) && self.nth(1) == Tok::Colon {
+                self.bump();
+                self.bump();
+            }
             out.push(self.parse_type()?);
             if !self.eat(Tok::Comma) {
                 break;
             }
         }
         Ok(out)
+    }
+
+    /// A return type: a type, or a type predicate (`x is T`, `this is T`, `asserts x is T`,
+    /// `asserts x`).
+    pub(super) fn parse_ret_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        let asserts = self.at_word("asserts")
+            && (Self::is_ident_like(self.nth(1)) || self.nth(1) == Tok::Kw(Kw::This))
+            && !matches!(self.nth(2), Tok::Lt | Tok::Dot | Tok::LBracket);
+        let off = usize::from(asserts);
+        let named = Self::is_ident_like(self.nth(off)) || self.nth(off) == Tok::Kw(Kw::This);
+        if !(named && (asserts || self.nth_word(off + 1, "is"))) {
+            return self.parse_type();
+        }
+        if asserts {
+            self.bump();
+        }
+        let param = Box::new(self.take_ident());
+        let ty = if self.at_word("is") {
+            self.bump();
+            Some(Box::new(self.parse_type()?))
+        } else {
+            None
+        };
+        Ok(TypeExpr {
+            kind: TypeExprKind::Predicate { param, ty, asserts },
+            span: self.span_from(lo),
+        })
+    }
+
+    /// A method signature in an object type or an optional one in an interface (`m(x: T): R`,
+    /// `m?(x: T): R`), after its name: a field of function type `(x: T) => R`. A generic one is
+    /// not supported yet (function types have no type parameters).
+    pub(super) fn parse_method_sig_type(
+        &mut self,
+        lo: u32,
+        name: &Ident,
+        optional: bool,
+    ) -> PResult<TypeExpr> {
+        let sig = self.parse_sig_rest(lo, name.clone(), false)?;
+        if let Some(g) = sig.generics.first() {
+            let msg = if optional {
+                format!(
+                    "an optional method signature can't be generic yet: `{}?` is a field of function type, and function types have no type parameters",
+                    name.name
+                )
+            } else {
+                format!(
+                    "generic method signatures are only supported in interfaces: declare `{}` in an interface",
+                    name.name
+                )
+            };
+            self.error(msg, g.name.span);
+        }
+        let span = self.span_from(lo);
+        let ret = sig.ret.unwrap_or(TypeExpr {
+            kind: TypeExprKind::Void,
+            span: Span::new(span.file, span.hi, span.hi),
+        });
+        Ok(TypeExpr {
+            kind: TypeExprKind::Function {
+                params: sig.params.into_iter().map(|p| p.ty).collect(),
+                ret: Box::new(ret),
+                throws: sig.throws.map(Box::new),
+            },
+            span,
+        })
     }
 
     /// `(a: A) => R` when `=>` follows the matching `)`, else a parenthesized type `(A | B)`.
@@ -301,7 +424,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(Tok::RParen)?;
         self.expect(Tok::FatArrow)?;
-        let ret = self.parse_type()?;
+        let ret = self.parse_ret_type()?;
         let throws = self.parse_throws_clause()?.map(Box::new);
         Ok(TypeExpr {
             kind: TypeExprKind::Function {

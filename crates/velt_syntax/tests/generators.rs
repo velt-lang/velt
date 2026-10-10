@@ -215,12 +215,15 @@ fn object_literal_methods() {
             vec![(SYMBOL_ITERATOR.into(), true, false)],
             vec![(SYMBOL_ITERATOR.into(), false, false)],
             vec![(SYMBOL_ASYNC_ITERATOR.into(), true, true)],
-            vec![("size".into(), false, false)],
+            vec![],
         ]
     );
     let ExprKind::Object(props) = &init(&m, 3).kind else {
         panic!("object")
     };
+    // A plain method is a property holding an arrow.
+    assert!(matches!(&props[0], ObjectProp::KeyValue(k, v)
+        if k.name == "size" && matches!(v.kind, ExprKind::Arrow { .. })));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "async"));
     assert!(matches!(&props[2], ObjectProp::Shorthand(k) if k.name == "get"));
 }

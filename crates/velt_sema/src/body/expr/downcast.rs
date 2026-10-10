@@ -202,7 +202,7 @@ impl FnCx<'_, '_> {
 
 /// `p` (a member pattern ending in a wildcard) with the wildcard replaced by the test for
 /// `class`.
-fn instance_leaf(p: hir::Pat, class: DefId) -> hir::Pat {
+pub(crate) fn instance_leaf(p: hir::Pat, class: DefId) -> hir::Pat {
     let kind = match p.kind {
         P::Wildcard => P::InstanceOf(class),
         P::Some(inner) => P::Some(Box::new(instance_leaf(*inner, class))),

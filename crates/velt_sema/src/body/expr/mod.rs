@@ -166,7 +166,10 @@ impl FnCx<'_, '_> {
                 type_args,
                 args,
                 optional,
-            } => self.call(callee, type_args, args, *optional, exp, span),
+            } => {
+                let call = self.call(callee, type_args, args, *optional, exp, span);
+                self.predicate_checked(call, span)
+            }
             A::New { class, args } => self.new_expr(class, args, exp, span),
             A::Member {
                 object,

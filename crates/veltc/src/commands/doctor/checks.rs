@@ -1,6 +1,6 @@
 //! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, linker
-//! (bundled or system), installed target packs, WebAssembly linker, clang and the vpm home
-//! directory. Each returns a [`Check`] with a fix hint when something is missing.
+//! (bundled or system), installed target packs, WebAssembly linker, clang, the vpm home
+//! directory and the selected toolchain version. Each returns a [`Check`] with a fix hint when something is missing.
 
 use std::path::Path;
 
@@ -23,7 +23,38 @@ pub fn environment() -> Vec<Check> {
         wasm_linker(),
         clang(),
         velt_home(),
+        toolchain(),
     ]
+}
+
+/// Which toolchain version runs, and why, as the launcher told it (#948).
+fn toolchain() -> Check {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    toolchain_from(
+        var("VELT_LAUNCHER")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+        var("VELT_TOOLCHAIN_SELECTED").map(|s| s.to_string_lossy().into_owned()),
+    )
+}
+
+/// [`toolchain`] with `$VELT_LAUNCHER` and `$VELT_TOOLCHAIN_SELECTED`.
+fn toolchain_from(launcher: Option<&Path>, selected: Option<String>) -> Check {
+    const LABEL: &str = "toolchain";
+    let Some(launcher) = launcher else {
+        return Check::ok(LABEL, "started directly, not by the velt launcher");
+    };
+    let selected = selected.unwrap_or_else(|| "?".into());
+    let default = match velt_toolchain::Root::of_launcher(launcher).map(|r| r.default()) {
+        Some(Ok(Some(t))) => format!("default {t}"),
+        Some(Ok(None)) => "no default".into(),
+        Some(Err(e)) => e,
+        None => "no toolchain root".into(),
+    };
+    Check::ok(
+        LABEL,
+        format!("{selected}; launcher {}, {default}", launcher.display()),
+    )
 }
 
 fn runtime_lib(host: &str) -> Check {
@@ -215,6 +246,25 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_toolchain_line_says_what_the_launcher_selected() {
+        let direct = toolchain_from(None, None);
+        assert!(
+            direct.detail.contains("started directly"),
+            "{}",
+            direct.detail
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let launcher = tmp.path().join("bin").join("velt");
+        let selected = "0.1.2 (velt: \"0.1\" in /p/package.vlt:3)".to_string();
+        let check = toolchain_from(Some(&launcher), Some(selected.clone()));
+        assert!(check.detail.starts_with(&selected), "{}", check.detail);
+        assert!(check.detail.ends_with("no default"), "{}", check.detail);
+        std::fs::write(tmp.path().join("default"), "0.1.2\n").unwrap();
+        let check = toolchain_from(Some(&launcher), Some(selected));
+        assert!(check.detail.ends_with("default 0.1.2"), "{}", check.detail);
+    }
 
     #[test]
     fn writable_probe() {

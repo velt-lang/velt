@@ -41,6 +41,8 @@ fn golden_m1_files_parse() {
                 | "for_in_outer_variable.vlt"
                 | "overloads_missing_impl.vlt"
                 | "overloads_declarations.vlt"
+                | "object_literal_accessors.vlt"
+                | "ts_syntax_errors.vlt"
         ) {
             continue;
         }

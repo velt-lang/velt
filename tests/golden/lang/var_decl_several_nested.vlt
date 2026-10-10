@@ -1,0 +1,25 @@
+// Several declarators in one declaration, a later initializer holding a block with its own
+// declarations (expected output from `node`).
+function run() {
+  const b = 100;
+  {
+    const a = 1,
+      b = 2,
+      c = () => {
+        const p = 10,
+          q = 20;
+        return p + q;
+      };
+    console.log(a, b, c());
+  }
+  console.log(b);
+}
+run();
+let x = 1,
+  f = (n: number) => {
+    let y = n,
+      z = n * 2;
+    return y + z;
+  },
+  w = f(x);
+console.log(x, w);

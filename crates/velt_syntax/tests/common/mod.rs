@@ -110,6 +110,17 @@ pub fn ty(t: &TypeExpr) -> String {
         }
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Void => "void".into(),
+        TypeExprKind::Predicate {
+            param,
+            ty: t,
+            asserts,
+        } => {
+            let asserts = if *asserts { "asserts " } else { "" };
+            match t {
+                Some(t) => format!("{asserts}{} is {}", param.name, ty(t)),
+                None => format!("{asserts}{}", param.name),
+            }
+        }
     }
 }
 

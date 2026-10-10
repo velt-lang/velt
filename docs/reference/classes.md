@@ -14,7 +14,9 @@ hidden classes and no runtime shape checks.
   a return value, `new (class { … })()`) are not supported yet.
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
+  in the `constructor`. A `declare` field (`declare readonly code?: string;`, TypeScript's field
+  without an emitted initializer) is declared like one without `declare`; it cannot have an
+  initializer. `new C(…)` allocates the object on the heap and constructs it in
   JavaScript's order: a class's field initializers run once its base class is constructed
   (right after `super(…)` returns, or after the inherited constructor when the class has no
   constructor of its own), in declaration order, before the rest of its constructor body. So for
@@ -439,6 +441,9 @@ console.log(p.len(), q.len());  // 4 4
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
+- An **optional method** `m?(x: T): R` is an optional field of function type
+  (`m?: (x: T) => R`): an implementing class declares the field (`m: ((x: T) => R) | null =
+  null`), and a caller writes `o.m?.(x)`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value
   (``generic method `apply` cannot be called on an interface value``): make the calling

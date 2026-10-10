@@ -337,6 +337,37 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
     },
     CommandHelp {
+        name: "toolchain",
+        summary: "List, install or select velt versions (run by the launcher)",
+        usage: &[
+            "toolchain list [--available]",
+            "toolchain install <version> [--default]",
+            "toolchain remove <toolchain> [--force]",
+            "toolchain default [<toolchain>]",
+            "toolchain which",
+            "toolchain link <name> <prefix>",
+            "toolchain unlink <name>",
+        ],
+        about: "Versions are installed side by side in <root>/toolchains/<version>/, and the \
+                `velt` on PATH (<root>/bin/velt, the launcher) runs the one a package pins with \
+                `velt: \"0.1\"` in package.vlt, else the default, installing it on first use. \
+                `velt +<toolchain> <command>` or $VELT_TOOLCHAIN (a version or a linked name) \
+                overrides the choice for one command. The launcher implements this command, the same for every version.",
+        options: &[
+            ("--available", "with list: the published versions"),
+            ("--default", "with install: make it the default"),
+            ("--force", "with remove: remove the default too"),
+        ],
+        examples: &[
+            ("velt toolchain which", "the version this directory runs, and why"),
+            ("velt toolchain install 0.1", "the newest published 0.1.x"),
+            (
+                "velt toolchain link dev ~/velt/dist/prefix",
+                "run a toolchain you built: VELT_TOOLCHAIN=dev velt test",
+            ),
+        ],
+    },
+    CommandHelp {
         name: "search",
         summary: "Find packages in the registry",
         usage: &["search <text> [--json]"],
@@ -538,6 +569,18 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     (
         "VELT_WASM_RUNNER",
         "program running wasm32-wasip1 modules for `velt run` (default: wasmtime)",
+    ),
+    (
+        "VELT_TOOLCHAIN",
+        "the toolchain the launcher runs for this command: a version or a linked name",
+    ),
+    (
+        "VELT_TOOLCHAIN_AUTO_INSTALL",
+        "`0`: the launcher does not install a missing pinned version",
+    ),
+    (
+        "VELT_INSTALL_BASE_URL",
+        "where toolchains and target packs are downloaded from (a mirror)",
     ),
     (
         "VELT_INSTALL_PUBLIC_KEY",
