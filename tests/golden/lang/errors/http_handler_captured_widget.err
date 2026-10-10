@@ -1,0 +1,4 @@
+http_handler_captured_widget.vlt:15:5: error: an HTTP handler can call this function, which changes `clicks`; requests run at the same time
+http_handler_captured_widget.vlt:18:19: the handler is passed to `serve` here
+  = note: fix: const clicks = shared(new Mutex(0))  // one value shared by every request, as in Node
+  = note: then read it with `clicks.with((v) => v)` and change it with `clicks.with((v) => { v = … })`

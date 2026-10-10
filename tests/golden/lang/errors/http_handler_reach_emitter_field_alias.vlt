@@ -1,0 +1,56 @@
+// A sync callback assigning a captured variable, reached by an HTTP handler: an emitter's array is read out into an object (#873).
+import { serve } from "velt:http";
+
+type Fn = (v: string) => void;
+
+class Input {
+  onChange: Fn = (v) => {};
+  fire() {
+    const g = () => {
+      this.onChange("x");
+    };
+    g();
+  }
+  attach(h: Hub) {
+    h.items.push(this);
+  }
+}
+
+class Hub {
+  items: Input[] = [];
+}
+
+class Emitter {
+  listeners: Fn[];
+  constructor(ls: Fn[]) {
+    this.listeners = ls;
+  }
+  on(f: Fn) {
+    this.listeners.push(f);
+  }
+}
+
+class Base {
+  cb: Fn = (v) => {};
+  run() {
+    this.cb("x");
+  }
+}
+class Sub extends Base {}
+
+function fireIt(o: Input) {
+  o.onChange("x");
+}
+
+async function main() {
+  let last = "";
+  const e = new Emitter([]);
+  const hub = { ls: e.listeners };
+  e.on((v: string) => { last = `${v}${last.length}`; });
+  const a = await serve({ port: 0 }, async (req) => {
+    for (const f of hub.ls) { f("x"); }
+    return new Response("ok");
+  });
+  await a.shutdown();
+  console.log(last.length);
+}
