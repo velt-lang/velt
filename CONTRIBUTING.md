@@ -58,8 +58,9 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   with `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and
   those of the crates depending on it, the end-to-end tests when a change can affect compiled
   programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
-  changes, and `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
-  workspace) when it changes. A Rust file where only comments changed runs the tests and doctests
+  changes, `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
+  workspace) when it changes, and `npm ci` plus `npm test` (tsc and the unit tests) of the VS
+  Code extension when `editors/vscode/` changes (skipped without npm, except in CI). A Rust file where only comments changed runs the tests and doctests
   of its crate (and of the crates compiling its sources), clippy, `veltc`'s unit tests and the
   file-size test (`standards`), nothing else. Changes to the build, the toolchain, CI or the
   scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in

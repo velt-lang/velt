@@ -10,8 +10,8 @@ use crate::graph::Graph;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
-/// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, smoke
-/// test) and `golden` (the end-to-end goldens).
+/// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, the VS Code
+/// extension's `npm test`, smoke test) and `golden` (the end-to-end goldens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parts {
     lint: bool,
@@ -139,6 +139,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         gate.step(&format!("goldens ({modes})"), &mut goldens)?;
         gate.bundled_linker_goldens(&ws, plan.golden_env(), opts.golden_modes.as_deref())?;
     }
+    if part.has(Part::Test) && plan.vscode {
+        gate.vscode()?;
+    }
     if part.has(Part::Test) && plan.vlt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
         let mut fmt = Command::new(&velt);
@@ -251,6 +254,31 @@ impl Gate<'_> {
             }
         }
         Ok(())
+    }
+
+    /// The VS Code extension: `npm ci`, then `npm test` (tsc and its unit tests), in
+    /// `editors/vscode`. Without npm the step is skipped, except in CI.
+    fn vscode(&mut self) -> Result<(), String> {
+        let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+        let found = Command::new(npm)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !found {
+            if std::env::var_os("CI").is_some() {
+                return Err("editors/vscode: npm is not installed".into());
+            }
+            println!("note: npm is not installed, so the VS Code extension's tests are skipped.");
+            return Ok(());
+        }
+        // Steps run in the repository root.
+        let prefix = ["--prefix", crate::plan::VSCODE];
+        let mut install = Command::new(npm);
+        install.args(prefix).args(["ci", "--no-audit", "--no-fund"]);
+        self.step("editors/vscode: npm ci", &mut install)?;
+        let mut test = Command::new(npm);
+        test.args(prefix).arg("test");
+        self.step("editors/vscode: npm test", &mut test)
     }
 
     /// `cargo fmt --check` and clippy of the differential tester, a crate outside the workspace
