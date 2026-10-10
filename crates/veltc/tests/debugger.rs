@@ -4,7 +4,8 @@
 //! in the right functions (checked without running the program, so no debugger permission is
 //! needed). On macOS the debug info stays in the object, which the executable's debug map names.
 //! Where LLDB may run programs, a default build also shows local variables with their source
-//! types (skipped where it may not).
+//! types, and with the formatters of `editors/lldb/velt_lldb.py` strings, arrays, unions and
+//! options as Velt prints them (skipped where it may not).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -272,4 +273,69 @@ fn lldb_resolves_breakpoints_in_llvm_builds() {
     let out = breakpoints("golden-work-debugger", &["--backend", "llvm"]);
     assert!(out.contains("at app.vlt:2"), "{out}");
     assert!(out.contains("at app.vlt:7"), "{out}");
+}
+
+const VALUES: &str = r#"type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+
+function show(s: Shape, v: string | number, n: number | null, words: string[]): void {
+  const lit = "hello";
+  const short = "abc" + "def";
+  const long = "a fairly long string that lives on the heap " + "!";
+  const uni = "héllo" + "✓";
+  const none: number | null = null;
+  console.log(s.kind, v, n, none, words.length, lit, short, long, uni);
+}
+
+function main() {
+  show({ kind: "circle", r: 2 }, "x", 4, ["one", "two"]);
+}
+"#;
+
+/// The formatters the VS Code extension loads: every string form as its text, array elements,
+/// the active member of a union, options as `null` or their value.
+#[test]
+fn lldb_formats_velt_values() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let (work, exe) = build("golden-work-debugger-values", VALUES, &[]);
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -f app.vlt -l 9",
+            "run",
+            "frame variable",
+            "frame variable words[1]",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        r#"(string) lit = "hello""#,
+        r#"(string) short = "abcdef""#,
+        r#"(string) long = "a fairly long string that lives on the heap !""#,
+        r#"(string) uni = "héllo✓""#,
+        r#"(string | number) v = "x""#,
+        "(number | null) n = 4",
+        "(number | null) none = null",
+        "(string[]) words = len=2",
+        r#"[0] = "one""#,
+        r#"(string) words[1] = "two""#,
+        "r = 2",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+    // Strings show no raw words.
+    assert!(!out.contains("w0 ="), "{out}");
 }
