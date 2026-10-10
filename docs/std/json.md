@@ -5,6 +5,30 @@
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
+- `JSON.stringify(x, replacer, space)` writes as JavaScript does. `space` indents: a number of
+  spaces (at most 10; less than 1 is none) or a string (its first 10 characters, such as
+  `"	"`); every member and element goes on its own line, `"key": value` gets a space after
+  the colon, and an empty array or object stays `[]` / `{}`. `replacer` is `null` or an array
+  of keys (strings, or numbers written as `String(n)`): objects at any depth keep only those
+  keys, in the array's order. A replacer function is not supported yet (a compile error);
+  `JSON.stringify(x)` alone writes no whitespace.
+
+```ts
+interface Item {
+  id: number;
+  tags: string[];
+  note: string;
+}
+
+const item: Item = { id: 7, tags: [], note: "x" };
+console.log(JSON.stringify(item, null, 2));
+// {
+//   "id": 7,
+//   "tags": [],
+//   "note": "x"
+// }
+console.log(JSON.stringify(item, ["note", "id"])); // {"note":"x","id":7}
+```
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
   of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,

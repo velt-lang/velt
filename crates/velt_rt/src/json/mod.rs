@@ -8,6 +8,7 @@
 
 pub mod cycle;
 pub mod error;
+pub mod layout;
 pub mod escape;
 pub mod object;
 pub mod reader;

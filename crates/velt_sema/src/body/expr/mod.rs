@@ -32,6 +32,7 @@ mod in_place_chain;
 mod int32;
 mod intrinsics;
 mod js_list;
+mod json_layout;
 pub(crate) mod jsx;
 mod lit;
 mod literal_types;

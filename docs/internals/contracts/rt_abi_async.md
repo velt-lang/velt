@@ -745,6 +745,7 @@ objects with more than 16 keys get a hash index for `get`.
 | `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
 | `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
 | `velt_rt_json_value_stringify` | `(VeltJson v, VeltStr* out)` | `JSON.stringify`: no whitespace, key order kept, numbers JS-formatted; null handle ⇒ `null` |
+| `velt_rt_json_relayout` | `(const VeltStr* text, const VeltStr* keys, u8 filter, const VeltStr* indent, VeltStr* out)` | `JSON.stringify(value, replacer, space)` from the compact `text` of `JSON.stringify(value)`: with `filter` 1, objects at any depth keep only the keys listed in `keys` (the compact JSON text of an array of strings; duplicates ignored), in that order; `indent` is JS's gap (line breaks, indentation, `": "`); malformed `text` is returned unchanged |
 | `velt_rt_json_value_clone` | `(VeltJson v) -> VeltJson` | O(1) new reference to the same value (may be the same pointer); the editors copy a node shared this way before changing it, so neither handle sees the other's later edits |
 | `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
 | `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |
