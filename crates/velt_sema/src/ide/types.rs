@@ -167,7 +167,7 @@ impl Analysis {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => TypeView::Fn,
             TyKind::Adt(d, args) | TyKind::Dyn(d, args) => self.view_def(*d, &list(args)),
             TyKind::Param(_) => TypeView::Param(self.show_type(&t)),
-            TyKind::Error | TyKind::Result(..) => TypeView::Other,
+            TyKind::Error | TyKind::Result(..) | TyKind::Symbol => TypeView::Other,
         }
     }
 

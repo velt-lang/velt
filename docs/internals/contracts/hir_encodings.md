@@ -491,6 +491,17 @@ their state in `#` fields. Handle types that are structs (sockets, files, databa
 `Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
 every std type with private state, `private` or `#`, out of JSON.
 
+## Symbols
+
+`TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is
+an ordinary field or method whose name is the symbol's key name: `[Symbol.iterator]` for a
+well-known symbol, `[Symbol(d)]` for the symbol a module constant holds (`[Symbol(d) #2]`,
+`#3`, … for further symbols with description `d`); no identifier starts with `[`. Readers act on
+the form (`velt_sema::property_order::symbol_key`): `console.log` shows such a field after the
+others as `[Symbol(d)]: v`, `JSON.stringify` and `Object.keys` leave it out. The value of a
+module constant initialized with `Symbol(...)` is `Intrinsic::SymbolStatic(id, desc,
+described)` (all literals), one read-only record per `id`.
+
 ## Types with no HIR form
 
 Intersection types (`A & B`) and indexed access types (`T["k"]`) never reach HIR: sema resolves

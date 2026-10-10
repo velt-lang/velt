@@ -18,7 +18,9 @@ use crate::hir::{DefId, TyId, TyKind};
 use crate::types::collect_params;
 
 /// The JS `typeof` tags Velt supports, in the order used by diagnostics.
-pub(crate) const TYPEOF_TAGS: [&str; 5] = ["string", "number", "boolean", "object", "function"];
+pub(crate) const TYPEOF_TAGS: [&str; 6] = [
+    "string", "number", "boolean", "symbol", "object", "function",
+];
 
 impl Ctx<'_> {
     /// The canonical type of the union of `members` (plus `null` when `nullable`); reports
@@ -105,6 +107,7 @@ impl Ctx<'_> {
             TyKind::Int(_) | TyKind::Float(_) => "number",
             TyKind::Str => "string",
             TyKind::Bool => "boolean",
+            TyKind::Symbol => "symbol",
             TyKind::FnPtr { .. } | TyKind::Closure(_) => "function",
             TyKind::Unit => "undefined",
             TyKind::Literal(v) => match v {

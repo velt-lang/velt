@@ -79,6 +79,8 @@ fn velt_class(ty: &str) -> String {
         "i8" | "i16" | "i32" | "i64" | "u16" | "u32" | "u64" | "f32" | "f64" => ty.to_string(),
         "bool" | "u8" => "u8".to_string(),
         "number" => "f64".to_string(),
+        // The address of a symbol record (rt_abi.md "Symbols").
+        "symbol" => "ptr".to_string(),
         "" | "void" | "never" => "void".to_string(),
         _ => "agg".to_string(),
     }

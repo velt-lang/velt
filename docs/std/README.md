@@ -11,7 +11,7 @@ import { Deque } from "velt:collections/deque";
 The [prelude](prelude.md) (strings, arrays, `Map`, `Math`, `JSON`, `Error`, promises, …) is in
 scope everywhere without an import, and so are Node's web globals: [`fetch`](fetch.md),
 `Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, `URL`, `URLSearchParams`,
-`Set`, `RegExp`, `TextEncoder`, `TextDecoder` and `structuredClone`.
+`Set`, `RegExp`, [`Symbol`](symbol.md), `TextEncoder`, `TextDecoder` and `structuredClone`.
 `velt doc --std` generates HTML API documentation from the sources.
 
 ## Conventions
@@ -51,6 +51,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
+| Language | [symbol](symbol.md) (global `Symbol`) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |

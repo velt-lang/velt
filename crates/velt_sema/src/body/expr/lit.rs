@@ -301,6 +301,10 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.expr(e, None, Want::Borrow);
+                if self.reject_symbol_text(&h) {
+                    parts.push(self.error_expr(h.span));
+                    continue;
+                }
                 parts.push(self.js_text(h, "a template literal"));
             }
         }

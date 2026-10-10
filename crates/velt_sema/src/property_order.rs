@@ -1,7 +1,8 @@
 //! JavaScript's order of an object's own string keys (ECMA-262 `OrdinaryOwnPropertyKeys`): the
 //! names that are canonical array indices (`"0"` to `"4294967294"`, no leading zeros) first, in
-//! ascending numeric order, then the others in the order they were created. `console.log`,
-//! `JSON.stringify` and `Object.keys` list an object's fields in this order (#756).
+//! ascending numeric order, then the others in the order they were created, then the symbol
+//! keys. `console.log`, `JSON.stringify` and `Object.keys` list an object's fields in this order
+//! (#756); the last two leave the symbol keys out.
 
 /// The array index that `name` is, if it is one: the canonical decimal form of an integer from 0
 /// to 2^32 - 2.
@@ -17,14 +18,39 @@ pub fn array_index(name: &str) -> Option<u32> {
     (n < u64::from(u32::MAX)).then_some(n as u32)
 }
 
+/// How `console.log` shows the member named `name` when a symbol names it (velt_sema's
+/// `symbols`): `[Symbol(d)]` for a symbol constant's key name (`[Symbol(d)]`, or `[Symbol(d) #2]`
+/// for a second symbol with that description), `[Symbol(Symbol.iterator)]` for a well-known
+/// symbol's (`[Symbol.iterator]`). `None` for a string key.
+pub fn symbol_key(name: &str) -> Option<String> {
+    if let Some(well_known) = name
+        .strip_prefix("[Symbol.")
+        .and_then(|n| n.strip_suffix(']'))
+    {
+        return Some(format!("[Symbol(Symbol.{well_known})]"));
+    }
+    let inner = name.strip_prefix("[Symbol(")?.strip_suffix(']')?;
+    let desc = match inner.rfind(") #") {
+        Some(i) if inner[i + 3..].bytes().all(|b| b.is_ascii_digit()) && i + 3 < inner.len() => {
+            &inner[..i]
+        }
+        _ => inner.strip_suffix(')')?,
+    };
+    Some(format!("[Symbol({desc})]"))
+}
+
 /// The positions of `names` in JavaScript's key order: array indices first, ascending, then the
-/// others in their given order.
+/// other strings in their given order, then the symbol keys ([`symbol_key`]) in theirs.
 pub fn js_key_order<S: AsRef<str>>(names: &[S]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..names.len()).collect();
-    // A stable sort keeps the non-index names (key `None`, after every index) in place.
-    order.sort_by_key(|&i| match array_index(names[i].as_ref()) {
-        Some(n) => (0, n),
-        None => (1, 0),
+    // A stable sort keeps the names of one group in their order.
+    order.sort_by_key(|&i| {
+        let name = names[i].as_ref();
+        match array_index(name) {
+            Some(n) => (0, n),
+            None if symbol_key(name).is_some() => (2, 0),
+            None => (1, 0),
+        }
     });
     order
 }
@@ -51,6 +77,39 @@ mod tests {
         ] {
             assert_eq!(array_index(not), None, "{not:?}");
         }
+    }
+
+    #[test]
+    fn symbol_keys_come_last_and_show_as_node_shows_them() {
+        let names = [
+            "[Symbol(a) #2]",
+            "b",
+            "[Symbol.iterator]",
+            "1",
+            "[Symbol()]",
+        ];
+        let order: Vec<&str> = js_key_order(&names).into_iter().map(|i| names[i]).collect();
+        assert_eq!(
+            order,
+            [
+                "1",
+                "b",
+                "[Symbol(a) #2]",
+                "[Symbol.iterator]",
+                "[Symbol()]"
+            ]
+        );
+        assert_eq!(symbol_key("[Symbol(a) #2]").as_deref(), Some("[Symbol(a)]"));
+        assert_eq!(
+            symbol_key("[Symbol(x) #y)]").as_deref(),
+            Some("[Symbol(x) #y)]")
+        );
+        assert_eq!(symbol_key("[Symbol()]").as_deref(), Some("[Symbol()]"));
+        assert_eq!(
+            symbol_key("[Symbol.iterator]").as_deref(),
+            Some("[Symbol(Symbol.iterator)]")
+        );
+        assert_eq!(symbol_key("b"), None);
     }
 
     #[test]

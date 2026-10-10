@@ -287,6 +287,29 @@ may change until it does. Design:
 | `velt_rt_weakref_drop` | `(uint32_t r)` | |
 | `velt_rt_weak_release` | `(uint8_t* obj) -> uint8_t` | cold release of an object with `RC_WEAK` set, given the caller's reference: 1 = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), 0 = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) on a thread without the object's record |
 
+## Symbols [additive]
+
+A `symbol` (HIR `TyKind::Symbol`, VIR `Ptr`) is the address of a record, never null, compared by
+identity (equality, hashing):
+
+```text
+struct SymbolRec { desc: *const VeltStr /* null: no description */, key: u64 }
+```
+
+`key` is 0 for a record `velt_rt_symbol_new` made, 1 for one `velt_rt_symbol_for` made, and 2 and
+up for a read-only record the compiler emits (`Intrinsic::SymbolStatic`; `key` is its id + 2, so
+no two records have the same bytes). Records are never freed. On wasm32 `desc` takes the first
+half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters by pointer, a
+`string` result through an out pointer):
+- `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
+  (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
+- `velt_rt_symbol_for(key: *const VeltStr) -> *const SymbolRec`: the process-wide registry's record
+  for `key`, made on first use.
+- `velt_rt_symbol_registered(s) -> u8`, `velt_rt_symbol_described(s) -> u8`,
+  `velt_rt_symbol_description(s, out: *mut VeltStr)` (`""` without a description).
+- `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
+  (`console.log`, `String(s)`).
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

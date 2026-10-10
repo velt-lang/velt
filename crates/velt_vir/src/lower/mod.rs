@@ -71,6 +71,7 @@ mod stabilize;
 mod stmt;
 mod strbuf;
 mod strings;
+mod symbols;
 mod template;
 mod track_caller;
 mod transfer;
@@ -261,6 +262,8 @@ struct Cx<'h> {
     tracked: HashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: HashMap<String, StaticId>,
+    /// The records of the compiler's symbols by id (`Intrinsic::SymbolStatic`, symbols.rs).
+    symbol_records: HashMap<u128, StaticId>,
     /// Types whose values carry a reference count in this pass (boxing/).
     boxing: boxing::Boxing,
     /// Sharing facts observed in this pass (boxing/).

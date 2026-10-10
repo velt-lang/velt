@@ -444,6 +444,24 @@ impl<'a> Parser<'a> {
     /// With `speculative_args`, a `<` that does not parse as type arguments is left alone.
     fn parse_named_type_with(&mut self, speculative_args: bool) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
+        // `unique symbol` (the type of a `const` holding a symbol) is one name, which sema reads
+        // as `symbol`: which symbol a constant holds is known from its initializer.
+        if self.at_word("unique") && self.nth_word(1, "symbol") {
+            self.bump();
+            self.bump();
+            let span = self.span_from(lo);
+            let name = Ident {
+                name: "unique symbol".into(),
+                span,
+            };
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Named {
+                    path: vec![name],
+                    args: vec![],
+                },
+                span,
+            });
+        }
         let mut path = vec![self.parse_ident()?];
         while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
             self.bump();

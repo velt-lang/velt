@@ -231,6 +231,11 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
+            Tok::LBracket if self.at_symbol_key() => {
+                let key = self.parse_symbol_key()?;
+                self.expect(Tok::Colon)?;
+                return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+            }
             Tok::PrivateName => {
                 let span = self.cur_span();
                 self.error("private names are only allowed in class bodies", span);
@@ -278,6 +283,10 @@ impl<'a> Parser<'a> {
         let is_generator = self.nth(off) == Tok::Star;
         let at_name = |p: &mut Self, k: usize| {
             (p.nth(k) == Tok::LBracket && p.nth_word(k + 1, "Symbol"))
+                || (p.nth(k) == Tok::LBracket
+                    && p.nth(k + 1) == Tok::Ident
+                    && p.nth(k + 2) == Tok::RBracket
+                    && p.nth(k + 3) == Tok::LParen)
                 || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::LParen)
         };
         if !is_generator && !at_name(self, off) {

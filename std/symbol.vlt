@@ -1,0 +1,100 @@
+// std/symbol: JavaScript's `Symbol` (a global, std/prelude/global/symbol.vlt; docs/std/symbol.md).
+//
+// A `symbol` is the address of a record the runtime or the compiler made (rt_abi.md "Symbols"),
+// compared by identity. A module constant initialized with `Symbol("d")` is a record the
+// compiler emits, so each use of the constant is the same symbol, and such a constant (or one
+// initialized with `Symbol.for("k")`) can name a member: `[KEY]: T` in an object type, an
+// interface or a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The
+// well-known symbols are records the compiler emits too.
+
+// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
+declare function velt_rt_symbol_new(description: string, described: bool): symbol;
+declare function velt_rt_symbol_for(key: string): symbol;
+declare function velt_rt_symbol_registered(s: symbol): bool;
+declare function velt_rt_symbol_described(s: symbol): bool;
+declare function velt_rt_symbol_description(s: symbol): string;
+
+/**
+ * A new symbol, different from every other one, with an optional description (shown by
+ * `console.log` and `toString()` as `Symbol(description)`). Called in the initializer of a module
+ * constant (`const KEY = Symbol("key")`), the symbol is made once, as in JavaScript.
+ */
+export function Symbol(description?: string): symbol {
+  if (description == null) {
+    return velt_rt_symbol_new("", false);
+  }
+  return velt_rt_symbol_new(description, true);
+}
+
+/**
+ * The static members of `Symbol` (`Symbol.for(key)`, `Symbol.iterator` & co.; TypeScript calls
+ * the type of `Symbol` `SymbolConstructor` too).
+ */
+export class SymbolConstructor {
+  /** The method `await using` calls to dispose of a value. */
+  static readonly asyncDispose: symbol = __intrinsic_symbol_static(0, "Symbol.asyncDispose", true);
+  /** The method `for await` calls to get an async iterator. */
+  static readonly asyncIterator: symbol = __intrinsic_symbol_static(
+    1,
+    "Symbol.asyncIterator",
+    true,
+  );
+  /** The method `using` calls to dispose of a value. */
+  static readonly dispose: symbol = __intrinsic_symbol_static(2, "Symbol.dispose", true);
+  /** The method `instanceof` consults in JavaScript. */
+  static readonly hasInstance: symbol = __intrinsic_symbol_static(3, "Symbol.hasInstance", true);
+  /** Whether `Array.prototype.concat` flattens an object in JavaScript. */
+  static readonly isConcatSpreadable: symbol = __intrinsic_symbol_static(
+    4,
+    "Symbol.isConcatSpreadable",
+    true,
+  );
+  /** The method `for...of` calls to get an iterator. */
+  static readonly iterator: symbol = __intrinsic_symbol_static(5, "Symbol.iterator", true);
+  /** The method `String.prototype.match` calls in JavaScript. */
+  static readonly match: symbol = __intrinsic_symbol_static(6, "Symbol.match", true);
+  /** The method `String.prototype.matchAll` calls in JavaScript. */
+  static readonly matchAll: symbol = __intrinsic_symbol_static(7, "Symbol.matchAll", true);
+  /** The method `String.prototype.replace` calls in JavaScript. */
+  static readonly replace: symbol = __intrinsic_symbol_static(8, "Symbol.replace", true);
+  /** The method `String.prototype.search` calls in JavaScript. */
+  static readonly search: symbol = __intrinsic_symbol_static(9, "Symbol.search", true);
+  /** The constructor JavaScript uses for derived objects. */
+  static readonly species: symbol = __intrinsic_symbol_static(10, "Symbol.species", true);
+  /** The method `String.prototype.split` calls in JavaScript. */
+  static readonly split: symbol = __intrinsic_symbol_static(11, "Symbol.split", true);
+  /** The method JavaScript calls to convert an object to a primitive. */
+  static readonly toPrimitive: symbol = __intrinsic_symbol_static(12, "Symbol.toPrimitive", true);
+  /** The string `Object.prototype.toString` shows for an object in JavaScript. */
+  static readonly toStringTag: symbol = __intrinsic_symbol_static(13, "Symbol.toStringTag", true);
+  /** The names `with` statements leave out in JavaScript. */
+  static readonly unscopables: symbol = __intrinsic_symbol_static(14, "Symbol.unscopables", true);
+
+  /** The symbol of the global registry for `key`, made on first use: the same for every call. */
+  static for(key: string): symbol {
+    return velt_rt_symbol_for(key);
+  }
+
+  /** The key of a symbol `Symbol.for` made, or null (`undefined` in JavaScript) for others. */
+  static keyFor(sym: symbol): string | null {
+    if (!velt_rt_symbol_registered(sym)) {
+      return null;
+    }
+    return velt_rt_symbol_description(sym);
+  }
+}
+
+extend symbol {
+  /** The description given to `Symbol(description)`, or null (`undefined` in JavaScript). */
+  get description(): string | null {
+    if (!velt_rt_symbol_described(this)) {
+      return null;
+    }
+    return velt_rt_symbol_description(this);
+  }
+
+  /** `Symbol(description)`. */
+  toString(): string {
+    return "Symbol(" + velt_rt_symbol_description(this) + ")";
+  }
+}

@@ -402,6 +402,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let t = obj.ty;
+        // `o[KEY]` with a symbol constant: the member the symbol names.
+        if let Some(key) = self.symbol_key_of(index) {
+            if self.has_fields(t, &key) {
+                return self.symbol_index(obj, key, index, want, span);
+            }
+        }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)

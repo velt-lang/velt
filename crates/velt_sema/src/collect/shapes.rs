@@ -192,7 +192,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         );
     }
     FieldInfo {
-        name: f.name.name.clone(),
+        name: cx.member_key(env.module, &f.name.name, f.name.span),
         ty,
         declared,
         span: f.name.span,

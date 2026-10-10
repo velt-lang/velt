@@ -126,15 +126,16 @@ impl Ctx<'_> {
                 f.ty.clone()
             };
             let t = self.resolve_type(&written, env);
-            if out.iter().any(|o| o.name == f.name.name) {
+            let name = self.member_key(env.module, &f.name.name, f.name.span);
+            if out.iter().any(|o| o.name == name) {
                 self.err(
-                    format!("duplicate field `{}` in object type", f.name.name),
+                    format!("duplicate field `{name}` in object type"),
                     f.name.span,
                 );
                 continue;
             }
             out.push(ShapeField {
-                name: f.name.name.clone(),
+                name,
                 ty: t,
                 readonly: f.readonly,
                 optional: f.optional,

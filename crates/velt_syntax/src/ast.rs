@@ -507,7 +507,8 @@ pub enum BinaryOp {
     Shr,
     UShr,
     /// `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the parser
-    /// builds one, only here).
+    /// builds one, only here). `KEY in o` / `Symbol.iterator in o`: the left operand is an
+    /// `Ident` or a `Member` of `Symbol` (a symbol key).
     In,
 }
 

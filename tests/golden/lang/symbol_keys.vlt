@@ -1,0 +1,50 @@
+// A module constant initialized with `Symbol(...)` or `Symbol.for(...)` (a `unique symbol`)
+// names a member: `[KEY]: T` in interfaces, object types and classes, `{ [KEY]: v }` in object
+// literals, `o[KEY]` and `KEY in o`, also through an import under another name. `console.log`
+// shows such a member as `[Symbol(desc)]: v` after the string keys, and `JSON.stringify` and
+// `Object.keys` leave it out, as in Node. Expected output from node.
+import { VNODE as V, MODEL } from "./_symbol_keys/brand";
+
+const CELL: unique symbol = Symbol("sigx:asyncCell");
+const OTHER = Symbol("sigx:vnode");
+const NAME = "name";
+const CELL_KEY = CELL;
+
+interface VNode {
+  type: string;
+  key: string | null;
+  [V]: true;
+}
+
+type Model = { value: number; readonly [MODEL]: true };
+
+type Cell = { ready: boolean; [CELL]?: true };
+
+class Box {
+  [OTHER]: number = 3;
+  [NAME]: string = "box";
+}
+
+function isVNode(v: VNode | string): boolean {
+  return typeof v !== "string" && v[V] === true;
+}
+
+function isCell(c: Cell): boolean {
+  return c[CELL_KEY] === true;
+}
+
+function main() {
+  const n: VNode = { type: "div", key: null, [V]: true };
+  console.log(n);
+  console.log(n[V], isVNode(n), isVNode("text"));
+  const m: Model = { [MODEL]: true, value: 1 };
+  console.log(m, m[MODEL], m.value);
+  console.log(JSON.stringify(n), JSON.stringify(m), Object.keys(n));
+  console.log(V in n, MODEL in n, MODEL in m, Symbol.iterator in n);
+  const b = new Box();
+  b[OTHER] += 1;
+  console.log(b, b[OTHER], b.name);
+  console.log(isCell({ ready: true, [CELL]: true }), isCell({ ready: false }));
+  const anon = { [CELL]: 1, x: 2 };
+  console.log(anon, anon[CELL] + anon.x);
+}

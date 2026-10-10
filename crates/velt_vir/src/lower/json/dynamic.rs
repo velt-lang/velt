@@ -130,11 +130,15 @@ impl Cx<'_> {
             }
             // std's private state (runtime handles) has no JSON form.
             hir::Def::Adt(a) if a.opaque => return None,
-            // ES private fields (`#x`) are never written; `private x` is, as in Node.
+            // ES private fields (`#x`) and symbol keys are never written; `private x` is, as
+            // in Node.
             hir::Def::Adt(a) => a
                 .fields
                 .iter()
-                .filter(|f| !f.name.starts_with('#'))
+                .filter(|f| {
+                    !f.name.starts_with('#')
+                        && velt_sema::property_order::symbol_key(&f.name).is_none()
+                })
                 .map(|f| f.ty)
                 .collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],

@@ -447,6 +447,9 @@ impl<'a> Parser<'a> {
     /// field is named (object types, interface fields, destructuring); object literals take
     /// quoted keys themselves (`parse_object_prop`).
     fn parse_prop_key(&mut self) -> PResult<Ident> {
+        if self.at_symbol_key() {
+            return self.parse_symbol_key();
+        }
         if let Tok::Str(idx) = self.peek() {
             let key = Ident {
                 name: self.payload_text(idx),
@@ -468,8 +471,7 @@ impl<'a> Parser<'a> {
                 "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property",
                 key.span,
             );
-        } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX)
-            || key.name.starts_with("[Symbol.")
+        } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX) || key.name.starts_with('[')
         {
             self.error(
                 format!(

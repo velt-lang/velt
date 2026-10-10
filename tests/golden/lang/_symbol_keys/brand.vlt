@@ -1,0 +1,3 @@
+// A module that exports symbol constants (symbol_keys.vlt).
+export const VNODE: unique symbol = Symbol("sigx:vnode");
+export const MODEL = Symbol.for("sigx.model");
