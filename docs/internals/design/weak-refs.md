@@ -150,6 +150,15 @@ the live objects, side-table records and map entries are exactly the window's. S
   closure): the trial treats every map as live, so entries whose keys are dead are still deleted,
   but a map that is itself garbage is freed only when its holder is.
 
+### Open cost question
+
+A recorded object whose count sits at its hint because the outside reference is elsewhere in the
+cycle (a raw object held only by its proxy, while the program holds the proxy) runs a trial on
+every release back to that level, such as the release of a temporary reference in a trap. Each
+trial is bounded (a handful of objects), but it is a hash-table walk on a path that is a
+decrement today. If sigx's traps show it, a failed trial can record the count it saw and skip
+the next trial until a release elsewhere in the cycle changes the answer.
+
 ## Next steps
 
 1. `WeakMap`/`WeakSet` in the language on this core (#823 step B): the program-wide

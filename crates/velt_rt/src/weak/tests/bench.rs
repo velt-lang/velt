@@ -1,8 +1,8 @@
 //! Cost of the weak flag on retain/release/free, measured in instructions (valgrind, see
 //! `crates/velt_rt/scripts/weak_rc_cost.sh`). Each loop inlines the release sequence the compiler
 //! would emit: `plain` is today's (a type never weakly held), `capable` adds the flag test (a
-//! weak-capable type whose object is not weakly held), `weak` runs on an object that is a weak
-//! key (the cold path). `VELT_WEAK_BENCH_N` sets the iterations.
+//! weak-capable type whose object is not weakly held), and `weak_shared` runs the `capable` loop
+//! on an object that is a weak key (the cold path).
 
 use super::*;
 use std::hint::black_box;
@@ -53,16 +53,8 @@ macro_rules! bench_loops {
 bench_loops!(bench_plain_shared, bench_plain_unique, release_plain);
 bench_loops!(bench_capable_shared, bench_capable_unique, release);
 
-/// The shared path on a weakly held object (each release is a call and a table probe).
-#[inline(never)]
-fn bench_weak_shared(obj: *mut u8, n: u64) {
-    for _ in 0..n {
-        let o = black_box(obj);
-        retain_inline(o);
-        release(o);
-    }
-}
-
+/// Runs the loop `VELT_WEAK_BENCH` names (all of them when unset), `VELT_WEAK_BENCH_N` times.
+/// `weak_shared` is `bench_capable_shared` on an object that is a weak key: the cold path.
 #[test]
 #[ignore = "a measurement, run under valgrind by scripts/weak_rc_cost.sh"]
 fn rc_paths() {
@@ -70,15 +62,27 @@ fn rc_paths() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1_000_000);
+    let only = std::env::var("VELT_WEAK_BENCH").ok();
+    let run = |name: &str| only.as_deref().is_none_or(|o| o == name);
     no_leak(|| {
         let obj = new_obj(&[]);
-        bench_plain_shared(obj, n);
-        bench_plain_unique(n);
-        bench_capable_shared(obj, n);
-        bench_capable_unique(n);
+        if run("plain_shared") {
+            bench_plain_shared(obj, n);
+        }
+        if run("plain_unique") {
+            bench_plain_unique(n);
+        }
+        if run("capable_shared") {
+            bench_capable_shared(obj, n);
+        }
+        if run("capable_unique") {
+            bench_capable_unique(n);
+        }
         let m = obj_map();
         set(m, obj, new_obj(&[]));
-        bench_weak_shared(obj, n);
+        if run("weak_shared") {
+            bench_capable_shared(obj, n);
+        }
         release(obj);
         finish(&[m]);
     });
