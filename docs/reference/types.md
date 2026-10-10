@@ -534,6 +534,14 @@ function show(v: string | number): string {
 console.log(show("ab"), show(41)); // AB 42
 ```
 
+- TypeScript does not check that a predicate's body answers correctly. A call that narrows
+  checks the value at run time against what its result says, as `typeof` or `instanceof` would,
+  and throws a `TypeError` when they disagree (``the type predicate `isString` returned false
+  for a value that is `string` ``), where Node would go on with a value that is not of the
+  type it was narrowed to. A predicate that answers correctly behaves as in Node.
+- A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
+  value of (`string`) when the call is true and leaves the variable as it is when false; a
+  type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
@@ -730,9 +738,9 @@ console.log(b.v); // hi
   ([Iterable object literals](#iterable-object-literals)).
 - **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
-  `label?(p: string): string` an optional one (`(p: string) => string | null` with the field
+  `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
-  (`run<T>(f: () => T): T`) is supported in interfaces only.
+  (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
 
 ```ts
 type Handler = {
@@ -750,6 +758,9 @@ console.log(h.get("ab", "c"), h.label?.("x") ?? "none"); // 3 none
 
 - **`satisfies`**: `value satisfies T` checks `value` against `T`, with `T` as its context (as
   an annotation `const x: T = value` does), and is `value`: `{ version: "1" } satisfies Stamp`.
+  Its type is `T`, as for the annotated `x`; TypeScript keeps the value's own, more precise
+  type instead (a field `T` declares as `number | string` but given a number is a `number`
+  after `satisfies` there), which Velt does not do yet.
 - **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
   (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without

@@ -278,7 +278,7 @@ impl<'a> Parser<'a> {
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
             let mut ty = if self.at(Tok::LParen) || self.at(Tok::Lt) {
-                self.parse_method_sig_type(flo, &name)?
+                self.parse_method_sig_type(flo, &name, optional)?
             } else {
                 self.expect(Tok::Colon)?;
                 self.parse_type()?
@@ -352,16 +352,26 @@ impl<'a> Parser<'a> {
     /// A method signature in an object type or an optional one in an interface (`m(x: T): R`,
     /// `m?(x: T): R`), after its name: a field of function type `(x: T) => R`. A generic one is
     /// not supported yet (function types have no type parameters).
-    pub(super) fn parse_method_sig_type(&mut self, lo: u32, name: &Ident) -> PResult<TypeExpr> {
+    pub(super) fn parse_method_sig_type(
+        &mut self,
+        lo: u32,
+        name: &Ident,
+        optional: bool,
+    ) -> PResult<TypeExpr> {
         let sig = self.parse_sig_rest(lo, name.clone(), false)?;
         if let Some(g) = sig.generics.first() {
-            self.error(
+            let msg = if optional {
+                format!(
+                    "an optional method signature can't be generic yet: `{}?` is a field of function type, and function types have no type parameters",
+                    name.name
+                )
+            } else {
                 format!(
                     "generic method signatures are only supported in interfaces: declare `{}` in an interface",
                     name.name
-                ),
-                g.name.span,
-            );
+                )
+            };
+            self.error(msg, g.name.span);
         }
         let span = self.span_from(lo);
         let ret = sig.ret.unwrap_or(TypeExpr {

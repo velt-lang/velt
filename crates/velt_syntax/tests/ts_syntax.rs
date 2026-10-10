@@ -120,6 +120,10 @@ fn method_signatures_in_object_types_and_optional_interface_methods() {
         errors("type G = { run<T>(f: () => T): T };"),
         vec!["generic method signatures are only supported in interfaces: declare `run` in an interface"]
     );
+    assert_eq!(
+        errors("interface I { wrap?<A>(a: A): A }"),
+        vec!["an optional method signature can't be generic yet: `wrap?` is a field of function type, and function types have no type parameters"]
+    );
 }
 
 #[test]

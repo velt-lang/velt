@@ -341,7 +341,7 @@ impl<'a> Parser<'a> {
         if self.at(Tok::Question) && matches!(self.nth(1), Tok::LParen | Tok::Lt) {
             // `m?(x: T): R`: an optional member of function type, `m?: (x: T) => R`.
             self.bump();
-            let ty = self.parse_method_sig_type(lo, &name)?;
+            let ty = self.parse_method_sig_type(lo, &name, true)?;
             let span = self.span_from(lo);
             self.expect_member_end()?;
             decl.fields.push(Field {

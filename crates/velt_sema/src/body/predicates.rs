@@ -1,4 +1,4 @@
-//! Type predicates (TypeScript's user-defined type guards, docs/reference/narrowing.md): a call
+//! Type predicates (TypeScript's user-defined type guards, docs/reference/types.md "Type predicates"): a call
 //! `isFoo(x)` of `function isFoo(v: A | B): v is A` narrows the local `x` in a condition as a
 //! test of its type would: to the members of its union that are `A` (or instances of class `A`)
 //! when the call returns `true`, to the others when it returns `false`, and a `T | null` local
