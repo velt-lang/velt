@@ -117,7 +117,9 @@ impl Object {
         }
     }
 
-    /// Insert, replacing the value of an existing key in place.
+    /// Insert, replacing the value of an existing key in place. A new key goes where
+    /// JavaScript puts it: an array index (`"0"` to `"4294967294"`) among the other indexes,
+    /// ascending, before every other key; any other key last.
     pub fn insert(&mut self, key: Text, value: Arc<Value>) {
         if let Some(slot) = self.find(&key) {
             if let Some((_, v)) = &mut self.slots[slot] {
@@ -125,6 +127,92 @@ impl Object {
             }
             return;
         }
+        if let Some(n) = array_index(&key) {
+            let at = self.index_slot(n);
+            if at < self.slots.len() {
+                return self.insert_at(at, key, value);
+            }
+        }
+        self.push_new(key, value);
+    }
+
+    /// Insert in document order (`JSON.parse` before [`Object::order_indexes`]): a new key
+    /// goes last.
+    pub(super) fn insert_last(&mut self, key: Text, value: Arc<Value>) {
+        if let Some(slot) = self.find(&key) {
+            if let Some((_, v)) = &mut self.slots[slot] {
+                *v = value;
+            }
+            return;
+        }
+        self.push_new(key, value);
+    }
+
+    /// Put the members whose keys are array indexes first, ascending, keeping the order of the
+    /// others: JavaScript's order, for an object read in document order that has such a key.
+    pub(super) fn order_indexes(&mut self) {
+        let sorted = self
+            .iter()
+            .map(|(k, _)| array_index(k))
+            .is_sorted_by(|a, b| match (a, b) {
+                (Some(x), Some(y)) => x <= y,
+                (Some(_), None) | (None, None) => true,
+                (None, Some(_)) => false,
+            });
+        if sorted {
+            return;
+        }
+        self.compact_all();
+        count_work(self.slots.len());
+        // Stable: members with the same rank (every non-index key) keep their order.
+        self.slots.sort_by_key(|e| {
+            e.as_ref()
+                .and_then(|(k, _)| array_index(k))
+                .map_or(u64::MAX, u64::from)
+        });
+        if self.index.is_some() {
+            self.index = Some(Box::new(Index::new(&self.slots)));
+        }
+    }
+
+    /// The slot before which the new index `n` goes: the first live member that is not an
+    /// index or is a larger one (the slots' length when there is none).
+    fn index_slot(&self, n: u32) -> usize {
+        let head = self.index.as_ref().map_or(0, |ix| ix.head);
+        (head..self.slots.len())
+            .find(|&i| match &self.slots[i] {
+                Some((k, _)) => array_index(k).is_none_or(|m| m > n),
+                None => false,
+            })
+            .unwrap_or(self.slots.len())
+    }
+
+    /// Insert the new member `key` before slot `at` (a live slot): O(number of members).
+    fn insert_at(&mut self, at: usize, key: Text, value: Arc<Value>) {
+        let live = self.slots[at].as_ref().map(|(k, _)| k.clone());
+        self.compact_all();
+        let at = match live {
+            Some(k) => self.find(&k).unwrap_or(self.slots.len()),
+            None => self.slots.len(),
+        };
+        count_work(self.slots.len() - at);
+        self.slots.insert(at, Some((key, value)));
+        if self.index.is_some() || self.slots.len() > INDEX_THRESHOLD {
+            self.index = Some(Box::new(Index::new(&self.slots)));
+        }
+    }
+
+    /// Drop every hole, keeping the index (rebuilt) when there is one.
+    fn compact_all(&mut self) {
+        if self.index.is_some() {
+            count_work(self.slots.len());
+            self.slots.retain(Option::is_some);
+            self.index = Some(Box::new(Index::new(&self.slots)));
+        }
+    }
+
+    /// Append the new member `key`.
+    fn push_new(&mut self, key: Text, value: Arc<Value>) {
         let slot = self.slots.len();
         match &mut self.index {
             Some(ix) => {
@@ -204,6 +292,32 @@ impl Object {
             .map(|(_, v)| v)
             .collect()
     }
+}
+
+/// The array index `key` names (canonical decimal `0` to `2^32 - 2`): such keys come first
+/// in a JavaScript object, ascending. One byte test for the common key.
+#[inline]
+pub fn array_index(key: &[u8]) -> Option<u32> {
+    let (&first, rest) = key.split_first()?;
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    array_index_digits(first, rest)
+}
+
+#[cold]
+fn array_index_digits(first: u8, rest: &[u8]) -> Option<u32> {
+    if (first == b'0' && !rest.is_empty()) || rest.len() > 9 {
+        return None;
+    }
+    let mut n = u64::from(first - b'0');
+    for &b in rest {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        n = n * 10 + u64::from(b - b'0');
+    }
+    u32::try_from(n).ok().filter(|&n| n != u32::MAX)
 }
 
 impl Index {
@@ -349,5 +463,87 @@ mod positions {
                 assert_eq!(p.select(want.len()), None);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::{array_index, Object, INDEX_THRESHOLD};
+    use crate::json::value::{parse, Value};
+    use std::sync::Arc;
+
+    fn keys(o: &Object) -> Vec<String> {
+        o.iter()
+            .map(|(k, _)| String::from_utf8(k.to_vec()).unwrap())
+            .collect()
+    }
+
+    fn put(o: &mut Object, k: &str) {
+        o.insert(k.as_bytes().into(), Arc::new(Value::Null));
+    }
+
+    #[test]
+    fn array_indexes() {
+        assert_eq!(array_index(b"0"), Some(0));
+        assert_eq!(array_index(b"10"), Some(10));
+        assert_eq!(array_index(b"4294967294"), Some(4294967294));
+        for k in [
+            "",
+            "01",
+            "4294967295",
+            "99999999999",
+            "1a",
+            "-1",
+            "a1",
+            "1.5",
+        ] {
+            assert_eq!(array_index(k.as_bytes()), None, "{k}");
+        }
+    }
+
+    #[test]
+    fn insert_puts_indexes_first() {
+        let mut o = Object::default();
+        for k in ["b", "10", "a", "01", "4294967295", "4294967294", "2", "10"] {
+            put(&mut o, k);
+        }
+        assert_eq!(
+            keys(&o),
+            ["2", "10", "4294967294", "b", "a", "01", "4294967295"]
+        );
+    }
+
+    #[test]
+    fn insert_with_an_index_and_holes() {
+        let mut o = Object::default();
+        let names: Vec<String> = (0..2 * INDEX_THRESHOLD).map(|i| format!("k{i}")).collect();
+        for k in &names {
+            put(&mut o, k);
+        }
+        assert!(o.remove(b"k3"));
+        assert!(o.remove(b"k0"));
+        put(&mut o, "7");
+        put(&mut o, "3");
+        put(&mut o, "k3");
+        let ks = keys(&o);
+        assert_eq!(&ks[..3], ["3", "7", "k1"]);
+        assert_eq!(ks.last().unwrap(), "k3");
+        assert_eq!(ks.len(), 2 * INDEX_THRESHOLD + 1);
+        assert!(o.get(b"k20").is_some() && o.get(b"7").is_some());
+        assert_eq!(o.entry_at(1).map(|(k, _)| &**k), Some(&b"7"[..]));
+    }
+
+    #[test]
+    fn parse_orders_like_json_parse() {
+        let v = parse(br#"{"b":1,"10":2,"a":3,"2":4,"01":5,"10":6}"#, 64).unwrap();
+        let Value::Object(o) = &*v else { panic!() };
+        assert_eq!(keys(o), ["2", "10", "b", "a", "01"]);
+        let v = parse(br#"{"b":1,"a":{"9":1,"x":2,"1":3}}"#, 64).unwrap();
+        let Value::Object(o) = &*v else { panic!() };
+        let Value::Object(inner) = &**o.get(b"a").unwrap() else {
+            panic!()
+        };
+        assert_eq!(keys(inner), ["1", "9", "x"]);
+        assert_eq!(keys(o), ["b", "a"]);
     }
 }

@@ -4,19 +4,55 @@
 // A record has no members of its own: `r.name` reads the key "name". Sema turns `r[k]`, `r.name`,
 // `r[k] = v`, `delete r[k]` and object literals typed as a record into calls of the `__`
 // methods below (`__get` for string keys, `__at` for literal keys, which are always present).
-// Entries keep insertion order; JSON reads and writes a record as an object, and `console.log`
-// shows it like one.
+// Entries keep JavaScript's order: keys that are array indices (canonical `"0"` to
+// `"4294967294"`) first, ascending, then the others in insertion order. A key that starts with a
+// digit marks the record `unordered`; then the readers (`__keyNames`, `__values`, `__entries`,
+// and the JSON and formatting glue through `__positions`) sort the entries they read, without
+// changing the record (they borrow it). A record without such keys pays one byte test per new
+// key. JSON reads and writes a record as an object, and
+// `console.log` shows it like one.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+// The rank of a key that is not an array index: after every index.
+const NOT_INDEX: i64 = 4294967296;
+
+// Does `key` (a string, or a string enum member's value) start with a digit, so that it may be
+// an array index?
+function digitFirst<K>(key: K): bool {
+  const c = `${key}`.charCodeAt(0);
+  return c >= 48 && c <= 57;
+}
+
+// The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1.
+function arrayIndex(s: string): i64 {
+  const n = s.length as i64;
+  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return -1;
+    }
+    v = v * 10 + (c - 48);
+  }
+  return v <= 4294967294 ? v : -1;
+}
 
 /**
  * A dictionary from keys of type `K` to values of type `V`, like TypeScript's `Record<K, V>`:
  * `K` is `string`, a union of string literal types or a string enum. `r.name` and `r[k]` read
- * a key, `r[k] = v` sets it, `delete r[k]` removes it; entries keep insertion order.
+ * a key, `r[k] = v` sets it, `delete r[k]` removes it; entries keep JavaScript's order
+ * (array-index keys first, ascending, then insertion order).
  */
 export class Record<K, V> {
-  // Field 0: the JSON and formatting glue read it directly.
+  // Field 0: the JSON and formatting glue read it directly, in the order `__positions` gives.
   private entries: Map<K, V> = new Map();
+  // Field 1: a key that may be an array index was added (JSON decoding sets it too), so the
+  // entries may not be in JavaScript's order (`__perm`).
+  private unordered: bool = false;
 
   __get(key: K): V | null {
     return this.entries.get(key);
@@ -28,7 +64,67 @@ export class Record<K, V> {
   }
 
   __set(key: K, value: V) {
+    if (this.unordered || !digitFirst(key)) {
+      this.entries.set(key, value);
+      return;
+    }
+    const n = this.entries.size;
     this.entries.set(key, value);
+    this.unordered = this.entries.size != n;
+  }
+
+
+  /**
+   * The order of the live entries (indexes into `keys()` / `values()`) in JavaScript's order:
+   * array indices first, ascending, then the other keys in insertion order (a stable sort).
+   * Empty when the entries are in that order already.
+   */
+  __perm(): usize[] {
+    if (!this.unordered) {
+      return [];
+    }
+    const keys = this.entries.keys();
+    const rank: i64[] = [];
+    let sorted = true;
+    let last: i64 = -1;
+    let other = false;
+    for (const k of keys) {
+      const i = arrayIndex(`${k}`);
+      if (i < 0) {
+        other = true;
+        rank.push(NOT_INDEX);
+      } else {
+        sorted = sorted && !other && i > last;
+        last = i;
+        rank.push(i);
+      }
+    }
+    if (sorted) {
+      return [];
+    }
+    const at: usize[] = [];
+    for (let i: usize = 0; i < keys.length; i++) {
+      at.push(i);
+    }
+    at.sort((a, b) => rank[a] - rank[b]);
+    return at;
+  }
+
+  /**
+   * The positions of the map's live entries in JavaScript's order (the JSON and formatting
+   * glue walk them), or empty when that is insertion order.
+   */
+  __positions(): usize[] {
+    const at = this.__perm();
+    if (at.length == 0) {
+      return at;
+    }
+    const live = this.entries.__livePositions();
+    const out: usize[] = [];
+    for (const i of at) {
+      out.push(live[i]);
+    }
+    return out;
   }
 
   __delete(key: K): bool {
@@ -41,8 +137,8 @@ export class Record<K, V> {
 
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
   __extend(other: Record<K, V>) {
-    for (const [k, v] of other.entries.entries()) {
-      this.entries.set(k, v);
+    for (const [k, v] of other.__entries()) {
+      this.__set(k, v);
     }
   }
 
@@ -56,29 +152,57 @@ export class Record<K, V> {
    */
   __keyNames(): string[] {
     const out: string[] = [];
-    for (const k of this.entries.keys()) {
-      out.push(`${k}`);
+    const keys = this.entries.keys();
+    const at = this.__perm();
+    if (at.length == 0) {
+      for (const k of keys) {
+        out.push(`${k}`);
+      }
+    } else {
+      for (const i of at) {
+        out.push(`${keys[i]}`);
+      }
     }
     return out;
   }
 
   __values(): V[] {
-    return this.entries.values();
+    const values = this.entries.values();
+    const at = this.__perm();
+    if (at.length == 0) {
+      return values;
+    }
+    const out: V[] = [];
+    for (const i of at) {
+      out.push(values[i]);
+    }
+    return out;
   }
 
   __entries(): [K, V][] {
-    return this.entries.entries();
+    const entries = this.entries.entries();
+    const at = this.__perm();
+    if (at.length == 0) {
+      return entries;
+    }
+    const out: [K, V][] = [];
+    for (const i of at) {
+      out.push(entries[i]);
+    }
+    return out;
   }
 }
 
 /**
- * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (insertion order).
+ * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (JavaScript's
+ * order: array-index keys first, ascending, then insertion order).
  * Sema checks calls of them itself: `Object.keys` also lists the fields of any object
  * (crates/velt_sema/src/body/expr/object_keys.rs).
  */
 export class Object {
   /**
-   * Returns the keys of a record as strings (a string enum key as its value), in insertion order.
+   * Returns the keys of a record as strings (a string enum key as its value): array-index keys
+   * first, ascending, then the others in insertion order.
    * On other objects it lists their fields.
    * @param r - The record whose keys to list.
    */
@@ -87,7 +211,7 @@ export class Object {
   }
 
   /**
-   * Returns an array of the values of a record, in insertion order. An object literal works
+   * Returns an array of the values of a record, in key order (as `keys`). An object literal works
    * too, read as a `Record<string, V>`: `Object.values({ x: 1, y: 2 })` is `[1, 2]`.
    * @param r - The record whose values to list.
    */
@@ -96,7 +220,7 @@ export class Object {
   }
 
   /**
-   * Returns an array of the `[key, value]` pairs of a record, in insertion order. An object
+   * Returns an array of the `[key, value]` pairs of a record, in key order (as `keys`). An object
    * literal works too, read as a `Record<string, V>`.
    * @param r - The record whose entries to list.
    */

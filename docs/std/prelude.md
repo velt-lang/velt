@@ -167,7 +167,7 @@ callback deleted or added entries.
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,
 `r[k] = v`, `delete r[k]` and object literals
 ([Reference](../reference/types.md#objects-arrays-tuples-and-maps)). `Object.keys(r)`,
-`Object.values(r)` and `Object.entries(r)` return arrays in insertion order; `Object.keys`
+`Object.values(r)` and `Object.entries(r)` return arrays in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order); `Object.keys`
 returns a `string[]` and, as in TypeScript, also lists the fields of any object, struct or
 class instance (except `#private` fields, as in JS).
 

@@ -8,7 +8,7 @@
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
   of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,
-  written in insertion order. A record with literal keys
+  written in insertion order (a `Record` in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order), as `JSON.parse` builds an object). A record with literal keys
   (`Record<"cpu" | "mem", i64>`) needs every key and skips other members. Unlike JavaScript, which writes a `Map` as `{}`,
   Velt writes its entries. Maps with other key types, functions, interfaces, promises and
   `shared` values have no JSON form; using them is a compile error. Values from a fixed set are checked:
@@ -193,7 +193,7 @@ console.log(text, m.cents); // {"cents":250} 250
     `at` takes O(n) to index the remaining members, and later edits keep that index up to date
     in O(log n) each, until the object is compacted
   - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
-  - `stringify()` (keys in insertion order); `clone()` is O(1)
+  - `stringify()` (keys in JavaScript's key order (array-index keys such as `"2"` first, ascending, then the others in insertion order), as `JSON.parse` and editing keep them); `clone()` is O(1)
   - `console.log(v)` prints the value the way node prints the parsed object
     (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
     quoted inside other values), broken across lines like node when it is long, with node's

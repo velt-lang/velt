@@ -84,7 +84,10 @@ fn owned_text(src: &[u8], tok: StrTok) -> Text {
 /// A container being built: its members so far and, for objects, the key awaiting its value.
 enum Frame {
     Array(Vec<Arc<Value>>),
-    Object(Object, Option<Text>),
+    /// The members so far (document order), the key of the one being read, and whether a key
+    /// may be an array index (it starts with a digit): then the members are reordered at the
+    /// end, indexes first, as `JSON.parse` does.
+    Object(Object, Option<Text>, bool),
 }
 
 /// Tree-building sink.
@@ -102,11 +105,11 @@ impl Builder {
         for f in &self.stack {
             match f {
                 Frame::Array(items) => p.push_str(&format!("[{}]", items.len())),
-                Frame::Object(_, Some(key)) => {
+                Frame::Object(_, Some(key), _) => {
                     p.push('.');
                     p.push_str(&crate::str::wtf8::to_utf8_lossy(key));
                 }
-                Frame::Object(_, None) => {}
+                Frame::Object(_, None, _) => {}
             }
         }
         p
@@ -116,9 +119,9 @@ impl Builder {
         let value = Arc::new(value);
         match self.stack.last_mut() {
             Some(Frame::Array(items)) => items.push(value),
-            Some(Frame::Object(obj, key)) => {
+            Some(Frame::Object(obj, key, _)) => {
                 let key = key.take().expect("ICE: object value without key");
-                obj.insert(key, value);
+                obj.insert_last(key, value);
             }
             None => self.root = Some(value),
         }
@@ -131,17 +134,25 @@ impl Sink for Builder {
         self.stack.push(Frame::Array(Vec::new()));
     }
     fn begin_object(&mut self, _: usize) {
-        self.stack.push(Frame::Object(Object::default(), None));
+        self.stack
+            .push(Frame::Object(Object::default(), None, false));
     }
     fn key(&mut self, src: &[u8], key: StrTok) {
-        if let Some(Frame::Object(_, slot)) = self.stack.last_mut() {
-            *slot = Some(owned_text(src, key));
+        if let Some(Frame::Object(_, slot, digits)) = self.stack.last_mut() {
+            let key = owned_text(src, key);
+            *digits |= key.first().is_some_and(u8::is_ascii_digit);
+            *slot = Some(key);
         }
     }
     fn end(&mut self, _: usize) {
         let value = match self.stack.pop().expect("ICE: unbalanced JSON walk") {
             Frame::Array(items) => Value::Array(items),
-            Frame::Object(obj, _) => Value::Object(obj),
+            Frame::Object(mut obj, _, digits) => {
+                if digits {
+                    obj.order_indexes();
+                }
+                Value::Object(obj)
+            }
         };
         self.add(value);
     }
