@@ -1,9 +1,12 @@
 # Release: pushing a tag v<version> (the workspace version in Cargo.toml) builds the toolchain
 # for every supported platform (bundling the lld from lld.yml), installs each archive with
-# scripts/get-velt.* and smoke-tests it, also on machines without a C toolchain (clean-machine),
-# publishes a GitHub release with the archives, SHA256SUMS and the installers, then installs the
+# scripts/get-velt.* and smoke-tests it through the launcher, also on machines without a C
+# toolchain (clean-machine), publishes a GitHub release with the archives, SHA256SUMS and its
+# signature (SHA256SUMS.sig, the release key: scripts/release-sign.sh) and the installers, updates
+# the signed index of releases the launcher reads (release-index.yml), then installs the
 # published release on every platform. Running the workflow by hand (workflow_dispatch) builds and
-# tests the archives and keeps them as workflow artifacts without publishing anything.
+# tests the archives and keeps them as workflow artifacts without publishing anything; it also
+# checks that the signing key matches the key velt is built with.
 # See CONTRIBUTING.md "Releases".
 name: release
 
@@ -116,25 +119,30 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/package.ps1 -Lld "$env:RUNNER_TEMP/lld/lld.exe"
 
-      - name: install the archive and smoke-test it (Linux, macOS)
+      - name: install the archive and smoke-test it through the launcher (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
-          prefix="$RUNNER_TEMP/velt"
-          sh scripts/get-velt.sh --no-modify-path --prefix "$prefix" \
+          root="$RUNNER_TEMP/velt"
+          sh scripts/get-velt.sh --no-modify-path --prefix "$root" \
             --archive "dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz"
-          "$prefix/bin/velt" --version
-          scripts/smoke.sh "$prefix/bin/velt"
-      - name: install the archive and smoke-test it (Windows)
+          [ -f "$root/toolchains/${{ needs.version.outputs.version }}/bin/velt" ]
+          "$root/bin/velt" --version | grep -F "velt ${{ needs.version.outputs.version }} "
+          "$root/bin/velt" toolchain list
+          scripts/smoke.sh "$root/bin/velt"
+      - name: install the archive and smoke-test it through the launcher (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $Prefix = Join-Path $env:RUNNER_TEMP "velt"
-          & ./scripts/get-velt.ps1 -NoModifyPath -Prefix $Prefix `
+          $Root = Join-Path $env:RUNNER_TEMP "velt"
+          & ./scripts/get-velt.ps1 -NoModifyPath -Prefix $Root `
             -Archive "dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.zip"
-          $Velt = Join-Path $Prefix "bin\velt.exe"
+          if (-not (Test-Path (Join-Path $Root "toolchains\${{ needs.version.outputs.version }}\bin\velt.exe"))) { throw "no toolchain installed" }
+          $Velt = Join-Path $Root "bin\velt.exe"
           function Run { & $Velt @args; if ($LASTEXITCODE -ne 0) { throw "velt $args failed" } }
-          Run --version
+          $v = Run --version
+          if ($v -notlike "velt ${{ needs.version.outputs.version }} *") { throw "unexpected version: $v" }
+          Run toolchain list
           Run doctor
           $Work = Join-Path $env:RUNNER_TEMP "smoke"
           New-Item -ItemType Directory -Force $Work | Out-Null
@@ -195,13 +203,13 @@ jobs:
           name="velt-${{ needs.version.outputs.version }}-${{ matrix.target }}"
           mkdir -p "x/$name/lib/targets"
           cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+          # Windows has a .zip (the installer's) and a .tar.gz (the launcher's); the others a .tar.gz.
           if [ -f "dist/$name.zip" ]; then
             (cd x && zip -q "../dist/$name.zip" "$name/lib/targets/PACKS.sha256")
-          else
-            tar -xzf "dist/$name.tar.gz" -C x
-            cp hashes/PACKS.sha256 "x/$name/lib/targets/"
-            tar -czf "dist/$name.tar.gz" -C x "$name"
           fi
+          tar -xzf "dist/$name.tar.gz" -C x
+          cp hashes/PACKS.sha256 "x/$name/lib/targets/"
+          tar -czf "dist/$name.tar.gz" -C x "$name"
           ls -la dist
       - uses: actions/upload-artifact@v4
         with:
@@ -339,10 +347,26 @@ jobs:
         shell: bash
         run: scripts/cross.sh run "$RUNNER_TEMP/cross" ${{ matrix.targets }}
 
+  # The release signing key (secret VELT_RELEASE_SIGNING_KEY) must be the private half of the key
+  # velt is built with: checked on every run, so a mismatch shows before a tag is pushed.
+  signing-key:
+    runs-on: ubuntu-latest
+    # The signing key is a secret of this environment, which only `main` and `v*` tags may use.
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - name: sign and check a file
+        env:
+          VELT_RELEASE_SIGNING_KEY: ${{ secrets.VELT_RELEASE_SIGNING_KEY }}
+        run: |
+          echo "velt release signing check" > probe
+          scripts/release-sign.sh probe
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [version, build, clean-machine, cross-run]
+    needs: [version, build, clean-machine, cross-run, signing-key]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
@@ -383,6 +407,10 @@ jobs:
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body
           } > notes.md
+      - name: sign SHA256SUMS
+        env:
+          VELT_RELEASE_SIGNING_KEY: ${{ secrets.VELT_RELEASE_SIGNING_KEY }}
+        run: scripts/release-sign.sh assets/SHA256SUMS
       - name: publish the release
         run: |
           flags=
@@ -390,9 +418,17 @@ jobs:
           gh release create "$GITHUB_REF_NAME" assets/* --verify-tag $flags \
             --title "Velt $VERSION" --notes-file notes.md
 
+  # The signed index of releases the launcher reads, with this release in it.
+  index:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-index.yml
+    secrets: inherit
+
   # Install the published release the way users will, on every platform.
   verify:
-    needs: [version, publish]
+    needs: [version, publish, index]
     strategy:
       fail-fast: false
       matrix:
@@ -405,8 +441,11 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           curl -fsSL "$VELT_INSTALL_BASE_URL/releases/download/$GITHUB_REF_NAME/get-velt.sh" | sh
-          velt="$HOME/.velt/toolchain/bin/velt"
+          velt="$HOME/.velt/bin/velt"
           "$velt" --version | grep -F "velt ${{ needs.version.outputs.version }} "
+          "$velt" toolchain list
+          # The launcher reads the signed index, with this release in it.
+          "$velt" toolchain list --available | grep -F "${{ needs.version.outputs.version }}"
           "$velt" doctor
           cd "$RUNNER_TEMP" && "$velt" new demo && cd demo && "$velt" run
       - name: install with get-velt.ps1 (Windows)
@@ -419,6 +458,9 @@ jobs:
           function Run { & $Velt @args; if ($LASTEXITCODE -ne 0) { throw "velt $args failed" } }
           $v = Run --version
           if ($v -notlike "velt ${{ needs.version.outputs.version }} *") { throw "unexpected version: $v" }
+          Run toolchain list
+          $available = Run toolchain list --available
+          if (-not ($available -match [regex]::Escape("${{ needs.version.outputs.version }}"))) { throw "not in the index: $available" }
           Run doctor
           Set-Location $env:RUNNER_TEMP
           Run new demo

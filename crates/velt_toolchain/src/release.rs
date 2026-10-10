@@ -4,8 +4,8 @@
 //!
 //! - the toolchain archive `velt-<version>-<triple>.tar.gz`, one top directory
 //!   `velt-<version>-<triple>/` holding the prefix. Windows too: the release workflow publishes a
-//!   `.tar.gz` beside the `.zip` the Windows installer uses (#948 part 3), so this crate unpacks
-//!   one format; v0.1.0 has only the `.zip`, and installs with the installer.
+//!   `.tar.gz` beside the `.zip` the Windows installer uses, so this crate unpacks one format
+//!   (v0.1.0 has only the `.zip`).
 //! - `SHA256SUMS`, and `SHA256SUMS.sig`, its signature with the release key
 //!   ([`crate::signature`]): the hash shows an archive is intact, the signature that the velt
 //!   project published it. Releases before signing (v0.1.0) cannot be installed from here.
