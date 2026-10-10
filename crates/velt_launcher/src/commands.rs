@@ -15,7 +15,7 @@ Usage: velt toolchain <command>
 
 Commands:
   list [--available]           installed toolchains (* the default, > the one selected here);
-                               --available lists the published versions
+                               --available lists the published versions (and the yanked)
   install <version> [--default]
                                install a release: `0.1.3`, or the newest match of `0.1`; the
                                first one installed becomes the default
@@ -132,12 +132,15 @@ fn list(ctx: &Context, available: bool) -> Result<(), String> {
     let root = &ctx.root;
     let installed = root.versions();
     if available {
-        for v in release::fetch_index(&ctx.base)?.iter().rev() {
-            let state = if installed.contains(v) {
-                "  (installed)"
-            } else {
-                ""
-            };
+        for release in release::fetch_index(&ctx.base)?.iter().rev() {
+            let v = &release.version;
+            let mut state = String::new();
+            if installed.contains(v) {
+                state.push_str("  (installed)");
+            }
+            if let Some(why) = &release.yanked {
+                state.push_str(&format!("  (yanked: {why})"));
+            }
             println!("{v}{state}");
         }
         return Ok(());

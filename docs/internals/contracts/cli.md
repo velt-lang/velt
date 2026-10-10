@@ -199,8 +199,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   newest installed version it accepts (`<root>/toolchains/<v>/` with a `bin/velt`). When none
   is installed: with `$VELT_TOOLCHAIN_AUTO_INSTALL` `0`/`false`/`no`/`off`, exit 1 naming
   `velt toolchain install <requirement or version>`; else an exact version, or the newest
-  version of `$VELT_INSTALL_BASE_URL/releases/latest/download/releases.json` the requirement
-  accepts (none → exit 1 listing the published versions), is installed
+  release of the signed index `$VELT_INSTALL_BASE_URL/releases/download/index/releases.json`
+  (`velt_toolchain::release`: format 1, checked against `releases.json.sig` with the release
+  key) that the requirement accepts and that is not yanked (an exact requirement may name a
+  yanked one; none → exit 1 listing the published versions that are not yanked), is installed
   (`velt_toolchain::release::install_toolchain`: `SHA256SUMS` then
   `velt-<v>-<host>.tar.gz` of `releases/download/v<v>/`, checked, unpacked under
   `velt-<v>-<host>/`, swapped into place) after `velt: installing velt <v> (<reason>) from <base>`
@@ -212,7 +214,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   saying it is the launcher's. `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
-  newest first, `  (installed)` after installed ones. `install <spec>`: a full version is exact,
+  newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones. `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
   `--force`. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and

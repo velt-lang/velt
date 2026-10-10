@@ -206,21 +206,28 @@ fn not_installed(wanted: &Wanted, reason: &Reason) -> String {
     )
 }
 
-/// The newest published version `req` accepts.
+/// The newest published version `req` accepts (not a yanked one, unless `req` names exactly it).
 pub fn newest_published(ctx: &Context, req: &Requirement) -> Result<Version, String> {
     let published = release::fetch_index(&ctx.base)
         .map_err(|e| format!("the list of published versions is unavailable: {e}"))?;
-    req.best(&published).cloned().ok_or_else(|| {
-        let shown: Vec<String> = published.iter().map(Version::to_string).collect();
-        format!(
+    if let Some(release) = release::newest_match(&published, req) {
+        return Ok(release.version.clone());
+    }
+    {
+        let shown: Vec<String> = published
+            .iter()
+            .filter(|r| r.yanked.is_none())
+            .map(|r| r.version.to_string())
+            .collect();
+        Err(format!(
             "no published velt matches `{req}`; the published versions are {}",
             if shown.is_empty() {
                 "none".to_string()
             } else {
                 shown.join(", ")
             }
-        )
-    })
+        ))
+    }
 }
 
 /// Install release `version`; another launcher finishing the same install first is fine.

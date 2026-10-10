@@ -54,6 +54,7 @@ struct Releases {
     server: Option<Server>,
     /// The public key, hex (`$VELT_INSTALL_PUBLIC_KEY`).
     key: String,
+    signer: ring::signature::Ed25519KeyPair,
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -88,18 +89,6 @@ impl Releases {
                 sums.into_bytes(),
             );
         }
-        let index = format!(
-            "{{\"versions\": [{}]}}",
-            versions
-                .iter()
-                .map(|v| format!("\"{v}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        map.insert(
-            "/releases/latest/download/releases.json".into(),
-            index.into_bytes(),
-        );
         drop(map);
         let (f, r) = (files.clone(), requests.clone());
         let handler = Arc::new(move |req: velt_http::Request| {
@@ -111,12 +100,35 @@ impl Releases {
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let server = Server::start(listener, handler, 1 << 20).unwrap();
-        Releases {
+        let releases = Releases {
             server: Some(server),
             key,
+            signer,
             files,
             requests,
-        }
+        };
+        let listed: Vec<(&str, Option<&str>)> = versions.iter().map(|v| (*v, None)).collect();
+        releases.index(&listed);
+        releases
+    }
+
+    /// Publish the signed index of releases: (version, why it was yanked).
+    fn index(&self, releases: &[(&str, Option<&str>)]) {
+        let entries: Vec<String> = releases
+            .iter()
+            .map(|(v, yanked)| match yanked {
+                Some(why) => format!("{{\"version\": \"{v}\", \"yanked\": \"{why}\"}}"),
+                None => format!("{{\"version\": \"{v}\"}}"),
+            })
+            .collect();
+        let index = format!("{{\"format\": 1, \"releases\": [{}]}}", entries.join(", "));
+        let path = "/releases/download/index/releases.json";
+        let mut files = self.files.lock().unwrap();
+        files.insert(
+            format!("{path}.sig"),
+            self.signer.sign(index.as_bytes()).as_ref().to_vec(),
+        );
+        files.insert(path.into(), index.into_bytes());
     }
 
     fn url(&self) -> String {
@@ -469,4 +481,33 @@ fn the_launcher_must_be_in_a_bin_directory() {
         stderr.contains("must be installed as <root>/bin/velt"),
         "{stderr}"
     );
+}
+
+#[test]
+fn yanked_releases_are_skipped_unless_named() {
+    let releases = Releases::new(&["0.1.0", "0.1.1"]);
+    releases.index(&[("0.1.0", None), ("0.1.1", Some("miscompiles closures"))]);
+    let m = Machine::new(&releases);
+    let pkg = m.package("app", Some("0.1"));
+    let stdout = m.ok(&pkg, &["build"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.0")), "{stdout}");
+    let available = m.ok(&m.work, &["toolchain", "list", "--available"]);
+    assert_eq!(
+        available,
+        "0.1.1  (yanked: miscompiles closures)\n0.1.0  (installed)\n"
+    );
+    // Named exactly, it is still installed: the user chose it.
+    let out = m.ok(&m.work, &["toolchain", "install", "=0.1.1"]);
+    assert!(out.contains("installed velt 0.1.1"), "{out}");
+    // A forged index is refused.
+    releases.files.lock().unwrap().insert(
+        "/releases/download/index/releases.json".into(),
+        br#"{"format": 1, "releases": [{"version": "0.1.1"}]}"#.to_vec(),
+    );
+    let fresh = m.package("fresh", Some("=0.1.0"));
+    std::fs::remove_dir_all(m.toolchain("0.1.0")).unwrap();
+    // An exact pin doesn't need the index; a range does.
+    m.ok(&fresh, &["build"]);
+    let err = m.fail(&m.work, &["toolchain", "install", "0.1"], &[]);
+    assert!(err.contains("does not match the release key"), "{err}");
 }

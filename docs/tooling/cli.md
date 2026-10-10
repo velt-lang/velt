@@ -239,8 +239,11 @@ small launcher, `<root>/bin/velt`, that runs one of them with the same arguments
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
 
-A version the package pins that isn't installed is downloaded from the release on first use,
-checked against the release's `SHA256SUMS` and installed, with a message on stderr. Set
+A version the package pins that isn't installed is downloaded from the release on first use and
+installed, with a message on stderr. The release's `SHA256SUMS` and the list of releases are
+signed with the velt release key, which is built into velt, so a mirror or a replaced file can't
+substitute a toolchain. A requirement such as `"0.1"` picks the newest release it accepts that
+hasn't been yanked (withdrawn for a serious bug). Set
 `VELT_TOOLCHAIN_AUTO_INSTALL=0` to turn that off: the command then fails and names the
 `velt toolchain install` command to run.
 
@@ -255,7 +258,7 @@ $ velt toolchain list
 
 | Command | What it does |
 |---|---|
-| `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions |
+| `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
 | `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
 | `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force` |
 | `default [<toolchain>]` | show or set the default |
