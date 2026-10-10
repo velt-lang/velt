@@ -61,10 +61,9 @@ pub const PACKAGE: &[Field] = &[
         kind: Kind::Str,
         ty: "string",
         required: false,
-        doc: "The velt versions that build the package, such as `\"0.1\"`: any `0.1.x` \
-              (`\"0.1.3\"`: at least `0.1.3`; `\"=0.1.3\"`: exactly). velt warns when its own \
-              version is not one of them; selecting the toolchain by this field comes with the \
-              velt launcher (#948).",
+        doc: "The velt versions that build the package, such as `\"0.1\"`: the newest \
+              installed `0.1.x` (`\"0.1.3\"`: at least `0.1.3`; `\"=0.1.3\"`: exactly). The \
+              velt launcher runs that toolchain, installing it when it is missing.",
     },
     Field {
         key: "description",

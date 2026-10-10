@@ -49,9 +49,11 @@ fn archive(version: &str) -> Vec<u8> {
     tar.into_inner().unwrap().finish().unwrap()
 }
 
-/// Releases served over loopback HTTP, laid out like GitHub's.
+/// Releases served over loopback HTTP, laid out like GitHub's, signed with a key of their own.
 struct Releases {
     server: Option<Server>,
+    /// The public key, hex (`$VELT_INSTALL_PUBLIC_KEY`).
+    key: String,
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -60,12 +62,27 @@ impl Releases {
     fn new(versions: &[&str]) -> Releases {
         let files: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::default();
         let requests: Arc<Mutex<Vec<String>>> = Arc::default();
+        use ring::signature::KeyPair;
+        let pkcs8 =
+            ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
+                .unwrap();
+        let signer = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let key: String = signer
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         let mut map = files.lock().unwrap();
         for v in versions {
             let name = format!("velt-{v}-{}.tar.gz", host());
             let bytes = archive(v);
             let sums = format!("{}  {name}\n", velt_toolchain::install::sha256_hex(&bytes));
             map.insert(format!("/releases/download/v{v}/{name}"), bytes);
+            map.insert(
+                format!("/releases/download/v{v}/SHA256SUMS.sig"),
+                signer.sign(sums.as_bytes()).as_ref().to_vec(),
+            );
             map.insert(
                 format!("/releases/download/v{v}/SHA256SUMS"),
                 sums.into_bytes(),
@@ -96,6 +113,7 @@ impl Releases {
         let server = Server::start(listener, handler, 1 << 20).unwrap();
         Releases {
             server: Some(server),
+            key,
             files,
             requests,
         }
@@ -129,6 +147,7 @@ struct Machine {
     root: PathBuf,
     work: PathBuf,
     base: String,
+    key: String,
 }
 
 impl Machine {
@@ -147,6 +166,7 @@ impl Machine {
             root,
             work,
             base: releases.url(),
+            key: releases.key.clone(),
             _tmp: tmp,
         }
     }
@@ -172,6 +192,7 @@ impl Machine {
         c.args(args)
             .current_dir(dir)
             .env("VELT_INSTALL_BASE_URL", &self.base)
+            .env("VELT_INSTALL_PUBLIC_KEY", &self.key)
             .env_remove("VELT_TOOLCHAIN")
             .env_remove("VELT_TOOLCHAIN_AUTO_INSTALL");
         c
@@ -339,6 +360,16 @@ fn a_tampered_archive_is_refused_and_nothing_is_installed() {
     assert!(!m.toolchain("0.1.0").exists());
     let err = m.fail(&m.work, &["toolchain", "install", "0.3.0"], &[]);
     assert!(err.contains("velt 0.3.0 has no SHA256SUMS"), "{err}");
+    // Signed with another key (a mirror's): refused before any archive is downloaded.
+    let other = Releases::new(&["0.1.0"]);
+    let err = m.fail(
+        &m.work,
+        &["toolchain", "install", "0.1.0"],
+        &[("VELT_INSTALL_BASE_URL", &other.url())],
+    );
+    assert!(err.contains("does not match the release key"), "{err}");
+    assert_eq!(other.downloads(), 0);
+    assert!(!m.toolchain("0.1.0").exists());
 }
 
 #[test]

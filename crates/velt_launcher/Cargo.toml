@@ -23,3 +23,5 @@ velt_http = { path = "../velt_http" }
 flate2 = "1.1.10"
 tar = "0.4"
 tempfile = "3.27.0"
+# Signing the fake releases.
+ring = "0.17.14"
