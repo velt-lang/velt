@@ -31,7 +31,8 @@ jobs:
         run: |
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq '.[] | {tag: .tag_name, draft, assets: [.assets[].name]}' > releases.ndjson
-          scripts/release-index.sh releases.ndjson .github/release-yanks.json > releases.json
+          scripts/release-index.sh releases.ndjson .github/release-yanks.json \
+            .github/release-revoked-keys.json > releases.json
           cat releases.json
       - name: sign it
         env:

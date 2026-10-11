@@ -108,6 +108,18 @@ impl Root {
         bin.parent().map(Root::new)
     }
 
+    /// The root of the installed toolchain whose `bin/velt` is `exe`
+    /// (`<root>/toolchains/<version>/bin/velt`); `None` for one elsewhere (a checkout, a link).
+    pub fn of_toolchain_exe(exe: &Path) -> Option<Root> {
+        let version_dir = exe.parent()?.parent()?;
+        let toolchains = version_dir.parent()?;
+        if toolchains.file_name()? != TOOLCHAINS_DIR {
+            return None;
+        }
+        Version::parse(&version_dir.file_name()?.to_string_lossy()).ok()?;
+        toolchains.parent().map(Root::new)
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -404,6 +416,19 @@ mod tests {
             Path::new("/h/.velt/toolchains/0.1.0")
         );
         assert_eq!(Root::of_launcher(Path::new("/h/.velt/velt")), None);
+        let installed = Path::new("/h/.velt/toolchains/0.2.1/bin/velt");
+        assert_eq!(
+            Root::of_toolchain_exe(installed).unwrap().dir(),
+            Path::new("/h/.velt")
+        );
+        assert_eq!(
+            Root::of_toolchain_exe(Path::new("/src/velt/target/debug/velt")),
+            None
+        );
+        assert_eq!(
+            Root::of_toolchain_exe(Path::new("/h/.velt/toolchains/dev/bin/velt")),
+            None
+        );
     }
 
     #[test]
