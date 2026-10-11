@@ -1,0 +1,9 @@
+// A destructured parameter binds no more elements than its tuple type has: TypeScript reports
+// TS2493 ("Tuple type '[string, number]' of length '2' has no element at index '2'").
+function f([a, b, c]: [string, number]): string {
+  return a + b + c;
+}
+
+function main() {
+  console.log(f(["x", 1]));
+}

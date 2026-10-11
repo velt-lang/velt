@@ -17,10 +17,16 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_type(object, v);
             walk_type(key, v);
         }
+        T::GenericFunction { type_params, ty } => {
+            walk_generics(type_params, v);
+            walk_type(ty, v);
+        }
+        T::Construct(ty) => walk_type(ty, v),
         T::Function {
             params,
             ret,
             throws,
+            ..
         } => {
             params.iter().for_each(|p| walk_type(p, v));
             walk_type(ret, v);

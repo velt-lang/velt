@@ -119,7 +119,10 @@ impl<'a> Walker<'a> {
                     p.ty.as_ref()
                         .and_then(crate::index::type_name)
                         .map(String::from);
-                w.bind(&p.name, detail, ty);
+                match &p.pattern {
+                    Some(q) => w.bind_pattern(q, "param"),
+                    None => w.bind(&p.name, detail, ty),
+                }
             }
             ret_throws.into_iter().for_each(|t| w.opt_ty(t));
             match body {

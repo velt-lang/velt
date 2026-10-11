@@ -170,6 +170,16 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(e.span);
         }
+        if let Some(p) = params.iter().find(|p| p.rest) {
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    "rest parameters of arrow functions are not supported yet",
+                    p.name.span,
+                )
+                .with_note("declare a `function` with the rest parameter (`function f(...xs: T[])`), or take an array (`(xs: T[]) => …`)"),
+            );
+            return self.error_expr(e.span);
+        }
         // Against a union of function types, the arrow is typed by one member; the caller
         // converts the closure to the union.
         let members = self.arrow_members(exp, *is_async, params.len());
@@ -277,6 +287,12 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
+        self.destructure_params(
+            params
+                .iter()
+                .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
+            &mut locals,
+        );
         let mut block = match body {
             ast::ArrowBody::Expr(x) if void_task => self.void_task_body(x),
             ast::ArrowBody::Expr(x) if await_body => self.awaited_body(x),

@@ -1,0 +1,2 @@
+param_pattern_past_tuple.vlt:3:12
+error: pattern does not match the tuple type `[string, f64]`
