@@ -26,6 +26,14 @@ pub const RELEASE_PUBLIC_KEYS: &[&str] = &[
     "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb",
     "84bb2873cee95e478045ff2195d7f8edb84fde21eebd7b96e00482b5207264be",
 ];
+/// A signature by the backup key (`RELEASE_PUBLIC_KEYS[1]`) over [`BACKUP_KEY_PROOF_MESSAGE`],
+/// made with its offline private half when the key was added: a test checks it, so a typo in
+/// the public key, or a lost private half, shows now rather than when the backup is needed.
+/// A new backup key comes with a new proof (CONTRIBUTING.md "Replacing the signing key").
+pub const BACKUP_KEY_PROOF: &str = "a6ac0647dfa8622be9b6d2a5bd84dda612d7345401492217aabc60b860078dd8\
+                                    18dd0929af7bb9428adeb3c6d0d61848d935cb1a8c5a07b51e649be7916aa109";
+/// What [`BACKUP_KEY_PROOF`] signs: the text, then the backup key in hex.
+pub const BACKUP_KEY_PROOF_MESSAGE: &str = "velt backup release key ";
 /// Overrides [`RELEASE_PUBLIC_KEYS`].
 pub const ENV_PUBLIC_KEY: &str = "VELT_INSTALL_PUBLIC_KEY";
 /// A signed file's signature is beside it, named `<file>.sig` (`SHA256SUMS.sig`,
@@ -190,5 +198,18 @@ pub(crate) mod tests {
         assert_eq!(decode_hex("0"), None);
         assert_eq!(decode_hex("zz"), None);
         assert_eq!(decode_hex("é0"), None);
+    }
+
+    #[test]
+    fn the_backup_key_has_signed_its_proof() {
+        let keys = parse_keys(&RELEASE_PUBLIC_KEYS.join(","), "built in").unwrap();
+        let message = format!("{BACKUP_KEY_PROOF_MESSAGE}{}", RELEASE_PUBLIC_KEYS[1]);
+        let proof = BACKUP_KEY_PROOF.as_bytes();
+        verify(message.as_bytes(), proof, &keys[1..]).unwrap();
+        assert!(
+            verify(message.as_bytes(), proof, &keys[..1]).is_err(),
+            "the proof is the backup key's, not the signing key's"
+        );
+        assert!(verify(b"another message", proof, &keys).is_err());
     }
 }

@@ -271,7 +271,9 @@ them, no release can be signed in a way installed launchers trust.
    new backup key as the second, and drop the old signing key. Update the two lines of
    `release_keys` in `scripts/get-velt.sh` (the base64 that `scripts/release-sign.sh
    --public-key` prints; a test checks they match), and the backup's proof signature
-   (`BACKUP_KEY_PROOF` in `velt_toolchain::signature`), made with the new backup key.
+   (`BACKUP_KEY_PROOF` in `velt_toolchain::signature`), made with the new backup key:
+   `printf 'velt backup release key <new backup hex>' | openssl pkeyutl -sign -rawin -inkey
+   <new backup>.pem -in /dev/stdin | xxd -p -c 128`.
 3. **Re-sign the earlier releases.** The new launcher no longer trusts the old signing key, so
    it would refuse every earlier `SHA256SUMS.sig` (and `velt toolchain install 0.2.x`, and
    packages pinned to them). For each earlier release, check its `SHA256SUMS` against a record
