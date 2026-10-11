@@ -307,10 +307,18 @@ fn spawn_accept_loops<S: OwnedStore>(
         .abort_handle()]);
     };
     let std_listener = l.into_std()?;
+    // Every registration first, so a failure starts no loop (none would be left running).
+    let dups = workers
+        .iter()
+        .map(|_| {
+            let dup: std::net::TcpListener =
+                socket2::SockRef::from(&std_listener).try_clone()?.into();
+            dup.set_nonblocking(true)?;
+            Ok(dup)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
     let mut loops = Vec::with_capacity(workers.len());
-    for h in workers {
-        let dup: std::net::TcpListener = socket2::SockRef::from(&std_listener).try_clone()?.into();
-        dup.set_nonblocking(true)?;
+    for (h, dup) in workers.into_iter().zip(dups) {
         let (shared, tls) = (shared.clone(), tls.clone());
         loops.push(
             h.spawn(async move {
