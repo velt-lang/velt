@@ -232,7 +232,7 @@ fn arithmetic(op: BinaryOp) -> bool {
 /// (`i64`) must stay an integer.
 pub(super) fn operand_positions(op: BinaryOp, lhs: &ast::Expr, rhs: &ast::Expr, t: &mut Typed) {
     use BinaryOp as B;
-    let compares = matches!(op, B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq);
+    let compares = matches!(op.loose(), B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq);
     if !arithmetic(op) && !compares {
         return;
     }

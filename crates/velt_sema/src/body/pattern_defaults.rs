@@ -1,8 +1,11 @@
 //! Defaults in destructuring declarations (`const { a = 1, b } = opts;`, `const [x = 0] = xs;`).
 //! A declaration whose pattern has a default anywhere is rewritten into plain declarations
 //! through hidden temporaries, each checked before the next is built, so field and element types
-//! are known: a field's default applies when it is `null` (`opts.a ?? 1`), an array element's
-//! when the array is too short (`#t.length > 0 ? #t[0] : 0`), where JS reads `undefined`.
+//! are known. As in JavaScript, a default applies where the value is `undefined`: a field's
+//! when it is `undefined` or, for an optional field, absent (`opts.a ?? 1`; a declared
+//! `T | null` field keeps its `null`), an array element's when the array is too short
+//! (`#t.length > 0 ? #t[0] : 0`) or the element is `undefined`
+//! (`(#t.length > 0 ? #t[0] : undefined) ?? 0`), and a tuple element's when it is `undefined`.
 //! A non-array iterable is first collected into a second temporary holding the values the
 //! pattern needs (`consume.rs`).
 
@@ -55,9 +58,23 @@ impl FnCx<'_, '_> {
                     return self.tuple_decl(kind, pattern, tmp, out);
                 }
                 let tmp = self.collected_temp(tmp, rest.is_none().then_some(elems.len()), out);
+                let undefined_elems = self.temp_ty(&tmp).is_some_and(|t| {
+                    let elem = match self.cx.ty.kind(t) {
+                        hir::TyKind::Array(e) => *e,
+                        _ => return false,
+                    };
+                    self.has_undefined(elem)
+                });
                 for (k, sub) in elems.iter().enumerate() {
                     let elem = index(&tmp, k);
                     let value = match &sub.kind {
+                        // An element that may be `undefined` takes the default then too.
+                        P::Default { pattern, value } if undefined_elems => {
+                            let cond = longer_than(&tmp, k);
+                            let undefined = mk(E::Lit(ast::Lit::Undefined), elem.span);
+                            let read = cond_expr(cond, elem, undefined);
+                            (pattern.as_ref(), nullish(read, (**value).clone()))
+                        }
                         P::Default { pattern, value } => {
                             let cond = longer_than(&tmp, k);
                             (pattern.as_ref(), cond_expr(cond, elem, (**value).clone()))
@@ -141,15 +158,62 @@ impl FnCx<'_, '_> {
             return None;
         };
         let ty = self.temp_ty(tmp)?;
-        let nullable = self
-            .field_of(ty, &key.name)
-            .is_some_and(|(_, t)| self.cx.ty.opt_payload(t).is_some());
-        Some((pattern, nullable.then(|| (**value).clone())))
+        // An optional field's `null` is its absence (JavaScript's `undefined`) in this phase.
+        let optional = |cx: &crate::ctx::Ctx, i: u32| match cx.ty.kind(ty) {
+            hir::TyKind::Adt(d, _) => cx
+                .adt(*d)
+                .and_then(|a| a.fields.get(i as usize))
+                .is_some_and(|f| f.optional),
+            _ => false,
+        };
+        let applies = self.field_of(ty, &key.name).is_some_and(|(i, t)| {
+            match self.cx.ty.nothing_of(t) {
+                Some(n) => n.has_undefined() || optional(self.cx, i),
+                None => false,
+            }
+        });
+        Some((pattern, applies.then(|| (**value).clone())))
     }
 
-    /// `kind [a, b = d] = tmp;` on a tuple: an ordinary destructuring without the defaults.
+    /// Can a value of type `t` be `undefined`?
+    fn has_undefined(&self, t: hir::TyId) -> bool {
+        self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+    }
+
+    /// `kind [a, b = d] = tmp;` on a tuple: an ordinary destructuring without the defaults,
+    /// except for elements that may be `undefined` (`b = tmp[1] ?? d`).
     fn tuple_decl(&mut self, kind: VarKind, p: &Pattern, tmp: Expr, out: &mut Vec<hir::Stmt>) {
         let span = p.span;
+        let elem_tys = match self.temp_ty(&tmp).map(|t| self.cx.ty.kind(t).clone()) {
+            Some(hir::TyKind::Tuple(ts)) => ts,
+            _ => vec![],
+        };
+        if let P::Array { elems, rest } = &p.kind {
+            let applies = elems.iter().enumerate().any(|(k, e)| {
+                matches!(e.kind, P::Default { .. })
+                    && elem_tys.get(k).is_some_and(|t| self.has_undefined(*t))
+            });
+            if applies {
+                if let Some(r) = rest {
+                    self.cx.err(
+                        "`...rest` next to a default of an element that may be `undefined` is not supported yet",
+                        r.span,
+                    );
+                }
+                for (k, sub) in elems.iter().enumerate().take(elem_tys.len()) {
+                    let elem = index(&tmp, k);
+                    let (sub, value) = match &sub.kind {
+                        P::Default { pattern, value } if self.has_undefined(elem_tys[k]) => {
+                            (pattern.as_ref(), nullish(elem, (**value).clone()))
+                        }
+                        P::Default { pattern, .. } => (pattern.as_ref(), elem),
+                        _ => (sub, elem),
+                    };
+                    self.decl_with_defaults(kind, sub, value, out);
+                }
+                return;
+            }
+        }
         let v = VarDecl {
             kind,
             pattern: without_defaults(p),

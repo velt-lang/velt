@@ -31,12 +31,9 @@ impl FnCx<'_, '_> {
             _ => self.literal_const(test),
         });
         // `case null` / `case undefined`: the nothing of a `T | null` / `T | undefined`.
-        let null = matches!(
-            strip_parens(test).kind,
-            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
-        );
+        let null = crate::body::narrow::nothing_word(test);
         match (&s.kind, lit) {
-            (_, _) if null => self.null_sel(s, test.span),
+            (_, _) if null.is_some() => self.null_sel(s, null.unwrap_or("null"), test.span),
             (ScrutKind::Discriminant(vals), Some(l)) => {
                 let vals = vals.clone();
                 let what = s.what.clone();
@@ -149,13 +146,24 @@ impl FnCx<'_, '_> {
         })
     }
 
-    fn null_sel(&mut self, s: &Scrut, span: Span) -> Sel {
-        if self.cx.ty.opt_payload(s.expr.ty).is_none() {
+    fn null_sel(&mut self, s: &Scrut, word: &str, span: Span) -> Sel {
+        // `case` compares with `===`: `case null` never matches a `T | undefined` value.
+        let lacks = self.cx.ty.nothing_of(s.expr.ty).is_some_and(|n| match word {
+            "undefined" => !n.has_undefined(),
+            _ => !n.has_null(),
+        });
+        if self.cx.ty.opt_payload(s.expr.ty).is_none() || lacks {
             let tn = self.cx.display(s.expr.ty);
-            self.cx.err(
-                format!("`case null` on a value of type `{tn}`, which is never null"),
+            let mut d = Diagnostic::error(
+                format!("`case {word}` on a value of type `{tn}`, which is never {word}"),
                 span,
             );
+            if lacks {
+                d = d.with_note(format!(
+                    "`case` compares with `===`, and `null === undefined` is `false`; to match either, test `x == {word}` before the `switch`"
+                ));
+            }
+            self.cx.error(d);
             return self.never_sel(s, span);
         }
         match self.slot_sel(s, span, &|_, slot| slot.member.is_none()) {

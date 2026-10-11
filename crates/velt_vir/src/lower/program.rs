@@ -55,7 +55,32 @@ impl<'h> Cx<'h> {
             dyn_modes_memo: HashMap::new(),
             json_key_memo: None,
             anon: Default::default(),
+            cur_def: None,
+            nothing_clashes: vec![],
         }
+    }
+
+    /// Errors for `nothing_clashes`, one per function.
+    pub(super) fn nothing_clash_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut seen = HashSet::new();
+        let mut out = vec![];
+        for d in &self.nothing_clashes {
+            if !seen.insert(*d) {
+                continue;
+            }
+            let (name, span) = match d.map(|d| self.hir.def(d)) {
+                Some(hir::Def::Fn(f)) => (f.name.rsplit("::").next().unwrap_or(&f.name), f.span),
+                _ => ("the program", velt_common::Span::DUMMY),
+            };
+            out.push(
+                velt_common::Diagnostic::error(
+                    format!("an instance of `{name}` would hold both `null` and `undefined` in one value, which is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("a type argument with one nothing (`T | undefined`) meets an option with the other (`T | null`) in this code"),
+            );
+        }
+        out
     }
 
     /// Queue the user entry and `velt_main`. Everything else (callees, generic instances, glue,
@@ -104,7 +129,10 @@ impl<'h> Cx<'h> {
         if self.funcs[fid.0 as usize].is_some() || !self.building.insert(fid) {
             return;
         }
+        let outer = self.cur_def;
+        self.cur_def = work_def(work).or(outer);
         let func = super::FnLower::build(self, work);
+        self.cur_def = outer;
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
     }
@@ -183,5 +211,27 @@ impl<'h> Cx<'h> {
         });
         self.str_objects.insert(s.to_string(), id);
         id
+    }
+}
+
+/// The function `work` builds an instance (or a part) of.
+fn work_def(work: &Work) -> Option<DefId> {
+    match work {
+        Work::Fn(d, _)
+        | Work::Thunk(_, d, _)
+        | Work::EnvDrop(d, _)
+        | Work::EnvDropFrame(d, _)
+        | Work::EnvClone(d, _)
+        | Work::EnvTransfer(d, _)
+        | Work::Tracked(d, _, _)
+        | Work::Poll(d, _)
+        | Work::AsyncDrop(d, _)
+        | Work::AsyncCloseStart(d, _)
+        | Work::ValuePoll(d, _)
+        | Work::ValueDrop(d, _)
+        | Work::HandlerInit(d, _)
+        | Work::GenNew(d, _)
+        | Work::GenFree(d, _) => Some(*d),
+        _ => None,
     }
 }

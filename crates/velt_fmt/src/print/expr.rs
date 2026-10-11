@@ -255,6 +255,8 @@ pub(super) fn binary_op(op: BinaryOp) -> &'static str {
         Pow => "**",
         Eq => "==",
         NotEq => "!=",
+        StrictEq => "===",
+        StrictNotEq => "!==",
         Lt => "<",
         LtEq => "<=",
         Gt => ">",

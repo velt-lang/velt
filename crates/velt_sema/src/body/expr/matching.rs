@@ -37,11 +37,14 @@ impl FnCx<'_, '_> {
     }
 
     /// `x == null` / `x != null` as a value.
-    /// `other == null` / `other == undefined` (`word`), `==` or `===`.
+    /// `other == null` / `other == undefined` (`word`), `==` or `===` (`strict`). `==` tests
+    /// for either nothing; `===` with the nothing the type lacks (`x === null` on a
+    /// `T | undefined`) is constant (`false`, `!==` `true`), as in JavaScript.
     pub(crate) fn null_compare(
         &mut self,
         other: &ast::Expr,
         word: &str,
+        strict: bool,
         is_eq: bool,
         span: Span,
     ) -> hir::Expr {
@@ -60,7 +63,30 @@ impl FnCx<'_, '_> {
                 .with_note(format!("only `T | {word}` values can be {word}")),
             );
         }
+        let lacks = |n: Nothing| match word {
+            "undefined" => !n.has_undefined(),
+            _ => !n.has_null(),
+        };
+        if strict && self.cx.ty.nothing_of(s.ty).is_some_and(lacks) {
+            // Still evaluated; neither arm depends on which state it is in.
+            return self.constant_test(s, !is_eq, span);
+        }
         self.null_test(s, is_eq, span)
+    }
+
+    /// `s`, evaluated, then `value`.
+    fn constant_test(&mut self, s: hir::Expr, value: bool, span: Span) -> hir::Expr {
+        let sty = s.ty;
+        let arms = vec![hir::Arm {
+            pat: self.pat(P::Wildcard, sty, span),
+            guard: None,
+            body: self.bool_lit(value, span),
+        }];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, self.cx.ty.bool_, span)
     }
 
     /// `s == null` / `s != null` of a checked `T | null` value.

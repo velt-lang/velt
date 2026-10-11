@@ -538,8 +538,15 @@ pub enum BinaryOp {
     Div,
     Rem,
     Pow,
-    Eq,    // == (same as === in Velt; no coercion)
-    NotEq, // != / !==
+    /// `==`: as `===` in typed code (no coercion), except that `== null` and `== undefined`
+    /// match both nothings.
+    Eq,
+    /// `!=`
+    NotEq,
+    /// `===`
+    StrictEq,
+    /// `!==`
+    StrictNotEq,
     Lt,
     LtEq,
     Gt,
@@ -557,6 +564,23 @@ pub enum BinaryOp {
     /// builds one, only here). `KEY in o` / `Symbol.iterator in o`: the left operand is an
     /// `Ident` or a `Member` of `Symbol` (a symbol key).
     In,
+}
+
+impl BinaryOp {
+    /// `===` / `!==` as `==` / `!=` (the same operation unless one side is `null` or
+    /// `undefined`); every other operator unchanged.
+    pub fn loose(self) -> BinaryOp {
+        match self {
+            BinaryOp::StrictEq => BinaryOp::Eq,
+            BinaryOp::StrictNotEq => BinaryOp::NotEq,
+            op => op,
+        }
+    }
+
+    /// `===` / `!==`.
+    pub fn is_strict(self) -> bool {
+        matches!(self, BinaryOp::StrictEq | BinaryOp::StrictNotEq)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

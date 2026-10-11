@@ -71,12 +71,12 @@ impl FnCx<'_, '_> {
                 (t, f)
             }
             ast::ExprKind::Binary {
-                op: op @ (B::Eq | B::NotEq),
+                op: op @ (B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq),
                 lhs,
                 rhs,
             } => {
-                let (t, f) = self.eq_facts(lhs, rhs);
-                if *op == B::Eq {
+                let (t, f) = self.eq_facts(lhs, rhs, op.is_strict());
+                if op.loose() == B::Eq {
                     (t, f)
                 } else {
                     (f, t)
@@ -263,9 +263,21 @@ impl FnCx<'_, '_> {
     }
 
     /// Facts of `lhs == rhs` (true / false).
-    fn eq_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+    fn eq_facts(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        strict: bool,
+    ) -> (Vec<Fact>, Vec<Fact>) {
         if is_null(lhs) || is_null(rhs) {
-            let other = if is_null(rhs) { lhs } else { rhs };
+            let (other, word) = match nothing_word(rhs) {
+                Some(w) => (lhs, w),
+                None => (rhs, nothing_word(lhs).unwrap_or("null")),
+            };
+            // `x === null` on a `T | undefined` is constant: it narrows nothing.
+            if strict && self.lacks_nothing(other, word) {
+                return (vec![], vec![]);
+            }
             return match self.nullable_local(other) {
                 Some(l) => (vec![], vec![Fact::NonNull(l)]),
                 None => match self.field_token(other) {
@@ -498,6 +510,20 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` / `this` naming an `Option`-typed local of the current function.
+    /// Is `e` (a variable or a path of fields) of an option type without nothing `word`
+    /// (`"null"` / `"undefined"`)?
+    fn lacks_nothing(&mut self, e: &ast::Expr, word: &str) -> bool {
+        let ty = match self.named_local(e) {
+            Some(l) => Some(self.local_ty(l)),
+            None => self.peek_ty(e),
+        };
+        ty.and_then(|t| self.cx.ty.nothing_of(t))
+            .is_some_and(|n| match word {
+                "undefined" => !n.has_undefined(),
+                _ => !n.has_null(),
+            })
+    }
+
     fn nullable_local(&mut self, e: &ast::Expr) -> Option<LocalId> {
         let l = self.named_local(e)?;
         self.cx.ty.opt_payload(self.local_ty(l)).map(|_| l)

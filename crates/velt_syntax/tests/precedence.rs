@@ -30,8 +30,8 @@ fn arithmetic_precedence() {
 fn comparison_logic_bitwise_precedence() {
     check("a < b == c > d", "(== (< a b) (> c d))");
     check("a <= b != c >= d", "(!= (<= a b) (>= c d))");
-    check("a === b", "(== a b)");
-    check("a !== b", "(!= a b)");
+    check("a === b", "(=== a b)");
+    check("a !== b", "(!== a b)");
     check("a & b | c ^ d", "(| (& a b) (^ c d))");
     check("a == b & c", "(& (== a b) c)");
     check("a || b && c", "(|| a (&& b c))");

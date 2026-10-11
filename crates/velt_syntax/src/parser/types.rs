@@ -82,7 +82,9 @@ impl<'a> Parser<'a> {
         );
         let more = |p: &mut Self| {
             p.at(Tok::Pipe)
-                && (p.nth(1) == Tok::Kw(Kw::Null) || strings && matches!(p.nth(1), Tok::Str(_)))
+                && (p.nth(1) == Tok::Kw(Kw::Null)
+                    || p.nth_word(1, "undefined")
+                    || strings && matches!(p.nth(1), Tok::Str(_)))
         };
         if more(self) {
             let mut members = vec![ty];

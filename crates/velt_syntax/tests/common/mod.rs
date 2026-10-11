@@ -163,6 +163,8 @@ pub fn binop(op: BinaryOp) -> &'static str {
         Pow => "**",
         Eq => "==",
         NotEq => "!=",
+        StrictEq => "===",
+        StrictNotEq => "!==",
         Lt => "<",
         LtEq => "<=",
         Gt => ">",

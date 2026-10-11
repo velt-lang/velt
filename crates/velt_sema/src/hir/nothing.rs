@@ -21,6 +21,11 @@ impl Nothing {
         }
     }
 
+    /// Does `other` allow every nothing `self` does?
+    pub fn within(self, other: Nothing) -> bool {
+        self == other || other == Nothing::Both
+    }
+
     pub fn has_null(self) -> bool {
         self != Nothing::Undefined
     }

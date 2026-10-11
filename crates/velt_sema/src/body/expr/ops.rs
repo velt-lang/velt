@@ -32,7 +32,17 @@ pub(crate) fn is_comparison(op: ast::BinaryOp) -> bool {
     use ast::BinaryOp as B;
     matches!(
         op,
-        B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq | B::And | B::Or | B::Nullish
+        B::Eq
+            | B::NotEq
+            | B::StrictEq
+            | B::StrictNotEq
+            | B::Lt
+            | B::LtEq
+            | B::Gt
+            | B::GtEq
+            | B::And
+            | B::Or
+            | B::Nullish
     )
 }
 
@@ -47,6 +57,8 @@ pub(crate) fn op_str(op: ast::BinaryOp) -> &'static str {
         B::Pow => "**",
         B::Eq => "==",
         B::NotEq => "!=",
+        B::StrictEq => "===",
+        B::StrictNotEq => "!==",
         B::Lt => "<",
         B::LtEq => "<=",
         B::Gt => ">",
@@ -73,8 +85,8 @@ pub(crate) fn hir_binop(op: ast::BinaryOp) -> Option<BinOp> {
         B::Div => BinOp::Div,
         B::Rem => BinOp::Rem,
         B::Pow => BinOp::Pow,
-        B::Eq => BinOp::Eq,
-        B::NotEq => BinOp::NotEq,
+        B::Eq | B::StrictEq => BinOp::Eq,
+        B::NotEq | B::StrictNotEq => BinOp::NotEq,
         B::Lt => BinOp::Lt,
         B::LtEq => BinOp::LtEq,
         B::Gt => BinOp::Gt,
@@ -230,6 +242,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
+        // `===` is `==` except against `null` / `undefined` (`null_compare`).
+        let strict = op.is_strict();
+        let op = op.loose();
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
             B::In => {
@@ -246,7 +261,7 @@ impl FnCx<'_, '_> {
                     Some(w) => (lhs, w),
                     None => (rhs, nothing_word(lhs).unwrap_or("null")),
                 };
-                return self.null_compare(other, word, op == B::Eq, span);
+                return self.null_compare(other, word, strict, op == B::Eq, span);
             }
             B::Eq | B::NotEq => {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
@@ -516,7 +531,7 @@ impl FnCx<'_, '_> {
             B::Add => ty.is_numeric(t) || t == ty.str_,
             B::Sub | B::Mul | B::Div | B::Rem | B::Pow => ty.is_numeric(t),
             B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => ty.is_int(t),
-            B::Eq | B::NotEq => self.equatable(t),
+            B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq => self.equatable(t),
             B::Lt | B::LtEq | B::Gt | B::GtEq => ty.is_numeric(t) || t == ty.str_,
             B::And | B::Or | B::Nullish | B::In => false,
         };

@@ -27,6 +27,13 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
+        // `TyTable::intern` makes an option of an option the inner one; with another nothing
+        // that would lose one (issue #930): report it.
+        if let TyKind::Option(e, n) = &k {
+            if matches!(self.types.kind(*e), TyKind::Option(_, m) if m != n) {
+                self.nothing_clashes.push(self.cur_def);
+            }
+        }
         self.types.intern(k)
     }
 

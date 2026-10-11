@@ -302,7 +302,14 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // only, and their optimizations stay as they are.
         debug_info: !opts.release && opts.debug_vars && line_info,
     };
-    let mut program = velt_vir::lower_with(&hir, &lower_opts);
+    let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
+        Ok(p) => p,
+        Err(diags) => {
+            sess.diagnostics.extend(diags);
+            sess.stop_if_errors()?;
+            return Err(BuildError::Ice("lowering reported no errors".into()));
+        }
+    };
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();

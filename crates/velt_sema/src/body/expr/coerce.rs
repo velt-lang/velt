@@ -71,6 +71,14 @@ impl FnCx<'_, '_> {
             };
             return Ok(self.mk(call, exp, span));
         }
+        // `T | undefined` to `T | null` (or the reverse): TS2322, as in TypeScript; converting
+        // would turn one nothing into the other (issue #930).
+        if let (Some(found), Some(want)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp))
+        {
+            if !found.within(want) {
+                return Err(h);
+            }
+        }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
             if self.cx.ty.opt_payload(h.ty).is_some()
                 && (self.cx.union_def(inner).is_some() || !self.cx.same_layout(h.ty, exp))
@@ -227,6 +235,22 @@ impl FnCx<'_, '_> {
         }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if let (Some(have), Some(want)) = (
+            self.cx.ty.nothing_of(found.ty),
+            self.cx.ty.nothing_of(expected),
+        ) {
+            if !have.within(want) {
+                let (x, y) = (have.word(), want.word());
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),
+                        found.span,
+                    )
+                    .with_note(format!("`{x}` is not `{y}`; convert it with `?? {y}`, or change the type")),
+                );
+                return;
+            }
+        }
         let mut d = Diagnostic::error("mismatched types", found.span)
             .with_note(format!("expected {e}, found {f}"));
         if self.cx.ty.is_float(expected) && matches!(found.kind, H::Lit(hir::Lit::Int(_))) {
