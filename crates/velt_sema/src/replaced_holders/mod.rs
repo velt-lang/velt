@@ -562,7 +562,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             fx.indirect |= fx.own;
         }
     }
-    let shared = close_shared(cx, shared);
+    let shared = program::close_shared(cx, shared);
     let program = Program {
         fns,
         values,
@@ -740,34 +740,6 @@ fn field_types(cx: &Ctx, d: DefId) -> Vec<TyId> {
         Some(DefInfo::Enum(e)) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
         _ => vec![],
     }
-}
-
-/// The types shared values hold inline: a shared object literal type that is never changed in
-/// place is copied field by field, sharing what its fields hold.
-fn close_shared(cx: &mut Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
-    let assigned = crate::assigned_fields::assigned_objects(cx);
-    let mut out = HashSet::new();
-    while let Some(t) = work.pop() {
-        if !out.insert(t) {
-            continue;
-        }
-        match cx.ty.kind(t).clone() {
-            TyKind::Option(x) => work.push(x),
-            TyKind::Tuple(ts) => work.extend(ts),
-            TyKind::Adt(d, args) => {
-                let kind = adt_kind(cx, d);
-                if kind == Some(AdtKind::Class) || assigned.contains(&d) {
-                    continue;
-                }
-                for f in field_types(cx, d) {
-                    let f = cx.subst(f, &args);
-                    work.push(f);
-                }
-            }
-            _ => {}
-        }
-    }
-    out
 }
 
 fn field_name(cx: &Ctx, t: TyId, index: u32) -> String {

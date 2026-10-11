@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::implicit::{Implicit, Reach};
-use super::{adt_kind, has_params, Effects, Frame, Layer, MAX_VISITS};
+use super::{adt_kind, field_types, has_params, Effects, Frame, Layer, MAX_VISITS};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
@@ -239,4 +239,32 @@ impl Program {
                 .zip(b)
                 .all(|(x, y)| self.instance(cx, *x, *y, depth + 1))
     }
+}
+
+/// The types shared values hold inline: a shared object literal type that is never changed in
+/// place is copied field by field, sharing what its fields hold.
+pub(super) fn close_shared(cx: &mut Ctx, mut work: Vec<TyId>) -> HashSet<TyId> {
+    let assigned = crate::assigned_fields::assigned_objects(cx);
+    let mut out = HashSet::new();
+    while let Some(t) = work.pop() {
+        if !out.insert(t) {
+            continue;
+        }
+        match cx.ty.kind(t).clone() {
+            TyKind::Option(x) => work.push(x),
+            TyKind::Tuple(ts) => work.extend(ts),
+            TyKind::Adt(d, args) => {
+                let kind = adt_kind(cx, d);
+                if kind == Some(AdtKind::Class) || assigned.contains(&d) {
+                    continue;
+                }
+                for f in field_types(cx, d) {
+                    let f = cx.subst(f, &args);
+                    work.push(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
