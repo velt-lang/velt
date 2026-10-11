@@ -166,12 +166,12 @@ impl FnCx<'_, '_> {
                 .is_some_and(|f| f.optional),
             _ => false,
         };
-        let applies = self.field_of(ty, &key.name).is_some_and(|(i, t)| {
-            match self.cx.ty.nothing_of(t) {
-                Some(n) => n.has_undefined() || optional(self.cx, i),
-                None => false,
-            }
-        });
+        let applies =
+            self.field_of(ty, &key.name)
+                .is_some_and(|(i, t)| match self.cx.ty.nothing_of(t) {
+                    Some(n) => n.has_undefined() || optional(self.cx, i),
+                    None => false,
+                });
         Some((pattern, applies.then(|| (**value).clone())))
     }
 

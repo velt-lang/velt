@@ -57,7 +57,6 @@ impl<'a> Printer<'a> {
         }
         parts
     }
-
 }
 
 /// Precedence level (higher binds tighter), as in the parser.
@@ -87,8 +86,10 @@ fn should_flatten(parent_op: BinaryOp, child_op: BinaryOp) -> bool {
     }
     !matches!(
         (parent_op, child_op),
-        (Pow | Eq | NotEq | StrictEq | StrictNotEq | Shl | Shr | UShr, _)
-            | (Rem, Mul | Div)
+        (
+            Pow | Eq | NotEq | StrictEq | StrictNotEq | Shl | Shr | UShr,
+            _
+        ) | (Rem, Mul | Div)
             | (Mul | Div, Rem)
             | (Mul, Div)
             | (Div, Mul)

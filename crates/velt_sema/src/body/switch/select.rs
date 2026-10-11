@@ -148,10 +148,14 @@ impl FnCx<'_, '_> {
 
     fn null_sel(&mut self, s: &Scrut, word: &str, span: Span) -> Sel {
         // `case` compares with `===`: `case null` never matches a `T | undefined` value.
-        let lacks = self.cx.ty.nothing_of(s.expr.ty).is_some_and(|n| match word {
-            "undefined" => !n.has_undefined(),
-            _ => !n.has_null(),
-        });
+        let lacks = self
+            .cx
+            .ty
+            .nothing_of(s.expr.ty)
+            .is_some_and(|n| match word {
+                "undefined" => !n.has_undefined(),
+                _ => !n.has_null(),
+            });
         if self.cx.ty.opt_payload(s.expr.ty).is_none() || lacks {
             let tn = self.cx.display(s.expr.ty);
             let mut d = Diagnostic::error(

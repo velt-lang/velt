@@ -158,7 +158,11 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         }
         let tn = cx.display(t);
         let name = def_name(cx, d);
-        let other = if kept & NULL != 0 { "null" } else { "undefined" };
+        let other = if kept & NULL != 0 {
+            "null"
+        } else {
+            "undefined"
+        };
         cx.error(
             Diagnostic::error(
                 format!("`{tn}` as a type argument of `{name}` is not supported yet"),

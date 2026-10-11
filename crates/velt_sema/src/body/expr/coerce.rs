@@ -246,7 +246,9 @@ impl FnCx<'_, '_> {
                         format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),
                         found.span,
                     )
-                    .with_note(format!("`{x}` is not `{y}`; convert it with `?? {y}`, or change the type")),
+                    .with_note(format!(
+                        "`{x}` is not `{y}`; convert it with `?? {y}`, or change the type"
+                    )),
                 );
                 return;
             }
