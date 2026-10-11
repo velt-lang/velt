@@ -1,0 +1,87 @@
+// check: no leaks
+// fetch sends an idempotent request once more only when it failed on a *reused* pooled
+// connection (#1020). The raw server answers `/first` and keeps the connection open; a `/second`
+// on that same connection is read and dropped unanswered. In "reused" mode a `/second` on a new
+// connection is answered (the resend); in "fresh" mode it is dropped too. The server's log shows
+// what it read: POST and PATCH, and anything on a fresh connection, are read once.
+import { listen, TcpListener, TcpStream } from "velt:net";
+import { channel, Channel } from "velt:channel";
+import { IoError } from "velt:io";
+
+async function requestLine(c: TcpStream): Promise<string> {
+  let got = "";
+  while (!got.includes("\r\n\r\n")) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      return "";
+    }
+    got += chunk;
+  }
+  return got.split("\r\n")[0];
+}
+
+async function connection(c: TcpStream, n: i64, reused: bool, log: Channel<string>) {
+  let answeredFirst = false;
+  while (true) {
+    const line = await requestLine(c);
+    if (line == "") {
+      break;
+    }
+    if (line.includes(" /first ")) {
+      log.trySend(`  conn ${n}: answers ${line}`);
+      await c.write("HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nfirst");
+      answeredFirst = true;
+    } else if (reused && !answeredFirst) {
+      log.trySend(`  conn ${n}: answers ${line}`);
+      await c.write("HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\nsecond");
+      break;
+    } else {
+      log.trySend(`  conn ${n}: drops ${line}`);
+      break;
+    }
+  }
+  c.close();
+}
+
+async function server(l: TcpListener, connections: i64, reused: bool, log: Channel<string>) {
+  const tasks: Promise<void, IoError>[] = [];
+  for (let n = 1; n <= connections; n++) {
+    const c = await l.accept();
+    tasks.push(spawn(connection(c, n, reused, log)));
+  }
+  await Promise.all(tasks);
+}
+
+async function scenario(method: string, reused: bool, connections: i64) {
+  const l = await listen("127.0.0.1:0");
+  const log = channel<string>();
+  const accepting = spawn(server(l, connections, reused, log));
+  const base = `http://127.0.0.1:${l.port}`;
+  if (reused) {
+    await (await fetch(`${base}/first`)).text();
+  }
+  let result = "";
+  try {
+    const r = await fetch(`${base}/second`, { method: method });
+    result = `${r.status} ${await r.text()}`;
+  } catch (e) {
+    result = "rejected";
+  }
+  await accepting;
+  console.log(`${reused ? "reused" : "fresh"} ${method}: ${result}`);
+  let line = log.tryReceive();
+  while (line != null) {
+    console.log(line);
+    line = log.tryReceive();
+  }
+  l.close();
+}
+
+async function main() {
+  await scenario("GET", true, 2);
+  await scenario("PUT", true, 2);
+  await scenario("POST", true, 1);
+  await scenario("PATCH", true, 1);
+  await scenario("GET", false, 1);
+  await scenario("PUT", false, 1);
+}
