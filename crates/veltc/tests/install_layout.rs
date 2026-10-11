@@ -164,8 +164,16 @@ fn installed_prefix_runs_doctor_and_programs() {
     let o = velt(&prefix, &work, &home, &["build", "hello.vlt", "--json"]);
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(out["errors"], 0, "{out}");
-    // The default (Cranelift) build has no line information on Windows yet.
-    assert_eq!(out["debugInfo"], !cfg!(windows), "{out}");
+    // On Windows the default (Cranelift) build keeps its DWARF only when the bundled lld links it,
+    // which doctor's `linker` line names.
+    let bundled = report
+        .lines()
+        .any(|l| l.split_whitespace().skip(1).take(2).collect::<Vec<_>>() == ["linker", "bundled"]);
+    assert_eq!(
+        out["debugInfo"],
+        !cfg!(windows) || bundled,
+        "{out}\n{report}"
+    );
     let same = |key: &str, path: &Path| {
         let got = Path::new(out[key].as_str().unwrap_or_else(|| panic!("{out}")));
         assert_eq!(

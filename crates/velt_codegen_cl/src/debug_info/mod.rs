@@ -10,8 +10,8 @@
 //! (function/mod.rs), found in the compiled frame and located relative to the frame pointer,
 //! which Cranelift always keeps; `types` builds their DWARF types.
 //!
-//! - `object`: the sections of ELF and Mach-O objects, with relocations against the function
-//!   symbols (COFF would need CodeView; Windows debug builds keep function symbols only);
+//! - `object`: the sections of ELF, Mach-O and COFF objects, with relocations against the
+//!   function symbols;
 //! - `jit`: an in-memory ELF image with absolute addresses for `velt dev`'s JIT code, announced
 //!   to GDB and LLDB through the GDB JIT interface.
 

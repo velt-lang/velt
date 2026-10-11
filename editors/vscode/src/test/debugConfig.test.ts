@@ -15,6 +15,7 @@ import {
   pickEngine,
   sortProcesses,
   VeltConfig,
+  needsLlvmBuild,
 } from "../debugConfig";
 
 const all = () => true;
@@ -171,4 +172,12 @@ test("the attach picker lists processes, Velt programs first", () => {
     { pid: 5120, command: "app.exe" },
   ]);
   assert.deepEqual(sortProcesses([{ pid: 2, command: "C:\\w\\target\\velt\\app.exe" }, { pid: 3, command: "x" }]).map((e) => e.pid), [2, 3]);
+});
+
+test("the Visual Studio debugger needs an LLVM build on Windows", () => {
+  const config: VeltConfig = { type: "velt", request: "launch", name: "Debug" };
+  assert.equal(needsLlvmBuild("cpptools", config, "win32"), true);
+  assert.equal(needsLlvmBuild("cpptools", { ...config, buildArgs: ["--backend", "llvm"] }, "win32"), false);
+  assert.equal(needsLlvmBuild("codelldb", config, "win32"), false);
+  assert.equal(needsLlvmBuild("cpptools", config, "linux"), false);
 });

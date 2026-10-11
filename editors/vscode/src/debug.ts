@@ -20,6 +20,7 @@ import {
   parseBuildResult,
   parsePs,
   parseTasklist,
+  needsLlvmBuild,
   pickEngine,
   sortProcesses,
   RECOMMENDED_EXTENSION,
@@ -126,9 +127,15 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
       env = { ...built.env, ...velt.env };
       if (built.debugInfo === false) {
         void vscode.window.showWarningMessage(
-          "Velt: this build has no line information, so breakpoints will not bind. On Windows the " +
-            'default build has none yet: add "buildArgs": ["--backend", "llvm"] (needs clang) to the ' +
-            "launch configuration.",
+          "Velt: this build has no line information, so breakpoints will not bind. On Windows it " +
+            "needs the bundled linker (`velt doctor` shows the linker), or add " +
+            '"buildArgs": ["--backend", "llvm"] (needs clang) to the launch configuration.',
+        );
+      } else if (needsLlvmBuild(engine, velt, process.platform)) {
+        void vscode.window.showWarningMessage(
+          "Velt: the Visual Studio debugger (C/C++ extension) reads only PDBs, so breakpoints in " +
+            "the default build will not bind. Install CodeLLDB, or add " +
+            '"buildArgs": ["--backend", "llvm"] (needs clang) to the launch configuration.',
         );
       }
     }

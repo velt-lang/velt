@@ -37,7 +37,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   "errors", "warnings"}`. `executable` is the absolute path of the linked program (`null` on
   failure or with `--emit obj|vir|llvm`); `debugInfo` is whether the program has line
   information for debuggers: debug info was asked for and the backend emits it for the target
-  (`false` for Cranelift builds for Windows; `null` if the options could not be resolved);
+  (`false` for Cranelift builds for Windows linked by `link.exe` instead of the bundled lld:
+  they carry no DWARF; `null` if the options could not be resolved);
   `lldbScript` is the absolute path of the toolchain's `share/velt/lldb/velt_lldb.py` (`null`
   if missing). The diagnostics are those of `check --json`, with a non-source failure (linker,
   missing runtime) as an error with `location: null`. Exit codes as for `build`. The VS Code
@@ -281,8 +282,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
   debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line
-  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, line tables in ELF and
-  Mach-O objects (checked on Linux; macOS untested) and function symbols on Windows.
+  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
+  Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
+  build that `link.exe` links emits none, leaving function symbols).
 - Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit

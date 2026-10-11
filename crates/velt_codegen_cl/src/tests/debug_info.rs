@@ -1,4 +1,4 @@
-//! DWARF line tables: in objects (ELF, Mach-O; none for COFF) and in the in-memory images of
+//! DWARF line tables: in objects (ELF, Mach-O, COFF) and in the in-memory images of
 //! JIT code registered through the GDB JIT interface.
 
 use std::borrow::Cow;
@@ -117,11 +117,27 @@ fn objects_carry_line_tables() {
         let line_section = file
             .sections()
             .find(|s| s.name().is_ok_and(|n| n.ends_with("debug_line")));
-        if fmt == BinaryFormat::Coff {
-            assert!(line_section.is_none(), "{triple}: COFF gets no DWARF");
-            continue;
-        }
         let line_section = line_section.unwrap_or_else(|| panic!("{triple}: no debug_line"));
+        if fmt == BinaryFormat::Coff {
+            // The long name through the string table; offsets into other debug sections are
+            // section-relative (an address would be wrong once lld-link places the section).
+            assert_eq!(line_section.name().unwrap(), ".debug_line", "{triple}");
+            let info = file.section_by_name(".debug_info").expect("debug_info");
+            let kinds: Vec<object::RelocationKind> =
+                info.relocations().map(|(_, r)| r.kind()).collect();
+            assert!(
+                kinds.contains(&object::RelocationKind::SectionOffset),
+                "{triple}: {kinds:?}"
+            );
+            assert!(info.relocations().all(|(_, r)| match r.target() {
+                object::RelocationTarget::Symbol(i) => {
+                    let s = file.symbol_by_index(i).unwrap();
+                    s.kind() == object::SymbolKind::Text
+                        || r.kind() == object::RelocationKind::SectionOffset
+                }
+                _ => r.kind() == object::RelocationKind::SectionOffset,
+            }));
+        }
         if fmt == BinaryFormat::MachO {
             assert_eq!(line_section.name().unwrap(), "__debug_line", "{triple}");
             assert_eq!(
