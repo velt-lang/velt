@@ -46,6 +46,7 @@
 
 mod index_trust;
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use semver::Version;
@@ -340,13 +341,14 @@ fn install_archive(
 /// Install a toolchain archive downloaded before (`velt toolchain install --from`, for machines
 /// without access to the releases): `velt-<version>-<this machine>.tar.gz`, checked against the
 /// `SHA256SUMS` and `SHA256SUMS.sig` of its release beside it, with the keys `root` trusts (`key`
-/// for a test), unless `unverified`. Returns the version and its prefix.
+/// for a test), unless `unverified`. Returns the version, its prefix, and whether it was
+/// installed now (`false`: that version was installed already, and is kept as it is).
 pub fn install_toolchain_from_file(
     root: &Root,
     file: &Path,
     unverified: bool,
     key: Option<&[u8]>,
-) -> Result<(Version, PathBuf), String> {
+) -> Result<(Version, PathBuf, bool), String> {
     let name = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -363,17 +365,22 @@ pub fn install_toolchain_from_file(
                 file.display()
             )
         })?;
-    let size = std::fs::metadata(file)
-        .map_err(|e| format!("cannot read {}: {e}", file.display()))?
-        .len();
-    if size > MAX_ARCHIVE as u64 {
+    if root.versions().contains(&version) {
+        // A version never changes: the one installed is kept, and the file isn't read.
+        let prefix = root.version_dir(&version);
+        return Ok((version, prefix, false));
+    }
+    let mut archive = vec![];
+    // Read through a limit, not after checking the size: the file may grow meanwhile.
+    std::fs::File::open(file)
+        .and_then(|f| f.take(MAX_ARCHIVE as u64 + 1).read_to_end(&mut archive))
+        .map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    if archive.len() > MAX_ARCHIVE {
         return Err(format!(
             "{} is larger than a toolchain archive",
             file.display()
         ));
     }
-    let archive =
-        std::fs::read(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
     if unverified {
         eprintln!(
             "velt: warning: installing {} without checking it (--unverified)",
@@ -395,12 +402,13 @@ pub fn install_toolchain_from_file(
         let trust = trusted(root, key)?;
         verify_by(&sums, &signature, &trust.keys)
             .map_err(|e| format!("{} beside {}: {e}; refusing it", SUMS_FILE, file.display()))?;
-        let sums = String::from_utf8_lossy(&sums);
+        let sums = String::from_utf8(sums)
+            .map_err(|_| format!("{SUMS_FILE} beside {} is not text", file.display()))?;
         check_sha256(&archive, &sums, &name)?;
     }
     let stem = archive_stem(&version, &host);
     let prefix = install_archive(root, &version, &stem, &archive)?;
-    Ok((version, prefix))
+    Ok((version, prefix, true))
 }
 
 #[cfg(test)]

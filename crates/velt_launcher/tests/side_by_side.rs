@@ -852,6 +852,18 @@ fn install_from_a_downloaded_archive() {
     m.ok(&m.work, &["toolchain", "remove", "0.3.0", "--force"]);
     let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
     assert!(err.contains("SHA-256"), "{err}");
+    // Signed, but not text: refused, not read lossily.
+    std::fs::write(&file, &bytes).unwrap();
+    let mut garbled = sums.clone().into_bytes();
+    garbled.extend_from_slice(b"\xff\xfe\n");
+    std::fs::write(dir.join("SHA256SUMS"), &garbled).unwrap();
+    std::fs::write(
+        dir.join("SHA256SUMS.sig"),
+        releases.signer.sign(&garbled).as_ref(),
+    )
+    .unwrap();
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("is not text"), "{err}");
     std::fs::remove_file(dir.join("SHA256SUMS")).unwrap();
     let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
     assert!(err.contains("pass --unverified"), "{err}");
@@ -866,6 +878,18 @@ fn install_from_a_downloaded_archive() {
     assert!(out.status.success(), "{stdout}{stderr}");
     assert!(stderr.contains("without checking it"), "{stderr}");
     assert!(m.toolchain("0.3.0").join("std/VERSION").is_file());
+    // Installed already: kept, and said so (not "installed … from").
+    std::fs::write(&file, archive("0.3.9")).unwrap();
+    let out = m.ok_with(
+        &m.work,
+        &["toolchain", "install", "--from", path, "--unverified"],
+        &offline,
+    );
+    assert!(
+        out.contains("velt 0.3.0 is already installed; kept it") && !out.contains("installed velt"),
+        "{out}"
+    );
+    std::fs::write(&file, &bytes).unwrap();
 
     // Another machine's archive, or no file name to read the version from: refused.
     let other = dir.join("velt-0.3.0-some-other-triple.tar.gz");

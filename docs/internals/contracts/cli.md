@@ -269,7 +269,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (`velt_toolchain::release::install_toolchain_from_file`): `<file>` must be named
   `velt-<semver>-<host>.tar.gz`; unless `--unverified` (a warning on stderr), `SHA256SUMS` and
   `SHA256SUMS.sig` beside it are checked with the root's trusted keys and the archive against
-  `SHA256SUMS`; the archive's top directory must be `velt-<v>-<host>`; then as `install`. `install <spec>`: a full version is exact,
+  `SHA256SUMS` (refused unless UTF-8); the archive's top directory must be `velt-<v>-<host>`; then
+  as `install`. When `<v>` is installed already it is kept and the file is not read (stdout
+  `velt <v> is already installed; kept it …`). `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
   `--force`. `prune` removes every installed version but the default, the version the cwd

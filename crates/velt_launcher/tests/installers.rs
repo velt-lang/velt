@@ -110,7 +110,13 @@ fn get_velt_sh_installs_versions_side_by_side() {
     let b = write("b.tar.gz", archive("0.2.0", true));
     let root = home.join(".velt");
     let install = |archive: &Path, extra: &[&str]| {
-        let mut args = vec!["--no-modify-path", "--archive", archive.to_str().unwrap()];
+        // Not release-named, nothing beside them: unchecked.
+        let mut args = vec![
+            "--no-modify-path",
+            "--unverified",
+            "--archive",
+            archive.to_str().unwrap(),
+        ];
         args.extend_from_slice(extra);
         get_velt(&home, &args, &[])
     };
@@ -160,7 +166,11 @@ fn get_velt_sh_installs_versions_side_by_side() {
     assert!(text(&out).contains("has no launcher"), "{}", text(&out));
 
     // PATH: profiles get <root>/bin.
-    ok(get_velt(&home, &["--archive", a.to_str().unwrap()], &[]));
+    ok(get_velt(
+        &home,
+        &["--unverified", "--archive", a.to_str().unwrap()],
+        &[],
+    ));
     let profile = std::fs::read_to_string(home.join(".profile")).unwrap();
     assert!(
         profile.contains(&format!("{}/bin", root.display())),
@@ -303,6 +313,74 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
             text(&out)
         );
         assert!(!home.join(".velt/toolchains/0.3.0").exists());
+    }
+
+    // --archive: checked against the SHA256SUMS and SHA256SUMS.sig beside it, as
+    // `velt toolchain install --from` does.
+    let downloads = tmp.path().join("downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let file = downloads.join(&name);
+    std::fs::write(&file, &bytes).unwrap();
+    let from_archive = |label: &str, extra: &[&str]| {
+        let home = tmp.path().join(label);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut args = vec!["--no-modify-path", "--archive", file.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        let out = get_velt(&home, &args, &[("VELT_INSTALL_PUBLIC_KEY", &key)]);
+        (out, home)
+    };
+    let (out, _) = from_archive("archive-bare", &[]);
+    assert!(!out.status.success());
+    assert!(text(&out).contains("pass --unverified"), "{}", text(&out));
+    let (out, home) = from_archive("archive-unverified", &["--unverified"]);
+    assert!(text(&out).contains("without checking it"), "{}", text(&out));
+    assert!(home.join(".velt/toolchains/0.3.0/bin/velt").is_file());
+    let out = get_velt(&home, &["--unverified"], &[]);
+    assert!(
+        text(&out).contains("--unverified goes with --archive"),
+        "{}",
+        text(&out)
+    );
+    // A raw signature with a NUL byte in it: no shell warning about it (only a file the size
+    // of a hex signature is read as text).
+    let mut sums_nul = sums.clone();
+    let mut sig = signer.sign(sums_nul.as_bytes()).as_ref().to_vec();
+    for i in 0.. {
+        if sig.contains(&0) {
+            break;
+        }
+        sums_nul = format!("{sums}{i:064x}  padding-{i}\n");
+        sig = signer.sign(sums_nul.as_bytes()).as_ref().to_vec();
+    }
+    std::fs::write(downloads.join("SHA256SUMS"), &sums_nul).unwrap();
+    std::fs::write(downloads.join("SHA256SUMS.sig"), &sig).unwrap();
+    let (out, home) = from_archive("archive-checked", &[]);
+    let all = ok(out);
+    assert!(!all.contains("null byte"), "{all}");
+    if has_ed25519 {
+        assert!(all.contains("checked the signature of SHA256SUMS"), "{all}");
+    }
+    assert!(home.join(".velt/toolchains/0.3.0/bin/velt").is_file());
+    // Tampered: refused.
+    std::fs::write(&file, archive("0.3.9", true)).unwrap();
+    let (out, home) = from_archive("archive-tampered", &[]);
+    assert!(!out.status.success());
+    assert!(text(&out).contains("checksum mismatch"), "{}", text(&out));
+    assert!(!home.join(".velt/toolchains/0.3.9").exists());
+    if has_ed25519 {
+        std::fs::write(&file, &bytes).unwrap();
+        std::fs::write(
+            downloads.join("SHA256SUMS.sig"),
+            forger.sign(sums_nul.as_bytes()).as_ref(),
+        )
+        .unwrap();
+        let (out, _) = from_archive("archive-forged", &[]);
+        assert!(!out.status.success());
+        assert!(
+            text(&out).contains("does not match its signature"),
+            "{}",
+            text(&out)
+        );
     }
 }
 
@@ -593,7 +671,12 @@ fn get_velt_sh_replaces_the_launcher_only_with_a_newer_one() {
         std::fs::write(&file, archive(version, true)).unwrap();
         ok(get_velt(
             &home,
-            &["--no-modify-path", "--archive", file.to_str().unwrap()],
+            &[
+                "--no-modify-path",
+                "--unverified",
+                "--archive",
+                file.to_str().unwrap(),
+            ],
             &[],
         ))
     };

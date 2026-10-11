@@ -253,12 +253,19 @@ fn install_from(
     unverified: bool,
     make_default: bool,
 ) -> Result<(), String> {
-    let version = select::install_from(ctx, file, unverified)?;
-    println!(
-        "installed velt {version} from {} into {}",
-        file.display(),
-        ctx.root.version_dir(&version).display()
-    );
+    let (version, installed) = select::install_from(ctx, file, unverified)?;
+    if installed {
+        println!(
+            "installed velt {version} from {} into {}",
+            file.display(),
+            ctx.root.version_dir(&version).display()
+        );
+    } else {
+        println!(
+            "velt {version} is already installed; kept it (did not install {})",
+            file.display()
+        );
+    }
     let toolchain = Toolchain::Version(version.clone());
     if make_default || ctx.root.default()?.is_none() {
         ctx.root.set_default(&toolchain)?;
