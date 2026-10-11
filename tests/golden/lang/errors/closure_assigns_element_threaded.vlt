@@ -1,0 +1,13 @@
+// A closure called on the spot that assigns a `for…of` variable gives it a copy of the element
+// in a cell of its own (#799); a variable that a spawned async closure also captures cannot
+// live in a cell, so assigning it is an error rather than a write into the array.
+async function main() {
+  const xs = ["a", "b"];
+  for (let x of xs) {
+    const f = () => { x = x + "!"; };
+    f();
+    const t = spawn(async () => x.length);
+    console.log(await t);
+  }
+  console.log(xs.join(","));
+}

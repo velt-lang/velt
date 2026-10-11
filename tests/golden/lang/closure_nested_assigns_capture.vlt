@@ -264,8 +264,8 @@ async function asyncForms() {
   console.log(n);
 }
 
-// Each closure the loop stores has its own copy of a `for...of` or destructured variable, which
-// the closure created inside it assigns (#904 review: these must not become one shared cell).
+// Each iteration has its own `for...of` or destructured variable, which the closure created
+// inside the stored closure assigns (#904 review: not one cell for every iteration; #799).
 async function* twoLetters(): AsyncGenerator<string> {
   yield "a";
   yield "b";
