@@ -6,9 +6,11 @@
 //!
 //! The public keys are built into velt ([`RELEASE_PUBLIC_KEYS`]): the one releases are signed
 //! with, and a backup whose private half is kept offline. A signature by either is accepted, so
-//! if the signing key is lost or leaks, releases are signed with the backup and every launcher
-//! already installed keeps checking them; the next release then names a new backup
-//! (CONTRIBUTING.md "Signing"). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
+//! if the signing key is lost or leaks, releases are signed with the backup and the launchers
+//! that carry it (those from the release after 0.2.0 on; 0.2.0's knows only the signing key)
+//! keep checking them; the next release then names a new backup (CONTRIBUTING.md "Replacing the
+//! signing key", which also says what this can't do: a leaked key can't be revoked from
+//! launchers that trust it). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
 //! replaces them, for releases of another build (a fork's, a test's): whoever can set your
 //! environment can already run programs as you, so it opens nothing new.
 

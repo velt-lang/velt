@@ -227,6 +227,45 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
     std::fs::create_dir_all(&home).unwrap();
     let good = serve(signer.sign(sums.as_bytes()).as_ref().to_vec());
     let out = ok(run(&good, &home));
+    if has_ed25519 {
+        // A list of keys passes with any of them: here only the second signed.
+        let forger_key: String = forger
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let list = format!("{forger_key}, {key}");
+        let home = tmp.path().join("list");
+        std::fs::create_dir_all(&home).unwrap();
+        let base = format!("http://{}", good.addr());
+        let out = ok(get_velt(
+            &home,
+            &["--no-modify-path", "--version", version],
+            &[
+                ("VELT_INSTALL_BASE_URL", &base),
+                ("VELT_INSTALL_PUBLIC_KEY", &list),
+            ],
+        ));
+        assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
+        // Not a key: refused, and a `*` is not expanded to file names.
+        for bad in ["*", &format!("{key},zz"), " , "] {
+            let out = get_velt(
+                &home,
+                &["--no-modify-path", "--force", "--version", version],
+                &[
+                    ("VELT_INSTALL_BASE_URL", &base),
+                    ("VELT_INSTALL_PUBLIC_KEY", bad),
+                ],
+            );
+            assert!(!out.status.success(), "{bad}: {}", text(&out));
+            assert!(
+                text(&out).contains("VELT_INSTALL_PUBLIC_KEY"),
+                "{bad}: {}",
+                text(&out)
+            );
+        }
+    }
     good.stop();
     if has_ed25519 {
         assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
@@ -433,8 +472,18 @@ fn the_installer_and_the_signing_script_use_the_built_in_keys() {
     let built_in = velt_toolchain::signature::RELEASE_PUBLIC_KEYS;
     assert_eq!(base64.len(), built_in.len(), "{pems}");
     let installer = std::fs::read_to_string(repo().join("scripts/get-velt.sh")).unwrap();
+    // Exactly these keys, in this order: the `release_keys='…'` block, one base64 per line.
+    let block = installer
+        .split_once("release_keys='")
+        .and_then(|(_, rest)| rest.split_once('\''))
+        .map(|(keys, _)| keys)
+        .expect("get-velt.sh has no release_keys='…' block");
+    assert_eq!(
+        block.lines().collect::<Vec<_>>(),
+        base64,
+        "get-velt.sh's release_keys"
+    );
     for (b64, hex) in base64.iter().zip(built_in) {
-        assert!(installer.contains(b64), "get-velt.sh does not embed {b64}");
         // The DER is a fixed header and the raw key, which RELEASE_PUBLIC_KEYS holds in hex.
         let der = ok(Command::new("sh")
             .arg("-c")

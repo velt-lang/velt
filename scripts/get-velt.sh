@@ -18,7 +18,8 @@
 #   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading
 #   --no-modify-path  do not add <root>/bin to PATH in your shell profiles
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests), and
-# VELT_INSTALL_PUBLIC_KEY (64 hex digits) the release key, for another build's releases.
+# VELT_INSTALL_PUBLIC_KEY (64 hex digits per key, several separated by commas) the release keys,
+# for another build's releases.
 #
 # A download is checked against the release's SHA256SUMS, and that file against its signature
 # (SHA256SUMS.sig) with the velt release key when OpenSSL can check Ed25519 signatures (OpenSSL
@@ -154,6 +155,8 @@ check_signature() { # <release url>
         # Hex keys, separated by commas. An Ed25519 public key's DER is a fixed 12-byte header
         # and the 32-byte key.
         release_keys=
+        # No file-name expansion of the words (`*` would name files).
+        set -f
         for hex in $(printf '%s' "$VELT_INSTALL_PUBLIC_KEY" | tr ',' ' '); do
             der=$(printf '302a300506032b6570032100%s' "$hex" | tr 'A-F' 'a-f' | awk '{
                 h = "0123456789abcdef"
@@ -167,6 +170,7 @@ check_signature() { # <release url>
             release_keys="$release_keys$b64
 "
         done
+        set +f
         [ -n "$release_keys" ] || err "VELT_INSTALL_PUBLIC_KEY names no key"
     fi
     fetch "$1/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||

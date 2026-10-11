@@ -5,8 +5,13 @@
 # (velt_toolchain::signature::RELEASE_PUBLIC_KEYS: the signing key and the backup), so a signing
 # key that is neither fails here, before anything is published.
 #
-# Usage: VELT_RELEASE_SIGNING_KEY=<PEM private key> scripts/release-sign.sh <file>...
+# Usage: VELT_RELEASE_SIGNING_KEY=<PEM private key> scripts/release-sign.sh [--backup] <file>...
 #        scripts/release-sign.sh --public-key     (prints the built-in public keys, PEM)
+#
+# The key must be the signing key (the first built-in key). The backup key's private half is
+# kept offline: signing with it is refused unless --backup says so (by hand, when the signing
+# key is being replaced: CONTRIBUTING.md "Replacing the signing key"), so it can't end up in the
+# release secret unnoticed.
 # Needs OpenSSL 3.0 or newer (`pkeyutl -rawin`).
 set -eu
 
@@ -32,13 +37,24 @@ if [ "${1:-}" = --public-key ]; then
     exit 0
 fi
 
+backup_ok=0
+if [ "${1:-}" = --backup ]; then
+    backup_ok=1
+    shift
+fi
 if [ $# -eq 0 ]; then
-    echo "usage: $0 <file>...   (with VELT_RELEASE_SIGNING_KEY set)" >&2
+    echo "usage: $0 [--backup] <file>...   (with VELT_RELEASE_SIGNING_KEY set)" >&2
     exit 2
 fi
-if [ -z "${VELT_RELEASE_SIGNING_KEY:-}" ]; then
-    echo "error: VELT_RELEASE_SIGNING_KEY (a release signing key, PEM) is not set" >&2
+signing_key=$(printf '%s\n' "$keys" | head -n 1)
+fail() {
+    # A workflow annotation too, in GitHub Actions.
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error::$1"; fi
+    echo "error: $1" >&2
     exit 1
+}
+if [ -z "${VELT_RELEASE_SIGNING_KEY:-}" ]; then
+    fail "VELT_RELEASE_SIGNING_KEY (a release signing key, PEM) is not set"
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -57,8 +73,11 @@ for f in "$@"; do
     done
     if [ -z "$matched" ]; then
         rm -f "$f.sig"
-        echo "error: VELT_RELEASE_SIGNING_KEY is not the private half of a release key velt is built with" >&2
-        exit 1
+        fail "VELT_RELEASE_SIGNING_KEY is not the private half of a release key velt is built with"
+    fi
+    if [ "$matched" != "$signing_key" ] && [ "$backup_ok" = 0 ]; then
+        rm -f "$f.sig"
+        fail "VELT_RELEASE_SIGNING_KEY is the backup release key, which is kept offline; pass --backup only when replacing the signing key (CONTRIBUTING.md \"Replacing the signing key\")"
     fi
     echo "signed $f (release key ${matched%"${matched#????????}"}…)"
 done

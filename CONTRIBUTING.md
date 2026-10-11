@@ -268,14 +268,36 @@ them, no release can be signed in a way installed launchers trust.
 1. Make a new backup key pair offline (`openssl genpkey -algorithm ed25519`), and get its public
    key in hex: `openssl pkey -in <file> -pubout -outform DER | tail -c 32 | xxd -p -c 64`.
 2. In a pull request, make the old backup key the first entry of `RELEASE_PUBLIC_KEYS`, add the
-   new backup key as the second, and drop the old signing key; update the two lines of
+   new backup key as the second, and drop the old signing key. Update the two lines of
    `release_keys` in `scripts/get-velt.sh` (the base64 that `scripts/release-sign.sh
-   --public-key` prints).
-3. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
-   and release. Launchers already installed accept the release, because they trust the old
-   backup key; the launcher it brings trusts only the new pair, so the old signing key is
-   refused from then on, once users have the new launcher (`get-velt` again; launchers that
-   read the index say so).
+   --public-key` prints; a test checks they match), and the backup's proof signature
+   (`BACKUP_KEY_PROOF` in `velt_toolchain::signature`), made with the new backup key.
+3. **Re-sign the earlier releases.** The new launcher no longer trusts the old signing key, so
+   it would refuse every earlier `SHA256SUMS.sig` (and `velt toolchain install 0.2.x`, and
+   packages pinned to them). For each earlier release, check its `SHA256SUMS` against a record
+   the old key never controlled (a copy kept when it was published, or the hashes of the
+   archives you can rebuild), then sign it with the old backup and replace the signature:
+   `VELT_RELEASE_SIGNING_KEY="$(cat old-backup.pem)" scripts/release-sign.sh --backup SHA256SUMS`
+   and `gh release upload v<x> SHA256SUMS.sig --clobber`.
+4. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
+   (from then on it is the signing key) and release. Launchers that carry the old backup key
+   accept the release; the launcher it brings trusts only the new pair.
+
+**If the backup key leaks** (the signing key is fine): release a launcher that drops it, signed
+with the signing key as usual, with a new backup key in its place (steps 1 and 2 without
+dropping the signing key, and without step 3: earlier releases are signed with the signing key).
+
+**What this can't do.**
+
+- A leaked key can't be revoked. Every launcher that trusts it, and every `get-velt.sh` from
+  the releases that embed it, accepts what it signs until the user installs a launcher that
+  doesn't (`get-velt` again). The holder of the leaked key can also sign an index without the
+  "newer launcher" hint, so those launchers aren't told to update.
+- The backup only helps launchers that carry it: those from the first release after 0.2.0
+  on. 0.2.0's launcher and installer know only the signing key.
+- The freshness check of the index of releases (`<root>/index-seen/<first trusted key>`)
+  starts over after a rotation, because the first trusted key changes: until a launcher has
+  seen an index signed with the new keys, it accepts any index they signed.
 
 **Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
 (`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the
