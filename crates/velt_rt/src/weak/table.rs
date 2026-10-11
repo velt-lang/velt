@@ -431,6 +431,12 @@ fn trial_locked(s: &mut State, o: usize) -> Vec<(ReleaseFn, u64)> {
 /// Runs a trial deletion from `o` (a live recorded object) and deletes the entries of every key
 /// it finds dead, which frees the cycle.
 fn try_free(o: usize) {
-    let values = with(|s| if at_hint(s, o) { trial_locked(s, o) } else { Vec::new() });
+    let values = with(|s| {
+        if at_hint(s, o) {
+            trial_locked(s, o)
+        } else {
+            Vec::new()
+        }
+    });
     release_values(values);
 }

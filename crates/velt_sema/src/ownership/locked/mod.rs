@@ -331,7 +331,10 @@ fn weak_across(
                     l.name
                 )
             } else {
-                format!("`with` calls a function that uses the weak collection `{}`", l.name)
+                format!(
+                    "`with` calls a function that uses the weak collection `{}`",
+                    l.name
+                )
             };
             let note = crate::body::LOCK_NOTE;
             cx.error(Diagnostic::error(msg, at).with_note(note));
