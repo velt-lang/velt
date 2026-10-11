@@ -234,7 +234,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `VELT_TOOLCHAIN_SELECTED=<toolchain> (<reason>)` set; `<reason>` is `$VELT_TOOLCHAIN`,
   `velt: "<req>" in <manifest>:<line>`, `+<toolchain>` or `the default`. `velt doctor` reports both
   (`toolchain`), or "started directly". `velt toolchain` in a toolchain's own `velt` exits 1
-  saying it is the launcher's. `velt toolchain` (`velt_launcher::commands`): `list` prints a
+  saying it is the launcher's. After installing a version (on first use or `velt toolchain install`), the launcher runs that
+  toolchain's `velt target add <triple>`, once per pack and with its stdout sent to stderr, for
+  the target packs of the newest installed older version of the same `major.minor`
+  (`velt_toolchain::layout::predecessor`, `installed_target_packs`:
+  `lib/targets/<triple>/kit.stamp` whose name is `[a-z0-9_.-]+` not starting with `-` or `.`,
+  the host's excluded), after `velt: adding the target packs velt <old> had to velt <new>: …` on
+  stderr; the packs that fail are named in a warning with `velt +<new> target add …`, and the
+  install succeeds. `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.

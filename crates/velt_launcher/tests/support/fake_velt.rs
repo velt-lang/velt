@@ -16,6 +16,10 @@ fn main() {
     println!("selected={}", var("VELT_TOOLCHAIN_SELECTED"));
     println!("launcher={}", var("VELT_LAUNCHER"));
     println!("args={}", args.join(" "));
+    // A target pack the tests make fail (`velt target add zz-fail`).
+    if args.iter().any(|a| a == "zz-fail") {
+        std::process::exit(1);
+    }
     let code = args
         .iter()
         .find_map(|a| a.strip_prefix("--exit="))
