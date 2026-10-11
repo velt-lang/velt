@@ -1,0 +1,414 @@
+######## VELT_SCHEDULER=stealing
+velt4 warm c=1 cpu_us/call=2.70 user_us/call=2.25 wall_ms(N2)=440
+velt1 warm c=1 cpu_us/call=1.50 user_us/call=1.50 wall_ms(N2)=330
+node warm c=1 cpu_us/call=0.60 user_us/call=0.55 wall_ms(N2)=230
+velt4 warm c=64 cpu_us/call=4.21 user_us/call=4.05 wall_ms(N2)=330
+velt1 warm c=64 cpu_us/call=1.15 user_us/call=1.15 wall_ms(N2)=250
+node warm c=64 cpu_us/call=0.65 user_us/call=0.65 wall_ms(N2)=250
+velt4 warm c=512 cpu_us/call=4.04 user_us/call=3.80 wall_ms(N2)=320
+velt1 warm c=512 cpu_us/call=1.40 user_us/call=1.40 wall_ms(N2)=310
+node warm c=512 cpu_us/call=0.69 user_us/call=0.65 wall_ms(N2)=270
+velt4 fan c=1 cpu_us/call=2.75 user_us/call=2.35 wall_ms(N2)=460
+velt1 fan c=1 cpu_us/call=1.55 user_us/call=1.55 wall_ms(N2)=350
+node fan c=1 cpu_us/call=0.59 user_us/call=0.55 wall_ms(N2)=290
+velt4 fan c=64 cpu_us/call=3.25 user_us/call=3.25 wall_ms(N2)=190
+velt1 fan c=64 cpu_us/call=1.60 user_us/call=1.60 wall_ms(N2)=350
+node fan c=64 cpu_us/call=0.65 user_us/call=0.60 wall_ms(N2)=290
+velt4 fan c=512 cpu_us/call=3.10 user_us/call=3.10 wall_ms(N2)=190
+velt1 fan c=512 cpu_us/call=1.70 user_us/call=1.70 wall_ms(N2)=400
+node fan c=512 cpu_us/call=0.76 user_us/call=0.70 wall_ms(N2)=310
+velt4 warm c=1 cpu_us/call=2.55 user_us/call=2.25 wall_ms(N2)=450
+velt1 warm c=1 cpu_us/call=1.50 user_us/call=1.50 wall_ms(N2)=330
+node warm c=1 cpu_us/call=0.60 user_us/call=0.55 wall_ms(N2)=230
+velt4 warm c=64 cpu_us/call=4.30 user_us/call=4.05 wall_ms(N2)=330
+velt1 warm c=64 cpu_us/call=1.10 user_us/call=1.10 wall_ms(N2)=250
+node warm c=64 cpu_us/call=0.65 user_us/call=0.70 wall_ms(N2)=250
+velt4 warm c=512 cpu_us/call=4.09 user_us/call=3.85 wall_ms(N2)=320
+velt1 warm c=512 cpu_us/call=1.25 user_us/call=1.25 wall_ms(N2)=280
+node warm c=512 cpu_us/call=0.65 user_us/call=0.65 wall_ms(N2)=270
+velt4 fan c=1 cpu_us/call=2.75 user_us/call=2.45 wall_ms(N2)=460
+velt1 fan c=1 cpu_us/call=1.55 user_us/call=1.55 wall_ms(N2)=350
+node fan c=1 cpu_us/call=0.59 user_us/call=0.55 wall_ms(N2)=290
+velt4 fan c=64 cpu_us/call=3.35 user_us/call=3.35 wall_ms(N2)=190
+velt1 fan c=64 cpu_us/call=1.60 user_us/call=1.60 wall_ms(N2)=350
+node fan c=64 cpu_us/call=0.59 user_us/call=0.50 wall_ms(N2)=280
+velt4 fan c=512 cpu_us/call=3.00 user_us/call=3.05 wall_ms(N2)=190
+velt1 fan c=512 cpu_us/call=1.65 user_us/call=1.65 wall_ms(N2)=400
+node fan c=512 cpu_us/call=0.70 user_us/call=0.65 wall_ms(N2)=300
+velt noop c=16 n=40000 ok=40000 cpu_us/req=45.2 user_us/req=27.5 rps=50548.4869 p50=0.2750 ms p99=0.9507 ms peakMB=19
+velt noop c=64 n=40000 ok=40000 cpu_us/req=36.5 user_us/req=23.2 rps=64764.6615 p50=0.8742 ms p99=2.9306 ms peakMB=19
+velt noop c=256 n=40000 ok=40000 cpu_us/req=35.5 user_us/req=22.8 rps=38055.9366 p50=0.0024 sec p99=0.0058 sec peakMB=27
+velt incr c=64 n=40000 ok=40000 cpu_us/req=39.8 user_us/req=24.8 rps=60781.1484 p50=0.9056 ms p99=3.2507 ms peakMB=28
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=44.5 user_us/req=26.2 rps=50849.3105 p50=0.2775 ms p99=0.8741 ms peakMB=19
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=36.2 user_us/req=22.8 rps=64950.5138 p50=0.8578 ms p99=2.9544 ms peakMB=19
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=33.2 user_us/req=20.5 rps=71605.1834 p50=3.3156 ms p99=8.7451 ms peakMB=27
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=39.0 user_us/req=25.0 rps=61929.1999 p50=0.9144 ms p99=2.9508 ms peakMB=29
+node noop c=16 n=40000 ok=40000 cpu_us/req=184.8 user_us/req=156.8 rps=5977.1350 p50=2.4105 ms p99=5.6275 ms peakMB=266
+node noop c=64 n=40000 ok=40000 cpu_us/req=173.5 user_us/req=146.5 rps=6017.9061 p50=10.1489 ms p99=20.3411 ms peakMB=310
+node noop c=256 n=40000 ok=40000 cpu_us/req=171.8 user_us/req=145.5 rps=6017.7603 p50=0.0351 sec p99=0.0540 sec peakMB=330
+node incr c=64 n=40000 ok=40000 cpu_us/req=195.5 user_us/req=167.0 rps=5448.4904 p50=11.1541 ms p99=23.3950 ms peakMB=331
+bare noop c=16 n=40000 ok=40000 cpu_us/req=68.2 user_us/req=48.0 rps=15498.7673 p50=0.9933 ms p99=2.2716 ms peakMB=83
+bare noop c=64 n=40000 ok=40000 cpu_us/req=66.0 user_us/req=45.2 rps=15189.0626 p50=4.3071 ms p99=8.5592 ms peakMB=87
+bare noop c=256 n=40000 ok=40000 cpu_us/req=69.5 user_us/req=49.0 rps=14690.1397 p50=0.0136 sec p99=0.0207 sec peakMB=89
+velt noop c=16 n=40000 ok=40000 cpu_us/req=45.0 user_us/req=26.8 rps=50318.2739 p50=0.2782 ms p99=0.9250 ms peakMB=19
+velt noop c=64 n=40000 ok=40000 cpu_us/req=36.5 user_us/req=22.5 rps=64816.7797 p50=0.8582 ms p99=3.1662 ms peakMB=19
+velt noop c=256 n=40000 ok=40000 cpu_us/req=34.0 user_us/req=21.8 rps=71280.6372 p50=3.3977 ms p99=8.0798 ms peakMB=27
+velt incr c=64 n=40000 ok=40000 cpu_us/req=39.8 user_us/req=25.0 rps=60816.2880 p50=0.9098 ms p99=3.2104 ms peakMB=28
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=45.0 user_us/req=26.2 rps=51097.9799 p50=0.2762 ms p99=0.8496 ms peakMB=19
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=36.2 user_us/req=21.5 rps=64582.6430 p50=0.8871 ms p99=3.0951 ms peakMB=19
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=34.5 user_us/req=21.8 rps=38617.5727 p50=0.0030 sec p99=0.0078 sec peakMB=27
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=38.8 user_us/req=25.2 rps=62099.3697 p50=0.9325 ms p99=2.7414 ms peakMB=29
+node noop c=16 n=40000 ok=40000 cpu_us/req=196.0 user_us/req=168.2 rps=5542.7285 p50=2.7459 ms p99=5.9644 ms peakMB=264
+node noop c=64 n=40000 ok=40000 cpu_us/req=165.2 user_us/req=137.8 rps=6342.1425 p50=9.4891 ms p99=19.0670 ms peakMB=308
+node noop c=256 n=40000 ok=40000 cpu_us/req=181.5 user_us/req=153.8 rps=5820.1327 p50=0.0360 sec p99=0.0619 sec peakMB=332
+node incr c=64 n=40000 ok=40000 cpu_us/req=206.5 user_us/req=175.5 rps=5101.7636 p50=12.3895 ms p99=25.2822 ms peakMB=333
+bare noop c=16 n=40000 ok=40000 cpu_us/req=69.0 user_us/req=50.0 rps=15279.9318 p50=0.8674 ms p99=2.7274 ms peakMB=82
+bare noop c=64 n=40000 ok=40000 cpu_us/req=65.5 user_us/req=45.0 rps=15314.5126 p50=4.3040 ms p99=7.4971 ms peakMB=87
+bare noop c=256 n=40000 ok=40000 cpu_us/req=63.2 user_us/req=42.2 rps=16149.2894 p50=0.0104 sec p99=0.0233 sec peakMB=89
+######## VELT_SCHEDULER=per-core
+velt4 warm c=1 cpu_us/call=34.59 user_us/call=10.50 wall_ms(N2)=7880
+velt1 warm c=1 cpu_us/call=1.50 user_us/call=1.50 wall_ms(N2)=330
+node warm c=1 cpu_us/call=0.60 user_us/call=0.55 wall_ms(N2)=240
+velt4 warm c=64 cpu_us/call=4.05 user_us/call=2.95 wall_ms(N2)=500
+velt1 warm c=64 cpu_us/call=1.10 user_us/call=1.10 wall_ms(N2)=240
+node warm c=64 cpu_us/call=0.65 user_us/call=0.60 wall_ms(N2)=250
+velt4 warm c=512 cpu_us/call=3.90 user_us/call=2.70 wall_ms(N2)=480
+velt1 warm c=512 cpu_us/call=1.15 user_us/call=1.15 wall_ms(N2)=250
+node warm c=512 cpu_us/call=0.70 user_us/call=0.60 wall_ms(N2)=280
+velt4 fan c=1 cpu_us/call=28.25 user_us/call=11.70 wall_ms(N2)=6370
+velt1 fan c=1 cpu_us/call=1.55 user_us/call=1.55 wall_ms(N2)=350
+node fan c=1 cpu_us/call=0.66 user_us/call=0.60 wall_ms(N2)=290
+velt4 fan c=64 cpu_us/call=3.35 user_us/call=2.75 wall_ms(N2)=210
+velt1 fan c=64 cpu_us/call=1.20 user_us/call=1.20 wall_ms(N2)=260
+node fan c=64 cpu_us/call=0.55 user_us/call=0.55 wall_ms(N2)=280
+velt4 fan c=512 cpu_us/call=3.20 user_us/call=2.75 wall_ms(N2)=230
+velt1 fan c=512 cpu_us/call=1.20 user_us/call=1.20 wall_ms(N2)=300
+node fan c=512 cpu_us/call=0.70 user_us/call=0.70 wall_ms(N2)=300
+velt4 warm c=1 cpu_us/call=33.51 user_us/call=15.20 wall_ms(N2)=7770
+velt1 warm c=1 cpu_us/call=1.50 user_us/call=1.50 wall_ms(N2)=330
+node warm c=1 cpu_us/call=0.55 user_us/call=0.55 wall_ms(N2)=230
+velt4 warm c=64 cpu_us/call=3.90 user_us/call=2.60 wall_ms(N2)=470
+velt1 warm c=64 cpu_us/call=1.05 user_us/call=1.05 wall_ms(N2)=240
+node warm c=64 cpu_us/call=0.60 user_us/call=0.65 wall_ms(N2)=240
+velt4 warm c=512 cpu_us/call=3.60 user_us/call=2.55 wall_ms(N2)=430
+velt1 warm c=512 cpu_us/call=1.15 user_us/call=1.15 wall_ms(N2)=250
+node warm c=512 cpu_us/call=0.65 user_us/call=0.65 wall_ms(N2)=270
+velt4 fan c=1 cpu_us/call=27.55 user_us/call=9.55 wall_ms(N2)=6440
+velt1 fan c=1 cpu_us/call=1.55 user_us/call=1.55 wall_ms(N2)=350
+node fan c=1 cpu_us/call=0.65 user_us/call=0.65 wall_ms(N2)=290
+velt4 fan c=64 cpu_us/call=3.35 user_us/call=2.85 wall_ms(N2)=210
+velt1 fan c=64 cpu_us/call=1.20 user_us/call=1.20 wall_ms(N2)=260
+node fan c=64 cpu_us/call=0.59 user_us/call=0.60 wall_ms(N2)=280
+velt4 fan c=512 cpu_us/call=3.25 user_us/call=2.75 wall_ms(N2)=230
+velt1 fan c=512 cpu_us/call=1.20 user_us/call=1.20 wall_ms(N2)=300
+node fan c=512 cpu_us/call=0.81 user_us/call=0.75 wall_ms(N2)=310
+velt noop c=16 n=40000 ok=40000 cpu_us/req=51.5 user_us/req=28.8 rps=45802.9913 p50=0.3265 ms p99=0.7759 ms peakMB=21
+velt noop c=64 n=40000 ok=40000 cpu_us/req=38.0 user_us/req=22.2 rps=63979.5336 p50=0.9029 ms p99=2.6874 ms peakMB=21
+velt noop c=256 n=40000 ok=40000 cpu_us/req=34.2 user_us/req=20.5 rps=38362.9805 p50=0.0020 sec p99=0.0060 sec peakMB=29
+velt incr c=64 n=40000 ok=40000 cpu_us/req=40.0 user_us/req=24.8 rps=61919.4406 p50=0.9295 ms p99=2.8497 ms peakMB=29
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=47.5 user_us/req=27.5 rps=47874.3571 p50=0.3119 ms p99=0.7386 ms peakMB=21
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=35.2 user_us/req=21.0 rps=66328.8063 p50=0.8852 ms p99=2.9084 ms peakMB=23
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=32.0 user_us/req=18.5 rps=73694.7428 p50=3.1700 ms p99=7.9554 ms peakMB=27
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=36.5 user_us/req=22.8 rps=64950.8269 p50=0.8973 ms p99=2.8385 ms peakMB=27
+node noop c=16 n=40000 ok=40000 cpu_us/req=182.0 user_us/req=154.8 rps=6042.6780 p50=2.3384 ms p99=5.6868 ms peakMB=264
+node noop c=64 n=40000 ok=40000 cpu_us/req=178.2 user_us/req=152.8 rps=5839.3003 p50=10.4712 ms p99=21.1416 ms peakMB=308
+node noop c=256 n=40000 ok=40000 cpu_us/req=183.2 user_us/req=156.2 rps=5749.3464 p50=0.0367 sec p99=0.0798 sec peakMB=335
+node incr c=64 n=40000 ok=40000 cpu_us/req=192.0 user_us/req=162.8 rps=5491.8056 p50=11.3108 ms p99=23.1909 ms peakMB=335
+bare noop c=16 n=40000 ok=40000 cpu_us/req=72.5 user_us/req=50.2 rps=14561.6731 p50=1.0413 ms p99=2.4872 ms peakMB=83
+bare noop c=64 n=40000 ok=40000 cpu_us/req=71.8 user_us/req=49.8 rps=14018.4471 p50=4.4582 ms p99=8.8712 ms peakMB=86
+bare noop c=256 n=40000 ok=40000 cpu_us/req=68.2 user_us/req=46.8 rps=14915.7808 p50=0.0147 sec p99=0.0217 sec peakMB=88
+velt noop c=16 n=40000 ok=40000 cpu_us/req=52.0 user_us/req=30.0 rps=44151.5442 p50=0.3379 ms p99=0.8269 ms peakMB=21
+velt noop c=64 n=40000 ok=40000 cpu_us/req=37.8 user_us/req=21.5 rps=62679.3774 p50=0.9512 ms p99=2.4564 ms peakMB=23
+velt noop c=256 n=40000 ok=40000 cpu_us/req=33.2 user_us/req=19.5 rps=71061.1970 p50=3.3726 ms p99=8.2301 ms peakMB=29
+velt incr c=64 n=40000 ok=40000 cpu_us/req=40.0 user_us/req=23.2 rps=60596.1291 p50=0.9655 ms p99=2.7130 ms peakMB=29
+velt1 noop c=16 n=40000 ok=40000 cpu_us/req=47.5 user_us/req=26.2 rps=47632.2530 p50=0.3110 ms p99=0.7917 ms peakMB=21
+velt1 noop c=64 n=40000 ok=40000 cpu_us/req=35.0 user_us/req=20.0 rps=66102.4864 p50=0.9001 ms p99=2.4717 ms peakMB=21
+velt1 noop c=256 n=40000 ok=40000 cpu_us/req=32.0 user_us/req=19.2 rps=37394.7903 p50=0.0026 sec p99=0.0061 sec peakMB=27
+velt1 incr c=64 n=40000 ok=40000 cpu_us/req=36.5 user_us/req=21.5 rps=64276.1366 p50=0.9332 ms p99=2.3267 ms peakMB=27
+node noop c=16 n=40000 ok=40000 cpu_us/req=198.8 user_us/req=170.0 rps=5495.2918 p50=2.6663 ms p99=5.8130 ms peakMB=266
+node noop c=64 n=40000 ok=40000 cpu_us/req=175.5 user_us/req=148.8 rps=5992.0020 p50=10.2763 ms p99=20.7060 ms peakMB=299
+node noop c=256 n=40000 ok=40000 cpu_us/req=185.0 user_us/req=157.8 rps=5622.6541 p50=0.0357 sec p99=0.0653 sec peakMB=315
+node incr c=64 n=40000 ok=40000 cpu_us/req=192.0 user_us/req=163.0 rps=5349.2441 p50=11.7631 ms p99=22.4151 ms peakMB=319
+bare noop c=16 n=40000 ok=40000 cpu_us/req=66.2 user_us/req=46.8 rps=16017.0142 p50=0.9179 ms p99=2.4428 ms peakMB=82
+bare noop c=64 n=40000 ok=40000 cpu_us/req=61.8 user_us/req=41.0 rps=16314.2201 p50=3.8061 ms p99=7.5804 ms peakMB=86
+bare noop c=256 n=40000 ok=40000 cpu_us/req=69.0 user_us/req=48.2 rps=14615.4849 p50=0.0141 sec p99=0.0196 sec peakMB=88
+######## ir
+velt1 fan 1 10000 129785371
+velt1 fan 1 60000 673375306
+velt1 fan 64 10000 150571921
+velt1 fan 64 60000 691696735
+velt1 warm 1 10000 108980830
+velt1 warm 1 60000 650172510
+velt1 warm 64 10000 92687685
+velt1 warm 64 60000 550288293
+velt4 fan 1 10000 129901216
+velt4 fan 1 60000 671437318
+velt4 fan 64 10000 150921210
+velt4 fan 64 60000 694293562
+velt4 warm 1 10000 111616724
+velt4 warm 1 60000 665431210
+velt4 warm 64 10000 92486319
+velt4 warm 64 60000 548493229
+######## throughput VELT_SCHEDULER=stealing
+== velt, all cores
+velt actors: 4 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  485.5k
+    c=1/p50  1.6µs   c=1/p99  5.2µs
+    c=64/ops_per_sec  680.2k
+    c=64/p50  95.2µs   c=64/p99  131.3µs
+    c=512/ops_per_sec  680.9k
+    c=512/p50  749.3µs   c=512/p99  805.8µs
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  467.8k
+    c=1/p50  1.7µs   c=1/p99  7.2µs
+    c=64/ops_per_sec  1.18M
+    c=64/p50  47.3µs   c=64/p99  193.7µs
+    c=512/ops_per_sec  1.16M
+    c=512/p50  293.5µs   c=512/p99  2.91ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  117.7k   p50  8.8µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  615.9k   live 19968   rss_delta/actor  1861 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  700.5k   live 99968   rss_delta/actor  1010 B
+turns 14464427, activations 356358, deactivations 356358
+== velt, one core
+velt actors: 1 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  630.6k
+    c=1/p50  1.6µs   c=1/p99  2.3µs
+    c=64/ops_per_sec  819.4k
+    c=64/p50  82.6µs   c=64/p99  233.0µs
+    c=512/ops_per_sec  601.4k
+    c=512/p50  257.9µs   c=512/p99  16.23ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  590.9k
+    c=1/p50  1.7µs   c=1/p99  2.5µs
+    c=64/ops_per_sec  545.4k
+    c=64/p50  221.2µs   c=64/p99  255.1µs
+    c=512/ops_per_sec  462.1k
+    c=512/p50  436.4µs   c=512/p99  50.81ms
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  233.5k   p50  4.1µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  340.6k   live 19968   rss_delta/actor  1234 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  322.9k   live 99968   rss_delta/actor  1195 B
+turns 11656570, activations 587915, deactivations 587915
+== node (@sigx/actors benchmarks)
+5 scenario(s), 3 interleaved round(s)
+  warmup dispatch/warm-actor
+  warmup dispatch/warm-actor-deadline
+  warmup dispatch/fan-out-actors
+  warmup activation/cold-cycle
+  warmup mem/per-actor-footprint
+  round 1/3 complete
+  round 2/3 complete
+  round 3/3 complete
+  gc pass complete
+v24.21.0 linux/x64 · AMD EPYC 7763 64-Core Processor
+conditions: production · commit 6a94345 · 3 runs × 400ms
+▸ dispatch/warm-actor — host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)
+    c=1/ops_per_sec              1.47M
+    c=1/p50_ms                   0.7µs
+    c=1/p99_ms                   1.0µs  ±50%
+    c=1/p999_ms                  2.1µs  ±22%
+    c=1/max_ms                 338.7µs  ±37%
+    c=64/ops_per_sec             1.40M
+    c=64/p50_ms                 54.4µs
+    c=64/p99_ms                 67.8µs
+    c=64/p999_ms               289.1µs  ±27%
+    c=64/max_ms                462.8µs  ±11%
+    c=512/ops_per_sec            1.25M
+    c=512/p50_ms               459.8µs
+    c=512/p99_ms               507.1µs
+    c=512/p999_ms              1.306ms
+    c=512/max_ms               1.319ms
+    gc/pause_ms               19.806ms
+    gc/collections         57.00 count
+    gc/major_collections    0.00 count
+▸ dispatch/warm-actor-deadline — same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax
+    c=1/ops_per_sec             930.0k
+    c=1/p50_ms                   1.1µs
+    c=1/p99_ms                   1.7µs
+    c=1/p999_ms                 12.6µs  ±16%
+    c=1/max_ms                 365.3µs  ±15%
+    c=64/ops_per_sec            994.1k
+    c=64/p50_ms                 73.6µs
+    c=64/p99_ms                 89.2µs
+    c=64/p999_ms               428.5µs
+    c=64/max_ms                518.4µs  ±12%
+    c=512/ops_per_sec           845.6k
+    c=512/p50_ms               633.5µs
+    c=512/p99_ms               1.407ms
+    c=512/p999_ms              1.767ms  ±13%
+    c=512/max_ms               1.802ms  ±12%
+    gc/pause_ms               33.016ms
+    gc/collections         71.00 count
+    gc/major_collections    0.00 count
+▸ dispatch/fan-out-actors — host.dispatch() round-robin across 1 000 warm activations
+    c=1/ops_per_sec              1.32M
+    c=1/p50_ms                   0.8µs
+    c=1/p99_ms                   1.3µs  ±34%
+    c=1/p999_ms                  3.6µs  ±20%
+    c=1/max_ms                 399.9µs  ±11%
+    c=64/ops_per_sec             1.41M
+    c=64/p50_ms                 53.9µs
+    c=64/p99_ms                 69.9µs
+    c=64/p999_ms               364.2µs  ±13%
+    c=64/max_ms                535.1µs
+    c=512/ops_per_sec            1.28M
+    c=512/p50_ms               447.3µs
+    c=512/p99_ms               856.6µs  ±49%
+    c=512/p999_ms              1.108ms  ±12%
+    c=512/max_ms               1.136ms  ±13%
+    gc/pause_ms               26.110ms
+    gc/collections         55.00 count
+    gc/major_collections    0.00 count
+▸ activation/cold-cycle — activate a fresh key + deactivate it — Activation.create, storage load, teardown
+    cycles_per_sec               38.4k
+    p50_ms                      18.3µs
+    p99_ms                      56.2µs  ±11%
+    gc/pause_ms               91.452ms
+    gc/collections          7.00 count
+    gc/major_collections    2.00 count
+▸ mem/per-actor-footprint — heapUsed delta per live activation, tiny vs ~200-row state
+    tiny/bytes_per_actor        5.2 KiB
+    large/bytes_per_actor      47.4 KiB
+    gc/pause_ms              1980.450ms
+    gc/collections          41.00 count
+    gc/major_collections    16.00 count
+results → /home/velt/velt/examples/apps/actors/bench/results/inproc-node.json
+######## throughput VELT_SCHEDULER=per-core
+== velt, all cores
+velt actors: 4 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  30.1k
+    c=1/p50  34.0µs   c=1/p99  35.6µs
+    c=64/ops_per_sec  377.0k
+    c=64/p50  131.7µs   c=64/p99  165.5µs
+    c=512/ops_per_sec  434.5k
+    c=512/p50  1.01ms   c=512/p99  1.15ms
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  35.7k
+    c=1/p50  34.6µs   c=1/p99  44.9µs
+    c=64/ops_per_sec  1.13M
+    c=64/p50  51.3µs   c=64/p99  141.3µs
+    c=512/ops_per_sec  1.14M
+    c=512/p50  413.0µs   c=512/p99  978.4µs
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  16.2k   p50  73.7µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  690.2k   live 19968   rss_delta/actor  2165 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  688.2k   live 99968   rss_delta/actor  1274 B
+turns 9530318, activations 153332, deactivations 153332
+== velt, one core
+velt actors: 1 shards, 2000 ms per level
+▸ dispatch/warm-actor (one key)
+    c=1/ops_per_sec  654.8k
+    c=1/p50  1.5µs   c=1/p99  2.2µs
+    c=64/ops_per_sec  866.4k
+    c=64/p50  74.3µs   c=64/p99  93.1µs
+    c=512/ops_per_sec  838.7k
+    c=512/p50  649.0µs   c=512/p99  691.9µs
+▸ dispatch/fan-out-actors (1000 keys)
+    c=1/ops_per_sec  608.7k
+    c=1/p50  1.6µs   c=1/p99  2.3µs
+    c=64/ops_per_sec  743.0k
+    c=64/p50  86.7µs   c=64/p99  108.5µs
+    c=512/ops_per_sec  579.4k
+    c=512/p50  866.3µs   c=512/p99  937.0µs
+▸ activation/cold-cycle (c=1: activate a new key, then deactivate it)
+    cycles_per_sec  238.2k   p50  4.0µs
+▸ mem/per-actor-footprint n=20000 (Tiny)
+    activations_per_sec(c=64)  361.6k   live 19968   rss_delta/actor  1273 B
+▸ mem/per-actor-footprint n=100000 (Tiny)
+    activations_per_sec(c=64)  376.1k   live 99968   rss_delta/actor  1200 B
+turns 13737784, activations 597330, deactivations 597330
+== node (@sigx/actors benchmarks)
+5 scenario(s), 3 interleaved round(s)
+  warmup dispatch/warm-actor
+  warmup dispatch/warm-actor-deadline
+  warmup dispatch/fan-out-actors
+  warmup activation/cold-cycle
+  warmup mem/per-actor-footprint
+  round 1/3 complete
+  round 2/3 complete
+  round 3/3 complete
+  gc pass complete
+v24.21.0 linux/x64 · AMD EPYC 7763 64-Core Processor
+conditions: production · commit 6a94345 · 3 runs × 400ms
+⚠ THE MACHINE WAS BUSY: the actor-free probe varied 38% across rounds, so something else was competing for the CPU. Repetitions are interleaved and reported as medians, which absorbs some of this — but treat small differences as meaningless. Close other applications and re-run before trusting anything under ~20%.
+▸ dispatch/warm-actor — host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)
+    c=1/ops_per_sec              1.49M
+    c=1/p50_ms                   0.7µs
+    c=1/p99_ms                   1.3µs  ±26%
+    c=1/p999_ms                  2.3µs  ±17%
+    c=1/max_ms                 301.0µs
+    c=64/ops_per_sec             1.41M
+    c=64/p50_ms                 54.4µs
+    c=64/p99_ms                 68.6µs
+    c=64/p999_ms               292.3µs  ±21%
+    c=64/max_ms                440.9µs  ±39%
+    c=512/ops_per_sec            1.27M
+    c=512/p50_ms               462.5µs
+    c=512/p99_ms               934.2µs  ±39%
+    c=512/p999_ms              1.329ms
+    c=512/max_ms               1.353ms
+    gc/pause_ms               18.827ms
+    gc/collections         56.00 count
+    gc/major_collections    0.00 count
+▸ dispatch/warm-actor-deadline — same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax
+    c=1/ops_per_sec             946.6k
+    c=1/p50_ms                   1.1µs
+    c=1/p99_ms                   1.5µs  ±11%
+    c=1/p999_ms                 12.2µs
+    c=1/max_ms                 293.0µs  ±29%
+    c=64/ops_per_sec            976.5k
+    c=64/p50_ms                 75.5µs
+    c=64/p99_ms                 93.1µs
+    c=64/p999_ms               428.6µs
+    c=64/max_ms                526.2µs
+    c=512/ops_per_sec           822.2k
+    c=512/p50_ms               645.5µs
+    c=512/p99_ms               1.418ms
+    c=512/p999_ms              1.582ms
+    c=512/max_ms               1.621ms
+    gc/pause_ms               28.763ms
+    gc/collections         70.00 count
+    gc/major_collections    0.00 count
+▸ dispatch/fan-out-actors — host.dispatch() round-robin across 1 000 warm activations
+    c=1/ops_per_sec              1.28M
+    c=1/p50_ms                   0.8µs
+    c=1/p99_ms                   1.4µs
+    c=1/p999_ms                  3.6µs
+    c=1/max_ms                 406.5µs
+    c=64/ops_per_sec             1.40M
+    c=64/p50_ms                 54.1µs
+    c=64/p99_ms                 69.8µs
+    c=64/p999_ms               382.7µs  ±12%
+    c=64/max_ms                528.9µs
+    c=512/ops_per_sec            1.26M
+    c=512/p50_ms               457.6µs
+    c=512/p99_ms               586.5µs
+    c=512/p999_ms              1.018ms  ±10%
+    c=512/max_ms               1.160ms  ±13%
+    gc/pause_ms               25.695ms
+    gc/collections         55.00 count
+    gc/major_collections    0.00 count
+▸ activation/cold-cycle — activate a fresh key + deactivate it — Activation.create, storage load, teardown
+    cycles_per_sec               39.3k
+    p50_ms                      17.9µs
+    p99_ms                      55.9µs
+    gc/pause_ms               94.019ms
+    gc/collections          7.00 count
+    gc/major_collections    2.00 count
+▸ mem/per-actor-footprint — heapUsed delta per live activation, tiny vs ~200-row state
+    tiny/bytes_per_actor        5.2 KiB
+    large/bytes_per_actor      47.4 KiB
+    gc/pause_ms              1784.317ms
+    gc/collections          41.00 count
+    gc/major_collections    16.00 count
+results → /home/velt/velt/examples/apps/actors/bench/results/inproc-node.json
