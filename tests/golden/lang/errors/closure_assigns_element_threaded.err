@@ -1,0 +1,2 @@
+closure_assigns_element_threaded.vlt:7:23
+error: cannot assign to `x`, which borrows an array element
