@@ -14,6 +14,9 @@
 //! some paths (a callee that writes its out-pointer only on success, read by the caller only on
 //! success). Removing the dead `&x` would leave `x` read before it is (syntactically) assigned,
 //! so a still-read `x` gets a zero initialization in the entry block instead.
+//!
+//! A local holding a source variable for debuggers (`LocalDecl::debug`, only in debug builds)
+//! is live: a debugger reads it.
 
 use velt_vir::vir::{AggLayout, Function, Local, Place, Proj, Rvalue, Stmt, Ty};
 
@@ -72,6 +75,11 @@ fn remove_dead_stores(aggs: &[AggLayout], func: &mut Function) -> bool {
     let mut work = Vec::new();
     let mut stores: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
     let mut scratch = Vec::new();
+    for (i, l) in func.locals.iter().enumerate() {
+        if l.debug.is_some() {
+            mark(Local(i as u32), &mut live, &mut work);
+        }
+    }
     for (bi, block) in func.blocks.iter().enumerate() {
         for (si, s) in block.stmts.iter().enumerate() {
             match store_target(&usage, s) {
@@ -252,6 +260,30 @@ mod tests {
         assert!(run(&[], &mut f));
         assert!(f.blocks.iter().all(|b| b.stmts.is_empty()));
         assert!(f.locals.is_empty());
+    }
+
+    #[test]
+    fn a_described_variable_is_kept() {
+        // x = 1; return 0 — x is never read, but a debugger shows it.
+        let mut fb = FuncBuilder::internal("f", &[], Ty::I64);
+        let x = fb.local(Ty::I64);
+        let b0 = fb.block();
+        fb.assign(b0, x, Rvalue::Use(int(1, Ty::I64)));
+        fb.ret(b0, int(0, Ty::I64));
+        let mut f = fb.finish();
+        f.locals[x.0 as usize].debug = Some(velt_vir::vir::LocalDebug {
+            decl: velt_vir::vir::SrcLoc {
+                file: 0,
+                line: 1,
+                col: 1,
+            },
+            ty: velt_vir::vir::DebugTyId(0),
+            by_ref: false,
+            param: false,
+        });
+        assert!(!run(&[], &mut f));
+        assert_eq!(f.locals.len(), 1);
+        assert_eq!(f.blocks[0].stmts.len(), 1);
     }
 
     /// `q = &x` (dead) keeps `x` assigned for the verifier; `x` (or its field 1, for an

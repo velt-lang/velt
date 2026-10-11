@@ -11,6 +11,7 @@ import { IoResult } from "velt:io";
 declare function velt_rt_bytes_from_str(s: string): u8[];
 // `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid.
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
+declare function velt_rt_bytes_utf8_valid(b: u8[]): bool;
 
 const BASE64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -238,7 +239,7 @@ export function utf8DecodeLossy(data: u8[]): string {
 
 /** Whether `data` is valid UTF-8. */
 export function utf8Valid(data: u8[]): bool {
-  return firstInvalid(data) < 0;
+  return velt_rt_bytes_utf8_valid(data);
 }
 
 // Offset of the first byte that starts an invalid sequence, or -1.

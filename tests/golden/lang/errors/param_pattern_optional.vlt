@@ -1,0 +1,9 @@
+// TS2463: a destructured parameter cannot be optional (`f()` would destructure `undefined`,
+// a TypeError in Node).
+function f({ a }?: { a: number }): number {
+  return a;
+}
+
+function main() {
+  console.log(f());
+}

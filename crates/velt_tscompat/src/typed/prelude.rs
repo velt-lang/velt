@@ -343,6 +343,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("isEmpty", "write `xs.length === 0`"),
             ("set", "assign the element: `xs[i] = v`"),
             ("truncate", "remove the tail with `xs.splice(n)`"),
+            ("xorMask", "XOR the bytes in a loop"),
             // Builtins.
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
         ],

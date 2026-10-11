@@ -66,3 +66,94 @@ fn object_literal_methods() {
         "const h = {\n  id: (x: number): number => x,\n  twice(x: number) {\n    return 2 * x;\n  },\n};\n",
     );
 }
+
+#[test]
+fn destructured_parameters_and_types_from_defaults() {
+    round_trips(
+        "function f([a, b = 1]: [string, number], { c, d: e }: P): string {
+  return a;
+}
+",
+    );
+    round_trips(
+        "function g(location: string, status = 302) {}
+",
+    );
+    round_trips(
+        "const h = xs.map(([k, v]) => k + v);
+",
+    );
+    round_trips(
+        "const r = (a: number, ...xs: number[]) => a;
+",
+    );
+    round_trips(
+        "class C {
+  m({ x }: P = q) {}
+}
+",
+    );
+}
+
+#[test]
+fn rest_generic_and_construct_function_types() {
+    round_trips(
+        "type Emit = (event: string, ...args: number[]) => void;
+",
+    );
+    round_trips(
+        "type Make = <T>(description: string) => Token<T>;
+",
+    );
+    round_trips(
+        "type Ctor = new (buffer: ArrayBuffer) => View;
+",
+    );
+    round_trips(
+        "type O = { m(a: number, ...rest: string[]): void };
+",
+    );
+}
+
+#[test]
+fn destructured_parameters_in_types() {
+    round_trips(
+        "type Obj = { m([a, b]: [number, number]): void };
+",
+    );
+    round_trips(
+        "type F = ([a, b]: [number, number]) => number;
+",
+    );
+    round_trips(
+        "interface I {
+  m({ x, y: [z] }: P, n: number): void;
+}
+",
+    );
+    round_trips(
+        "type G = (x: string, { a }: P) => void;
+",
+    );
+}
+
+#[test]
+fn array_pattern_holes_stay_holes() {
+    round_trips(
+        "const f = ([, , c]: number[]) => c;
+",
+    );
+    round_trips(
+        "function g([, b]: [string, number], [_, d]: [string, number]) {}
+",
+    );
+    round_trips(
+        "function h() {
+  let [, x, , y] = xs;
+  const [a, , ] = ys;
+  const [, ...rest] = zs;
+  return x;
+}
+",
+    );
+}

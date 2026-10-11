@@ -179,7 +179,7 @@ fn github_outputs(plan: &Plan) -> Result<(), String> {
         "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\n",
         flag(plan.full),
         "true",
-        flag(plan.needs_build() || plan.difftest),
+        flag(plan.needs_build() || plan.difftest || plan.vscode),
         flag(plan.goldens != plan::Goldens::None),
     );
     append("GITHUB_OUTPUT", &outputs)?;

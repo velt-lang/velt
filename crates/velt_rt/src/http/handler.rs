@@ -102,6 +102,9 @@ impl Drop for Shared {
         // SAFETY: no request is running (each holds `Shared`), so nothing borrows the environment
         // any more; its first word is its drop function (`VeltHandler::env`).
         unsafe { release_env(desc.env) };
+        // A hand-off: dropping the `released` sender next wakes `server.shutdown()`, often on
+        // another worker, so what the environment's disposal printed must be published first.
+        crate::io::publish_before_handoff();
     }
 }
 

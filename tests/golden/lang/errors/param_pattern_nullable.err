@@ -1,0 +1,2 @@
+param_pattern_nullable.vlt:7:12
+error: cannot destructure a value of type `P | null`: it may be `null` (TypeScript's TS2339)

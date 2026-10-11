@@ -97,6 +97,9 @@ const EVERYTHING: &[&str] = &[
 /// only its own build, lints and unit tests.
 pub(crate) const DIFFTEST: &str = "tests/difftest/";
 
+/// The VS Code extension, a Node package outside the Rust workspace.
+pub(crate) const VSCODE: &str = "editors/vscode/";
+
 /// Changes to these need no check.
 const NOTHING: &[&str] = &[
     "LICENSE-APACHE",
@@ -185,6 +188,9 @@ pub struct Plan {
     pub vlt_fmt: bool,
     /// `tests/difftest`: `cargo fmt`, clippy and its unit tests.
     pub difftest: bool,
+    /// The VS Code extension (`editors/vscode`): `npm ci`, then `npm test` (tsc and its unit
+    /// tests).
+    pub vscode: bool,
     /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
     /// (crates/xtask/src/os.rs).
     pub other_os: Option<String>,
@@ -204,6 +210,7 @@ impl Plan {
             goldens: Goldens::All,
             vlt_fmt: true,
             difftest: true,
+            vscode: true,
         }
     }
 
@@ -219,6 +226,7 @@ impl Plan {
             goldens: Goldens::None,
             vlt_fmt: false,
             difftest: false,
+            vscode: false,
         }
     }
 
@@ -241,6 +249,10 @@ impl Plan {
                     plan.reasons
                         .push(format!("{path}: the differential tester"));
                     plan.difftest = true;
+                }
+                Effect::Vscode => {
+                    plan.reasons.push(format!("{path}: the VS Code extension"));
+                    plan.vscode = true;
                 }
                 Effect::Crate(name) if comment_only.contains(path) => {
                     comment_crates.insert(name);
@@ -469,6 +481,10 @@ impl Plan {
             "  tests/difftest (fmt, clippy, unit tests): {}\n",
             yes(self.difftest)
         ));
+        out.push_str(&format!(
+            "  editors/vscode (npm ci, npm test): {}\n",
+            yes(self.vscode)
+        ));
         let os = match &self.other_os {
             Some(reason) => format!("Linux, Windows, macOS ({reason})"),
             None => "Linux (Windows and macOS after merging, on main)".into(),
@@ -482,6 +498,9 @@ enum Effect {
     Everything,
     Nothing,
     Difftest,
+    /// The VS Code extension's sources and tests (`editors/vscode/`, other than the templates the
+    /// `debugger` test reads).
+    Vscode,
     Crate(String),
     Std,
     ReadByTests(&'static [&'static str], &'static [&'static str]),
@@ -514,6 +533,9 @@ fn classify(graph: &Graph, path: &str) -> Effect {
         if under(prefix) {
             return Effect::ReadByTests(packages, binaries);
         }
+    }
+    if under(VSCODE) {
+        return Effect::Vscode;
     }
     if path.starts_with("editors/") {
         return Effect::Nothing;

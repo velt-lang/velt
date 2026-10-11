@@ -365,9 +365,11 @@ fn adapter(
             name: name.into(),
             span,
         },
+        pattern: None,
         ty: None,
         default: None,
         optional: false,
+        rest: false,
     };
     expr(
         E::Arrow {

@@ -195,8 +195,10 @@ impl FnCx<'_, '_> {
 fn arrow_param(p: &ast::Param) -> ast::ArrowParam {
     ast::ArrowParam {
         name: p.name.clone(),
+        pattern: p.pattern.clone(),
         ty: Some(p.ty.clone()),
         default: p.default.clone(),
         optional: p.optional,
+        rest: p.rest,
     }
 }

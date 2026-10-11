@@ -97,9 +97,7 @@ async fn open(ep: Endpoint, command: &str, names: Vec<Vec<u8>>) -> Result<SubObj
     let (rd, wr) = tokio::io::split(connect::open(&ep).await?);
     let (event_tx, events) = mpsc::unbounded_channel();
     let (ack_tx, acks) = mpsc::unbounded_channel();
-    let reader = crate::task::runtime::handle()
-        .spawn(read_loop(rd, event_tx, ack_tx))
-        .abort_handle();
+    let reader = crate::task::runtime::spawn(read_loop(rd, event_tx, ack_tx)).abort_handle();
     let obj = SubObj {
         control: Mutex::new(Control { wr, acks }),
         events: Mutex::new(events),
