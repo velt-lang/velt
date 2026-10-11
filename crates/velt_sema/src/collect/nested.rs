@@ -15,7 +15,6 @@ use velt_syntax::ast;
 
 use super::declare::new_def;
 use crate::ctx::{Ctx, Item};
-use crate::defs::member_key;
 use crate::hir::DefId;
 
 /// A nested item's name and the source range (inside `module`) where it is visible.
@@ -83,7 +82,7 @@ fn item_bodies<'m>(
             for meth in &t.methods {
                 let q = format!(
                     "{qual}.{}",
-                    member_key(&meth.decl.sig.name.name, meth.is_setter)
+                    cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
             }
@@ -95,7 +94,7 @@ fn item_bodies<'m>(
             for meth in &e.methods {
                 let q = format!(
                     "{qual}.{}",
-                    member_key(&meth.decl.sig.name.name, meth.is_setter)
+                    cx.method_key(m, &meth.decl.sig.name, meth.is_setter)
                 );
                 bodies.push((q, &meth.decl.sig.params, &meth.decl.body));
             }
@@ -104,7 +103,10 @@ fn item_bodies<'m>(
             for meth in &i.methods {
                 if let Some(b) = &meth.body {
                     bodies.push((
-                        format!("{qual}.{}", member_key(&meth.sig.name.name, meth.is_setter)),
+                        format!(
+                            "{qual}.{}",
+                            cx.method_key(m, &meth.sig.name, meth.is_setter)
+                        ),
                         &meth.sig.params,
                         b,
                     ));

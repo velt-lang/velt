@@ -182,10 +182,13 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         }
         if self.method_exists(t, &prop.name) {
-            d = d.with_note(format!(
-                "`{}` is a method: call it with `.{}()`",
-                prop.name, prop.name
-            ));
+            d = d.with_note(match self.cx.key_spelling(&prop.name) {
+                Some(key) => format!("`{key}` is a method: call it with `o{key}()`"),
+                None => format!(
+                    "`{}` is a method: call it with `.{}()`",
+                    prop.name, prop.name
+                ),
+            });
         }
         self.cx.error(d);
     }

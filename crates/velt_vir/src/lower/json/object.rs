@@ -1,5 +1,5 @@
 //! JSON object decoding into structs, anon objects and classes: keys are matched against the
-//! field names (unknown keys are skipped), a repeated key replaces the earlier value (like
+//! field names (unknown keys are skipped; no key fills a member a symbol names), a repeated key replaces the earlier value (like
 //! `JSON.parse`), a missing field fails with `expected field "<name>"` unless its type is
 //! `T | null` (absent and `null` are the same to a typed decode; only `JsonValue` tells them
 //! apart with `has(key)` / `isNull()`): it stays null. A class object is allocated zeroed up front, so a failure
@@ -72,6 +72,11 @@ impl FnLower<'_, '_> {
         self.json_fail(ctx, "object", fail);
         self.switch_to(dispatch);
         for (i, ((name, _), fty)) in fields.iter().zip(&tys).enumerate() {
+            // No key fills a member a symbol or a private name (`#x`) names, whatever its text
+            // (`"[Symbol(k)]"` is a string key), as in JavaScript: it stays absent.
+            if velt_sema::property_order::is_hidden_key(name) {
+                continue;
+            }
             self.json_read_member(
                 r,
                 place,
@@ -85,7 +90,9 @@ impl FnLower<'_, '_> {
         self.switch_to(end);
         for (i, (name, nullable)) in fields.iter().enumerate() {
             if !nullable {
-                self.json_require(ctx, seen, i as u32, name, fail);
+                // A required symbol-keyed member is never filled: the decode fails.
+                let shown = velt_sema::property_order::symbol_key(name);
+                self.json_require(ctx, seen, i as u32, shown.as_deref().unwrap_or(name), fail);
             }
             // `a?: T | null`: present when its key was there, `null` included.
             if let Some(slot) = self.cx.presence_slot(ty, i as u32) {

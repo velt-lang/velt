@@ -159,13 +159,47 @@ impl Ctx<'_> {
     /// returned unchanged.
     pub(crate) fn member_key(&mut self, module: usize, k: &ast::Ident) -> String {
         match self.resolve_key(module, k) {
-            Ok(n) => n,
+            Ok(n) => {
+                self.note_spelling(&n, &k.name);
+                n
+            }
             Err(inner) => self.bad_key(&k.name, &inner, k.span),
         }
     }
 
+    /// The method-table key (`defs::member_key`) of a method or accessor named `k` in `module`:
+    /// a computed key `[KEY]` is resolved as [`Self::member_key`] resolves a field's, so
+    /// `o[KEY]`, `o[KEY]()` and `KEY in o` find it. A key that names nothing keeps its name
+    /// (reported where the member is declared, [`Self::check_method_key`]).
+    pub(crate) fn method_key(&self, module: usize, k: &ast::Ident, is_setter: bool) -> String {
+        let name = self
+            .resolve_key(module, k)
+            .unwrap_or_else(|_| k.name.clone());
+        crate::defs::member_key(&name, is_setter)
+    }
+
+    /// Reports a method or accessor named by a computed key `[KEY]` that names nothing (see
+    /// [`Self::member_key`]).
+    pub(crate) fn check_method_key(&mut self, module: usize, k: &ast::Ident) {
+        self.member_key(module, k);
+    }
+
+    /// Gives every symbol constant of the program its key name, in declaration order, before
+    /// any member is collected, so [`Self::resolve_key`] needs no `&mut`.
+    pub(crate) fn name_symbol_keys(&mut self) {
+        for i in 0..self.info.len() {
+            let d = DefId(i as u32);
+            if !matches!(self.info[i], DefInfo::Global(_)) {
+                continue;
+            }
+            if let Some(sym) = self.known_symbol(d) {
+                self.key_name(sym);
+            }
+        }
+    }
+
     /// [`Self::member_key`] without reporting: `Err(NAME)` for a `[NAME]` that names nothing.
-    pub(crate) fn resolve_key(&mut self, module: usize, k: &ast::Ident) -> Result<String, String> {
+    pub(crate) fn resolve_key(&self, module: usize, k: &ast::Ident) -> Result<String, String> {
         let name = k.name.as_str();
         let inner = match name.strip_prefix('[').and_then(|n| n.strip_suffix(']')) {
             Some(inner) if is_computed_key(k) => inner,
@@ -176,9 +210,11 @@ impl Ctx<'_> {
             _ => return Err(inner.to_string()),
         };
         if let Some(sym) = self.known_symbol(d) {
-            let key = self.key_name(sym);
-            self.note_spelling(&key, name);
-            return Ok(key);
+            // Every symbol constant has its name ([`Self::name_symbol_keys`]).
+            return match self.symbol_keys.names.get(&sym) {
+                Some(key) => Ok(key.clone()),
+                None => Err(inner.to_string()),
+            };
         }
         match self
             .global(d)
@@ -202,8 +238,9 @@ impl Ctx<'_> {
         name.to_string()
     }
 
-    /// The key name of `sym`: `[Symbol(d)]` (`[Symbol()]` without a description), with ` #2`,
-    /// ` #3`, … before the `]` when another symbol with that description has the name already.
+    /// The key name of `sym`: `"\u{FFFF}Symbol(d)"` (`"\u{FFFF}Symbol()"` without a
+    /// description), with ` #2`, ` #3`, … after it when another symbol with that description has
+    /// the name already (`property_order::symbol_key_name`; no written key starts with U+FFFF).
     pub(crate) fn key_name(&mut self, sym: KnownSymbol) -> String {
         if let Some(n) = self.symbol_keys.names.get(&sym) {
             return n.clone();
@@ -212,11 +249,11 @@ impl Ctx<'_> {
             KnownSymbol::Own(_, d) => d.clone().unwrap_or_default(),
             KnownSymbol::Registered(k) => k.clone(),
         };
-        let mut name = format!("[Symbol({desc})]");
-        let mut n = 2;
+        let mut n = 1;
+        let mut name = crate::property_order::symbol_key_name(&desc, n);
         while self.symbol_keys.taken.contains_key(&name) {
-            name = format!("[Symbol({desc}) #{n}]");
             n += 1;
+            name = crate::property_order::symbol_key_name(&desc, n);
         }
         self.symbol_keys.taken.insert(name.clone(), sym.clone());
         self.symbol_keys.names.insert(sym, name.clone());
@@ -236,14 +273,20 @@ impl Ctx<'_> {
     }
 
     /// Member name `name` as the source writes it: `[VNODE]` for the key name of the symbol
-    /// constant `VNODE` holds, `[Symbol.iterator]` for a well-known symbol; `None` for a name
-    /// that is not a symbol key.
+    /// constant `VNODE` holds (`[Symbol(d)]` if no key wrote it), `[Symbol.iterator]` for a
+    /// well-known symbol; `None` for a name that is not a symbol key.
     pub(crate) fn key_spelling(&self, name: &str) -> Option<String> {
         if let Some(s) = self.symbol_keys.spelled.get(name) {
             return Some(s.clone());
         }
-        (name.starts_with("[Symbol.") || self.symbol_keys.taken.contains_key(name))
-            .then(|| name.to_string())
+        if name.starts_with("[Symbol.") {
+            return Some(name.to_string());
+        }
+        self.symbol_keys
+            .taken
+            .contains_key(name)
+            .then(|| crate::property_order::symbol_key(name))
+            .flatten()
     }
 
     /// Member name `name` for a diagnostic: [`Self::key_spelling`] for a symbol key, else the

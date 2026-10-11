@@ -135,10 +135,7 @@ impl Cx<'_> {
             hir::Def::Adt(a) => a
                 .fields
                 .iter()
-                .filter(|f| {
-                    !f.name.starts_with('#')
-                        && velt_sema::property_order::symbol_key(&f.name).is_none()
-                })
+                .filter(|f| !velt_sema::property_order::is_hidden_key(&f.name))
                 .map(|f| f.ty)
                 .collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],

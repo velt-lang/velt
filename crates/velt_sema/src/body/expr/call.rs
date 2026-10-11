@@ -61,6 +61,18 @@ impl FnCx<'_, '_> {
                 prop,
                 optional,
             } => self.member_call(object, prop, *optional, type_args, args, exp, span),
+            // `o[KEY]()` with a symbol key: the method (or function field) the symbol names.
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional,
+            } if self.symbol_key_of(index).is_some() => {
+                let prop = ast::Ident {
+                    name: self.symbol_key_of(index).unwrap_or_default(),
+                    span: index.span,
+                };
+                self.member_call(object, &prop, *optional, type_args, args, exp, span)
+            }
             _ => {
                 let f = match &callee.kind {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),

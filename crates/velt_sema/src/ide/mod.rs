@@ -249,7 +249,7 @@ impl Analysis {
             }
         }
         match self.type_id_at(file, offset) {
-            Some((ty, ctx)) => self.members.instance(self, ty, ctx),
+            Some((ty, ctx)) => written_members(self.members.instance(self, ty, ctx)),
             None => vec![],
         }
     }
@@ -261,7 +261,7 @@ impl Analysis {
             return self.members.statics(self, def);
         }
         match self.def_types.get(&def.span) {
-            Some(&(ty, ctx)) => self.members.instance(self, ty, ctx),
+            Some(&(ty, ctx)) => written_members(self.members.instance(self, ty, ctx)),
             None => vec![],
         }
     }
@@ -306,6 +306,13 @@ impl Analysis {
         spans.dedup();
         spans
     }
+}
+
+/// `members` without those a symbol constant names (`property_order::SYMBOL_KEY_PREFIX`): they
+/// are written with the constant (`o[KEY]`), which a member list cannot name.
+fn written_members(mut members: Vec<(String, DefRef, String)>) -> Vec<(String, DefRef, String)> {
+    members.retain(|(name, ..)| !name.starts_with(crate::property_order::SYMBOL_KEY_PREFIX));
+    members
 }
 
 #[cfg(test)]

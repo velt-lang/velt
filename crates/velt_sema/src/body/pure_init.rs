@@ -438,7 +438,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::JsonStringify
         | I::SourceLocation
         | I::SymbolStatic
-        | I::SymbolRegistry => return None,
+        | I::SymbolRegistry
+        | I::TemplateToString => return None,
         _ => return Some("uses an operation with effects".into()),
     };
     Some(format!("calls `{name}`, which has effects"))

@@ -73,6 +73,7 @@ impl<'a> Parser<'a> {
             // `"[KEY]"` (whose span includes the quotes) by it.
             let key = self.take_ident();
             self.bump(); // ]
+            self.computed_keys.insert(key.name.clone());
             return Ok(Ident {
                 name: format!("[{}]", key.name),
                 span: key.span,

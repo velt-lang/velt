@@ -1,0 +1,3 @@
+symbol_key_methods_unknown.vlt:9:4: error: `[SLOT]` is not a member name the compiler knows: `SLOT` must be a module constant holding a symbol or a string
+symbol_key_methods_unknown.vlt:13:8: error: `[SLOT]` is not a member name the compiler knows: `SLOT` must be a module constant holding a symbol or a string
+symbol_key_methods_unknown.vlt:19:15: error: the property name "\u{ffff}Symbol(k)" is not supported in an object type: Velt uses names starting with `#`, `[Symbol.` and U+FFFF for private names and symbol keys (a `Record<string, V>` may hold it)

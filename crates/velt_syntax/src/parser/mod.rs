@@ -29,7 +29,7 @@ mod type_decls;
 mod types;
 mod undefined;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
 use crate::lexer::{Kw, Lexer, Payload, Tok, Token};
@@ -79,6 +79,9 @@ pub(crate) struct Parser<'a> {
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
+    /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
+    /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
+    computed_keys: BTreeSet<String>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -123,6 +126,7 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            computed_keys: BTreeSet::new(),
         }
     }
 
@@ -463,8 +467,9 @@ impl<'a> Parser<'a> {
     }
 
     /// A quoted property name whose text Velt uses for something else: `"#x"` reads as an ES
-    /// private name and `"[Symbol.iterator]"` / `"[Symbol(k)]"` as a symbol key internally, so they are rejected
-    /// rather than silently taking that meaning; `"__proto__"` names the prototype in JS.
+    /// private name, `"[Symbol.iterator]"` and names starting with the noncharacter U+FFFF as
+    /// symbol keys internally, so they are rejected rather than silently taking that meaning;
+    /// `"__proto__"` names the prototype in JS.
     fn check_quoted_key(&mut self, key: &Ident) {
         if key.name == "__proto__" {
             self.error(
@@ -473,14 +478,14 @@ impl<'a> Parser<'a> {
             );
         } else if key.name.starts_with(crate::ast::PRIVATE_NAME_PREFIX)
             || key.name.starts_with("[Symbol.")
-            || key.name.starts_with("[Symbol(")
+            || key.name.starts_with('\u{FFFF}')
         {
             self.error(
                 format!(
                     "the property name {:?} is not supported: Velt uses names starting with {} for private names and symbol keys",
                     key.name,
-                    match key.name.starts_with("[Symbol(") {
-                        true => "`#`, `[Symbol.` and `[Symbol(`",
+                    match key.name.starts_with('\u{FFFF}') {
+                        true => "`#`, `[Symbol.` and U+FFFF",
                         false => "`#` and `[Symbol.`",
                     }
                 ),

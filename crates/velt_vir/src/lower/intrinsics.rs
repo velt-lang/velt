@@ -50,7 +50,8 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::PrintErr, _) => self.print(2, args),
-            (I::ToString, [a]) => self.stringify(a, ty),
+            (I::ToString, [a]) => self.stringify(a, ty, false),
+            (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
                 let v = self.expr(a);

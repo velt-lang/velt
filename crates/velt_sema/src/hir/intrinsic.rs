@@ -160,6 +160,12 @@ pub enum Intrinsic {
     /// `symbol` only to be passed on as a pointer, to `velt_rt_symbol_for`, whose registry
     /// gives these records for their keys (rt_abi.md "Symbols").
     SymbolRegistry,
+    /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
+    /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
+    /// type is `symbol` (or `symbol | null` holding one) once substituted, it stops the program
+    /// with JS's `TypeError: Cannot convert a Symbol value to a string`, as JS's `ToString`
+    /// throws (`String(x)`, a `ToString`, writes `Symbol(d)`; sema rejects the direct cases).
+    TemplateToString,
     /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
     /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
     /// the rejection.

@@ -305,10 +305,27 @@ impl FnCx<'_, '_> {
                     parts.push(self.error_expr(h.span));
                     continue;
                 }
-                parts.push(self.js_text(h, "a template literal"));
+                let part = self.js_text(h, "a template literal");
+                parts.push(self.implicit_text(part));
             }
         }
         self.concat_parts(parts, span)
+    }
+
+    /// Template literal part `h` (a [`Self::js_text`]): a `ToString` of a value whose type
+    /// mentions a type parameter becomes a `TemplateToString`, which throws for a symbol as
+    /// JavaScript does (the type may be `symbol` once substituted).
+    fn implicit_text(&mut self, mut h: hir::Expr) -> hir::Expr {
+        if let H::Call {
+            callee: callee @ Callee::Intrinsic(Intrinsic::ToString),
+            args,
+        } = &mut h.kind
+        {
+            if args.len() == 1 && self.cx.mentions_params(args[0].ty) {
+                *callee = Callee::Intrinsic(Intrinsic::TemplateToString);
+            }
+        }
+        h
     }
 
     /// `h` as JS's `String(h)` writes it (a template literal part, `String(x)`; `what` names
@@ -380,7 +397,7 @@ impl FnCx<'_, '_> {
             first.kind,
             H::Lit(_)
                 | H::Call {
-                    callee: Callee::Intrinsic(Intrinsic::ToString),
+                    callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::TemplateToString),
                     ..
                 }
         );

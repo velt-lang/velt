@@ -494,11 +494,16 @@ every std type with private state, `private` or `#`, out of JSON.
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is
-an ordinary field or method whose name is the symbol's key name: `[Symbol.iterator]` for a
-well-known symbol, `[Symbol(d)]` for the symbol a module constant holds (`[Symbol(d) #2]`,
-`#3`, … for further symbols with description `d`); no identifier starts with `[`. Readers act on
-the form (`velt_sema::property_order::symbol_key`): `console.log` shows such a field after the
-others as `[Symbol(d)]: v`, `JSON.stringify` and `Object.keys` leave it out. The value of a
+an ordinary field, method or accessor whose name is the symbol's key name: `[Symbol.iterator]`
+for a well-known symbol, and for the symbol a module constant holds `"\u{FFFF}Symbol(d)"`
+(`"\u{FFFF}Symbol(d) #2"`, `#3`, … for further symbols with description `d`;
+`velt_sema::property_order::symbol_key_name`). No identifier starts with `[` or U+FFFF, and
+sema rejects quoted keys starting with `[Symbol.` or U+FFFF, so no string key reaches such a
+member (`"[Symbol(k)]"` is an ordinary key). Readers act on the form
+(`velt_sema::property_order::symbol_key`, `is_hidden_key`): `console.log` shows such a field
+after the others as `[Symbol(d)]: v`; `JSON.stringify`, `Object.keys` and `JSON.parse` leave it
+(and `#` fields) out, whatever keys the text has. Like every member name, a key name reaches
+machine symbol names only through `velt_vir::mangle` (escaped to `[A-Za-z0-9_]`). The value of a
 module constant initialized with `Symbol(...)` or `Symbol.for("k")` is
 `Intrinsic::SymbolStatic(id, desc, described)` (all literals), one read-only record per `id`
 (ids from 2^40: the registry's records, listed in `Intrinsic::SymbolRegistry`'s table).
@@ -507,7 +512,11 @@ module constant initialized with `Symbol(...)` or `Symbol.for("k")` is
 whose type declares the key (a field, method or accessor; a class's optional field too),
 `false` for one that doesn't, and for an optional field of an object type or interface
 (`[KEY]?: T`) a test of the field: its presence flag (`Intrinsic::FieldPresent`) for
-`[KEY]?: T | null` in an object type, else not null.
+`[KEY]?: T | null` in an object type, else not null. `Symbol.iterator in o` and
+`Symbol.asyncIterator in o` are `true` or `false` from `o`'s type's methods.
+
+`Intrinsic::TemplateToString` is a template literal part whose type mentions a type parameter:
+`ToString`, except that a `symbol` (once substituted) panics with JS's `TypeError`.
 
 ## Types with no HIR form
 

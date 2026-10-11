@@ -249,8 +249,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Whether a (non-null) value of type `t` has member `key` (`None`: unknown, a well-known
-    /// symbol other than an iterator one on a built-in or standard library type, or an iterator
-    /// one the type has no method for).
+    /// symbol other than an iterator one on a built-in or standard library type). For
+    /// `Symbol.iterator` and `Symbol.asyncIterator` the type's methods answer: a sync generator
+    /// has no `[Symbol.asyncIterator]`, as in JavaScript.
     pub(crate) fn key_presence(&mut self, t: TyId, key: &str) -> Option<Presence> {
         let declared = self.cx.declared_presence(t, key);
         if !key.starts_with("[Symbol.") {
@@ -261,8 +262,11 @@ impl FnCx<'_, '_> {
             return declared;
         }
         let iterator = key == ast::SYMBOL_ITERATOR || key == ast::SYMBOL_ASYNC_ITERATOR;
-        if iterator && self.method_exists(t, key) {
-            return Some(Presence::Yes);
+        if iterator {
+            return Some(match self.method_exists(t, key) {
+                true => Presence::Yes,
+                false => Presence::No,
+            });
         }
         // A type of the program's own: objects have no well-known symbol members of their own
         // (`Object.prototype` has none) unless they declare them.
