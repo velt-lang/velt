@@ -181,6 +181,11 @@ fn a_released_value_that_drops_another_map() {
 
 #[test]
 fn an_object_marked_without_a_record_is_an_ice() {
+    if env!("CARGO_PKG_NAME") == "velt_rt_wasm" {
+        // Another test of that crate runs a program entry, which installs the panic hook that
+        // exits the process: the panic cannot be caught there.
+        return;
+    }
     no_leak(|| {
         let obj = new_obj(&[]);
         // SAFETY: `obj` is live; the flag is set without a record, as corruption would.
