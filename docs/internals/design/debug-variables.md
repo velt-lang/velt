@@ -1,8 +1,8 @@
 # Design: variables in the debugger
 
-Status: in progress (issue #958, phase 2). Phase 1 made F5 build and start a debugger with
-breakpoints and stepping; this phase shows local variables with readable values in debug
-(Cranelift) builds.
+Status: steps 1 to 3 implemented (issue #958, phase 2), step 4 in review (#980). Phase 1 made
+F5 build and start a debugger with breakpoints and stepping; this phase shows local variables
+with readable values in debug (Cranelift) builds.
 
 ## Problem
 
@@ -33,8 +33,10 @@ Three steps, each its own pull request:
    enumerations.
 3. **LLDB formatters** (`share/velt/lldb/velt_lldb.py`, loaded by the VS Code extension) show
    strings as text, arrays as their elements, options as `null` or the value and tagged types
-   as their active variant, matching debug type names. Lexical scopes come with this step, so
-   shadowed and not-yet-declared variables are hidden.
+   as their active variant, matching debug type names. A value that cannot be one (a variable
+   not initialized yet) shows as `<invalid string>` or `<invalid array>`, never read as a huge
+   array. They match type names and need no recognizer functions, so they work with LLDB 18.
+   Lexical scopes, which hide not-yet-declared variables, are step 4.
 
 Locals of async functions, generators and inlined code are not described yet (phase 4: their
 values live in state machines or the caller's frame).

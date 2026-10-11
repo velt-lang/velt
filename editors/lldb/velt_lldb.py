@@ -23,8 +23,31 @@ ARRAY_LIMIT = 10000
 
 def _formatted(value):
     """`value` as its formatters show it (its synthetic children, if it has a provider)."""
-    synthetic = value.GetSyntheticValue()
-    return synthetic if synthetic.IsValid() else value
+    get = getattr(value, "GetSyntheticValue", None)
+    if get is not None:
+        synthetic = get()
+        return synthetic if synthetic.IsValid() else value
+    # LLDB 18 and older have no `GetSyntheticValue`.
+    value.SetPreferSyntheticValue(True)
+    return value
+
+
+def _readable(value, address, size):
+    """Whether the program's memory at `address` (`size` bytes, at least one) can be read."""
+    if size <= 0:
+        return True
+    error = lldb.SBError()
+    value.GetProcess().ReadMemory(address + size - 1, 1, error)
+    return error.Success()
+
+
+def _decode(raw):
+    """WTF-8 bytes as text: a lone surrogate shows as one U+FFFD."""
+    try:
+        text = raw.decode("utf-8", "surrogatepass")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", "replace")
+    return "".join("\ufffd" if 0xD800 <= ord(c) <= 0xDFFF else c for c in text)
 
 
 def _word(value, name):
@@ -37,33 +60,37 @@ def _quote(text):
 
 
 def string_text(value):
-    """The text of a `string` value, `None` if its bytes cannot be read."""
+    """The text of a `string` value; `None` if it cannot be one (not yet initialized) or its
+    bytes cannot be read."""
     value = value.GetNonSyntheticValue()
     w0, w1, w2 = (_word(value, n) for n in ("w0", "w1", "w2"))
     top = (w2 >> 56) & 0xFF
     if top >= 0x80:
-        # Inline: the text is in the value's own bytes, its length in byte 23.
+        # Inline: the text is in the value's own bytes, its length in byte 23 (at most 23, or
+        # 22 with the UTF-16 unit count in byte 22).
         n = top & 0x1F
+        if n > 23 or (top & 0x40 and n > 22):
+            return None
         raw = (w0.to_bytes(8, "little") + w1.to_bytes(8, "little") + w2.to_bytes(8, "little"))[:n]
-        truncated = False
-    else:
-        # Static, borrowed or heap: a pointer and the byte length in the low half of word 1.
-        n = w1 & 0xFFFFFFFF
-        truncated = n > STRING_LIMIT
-        raw = b""
-        if n:
-            error = lldb.SBError()
-            raw = value.GetProcess().ReadMemory(w0, min(n, STRING_LIMIT), error)
-            if not error.Success():
-                return None
-    # WTF-8: a lone surrogate is not UTF-8 and shows as U+FFFD.
-    text = raw.decode("utf-8", "replace")
-    return text + "…" if truncated else text
+        return _decode(raw)
+    # Static, borrowed or heap: a pointer, then the UTF-16 unit count and the byte length in the
+    # halves of word 1 (a string is shorter than 2 GiB, and has 1 to 3 bytes per unit).
+    n, units = w1 & 0xFFFFFFFF, w1 >> 32
+    if n > 0x7FFFFFFF or not units <= n <= 3 * units:
+        return None
+    if n == 0:
+        return ""
+    error = lldb.SBError()
+    raw = value.GetProcess().ReadMemory(w0, min(n, STRING_LIMIT), error)
+    if not error.Success():
+        return None
+    text = _decode(raw)
+    return text + "…" if n > STRING_LIMIT else text
 
 
 def string_summary(value, internal_dict):
     text = string_text(value)
-    return "<unreadable string>" if text is None else _quote(text)
+    return "<invalid string>" if text is None else _quote(text)
 
 
 class TextProvider:
@@ -98,7 +125,7 @@ class ArrayProvider:
         self.data = self.value.GetChildMemberWithName("data")
         self.elem = self.data.GetType().GetPointeeType()
         self.size = self.elem.GetByteSize()
-        self.len = min(_word(self.value, "len"), ARRAY_LIMIT)
+        self.len = min(array_len(self.value) or 0, ARRAY_LIMIT)
         return False
 
     def has_children(self):
@@ -119,8 +146,21 @@ class ArrayProvider:
         return self.data.CreateChildAtOffset("[%d]" % index, index * self.size, self.elem)
 
 
+def array_len(value):
+    """The length of a `T[]`, `None` if it cannot be an array (not yet initialized: a length
+    above its capacity, or elements that cannot be read)."""
+    raw = value.GetNonSyntheticValue()
+    length, cap = _word(raw, "len"), _word(raw, "cap")
+    data = raw.GetChildMemberWithName("data")
+    size = data.GetType().GetPointeeType().GetByteSize()
+    if length > cap or not _readable(raw, data.GetValueAsUnsigned(0), length * size):
+        return None
+    return length
+
+
 def array_summary(value, internal_dict):
-    return "len=%d" % _word(value.GetNonSyntheticValue(), "len")
+    length = array_len(value)
+    return "<invalid array>" if length is None else "len=%d" % length
 
 
 def _variant(value):

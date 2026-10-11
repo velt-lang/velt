@@ -276,6 +276,7 @@ fn lldb_resolves_breakpoints_in_llvm_builds() {
 }
 
 const VALUES: &str = r#"type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+type Pair = { x: number; y: number };
 
 function show(s: Shape, v: string | number, n: number | null, words: string[]): void {
   const lit = "hello";
@@ -283,11 +284,19 @@ function show(s: Shape, v: string | number, n: number | null, words: string[]): 
   const long = "a fairly long string that lives on the heap " + "!";
   const uni = "héllo" + "✓";
   const none: number | null = null;
-  console.log(s.kind, v, n, none, words.length, lit, short, long, uni);
+  const q: Pair | null = { x: 1, y: 2 };
+  const lone = "a" + String.fromCharCode(0xd800) + "b";
+  console.log(s.kind, v, n, none, words.length, lit, short, long, uni, q == null, lone.length);
+}
+
+function points(): number {
+  const ps: Pair[] = [{ x: 1, y: 2 }];
+  return ps.length;
 }
 
 function main() {
   show({ kind: "circle", r: 2 }, "x", 4, ["one", "two"]);
+  console.log(points());
 }
 "#;
 
@@ -309,10 +318,16 @@ fn lldb_formats_velt_values() {
         &exe,
         &[
             &import,
-            "breakpoint set -f app.vlt -l 9",
+            "breakpoint set -f app.vlt -l 12",
+            // At the entry of `points`, `ps` is not initialized: whatever its words hold, the
+            // formatters must neither hang nor read a huge array.
+            "breakpoint set -n _V6points",
             "run",
             "frame variable",
             "frame variable words[1]",
+            "frame variable q.x",
+            "continue",
+            "frame variable",
             "kill",
         ],
     );
@@ -333,11 +348,17 @@ fn lldb_formats_velt_values() {
         r#"[0] = "one""#,
         r#"(string) words[1] = "two""#,
         "r = 2",
+        "(number) q.x = 1",
+        // A lone surrogate is one replacement character.
+        "(string) lone = \"a\u{fffd}b\"",
+        // Stopped at the entry of `points`: an array, valid or not, and no hang.
+        "({ x: number; y: number }[]) ps = ",
     ] {
         assert!(out.contains(expected), "no `{expected}` in:\n{out}");
     }
-    // Strings show no raw words.
+    // Strings show no raw words, and unions of scalars or strings no raw `value` child.
     assert!(!out.contains("w0 ="), "{out}");
+    assert!(!out.contains("value ="), "{out}");
 }
 
 const ENTRY: &str = "function area(w: number, h: number): number {
