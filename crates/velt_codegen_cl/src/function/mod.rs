@@ -26,6 +26,8 @@ mod operand;
 mod place;
 mod rounding;
 mod stmt;
+#[cfg(test)]
+mod storage_tests;
 mod terminator;
 
 use std::collections::HashMap;

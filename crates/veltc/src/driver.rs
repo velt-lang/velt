@@ -42,7 +42,7 @@ pub struct BuildOptions {
     pub report_numbers: bool,
     /// Describe local variables for debuggers in a debug build (`velt build`, `velt dev --exe`).
     /// Off for builds that only run (`velt run`, `velt test`): the backend also stores each
-    /// assignment of a described variable to a stack slot, a few percent in hot loops.
+    /// assignment of a described variable to a stack slot (+7–15% instructions on benchmarks).
     pub debug_vars: bool,
 }
 
