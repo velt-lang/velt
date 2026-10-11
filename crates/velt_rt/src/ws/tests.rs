@@ -58,7 +58,9 @@ fn sends_keep_call_order_past_the_high_water_mark() {
         // queueing); the second must still go out after it.
         let big = vec![b'x'; HIGH_WATER + 1];
         assert!(server.tx.enqueue(Op::Binary, &big).unwrap());
-        assert!(server.tx.enqueue(Op::Text, b"after").unwrap());
+        // Whether this one finds the queue still over HIGH_WATER depends on how far the writer
+        // has got with the first (on another worker), so only the order is checked.
+        server.tx.enqueue(Op::Text, b"after").unwrap();
         let first = client.receive().await.unwrap();
         assert_eq!(
             (first.kind, unsafe { first.data.as_bytes() }.len()),
