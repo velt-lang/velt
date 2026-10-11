@@ -58,3 +58,5 @@ for in x 5
 true
 { a: null, b: { c: null, d: 'e' } } {"a":null,"b":{"c":null,"d":"e"}}
 { a: null, b: { c: null, d: 'e' } } [ 'a', 'b' ]
+null 1 null [ 'a', 'b' ]
+{ a: null, b: null } {"a":null,"b":null}

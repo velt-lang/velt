@@ -1035,7 +1035,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
   include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
   `null` is present like any other (`has` is true, it is counted, iterated and printed), and
-  `get` gives `null` both for it and for a missing key (use `has` to tell them apart).
+  `get` gives `null` both for it and for a missing key (use `has` to tell them apart). If
+  such an entry holding `null` has a content key that changed after insertion, then while the
+  map has deleted entries not yet compacted away, `forEach`, `for...of` and `console.log` skip
+  it (`keys()`, `values()` and `entries()` list it).
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.

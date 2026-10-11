@@ -9,10 +9,13 @@
 // - A null value marks a deleted entry only where `V` excludes null. When `V` includes null
 //   (`Map<string, number | null>`, a `Record<string, T | null>`), `V | null` is `V` and a live
 //   entry may hold null too: such an entry is live when the map has no tombstones (`dead == 0`,
-//   the common case) or the index still points at it (`liveNull`: a delete removes the entry's
-//   slot at once, its key stays). `__intrinsic_holds_null` is a constant per instantiation, so
-//   maps whose `V` excludes null keep this layout and code unchanged, and maps whose `V`
-//   includes null pay only on entries that hold null (no extra field, no per-entry flag).
+//   the common case) or a slot of the index points at it (a delete removes the entry's slot at
+//   once, its key stays). `__intrinsic_holds_null` is a constant per instantiation, so maps
+//   whose `V` excludes null keep this layout and code unchanged (no extra field, no per-entry
+//   flag). Maps whose `V` includes null pay only while they have tombstones: `keys()`,
+//   `values()`, `entries()`, `compact` and the other bulk readers then mark the live positions
+//   from the slot words in one pass (`liveScan`), and `forEach`, `for...of` and the formatting
+//   and JSON glue probe the index for each null-valued entry, deleted ones included (`liveNull`).
 // - `slots` is an open-addressing index (power-of-two capacity) of packed `u64` words:
 //   the top 32 bits of the entry's scrambled hash `p = hash * 2^64/phi` (Fibonacci hashing,
 //   which spreads even weak hashes such as sequential integers), and in the low 32 bits the
@@ -132,6 +135,18 @@ export class Map<K, V> {
       return null;
     }
     return __intrinsic_share(this.entryValues[e as usize]);
+  }
+
+  /**
+   * The value stored for `key`, which is present (a literal-key `Record` reads its keys with it);
+   * unlike `get(key)!` it reads a live entry holding null as that null.
+   */
+  __at(key: K): V {
+    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+    if (e < 0) {
+      panic("ICE: Map.__at of a missing key");
+    }
+    return sharedValue(this.entryValues[e as usize]);
   }
 
   /** Whether the map has an entry for `key`, matched as `get` matches it. */
@@ -264,11 +279,14 @@ export class Map<K, V> {
    */
   keys(): K[] {
     const out: K[] = __intrinsic_array_with_capacity(this._size);
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      for (const e of this.liveScan()) {
+        out.push(__intrinsic_share(this.entryKeys[e]));
+      }
+      return out;
+    }
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (
-        this.entryValues[e] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e))
-      ) {
+      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         out.push(__intrinsic_share(this.entryKeys[e]));
       }
     }
@@ -290,12 +308,12 @@ export class Map<K, V> {
 
   /** The positions of the live entries in `entryKeys` / `entryValues` (a record's glue). */
   __livePositions(): usize[] {
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      return this.liveScan();
+    }
     const out: usize[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (
-        this.entryValues[e] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e))
-      ) {
+      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         out.push(e);
       }
     }
@@ -308,11 +326,15 @@ export class Map<K, V> {
    */
   values(): V[] {
     const out: V[] = __intrinsic_array_with_capacity(this._size);
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      for (const e of this.liveScan()) {
+        out.push(sharedValue(this.entryValues[e]));
+      }
+      return out;
+    }
     for (let e: usize = 0; e < this.entryValues.length; e++) {
       if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.entryValues[e] == null) {
-        if (this.liveNull(e)) {
-          out.push(__intrinsic_null_as<V>());
-        }
+        out.push(__intrinsic_null_as<V>());
       } else {
         pushShared(out, this.entryValues[e]);
       }
@@ -327,11 +349,19 @@ export class Map<K, V> {
    */
   entries(): [K, V][] {
     const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      for (const e of this.liveScan()) {
+        const pair: [K, V] = [
+          __intrinsic_share(this.entryKeys[e]),
+          sharedValue(this.entryValues[e]),
+        ];
+        out.push(pair);
+      }
+      return out;
+    }
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.entryValues[e] == null) {
-        if (this.liveNull(e)) {
-          pushNullEntry(out, this.entryKeys[e]);
-        }
+        pushNullEntry(out, this.entryKeys[e]);
       } else {
         pushEntry(out, this.entryKeys[e], this.entryValues[e]);
       }
@@ -438,11 +468,17 @@ export class Map<K, V> {
     if (this._size != other._size) {
       return false;
     }
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      for (const e of this.liveScan()) {
+        const o = other.lookup(this.entryKeys[e], __intrinsic_hash(this.entryKeys[e]) * FIB);
+        if (o < 0 || !__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+          return false;
+        }
+      }
+      return true;
+    }
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (
-        this.entryValues[e] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e))
-      ) {
+      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
         const o = other.lookup(this.entryKeys[e], p);
         if (o < 0 || !__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
@@ -459,11 +495,14 @@ export class Map<K, V> {
    */
   __deepHash(): u64 {
     let h = this._size as u64;
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.dead > 0) {
+      for (const e of this.liveScan()) {
+        h = h ^ __intrinsic_hash(this.entryKeys[e]);
+      }
+      return h;
+    }
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      if (
-        this.entryValues[e] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e))
-      ) {
+      if (__intrinsic_holds_null(__intrinsic_null_as<V>()) || this.entryValues[e] != null) {
         h = h ^ __intrinsic_hash(this.entryKeys[e]);
       }
     }
@@ -479,11 +518,37 @@ export class Map<K, V> {
       (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(e));
   }
 
+  // The positions of the live entries, ascending, read from the slot words in one pass: every
+  // live entry has a slot and a deleted one has none (a delete removes the slot at once). For
+  // maps whose `V` includes null that have tombstones; no key is hashed, so an entry whose
+  // content key changed since it was set is found too.
+  private liveScan(): usize[] {
+    const n = this.entryKeys.length;
+    const live: bool[] = __intrinsic_array_with_capacity(n);
+    for (let e: usize = 0; e < n; e++) {
+      live.push(false);
+    }
+    for (let s: usize = 0; s < this.slots.length; s++) {
+      const w = this.slots[s];
+      if (w != 0) {
+        live[((w & POS_MASK) - 1) as usize] = true;
+      }
+    }
+    const out: usize[] = __intrinsic_array_with_capacity(this._size);
+    for (let e: usize = 0; e < n; e++) {
+      if (live[e]) {
+        out.push(e);
+      }
+    }
+    return out;
+  }
+
   // Whether entry `e`, whose value is null and whose `V` includes null, is live (holds a null
   // value) rather than deleted: true when the map has no tombstones, else when a slot of the
   // index still points at it (a delete removes the entry's slot at once but leaves its key). It
-  // probes from the home of the entry's key comparing positions only, so it holds while
-  // `compact` moves the entries before `e`.
+  // probes from the home of the entry's key's current hash, so while the map has tombstones it
+  // misses an entry whose content key changed since it was set (`forEach`, `for...of` and the
+  // formatting and JSON glue then skip it; the bulk readers use `liveScan`).
   private liveNull(e: usize): bool {
     if (this.dead == 0) {
       return true;
@@ -613,9 +678,23 @@ export class Map<K, V> {
   // (dropping the dead keys), then renumbers the positions in the slot words in place.
   // The sequence-number breakpoints are rebuilt on the way: one where a run of removed entries
   // ends (or an old breakpoint starts), so each entry keeps its sequence number.
+  // Where `V` includes null, a null value does not tell a live entry from a deleted one, so
+  // `moved` first marks the positions the slot words point at (1), in one pass, and then is
+  // filled in place instead of pushed.
   private compact() {
     const next = this.nextSeq();
     const moved: u64[] = __intrinsic_array_with_capacity(this.entryKeys.length);
+    if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
+      for (let e: usize = 0; e < this.entryKeys.length; e++) {
+        moved.push(0);
+      }
+      for (let s: usize = 0; s < this.slots.length; s++) {
+        const word = this.slots[s];
+        if (word != 0) {
+          moved[((word & POS_MASK) - 1) as usize] = 1;
+        }
+      }
+    }
     const oldPos = this.seqPos;
     const oldOff = this.seqOff;
     this.seqPos = [];
@@ -632,11 +711,9 @@ export class Map<K, V> {
         nextBp = k < oldPos.length ? oldPos[k] : MAX_ENTRIES;
         shifted = true;
       }
-      // Entry `r` and those after it are still where the slot words point (only positions before
-      // `r` have moved), so `liveNull` reads the index as it stands.
       if (
         this.entryValues[r] != null ||
-        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && this.liveNull(r))
+        (__intrinsic_holds_null(__intrinsic_null_as<V>()) && moved[r] != 0)
       ) {
         if (w != r) {
           __intrinsic_array_swap(this.entryKeys, w, r);
@@ -648,9 +725,15 @@ export class Map<K, V> {
           shifted = false;
         }
         w++;
-        moved.push(w as u64);
+        if (__intrinsic_holds_null(__intrinsic_null_as<V>())) {
+          moved[r] = w as u64;
+        } else {
+          moved.push(w as u64);
+        }
       } else {
-        moved.push(0);
+        if (!__intrinsic_holds_null(__intrinsic_null_as<V>())) {
+          moved.push(0);
+        }
         shifted = true;
       }
     }
