@@ -169,7 +169,9 @@ getter, as in TypeScript. Write `B(T)` for the fields the bounds declare. Inside
 
 `keyof X` is the union of `X`'s keys as literal types: string literals, and number literals for
 numeric keys (`keyof { 0: string; a: number }` is `0 | "a"`). Object types with numeric keys don't
-parse yet; until they do, every key is a string literal.
+parse yet; until they do, every key is a string literal. `TypeExprKind::KeyOf` exists since #936
+for concrete object types and literal-keyed `Record`s (`crate::type_queries`); classes, unions and
+type parameters are still errors there.
 
 ## Stuck operators
 

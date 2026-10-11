@@ -87,10 +87,10 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`
-  (vir/debug.rs): which source variable a local holds (declaration, debug type, held by
-  reference, param) and how each source type is laid out, in terms of existing aggregates
-  (fields are VIR field indexes; a local's own VIR type gives the encoding of a scalar or of an
-  enum without payloads, which may be narrower than its natural one).
+  (vir/debug.rs): which source variable a local holds (declaration, end of its scope, debug
+  type, held by reference, param) and how each source type is laid out, in terms of existing
+  aggregates (fields are VIR field indexes; a local's own VIR type gives the encoding of a scalar
+  or of an enum without payloads, which may be narrower than its natural one).
 - Filled only by `velt_vir::lower_with` with `LowerOptions::debug_info`, which the driver sets
   for debug builds made for debugging (`velt build`, `velt dev --exe`; not `velt run` or
   `velt test`); empty otherwise. Invariant (vir.rs 10): every reference resolves (checked by `verify`).

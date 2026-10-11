@@ -36,6 +36,19 @@ pub trait Visit<'a> {
     fn ty(&mut self, _t: &'a ast::TypeExpr) {}
 }
 
+/// Calls `f` with the path of every type query (`typeof a.b`) in type `t`.
+pub fn type_queries<'a>(t: &'a ast::TypeExpr, f: &mut dyn FnMut(&'a [ast::Ident])) {
+    struct Queries<'f, 'a>(&'f mut dyn FnMut(&'a [ast::Ident]));
+    impl<'a> Visit<'a> for Queries<'_, 'a> {
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Query(path) = &t.kind {
+                (self.0)(path);
+            }
+        }
+    }
+    walk_type(t, &mut Queries(f));
+}
+
 /// Visit every node of `module`.
 pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     for item in &module.items {
@@ -43,7 +56,7 @@ pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     }
 }
 
-fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
+pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
     v.item(item);
     match &item.kind {
         ast::ItemKind::Function(f) => walk_fn(f, v),

@@ -401,6 +401,106 @@ fn test_runner_reports_passes_and_failures() {
     assert!(Path::new(&s.dir.join("app/target/velt/test")).is_dir());
 }
 
+/// `--filter` runs the matching tests; `--no-run --json` builds their harness without running
+/// it and names it, for a debugger ("Debug test" in VS Code).
+#[test]
+fn test_filter_and_no_run() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.write(
+        "app/src/math.test.vlt",
+        "export function test_add() { console.log(\"add ran\"); }\n\
+         export function test_add_more() { assert(1 + 1 == 2); }\n\
+         export function test_bad() { assertEq(1, 2); }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "add"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "{stdout}");
+    for want in ["ok test_add", "ok test_add_more", "2 passed; 0 failed"] {
+        assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
+    }
+    assert!(!stdout.contains("test_bad"), "{stdout}");
+
+    let o = s.velt(
+        "app",
+        &[
+            "test",
+            "src/math.test.vlt",
+            "--filter",
+            "test_bad",
+            "--no-run",
+            "--json",
+        ],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(out["errors"], 0, "{out}");
+    let harnesses = out["harnesses"].as_array().unwrap();
+    assert_eq!(harnesses.len(), 1, "{out}");
+    let h = &harnesses[0];
+    assert_eq!(h["tests"], serde_json::json!(["test_bad"]), "{out}");
+    assert!(
+        h["file"].as_str().unwrap().ends_with("math.test.vlt"),
+        "{out}"
+    );
+    // Built, not run: running it fails the assertion.
+    let exe = Path::new(h["executable"].as_str().unwrap());
+    let run = std::process::Command::new(exe).output().unwrap();
+    assert_eq!(run.status.code(), Some(101));
+    // In a directory of its own, so debugging it doesn't block the next run's link.
+    assert_eq!(
+        exe.parent().and_then(|d| d.file_name()),
+        Some(std::ffi::OsStr::new("debug")),
+        "{out}"
+    );
+    assert!(h["debugInfo"].is_boolean(), "{out}");
+    if !cfg!(windows) {
+        assert_eq!(h["debugInfo"], true, "{out}");
+    }
+
+    // `--exact`: `test_add` alone, not `test_add_more`.
+    let o = s.velt(
+        "app",
+        &[
+            "test", "--filter", "test_add", "--exact", "--no-run", "--json",
+        ],
+    );
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        out["harnesses"][0]["tests"],
+        serde_json::json!(["test_add"]),
+        "{out}"
+    );
+    let o = s.velt("app", &["test", "--filter", "test_add", "--exact"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
+
+    // A test file that does not parse: its errors, with their location, are in the JSON.
+    s.write("app/src/garbled.test.vlt", "export function test_y( {\n");
+    let o = s.velt("app", &["test", "--filter", "test_y", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    let located = out["diagnostics"].as_array().unwrap().iter().any(|d| {
+        d["location"]["file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with("garbled.test.vlt"))
+    });
+    assert!(located, "{out}");
+    std::fs::remove_file(s.dir.join("app/src/garbled.test.vlt")).unwrap();
+
+    // A test that does not build is reported in the JSON.
+    s.write(
+        "app/src/broken.test.vlt",
+        "export function test_x() { const n: number = \"no\"; }\n",
+    );
+    let o = s.velt("app", &["test", "--filter", "test_x", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    assert_eq!(out["harnesses"], serde_json::json!([]), "{out}");
+}
+
 #[test]
 fn manifest_json_prints_the_validated_manifest() {
     let s = sandbox();
@@ -710,4 +810,64 @@ fn target_add_from_an_unsigned_release_names_the_way_out() {
             && err.contains("--unverified"),
         "{err}"
     );
+}
+
+#[test]
+fn the_lock_records_the_toolchain_and_locked_builds_refuse_another() {
+    // #960: velt.lock.json says which velt builds the package; --locked holds to it.
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["install"]);
+    let version = env!("CARGO_PKG_VERSION");
+    let lock = s.read("app/velt.lock.json");
+    assert!(lock.contains(&format!("\"velt\": \"{version}\"")), "{lock}");
+
+    // Another toolchain's lock: a normal build leaves it (another velt ran this one), --locked
+    // refuses, `velt update` moves it to this toolchain.
+    let minor = version.rsplit_once('.').unwrap().0;
+    let other = format!("{minor}.999");
+    s.write("app/velt.lock.json", &lock.replace(version, &other));
+    s.ok("app", &["install"]);
+    assert!(s.read("app/velt.lock.json").contains(&other));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains(&format!(
+            "velt.lock.json pins velt {other}, but this is velt {version}"
+        )),
+        "{err}"
+    );
+    s.ok("app", &["update"]);
+    assert!(s
+        .read("app/velt.lock.json")
+        .contains(&format!("\"velt\": \"{version}\"")));
+
+    // A locked version the pin no longer accepts: --locked says to record this one instead.
+    let pinned = s.read("app/velt.lock.json");
+    s.write("app/velt.lock.json", &pinned.replace(version, "0.0.9"));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains("pins velt 0.0.9, which the package's velt pin")
+            && err.contains(&format!("to record velt {version}")),
+        "{err}"
+    );
+    // Not a version: refused when the lock is read, shown escaped.
+    s.write("app/velt.lock.json", &pinned.replace(version, "../../x"));
+    let err = s.fail("app", &["install"]);
+    assert!(err.contains("not a velt version"), "{err}");
+    s.write("app/velt.lock.json", &pinned);
+
+    // A package without a `velt` pin records none (the launcher only follows a pinned lock).
+    s.ok("", &["new", "unpinned"]);
+    let manifest = s.read("unpinned/package.vlt");
+    let unpinned = manifest.replace(&format!(", velt: \"{minor}\""), "");
+    assert_ne!(unpinned, manifest, "{manifest}");
+    s.write("unpinned/package.vlt", &unpinned);
+    s.ok("unpinned", &["install"]);
+    assert!(!s.read("unpinned/velt.lock.json").contains("\"velt\""));
+
+    // A lock from before the field is fine under --locked, and stays as it is.
+    let old = "{\n  \"version\": 1,\n  \"packages\": []\n}\n";
+    s.write("app/velt.lock.json", old);
+    s.ok("app", &["install", "--locked"]);
+    assert_eq!(s.read("app/velt.lock.json"), old);
 }

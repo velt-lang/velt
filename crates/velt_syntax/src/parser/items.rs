@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
             }
             Some(Kw::Struct) => ItemKind::Struct(self.parse_type_decl(false)?),
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
-            Some(Kw::Interface) => ItemKind::Interface(self.parse_interface()?),
+            Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
             Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => {
                 ItemKind::TypeAlias(self.parse_type_alias()?)

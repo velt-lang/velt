@@ -28,7 +28,17 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
                     Some(FnSource::Decl(decl)) => &decl.sig,
                     _ => extern_sig(cx, d, module),
                 };
+                // A type query in the signature that needs a body (`ReturnType<typeof f>` of a
+                // function with an inferred result) resolves it again when collection is done.
+                let reported = cx.diags.len();
+                cx.sigq.sig_fill = true;
+                cx.sigq.sig_deferred = false;
                 fill_sig(cx, d, sig, &Generics::default(), module);
+                cx.sigq.sig_fill = false;
+                if cx.sigq.sig_deferred {
+                    cx.diags.truncate(reported);
+                    cx.sigq.deferred_sigs.insert(d, (sig, module));
+                }
             }
             DefInfo::Adt(_) => adt_methods(cx, d),
             DefInfo::Iface(_) => iface_methods(cx, d),
@@ -46,7 +56,26 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
     }
 }
 
-fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
+/// The signatures `resolve_sigs` deferred, now that bodies may be checked (`Ctx::bodies_ok`).
+/// A type query may reach one still pending (`fill_pending`), so they are filled in dependency
+/// order, whatever the declaration order.
+pub(super) fn fill_deferred(cx: &mut Ctx) {
+    while let Some((&d, _)) = cx.sigq.deferred_sigs.first_key_value() {
+        fill_pending(cx, d);
+    }
+}
+
+/// Fill `d`'s deferred signature now if it is still pending (a type query needs it).
+pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
+    let Some((sig, module)) = cx.sigq.deferred_sigs.remove(&d) else {
+        return;
+    };
+    cx.sigq.filling_sigs.push((d, sig.name.name.clone()));
+    fill_sig(cx, d, sig, &Generics::default(), module);
+    cx.sigq.filling_sigs.pop();
+}
+
+pub(crate) fn extern_sig<'m>(cx: &Ctx<'m>, d: DefId, module: usize) -> &'m ast::FnSig {
     let span = cx.def_spans[d.0 as usize];
     cx.modules[module]
         .ast
@@ -72,6 +101,9 @@ pub(crate) fn declared_mode(cx: &mut Ctx, ty: TyId) -> PassMode {
 fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
     let mut out: Vec<ParamSig> = vec![];
     for p in ps {
+        if let Some(f) = cx.sigq.filling_sigs.last_mut() {
+            f.1.clone_from(&p.name.name);
+        }
         let ty = cx.resolve_type(&p.ty, env);
         if out.iter().any(|q| q.name == p.name.name) {
             cx.err(
@@ -118,6 +150,9 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     }
     let kind = cx.fn_info(d).kind;
     let mut ps = params(cx, &sig.params, &env);
+    if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
+        f.1.clone_from(&sig.name.name);
+    }
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {

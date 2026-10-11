@@ -81,6 +81,11 @@ impl Ctx<'_> {
                 None => self.ty.error,
             },
             ast::TypeExprKind::Object(fields) => self.resolve_object(fields, env),
+            ast::TypeExprKind::IndexSig {
+                fields, key, value, ..
+            } => self.resolve_index_sig(fields, &key.ty, value, env),
+            ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
+            ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
                 self.ty.error
@@ -287,6 +292,9 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            "ReturnType" | "Parameters" => {
+                return Some(self.resolve_fn_operator(t, name, args, env))
+            }
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 use velt_toolchain::layout::velt_exe;
-use velt_toolchain::pin::{find_pin, Pin};
+use velt_toolchain::pin::{find_pin, locked_version, Pin};
 use velt_toolchain::{release, Requirement, Root, Toolchain};
 
 use crate::{ENV_AUTO_INSTALL, ENV_TOOLCHAIN};
@@ -17,6 +17,9 @@ pub struct Context {
     pub cwd: PathBuf,
     /// `velt +<toolchain> …`.
     pub plus: Option<String>,
+    /// Pick the newest toolchain the pin accepts, not the one `velt.lock.json` records: for
+    /// `velt update`, which moves the lock to it.
+    pub ignore_lock: bool,
     /// `$VELT_TOOLCHAIN`.
     pub env_toolchain: Option<String>,
     /// Unless `$VELT_TOOLCHAIN_AUTO_INSTALL` is `0` (or `false`, `no`, `off`).
@@ -40,6 +43,7 @@ impl Context {
             root,
             cwd,
             plus: None,
+            ignore_lock: false,
             env_toolchain: var(ENV_TOOLCHAIN),
             auto_install,
             base: release::base_url(),
@@ -54,6 +58,8 @@ pub enum Reason {
     Plus(String),
     Env,
     Pin(Pin),
+    /// The version `velt.lock.json` records, which the pin accepts.
+    Locked(Pin),
     Default,
 }
 
@@ -65,6 +71,13 @@ impl fmt::Display for Reason {
             Reason::Pin(pin) => write!(
                 f,
                 "velt: \"{}\" in {}:{}",
+                pin.requirement,
+                pin.manifest.display(),
+                pin.line
+            ),
+            Reason::Locked(pin) => write!(
+                f,
+                "velt.lock.json, with velt: \"{}\" in {}:{}",
                 pin.requirement,
                 pin.manifest.display(),
                 pin.line
@@ -113,7 +126,8 @@ fn chosen(text: &str) -> Result<Wanted, String> {
         })
 }
 
-/// `+<toolchain>`, else `$VELT_TOOLCHAIN`, else the package's pin, else the default.
+/// `+<toolchain>`, else `$VELT_TOOLCHAIN`, else the package's pin (the version its lock records
+/// when the pin accepts it), else the default.
 pub fn select(ctx: &Context) -> Result<Selection, String> {
     if let Some(name) = &ctx.plus {
         return Ok(Selection {
@@ -128,6 +142,18 @@ pub fn select(ctx: &Context) -> Result<Selection, String> {
         });
     }
     if let Some(pin) = find_pin(&ctx.cwd)? {
+        // The lock's version, so every machine builds a commit with the same toolchain; not one
+        // the pin no longer accepts (the toolchain then records the one it is).
+        if !ctx.ignore_lock {
+            if let Some(locked) = locked_version(&pin.manifest) {
+                if pin.requirement.matches(&locked) {
+                    return Ok(Selection {
+                        wanted: Wanted::Toolchain(Toolchain::Version(locked)),
+                        reason: Reason::Locked(pin),
+                    });
+                }
+            }
+        }
         return Ok(Selection {
             wanted: Wanted::Requirement(pin.requirement.clone()),
             reason: Reason::Pin(pin),
@@ -315,6 +341,24 @@ fn carry_target_packs(ctx: &Context, before: &[Version], version: &Version, pref
             names.join(" ")
         );
     }
+}
+
+/// Install the toolchain archive `file` downloaded before (`velt toolchain install --from`),
+/// checked against the signed `SHA256SUMS` beside it unless `unverified`, then add the target
+/// packs of the version it follows, as for a download. Returns the version, and whether it was
+/// installed now (`false`: it was installed already, and is kept).
+pub fn install_from(
+    ctx: &Context,
+    file: &Path,
+    unverified: bool,
+) -> Result<(Version, bool), String> {
+    let before = ctx.root.versions();
+    let (version, prefix, installed) =
+        release::install_toolchain_from_file(&ctx.root, file, unverified, None)?;
+    if installed {
+        carry_target_packs(ctx, &before, &version, &prefix);
+    }
+    Ok((version, installed))
 }
 
 /// Install release `version`; another launcher finishing the same install first is fine. The

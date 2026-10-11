@@ -59,6 +59,31 @@ impl BuildOptions {
     pub fn wants_debug_info(&self) -> bool {
         !self.release || self.debug_info
     }
+
+    /// Whether the program keeps line information for debuggers: debug info was asked for, and
+    /// it reaches the executable. Cranelift's DWARF in Windows objects reaches it only through
+    /// the bundled `lld-link`; MSVC's `link.exe` keeps the sections but cuts their names to 8
+    /// bytes, so with it the build emits none (an object, `--emit obj`, keeps it: whoever links
+    /// it chooses the linker).
+    pub fn has_line_info(&self) -> bool {
+        let target = self.target();
+        let bundled = || {
+            matches!(
+                velt_link::linker_report(&target),
+                Ok(velt_link::LinkerReport::Bundled { .. })
+            )
+        };
+        self.line_info(bundled)
+    }
+
+    /// [`has_line_info`](Self::has_line_info), with `bundled` answering whether the bundled lld
+    /// links for the target.
+    pub fn line_info(&self, bundled: impl FnOnce() -> bool) -> bool {
+        let linked_cranelift_coff = self.target().contains("windows")
+            && self.backend != Some(Backend::Llvm)
+            && self.emit == Emit::Exe;
+        self.wants_debug_info() && (!linked_cranelift_coff || bundled())
+    }
 }
 
 /// What [`check_with`] checks besides [`BuildOptions::input`].
@@ -264,6 +289,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let t = Instant::now();
     let std_root = loader::std_root();
     let native_inits = crate::native::inits(opts.packages.as_ref());
+    let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
         std_root: std_root.as_deref(),
@@ -271,12 +297,13 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // A debug compiler links the debug runtime, which checks that no two tasks use one
         // captured variable's cell (#916); release programs and release compilers skip it.
         cell_checks: !opts.release && cfg!(debug_assertions),
-        // Variables for debuggers in debug builds made for debugging; release builds with `-g`
-        // keep line information only, and their optimizations stay as they are.
-        debug_info: !opts.release && opts.debug_vars,
+        // Variables for debuggers in debug builds made for debugging that keep their line
+        // information (they refer to its files); release builds with `-g` keep line information
+        // only, and their optimizations stay as they are.
+        debug_info: !opts.release && opts.debug_vars && line_info,
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
-    if !opts.wants_debug_info() && !opts.report_numbers {
+    if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
         program.funcs.iter_mut().for_each(|f| f.locs.clear());
@@ -315,7 +342,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));
-        if !opts.wants_debug_info() {
+        if !line_info {
             program.files.clear();
             program.funcs.iter_mut().for_each(|f| f.locs.clear());
         }

@@ -55,6 +55,12 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             }
             ("test", "--release") => flags.release = true,
             ("test", "--watch") => flags.watch = true,
+            ("test", "--filter") => {
+                flags.filter = Some(take_value(inline.as_deref(), &mut it, "--filter")?)
+            }
+            ("test", "--exact") => flags.exact = true,
+            ("test", "--no-run") => flags.no_run = true,
+            ("test", "--json") => flags.json = true,
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
             _ => positional.push(s),
         }
@@ -72,6 +78,10 @@ struct Flags {
     locked: bool,
     release: bool,
     watch: bool,
+    filter: Option<String>,
+    exact: bool,
+    no_run: bool,
+    json: bool,
     path: Option<String>,
     native_artifacts: Option<PathBuf>,
     native_only: bool,
@@ -155,11 +165,24 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             )),
             None => Err("usage: velt native build [--target <triple>]".into()),
         },
+        "test" if flags.json && !flags.no_run => {
+            Err("`--json` goes with `--no-run` (`velt test --no-run --json`)".into())
+        }
+        "test" if flags.exact && flags.filter.is_none() => {
+            Err("`--exact` goes with `--filter <name>`".into())
+        }
+        "test" if flags.watch && flags.no_run => {
+            Err("`--watch` runs the tests; it does not go with `--no-run`".into())
+        }
         "test" => Ok(Command::Test {
             path: arg.map(PathBuf::from),
             release: flags.release,
             locked: flags.locked,
             watch: flags.watch,
+            filter: flags.filter,
+            exact: flags.exact,
+            no_run: flags.no_run,
+            json: flags.json,
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
@@ -297,7 +320,11 @@ mod tests {
                 path: None,
                 release: false,
                 locked: false,
-                watch: false
+                watch: false,
+                filter: None,
+                exact: false,
+                no_run: false,
+                json: false,
             }
         );
         assert_eq!(
@@ -306,9 +333,39 @@ mod tests {
                 path: Some(PathBuf::from("tests")),
                 release: true,
                 locked: false,
-                watch: true
+                watch: true,
+                filter: None,
+                exact: false,
+                no_run: false,
+                json: false,
             }
         );
+        assert_eq!(
+            p(&[
+                "test",
+                "a.test.vlt",
+                "--filter",
+                "test_add",
+                "--no-run",
+                "--json"
+            ])
+            .unwrap(),
+            Command::Test {
+                path: Some(PathBuf::from("a.test.vlt")),
+                release: false,
+                locked: false,
+                watch: false,
+                filter: Some("test_add".into()),
+                exact: false,
+                no_run: true,
+                json: true,
+            }
+        );
+        assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));
+        assert!(p(&["test", "--exact"]).unwrap_err().contains("`--filter"));
+        assert!(p(&["test", "--no-run", "--watch"])
+            .unwrap_err()
+            .contains("`--watch`"));
     }
 
     #[test]

@@ -15,6 +15,7 @@ import {
   pickEngine,
   sortProcesses,
   VeltConfig,
+  needsLlvmBuild,
 } from "../debugConfig";
 
 const all = () => true;
@@ -42,6 +43,43 @@ test("build arguments: the package, or one file", () => {
     "llvm",
     "--json",
   ]);
+});
+
+test("a test builds its harness with velt test", () => {
+  const config: VeltConfig = { type: "velt", request: "launch", name: "Debug test_add" };
+  assert.deepEqual(buildArgs({ ...config, file: "/w/math.test.vlt", test: "test_add" }), [
+    "test",
+    "/w/math.test.vlt",
+    "--filter",
+    "test_add",
+    "--exact",
+    "--no-run",
+    "--json",
+  ]);
+  const built = parseBuildResult(
+    JSON.stringify({
+      harnesses: [
+        {
+          file: "/w/math.test.vlt",
+          executable: "/w/target/velt/test/math_test_0",
+          tests: ["test_add"],
+          env: { VELT_SCRIPT: "/w/math.test.vlt" },
+          debugInfo: false,
+        },
+      ],
+      lldbScript: "/opt/velt/share/velt/lldb/velt_lldb.py",
+      diagnostics: [],
+      errors: 0,
+      warnings: 0,
+    }),
+  );
+  assert.equal(built.executable, "/w/target/velt/test/math_test_0");
+  assert.deepEqual(built.env, { VELT_SCRIPT: "/w/math.test.vlt" });
+  assert.equal(built.lldbScript, "/opt/velt/share/velt/lldb/velt_lldb.py");
+  // The harness's own debugInfo (a Windows build without line information warns).
+  assert.equal(built.debugInfo, false);
+  // No harness (the test is gone, or the build failed): nothing to debug.
+  assert.equal(parseBuildResult('{"harnesses": [], "diagnostics": [], "errors": 0}').executable, null);
 });
 
 const failed = JSON.stringify({
@@ -134,4 +172,12 @@ test("the attach picker lists processes, Velt programs first", () => {
     { pid: 5120, command: "app.exe" },
   ]);
   assert.deepEqual(sortProcesses([{ pid: 2, command: "C:\\w\\target\\velt\\app.exe" }, { pid: 3, command: "x" }]).map((e) => e.pid), [2, 3]);
+});
+
+test("the Visual Studio debugger needs an LLVM build on Windows", () => {
+  const config: VeltConfig = { type: "velt", request: "launch", name: "Debug" };
+  assert.equal(needsLlvmBuild("cpptools", config, "win32"), true);
+  assert.equal(needsLlvmBuild("cpptools", { ...config, buildArgs: ["--backend", "llvm"] }, "win32"), false);
+  assert.equal(needsLlvmBuild("codelldb", config, "win32"), false);
+  assert.equal(needsLlvmBuild("cpptools", config, "linux"), false);
 });

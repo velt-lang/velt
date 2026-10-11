@@ -247,6 +247,26 @@ where
     }
 }
 
+/// Like [`spawn`], but placement runs first and `make` learns whether the task will run on another
+/// per-core worker than this thread's, so it can prepare to move (a socket to detach from this
+/// worker's I/O driver). Always `false` with the stealing scheduler.
+pub fn spawn_with<F>(make: impl FnOnce(bool) -> F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    match per_core() {
+        None => runtime().spawn(make(false)),
+        Some(workers) => {
+            let i = place(workers);
+            let fut = make(current_worker() != Some(i));
+            let w = &workers[i];
+            w.load.fetch_add(1, Ordering::Relaxed);
+            w.handle.spawn(Counted { fut, load: &w.load })
+        }
+    }
+}
+
 fn build() -> Runtime {
     if is_per_core() {
         // The main thread's own runtime: it only waits for work running on the workers.

@@ -9,7 +9,7 @@ pins them.
 | `velt add <pkg>[@<req>]` | add a registry dependency to `package.vlt` (latest version without a requirement) and install it; comments in `package.vlt` are kept |
 | `velt add <pkg> --path <dir>` | add a local package |
 | `velt install [--locked]` | resolve and fetch dependencies, write `velt.lock.json`; `--locked` fails if the lock would change |
-| `velt update` | resolve again, ignoring `velt.lock.json` |
+| `velt update` | resolve again, ignoring `velt.lock.json`, with the newest *installed* velt the package's `velt` field accepts (recorded in the lock; `velt toolchain install` fetches a newer one) |
 | `velt publish` | publish the current package to its registry (with its prebuilt native libraries) |
 | `velt native build [--target <t>]` | build the package's native library (package authors; needs Rust) |
 | `velt manifest [--json]` | check `package.vlt`, or print it as JSON for other tools |

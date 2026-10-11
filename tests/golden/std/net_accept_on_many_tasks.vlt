@@ -1,0 +1,55 @@
+// check: no leaks
+// Eight tasks accept on one listener (with the per-core scheduler, on several workers, sharing
+// one registration of the socket); every connection is answered once, and after `close()` the
+// port can be listened on again at once.
+import { listen, connect, TcpListener } from "velt:net";
+import { IoError } from "velt:io";
+
+async function serveFour(server: TcpListener): Promise<void> {
+  for (let i = 0; i < 4; i++) {
+    const conn = await server.accept();
+    const data = await conn.readString();
+    await conn.write(`echo ${data}`);
+    conn.close();
+  }
+}
+
+async function ask(port: number, i: i64): Promise<bool> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(`${i}`);
+  const reply = await c.readString();
+  c.close();
+  return reply == `echo ${i}`;
+}
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+  const port = server.port;
+  const acceptors: Promise<void, IoError>[] = [];
+  for (let t = 0; t < 8; t++) {
+    acceptors.push(spawn(serveFour(server)));
+  }
+  const asks: Promise<bool, IoError>[] = [];
+  for (let i = 0; i < 32; i++) {
+    asks.push(spawn(ask(port, i)));
+  }
+  let ok = 0;
+  for (const r of await Promise.all(asks)) {
+    if (r) {
+      ok++;
+    }
+  }
+  await Promise.all(acceptors);
+  console.log("echoes:", ok);
+  server.close();
+
+  let relistened = 0;
+  for (let i = 0; i < 20; i++) {
+    const again = await listen(`127.0.0.1:${port}`);
+    if (again.port == port) {
+      relistened++;
+    }
+    again.close();
+  }
+  console.log("listened again:", relistened);
+}

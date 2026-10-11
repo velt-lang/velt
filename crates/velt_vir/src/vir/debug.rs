@@ -20,8 +20,12 @@ pub struct DebugTyId(pub u32);
 /// The source variable a local holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalDebug {
-    /// Where the variable is declared (its name, for params and bindings).
+    /// Where the variable is declared (its name, for params and bindings). It is in scope in
+    /// the code at source locations from here up to `end`.
     pub decl: SrcLoc,
+    /// The end of the block declaring the variable; `None`: the end of the function (params,
+    /// variables of the function's own block).
+    pub end: Option<SrcLoc>,
     pub ty: DebugTyId,
     /// The local holds a pointer to the value (a by-reference param or binding, a captured
     /// variable, a variable in a shared cell), not the value itself.
