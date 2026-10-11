@@ -119,7 +119,13 @@ pub struct GenericParam {
 
 #[derive(Clone, Debug)]
 pub struct Param {
+    /// The parameter's name; for a destructured parameter (`pattern`), a name no source can
+    /// spell (`#param0`, by position), which the function's body destructures.
     pub name: Ident,
+    /// `[a, b]: T` / `{ a, b }: T`: a destructured parameter. The function's body starts by
+    /// binding the pattern from the parameter, as `let [a, b] = #param0;` would (defaults inside
+    /// the pattern included).
+    pub pattern: Option<Pattern>,
     /// For an optional parameter, the written type plus `| null`.
     pub ty: TypeExpr,
     /// For an optional parameter, `null`.
@@ -293,7 +299,17 @@ pub enum TypeExprKind {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
         throws: Option<Box<TypeExpr>>,
+        /// `(a: A, ...xs: T[]) => R`: the last parameter is a rest parameter.
+        rest: bool,
     },
+    /// `<T>(x: T) => T`: a generic function type (`ty` is the function type).
+    GenericFunction {
+        type_params: Vec<GenericParam>,
+        ty: Box<TypeExpr>,
+    },
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
+    /// function type, generic or not, after `new`).
+    Construct(Box<TypeExpr>),
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
     /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)
@@ -549,7 +565,11 @@ pub enum ArrowBody {
 
 #[derive(Clone, Debug)]
 pub struct ArrowParam {
+    /// The parameter's name; for a destructured parameter, a name no source can spell, as in
+    /// [`Param::name`].
     pub name: Ident,
+    /// `([k, v]) => …` / `({ a, b }: T) => …`: a destructured parameter (see [`Param::pattern`]).
+    pub pattern: Option<Pattern>,
     /// Optional in arrows when inferable from context. For an optional parameter with a
     /// written type, that type plus `| null`.
     pub ty: Option<TypeExpr>,
@@ -558,6 +578,9 @@ pub struct ArrowParam {
     pub default: Option<Expr>,
     /// `(x?: T) => …`, parsed as `(x: T | null = null) => …` (the flag keeps the spelling).
     pub optional: bool,
+    /// `(...xs: T[]) => …` (the last parameter): the remaining arguments as one array, as for
+    /// [`Param::rest`].
+    pub rest: bool,
 }
 
 #[derive(Clone, Debug)]

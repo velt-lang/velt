@@ -1,7 +1,9 @@
 //! Functions: declarations and signatures (shared by methods and `declare function`), parameter
 //! lists, generic parameter lists and arrow functions.
 
-use velt_syntax::ast::{ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Param, TypeExpr};
+use velt_syntax::ast::{
+    ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param, Pattern, TypeExpr,
+};
 
 use super::lists::delimited;
 use super::Printer;
@@ -102,18 +104,23 @@ impl<'a> Printer<'a> {
                     .filter(|m| *m != "...")
                     .map(|m| format!("{m} "))
                     .collect::<String>();
+                let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
-                    return cat![
-                        mods,
-                        param.name.name.clone(),
-                        "?: ",
-                        p.ty_optional(&param.ty)
-                    ];
+                    return cat![mods, name, "?: ", p.ty_optional(&param.ty)];
                 }
                 if param.rest {
-                    return cat![mods, "...", param.name.name.clone(), ": ", p.ty(&param.ty)];
+                    return cat![mods, "...", name, ": ", p.ty(&param.ty)];
                 }
-                let mut doc = cat![mods, param.name.name.clone(), ": ", p.ty(&param.ty)];
+                // `status = 302`: the type comes from the default (it has the default's span).
+                let inferred = param
+                    .default
+                    .as_ref()
+                    .is_some_and(|d| d.span == param.ty.span);
+                let mut doc = if inferred {
+                    cat![mods, name]
+                } else {
+                    cat![mods, name, ": ", p.ty(&param.ty)]
+                };
                 if let Some(default) = &param.default {
                     doc = cat![doc, " = ", p.expr(default)];
                 }
@@ -121,6 +128,14 @@ impl<'a> Printer<'a> {
             },
         );
         delimited("(", list, ")", false)
+    }
+
+    /// A parameter's name, or the pattern it destructures.
+    fn param_binding(&mut self, name: &Ident, pattern: Option<&Pattern>) -> Doc {
+        match pattern {
+            Some(q) => self.pattern(q),
+            None => text(name.name.clone()),
+        }
     }
 
     /// `<T, U extends A & B, E = never>`, or nothing.
@@ -172,16 +187,19 @@ impl<'a> Printer<'a> {
             |p| {
                 let hi = p.ty.as_ref().map_or(p.name.span.hi, |t| t.span.hi);
                 let hi = p.default.as_ref().map_or(hi, |d| d.span.hi.max(hi));
+                let hi = p.pattern.as_ref().map_or(hi, |q| q.span.hi.max(hi));
                 (p.name.span.lo, hi)
             },
             |p, param| {
+                let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
                     let ty = match &param.ty {
                         Some(ty) => cat![": ", p.ty_optional(ty)],
                         None => nil(),
                     };
-                    return cat![param.name.name.clone(), "?", ty];
+                    return cat![name, "?", ty];
                 }
+                let dots = if param.rest { "..." } else { "" };
                 let ty = match &param.ty {
                     Some(ty) => cat![": ", p.ty(ty)],
                     None => nil(),
@@ -190,7 +208,8 @@ impl<'a> Printer<'a> {
                     Some(d) => cat![" = ", p.expr(d)],
                     None => nil(),
                 };
-                cat![param.name.name.clone(), ty, default]
+                let default = if param.rest { nil() } else { default };
+                cat![dots, name, ty, default]
             },
         );
         let asyncness = if is_async { "async " } else { "" };

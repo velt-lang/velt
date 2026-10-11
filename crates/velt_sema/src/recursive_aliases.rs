@@ -115,11 +115,13 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
             params,
             ret,
             throws,
+            ..
         } => {
             params.iter().any(|x| names(x, name))
                 || names(ret, name)
                 || throws.as_deref().is_some_and(|x| names(x, name))
         }
+        K::GenericFunction { ty, .. } | K::Construct(ty) => names(ty, name),
         K::Indexed { object, key } => names(object, name) || names(key, name),
         K::Object(fs) => fs.iter().any(|f| names(&f.ty, name)),
         K::IndexSig {

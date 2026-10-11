@@ -55,10 +55,15 @@ impl Printer<'_> {
             .split_whitespace()
             .map(|m| format!("{m} "))
             .collect();
+        // A destructured parameter shows its pattern as written.
+        let name = match &p.pattern {
+            Some(q) => self.flat(q.span),
+            None => p.name.name.clone(),
+        };
         if p.optional {
-            return format!("{mods}{}?: {}", p.name.name, self.ty_optional(&p.ty));
+            return format!("{mods}{name}?: {}", self.ty_optional(&p.ty));
         }
-        let mut out = format!("{mods}{}: {}", p.name.name, self.ty(&p.ty));
+        let mut out = format!("{mods}{name}: {}", self.ty(&p.ty));
         if let Some(default) = &p.default {
             out.push_str(" = ");
             out.push_str(&self.flat(default.span));
@@ -145,13 +150,22 @@ impl Printer<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let params: Vec<String> = params.iter().map(|p| self.fn_type_param(p)).collect();
+                let mut params: Vec<String> =
+                    params.iter().map(|p| self.fn_type_param(p)).collect();
+                if let Some(last) = params.last_mut().filter(|_| *rest) {
+                    last.insert_str(0, "...");
+                }
                 let throws = throws
                     .as_ref()
                     .map_or(String::new(), |t| format!(" throws {}", self.ty(t)));
                 format!("({}) => {}{throws}", params.join(", "), self.ty(ret))
             }
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                format!("{}{}", self.generics(type_params), self.ty(ty))
+            }
+            TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
             TypeExprKind::Union(members) => {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")

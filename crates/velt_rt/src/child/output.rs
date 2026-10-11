@@ -84,7 +84,7 @@ async fn run(mut cmd: tokio::process::Command, input: Vec<u8>) -> std::io::Resul
     if let Some(mut stdin) = child.stdin.take() {
         // Fed from its own task: a child that writes a lot before reading its input must not
         // block on a full stdout pipe while we block writing to its stdin.
-        tokio::spawn(async move {
+        crate::task::runtime::spawn(async move {
             let _ = stdin.write_all(&input).await;
         });
     }

@@ -157,7 +157,7 @@ impl<S: OwnedStore> Drop for HandlerFut<S> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             let shared = self.shared.clone();
-            crate::task::runtime::handle().spawn(finish_detached(inner, shared));
+            crate::task::runtime::spawn(finish_detached(inner, shared));
         }
     }
 }
@@ -258,7 +258,7 @@ async fn accept_connections<S: OwnedStore>(
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
         // connection.
-        tokio::spawn(async move {
+        crate::task::runtime::spawn(async move {
             match tls {
                 None => serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await,
                 Some(acceptor) => {
@@ -305,9 +305,9 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
             } else {
                 (desc.state_size as usize, desc.state_align as usize)
             };
-            let task = with_state_store!(size, align, |S| tokio::spawn(accept_loop::<S>(
-                l, shared, tls
-            )));
+            let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
+                accept_loop::<S>(l, shared, tls)
+            ));
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {

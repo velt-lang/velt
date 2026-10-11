@@ -1,0 +1,57 @@
+// Defaults inside destructured parameters run in the body, in order, and after the defaults
+// evaluated for the call: here the later defaults are constants, or the earlier pattern has no
+// defaults, so the order is Node's. Destructuring a value that may be `null` is checked first.
+function se(t: string, v: number): number {
+  console.log("eval " + t);
+  return v;
+}
+
+function mk(): { y?: number } {
+  console.log("eval mk");
+  return { y: 5 };
+}
+
+function f1({ x = se("x", 1) }: { x?: number }, y: number = 10, z: string = "z"): string {
+  return `${x} ${y} ${z}`;
+}
+
+function f2({ x }: { x: number }, { y = se("y", 7) }: { y?: number } = mk()): number {
+  return x + y;
+}
+
+class K {
+  m({ p = se("p", 1) }: { p?: number }, [q = se("q", 2)]: number[], r = -1): number {
+    return p + q + r;
+  }
+}
+
+interface P {
+  a: number;
+  s: string;
+}
+
+function find(hit: boolean): P | null {
+  return hit ? { a: 1, s: "one" } : null;
+}
+
+function main() {
+  const g = ([a = se("a", 1), b = se("b", 2)]: number[], c: number[] = [3, 4]): number =>
+    a + b + c.length;
+  console.log(f1({}));
+  console.log(f1({ x: 2 }, 3));
+  console.log(f2({ x: 1 }));
+  console.log(f2({ x: 1 }, {}));
+  console.log(g([]));
+  console.log(g([5], [1]));
+  console.log(new K().m({}, []));
+  console.log(new K().m({ p: 4 }, [5], 6));
+  for (const hit of [true, false]) {
+    const p = find(hit);
+    if (p !== null) {
+      const { a, s } = p;
+      console.log(a, s);
+    } else {
+      console.log("none");
+    }
+  }
+}

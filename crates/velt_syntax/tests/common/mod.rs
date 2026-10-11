@@ -82,6 +82,7 @@ pub fn ty(t: &TypeExpr) -> String {
             params,
             ret,
             throws,
+            ..
         } => {
             let throws = throws
                 .as_ref()
@@ -130,6 +131,11 @@ pub fn ty(t: &TypeExpr) -> String {
         TypeExprKind::KeyOf(t) => format!("keyof {}", ty(t)),
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Void => "void".into(),
+        TypeExprKind::GenericFunction { type_params, ty: t } => {
+            let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
+            format!("<{}>{}", names.join(", "), ty(t))
+        }
+        TypeExprKind::Construct(t) => format!("new {}", ty(t)),
         TypeExprKind::Predicate {
             param,
             ty: t,

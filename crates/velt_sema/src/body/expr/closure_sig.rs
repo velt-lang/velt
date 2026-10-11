@@ -188,8 +188,12 @@ impl FnCx<'_, '_> {
                     crate::body::defaults::default_type(self.cx, self.module, e)
                 }
                 (None, None) => {
+                    let what = match p.pattern {
+                        Some(_) => "this parameter".to_string(),
+                        None => format!("parameter `{}`", p.name.name),
+                    };
                     self.cx.error(
-                        Diagnostic::error(format!("type annotations needed for parameter `{}`", p.name.name), p.name.span)
+                        Diagnostic::error(format!("type annotations needed for {what}"), p.name.span)
                             .with_note("annotate it (`(x: i64) => ...`) or pass the function where a function type is expected"),
                     );
                     self.cx.ty.error

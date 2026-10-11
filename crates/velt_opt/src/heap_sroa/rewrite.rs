@@ -33,7 +33,12 @@ pub(super) fn apply(
         };
         let name = func.locals[i].name.as_ref().map(|n| format!("{n}.obj"));
         let l = Local(func.locals.len() as u32);
-        func.locals.push(LocalDecl::new(Ty::Agg(obj), name));
+        // The object's fields, not the variable (a pointer): no debug description (only release
+        // builds run this, and they describe none).
+        func.locals.push(LocalDecl {
+            debug: None,
+            ..LocalDecl::new(Ty::Agg(obj), name)
+        });
         *slot = Some((l, obj));
         entry.push((l, obj));
     }

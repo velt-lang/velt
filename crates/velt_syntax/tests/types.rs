@@ -160,3 +160,68 @@ fn index_signatures() {
         ["an index signature cannot be optional"]
     );
 }
+
+/// The function type alias `T` in `src`: (rest, type parameter count, construct).
+fn fn_type_flags(src: &str) -> (bool, usize, bool) {
+    let m = parse_ok(&format!("type T = {src};"));
+    let ItemKind::TypeAlias(a) = &m.items[0].kind else {
+        panic!("expected a type alias")
+    };
+    let (construct, t) = match &a.ty.kind {
+        TypeExprKind::Construct(t) => (true, &**t),
+        _ => (false, &a.ty),
+    };
+    let (n, t) = match &t.kind {
+        TypeExprKind::GenericFunction { type_params, ty } => (type_params.len(), &**ty),
+        _ => (0, t),
+    };
+    match &t.kind {
+        TypeExprKind::Function { rest, .. } => (*rest, n, construct),
+        k => panic!("expected a function type, got {k:?}"),
+    }
+}
+
+#[test]
+fn rest_generic_and_construct_function_types() {
+    assert_eq!(
+        fn_type_flags("(event: string, ...args: number[]) => void"),
+        (true, 0, false)
+    );
+    assert_eq!(
+        fn_type_flags("<T>(description: string) => Token<T>"),
+        (false, 1, false)
+    );
+    assert_eq!(
+        fn_type_flags("new (buffer: ArrayBuffer) => View"),
+        (false, 0, true)
+    );
+    assert_eq!(
+        fn_type_flags("new <T>(...xs: T[]) => Box<T>"),
+        (true, 1, true)
+    );
+    assert_eq!(fn_type_flags("(a: A) => R"), (false, 0, false));
+    assert_eq!(
+        alias_ty("(e: string, ...xs: i64[]) => void"),
+        "fn(string, i64[]) => void"
+    );
+    assert!(errors("type T = (...xs: i64[], y: i64) => void;")
+        .iter()
+        .any(|e| e.contains("a rest parameter must be the last parameter")));
+}
+
+#[test]
+fn function_type_parameters_may_be_patterns() {
+    assert_eq!(
+        alias_ty("([a, b]: [i64, i64]) => i64"),
+        "fn([i64, i64]) => i64"
+    );
+    assert_eq!(
+        alias_ty("(x: string, { a, b: [c] }: P) => void"),
+        "fn(string, P) => void"
+    );
+    // Without a `:`, `[`/`{` starts the parameter's type.
+    assert_eq!(
+        alias_ty("([i64, string]) => void"),
+        "fn([i64, string]) => void"
+    );
+}

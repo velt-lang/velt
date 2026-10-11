@@ -84,8 +84,7 @@ impl Conn {
         let stream = connect::open(&endpoint).await?;
         let (requests, rx) = mpsc::unbounded_channel();
         let lost = Arc::new(AtomicU64::new(0));
-        let driver = crate::task::runtime::handle()
-            .spawn(drive(endpoint.clone(), stream, rx, lost.clone()))
+        let driver = crate::task::runtime::spawn(drive(endpoint.clone(), stream, rx, lost.clone()))
             .abort_handle();
         Ok(Conn {
             endpoint,
@@ -173,7 +172,7 @@ async fn serve(
 ) -> Ended {
     let (rd, wr) = tokio::io::split(stream);
     let queue = SharedQueue::default();
-    let reader = crate::task::runtime::handle().spawn(read_loop(rd, queue.clone(), lost.clone()));
+    let reader = crate::task::runtime::spawn(read_loop(rd, queue.clone(), lost.clone()));
     let ended = write_loop(wr, rx, &queue, first).await;
     reader.abort();
     ended

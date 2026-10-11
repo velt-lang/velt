@@ -36,6 +36,7 @@ mod class_test;
 mod closure;
 mod console;
 mod ctor_init;
+mod debug_vars;
 mod dispatch;
 mod drops;
 mod entry;
@@ -114,6 +115,7 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
+        cx.debug = (opts.debug_info && cx.locs.is_some()).then(Default::default);
         cx.seed_functions();
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
@@ -257,6 +259,8 @@ struct Cx<'h> {
     lay: layout::Layouts,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
+    /// Debug types of source variables (`LowerOptions::debug_info`, debug_vars.rs).
+    debug: Option<debug_vars::DebugTypes>,
     /// Memoized `tracks_caller` answers.
     tracked: HashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
