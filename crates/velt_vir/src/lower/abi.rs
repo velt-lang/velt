@@ -154,7 +154,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return Self::build_async_new(cx, def, targs);
         }
         let mut lw = FnLower::bare(cx, targs.to_vec());
-        lw.enter_span(f.span);
+        // The prologue (binding params and captures, copying modified params, making cells) has
+        // no source location: a debugger stopping at a function's first located code finds its
+        // params and captures bound. `lower_body` locates the code from there on.
+        lw.loc = None;
         lw.caller_loc = caller;
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
@@ -308,6 +311,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
+        self.enter_span(f.span);
         self.ctor_entry_inits();
         let unit_super = self.unit_super_at(f);
         for (i, s) in f.body.block.stmts.iter().enumerate() {
