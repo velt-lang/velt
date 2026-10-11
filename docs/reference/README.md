@@ -9,7 +9,7 @@ native code with Rust-level performance and no garbage collector. Three rules sh
 decision:
 
 - adopt TypeScript's best parts, never JavaScript's bug sources (implicit coercions,
-  `undefined`, floating promises, …);
+  floating promises, …);
 - one way of doing things;
 - valid TypeScript runs as it does in Node, but TypeScript is the starting point, not the
   limit: Velt is a native backend language and adds its own opt-in features wherever they make

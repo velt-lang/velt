@@ -272,9 +272,10 @@ impl FnCx<'_, '_> {
     /// `return;` where the function returns `ty` elsewhere: TS would return `undefined`.
     fn bare_return(&mut self, span: Span, who: &str, ty: TyId) {
         let tn = self.cx.display(ty);
-        let nullable = match self.cx.ty.opt_payload(ty) {
-            Some(_) => tn.clone(),
-            None => format!("{tn} | null"),
+        let (word, nullable) = match self.cx.ty.nothing_of(ty) {
+            Some(Nothing::Null) => ("null", tn.clone()),
+            Some(_) => ("undefined", tn.clone()),
+            None => ("undefined", format!("{tn} | undefined")),
         };
         self.cx.error(
             Diagnostic::error(
@@ -282,7 +283,7 @@ impl FnCx<'_, '_> {
                 span,
             )
             .with_note(format!(
-                "Velt has no `undefined`: write `return null;` and the return type `{nullable}`"
+                "a bare `return;` beside returned values is not supported yet: write `return {word};` and the return type `{nullable}`"
             )),
         );
     }

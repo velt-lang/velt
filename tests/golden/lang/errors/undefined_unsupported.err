@@ -1,0 +1,9 @@
+undefined_unsupported.vlt:4:13: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
+undefined_unsupported.vlt:7:10: error: type `null` is not assignable to type `string | undefined` (TypeScript's TS2322)
+undefined_unsupported.vlt:11:10: error: type `undefined` is not assignable to type `string | null` (TypeScript's TS2322)
+undefined_unsupported.vlt:15:13: error: `undefined` with no type to take here is not supported yet (its type would be `undefined` alone)
+undefined_unsupported.vlt:19:19: error: `undefined` alone as a type is not supported yet; write `T | undefined`
+undefined_unsupported.vlt:22:15: error: `JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string) is not supported yet
+undefined_unsupported.vlt:23:18: error: `JSON.parse` into a type that may hold `undefined` is not supported yet
+undefined_unsupported.vlt:28:3: error: `f64 | undefined` as a type argument of `Map.set` is not supported yet
+undefined_unsupported.vlt:34:16: error: `?.` on a value that may be `undefined`, giving a `Node | null`, is not supported yet

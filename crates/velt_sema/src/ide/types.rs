@@ -43,7 +43,7 @@ pub enum TypeView {
     Void,
     /// `never`.
     Never,
-    /// `T | null`.
+    /// `T | null`, and `T | undefined` (issue #930, phase 1).
     Nullable(TypeRef),
     /// `T[]`.
     Array(TypeRef),

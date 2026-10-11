@@ -13,7 +13,7 @@
 | `Map<K, V>` | insertion-ordered hash map |
 | `{ a: T; b: U }` | anonymous object type |
 | classes, structs, interfaces | [Classes](classes.md) |
-| `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null) |
+| `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null-and-undefined) |
 | `A & B`, `T["k"]` | [intersections of object types](#intersection-types), [branded types](#branded-types), [indexed access](#indexed-access-types) |
 | `"up"`, `42`, `true` | [literal types](#literal-types) |
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
@@ -368,12 +368,37 @@ for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823))
   `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
   `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).
 
-## Null
+## Null and undefined
 
-`null` is the only "nothing". `undefined` is not part of the language: `undefined` as a value or
-a type, and `void expr`, are errors with the fix "use `null`" (editors offer it as a quick fix),
-and `typeof x === "undefined"` is an error too (test `x === null`). A value that may be absent
-has type `T | null`, stored without an extra allocation where possible.
+`null` and `undefined` are two values, as in JavaScript. A value that may be absent has type
+`T | null` or `T | undefined` (`A | B | undefined` for a union), stored without an extra
+allocation where possible; the two types take the same space. `undefined` behaves as in Node:
+
+```ts
+function find(xs: string[], s: string): string | undefined {
+  return xs.includes(s) ? s : undefined;
+}
+
+const a = find(["x"], "y");
+console.log(a, typeof a, a === undefined, a == null); // undefined undefined true true
+console.log(a ?? "none", `${a}`, [a]);                 // none undefined [ undefined ]
+console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [null]
+const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
+```
+
+`x == null` and `x === undefined` both test a `T | undefined` for its nothing (`x === null` on a
+`T | undefined` does too: TypeScript rejects it, TS2367, and Velt does not report it yet),
+`typeof x === "undefined"` narrows, `?.` on a
+`T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field holding `undefined`
+and writes an array element as `null`. `null` where `T | undefined` is expected, and `undefined`
+where `T | null` is, are errors (TS2322).
+
+Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
+a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
+of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`, and a
+`T | undefined` type argument of a generic that keeps a `T | null` of it (`Map.set`,
+`Array.prototype.find`). Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
+standard library still use `null` for now:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
@@ -517,7 +542,7 @@ the nullable type; `void` cannot be a member.
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
-    A local that a closure assigns is not narrowed ([Null](#null)).
+    A local that a closure assigns is not narrowed ([Null](#null-and-undefined)).
 - Printing and template literals show the active member's value. A union with a member that
   cannot be printed (a closure) prints once a test has narrowed it to members that can
   (`typeof v !== "function"`). `JSON.stringify` works on

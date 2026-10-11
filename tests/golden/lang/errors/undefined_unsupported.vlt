@@ -1,0 +1,37 @@
+// What phase 1 of `undefined` (issue #930) reports: type errors as in TypeScript (TS2322), and
+// "not supported yet" for what later phases add (`T | null | undefined`, JSON of a value that
+// may be `undefined`, a `T | undefined` type argument where the generic keeps a `T | null`).
+type Both = string | null | undefined;
+
+function nullIntoUndefined(): string | undefined {
+  return null;
+}
+
+function undefinedIntoNull(): string | null {
+  return undefined;
+}
+
+function noType() {
+  const x = undefined;
+  console.log(x);
+}
+
+function alone(x: undefined) {}
+
+function json(a: string | undefined) {
+  console.log(JSON.stringify(a));
+  const parsed = JSON.parse<{ a: number | undefined }>("{}");
+}
+
+function mapOfUndefined() {
+  const m = new Map<string, number | undefined>();
+  m.set("k", undefined);
+}
+
+type Node = { next: Node | null };
+
+function chain(n: Node | undefined) {
+  const next = n?.next;
+}
+
+function main() {}

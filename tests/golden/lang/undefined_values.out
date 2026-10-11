@@ -1,0 +1,35 @@
+undefined hi
+[ undefined, 'hi' ]
+undefined string
+true false true true true
+true false
+d hi
+undefined|hi
+undefined
+undefined 2
+yes undefined
+{ name: 'x', age: undefined }
+{"name":"x"}
+[null,"hi"]
+{"b":"hi"}
+side
+undefined
+stmt
+undef
+6
+Box { v: undefined }
+undefined
+sw undefined
+none string number
+[ 'a', undefined, 2 ]
+["a",null,2]
+{ b: 1 } { a: undefined, b: 2 } { a: 'x', b: 3 }
+[{"b":1},{"b":2},{"a":"x","b":3}]
+undefined
+fallback
+pos undefined
+undefined a
+falsy undefined
+true {"kind":"c"} undefined
+[ 1, undefined ] [1,null]
+7

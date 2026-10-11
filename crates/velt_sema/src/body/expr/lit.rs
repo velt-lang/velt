@@ -172,9 +172,11 @@ impl FnCx<'_, '_> {
             Some(t) => self.nothing_mismatch("undefined", t, span),
             None => {
                 self.cx.error(
-                    Diagnostic::error("cannot infer the type of `undefined`", span).with_note(
-                        "add a type annotation like `let x: T | undefined = undefined`",
-                    ),
+                    Diagnostic::error(
+                        "`undefined` with no type to take here is not supported yet (its type would be `undefined` alone)",
+                        span,
+                    )
+                    .with_note("add a type annotation like `let x: T | undefined = undefined`"),
                 );
                 self.error_expr(span)
             }

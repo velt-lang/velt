@@ -92,7 +92,7 @@ type typeof void while yield
 
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
-Not part of the language: `var`, `undefined`, `any`, `unknown`, `abstract`, `protected` (as a
+Not part of the language: `var`, `any`, `unknown`, `abstract`, `protected` (as a
 member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)),
 `export default`, `function` expressions other than generators (`function* (…) { … }` is
@@ -124,7 +124,7 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `=>` | arrow function |
 
 The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
-right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). As in JavaScript, a compound
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null-and-undefined)). As in JavaScript, a compound
 assignment or `++` / `--` evaluates its target's object and indices once, before the right
 side: `rows[next()].out += "a"` and `f().count++` call `next` and `f` once. The write goes to
 that element where it is after the right side ran: `xs[0] += grow(xs)` updates `xs[0]` even when

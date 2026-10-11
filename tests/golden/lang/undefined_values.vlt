@@ -1,0 +1,119 @@
+// `undefined` as its own value (issue #930, phase 1): `T | undefined` types, `void e`, `typeof`,
+// comparisons, truthiness, `??`, `?.`, printing, template strings and JSON, as in Node.
+function find(xs: number[], v: number): number | undefined {
+  for (const x of xs) {
+    if (x === v) {
+      return x;
+    }
+  }
+  return undefined;
+}
+
+function pick(c: boolean) {
+  if (c) {
+    return "yes";
+  }
+  return undefined;
+}
+
+type O = { name: string; age: number | undefined };
+
+class Box {
+  v: string | undefined = undefined;
+}
+
+type U = string | number | undefined;
+type P = { a?: string | undefined; b: number };
+
+function show(u: U): string {
+  if (u === undefined) {
+    return "none";
+  }
+  return typeof u;
+}
+
+function label(n: number): string | undefined {
+  return n > 0 ? "pos" : undefined;
+}
+
+function first(xs: string[]): string | undefined {
+  return xs.length > 0 ? xs[0] : undefined;
+}
+
+type Shape = { kind: string; r: number | undefined };
+
+function nothing(): string | undefined {
+  return undefined;
+}
+
+function main(): void {
+  const a: string | undefined = undefined;
+  const b: string | undefined = "hi";
+  console.log(a, b);
+  console.log([a, b]);
+  console.log(typeof a, typeof b);
+  console.log(a === undefined, b === undefined, a == null, b != null, a == undefined);
+  console.log(!a, !b);
+  console.log(a ?? "d", b ?? "d");
+  console.log(`${a}|${b}`);
+  console.log(String(a));
+  console.log(find([1, 2], 3), find([1, 2], 2));
+  console.log(pick(true), pick(false));
+  const o: O = { name: "x", age: undefined };
+  console.log(o);
+  console.log(JSON.stringify(o));
+  console.log(JSON.stringify([a, b]));
+  console.log(JSON.stringify({ a, b }));
+  const w: number | undefined = void console.log("side");
+  console.log(w);
+  void console.log("stmt");
+  let x: number | undefined = undefined;
+  if (typeof x === "undefined") {
+    console.log("undef");
+  }
+  x = 5;
+  if (x !== undefined) {
+    console.log(x + 1);
+  }
+  console.log(new Box());
+  const nn: string | null = null;
+  console.log(typeof nn === "undefined", typeof nn);
+  const n: number | undefined = Math.random() > 2 ? 1 : undefined;
+  console.log(n);
+  switch (typeof n) {
+    case "undefined":
+      console.log("sw undefined");
+      break;
+    case "number":
+      console.log("sw number");
+      break;
+  }
+  console.log(show(undefined), show("s"), show(1));
+  const xs: U[] = ["a", undefined, 2];
+  console.log(xs);
+  console.log(JSON.stringify(xs));
+  const p: P = { b: 1 };
+  const q: P = { a: undefined, b: 2 };
+  const r: P = { a: "x", b: 3 };
+  console.log(p, q, r);
+  console.log(JSON.stringify([p, q, r]));
+  let s: string | undefined = nothing();
+  console.log(s?.length);
+  console.log(s ?? "fallback");
+  console.log(label(1), label(-1));
+  console.log(first([]), first(["a"]));
+  const v = label(-1);
+  if (v) {
+    console.log("truthy");
+  } else {
+    console.log("falsy", v);
+  }
+  const sh: Shape = { kind: "c", r: undefined };
+  console.log(sh.r === undefined, JSON.stringify(sh), `${sh.r}`);
+  const t: [number, string | undefined] = [1, undefined];
+  console.log(t, JSON.stringify(t));
+  let u: number | undefined = 3;
+  u = undefined;
+  u ??= 7;
+  console.log(u);
+}

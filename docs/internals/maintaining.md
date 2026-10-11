@@ -12,7 +12,7 @@ How the project is run day to day: planning work, reviewing and merging pull req
    not a way to compile to JavaScript: TypeScript is the starting point, not the limit. Add
    Velt-only features wherever they make programs substantially faster (integer widths,
    `shared`, `extend`, and more to come), as opt-ins layered on the TypeScript-compatible core.
-   Never copy JavaScript's bug sources (`undefined`, implicit coercion, `any`): one way of
+   Never copy JavaScript's bug sources (implicit coercion, `any`): one way of
    doing things, enforced by the compiler with a precise error and fix-it, even when ported
    code must change. Where valid TypeScript depends on a JavaScript behavior everywhere,
    TypeScript compatibility comes first and Velt matches Node exactly: numbers and strings are
