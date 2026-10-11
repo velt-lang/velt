@@ -1074,11 +1074,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
   (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
   missing key, `d.k === undefined` is a compile error, and `d[k] ?? 0`, `d[k] || 0` and
-  `d[k]?.push(x)` work as in JavaScript. As for `readonly T[]`, a `readonly`
+  `d[k]?.push(x)` work as in JavaScript. The value type may include `null` (`{ [k: string]:
+  number | null }`): a key holding `null` is present (listed by `Object.keys`, written by
+  `JSON.stringify`), and reading it gives `null` as for a missing key. As for `readonly T[]`, a `readonly`
   index signature is not checked for writes yet. Not supported yet (each is an error): named
   members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
-  which needs `undefined`, #930), a value type that includes `null` (`{ [k: string]: number |
-  null }`: a `null` value would be dropped, #1005), a `number` or `symbol` key, two index signatures in one type,
+  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.

@@ -1,0 +1,9 @@
+{ ann: null, bob: 3, cid: null } [ 'ann', 'bob', 'cid' ] null 3 null
+{"ann":null,"bob":null,"cid":null,"dan":null} ann=null,bob=null,cid=null,dan=null
+[ 'bob', 'cid', 'dan' ] [ null, null, null ] [ [ 'bob', null ], [ 'cid', null ], [ 'dan', null ] ]
+for in bob null
+for in cid null
+for in dan null
+for in ann 1
+{ b: null, c: 2, d: null } {"b":null,"c":2,"d":null}
+{ '2': null, z: null, y: 'why' } [ '2', 'z', 'y' ] {"2":null,"z":null,"y":"why"}
