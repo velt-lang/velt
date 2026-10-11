@@ -69,8 +69,11 @@ the velt that created the package (a pre-release writes its whole version, such 
 `"0.2.0-rc.1"`), so installing a newer velt doesn't change how it builds: pre-1.0 minors may
 change the language, and a toolchain's standard library and runtime belong to it.
 
-The `velt` on your `PATH`, the launcher, runs the newest installed version the field accepts,
-installing one first when none is ([`velt toolchain`](cli.md#velt-toolchain)). A toolchain's
+The `velt` on your `PATH`, the launcher, runs the version the package's
+[`velt.lock.json`](#veltlockjson) records when the field accepts it, so every machine builds a
+commit with the same velt; otherwise (no lock yet, or `velt update`) the newest installed version
+the field accepts, installing one first when none is
+([`velt toolchain`](cli.md#velt-toolchain)). A toolchain's
 own `velt` started directly warns when its version is not one the field accepts:
 
 ```text
@@ -83,6 +86,9 @@ warning: package.vlt asks for velt "0.2", but this is velt 0.1.0; it may not bui
 | `"0.1.3"` | `0.1.3` or a newer `0.1.x` |
 | `"=0.1.3"` | exactly `0.1.3` |
 | `">=0.1, <0.3"` | a requirement with an operator means what it means in `dependencies` |
+
+"Builds with" is the choice when the package has no lock yet and on `velt update`; after that,
+the version the lock records, while the field accepts it.
 
 A version without an operator stays within its minor version, also after 1.0: `"1.2"` accepts
 `1.2.5` but not `1.3.0`, unlike the same requirement in `dependencies`. A major version alone
@@ -207,6 +213,11 @@ dependency. It is generated JSON, pretty-printed with a stable key order so diff
 `"version": 1` and a `"packages"` array with one entry per package (`name`, `version`, `source`:
 `"registry"` or `"path+<relative path>"`, `checksum`, `dependencies`, and for a package with
 native code a `"native"` object with the checksum of its prebuilt library for every published
-target). Commit it for applications. `--locked` on `build`, `run`, `test` and `install` fails
-instead of changing it. A package that still has the former `velt.lock` (TOML) gets an error:
+target). In a package with a [`velt` field](#velt), it also records the velt version that builds the
+package, `"velt": "0.2.1"`: the one that created the lock, kept until `velt update` (or until
+the field no longer accepts it). The `velt` on your `PATH` runs that version in the package, installing it
+if needed, so a laptop and CI build a commit with the same compiler even when newer patch
+versions are installed. Commit it for applications. `--locked` on `build`, `run`, `test` and
+`install` fails instead of changing it, and fails when a different velt runs than the lock
+records. A package that still has the former `velt.lock` (TOML) gets an error:
 delete it and run `velt install`.

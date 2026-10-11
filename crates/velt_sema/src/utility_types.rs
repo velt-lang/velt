@@ -115,7 +115,7 @@ impl Ctx<'_> {
 
     /// The public fields of object type `t` (anonymous, a field-only interface, a struct or a
     /// class), with `t`'s type arguments substituted.
-    fn object_fields(
+    pub(crate) fn object_fields(
         &mut self,
         op: &str,
         t: TyId,

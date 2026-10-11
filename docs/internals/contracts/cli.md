@@ -214,7 +214,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (both: a full version is that
   version, a `[a-z]…` name a link, anything else a requirement read like a pin),
   else the `velt` requirement of the nearest `package.vlt` above the cwd
-  (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin), else
+  (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin): the
+  version the `velt` field of the `velt.lock.json` beside it records, as an exact toolchain
+  (reason `velt.lock.json, with velt: "<req>" in <manifest>:<line>`), when the requirement
+  accepts it and the command is not `update` (`velt_toolchain::pin::locked_version`; a missing
+  or unreadable lock or field counts as none); else the requirement, else
   `<root>/default`; none → exit 1 naming `velt toolchain install`. A requirement selects the
   newest installed version it accepts (`<root>/toolchains/<v>/` with a `bin/velt`). When none
   is installed: with `$VELT_TOOLCHAIN_AUTO_INSTALL` `0`/`false`/`no`/`off`, exit 1 naming

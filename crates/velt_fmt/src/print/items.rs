@@ -95,6 +95,25 @@ impl<'a> Printer<'a> {
 
     /// `type X = T;` — a union too long for one line gets one `| member` per line.
     fn type_alias(&mut self, alias: &TypeAlias) -> Doc {
+        // An interface with an index signature, which the parser gives as an alias.
+        if let TypeExprKind::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+        } = &alias.ty.kind
+        {
+            if slice(self.src, alias.ty.span).starts_with("interface") {
+                let members = super::types::index_sig_members(fields, key, value, *readonly);
+                let body = self.index_sig_lines(&members, alias.ty.span.hi);
+                let head = cat![
+                    "interface ",
+                    alias.name.name.clone(),
+                    self.generic_params(&alias.generics)
+                ];
+                return cat![head, " ", super::decls::braced(body)];
+            }
+        }
         let head = cat![
             "type ",
             alias.name.name.clone(),

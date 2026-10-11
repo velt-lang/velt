@@ -1,0 +1,14 @@
+example.org 443 0
+10 velt
+[ 'n=3:3', 'n=3:6' ]
+42
+6
+[ 2, 3 ]
+8
+host="localhost" port=8080 tags="a,b"
+root
+[ 'k7', 'k8' ]
+true
+11
+1.5
+[ 0.75 ]
