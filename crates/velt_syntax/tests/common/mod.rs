@@ -111,6 +111,7 @@ pub fn ty(t: &TypeExpr) -> String {
             format!("{{{}}}", parts.join("; "))
         }
         TypeExprKind::Null => "null".into(),
+        TypeExprKind::Undefined => "undefined".into(),
         TypeExprKind::Void => "void".into(),
         TypeExprKind::GenericFunction { type_params, ty: t } => {
             let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
@@ -222,6 +223,7 @@ pub fn sx(e: &Expr) -> String {
                 UnaryOp::BitNot => "~",
                 UnaryOp::TypeOf => "typeof",
                 UnaryOp::Delete => "delete",
+                UnaryOp::Void => "void",
             };
             format!("({} {})", o, sx(expr))
         }
