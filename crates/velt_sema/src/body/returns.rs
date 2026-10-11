@@ -44,7 +44,7 @@ fn stack_exhausted(cx: &Ctx) -> bool {
 
 /// The result type of function `d` (used at `at`), inferring it from the body if needed.
 pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
-    if cx.bodies_ok && !(cx.deferred_sigs.is_empty() && cx.filling_sigs.is_empty()) {
+    if cx.bodies_ok && !(cx.sigq.deferred_sigs.is_empty() && cx.sigq.filling_sigs.is_empty()) {
         if let Some(t) = pending_sig(cx, d, at) {
             return t;
         }
@@ -79,7 +79,7 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
 /// needed at `at`, so its signature is filled first; if it is being filled and its result comes
 /// from its body, which needs its parameters, that is a cycle (TS7023), reported here.
 fn pending_sig(cx: &mut Ctx, d: DefId, at: Span) -> Option<TyId> {
-    let Some((_, param)) = cx.filling_sigs.iter().find(|f| f.0 == d).cloned() else {
+    let Some((_, param)) = cx.sigq.filling_sigs.iter().find(|f| f.0 == d).cloned() else {
         crate::collect::sigs::fill_pending(cx, d);
         return None;
     };

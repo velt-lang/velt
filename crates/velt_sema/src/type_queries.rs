@@ -19,6 +19,22 @@ use crate::defs::{DefInfo, FnSource, RetSource};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
+/// Free functions' signatures with a type query that needs a body checked (`ReturnType<typeof
+/// f>` of a function whose result is inferred) wait until collection is finished
+/// (`Ctx::bodies_ok`, `collect::sigs::fill_deferred`).
+#[derive(Default)]
+pub(crate) struct SigQueries<'m> {
+    /// A free function's signature is being resolved: a type query that needs a body defers it.
+    pub sig_fill: bool,
+    /// Set when the signature being resolved was deferred (`sig_fill`).
+    pub sig_deferred: bool,
+    /// The deferred signatures; a type query fills one on demand (`collect::sigs::fill_pending`).
+    pub deferred_sigs: std::collections::BTreeMap<DefId, (&'m ast::FnSig, usize)>,
+    /// Those being filled now, each with the name of the parameter (or function) whose type is
+    /// being resolved: a query reaching one of them is a cycle (TS2502).
+    pub filling_sigs: Vec<(DefId, String)>,
+}
+
 impl Ctx<'_> {
     /// `typeof x` / `typeof ns.f` / `typeof x.field`.
     pub(crate) fn resolve_query(
@@ -150,10 +166,10 @@ impl Ctx<'_> {
         if self.bodies_ok {
             // `function a(x: ReturnType<typeof b>)` before `b`: fill `b`'s signature first,
             // unless it is the one being resolved (TS2502).
-            if let Some(i) = self.filling_sigs.iter().position(|f| f.0 == d) {
-                let whose = self.filling_sigs.last().map_or("", |f| f.1.as_str());
+            if let Some(i) = self.sigq.filling_sigs.iter().position(|f| f.0 == d) {
+                let whose = self.sigq.filling_sigs.last().map_or("", |f| f.1.as_str());
                 let whose = if whose.is_empty() { name } else { whose };
-                let cycle: Vec<String> = self.filling_sigs[i..]
+                let cycle: Vec<String> = self.sigq.filling_sigs[i..]
                     .iter()
                     .map(|f| format!("`{}`", self.fn_info(f.0).name))
                     .collect();
@@ -236,8 +252,8 @@ impl Ctx<'_> {
     /// function's signature waits for the end of collection (`Ctx::sig_fill`); anywhere else it is
     /// not supported yet.
     fn query_needs_body(&mut self, name: &str, what: &str, span: Span) -> TyId {
-        if self.sig_fill {
-            self.sig_deferred = true;
+        if self.sigq.sig_fill {
+            self.sigq.sig_deferred = true;
         } else {
             self.error(
                 Diagnostic::error(

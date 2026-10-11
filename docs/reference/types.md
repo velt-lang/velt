@@ -976,8 +976,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Index signatures**: an object type or interface with an index signature and no other
   members, `{ [key: string]: V }`, is `Record<string, V>`, as in TypeScript where the two are
   interchangeable: a value converts between them and stays the same object, and everything
-  above holds (any key may be read, written and deleted; keys keep insertion order, also
-  integer-like keys such as `"2"`, which JavaScript lists first, #756). A generic
+  above holds (any key may be read, written and deleted; keys are listed in JavaScript's
+  order, array-index keys such as `"2"` first). A generic
   interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
   there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
   (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
