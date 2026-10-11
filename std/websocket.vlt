@@ -17,7 +17,7 @@
 // are pulled with `receive` (null once the peer has closed); pings are answered automatically.
 // Only HTTP/1.1 upgrades are supported (HTTP/2 clients fall back to HTTP/1.1 for WebSockets).
 
-import { IoError, IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { IoError, IoResult, IoStatus, unwrapIo, checkIo, ioError } from "velt:io";
 import { Request } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
 
@@ -64,12 +64,15 @@ export class WsMessage {
 export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   private handle: u64;
 
-  /** Sends a text message. */
+  /**
+   * Sends a text message: returns once it is queued (everything queued goes out in one write),
+   * waiting while more than 1 MiB is queued for this connection.
+   */
   async send(text: string): Promise<void> {
     checkIo(await velt_rt_ws_send_text(this.handle, text));
   }
 
-  /** Sends a binary message. */
+  /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
     checkIo(await velt_rt_ws_send_binary(this.handle, data));
   }
@@ -98,14 +101,29 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   }
 
   /**
-   * Sends a close frame (`code` 1000 = normal closure) and releases the handle. Closing a
-   * connection the peer already closed, or closing twice, is fine; other operations on the
-   * handle (through any copy) throw `IoError` `EBADF` afterwards.
+   * Sends a close frame (`code` 1000 = normal closure; 1000-1003, 1007-1014 or 3000-4999, else
+   * `IoError` "EINVAL", nothing is sent and the connection stays open) after everything queued,
+   * waits until it is written, and releases the handle. Closing a connection the peer already closed, or closing
+   * twice, is fine; other operations on the handle (through any copy) throw `IoError` `EBADF`
+   * afterwards.
    */
   async close(code: i64 = 1000, reason: string = ""): Promise<void> {
+    if (code < 0 || code > 65535) {
+      throw new IoError(
+        "EINVAL",
+        `invalid WebSocket close code ${code} (1000-1003, 1007-1014 or 3000-4999)`,
+      );
+    }
     const s = await velt_rt_ws_close(this.handle, code as u32, reason);
+    if (s.code != 0) {
+      const e = ioError(s.code, s.message);
+      // A rejected code sent nothing: the connection stays usable (like Node).
+      if (e.code != "EINVAL") {
+        velt_rt_ws_free(this.handle);
+      }
+      throw e;
+    }
     velt_rt_ws_free(this.handle);
-    checkIo(s);
   }
 }
 

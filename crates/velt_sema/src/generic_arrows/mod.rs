@@ -139,10 +139,11 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
     let params = params
         .iter()
         .map(|p| {
-            let ty = p.ty.clone()?;
+            let ty = p.ty.clone().filter(|_| !p.rest)?;
             Some(ast::Param {
                 span: p.name.span.to(ty.span),
                 name: p.name.clone(),
+                pattern: p.pattern.clone(),
                 ty,
                 default: None,
                 optional: false,

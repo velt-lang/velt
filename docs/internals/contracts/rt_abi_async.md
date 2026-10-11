@@ -133,6 +133,14 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
+`VELT_SCHEDULER=per-core` (experimental, #211) makes every worker a `current_thread` runtime with
+its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
+starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
+(`task/runtime.rs`). The default, `stealing`, is one multi-thread runtime. Per-core trade-offs
+today: a task never moves after its first poll, so a CPU-bound task delays every task on its
+worker; placement counts live tasks, not CPU; a socket stays on the worker whose driver
+registered it (an accepted connection on the listener's worker); spawn bursts and cross-worker
+request/reply are much slower than stealing (no batch steal-before-start yet, #997).
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
 64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
@@ -998,8 +1006,13 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 
 ### 14.9 WebSockets (`velt:websocket`)
 
-`VeltWs` is an `Arc`; its send and receive halves are locked separately (one task may wait in
-`receive` while others send). Pings are answered automatically. No callbacks are stored.
+`VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
+RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
+at the call (call order is wire order, also before a server-side upgrade completes) and
+completes once it is queued; a writer task per connection sends everything queued in one
+write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
+reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
+Pings are answered automatically. No callbacks are stored.
 
 ```c
 typedef struct { VeltWs ws; VeltResp response; } VeltWsAccept;                    // 16 bytes
@@ -1011,10 +1024,10 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 |---|---|---|
 | `velt_rt_ws_accept` | `(u64 upgrade_key, const VeltStr* sec_websocket_key, IoResult<VeltWsAccept>* out)` | claims the parked upgrade (§14.8) and builds the `101` response (handshake headers) the handler must return; the connection's first operation waits for the upgrade; `EINVAL` if not an upgrade request |
 | `velt_rt_ws_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltWs>`; `ws://` / `wss://` (TLS as §14.8, extra CAs in `ca_pem`); HTTP/1.1 handshake |
-| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>`; copied |
-| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied |
+| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
+| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
 | `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>`: close frame; closing a closed connection succeeds |
+| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
 | `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)

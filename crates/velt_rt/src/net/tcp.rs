@@ -93,9 +93,11 @@ pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltF
 
 /// Read what is available (at least 1 byte, at most `max`; empty only at end of stream).
 async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(max.clamp(1, 16 << 20) as usize);
     loop {
+        // The buffer is allocated once there is something to read, so a connection waiting
+        // for data holds none (a server's idle connections would otherwise each keep `max`).
         stream.readable().await?;
+        let mut buf = Vec::with_capacity(max.clamp(1, 16 << 20) as usize);
         match stream.try_read_buf(&mut buf) {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e),

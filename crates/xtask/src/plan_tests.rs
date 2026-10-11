@@ -467,3 +467,19 @@ fn example_apps_run_their_velt_tests() {
         other => panic!("vpm: {other:?}"),
     }
 }
+
+#[test]
+fn the_vscode_extension_runs_its_own_tests() {
+    let p = plan(&["editors/vscode/src/debug.ts", "editors/vscode/package.json"]);
+    assert!(!p.full);
+    assert!(p.vscode);
+    assert!(!p.rust && !p.needs_build(), "no workspace build");
+    assert_eq!(p.goldens, Goldens::None);
+    // The templates are read by the `debugger` test, not the extension's.
+    let t = plan(&["editors/vscode/templates/launch.json"]);
+    assert!(!t.vscode);
+    assert_eq!(t.veltc, Veltc::Some(set(&["debugger"])));
+    // Rust changes leave it alone; everything includes it.
+    assert!(!plan(&["crates/velt_syntax/src/lexer.rs"]).vscode);
+    assert!(plan(&["Cargo.lock"]).vscode);
+}

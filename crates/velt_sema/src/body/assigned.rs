@@ -177,13 +177,16 @@ impl<'a> Walk<'a, '_> {
                 }
             }
             E::Arrow { params, body, .. } => {
-                let names = params.iter().map(|p| p.name.name.as_str());
+                let mut names = vec![];
+                for p in params {
+                    param_names(&p.name, p.pattern.as_ref(), &mut names);
+                }
                 let defaults = params.iter().filter_map(|p| p.default.as_ref());
                 let body = match body {
                     ast::ArrowBody::Block(b) => Body::Block(b),
                     ast::ArrowBody::Expr(x) => Body::Expr(x),
                 };
-                return self.closure(names.collect(), defaults.collect(), body);
+                return self.closure(names, defaults.collect(), body);
             }
             E::Function(f) => return self.function(f),
             E::Object(props) if !self.fields => {
@@ -200,7 +203,10 @@ impl<'a> Walk<'a, '_> {
 
     fn function(&mut self, f: &'a ast::FnDecl) {
         let params = &f.sig.params;
-        let names = params.iter().map(|p| p.name.name.as_str()).collect();
+        let mut names = vec![];
+        for p in params {
+            param_names(&p.name, p.pattern.as_ref(), &mut names);
+        }
         let defaults = params.iter().filter_map(|p| p.default.as_ref()).collect();
         self.closure(names, defaults, Body::Block(&f.body));
     }
@@ -238,6 +244,22 @@ impl<'a> Walk<'a, '_> {
 }
 
 /// The names a declaration pattern binds.
+/// The names a parameter binds: its own, or those of the pattern it destructures.
+fn param_names<'a>(
+    name: &'a ast::Ident,
+    pattern: Option<&'a ast::Pattern>,
+    out: &mut Vec<&'a str>,
+) {
+    match pattern {
+        Some(p) => {
+            let mut names = HashSet::new();
+            bound_names(p, &mut names);
+            out.extend(names);
+        }
+        None => out.push(name.name.as_str()),
+    }
+}
+
 fn bound_names<'a>(p: &'a ast::Pattern, out: &mut HashSet<&'a str>) {
     use ast::PatternKind as P;
     match &p.kind {

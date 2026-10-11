@@ -227,7 +227,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
     };
     let delay = Duration::from_millis(ms.max(0) as u64);
     let live = live_timers::Live::new();
-    let task = super::runtime::handle().spawn(async move {
+    let task = super::runtime::spawn(async move {
         let _live = live;
         tokio::time::sleep(delay).await;
         if let Some(s) = weak.upgrade() {

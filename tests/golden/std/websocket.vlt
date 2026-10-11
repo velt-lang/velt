@@ -39,6 +39,16 @@ async function talk(url: string, ca: string) {
   await ws.sendBytes([1u8, 2u8, 3u8]);
   const b = await ws.receive();
   console.log(b?.data ?? [], b?.isBinary ?? false);
+  // An invalid close code (reserved, or out of range for u16) throws and leaves it open.
+  for (const bad of [1005, 4294968296]) {
+    try {
+      await ws.close(bad);
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  await ws.send("still open");
+  console.log((await ws.receive())?.text ?? "closed");
   await ws.close(1000, "bye");
 }
 

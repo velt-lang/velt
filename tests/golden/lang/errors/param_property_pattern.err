@@ -1,0 +1,2 @@
+param_property_pattern.vlt:4:23
+error: a parameter property cannot be declared using a binding pattern
