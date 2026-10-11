@@ -351,7 +351,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_INSTALL_BASE_URL` | the repository whose releases the launcher, `velt toolchain install`, `velt target add` and the installers download from (default `https://github.com/velt-lang/velt`) |
 | `VELT_TOOLCHAIN` | the toolchain the launcher runs for this command: a version or a linked name, overriding the package's `velt` field ([`velt toolchain`](#velt-toolchain)) |
 | `VELT_TOOLCHAIN_AUTO_INSTALL` | `0`: the launcher fails instead of installing a missing version |
-| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 key (64 hex digits) release signatures (`SHA256SUMS.sig`) are checked with, instead of the velt release key: for the releases of another build |
+| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 keys (64 hex digits each, separated by commas) release signatures (`SHA256SUMS.sig`, `releases.json.sig`) are checked with, instead of the velt release keys: for the releases of another build |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |

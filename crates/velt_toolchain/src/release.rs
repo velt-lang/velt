@@ -25,8 +25,8 @@
 //! ```
 //!
 //! - `generated`: when the workflow wrote it (Unix seconds). The newest one seen is kept in
-//!   `<root>/index-seen/<release key>`, and an older index signed with that key is refused: its
-//!   signature is valid, but a mirror serving it (behind, or on purpose) would hide later
+//!   `<root>/index-seen/<first release key>`, and an older index of those releases is refused:
+//!   its signature is valid, but a mirror serving it (behind, or on purpose) would hide later
 //!   releases and yanks. Per key, so another build's releases (`$VELT_INSTALL_PUBLIC_KEY`) and
 //!   their times don't block the official ones.
 //! - `launcher`: the newest launcher's version (optional); an older launcher says to run the
@@ -43,7 +43,7 @@ use crate::install::{
     check_download_url, check_sha256, download, install_dir, sha256_entry, Existing, MAX_ARCHIVE,
 };
 use crate::layout::{velt_exe, Root};
-use crate::signature::{public_key, signed_sums, signed_text};
+use crate::signature::{public_keys, signed_sums, signed_text};
 
 /// Where releases are downloaded from unless `$VELT_INSTALL_BASE_URL` says otherwise (the
 /// installers read the same variable).
@@ -187,23 +187,29 @@ pub fn fetch_index(root: &Root, base: &str) -> Result<Index, String> {
     fetch_index_with_key(root, base, None)
 }
 
-/// [`fetch_index`] checking with `key` instead of [`public_key`].
+/// [`fetch_index`] checking with `key` instead of [`public_keys`].
 pub fn fetch_index_with_key(root: &Root, base: &str, key: Option<&[u8]>) -> Result<Index, String> {
     let url = index_url(base);
     check_download_url(&url)?;
-    let key = match key {
-        Some(key) => key.to_vec(),
-        None => public_key()?,
-    };
+    let keys = trusted(key)?;
     let text =
-        signed_text(&url, &key)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
+        signed_text(&url, &keys)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
     let index = parse_index(&text)?;
-    remember_index(root, &index, &url, &key)?;
+    remember_index(root, &index, &url, &keys[0])?;
     Ok(index)
 }
 
-/// Refuse an index older than the newest `root` has seen signed with `key`; remember a newer
-/// one.
+/// `key`, else the built-in keys ([`public_keys`]), the signing key first.
+fn trusted(key: Option<&[u8]>) -> Result<Vec<Vec<u8>>, String> {
+    match key {
+        Some(key) => Ok(vec![key.to_vec()]),
+        None => public_keys(),
+    }
+}
+
+/// Refuse an index older than the newest `root` has seen from the releases of `key` (the first
+/// trusted key: the official releases' are one series whichever key signed them, another
+/// build's another); remember a newer one.
 fn remember_index(root: &Root, index: &Index, url: &str, key: &[u8]) -> Result<(), String> {
     let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
     let seen_file = root.dir().join(INDEX_SEEN_DIR).join(key_hex);
@@ -248,7 +254,7 @@ pub fn install_toolchain(root: &Root, version: &Version, base: &str) -> Result<P
     install_toolchain_with_key(root, version, base, None)
 }
 
-/// [`install_toolchain`] checking with `key` instead of [`crate::signature::public_key`].
+/// [`install_toolchain`] checking with `key` instead of [`public_keys`].
 pub fn install_toolchain_with_key(
     root: &Root,
     version: &Version,
@@ -264,11 +270,8 @@ pub fn install_toolchain_with_key(
     };
     // The expected hash first, so an archive the release lacks fails before a long download.
     check_download_url(&release)?;
-    let key = match key {
-        Some(key) => key.to_vec(),
-        None => public_key()?,
-    };
-    let sums = signed_sums(&release, &key)?.ok_or_else(|| missing(SUMS_FILE))?;
+    let keys = trusted(key)?;
+    let sums = signed_sums(&release, &keys)?.ok_or_else(|| missing(SUMS_FILE))?;
     if sha256_entry(&sums, &name).is_none() {
         return Err(format!(
             "velt {version} has no toolchain for {triple} (its {SUMS_FILE} lists no {name})"

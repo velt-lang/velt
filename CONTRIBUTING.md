@@ -256,12 +256,50 @@ key, the secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM) of the 
 environment `release` (Settings → Environments), which allows only `main` and tags `v*` to use
 it, so a workflow run from another branch, with changed scripts, can't read the key. The jobs that
 sign (`signing-key` and `publish` in `release.yml`, `index` in `release-index.yml`) run in that
-environment. The script checks
-each signature against the public key velt is built with
-(`velt_toolchain::signature::RELEASE_PUBLIC_KEY`, also embedded in `scripts/get-velt.sh`; a test
-keeps them in line). The launcher and `velt target add` refuse what doesn't match it. Keep a
-backup of the private key outside GitHub: without it no release can be signed with the key that
-installed launchers trust.
+environment. The script checks each signature against the public keys velt is built with
+(`velt_toolchain::signature::RELEASE_PUBLIC_KEYS`, also embedded in `scripts/get-velt.sh`; a
+test keeps them in line): the **signing key**, and a **backup key** whose private half is kept
+offline, never in GitHub. The launcher, `velt target add` and `get-velt.sh` accept a signature
+by either and refuse anything else. Keep an offline copy of both private keys: without one of
+them, no release can be signed in a way installed launchers trust.
+
+**Replacing the signing key** (it leaked or was lost):
+
+1. Make a new backup key pair offline (`openssl genpkey -algorithm ed25519`), and get its public
+   key in hex: `openssl pkey -in <file> -pubout -outform DER | tail -c 32 | xxd -p -c 64`.
+2. In a pull request, make the old backup key the first entry of `RELEASE_PUBLIC_KEYS`, add the
+   new backup key as the second, and drop the old signing key. Update the two lines of
+   `release_keys` in `scripts/get-velt.sh` (the base64 that `scripts/release-sign.sh
+   --public-key` prints; a test checks they match), and the backup's proof signature
+   (`BACKUP_KEY_PROOF` in `velt_toolchain::signature`), made with the new backup key:
+   `printf 'velt backup release key <new backup hex>' | openssl pkeyutl -sign -rawin -inkey
+   <new backup>.pem -in /dev/stdin | xxd -p -c 128`.
+3. **Re-sign the earlier releases.** The new launcher no longer trusts the old signing key, so
+   it would refuse every earlier `SHA256SUMS.sig` (and `velt toolchain install 0.2.x`, and
+   packages pinned to them). For each earlier release, check its `SHA256SUMS` against a record
+   the old key never controlled (a copy kept when it was published, or the hashes of the
+   archives you can rebuild), then sign it with the old backup and replace the signature:
+   `VELT_RELEASE_SIGNING_KEY="$(cat old-backup.pem)" scripts/release-sign.sh --backup SHA256SUMS`
+   and `gh release upload v<x> SHA256SUMS.sig --clobber`.
+4. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
+   (from then on it is the signing key) and release. Launchers that carry the old backup key
+   accept the release; the launcher it brings trusts only the new pair.
+
+**If the backup key leaks** (the signing key is fine): release a launcher that drops it, signed
+with the signing key as usual, with a new backup key in its place (steps 1 and 2 without
+dropping the signing key, and without step 3: earlier releases are signed with the signing key).
+
+**What this can't do.**
+
+- A leaked key can't be revoked. Every launcher that trusts it, and every `get-velt.sh` from
+  the releases that embed it, accepts what it signs until the user installs a launcher that
+  doesn't (`get-velt` again). The holder of the leaked key can also sign an index without the
+  "newer launcher" hint, so those launchers aren't told to update.
+- The backup only helps launchers that carry it: those from the first release after 0.2.0
+  on. 0.2.0's launcher and installer know only the signing key.
+- The freshness check of the index of releases (`<root>/index-seen/<first trusted key>`)
+  starts over after a rotation, because the first trusted key changes: until a launcher has
+  seen an index signed with the new keys, it accepts any index they signed.
 
 **Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
 (`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the

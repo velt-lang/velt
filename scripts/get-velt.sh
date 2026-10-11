@@ -18,7 +18,8 @@
 #   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading
 #   --no-modify-path  do not add <root>/bin to PATH in your shell profiles
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests), and
-# VELT_INSTALL_PUBLIC_KEY (64 hex digits) the release key, for another build's releases.
+# VELT_INSTALL_PUBLIC_KEY (64 hex digits per key, several separated by commas) the release keys,
+# for another build's releases.
 #
 # A download is checked against the release's SHA256SUMS, and that file against its signature
 # (SHA256SUMS.sig) with the velt release key when OpenSSL can check Ed25519 signatures (OpenSSL
@@ -37,10 +38,12 @@ modify_path=1
 make_default=0
 force=0
 
-# The velt release key (velt_toolchain::signature::RELEASE_PUBLIC_KEY), as OpenSSL reads it.
-release_key='-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAlXBDOAeP85PjjZH6CzVAe++R8saiPgF4bNYBUQBhBcs=
------END PUBLIC KEY-----'
+# The velt release keys (velt_toolchain::signature::RELEASE_PUBLIC_KEYS), as the base64 of the DER
+# OpenSSL reads, one per line: the signing key, then the backup (its private half offline). A
+# signature by either is accepted.
+release_keys='MCowBQYDK2VwAyEAlXBDOAeP85PjjZH6CzVAe++R8saiPgF4bNYBUQBhBcs=
+MCowBQYDK2VwAyEAhLsoc87pXkeARf8hldf47bhP3iHuvXuW4ASCtSByZL4='
+pem() { printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n' "$1"; }
 
 
 say() { printf '%s\n' "$*"; }
@@ -139,7 +142,7 @@ sha256_of() {
 # intact, the signature that the velt project published it (whatever mirror served it).
 check_signature() { # <release url>
     if ! command -v openssl >/dev/null 2>&1 ||
-        ! printf '%s\n' "$release_key" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+        ! pem "$(printf '%s\n' "$release_keys" | head -n 1)" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
         ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
         if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
             err "VELT_INSTALL_PUBLIC_KEY is set, but no OpenSSL here checks Ed25519 signatures (OpenSSL 3.0 or newer)"
@@ -149,27 +152,39 @@ check_signature() { # <release url>
         return 0
     fi
     if [ -n "${VELT_INSTALL_PUBLIC_KEY:-}" ]; then
-        # An Ed25519 public key's DER is a fixed 12-byte header and the 32-byte key.
-        der=$(printf '302a300506032b6570032100%s' "$VELT_INSTALL_PUBLIC_KEY" | tr 'A-F' 'a-f' | awk '{
-            h = "0123456789abcdef"
-            for (i = 1; i < length($0); i += 2)
-                printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
-        }')
-        # shellcheck disable=SC2059
-        b64=$(printf "$der" | openssl base64 -A) || err "VELT_INSTALL_PUBLIC_KEY is not a key"
-        release_key=$(printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----' "$b64")
-        printf '%s\n' "$release_key" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
-            err "VELT_INSTALL_PUBLIC_KEY is not an Ed25519 public key (64 hex digits)"
+        # Hex keys, separated by commas. An Ed25519 public key's DER is a fixed 12-byte header
+        # and the 32-byte key.
+        release_keys=
+        # No file-name expansion of the words (`*` would name files).
+        set -f
+        for hex in $(printf '%s' "$VELT_INSTALL_PUBLIC_KEY" | tr ',' ' '); do
+            der=$(printf '302a300506032b6570032100%s' "$hex" | tr 'A-F' 'a-f' | awk '{
+                h = "0123456789abcdef"
+                for (i = 1; i < length($0); i += 2)
+                    printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+            }')
+            # shellcheck disable=SC2059
+            b64=$(printf "$der" | openssl base64 -A) || err "VELT_INSTALL_PUBLIC_KEY: $hex is not a key"
+            pem "$b64" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
+                err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)"
+            release_keys="$release_keys$b64
+"
+        done
+        set +f
+        [ -n "$release_keys" ] || err "VELT_INSTALL_PUBLIC_KEY names no key"
     fi
     fetch "$1/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
         err "download failed: $1/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
-    printf '%s\n' "$release_key" > "$tmp/release-key.pem"
     # The release workflow writes the signature as its 64 raw bytes.
-    sig="$tmp/SHA256SUMS.sig"
-    openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
-        -in "$tmp/SHA256SUMS" -sigfile "$sig" >/dev/null 2>&1 ||
-        err "SHA256SUMS does not match its signature with the velt release key: refusing this download"
-    say "checked the signature of SHA256SUMS with the velt release key"
+    for b64 in $release_keys; do
+        pem "$b64" > "$tmp/release-key.pem"
+        if openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
+            -in "$tmp/SHA256SUMS" -sigfile "$tmp/SHA256SUMS.sig" >/dev/null 2>&1; then
+            say "checked the signature of SHA256SUMS with the velt release key"
+            return 0
+        fi
+    done
+    err "SHA256SUMS does not match its signature with the velt release keys: refusing this download"
 }
 
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t velt)
