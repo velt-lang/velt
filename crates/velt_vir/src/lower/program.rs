@@ -130,10 +130,9 @@ impl<'h> Cx<'h> {
         ret: Ty,
         noreturn: bool,
     ) -> ExternId {
-        if matches!(
-            symbol,
-            "velt_rt_spawn_target" | "velt_rt_worker_count" | "velt_rt_current_worker"
-        ) {
+        // Only pinning selects the per-core scheduler: `workerCount()` sizes pools of unpinned
+        // tasks, which run faster on the stealing one.
+        if symbol == "velt_rt_spawn_target" {
             self.uses_placement = true;
         }
         if let Some(&id) = self.extern_map.get(symbol) {

@@ -282,6 +282,17 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if args.len() > 2 {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`spawn` takes 1 or 2 arguments, found {}", args.len()),
+                    span,
+                )
+                .with_note("write `spawn(f())` or `spawn(f(), { worker: i })`"),
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         // `spawn(p, { worker })` (#211): the task pinned to a worker; the index is checked
         // after `p`, as its second argument, and passed to the runtime right before the spawn.
         if let [p, opts] = args {
@@ -379,6 +390,13 @@ impl FnCx<'_, '_> {
                     continue;
                 }
             };
+            if name.name == "worker" && worker.is_some() {
+                self.cx.error(
+                    Diagnostic::error("`worker` is given twice", name.span)
+                        .with_note("give `worker` once"),
+                );
+                continue;
+            }
             if name.name != "worker" {
                 self.cx.error(
                     Diagnostic::error(format!("unknown `spawn` option `{}`", name.name), name.span)

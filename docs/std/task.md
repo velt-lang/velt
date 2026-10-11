@@ -129,16 +129,20 @@ Seastar or Orleans style) pins each shard to a worker and its callers next to it
 never wakes another thread.
 
 - `workerCount(): i64`: how many workers there are.
-- `currentWorker(): i64`: the worker running this task (`0` to `workerCount() - 1`).
+- `currentWorker(): i64`: the worker running this task (`0` to `workerCount() - 1`); `0`
+  outside a task (a synchronous `main`).
 - `spawn(p, { worker: i })`: starts `p` on worker `i`, where it stays (`SpawnOptions` is
   `{ worker?: i64 }`; `{}` pins nothing). `p` must be a call or a task body: a promise that
   already started stays on its task (`a started promise stays on its task; pass the call`).
-  The options are an object literal. An index out of range is a panic:
+  The options must be an object literal (a variable holding them is an error); `worker` may
+  be given once. An index out of range is a panic:
   `spawn: worker 7 is out of range (the runtime has 4 workers)`.
-- A program that uses any of these runs on the per-core scheduler: every worker runs its own
-  event loop, and a task stays on the worker it started on (an unpinned one starts on the
-  spawning worker unless that worker is clearly busier than another). Programs that don't use
-  them keep the default work-stealing scheduler, unchanged. `VELT_SCHEDULER=stealing` or
+- A program that pins a task (`spawn(p, { worker })`) runs on the per-core scheduler: every
+  worker runs its own event loop, and a task stays on the worker it started on (an unpinned one
+  starts on the spawning worker unless that worker is clearly busier than another). Every other
+  program keeps the default work-stealing scheduler, unchanged, including one that only calls
+  `workerCount()` to size a pool of unpinned tasks (which the stealing scheduler runs faster)
+  or `currentWorker()`. `VELT_SCHEDULER=stealing` or
   `per-core` overrides the choice (for measuring); with `stealing`, `{ worker }` is checked but
   the task may run on any worker, and `currentWorker()` can change at any `await`.
 - A pinned task can't borrow an idle core: CPU-bound code in it delays everything else on its

@@ -273,9 +273,9 @@ use one object (also on single-threaded WebAssembly, where tasks share the one t
 `spawn(p, { worker: i })` pins the task to worker `i` (`0` to `workerCount() - 1`, from
 [`velt:task`](../std/task.md#task-placement)): it starts there and never moves. `p` must be a
 call or a task body (not a promise that already started); an index out of range is a panic at
-the spawn. A program that pins tasks or calls `workerCount()` / `currentWorker()` runs on the
-per-core scheduler, where every task stays on the worker it started on, so a caller pinned next
-to the task it talks to never wakes another thread.
+the spawn. A program that pins a task runs on the per-core scheduler, where every task stays on
+the worker it started on, so a caller pinned next to the task it talks to never wakes another
+thread. Calling `workerCount()` or `currentWorker()` alone doesn't change the scheduler.
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.

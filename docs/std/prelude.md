@@ -298,7 +298,8 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 
 ## Async and concurrency
 
-`sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
+`sleep(ms)`, `yieldNow()`, `spawn(p, options?)` (options: `{ worker }`, see
+[velt:task](task.md#task-placement)), `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
 `PromiseWithResolvers<T, E>`), `Promise.resolve`, `Promise.reject`, `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer

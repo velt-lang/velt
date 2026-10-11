@@ -9,6 +9,31 @@ async function where(): Promise<i64> {
   return currentWorker();
 }
 
+// A pinned task never moves: its worker is the same after every kind of suspension.
+async function stays(rounds: i64): Promise<i64> {
+  const ch = channel<i64>();
+  let moves = 0;
+  for (let i = 0; i < rounds; i++) {
+    let w = currentWorker();
+    await sleep(0);
+    if (currentWorker() != w) {
+      moves++;
+    }
+    w = currentWorker();
+    await yieldNow();
+    if (currentWorker() != w) {
+      moves++;
+    }
+    w = currentWorker();
+    await ch.send(i);
+    await ch.receive();
+    if (currentWorker() != w) {
+      moves++;
+    }
+  }
+  return moves;
+}
+
 type Call = { key: string; reply: (n: i64) => void };
 
 async function shard(inbox: Channel<Call>): Promise<void> {
@@ -44,6 +69,11 @@ async function main() {
     }
   }
   console.log("pinned on their worker:", ok == n);
+  let moves = 0;
+  for (let w = 0; w < n; w++) {
+    moves += await spawn(stays(50), { worker: w });
+  }
+  console.log("moves after sleep, yieldNow and channel round trips:", moves);
   const worker = n - 1;
   console.log("shorthand:", (await spawn(where(), { worker })) == worker);
   const inbox = channel<Call>();

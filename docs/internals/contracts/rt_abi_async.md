@@ -134,10 +134,10 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. With the stealing scheduler the task is spawned as usual. Additive. |
 | `velt_rt_worker_count` | `() -> u64` | `workerCount()`: the per-core workers, or the stealing runtime's worker threads (1 on WebAssembly). Additive. |
 | `velt_rt_current_worker` | `() -> u64` | `currentWorker()`: the per-core worker running this task; with the stealing scheduler an index for this worker thread. Additive. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: per-core. `velt_main` calls it first, before anything starts the runtime, when the program uses the placement API (it references `velt_rt_spawn_target`, `velt_rt_worker_count` or `velt_rt_current_worker`); otherwise it isn't called. `VELT_SCHEDULER` overrides it. A no-op on WebAssembly. Additive. |
+| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: per-core. `velt_main` calls it first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`); otherwise it isn't called (`workerCount()` and `currentWorker()` alone don't select per-core). `VELT_SCHEDULER` overrides it. A no-op on WebAssembly. Additive. |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
-The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program using task placement, or
+The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program that pins a task, or
 `VELT_SCHEDULER=per-core`) makes every worker a `current_thread` runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
