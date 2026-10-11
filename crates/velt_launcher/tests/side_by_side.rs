@@ -649,3 +649,68 @@ fn the_launcher_says_its_own_version() {
         format!("velt-launcher {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
+
+/// `velt toolchain prune` keeps the default and the newest of each minor, and removes the rest.
+#[test]
+fn prune_removes_old_patches_but_not_the_default() {
+    let releases = Releases::new(&["0.1.0", "0.1.1", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    for v in ["0.1.0", "0.1.1", "0.1.2", "0.2.0"] {
+        m.ok(&m.work, &["toolchain", "install", v]);
+    }
+    // The first one installed is the default.
+    let dry = m.ok(&m.work, &["toolchain", "prune", "--dry-run"]);
+    assert!(
+        dry.contains("would remove velt 0.1.1 (") && dry.contains("would free"),
+        "{dry}"
+    );
+    assert!(
+        dry.contains("nothing was removed") && !dry.contains("no longer run"),
+        "{dry}"
+    );
+    assert!(
+        !dry.contains("0.1.0") && !dry.contains("0.1.2") && !dry.contains("0.2.0"),
+        "{dry}"
+    );
+    assert!(m.toolchain("0.1.1").exists());
+    let out = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(
+        out.contains("removed velt 0.1.1 (") && out.contains("freed"),
+        "{out}"
+    );
+    assert!(!m.toolchain("0.1.1").exists());
+    for kept in ["0.1.0", "0.1.2", "0.2.0"] {
+        assert!(m.toolchain(kept).exists(), "{kept}");
+    }
+    let again = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(again.contains("nothing to prune"), "{again}");
+}
+
+/// `prune` keeps the version the current directory selects and versions a link points into.
+#[test]
+fn prune_keeps_what_this_directory_runs_and_linked_versions() {
+    let releases = Releases::new(&["0.1.0", "0.1.1", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    for v in ["0.1.0", "0.1.1", "0.1.2", "0.2.0"] {
+        m.ok(&m.work, &["toolchain", "install", v]);
+    }
+    m.ok(&m.work, &["toolchain", "default", "0.2.0"]);
+    let pinned = m.package("old", Some("=0.1.0"));
+    let linked = m.toolchain("0.1.1");
+    m.ok(
+        &m.work,
+        &["toolchain", "link", "dev", linked.to_str().unwrap()],
+    );
+
+    // In the package: 0.1.0 is what it runs, 0.1.1 is linked, 0.1.2 the newest of 0.1, 0.2.0
+    // the default.
+    let out = m.ok(&pinned, &["toolchain", "prune"]);
+    assert!(out.contains("nothing to prune"), "{out}");
+    // Outside it, 0.1.0 goes; the linked 0.1.1 stays, and its link still works.
+    let out = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(out.contains("removed velt 0.1.0 ("), "{out}");
+    assert!(!out.contains("0.1.1"), "{out}");
+    assert!(linked.exists());
+    let stdout = m.ok(&m.work, &["+dev", "run"]);
+    assert!(same(&prefix_of(&stdout), &linked), "{stdout}");
+}

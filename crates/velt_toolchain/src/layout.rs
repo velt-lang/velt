@@ -228,6 +228,24 @@ impl Root {
         )
     }
 
+    /// The installed versions a link points into: its prefix is the version's directory or inside
+    /// it (`velt toolchain link dev <root>/toolchains/0.1.1`). Removing one would break the link.
+    pub fn linked_versions(&self) -> Vec<Version> {
+        let targets: Vec<PathBuf> = self
+            .links()
+            .into_iter()
+            .filter_map(|(_, prefix)| prefix.canonicalize().ok())
+            .collect();
+        self.versions()
+            .into_iter()
+            .filter(|v| {
+                self.version_dir(v)
+                    .canonicalize()
+                    .is_ok_and(|dir| targets.iter().any(|t| t.starts_with(&dir)))
+            })
+            .collect()
+    }
+
     /// Remove an installed version or a link (a link's prefix stays). A version is renamed
     /// aside first and then deleted, so it is gone whole or not at all: a rename that fails
     /// (Windows: a file of it is open) reports it in use and leaves it complete.
@@ -264,6 +282,46 @@ impl Root {
             }
         }
     }
+}
+
+/// The installed versions `velt toolchain prune` removes from `versions`: all but the default and,
+/// for each `major.minor`, the version a pin like `"0.1"` runs: its newest release (a pin skips
+/// pre-releases), or its newest pre-release when it has no release yet; and all in `keep` (the
+/// default, the one the current directory selects, those a link points into). One a lockfile
+/// still names is installed again when it is next used.
+pub fn prunable(versions: &[Version], keep: &[Version]) -> Vec<Version> {
+    let newest_of_minor = |v: &Version| {
+        let minor = || {
+            versions
+                .iter()
+                .filter(|o| o.major == v.major && o.minor == v.minor)
+        };
+        let kept = minor()
+            .filter(|o| o.pre.is_empty())
+            .max()
+            .or_else(|| minor().max());
+        kept == Some(v)
+    };
+    versions
+        .iter()
+        .filter(|v| !newest_of_minor(v) && !keep.contains(v))
+        .cloned()
+        .collect()
+}
+
+/// The bytes the files under `path` take (0 when it can't be read).
+pub fn dir_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Write `text` to `path` through a temporary file, so a reader never sees half of it.
@@ -390,5 +448,55 @@ mod tests {
             assert!(err.contains("device name on Windows"), "{device}: {err}");
         }
         assert!(Toolchain::parse("console").is_ok() && Toolchain::parse("com").is_ok());
+    }
+
+    #[test]
+    fn prune_keeps_the_default_and_the_newest_of_each_minor() {
+        let versions: Vec<Version> = ["0.1.0", "0.1.2", "0.1.3", "0.2.0-rc.1", "0.2.0", "1.0.0"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        let shown = |p: Vec<Version>| p.iter().map(Version::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            shown(prunable(&versions, &[])),
+            ["0.1.0", "0.1.2", "0.2.0-rc.1"]
+        );
+        // Kept: the default, the one this directory selects, those a link points into.
+        assert_eq!(
+            shown(prunable(&versions, &[v("0.1.0"), v("0.2.0-rc.1")])),
+            ["0.1.2"]
+        );
+        // A newer pre-release doesn't displace the release a pin runs; a minor with only
+        // pre-releases keeps its newest.
+        let with_rc: Vec<Version> = ["0.1.3", "0.1.4-rc.1", "0.3.0-rc.1", "0.3.0-rc.2"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        assert_eq!(shown(prunable(&with_rc, &[])), ["0.1.4-rc.1", "0.3.0-rc.1"]);
+        assert!(prunable(&[v("0.1.0")], &[]).is_empty());
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/b")).unwrap();
+        std::fs::write(tmp.path().join("a/b/f"), [0u8; 1000]).unwrap();
+        std::fs::write(tmp.path().join("g"), [0u8; 24]).unwrap();
+        assert_eq!(dir_size(tmp.path()), 1024);
+    }
+
+    #[test]
+    fn versions_a_link_points_into() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Root::new(tmp.path());
+        for ver in ["0.1.0", "0.1.1", "0.2.0"] {
+            fake_prefix(&root.version_dir(&v(ver)));
+        }
+        assert!(root.linked_versions().is_empty());
+        root.link("dev", &root.version_dir(&v("0.1.1"))).unwrap();
+        // A prefix inside a version's directory counts too.
+        let inner = root.version_dir(&v("0.2.0")).join("inner");
+        fake_prefix(&inner);
+        root.link("inner", &inner).unwrap();
+        let elsewhere = tmp.path().join("checkout");
+        fake_prefix(&elsewhere);
+        root.link("checkout", &elsewhere).unwrap();
+        assert_eq!(root.linked_versions(), [v("0.1.1"), v("0.2.0")]);
     }
 }

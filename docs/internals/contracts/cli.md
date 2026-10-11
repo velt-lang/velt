@@ -24,7 +24,7 @@ velt playground [--port <n>] [--host <addr>]   # browser playground (default 127
 velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
-velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
+velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
 velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
@@ -243,7 +243,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   the running launcher. `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
-  `--force`. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and
+  `--force`. `prune` removes every installed version but the default, the version the cwd
+  selects (`select` then `installed`), those whose directory is a link's prefix or contains it
+  (`Root::linked_versions`), and per `major.minor` its newest release (its newest pre-release
+  when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per
+  version and `freed <n> MB` (`--dry-run`: `would remove` / `would free`, nothing removed; none
+  to remove: `nothing to prune: …`); a version that cannot be removed (in use) is reported and
+  the others still go, and the exit status is then 1. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and
   the prefix, or `<wanted> (<reason>): not installed; …`. `link <name> <prefix>` (`name`:
   `[a-z][a-z0-9._-]*`) requires `<prefix>/bin/velt` and writes the absolute prefix to
   `<root>/links/<name>`.
