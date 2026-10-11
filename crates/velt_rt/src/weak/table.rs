@@ -378,49 +378,59 @@ pub(super) fn release_values(values: Vec<(ReleaseFn, u64)>) {
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
 pub(super) unsafe fn decrement(obj: *mut u8) {
     let o = obj as usize;
-    let hint = with(|s| s.nodes.get(&o).map(|n| n.hint.max(n.observed)));
-    let Some(hint) = hint else { no_record(obj) };
-    let rc = rc_word(obj);
-    *rc -= 1;
-    if *rc & RC_COUNT > u64::from(hint) {
-        return;
-    }
-    if CASCADE.with(Cell::get) > 0 {
-        PENDING.with(|p| {
-            let mut p = p.borrow_mut();
-            if !p.contains(&o) {
-                p.push(o);
-            }
-        });
-    } else {
-        try_free(o);
-    }
+    let cascade = CASCADE.with(Cell::get) > 0;
+    // One acquisition: the record check, the decrement and (outside a cascade) the trial.
+    let values = with(|s| {
+        let n = s.nodes.get(&o)?;
+        let hint = n.hint.max(n.observed);
+        // SAFETY: as for the function; the count changes under the lock, like `deref`'s increment.
+        let left = unsafe {
+            let rc = rc_word(obj);
+            *rc -= 1;
+            *rc & RC_COUNT
+        };
+        if left > u64::from(hint) {
+            return Some(Vec::new());
+        }
+        if cascade {
+            PENDING.with(|p| {
+                let mut p = p.borrow_mut();
+                if !p.contains(&o) {
+                    p.push(o);
+                }
+            });
+            return Some(Vec::new());
+        }
+        Some(trial_locked(s, o))
+    });
+    let Some(values) = values else { no_record(obj) };
+    release_values(values);
 }
 
-fn at_hint(o: usize) -> bool {
-    with(|s| match s.nodes.get(&o) {
+fn at_hint(s: &State, o: usize) -> bool {
+    match s.nodes.get(&o) {
         // SAFETY: a recorded object is live.
         Some(n) => {
             (unsafe { *rc_word(o as *mut u8) & RC_COUNT }) <= u64::from(n.hint.max(n.observed))
         }
         None => false,
-    })
+    }
+}
+
+/// The trial from `o` with the table locked: the values of the dead keys' entries to release.
+fn trial_locked(s: &mut State, o: usize) -> Vec<(ReleaseFn, u64)> {
+    let trial = trial::run(s, o);
+    for c in trial.observed {
+        s.node(c.obj, c.trace).observed = c.refs;
+    }
+    let dead = trial.dead.into_iter();
+    dead.flat_map(|(m, k)| s.delete(m, k as *mut u8).unwrap_or_default())
+        .collect()
 }
 
 /// Runs a trial deletion from `o` (a live recorded object) and deletes the entries of every key
 /// it finds dead, which frees the cycle.
 fn try_free(o: usize) {
-    if !at_hint(o) {
-        return;
-    }
-    let values = with(|s| {
-        let trial = trial::run(s, o);
-        for c in trial.observed {
-            s.node(c.obj, c.trace).observed = c.refs;
-        }
-        let dead = trial.dead.into_iter();
-        dead.flat_map(|(m, k)| s.delete(m, k as *mut u8).unwrap_or_default())
-            .collect()
-    });
+    let values = with(|s| if at_hint(s, o) { trial_locked(s, o) } else { Vec::new() });
     release_values(values);
 }
