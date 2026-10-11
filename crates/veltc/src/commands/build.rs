@@ -139,19 +139,11 @@ fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), Str
     }
 }
 
-/// Whether the build's program has line information a debugger can use: debug info was asked
-/// for, and the backend emits it for the target. Cranelift writes no DWARF or CodeView into COFF
-/// (Windows) objects yet, only function symbols.
-fn has_line_info(opts: &BuildOptions) -> bool {
-    let cranelift_coff = opts.target().contains("windows") && opts.backend != Some(Backend::Llvm);
-    opts.wants_debug_info() && !cranelift_coff
-}
-
 /// `velt build --json`: `{"executable", "debugInfo", "lldbScript", "diagnostics", "errors",
 /// "warnings"}` on stdout, for editors (the VS Code debugger runs the executable it names, with
 /// the LLDB formatters loaded). `executable` is the absolute path of the linked program, `null`
 /// when the build failed or made no program (`--emit obj|vir|llvm`); `debugInfo` says whether it
-/// has line information for debuggers ([`has_line_info`]); `lldbScript` is the toolchain's
+/// has line information for debuggers ([`BuildOptions::has_line_info`]); `lldbScript` is the toolchain's
 /// `velt_lldb.py` (`null` if missing). Exit codes are those of `velt build`.
 fn build_json(args: &BuildArgs) -> ExitCode {
     let mut sess = Session::new();
@@ -167,7 +159,7 @@ fn build_json(args: &BuildArgs) -> ExitCode {
                 finish_executable(&opts, &artifact).map_err(BuildError::Failed)?;
                 Ok(artifact)
             });
-            (Some(has_line_info(&opts)), result)
+            (Some(opts.has_line_info()), result)
         }
         Err(msg) => (None, Err(BuildError::Failed(msg))),
     };
@@ -352,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_cranelift_builds_have_no_line_info() {
+    fn windows_cranelift_builds_need_the_bundled_linker_for_line_info() {
         let opts = |target: &str, backend, release| BuildOptions {
             target: Some(target.into()),
             backend,
@@ -361,10 +353,18 @@ mod tests {
         };
         let win = "x86_64-pc-windows-msvc";
         let linux = "x86_64-unknown-linux-gnu";
-        assert!(has_line_info(&opts(linux, Some(Backend::Cranelift), false)));
-        assert!(!has_line_info(&opts(linux, Some(Backend::Cranelift), true)));
-        assert!(!has_line_info(&opts(win, Some(Backend::Cranelift), false)));
-        assert!(has_line_info(&opts(win, Some(Backend::Llvm), false)));
+        let with = |o: &BuildOptions, bundled: bool| o.line_info(|| bundled);
+        assert!(with(&opts(linux, Some(Backend::Cranelift), false), false));
+        assert!(!with(&opts(linux, Some(Backend::Cranelift), true), true));
+        assert!(with(&opts(win, Some(Backend::Cranelift), false), true));
+        assert!(!with(&opts(win, Some(Backend::Cranelift), false), false));
+        assert!(with(&opts(win, Some(Backend::Llvm), false), false));
+        // An object keeps its DWARF whoever links it.
+        let obj = BuildOptions {
+            emit: Emit::Obj,
+            ..opts(win, Some(Backend::Cranelift), false)
+        };
+        assert!(with(&obj, false));
     }
 
     #[test]

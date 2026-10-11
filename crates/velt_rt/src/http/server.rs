@@ -61,6 +61,8 @@ static SERVERS: Registry<ServerObj> = Registry::new();
 pub struct ServerObj {
     port: u16,
     accept_loop: AbortHandle,
+    /// Closed once the accept loop dropped the listening socket (see [`Bound`]).
+    unbound: watch::Receiver<()>,
     /// Signals (by closing) that the handler was released; see `Shared::released`.
     released: watch::Receiver<()>,
 }
@@ -212,24 +214,30 @@ fn handle<S: OwnedStore>(
     HandlerFut::new(shared, req, parked)
 }
 
-async fn accept_loop<S: OwnedStore>(
+/// A server's listening socket and, dropped right after it, the signal that the port is free
+/// again: `close()` stops the accept loop (which owns this) asynchronously, so a `serve` or
+/// `listen` on the same port waits for the signal ([`crate::dev::unbinding`]) instead of failing
+/// with "address in use" (#1020).
+struct Bound {
     listener: TcpListener,
-    shared: Arc<Shared>,
-    tls: Option<TlsAcceptor>,
-) {
+    _unbound: watch::Sender<()>,
+}
+
+async fn accept_loop<S: OwnedStore>(bound: Bound, shared: Arc<Shared>, tls: Option<TlsAcceptor>) {
+    let listener = &bound.listener;
     // Dropping this (when `close()` aborts the loop) makes every open connection finish its
     // in-flight requests and close.
     let graceful = GracefulShutdown::new();
     let Some(mut stop) = crate::dev::shutdown::register() else {
-        return accept_connections::<S>(&listener, shared, &graceful, tls).await;
+        return accept_connections::<S>(listener, shared, &graceful, tls).await;
     };
     // Dev mode: on SIGTERM stop accepting (the supervisor keeps the socket, so new connections
     // wait for the next version) and let in-flight requests finish before the process exits.
     {
-        let accept = std::pin::pin!(accept_connections::<S>(&listener, shared, &graceful, tls));
+        let accept = std::pin::pin!(accept_connections::<S>(listener, shared, &graceful, tls));
         futures_util::future::select(accept, std::pin::pin!(stop.requested())).await;
     }
-    drop(listener);
+    drop(bound);
     let _ = tokio::time::timeout(crate::dev::shutdown::DRAIN, graceful.shutdown()).await;
     drop(stop);
 }
@@ -257,15 +265,24 @@ async fn accept_connections<S: OwnedStore>(
         };
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
-        // connection.
-        crate::task::runtime::spawn(async move {
-            match tls {
-                None => serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await,
-                Some(acceptor) => {
-                    if let Ok(Ok(s)) =
-                        tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
-                    {
-                        serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
+        // connection. Per-core: served where placement puts it; its socket moves there only if
+        // that is another worker.
+        crate::task::runtime::spawn_with(move |moves| {
+            let stream = crate::net::tcp::Handoff::new(stream, moves);
+            async move {
+                let Ok(stream) = stream.and_then(crate::net::tcp::Handoff::attach) else {
+                    return;
+                };
+                match tls {
+                    None => {
+                        serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await
+                    }
+                    Some(acceptor) => {
+                        if let Ok(Ok(s)) =
+                            tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
+                        {
+                            serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
+                        }
                     }
                 }
             }
@@ -296,6 +313,11 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await.and_then(|l| {
             let port = l.local_addr()?.port();
+            let (unbound_tx, unbound) = watch::channel(());
+            let bound = Bound {
+                listener: l,
+                _unbound: unbound_tx,
+            };
             let desc = shared.handler();
             let released = shared.released();
             // Dev mode: a replacement handler may need any state size, so store states on the
@@ -306,13 +328,14 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
                 (desc.state_size as usize, desc.state_align as usize)
             };
             let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
-                accept_loop::<S>(l, shared, tls)
+                accept_loop::<S>(bound, shared, tls)
             ));
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {
                 port,
                 accept_loop: task.abort_handle(),
+                unbound,
                 released,
             })
         });
@@ -387,6 +410,7 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
     s.accept_loop.abort();
+    crate::dev::unbinding(s.port, s.unbound.clone());
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }

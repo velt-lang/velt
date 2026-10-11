@@ -1,0 +1,18 @@
+reused GET: 200 second
+  conn 1: answers GET /first HTTP/1.1
+  conn 1: drops GET /second HTTP/1.1
+  conn 2: answers GET /second HTTP/1.1
+reused PUT: 200 second
+  conn 1: answers GET /first HTTP/1.1
+  conn 1: drops PUT /second HTTP/1.1
+  conn 2: answers PUT /second HTTP/1.1
+reused POST: rejected
+  conn 1: answers GET /first HTTP/1.1
+  conn 1: drops POST /second HTTP/1.1
+reused PATCH: rejected
+  conn 1: answers GET /first HTTP/1.1
+  conn 1: drops PATCH /second HTTP/1.1
+fresh GET: rejected
+  conn 1: drops GET /second HTTP/1.1
+fresh PUT: rejected
+  conn 1: drops PUT /second HTTP/1.1

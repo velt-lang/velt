@@ -10,6 +10,7 @@ use crate::vir::{BlockId, Const, Operand, Place, Proj, Rvalue, Terminator};
 
 impl FnLower<'_, '_> {
     pub(super) fn block(&mut self, b: &hir::Block) {
+        self.note_scope_ends(b, false);
         self.push_scope(ScopeKind::Block);
         for s in &b.stmts {
             self.stmt(s);

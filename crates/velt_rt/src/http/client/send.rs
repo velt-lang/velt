@@ -2,6 +2,7 @@
 //! ([`Outgoing`]), redirects as the Fetch standard follows them ([`send`]), and the error
 //! messages Node's `fetch` gives.
 
+use super::stamp::{opened_before, Stamped};
 use super::target::Target;
 use super::Redirect;
 use crate::result::{code, VeltErr};
@@ -20,7 +21,7 @@ use std::time::Duration;
 use url::Url;
 
 /// A pooled HTTP/1.1 + HTTP/2 client (keep-alive connections are reused per origin).
-pub(super) type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub(super) type HttpClient = Client<Stamped<HttpsConnector<HttpConnector>>, Full<Bytes>>;
 
 /// How long connecting may take before `fetch` fails with `ETIMEDOUT` (undici's default).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -40,7 +41,7 @@ fn build(extra_ca_pem: &[u8]) -> Result<HttpClient, VeltErr> {
         .enable_http1()
         .enable_http2()
         .wrap_connector(http);
-    Ok(Client::builder(TokioExecutor::new()).build(https))
+    Ok(Client::builder(TokioExecutor::new()).build(Stamped(https)))
 }
 
 /// The pooled client trusting the built-in roots plus `extra_ca_pem` (one per CA text; the
@@ -167,6 +168,40 @@ fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     req
 }
 
+/// Methods that may be sent twice (RFC 9110 §9.2.2).
+fn idempotent(m: &Method) -> bool {
+    matches!(
+        *m,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE | Method::PUT | Method::DELETE
+    )
+}
+
+/// Whether `e` is a connection that broke before a response (not a failed connect, which a new
+/// connection would not fix); [`opened_before`] tells whether it was a reused one.
+fn stale_connection(e: &hyper_util::client::legacy::Error) -> bool {
+    use std::error::Error;
+    use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
+    if e.is_connect() {
+        return false;
+    }
+    let mut source = e.source();
+    while let Some(s) = source {
+        if let Some(h) = s.downcast_ref::<hyper::Error>() {
+            if h.is_incomplete_message() || h.is_canceled() || h.is_closed() {
+                return true;
+            }
+        }
+        if let Some(io) = s.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof
+            );
+        }
+        source = s.source();
+    }
+    false
+}
+
 /// A response with the URL it came from and whether a redirect led there.
 pub(super) struct Received {
     pub response: Response<Incoming>,
@@ -183,8 +218,26 @@ pub(super) async fn send(
 ) -> Result<Received, VeltErr> {
     let mut redirected = false;
     for _ in 0..=MAX_REDIRECTS {
+        // What the request is built from, kept for a second send: a `Uri` clone shares its
+        // bytes and the caller's header map is empty unless they set headers, so keeping them
+        // allocates nothing for most requests (the request itself is only rebuilt on a retry).
+        let again = idempotent(&o.method).then(|| (o.url.uri.clone(), o.headers.clone()));
         let req = request(&mut o, mode == Redirect::Follow);
-        let response = client.request(req).await.map_err(|e| failed(&e))?;
+        let sent = std::time::Instant::now();
+        let response = match client.request(req).await {
+            Ok(r) => r,
+            // A reused pooled keep-alive connection the server closed meanwhile fails before a
+            // response: an idempotent request goes out once more, on another connection
+            // (#1020). Never on a fresh connection: that server got the request and failed.
+            Err(e) => match again {
+                Some((uri, headers)) if stale_connection(&e) && opened_before(&e, sent) => {
+                    (o.url.uri, o.headers) = (uri, headers);
+                    let req = request(&mut o, mode == Redirect::Follow);
+                    client.request(req).await.map_err(|e| failed(&e))?
+                }
+                _ => return Err(failed(&e)),
+            },
+        };
         let status = response.status();
         // Only a redirect's `location` is looked up.
         let location = (status.is_redirection() && mode != Redirect::Manual)

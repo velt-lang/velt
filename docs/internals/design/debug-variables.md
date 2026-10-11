@@ -13,7 +13,7 @@ first word may be a vtable.
 
 ## Proposal
 
-Three steps, each its own pull request:
+Four steps, each its own pull request:
 
 1. **VIR describes variables** (this note's contract change, vir/debug.rs, vir.rs invariant 10).
    Lowering with `LowerOptions::debug_info` attaches a `LocalDebug` (declaration, debug type,
@@ -36,7 +36,12 @@ Three steps, each its own pull request:
    as their active variant, matching debug type names. A value that cannot be one (a variable
    not initialized yet) shows as `<invalid string>` or `<invalid array>`, never read as a huge
    array. They match type names and need no recognizer functions, so they work with LLDB 18.
-   Lexical scopes, which hide not-yet-declared variables, are step 4.
+4. **Scopes.** A variable is in scope from its declaration's line to the end of the block that
+   declares it (`LocalDebug::end`; the function's end for its own block and params). Those
+   source ranges nest like the blocks, so Cranelift puts each variable in a
+   `DW_TAG_lexical_block` inside the one of the innermost variable whose range holds its own,
+   covering the code located in its range. Not-yet-declared variables and those of a finished
+   loop are hidden.
 
 Locals of async functions, generators and inlined code are not described yet (phase 4: their
 values live in state machines or the caller's frame).
@@ -46,5 +51,7 @@ values live in state machines or the caller's frame).
 - Field names in a side table indexed by `AggId`: needs no new types, but tagged types, options
   and the source spelling of a type still need a description, and the side table would describe
   layouts rather than source types.
-- Scopes as statement ranges: after CFG lowering a scope is not a contiguous range, so scopes
-  will be recorded per statement location instead (step 3).
+- Scopes as statement ranges: after CFG lowering a scope is not a contiguous range.
+- A scope id in every statement location (`SrcLoc`): exact, but it touches every location and
+  every pass that makes one; a source range per variable needs neither, since the code of a
+  block is the code located inside it.

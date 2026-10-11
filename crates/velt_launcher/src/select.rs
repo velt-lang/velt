@@ -343,6 +343,24 @@ fn carry_target_packs(ctx: &Context, before: &[Version], version: &Version, pref
     }
 }
 
+/// Install the toolchain archive `file` downloaded before (`velt toolchain install --from`),
+/// checked against the signed `SHA256SUMS` beside it unless `unverified`, then add the target
+/// packs of the version it follows, as for a download. Returns the version, and whether it was
+/// installed now (`false`: it was installed already, and is kept).
+pub fn install_from(
+    ctx: &Context,
+    file: &Path,
+    unverified: bool,
+) -> Result<(Version, bool), String> {
+    let before = ctx.root.versions();
+    let (version, prefix, installed) =
+        release::install_toolchain_from_file(&ctx.root, file, unverified, None)?;
+    if installed {
+        carry_target_packs(ctx, &before, &version, &prefix);
+    }
+    Ok((version, installed))
+}
+
 /// Install release `version`; another launcher finishing the same install first is fine. The
 /// target packs the version it follows had are added to it ([`carry_target_packs`]).
 pub fn install(ctx: &Context, version: &Version) -> Result<PathBuf, String> {

@@ -14,6 +14,7 @@
 mod body;
 mod decode;
 mod send;
+mod stamp;
 mod target;
 #[cfg(test)]
 mod tests;

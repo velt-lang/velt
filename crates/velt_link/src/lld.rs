@@ -34,7 +34,10 @@ fn path_arg(prefix: &str, path: &Path) -> OsString {
 }
 
 /// `lld-link`: like `link.exe` with the MSVC libraries (`msvc_args`), but without default
-/// libraries: the kit's startup object and import libraries stand in for them.
+/// libraries: the kit's startup object and import libraries stand in for them. A debug build
+/// keeps the DWARF of Cranelift's objects in the executable (where LLDB reads it) and writes the
+/// PDB (CodeView of LLVM's objects, public symbols of all); `/IGNORE:longsections` quiets the
+/// warning about the `.debug_*` names, longer than 8 bytes, which the string table holds.
 fn coff_args(req: &LinkRequest, kit: &Kit) -> Result<Vec<OsString>, String> {
     let mut args: Vec<OsString> = [
         "/NOLOGO",
@@ -47,7 +50,7 @@ fn coff_args(req: &LinkRequest, kit: &Kit) -> Result<Vec<OsString>, String> {
     if req.release {
         args.extend(["/OPT:REF", "/OPT:ICF"].map(OsString::from));
     } else {
-        args.push("/DEBUG".into());
+        args.extend(["/DEBUG", "/IGNORE:longsections"].map(OsString::from));
     }
     args.push(path_arg("/OUT:", req.output));
     args.push(path_arg("/LIBPATH:", &kit.dir));
@@ -234,6 +237,8 @@ mod tests {
         for item in [
             "/NODEFAULTLIB",
             "/DEBUG",
+            // Cranelift's DWARF stays in the executable, beside the PDB.
+            "/IGNORE:longsections",
             "/OUT:out",
             "ucrt.lib",
             "kernel32.lib",

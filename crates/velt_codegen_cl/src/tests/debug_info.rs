@@ -1,4 +1,4 @@
-//! DWARF line tables: in objects (ELF, Mach-O; none for COFF) and in the in-memory images of
+//! DWARF line tables: in objects (ELF, Mach-O, COFF) and in the in-memory images of
 //! JIT code registered through the GDB JIT interface.
 
 use std::borrow::Cow;
@@ -117,11 +117,27 @@ fn objects_carry_line_tables() {
         let line_section = file
             .sections()
             .find(|s| s.name().is_ok_and(|n| n.ends_with("debug_line")));
-        if fmt == BinaryFormat::Coff {
-            assert!(line_section.is_none(), "{triple}: COFF gets no DWARF");
-            continue;
-        }
         let line_section = line_section.unwrap_or_else(|| panic!("{triple}: no debug_line"));
+        if fmt == BinaryFormat::Coff {
+            // The long name through the string table; offsets into other debug sections are
+            // section-relative (an address would be wrong once lld-link places the section).
+            assert_eq!(line_section.name().unwrap(), ".debug_line", "{triple}");
+            let info = file.section_by_name(".debug_info").expect("debug_info");
+            let kinds: Vec<object::RelocationKind> =
+                info.relocations().map(|(_, r)| r.kind()).collect();
+            assert!(
+                kinds.contains(&object::RelocationKind::SectionOffset),
+                "{triple}: {kinds:?}"
+            );
+            assert!(info.relocations().all(|(_, r)| match r.target() {
+                object::RelocationTarget::Symbol(i) => {
+                    let s = file.symbol_by_index(i).unwrap();
+                    s.kind() == object::SymbolKind::Text
+                        || r.kind() == object::RelocationKind::SectionOffset
+                }
+                _ => r.kind() == object::RelocationKind::SectionOffset,
+            }));
+        }
         if fmt == BinaryFormat::MachO {
             assert_eq!(line_section.name().unwrap(), "__debug_line", "{triple}");
             assert_eq!(
@@ -204,6 +220,7 @@ fn fib_with_variables() -> Program {
                 line,
                 col: 1,
             },
+            end: None,
             ty: vir::DebugTyId(0),
             by_ref: false,
             param: local == 0,
@@ -212,11 +229,11 @@ fn fib_with_variables() -> Program {
     program
 }
 
-/// The variables under the subprogram `symbol`: (tag, name, type name, location expression).
-fn read_variables(
-    file: &object::File,
-    symbol: &str,
-) -> Vec<(gimli::DwTag, String, String, Vec<u8>)> {
+/// A variable read back: (tag, name, type name, location expression, lexical blocks around it).
+type Var = (gimli::DwTag, String, String, Vec<u8>, usize);
+
+/// The variables under the subprogram `symbol`.
+fn read_variables(file: &object::File, symbol: &str) -> Vec<Var> {
     let load = |id: gimli::SectionId| -> Result<Cow<'_, [u8]>, gimli::Error> {
         let names = [id.name().to_string(), format!("__{}", &id.name()[1..])];
         let data = (file.sections())
@@ -240,33 +257,42 @@ fn read_variables(
                 .into_owned(),
         )
     };
-    let mut tree = unit.entries_tree(None).unwrap();
-    let root = tree.root().unwrap();
-    let mut children = root.children();
     let mut out = vec![];
-    while let Some(sub) = children.next().unwrap() {
-        if sub.entry().tag() != gimli::DW_TAG_subprogram
-            || string(sub.entry(), gimli::DW_AT_linkage_name).as_deref() != Some(symbol)
-        {
+    // Depth-first: the variables below the subprogram, directly or in lexical blocks.
+    let mut inside = None;
+    let mut entries = unit.entries();
+    while let Some(e) = entries.next_dfs().unwrap() {
+        let depth = e.depth();
+        if inside.is_some_and(|d| depth <= d) {
+            inside = None;
+        }
+        if e.tag() == gimli::DW_TAG_subprogram {
+            if string(e, gimli::DW_AT_linkage_name).as_deref() == Some(symbol) {
+                inside = Some(depth);
+            }
             continue;
         }
-        let mut vars = sub.children();
-        while let Some(v) = vars.next().unwrap() {
-            let e = v.entry();
-            let ty = match e.attr_value(gimli::DW_AT_type) {
-                Some(gimli::AttributeValue::UnitRef(o)) => {
-                    let t = unit.entry(o).unwrap();
-                    string(&t, gimli::DW_AT_name).unwrap_or_default()
-                }
-                other => panic!("type {other:?}"),
-            };
-            let location = match e.attr_value(gimli::DW_AT_location) {
-                Some(gimli::AttributeValue::Exprloc(x)) => x.0.slice().to_vec(),
-                other => panic!("location {other:?}"),
-            };
-            let name = string(e, gimli::DW_AT_name).unwrap_or_default();
-            out.push((e.tag(), name, ty, location));
+        let Some(sub_depth) = inside else { continue };
+        if !matches!(
+            e.tag(),
+            gimli::DW_TAG_variable | gimli::DW_TAG_formal_parameter
+        ) {
+            continue;
         }
+        let ty = match e.attr_value(gimli::DW_AT_type) {
+            Some(gimli::AttributeValue::UnitRef(o)) => {
+                let t = unit.entry(o).unwrap();
+                string(&t, gimli::DW_AT_name).unwrap_or_default()
+            }
+            other => panic!("type {other:?}"),
+        };
+        let location = match e.attr_value(gimli::DW_AT_location) {
+            Some(gimli::AttributeValue::Exprloc(x)) => x.0.slice().to_vec(),
+            other => panic!("location {other:?}"),
+        };
+        let name = string(e, gimli::DW_AT_name).unwrap_or_default();
+        let blocks = (depth - sub_depth - 1) as usize;
+        out.push((e.tag(), name, ty, location, blocks));
     }
     out
 }
@@ -285,22 +311,24 @@ fn objects_describe_variables() {
         let bytes = emit_object(&program, &opts).unwrap();
         let file = object::File::parse(&*bytes).unwrap();
         let vars = read_variables(&file, "fib");
-        let summary: Vec<(gimli::DwTag, &str, &str)> = vars
+        let summary: Vec<(gimli::DwTag, &str, &str, usize)> = vars
             .iter()
-            .map(|(t, n, ty, _)| (*t, n.as_str(), ty.as_str()))
+            .map(|(t, n, ty, _, blocks)| (*t, n.as_str(), ty.as_str(), *blocks))
             .collect();
+        // `s` is in scope from its declaration (line 5) on, after the code of the first lines:
+        // a lexical block.
         assert_eq!(
             summary,
             [
-                (gimli::DW_TAG_formal_parameter, "n", "number"),
-                (gimli::DW_TAG_variable, "s", "number"),
+                (gimli::DW_TAG_formal_parameter, "n", "number", 0),
+                (gimli::DW_TAG_variable, "s", "number", 1),
             ],
             "{triple}"
         );
         // Each in its own frame slot, below the frame pointer.
         let offsets: Vec<i64> = vars
             .iter()
-            .map(|(.., loc)| {
+            .map(|(_, _, _, loc, _)| {
                 assert_eq!(loc[0], gimli::DW_OP_fbreg.0, "{triple}: {loc:?}");
                 let mut r = gimli::EndianSlice::new(&loc[1..], gimli::LittleEndian);
                 gimli::leb128::read::signed(&mut r).unwrap()

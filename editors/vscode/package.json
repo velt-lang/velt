@@ -72,6 +72,16 @@
         "icon": "$(debug-alt)"
       },
       {
+        "command": "velt.runTest",
+        "title": "Run Test",
+        "category": "Velt"
+      },
+      {
+        "command": "velt.debugTest",
+        "title": "Debug Test",
+        "category": "Velt"
+      },
+      {
         "command": "velt.generateLaunchJson",
         "title": "Generate launch.json",
         "category": "Velt"
@@ -131,6 +141,16 @@
       }
     },
     "menus": {
+      "commandPalette": [
+        {
+          "command": "velt.runTest",
+          "when": "false"
+        },
+        {
+          "command": "velt.debugTest",
+          "when": "false"
+        }
+      ],
       "editor/title/run": [
         {
           "command": "velt.runFile",
@@ -191,13 +211,17 @@
                 "default": true,
                 "description": "Build with `velt build` before debugging."
               },
+              "test": {
+                "type": "string",
+                "description": "Debug this test of `file` (an exported `test_*` function): its harness is built with `velt test --no-run`."
+              },
               "buildArgs": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
                 "default": [],
-                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (line information on Windows, which the default build lacks yet)."
+                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (a PDB on Windows, for the Visual Studio debugger)."
               },
               "stopOnEntry": {
                 "type": "boolean",

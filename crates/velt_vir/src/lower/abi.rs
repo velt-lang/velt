@@ -3,7 +3,7 @@
 //! out-pointer for aggregate or `Result` returns, hidden env param for closures), allocates VIR
 //! locals for HIR locals and drop flags, then lowers the body.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
@@ -61,6 +61,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             throws: None,
             div_zero_bbs: vec![],
             ref_bindings: HashSet::new(),
+            scope_ends: HashMap::new(),
             asyncx: None,
             lazy_call: false,
             retain_hops: false,
@@ -312,6 +313,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.push_scope(ScopeKind::Block);
         self.enter_span(f.span);
+        self.note_scope_ends(&f.body.block, true);
         self.ctor_entry_inits();
         let unit_super = self.unit_super_at(f);
         for (i, s) in f.body.block.stmts.iter().enumerate() {

@@ -205,6 +205,7 @@ fn verify_rejects_dangling_debug_descriptions() {
             line: 1,
             col: 1,
         },
+        end: None,
         ty,
         by_ref: false,
         param: false,
