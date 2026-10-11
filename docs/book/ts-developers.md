@@ -165,8 +165,11 @@ contents.
   are an error instead of `never`; classes, type parameters (#350) and function types
   (overloads) can't be parts; `A & B` doesn't convert to `A` without a copy (`{ ...ab }`)
   ([Intersection types](../reference/types.md#intersection-types)).
+- Index signatures without other members (`{ [key: string]: V }`) are `Record<string, V>`, as
+  in TypeScript ([Objects](../reference/types.md#objects-arrays-tuples-and-maps)).
 - Not available: `keyof`, mapped and conditional types, template literal types, the other
-  utility types (`Record` aside), index signatures, declaration merging, `namespace`.
+  utility types (`Record` aside), index signatures next to named members, declaration merging,
+  `namespace`.
 
 ## Classes
 

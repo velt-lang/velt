@@ -43,6 +43,7 @@ fn golden_m1_files_parse() {
                 | "overloads_declarations.vlt"
                 | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
+                | "type_operators_unsupported.vlt"
         ) {
             continue;
         }

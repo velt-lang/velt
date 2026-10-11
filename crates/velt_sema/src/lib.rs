@@ -43,6 +43,7 @@ mod fresh_returns;
 mod generic_arrows;
 mod hooks;
 pub mod ide;
+mod index_signatures;
 mod infer;
 mod instantiation_cycles;
 mod intersections;

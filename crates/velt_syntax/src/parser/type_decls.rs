@@ -160,7 +160,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `interface Name<T> extends A, B { field: T; method(): R; withDefault(): R { ... } }`
-    pub(super) fn parse_interface(&mut self) -> PResult<InterfaceDecl> {
+    pub(super) fn parse_interface(&mut self) -> PResult<ItemKind> {
+        let lo = self.cur_lo();
         self.bump(); // interface
         let name = self.parse_ident()?;
         let generics = self.parse_generic_params()?;
@@ -175,8 +176,67 @@ impl<'a> Parser<'a> {
             fields: vec![],
             methods: vec![],
         };
-        self.parse_members(|p| p.parse_interface_member(&mut decl))?;
-        Ok(decl)
+        let mut index = None;
+        self.parse_members(|p| {
+            let lo = p.cur_lo();
+            let readonly = p.at(Tok::Kw(Kw::Readonly))
+                && p.nth(1) == Tok::LBracket
+                && Self::is_name(p.nth(2))
+                && p.nth(3) == Tok::Colon;
+            if readonly {
+                p.bump();
+            }
+            if p.at_index_signature() {
+                let sig = p.parse_index_signature(lo, readonly)?;
+                p.add_index_signature(&mut index, sig);
+                return p.expect_member_end();
+            }
+            p.parse_interface_member(&mut decl)
+        })?;
+        let Some(index) = index else {
+            return Ok(ItemKind::Interface(decl));
+        };
+        // An interface with an index signature is the object type it spells out (a type alias):
+        // with methods or `extends` that is not supported yet.
+        if !decl.methods.is_empty() || !decl.extends.is_empty() {
+            self.error(
+                format!(
+                    "an interface with an index signature and {} is not supported yet (#937)",
+                    if decl.extends.is_empty() {
+                        "methods"
+                    } else {
+                        "`extends`"
+                    }
+                ),
+                index.span,
+            );
+            return Ok(ItemKind::Interface(decl));
+        }
+        let fields = decl
+            .fields
+            .into_iter()
+            .map(|f| ObjectTypeField {
+                name: f.name,
+                // An object type's optional field has the `| null` an interface's leaves out.
+                ty: if f.optional {
+                    super::types::or_null(f.ty)
+                } else {
+                    f.ty
+                },
+                optional: f.optional,
+                readonly: f.readonly,
+                span: f.span,
+            })
+            .collect();
+        let span = self.span_from(lo);
+        Ok(ItemKind::TypeAlias(TypeAlias {
+            name: decl.name,
+            generics: decl.generics,
+            ty: TypeExpr {
+                kind: index.into_type(fields),
+                span,
+            },
+        }))
     }
 
     /// Is the cursor at an `extend` block? `extend` is contextual: a type name or `<` must follow.

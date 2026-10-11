@@ -101,3 +101,36 @@ fn indexed_access_types() {
     // Only string keys: `T[]` stays an array type.
     assert_eq!(alias_ty("T[]"), "T[]");
 }
+
+#[test]
+fn index_signatures() {
+    assert_eq!(alias_ty("{ [key: string]: i64 }"), "{[string]: i64}");
+    assert_eq!(
+        alias_ty("{ readonly [k: string]: V[] }"),
+        "{readonly [string]: V[]}"
+    );
+    assert_eq!(
+        alias_ty("{ a: i64; [k: string]: i64, }"),
+        "{a: i64; [string]: i64}"
+    );
+    // An interface with an index signature is an alias of the object type it spells out.
+    let m = parse_ok("interface D<T> { readonly [key: string]: T; n?: T }");
+    let ItemKind::TypeAlias(a) = &m.items[0].kind else {
+        panic!("expected an alias")
+    };
+    assert_eq!(a.name.name, "D");
+    assert_eq!(a.generics.len(), 1);
+    assert_eq!(ty(&a.ty), "{n: (T | null); readonly [string]: T}");
+    assert_eq!(
+        errors("interface W { [k: string]: i64; size(): i64; }"),
+        ["an interface with an index signature and methods is not supported yet (#937)"]
+    );
+    assert_eq!(
+        errors("type T = { [k: string]: i64; [i: number]: i64 };"),
+        ["more than one index signature in a type is not supported yet (#937)"]
+    );
+    assert_eq!(
+        errors("type T = { [k: string]?: i64 };"),
+        ["an index signature cannot be optional"]
+    );
+}

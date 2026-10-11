@@ -308,6 +308,19 @@ pub enum TypeExprKind {
     Literal(SignedLit),
     /// Object type `{ kind: "circle"; r: f64 }` (an anonymous object type).
     Object(Vec<ObjectTypeField>),
+    /// An object type with an index signature: `{ [key: string]: T }`, possibly with named
+    /// members (`{ name?: string; [key: string]: string | null }`). An interface whose body has
+    /// an index signature is parsed as a type alias to one.
+    IndexSig {
+        /// The named members, in source order.
+        fields: Vec<ObjectTypeField>,
+        /// The key: `key: string` in `[key: string]`.
+        key: Box<IndexKey>,
+        /// The values' type.
+        value: Box<TypeExpr>,
+        /// `readonly [key: string]: T`
+        readonly: bool,
+    },
     /// `null` in type position.
     Null,
     /// `void`
@@ -321,6 +334,13 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
+}
+
+/// The key of an index signature, `[name: ty]` (the name is documentation only).
+#[derive(Clone, Debug)]
+pub struct IndexKey {
+    pub name: Ident,
+    pub ty: TypeExpr,
 }
 
 /// `name: T` / `name?: T` / `readonly name: T` in an object type.

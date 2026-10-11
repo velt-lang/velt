@@ -923,6 +923,31 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
+- **Index signatures**: an object type or interface with an index signature and no other
+  members, `{ [key: string]: V }`, is `Record<string, V>`, as in TypeScript where the two are
+  interchangeable: a value converts between them and stays the same object, and everything
+  above holds (any key may be read, written and deleted, keys keep insertion order). A generic
+  interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
+  there gives `null` where JavaScript gives `undefined`, so a read is `V | null` (TypeScript
+  types it `V`): write `d[k] ?? 0` or `d[k]?.push(x)`. As for `readonly T[]`, a `readonly`
+  index signature is not checked for writes yet. Not supported yet (each is an error): named
+  members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
+  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
+  and an interface with an index signature that also has methods or `extends`. An object of a
+  named object type does not convert to an index-signature type (TypeScript allows it for type
+  aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
+
+```ts
+interface Scores {
+  [player: string]: number;
+}
+
+const s: Scores = { bob: 2 };
+s.alice = 3;
+s["carol"] = (s["carol"] ?? 0) + 1;
+const r: Record<string, number> = s; // the same object
+console.log(Object.keys(r), s.dave ?? "none"); // [ 'bob', 'alice', 'carol' ] none
+```
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
   `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)).

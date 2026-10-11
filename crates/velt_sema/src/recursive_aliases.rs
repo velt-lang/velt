@@ -122,6 +122,11 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
         }
         K::Indexed { object, key } => names(object, name) || names(key, name),
         K::Object(fs) => fs.iter().any(|f| names(&f.ty, name)),
+        K::IndexSig {
+            fields, key, value, ..
+        } => {
+            fields.iter().any(|f| names(&f.ty, name)) || names(&key.ty, name) || names(value, name)
+        }
         K::Predicate { ty, .. } => ty.as_deref().is_some_and(|x| names(x, name)),
         K::Literal(_) | K::Null | K::Void => false,
     }

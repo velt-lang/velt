@@ -73,6 +73,9 @@ impl Ctx<'_> {
                 None => self.ty.error,
             },
             ast::TypeExprKind::Object(fields) => self.resolve_object(fields, env),
+            ast::TypeExprKind::IndexSig {
+                fields, key, value, ..
+            } => self.resolve_index_sig(fields, &key.ty, value, env),
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
                 self.ty.error
