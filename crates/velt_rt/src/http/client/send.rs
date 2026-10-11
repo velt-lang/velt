@@ -175,15 +175,6 @@ fn idempotent(m: &Method) -> bool {
     )
 }
 
-/// A second copy of `req` (body `body`), for [`idempotent`] requests that may be sent again.
-fn copy(req: &Request<Full<Bytes>>, body: &Bytes) -> Request<Full<Bytes>> {
-    let mut r = Request::new(Full::new(body.clone()));
-    *r.method_mut() = req.method().clone();
-    *r.uri_mut() = req.uri().clone();
-    *r.headers_mut() = req.headers().clone();
-    r
-}
-
 /// Whether `e` is a connection that broke before a response: a reused connection the server had
 /// closed (not a failed connect, which a new connection would not fix).
 fn stale_connection(e: &hyper_util::client::legacy::Error) -> bool {
@@ -226,14 +217,19 @@ pub(super) async fn send(
 ) -> Result<Received, VeltErr> {
     let mut redirected = false;
     for _ in 0..=MAX_REDIRECTS {
+        // What the request is built from, kept for a second send: a `Uri` clone shares its
+        // bytes and the caller's header map is empty unless they set headers, so keeping them
+        // allocates nothing for most requests (the request itself is only rebuilt on a retry).
+        let again = idempotent(&o.method).then(|| (o.url.uri.clone(), o.headers.clone()));
         let req = request(&mut o, mode == Redirect::Follow);
-        let again = idempotent(req.method()).then(|| copy(&req, &o.body));
         let response = match client.request(req).await {
             Ok(r) => r,
             // A pooled keep-alive connection the server closed meanwhile fails before a
             // response: an idempotent request goes out once more, on another connection (#1020).
             Err(e) => match again {
-                Some(req) if stale_connection(&e) => {
+                Some((uri, headers)) if stale_connection(&e) => {
+                    (o.url.uri, o.headers) = (uri, headers);
+                    let req = request(&mut o, mode == Redirect::Follow);
                     client.request(req).await.map_err(|e| failed(&e))?
                 }
                 _ => return Err(failed(&e)),
