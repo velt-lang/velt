@@ -24,7 +24,7 @@ velt playground [--port <n>] [--host <addr>]   # browser playground (default 127
 velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
-velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
+velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
 velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
@@ -192,8 +192,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `$VELT_INSTALL_BASE_URL/releases/download/v<version>/` (https, redirects followed) and checks
   it against `<prefix>/lib/targets/PACKS.sha256` (written by the release workflow), or, when the
   toolchain lists no hash for it, against the release's `SHA256SUMS` (fetched first), checked
-  against `SHA256SUMS.sig` with the release key (`velt_toolchain::signature`;
-  `$VELT_INSTALL_PUBLIC_KEY` replaces the built-in key); an unsigned release or a signature
+  against `SHA256SUMS.sig` with the release keys (`velt_toolchain::signature`: a signature by
+  the signing key or the backup key passes; `$VELT_INSTALL_PUBLIC_KEY`, one or more hex keys
+  separated by commas, replaces them); an unsigned release or a signature
   that does not match fails. It unpacks only regular files under `<triple>/` and installs the
   pack into `<prefix>/lib/targets/<triple>/` once its kit and runtime are complete and its stamp
   names this velt (`velt_link::kit::toolchain_id`), swapping a previous pack out whole. `--from
@@ -233,7 +234,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `VELT_TOOLCHAIN_SELECTED=<toolchain> (<reason>)` set; `<reason>` is `$VELT_TOOLCHAIN`,
   `velt: "<req>" in <manifest>:<line>`, `+<toolchain>` or `the default`. `velt doctor` reports both
   (`toolchain`), or "started directly". `velt toolchain` in a toolchain's own `velt` exits 1
-  saying it is the launcher's. `velt toolchain` (`velt_launcher::commands`): `list` prints a
+  saying it is the launcher's. After installing a version (on first use or `velt toolchain install`), the launcher runs that
+  toolchain's `velt target add <triple>`, once per pack and with its stdout sent to stderr, for
+  the target packs of the newest installed older version of the same `major.minor`
+  (`velt_toolchain::layout::predecessor`, `installed_target_packs`:
+  `lib/targets/<triple>/kit.stamp` whose name is `[a-z0-9_.-]+` not starting with `-` or `.`,
+  the host's excluded), after `velt: adding the target packs velt <old> had to velt <new>: …` on
+  stderr; the packs that fail are named in a warning with `velt +<new> target add …`, and the
+  install succeeds. `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
@@ -242,7 +250,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   the running launcher. `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
-  `--force`. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and
+  `--force`. `prune` removes every installed version but the default, the version the cwd
+  selects (`select` then `installed`), those whose directory is a link's prefix or contains it
+  (`Root::linked_versions`), and per `major.minor` its newest release (its newest pre-release
+  when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per
+  version and `freed <n> MB` (`--dry-run`: `would remove` / `would free`, nothing removed; none
+  to remove: `nothing to prune: …`); a version that cannot be removed (in use) is reported and
+  the others still go, and the exit status is then 1. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and
   the prefix, or `<wanted> (<reason>): not installed; …`. `link <name> <prefix>` (`name`:
   `[a-z][a-z0-9._-]*`) requires `<prefix>/bin/velt` and writes the absolute prefix to
   `<root>/links/<name>`.

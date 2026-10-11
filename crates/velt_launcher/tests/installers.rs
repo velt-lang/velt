@@ -227,6 +227,45 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
     std::fs::create_dir_all(&home).unwrap();
     let good = serve(signer.sign(sums.as_bytes()).as_ref().to_vec());
     let out = ok(run(&good, &home));
+    if has_ed25519 {
+        // A list of keys passes with any of them: here only the second signed.
+        let forger_key: String = forger
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let list = format!("{forger_key}, {key}");
+        let home = tmp.path().join("list");
+        std::fs::create_dir_all(&home).unwrap();
+        let base = format!("http://{}", good.addr());
+        let out = ok(get_velt(
+            &home,
+            &["--no-modify-path", "--version", version],
+            &[
+                ("VELT_INSTALL_BASE_URL", &base),
+                ("VELT_INSTALL_PUBLIC_KEY", &list),
+            ],
+        ));
+        assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
+        // Not a key: refused, and a `*` is not expanded to file names.
+        for bad in ["*", &format!("{key},zz"), " , "] {
+            let out = get_velt(
+                &home,
+                &["--no-modify-path", "--force", "--version", version],
+                &[
+                    ("VELT_INSTALL_BASE_URL", &base),
+                    ("VELT_INSTALL_PUBLIC_KEY", bad),
+                ],
+            );
+            assert!(!out.status.success(), "{bad}: {}", text(&out));
+            assert!(
+                text(&out).contains("VELT_INSTALL_PUBLIC_KEY"),
+                "{bad}: {}",
+                text(&out)
+            );
+        }
+    }
     good.stop();
     if has_ed25519 {
         assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
@@ -413,11 +452,12 @@ fn release_index_sh_writes_what_the_launcher_reads() {
     );
 }
 
-/// The key get-velt.sh checks releases with is the one velt is built with
-/// (velt_toolchain::signature::RELEASE_PUBLIC_KEY), as scripts/release-sign.sh derives it.
+/// The keys get-velt.sh checks releases with are the ones velt is built with
+/// (velt_toolchain::signature::RELEASE_PUBLIC_KEYS: the signing key and the backup), as
+/// scripts/release-sign.sh derives them.
 #[cfg(unix)]
 #[test]
-fn the_installer_and_the_signing_script_use_the_built_in_key() {
+fn the_installer_and_the_signing_script_use_the_built_in_keys() {
     if Command::new("openssl").arg("version").output().is_err() {
         eprintln!("skipping: no openssl");
         return;
@@ -427,24 +467,33 @@ fn the_installer_and_the_signing_script_use_the_built_in_key() {
         .arg("--public-key")
         .output()
         .unwrap();
-    let pem = ok(out);
-    let base64 = pem.lines().nth(1).unwrap();
+    let pems = ok(out);
+    let base64: Vec<&str> = pems.lines().filter(|l| !l.starts_with("-----")).collect();
+    let built_in = velt_toolchain::signature::RELEASE_PUBLIC_KEYS;
+    assert_eq!(base64.len(), built_in.len(), "{pems}");
     let installer = std::fs::read_to_string(repo().join("scripts/get-velt.sh")).unwrap();
-    assert!(
-        installer.contains(base64),
-        "get-velt.sh does not embed {base64}"
+    // Exactly these keys, in this order: the `release_keys='…'` block, one base64 per line.
+    let block = installer
+        .split_once("release_keys='")
+        .and_then(|(_, rest)| rest.split_once('\''))
+        .map(|(keys, _)| keys)
+        .expect("get-velt.sh has no release_keys='…' block");
+    assert_eq!(
+        block.lines().collect::<Vec<_>>(),
+        base64,
+        "get-velt.sh's release_keys"
     );
-    // The DER is a fixed header and the raw key, which RELEASE_PUBLIC_KEY holds in hex.
-    let tail = velt_toolchain::signature::RELEASE_PUBLIC_KEY;
-    assert_eq!(tail.len(), 64);
-    let der = ok(Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "printf '%s\\n' '{base64}' | openssl base64 -d -A | od -An -v -tx1 | tr -d ' \\n'"
-        ))
-        .output()
-        .unwrap());
-    assert_eq!(der, format!("302a300506032b6570032100{tail}"));
+    for (b64, hex) in base64.iter().zip(built_in) {
+        // The DER is a fixed header and the raw key, which RELEASE_PUBLIC_KEYS holds in hex.
+        let der = ok(Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "printf '%s\\n' '{b64}' | openssl base64 -d -A | od -An -v -tx1 | tr -d ' \\n'"
+            ))
+            .output()
+            .unwrap());
+        assert_eq!(der, format!("302a300506032b6570032100{hex}"));
+    }
 }
 
 /// scripts/install.sh puts a dist directory beside the installed versions, replacing a copy of
