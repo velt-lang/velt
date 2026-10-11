@@ -12,6 +12,14 @@ fn main() {
         println!("velt {} (fake {})", version.trim(), std::env::consts::ARCH);
         return;
     }
+    // Copied as a release's launcher (`velt toolchain self-update` runs it before putting it in
+    // place), it answers as one only when the test says which version it is.
+    if args == ["toolchain", "--version"] {
+        if let Ok(version) = std::env::var("FAKE_VELT_LAUNCHER_VERSION") {
+            println!("velt-launcher {version}");
+            return;
+        }
+    }
     println!("prefix={}", prefix.display());
     println!("selected={}", var("VELT_TOOLCHAIN_SELECTED"));
     println!("launcher={}", var("VELT_LAUNCHER"));

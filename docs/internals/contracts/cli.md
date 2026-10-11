@@ -276,10 +276,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
   `--force`. `self-update`: the index's `launcher` when newer than the running launcher (else
   `the velt launcher is up to date (<v>)`), its toolchain installed first when missing (as
-  `install`), and that prefix's `bin/velt-launcher` copied to `<root>/bin/.velt-new-<pid>` and
-  renamed over `<root>/bin/velt` (on Windows the running `velt.exe` is first renamed to
-  `.velt.exe.old-<pid>`, which every later launcher run deletes); prints
-  `updated the velt launcher: <old> → <new>`. `prune` removes every installed version but the default, the version the cwd
+  `install`), and that prefix's `bin/velt-launcher` copied to `<root>/bin/.velt-new-<pid>`, run
+  there as `toolchain --version` (it must print `velt-launcher <new>`, else the copy is deleted and
+  the error says `the launcher of velt <new> (<path>) does not work here: …; kept the current
+  one`), and renamed over `<root>/bin/velt` (on Windows the running `velt.exe` is first renamed to
+  `.velt.exe.old-<pid>`); prints `updated the velt launcher: <old> → <new>`. It refuses unless the
+  running launcher is `<root>/bin/velt` itself (canonical paths). Every launcher run deletes
+  `<root>/bin/.velt*.old-*`, and `.velt-new-*` older than an hour. `prune` removes every installed version but the default, the version the cwd
   selects (`select` then `installed`), those whose directory is a link's prefix or contains it
   (`Root::linked_versions`), and per `major.minor` its newest release (its newest pre-release
   when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per
