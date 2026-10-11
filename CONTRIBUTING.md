@@ -53,18 +53,19 @@ without a copy) aborts with `velt debug-cells: …` (rt_abi.md "Counted objects"
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
-- **The checks your changes need**, while iterating and before you push: `scripts/check.sh`
-  (macOS, Linux) or `pwsh scripts/check.ps1` (Windows). The files changed since the merge base
-  with `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and
-  those of the crates depending on it, the end-to-end tests when a change can affect compiled
-  programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
-  changes, and `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
-  workspace) when it changes. A Rust file where only comments changed runs the tests and doctests
-  of its crate (and of the crates compiling its sources), clippy, `veltc`'s unit tests and the
-  file-size test (`standards`), nothing else. Changes to the build, the toolchain, CI or the
-  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
-  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
-  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
+- **The checks your changes need**, while iterating and before you push: `scripts/check.sh` (macOS,
+  Linux) or `pwsh scripts/check.ps1` (Windows). The files changed since the merge base with
+  `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and those
+  of the crates depending on it, the end-to-end tests when a change can affect compiled programs
+  (or only the goldens you touched), the documentation tests for docs, clippy for Rust changes,
+  `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the workspace) when
+  it changes, and `npm ci` plus `npm test` (tsc and the unit tests) of the VS Code extension when
+  `editors/vscode/` changes (skipped without npm, except in CI). A Rust file where only comments
+  changed runs the tests and doctests of its crate (and of the crates compiling its sources),
+  clippy, `veltc`'s unit tests and the file-size test (`standards`), nothing else. Changes to the
+  build, the toolchain, CI or the scripts select everything. `cargo xtask affected` prints the plan
+  and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes
+  release` for the other); `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
   OS-specific changes), and every push to `main` on Windows and macOS, so you need it locally
