@@ -161,9 +161,21 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   locked value (`ownership/locked/stores.rs`), is checked by its captures: at run time either
   would panic (a function value's environment is opaque to the transfer). Plain interface use
   stays legal: an interface none of whose converted classes holds a weak collection is not
-  affected (`weak_hidden_ok_iface_plain.vlt`). Not covered: a function value held in a field
-  (its captures are not in its type), which the run-time transfer still rejects with a panic. `async main` keeps its maps
-  across `await`s and spawned tasks use maps of their own at once (`weakmap_async.vlt`).
+  affected (`weak_hidden_ok_iface_plain.vlt`).
+  **Known gap (a run-time panic, not a compile error):** a function value held in a field, or
+  reached through a variable rather than written as a closure literal where it crosses, whose
+  closure captures a weak collection: its captures are not in its type (`class F { f: () =>
+  number }` holding `() => w.deref()`, passed to `spawn` or put in a `Mutex`'s value). The
+  run-time transfer still rejects it ("a function value that captured a `WeakRef` is shared
+  between threads", "cannot copy a `WeakRef` for another thread") before anything is shared, so
+  it is a clean panic, not a race. `async main` keeps its maps across `await`s and spawned tasks
+  use maps of their own at once (`weakmap_async.vlt`).
+- **User code a release runs** (#876, `crates/velt_sema/src/replaced_holders/implicit.rs` entry
+  8): releasing a weak map's key drops its entries' values, and dropping a map drops all of them,
+  running their `[Symbol.dispose]()` without a call in the program. The analysis counts a value
+  of a key type (found from the program's `new WeakMap<K, V>()`) as reaching what its maps'
+  values reach, and a `WeakMap<K, V>` as reaching what a `V` does
+  (`tests/golden/lang/errors/assign_target_replaced_holder_weak.vlt`).
 
 ## Weak maps and `WeakRef`
 
