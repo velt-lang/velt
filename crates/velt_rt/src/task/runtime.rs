@@ -146,11 +146,6 @@ pub fn current_worker() -> Option<usize> {
     (i != usize::MAX).then_some(i)
 }
 
-/// The per-core workers' runtimes (`None` with the stealing scheduler), in worker order.
-pub fn worker_handles() -> Option<Vec<&'static Handle>> {
-    per_core().map(|ws| ws.iter().map(|w| &w.handle).collect())
-}
-
 fn start_workers() -> Vec<Worker> {
     let n = worker_count();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -336,6 +331,16 @@ mod tests {
         keep_alive_acquire();
         buffer_output();
         keep_alive_release();
+        assert!(published());
+    }
+
+    #[test]
+    fn an_idle_worker_publishes_this_threads_output() {
+        // Output printed outside a task poll (a future dropped after it finished) has no
+        // end-of-poll publish: the idle hook must publish it, not only write the shared buffer.
+        use crate::io::handoff_probe::{buffer_output, published};
+        buffer_output();
+        crate::io::flush_idle();
         assert!(published());
     }
 

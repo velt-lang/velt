@@ -7,7 +7,8 @@
 //! `log a; await; log b` always prints `a` before `b` — and before the task hands work to another
 //! (`publish_before_handoff`, called before the hand-off becomes visible: spawning a task, a channel
 //! send or close, a receive that frees room in a bounded channel, settling a `new Promise`, aborting
-//! a signal, a child leaving a task group, releasing a keep-alive reference), so a line logged
+//! a signal, a child leaving a task group, releasing a keep-alive reference or a server's
+//! handler), so a line logged
 //! before `spawn(f())` prints before anything `f` prints, and a timer callback's last line before
 //! the program exits. Hand-offs through shared state (`shared`, a `Mutex`) and timers are not
 //! covered: such lines may still appear out of order. The shared buffer reaches the OS
