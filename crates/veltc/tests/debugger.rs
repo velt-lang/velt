@@ -273,3 +273,60 @@ fn lldb_resolves_breakpoints_in_llvm_builds() {
     assert!(out.contains("at app.vlt:2"), "{out}");
     assert!(out.contains("at app.vlt:7"), "{out}");
 }
+
+const ENTRY: &str = "function area(w: number, h: number): number {
+  const a = w * h;
+  return a;
+}
+
+function main() {
+  const base = 10;
+  let hits = 0;
+  const step = (x: number): number => {
+    hits += 1;
+    return base + x;
+  };
+  console.log(area(2, 3), step(2), hits);
+}
+";
+
+/// Stopped at a function's entry (a breakpoint on its name, or stepping into it), its params
+/// and a closure's captures already hold their values (regression: the prologue that stores
+/// them was part of the body, so they were garbage there).
+#[test]
+fn lldb_shows_params_at_function_entry() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF variables; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let (work, exe) = build("golden-work-debugger-entry", ENTRY, &[]);
+    let out = lldb(
+        &exe,
+        &[
+            "breakpoint set -n _V4area",
+            "breakpoint set -s app -r closure",
+            "run",
+            "frame variable",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "(number) w = 2",
+        "(number) h = 3",
+        "(number) x = 2",
+        "(number) base = 10",
+        "(number) hits = 0",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+}

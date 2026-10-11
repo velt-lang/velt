@@ -153,6 +153,15 @@ pub(crate) const ENCODING: Encoding = Encoding {
     address_size: 8,
 };
 
+/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF and Mach-O,
+/// `object::add_debug_info`) and its frame pointer has a DWARF number ([`frame_register`]).
+/// Only then do described locals need stack slots.
+pub(crate) fn describes_variables(triple: &target_lexicon::Triple) -> bool {
+    use target_lexicon::{Architecture as A, BinaryFormat as F};
+    matches!(triple.binary_format, F::Elf | F::Macho)
+        && matches!(triple.architecture, A::X86_64 | A::Aarch64(_))
+}
+
 /// The DWARF number of the frame pointer register, which variables are located from; `None`
 /// for other architectures (no variables).
 pub(crate) fn frame_register(arch: Architecture) -> Option<gimli::Register> {

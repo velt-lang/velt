@@ -310,6 +310,23 @@ fn objects_describe_variables() {
     }
 }
 
+/// Where objects get no DWARF variables (COFF), describing them changes no code: their locals
+/// keep their registers.
+#[test]
+fn coff_code_ignores_variable_descriptions() {
+    let opts = CodegenOptions {
+        target: "x86_64-pc-windows-msvc".into(),
+        optimize: false,
+    };
+    let text = |program: &Program| {
+        let bytes = emit_object(program, &opts).unwrap();
+        let file = object::File::parse(&*bytes).unwrap();
+        let text = file.section_by_name(".text").expect(".text");
+        text.data().unwrap().to_vec()
+    };
+    assert_eq!(text(&located_fib()), text(&fib_with_variables()));
+}
+
 #[test]
 fn no_debug_info_without_locations() {
     let program = programs::fib().program;

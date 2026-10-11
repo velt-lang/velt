@@ -61,170 +61,226 @@ impl<'p> Types<'p> {
         if let Some(&e) = self.described.get(&(id, held)) {
             return e;
         }
-        let name = t.name.clone();
-        let entry = match &t.kind {
+        let (name, kind) = (t.name.clone(), t.kind.clone());
+        let tag = match kind {
             // A typedef carries the source name: debuggers show C base types by their C names.
-            DebugKind::Scalar(natural) => {
-                let base = self.raw(dwarf, held.unwrap_or(*natural));
-                let e = new_entry(dwarf, gimli::DW_TAG_typedef, &name);
-                set_type(dwarf, e, base);
-                self.described.insert((id, held), e);
-                return e;
-            }
-            // Registered before its parts, so a type reached again through itself (a class with
-            // a field of its own type) refers to this entry.
-            DebugKind::Class { .. }
+            DebugKind::Scalar(_)
+            | DebugKind::Class { .. }
             | DebugKind::Option { .. }
             | DebugKind::Shared { .. }
-            | DebugKind::Tagged { .. } => new_entry(dwarf, gimli::DW_TAG_typedef, &name),
-            DebugKind::Enum { .. } => new_entry(dwarf, gimli::DW_TAG_enumeration_type, &name),
-            _ => new_entry(dwarf, gimli::DW_TAG_structure_type, &name),
+            | DebugKind::Tagged { .. } => gimli::DW_TAG_typedef,
+            DebugKind::Enum { .. } => gimli::DW_TAG_enumeration_type,
+            _ => gimli::DW_TAG_structure_type,
         };
+        // Registered before its parts, so a type reached again through itself (a class with a
+        // field of its own type) refers to this entry.
+        let entry = new_entry(dwarf, tag, &name);
         self.described.insert((id, held), entry);
-        let kind = t.kind.clone();
         match kind {
-            DebugKind::Scalar(_) => unreachable!("returned above"),
-            DebugKind::Str => {
-                set_size(dwarf, entry, 24);
-                let w = self.raw(dwarf, Ty::U64);
-                for (i, n) in ["w0", "w1", "w2"].into_iter().enumerate() {
-                    member(dwarf, entry, n, w, 8 * i as u64);
-                }
+            DebugKind::Scalar(natural) => {
+                let base = self.raw(dwarf, held.unwrap_or(natural));
+                set_type(dwarf, entry, base);
             }
-            DebugKind::Array { elem } => {
-                set_size(dwarf, entry, 24);
-                let e = self.ty(dwarf, elem, None);
-                let data = pointer(dwarf, Some(e));
-                member(dwarf, entry, "data", data, 0);
-                let w = self.raw(dwarf, Ty::U64);
-                member(dwarf, entry, "len", w, 8);
-                member(dwarf, entry, "cap", w, 16);
-            }
+            DebugKind::Str => self.string(dwarf, entry),
+            DebugKind::Array { elem } => self.array(dwarf, entry, elem),
             DebugKind::Struct { agg, fields } => {
                 set_size(dwarf, entry, self.program.agg(agg).size.into());
                 self.fields(dwarf, entry, agg, &fields);
             }
-            DebugKind::Class { obj, fields } => {
-                let object = new_entry(
-                    dwarf,
-                    gimli::DW_TAG_structure_type,
-                    &format!("{name} object"),
-                );
-                let layout = self.program.agg(obj);
-                set_size(dwarf, object, layout.size.into());
-                // The object's fields are the described ones, after a vtable pointer if any.
-                if layout.fields.len() == fields.len() + 1 {
-                    let p = pointer(dwarf, None);
-                    member(dwarf, object, "$vtable", p, 0);
-                }
-                self.fields(dwarf, object, obj, &fields);
-                let p = pointer(dwarf, Some(object));
-                set_type(dwarf, entry, p);
-            }
+            DebugKind::Class { obj, fields } => self.class(dwarf, entry, &name, obj, &fields),
             DebugKind::Enum { members } => {
-                let repr = held.unwrap_or(Ty::I64);
-                set_size(dwarf, entry, repr.scalar_size().unwrap_or(8).into());
-                let underlying = self.raw(dwarf, repr);
-                set_type(dwarf, entry, underlying);
-                for (n, v) in members {
-                    let m = new_child(dwarf, entry, gimli::DW_TAG_enumerator, &n);
-                    dwarf
-                        .unit
-                        .get_mut(m)
-                        .set(gimli::DW_AT_const_value, AttributeValue::Sdata(v));
-                }
+                self.enumeration(dwarf, entry, held.unwrap_or(Ty::I64), members)
             }
-            DebugKind::Tagged { agg, variants } => {
-                // The typedef names the type; the formatters recognize the structure's suffix.
-                let typedef = entry;
-                let entry = new_entry(
-                    dwarf,
-                    gimli::DW_TAG_structure_type,
-                    &format!("{name} $tagged"),
-                );
-                set_type(dwarf, typedef, entry);
-                let layout = self.program.agg(agg);
-                set_size(dwarf, entry, layout.size.into());
-                if let Some(&(tag_ty, _)) = layout.fields.first() {
-                    let tag = self.raw(dwarf, tag_ty);
-                    member(dwarf, entry, "tag", tag, 0);
-                }
-                let union = new_child(dwarf, entry, gimli::DW_TAG_union_type, "");
-                set_size(dwarf, union, layout.size.into());
-                for v in variants {
-                    let view = new_entry(
-                        dwarf,
-                        gimli::DW_TAG_structure_type,
-                        &format!("{name}::{}", v.name),
-                    );
-                    set_size(dwarf, view, self.program.agg(v.view).size.into());
-                    self.fields(dwarf, view, v.view, &v.fields);
-                    member(dwarf, union, &v.name, view, 0);
-                }
-                // An anonymous member at offset 0 holding the variants.
-                let holder = dwarf.unit.add(entry, gimli::DW_TAG_member);
-                let holder = dwarf.unit.get_mut(holder);
-                holder.set(gimli::DW_AT_type, AttributeValue::UnitRef(union));
-                holder.set(gimli::DW_AT_data_member_location, AttributeValue::Udata(0));
-            }
-            DebugKind::Option { inner, repr } => match repr {
-                Ty::Agg(a) => {
-                    // `{ some: bool, value: T }`, which the formatters recognize by its name.
-                    let s = new_entry(
-                        dwarf,
-                        gimli::DW_TAG_structure_type,
-                        &format!("{name} $option"),
-                    );
-                    set_size(dwarf, s, self.program.agg(a).size.into());
-                    let flag = self.raw(dwarf, Ty::Bool);
-                    member(dwarf, s, "some", flag, 0);
-                    if let Some(&(vt, off)) = self.program.agg(a).fields.get(1) {
-                        let v = self.ty(dwarf, inner, Some(vt));
-                        member(dwarf, s, "value", v, off.into());
-                    }
-                    set_type(dwarf, entry, s);
-                }
-                Ty::Bool => {
-                    let b = self.raw(dwarf, Ty::Bool);
-                    set_type(dwarf, entry, b);
-                }
-                _ => {
-                    let i = self.ty(dwarf, inner, Some(repr));
-                    set_type(dwarf, entry, i);
-                }
-            },
-            DebugKind::Shared { boxed, inner } => {
-                let b = new_entry(dwarf, gimli::DW_TAG_structure_type, &format!("{name} box"));
-                let layout = self.program.agg(boxed);
-                set_size(dwarf, b, layout.size.into());
-                let count = self.raw(dwarf, Ty::U64);
-                member(dwarf, b, "count", count, 0);
-                if let Some(&(vt, off)) = layout.fields.get(1) {
-                    let v = self.ty(dwarf, inner, Some(vt));
-                    member(dwarf, b, "value", v, off.into());
-                }
-                let p = pointer(dwarf, Some(b));
-                set_type(dwarf, entry, p);
-            }
-            DebugKind::Opaque(repr) => match repr {
-                Ty::Agg(a) => {
-                    let layout = self.program.agg(a).clone();
-                    set_size(dwarf, entry, layout.size.into());
-                    for (i, (ft, off)) in layout.fields.into_iter().enumerate() {
-                        let f = self.raw(dwarf, ft);
-                        member(dwarf, entry, &format!("w{i}"), f, off.into());
-                    }
-                }
-                Ty::Unit => set_size(dwarf, entry, 0),
-                scalar => {
-                    let size = scalar.scalar_size().unwrap_or(8);
-                    set_size(dwarf, entry, size.into());
-                    let f = self.raw(dwarf, scalar);
-                    member(dwarf, entry, "w0", f, 0);
-                }
-            },
+            DebugKind::Tagged { agg, variants } => self.tagged(dwarf, entry, &name, agg, &variants),
+            DebugKind::Option { inner, repr } => self.option(dwarf, entry, &name, inner, repr),
+            DebugKind::Shared { boxed, inner } => self.shared(dwarf, entry, &name, boxed, inner),
+            DebugKind::Opaque(repr) => self.opaque(dwarf, entry, repr),
         }
         entry
+    }
+
+    /// `string`: its three words, which the LLDB formatters decode.
+    fn string(&mut self, dwarf: &mut DwarfUnit, entry: UnitEntryId) {
+        set_size(dwarf, entry, 24);
+        let w = self.raw(dwarf, Ty::U64);
+        for (i, n) in ["w0", "w1", "w2"].into_iter().enumerate() {
+            member(dwarf, entry, n, w, 8 * i as u64);
+        }
+    }
+
+    /// `T[]`: `{ data: T*, len, cap }`.
+    fn array(&mut self, dwarf: &mut DwarfUnit, entry: UnitEntryId, elem: DebugTyId) {
+        set_size(dwarf, entry, 24);
+        let e = self.ty(dwarf, elem, None);
+        let data = pointer(dwarf, Some(e));
+        member(dwarf, entry, "data", data, 0);
+        let w = self.raw(dwarf, Ty::U64);
+        member(dwarf, entry, "len", w, 8);
+        member(dwarf, entry, "cap", w, 16);
+    }
+
+    /// A class: the typedef `entry` of a pointer to the object structure (`$vtable` first when
+    /// objects have one).
+    fn class(
+        &mut self,
+        dwarf: &mut DwarfUnit,
+        entry: UnitEntryId,
+        name: &str,
+        obj: AggId,
+        fields: &[DebugField],
+    ) {
+        let object = new_entry(
+            dwarf,
+            gimli::DW_TAG_structure_type,
+            &format!("{name} object"),
+        );
+        let layout = self.program.agg(obj);
+        set_size(dwarf, object, layout.size.into());
+        // The object's fields are the described ones, after a vtable pointer if any.
+        if layout.fields.len() == fields.len() + 1 {
+            let p = pointer(dwarf, None);
+            member(dwarf, object, "$vtable", p, 0);
+        }
+        self.fields(dwarf, object, obj, fields);
+        let p = pointer(dwarf, Some(object));
+        set_type(dwarf, entry, p);
+    }
+
+    /// An enum without payloads: an enumeration over `repr`, the integer holding it.
+    fn enumeration(
+        &mut self,
+        dwarf: &mut DwarfUnit,
+        entry: UnitEntryId,
+        repr: Ty,
+        members: Vec<(String, i64)>,
+    ) {
+        set_size(dwarf, entry, repr.scalar_size().unwrap_or(8).into());
+        let underlying = self.raw(dwarf, repr);
+        set_type(dwarf, entry, underlying);
+        for (n, v) in members {
+            let m = new_child(dwarf, entry, gimli::DW_TAG_enumerator, &n);
+            dwarf
+                .unit
+                .get_mut(m)
+                .set(gimli::DW_AT_const_value, AttributeValue::Sdata(v));
+        }
+    }
+
+    /// A union or result: the typedef `entry` of a structure `<name> $tagged` holding the tag,
+    /// then a union of one structure per variant (its view aggregate). The formatters recognize
+    /// the structure's suffix.
+    fn tagged(
+        &mut self,
+        dwarf: &mut DwarfUnit,
+        entry: UnitEntryId,
+        name: &str,
+        agg: AggId,
+        variants: &[vir::DebugVariant],
+    ) {
+        let tagged = new_entry(
+            dwarf,
+            gimli::DW_TAG_structure_type,
+            &format!("{name} $tagged"),
+        );
+        set_type(dwarf, entry, tagged);
+        let layout = self.program.agg(agg);
+        set_size(dwarf, tagged, layout.size.into());
+        if let Some(&(tag_ty, _)) = layout.fields.first() {
+            let tag = self.raw(dwarf, tag_ty);
+            member(dwarf, tagged, "tag", tag, 0);
+        }
+        let union = new_child(dwarf, tagged, gimli::DW_TAG_union_type, "");
+        set_size(dwarf, union, layout.size.into());
+        for v in variants {
+            let view = new_entry(
+                dwarf,
+                gimli::DW_TAG_structure_type,
+                &format!("{name}::{}", v.name),
+            );
+            set_size(dwarf, view, self.program.agg(v.view).size.into());
+            self.fields(dwarf, view, v.view, &v.fields);
+            member(dwarf, union, &v.name, view, 0);
+        }
+        // An anonymous member at offset 0 holding the variants.
+        let holder = dwarf.unit.add(tagged, gimli::DW_TAG_member);
+        let holder = dwarf.unit.get_mut(holder);
+        holder.set(gimli::DW_AT_type, AttributeValue::UnitRef(union));
+        holder.set(gimli::DW_AT_data_member_location, AttributeValue::Udata(0));
+    }
+
+    /// `T | null`: the typedef `entry` of the inner type (a pointer niche), of `boolean`, or of a
+    /// structure `<name> $option` holding `{ some, value }` (the formatters recognize it).
+    fn option(
+        &mut self,
+        dwarf: &mut DwarfUnit,
+        entry: UnitEntryId,
+        name: &str,
+        inner: DebugTyId,
+        repr: Ty,
+    ) {
+        let target = match repr {
+            Ty::Agg(a) => {
+                let s = new_entry(
+                    dwarf,
+                    gimli::DW_TAG_structure_type,
+                    &format!("{name} $option"),
+                );
+                set_size(dwarf, s, self.program.agg(a).size.into());
+                let flag = self.raw(dwarf, Ty::Bool);
+                member(dwarf, s, "some", flag, 0);
+                if let Some(&(vt, off)) = self.program.agg(a).fields.get(1) {
+                    let v = self.ty(dwarf, inner, Some(vt));
+                    member(dwarf, s, "value", v, off.into());
+                }
+                s
+            }
+            Ty::Bool => self.raw(dwarf, Ty::Bool),
+            _ => self.ty(dwarf, inner, Some(repr)),
+        };
+        set_type(dwarf, entry, target);
+    }
+
+    /// `shared<T>`: the typedef `entry` of a pointer to `<name> box` (`{ count, value }`).
+    fn shared(
+        &mut self,
+        dwarf: &mut DwarfUnit,
+        entry: UnitEntryId,
+        name: &str,
+        boxed: AggId,
+        inner: DebugTyId,
+    ) {
+        let b = new_entry(dwarf, gimli::DW_TAG_structure_type, &format!("{name} box"));
+        let layout = self.program.agg(boxed);
+        set_size(dwarf, b, layout.size.into());
+        let count = self.raw(dwarf, Ty::U64);
+        member(dwarf, b, "count", count, 0);
+        if let Some(&(vt, off)) = layout.fields.get(1) {
+            let v = self.ty(dwarf, inner, Some(vt));
+            member(dwarf, b, "value", v, off.into());
+        }
+        let p = pointer(dwarf, Some(b));
+        set_type(dwarf, entry, p);
+    }
+
+    /// Anything else: the raw words of `repr`.
+    fn opaque(&mut self, dwarf: &mut DwarfUnit, entry: UnitEntryId, repr: Ty) {
+        match repr {
+            Ty::Agg(a) => {
+                let layout = self.program.agg(a).clone();
+                set_size(dwarf, entry, layout.size.into());
+                for (i, (ft, off)) in layout.fields.into_iter().enumerate() {
+                    let f = self.raw(dwarf, ft);
+                    member(dwarf, entry, &format!("w{i}"), f, off.into());
+                }
+            }
+            Ty::Unit => set_size(dwarf, entry, 0),
+            scalar => {
+                let size = scalar.scalar_size().unwrap_or(8);
+                set_size(dwarf, entry, size.into());
+                let f = self.raw(dwarf, scalar);
+                member(dwarf, entry, "w0", f, 0);
+            }
+        }
     }
 
     /// Members for `fields` of aggregate `agg` at their layout offsets.
