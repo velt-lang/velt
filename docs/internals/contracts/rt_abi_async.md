@@ -136,9 +136,10 @@ Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the numb
 `VELT_SCHEDULER=per-core` (experimental, #211) makes every worker a `current_thread` runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
-(`task/runtime.rs`). A TCP listener is registered with every worker that accepts on it (a
-duplicated descriptor per worker), and `serve` runs one accept loop per worker, so a connection
-and its handler's tasks stay on the worker that accepted it. The default, `stealing`, is one
+(`task/runtime.rs`). An accepted TCP connection is moved to the I/O driver of the worker that
+serves it: `accept()` registers it with the caller's worker, and `serve`'s one accept loop
+spawns each connection with placement and registers its socket there, so a connection's wakes
+and its handler's tasks stay on one worker. The default, `stealing`, is one
 multi-thread runtime. Per-core trade-offs today: a task never moves after its first poll, so a
 CPU-bound task delays every task on its worker; placement counts live tasks, not CPU; a socket
 stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
