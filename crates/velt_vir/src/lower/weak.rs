@@ -26,6 +26,30 @@ pub(in crate::lower) enum WordKind {
     Boxed,
 }
 
+/// The prelude's weak classes, by qualified name.
+const WEAK_CLASSES: [&str; 3] = [
+    "std/prelude/weak::WeakMap",
+    "std/prelude/weak::WeakSet",
+    "std/prelude/weak::WeakRef",
+];
+
+impl super::Cx<'_> {
+    /// The prelude's `WeakMap`, `WeakSet` or `WeakRef` class (by name, for messages), if `t`
+    /// is one of them.
+    pub(in crate::lower) fn weak_class(&self, t: TyId) -> Option<&'static str> {
+        let TyKind::Adt(d, _) = self.types.kind(t) else {
+            return None;
+        };
+        match self.hir.def(*d) {
+            hir::Def::Adt(a) => WEAK_CLASSES
+                .iter()
+                .find(|n| a.name == **n)
+                .map(|n| n.rsplit("::").next().unwrap_or(n)),
+            _ => None,
+        }
+    }
+}
+
 impl FnLower<'_, '_> {
     /// How weak maps store values of `ty`.
     pub(in crate::lower) fn word_kind(&mut self, ty: TyId) -> WordKind {

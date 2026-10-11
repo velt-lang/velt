@@ -226,7 +226,10 @@ Differences from JavaScript:
   and a function that captures one, passed to another task or stored into a `Mutex`'s value.
   This is decided for the whole program: once any class holding a weak collection is converted
   to an interface (even on one task only), every value of that interface counts as holding one
-  wherever it crosses threads.
+  wherever it crosses threads. A function value that is not written as a closure literal where
+  it crosses (one a factory returned, or held in a field) does not show what it captured: if it
+  captured a weak collection, the program panics when it is handed to another thread
+  ("a `WeakRef` cannot go to another thread"), before the other thread can use it.
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.

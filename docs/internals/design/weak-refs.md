@@ -167,13 +167,19 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   once any weak-holding class is converted to an interface, even one used on a single task,
   every value of that interface counts as holding a weak collection where it crosses threads
   (the diagnostic's note names the class).
-  **Known gap (a run-time panic, not a compile error):** a function value held in a field, or
-  reached through a variable rather than written as a closure literal where it crosses, whose
-  closure captures a weak collection: its captures are not in its type (`class F { f: () =>
-  number }` holding `() => w.deref()`, passed to `spawn` or put in a `Mutex`'s value). The
-  run-time transfer still rejects it ("a function value that captured a `WeakRef` is shared
-  between threads", "cannot copy a `WeakRef` for another thread") before anything is shared, so
-  it is a clean panic, not a race. `async main` keeps its maps across `await`s and spawned tasks
+  **The run-time backstop (a panic, not a compile error):** a function value whose closure
+  captured a weak collection but which is not a closure literal where it crosses (made by a
+  factory, held in a field or a variable: `spawn(run(mk(keep)))`, `setTimeout(task(keep), 0)`,
+  `ch.send(mk(keep))`) has captures its type does not show. Its transfer reaches the captured
+  `WeakMap`, `WeakSet` or `WeakRef`, whose transfer glue panics ("a `WeakRef` cannot go to another
+  thread …", velt_vir `glue/transfer.rs` `transfer_expand`) whether the environment is moved (the
+  only reference) or copied: the weak classes are not counted, but `Cx::holds_counted` counts
+  them as having something to transfer so the glue is reached. Values holding no weak class get
+  the same transfer glue as before (`bench/vir_diff.sh`: the benchmarks' VIR is unchanged). So
+  the panic happens before anything crosses: no race
+  (`tests/golden/std/weakref_transfer_{spawn,field,timer,channel}.vlt`). A function value made
+  shared between threads (`shared(...)`, a `Mutex`'s value, an HTTP handler) panics in the
+  many-threads check the same way. `async main` keeps its maps across `await`s and spawned tasks
   use maps of their own at once (`weakmap_async.vlt`).
 - **User code a release runs** (#876, `crates/velt_sema/src/replaced_holders/implicit.rs` entry
   8): releasing a weak map's key drops its entries' values, and dropping a map drops all of them,
