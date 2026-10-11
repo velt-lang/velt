@@ -9,8 +9,8 @@ builds and debugs with nothing to configure ([VS Code](#vs-code)).
 
 | Build | Line info (`.vlt` file:line) | Variables | Use it for |
 |---|---|---|---|
-| `velt build` (Cranelift, the debug default) | yes; on Windows when the bundled linker links it (the default of a released toolchain), else function symbols only | yes on Linux and macOS | stepping, breakpoints, backtraces, inspecting values |
-| `velt run`, `velt test` | as `velt build` | no (values stay in registers, which is faster) | running and testing |
+| `velt build` (Cranelift, the debug default) | yes; on Windows when the bundled linker links it (the default of a released toolchain), else function symbols only | as line info | stepping, breakpoints, backtraces, inspecting values |
+| `velt run`, `velt test` | as `velt build` | no (a few percent faster without) | running and testing |
 | `velt build --backend llvm` | yes, unoptimized | no | stepping, breakpoints, backtraces |
 | `velt build --release -g` | yes, optimized (LLVM when clang is installed) | no | profiling, crash addresses |
 | `velt dev --exe` | as `velt build` | as `velt build` | attaching to a running version |
@@ -34,11 +34,10 @@ their value; without them those are raw words. Variables of `async` functions, g
 inlined code are not shown yet. A variable is shown from the line declaring it to the end of its
 block; inside a closure, the variables it captures are shown too. Setting a number, boolean or
 other scalar from the debugger (`expr x = 100`, VS Code's *Set Value*) shows the new value, but
-the program keeps using the old one. On Windows the default build has line information but no
-variables yet; one linked by MSVC's `link.exe` (a toolchain without the bundled linker, or
-`VELT_LINKER=system`) has function symbols only, since `link.exe` would cut the DWARF sections'
-names. On macOS, executables are signed ad hoc without the hardened runtime, so LLDB can launch
-and attach to them.
+the program keeps using the old one. On Windows a build that MSVC's `link.exe` links (a
+toolchain without the bundled linker, or `VELT_LINKER=system`) has function symbols only, since
+`link.exe` would cut the DWARF sections' names. On macOS, executables are signed ad hoc without
+the hardened runtime, so LLDB can launch and attach to them.
 
 Panics print `panic: <message> at <file>:<line>:<col>` even without a debugger, and exit with
 code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).

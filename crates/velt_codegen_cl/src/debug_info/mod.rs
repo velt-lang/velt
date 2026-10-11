@@ -156,12 +156,12 @@ pub(crate) const ENCODING: Encoding = Encoding {
     address_size: 8,
 };
 
-/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF and Mach-O,
-/// `object::add_debug_info`) and its frame pointer has a DWARF number ([`frame_register`]).
-/// Only then do described locals need stack slots.
+/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF, Mach-O and
+/// COFF, `object::add_debug_info`) and its frame pointer has a DWARF number
+/// ([`frame_register`]). Only then do described locals need shadow slots.
 pub(crate) fn describes_variables(triple: &target_lexicon::Triple) -> bool {
     use target_lexicon::{Architecture as A, BinaryFormat as F};
-    matches!(triple.binary_format, F::Elf | F::Macho)
+    matches!(triple.binary_format, F::Elf | F::Macho | F::Coff)
         && matches!(triple.architecture, A::X86_64 | A::Aarch64(_))
 }
 
