@@ -14,7 +14,10 @@
 //! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
 //!    field by field (velt_vir transfer.rs `own_clone`): `x.clone()` (`Intrinsic::Clone`), a
 //!    transfer to another task (`Transfer`, `spawn`, channels, `shared`, `Mutex`, promise
-//!    combinators, the arguments of an async call). Counted like the hooks of 1.
+//!    combinators, the arguments of an async call): for `spawn`, the arguments and receiver of
+//!    the call it starts, whatever the callee (a function value, a vtable or interface method:
+//!    velt_vir `async_fn/spawn.rs` `transfer_call`), the captures of an async closure, and
+//!    either branch of a conditional. Counted like the hooks of 1.
 //! 3. **`[Symbol.dispose]()`, run by drop glue** (`hir::AdtDef::dispose`): wherever a value is
 //!    dropped (the end of its variable's scope, a temporary, the old value an assignment
 //!    replaces, an element an array operation removes, a closure's environment, a `using`
@@ -36,6 +39,9 @@
 //!    `Map`/`Set` callbacks, iterator helpers): always a function value some code passed, so
 //!    already counted where it is passed or created (`Effects::callbacks`, `Effects::values`).
 //! 7. **Async bodies after a suspension**: only at an `await` (`Effects::anything`).
+//!
+//! Not yet in the language: releasing a weakly held object (`WeakMap`, `WeakRef`, #969) drops
+//! entries' values from the runtime; once that lands it needs an entry here (a drop, 3).
 //!
 //! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
 //! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
@@ -435,16 +441,38 @@ pub(super) fn is_place(e: &Expr) -> bool {
     }
 }
 
-/// The values a glue intrinsic's argument hands it: the argument, and the arguments of a call
-/// it makes (an async call's arguments are transferred when it is spawned).
-pub(super) fn glue_values(a: &Expr) -> impl Iterator<Item = &Expr> {
-    let inner: &[Expr] = match &a.kind {
-        E::Call {
-            callee: Callee::Def(..),
-            args,
+/// The types of the values a glue intrinsic's argument hands it (into `out`): the argument
+/// itself; the arguments of a call it makes, whatever the callee (an async call's arguments
+/// and receiver, `args[0]`, are transferred when it is spawned: velt_vir `async_fn/spawn.rs`,
+/// `dynamic_call` too), the function value of a call through one, and a closure's captures
+/// (`spawn(async () => …)`); through either branch of a conditional (`spawn_if`) and a block
+/// that only holds a value.
+pub(super) fn glue_types(cx: &Ctx, a: &Expr, out: &mut Vec<TyId>) {
+    out.push(a.ty);
+    match &a.kind {
+        E::Call { callee, args } => {
+            out.extend(args.iter().map(|x| x.ty));
+            if let Callee::Indirect(f) = callee {
+                glue_types(cx, f, out);
+            }
         }
-        | E::New { args, .. } => args,
-        _ => &[],
-    };
-    std::iter::once(a).chain(inner)
+        E::New { args, .. } => out.extend(args.iter().map(|x| x.ty)),
+        E::If { then, els, .. } => {
+            glue_types(cx, then, out);
+            glue_types(cx, els, out);
+        }
+        E::Block(b) if b.stmts.is_empty() => {
+            if let Some(v) = &b.value {
+                glue_types(cx, v, out);
+            }
+        }
+        E::Closure(d) => {
+            if let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) {
+                for c in &f.captures {
+                    out.extend(f.body.locals.get(c.inner.0 as usize).map(|l| l.ty));
+                }
+            }
+        }
+        _ => {}
+    }
 }

@@ -164,9 +164,13 @@ impl Effects {
 
     /// Values handed to glue that may format, serialise or copy them.
     fn glue(&mut self, cx: &Ctx, im: &Implicit, args: &[Expr]) {
-        for v in args.iter().flat_map(implicit::glue_values) {
-            if im.maybe(cx, v.ty) {
-                self.glue.insert(v.ty);
+        let mut tys = Vec::new();
+        for a in args {
+            implicit::glue_types(cx, a, &mut tys);
+        }
+        for t in tys {
+            if im.maybe(cx, t) {
+                self.glue.insert(t);
             }
         }
     }
