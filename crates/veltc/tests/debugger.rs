@@ -499,7 +499,8 @@ const CLOSURE: &str = r#"function main() {
 "#;
 
 /// Inside a closure, its captures show like its own variables: by value (`base`), through the
-/// shared cell of a variable it assigns (`hits`), and borrowed (`names`).
+/// shared cell of a variable it assigns (`hits`), and borrowed (`names`). On its first line,
+/// before any of them is used (regression: a capture was in scope only from its first use).
 #[test]
 fn lldb_shows_closure_captures() {
     if cfg!(windows) {
@@ -516,7 +517,7 @@ fn lldb_shows_closure_captures() {
         &exe,
         &[
             &import,
-            "breakpoint set -f app.vlt -l 7",
+            "breakpoint set -f app.vlt -l 6",
             "run",
             "frame variable",
             "kill",
@@ -529,7 +530,7 @@ fn lldb_shows_closure_captures() {
     }
     for expected in [
         "(number) x = 1",
-        "(number) hits = 1",
+        "(number) hits = 0",
         "(number) base = 10",
         "(string[]) names = len=2",
     ] {

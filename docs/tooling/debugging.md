@@ -22,17 +22,17 @@ stays in the object files next to the executable (`target/velt/<name>.o`, plus `
 … when a large program is split into codegen units), so keep them there, or run `dsymutil
 target/velt/<name>` to bundle it.
 
-Debug builds by `velt build` (what F5 debugs) and `velt dev --exe` also describe each
-function's parameters and local variables with their source types: a debugger shows `count`
-as an `i64`, a class value as a pointer whose fields it expands (`p->x`), an enum by its member
-name, and `NULL` for an empty `T | null` of a class. LLDB with Velt's formatters (which the VS
-Code extension loads, [Command line](#command-line) shows how) also shows a string as its text,
-an array as `len=N` with its elements, a union by its active member, and other options as
-`null` or their value; without them those are raw words. Variables of `async` functions,
-generators and inlined code are not shown yet. A variable is shown from the line declaring it
-to the end of its block; inside a closure, the variables it captures are shown too. On Windows, Cranelift builds have function
-symbols only. On macOS, executables are signed ad hoc without the hardened runtime, so
-LLDB can launch and attach to them.
+Debug builds by `velt build` (what F5 debugs) and `velt dev --exe` also describe each function's
+parameters and local variables with their source types: a debugger shows `count` as an `i64`, a
+class value as a pointer whose fields it expands (`p->x`), an enum by its member name, and
+`NULL` for an empty `T | null` of a class. LLDB with Velt's formatters (which the VS Code
+extension loads, [Command line](#command-line) shows how) also shows a string as its text, an
+array as `len=N` with its elements, a union by its active member, and other options as `null` or
+their value; without them those are raw words. Variables of `async` functions, generators and
+inlined code are not shown yet. A variable is shown from the line declaring it to the end of its
+block; inside a closure, the variables it captures are shown too. On Windows, Cranelift builds
+have function symbols only. On macOS, executables are signed ad hoc without the hardened
+runtime, so LLDB can launch and attach to them.
 
 Panics print `panic: <message> at <file>:<line>:<col>` even without a debugger, and exit with
 code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).

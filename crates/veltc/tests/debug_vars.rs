@@ -346,3 +346,134 @@ fn every_golden_compiles_with_variables() {
     let failures = failures.into_inner().unwrap();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Blocks lowered outside `block`: a `catch` body and a `switch` case.
+const HANDLERS: &str = r#"class Oops extends Error {}
+
+function risky(n: number): number throws Oops {
+  if (n > 1) {
+    throw new Oops("big");
+  }
+  return n;
+}
+
+function main() {
+  let total = 0;
+  try {
+    total = risky(2);
+  } catch (e) {
+    const inCatch = 7;
+    total = inCatch;
+  } finally {
+    total += 1;
+  }
+  const k = 2;
+  switch (k) {
+    case 2:
+      const two = k * 2;
+      total += two;
+      break;
+    default:
+      total += 0;
+  }
+  console.log(total);
+}
+"#;
+
+#[test]
+fn catch_bodies_and_switch_cases_end_their_variables() {
+    let p = compile_source(HANDLERS, false, true);
+    velt_vir::verify(&p).unwrap();
+    let main = p
+        .funcs
+        .iter()
+        .find(|f| f.symbol.ends_with("4main"))
+        .unwrap();
+    let end_of = |name: &str| {
+        main.locals
+            .iter()
+            .find(|l| l.name.as_deref() == Some(name) && l.debug.is_some())
+            .unwrap_or_else(|| panic!("no {name}"))
+            .debug
+            .as_ref()
+            .unwrap()
+            .end
+    };
+    let line = |text: &str| HANDLERS.lines().position(|l| l.contains(text)).unwrap() as u32 + 1;
+    // `inCatch` ends with the `catch` body, before `finally`; `two` with its case, before the
+    // `switch` ends.
+    let in_catch = end_of("inCatch").expect("inCatch ends");
+    assert_eq!(in_catch.line, line("} finally {"), "{in_catch:?}");
+    let two = end_of("two").expect("two ends");
+    assert!(two.line < line("console.log"), "{two:?}");
+    assert_eq!(end_of("total"), None);
+}
+
+/// `llvm-dwarfdump` (`dwarfdump` on macOS), if installed.
+fn dwarfdump() -> Option<&'static str> {
+    ["llvm-dwarfdump", "dwarfdump"].into_iter().find(|tool| {
+        std::process::Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    })
+}
+
+/// The debug info of programs with blocks lowered outside `block` (`catch` bodies, `switch`
+/// cases, JSX components) passes `dwarfdump --verify`: no lexical block overlaps a sibling
+/// (regression: a `catch` body's variables lasted to the function's end).
+#[test]
+fn dwarf_of_handlers_and_cases_verifies() {
+    let Some(tool) = dwarfdump() else {
+        eprintln!("note: no llvm-dwarfdump; skipping");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let goldens = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
+    let mut programs: Vec<(String, BuildOptions)> = vec![(
+        "handlers".into(),
+        BuildOptions {
+            input: dir.path().join("handlers.vlt"),
+            root_source: Some(HANDLERS.to_string()),
+            ..BuildOptions::default()
+        },
+    )];
+    for golden in [
+        "lang/field_default_generic_throws",
+        "lang/field_default_generic_siblings",
+        "std/jsx_async",
+        "std/jsx_render",
+    ] {
+        let input = goldens.join(format!("{golden}.vlt"));
+        programs.push((
+            golden.replace('/', "_"),
+            BuildOptions {
+                input,
+                ..BuildOptions::default()
+            },
+        ));
+    }
+    for (name, opts) in programs {
+        let object = dir.path().join(format!("{name}.o"));
+        let opts = BuildOptions {
+            output: Some(object.clone()),
+            emit: veltc::cli::Emit::Obj,
+            debug_vars: true,
+            ..opts
+        };
+        let mut sess = Session::new();
+        driver::build(&mut sess, &opts)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}\n{}", sess.render_diagnostics()));
+        let out = std::process::Command::new(tool)
+            .arg("--verify")
+            .arg(&object)
+            .output()
+            .expect("dwarfdump");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{name}: {text}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}

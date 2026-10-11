@@ -15,13 +15,13 @@
 //! - `jit`: an in-memory ELF image with absolute addresses for `velt dev`'s JIT code, announced
 //!   to GDB and LLDB through the GDB JIT interface.
 
+use std::cmp::Reverse;
+
 use cranelift_codegen::gimli::write::{
     Address, AttributeValue, DwarfUnit, Expression, FileId, LineProgram, LineString, Range,
     RangeList, UnitEntryId,
 };
 use cranelift_codegen::gimli::{self, Encoding, Format, LineEncoding};
-use std::cmp::Reverse;
-
 use cranelift_codegen::Context;
 use cranelift_module::FuncId;
 use cranelift_object::object::Architecture;
@@ -346,8 +346,8 @@ pub(crate) fn build_unit(
 
 /// The code ranges (offsets in `f`) where `var` is in scope: code located from its declaration
 /// line (a whole line in one block: debuggers make a breakpoint location per block a line's
-/// code is in) up to the end of its block. `None` when that is the whole function (params, variables of the
-/// function's own block declared at its start).
+/// code is in) up to the end of its block. `None` when that is the whole function (params,
+/// variables of the function's own block declared at its start).
 fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
     if var.param {
         return None;
