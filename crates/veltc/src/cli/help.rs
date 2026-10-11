@@ -598,7 +598,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_INSTALL_PUBLIC_KEY",
-        "key release signatures are checked with instead of velt's (another build's releases)",
+        "keys release signatures are checked with instead of velt's (another build's releases)",
     ),
     ("NO_COLOR", "set to disable colored output"),
 ];

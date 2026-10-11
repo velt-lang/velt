@@ -256,12 +256,26 @@ key, the secret `VELT_RELEASE_SIGNING_KEY` (an Ed25519 private key, PEM) of the 
 environment `release` (Settings → Environments), which allows only `main` and tags `v*` to use
 it, so a workflow run from another branch, with changed scripts, can't read the key. The jobs that
 sign (`signing-key` and `publish` in `release.yml`, `index` in `release-index.yml`) run in that
-environment. The script checks
-each signature against the public key velt is built with
-(`velt_toolchain::signature::RELEASE_PUBLIC_KEY`, also embedded in `scripts/get-velt.sh`; a test
-keeps them in line). The launcher and `velt target add` refuse what doesn't match it. Keep a
-backup of the private key outside GitHub: without it no release can be signed with the key that
-installed launchers trust.
+environment. The script checks each signature against the public keys velt is built with
+(`velt_toolchain::signature::RELEASE_PUBLIC_KEYS`, also embedded in `scripts/get-velt.sh`; a
+test keeps them in line): the **signing key**, and a **backup key** whose private half is kept
+offline, never in GitHub. The launcher, `velt target add` and `get-velt.sh` accept a signature
+by either and refuse anything else. Keep an offline copy of both private keys: without one of
+them, no release can be signed in a way installed launchers trust.
+
+**Replacing the signing key** (it leaked or was lost):
+
+1. Make a new backup key pair offline (`openssl genpkey -algorithm ed25519`), and get its public
+   key in hex: `openssl pkey -in <file> -pubout -outform DER | tail -c 32 | xxd -p -c 64`.
+2. In a pull request, make the old backup key the first entry of `RELEASE_PUBLIC_KEYS`, add the
+   new backup key as the second, and drop the old signing key; update the two lines of
+   `release_keys` in `scripts/get-velt.sh` (the base64 that `scripts/release-sign.sh
+   --public-key` prints).
+3. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
+   and release. Launchers already installed accept the release, because they trust the old
+   backup key; the launcher it brings trusts only the new pair, so the old signing key is
+   refused from then on, once users have the new launcher (`get-velt` again; launchers that
+   read the index say so).
 
 **Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
 (`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the

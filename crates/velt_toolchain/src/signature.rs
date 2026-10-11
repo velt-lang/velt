@@ -4,78 +4,99 @@
 //! the download is intact; checked against the signature, it also shows the archive is the one
 //! the velt project published, whatever mirror (`$VELT_INSTALL_BASE_URL`) served it.
 //!
-//! The public key is built into velt ([`RELEASE_PUBLIC_KEY`]). `$VELT_INSTALL_PUBLIC_KEY` (hex)
-//! replaces it, for releases of another build (a fork's, a test's): whoever can set your
+//! The public keys are built into velt ([`RELEASE_PUBLIC_KEYS`]): the one releases are signed
+//! with, and a backup whose private half is kept offline. A signature by either is accepted, so
+//! if the signing key is lost or leaks, releases are signed with the backup and every launcher
+//! already installed keeps checking them; the next release then names a new backup
+//! (CONTRIBUTING.md "Signing"). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
+//! replaces them, for releases of another build (a fork's, a test's): whoever can set your
 //! environment can already run programs as you, so it opens nothing new.
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 
 use crate::install::{download, MAX_SMALL_FILE};
 
-/// The velt release key: an Ed25519 public key, hex. The private half signs releases in
-/// `.github/workflows/release.yml` (secret `VELT_RELEASE_SIGNING_KEY`).
-pub const RELEASE_PUBLIC_KEY: &str =
-    "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb";
-/// Overrides [`RELEASE_PUBLIC_KEY`].
+/// The velt release keys: Ed25519 public keys, hex, one per line (scripts/release-sign.sh and a
+/// test read them from here). The first signs releases in `.github/workflows/release.yml`
+/// (secret `VELT_RELEASE_SIGNING_KEY` of the `release` environment); the second is the backup,
+/// its private half offline.
+pub const RELEASE_PUBLIC_KEYS: &[&str] = &[
+    "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb",
+    "84bb2873cee95e478045ff2195d7f8edb84fde21eebd7b96e00482b5207264be",
+];
+/// Overrides [`RELEASE_PUBLIC_KEYS`].
 pub const ENV_PUBLIC_KEY: &str = "VELT_INSTALL_PUBLIC_KEY";
 /// A signed file's signature is beside it, named `<file>.sig` (`SHA256SUMS.sig`,
 /// `releases.json.sig`): the 64-byte Ed25519 signature of the file's bytes, raw or in hex.
 pub const SIG_SUFFIX: &str = ".sig";
 
-/// The key releases are checked with: `$VELT_INSTALL_PUBLIC_KEY`, else the built-in one.
-pub fn public_key() -> Result<Vec<u8>, String> {
-    let (hex, from) = match std::env::var(ENV_PUBLIC_KEY)
+/// The keys releases are checked with, the signing key first: `$VELT_INSTALL_PUBLIC_KEY`, else
+/// the built-in ones.
+pub fn public_keys() -> Result<Vec<Vec<u8>>, String> {
+    match std::env::var(ENV_PUBLIC_KEY)
         .ok()
         .filter(|k| !k.trim().is_empty())
     {
-        Some(k) => (k, format!("${ENV_PUBLIC_KEY}")),
-        None => (
-            RELEASE_PUBLIC_KEY.to_string(),
-            "this velt's release key".into(),
-        ),
-    };
-    if hex.trim().is_empty() {
-        return Err(format!(
-            "this velt has no release key built in, so it cannot check downloads; set \
-             ${ENV_PUBLIC_KEY} to the key of the releases you trust"
-        ));
-    }
-    match decode_hex(hex.trim()) {
-        Some(key) if key.len() == 32 => Ok(key),
-        _ => Err(format!(
-            "{from} is not an Ed25519 public key (64 hex digits)"
-        )),
+        Some(list) => parse_keys(&list, &format!("${ENV_PUBLIC_KEY}")),
+        None => parse_keys(&RELEASE_PUBLIC_KEYS.join(","), "this velt's release keys"),
     }
 }
 
-/// Check `signature` (64 bytes, or their hex) of `data` with `key`.
-pub fn verify(data: &[u8], signature: &[u8], key: &[u8]) -> Result<(), String> {
+/// Ed25519 public keys in hex, separated by commas (or spaces).
+fn parse_keys(list: &str, from: &str) -> Result<Vec<Vec<u8>>, String> {
+    let keys = list
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|k| !k.is_empty())
+        .map(|k| match decode_hex(k) {
+            Some(key) if key.len() == 32 => Ok(key),
+            _ => Err(format!(
+                "{from}: `{k}` is not an Ed25519 public key (64 hex digits)"
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if keys.is_empty() {
+        return Err(format!(
+            "{from} names no key, so downloads cannot be checked; set ${ENV_PUBLIC_KEY} to the \
+             key of the releases you trust"
+        ));
+    }
+    Ok(keys)
+}
+
+/// Check `signature` (64 bytes, or their hex) of `data`: it must be by one of `keys`.
+pub fn verify(data: &[u8], signature: &[u8], keys: &[Vec<u8>]) -> Result<(), String> {
     let text = std::str::from_utf8(signature).ok().map(str::trim);
     let signature = match text.and_then(decode_hex) {
         Some(bytes) => bytes,
         None => signature.to_vec(),
     };
-    UnparsedPublicKey::new(&ED25519, key)
-        .verify(data, &signature)
-        .map_err(|_| "the signature does not match the release key".to_string())
+    if keys.iter().any(|key| {
+        UnparsedPublicKey::new(&ED25519, key)
+            .verify(data, &signature)
+            .is_ok()
+    }) {
+        Ok(())
+    } else {
+        Err("the signature does not match the release key".to_string())
+    }
 }
 
-/// The `SHA256SUMS` of the release at `release_url`, checked against its signature with `key`
-/// ([`public_key`]); `None` when the release has no `SHA256SUMS` (it does not exist).
-pub fn signed_sums(release_url: &str, key: &[u8]) -> Result<Option<String>, String> {
-    signed_text(&format!("{release_url}/SHA256SUMS"), key)
+/// The `SHA256SUMS` of the release at `release_url`, checked against its signature with `keys`
+/// ([`public_keys`]); `None` when the release has no `SHA256SUMS` (it does not exist).
+pub fn signed_sums(release_url: &str, keys: &[Vec<u8>]) -> Result<Option<String>, String> {
+    signed_text(&format!("{release_url}/SHA256SUMS"), keys)
 }
 
-/// The text at `url`, checked against its signature at `<url>.sig` with `key`; `None` when
+/// The text at `url`, checked against its signature at `<url>.sig` with `keys`; `None` when
 /// `url` does not exist.
-pub fn signed_text(url: &str, key: &[u8]) -> Result<Option<String>, String> {
+pub fn signed_text(url: &str, keys: &[Vec<u8>]) -> Result<Option<String>, String> {
     let Some(data) = download(url, MAX_SMALL_FILE)? else {
         return Ok(None);
     };
     let signature = download(&format!("{url}{SIG_SUFFIX}"), MAX_SMALL_FILE)?.ok_or_else(|| {
         format!("{url} has no signature ({url}{SIG_SUFFIX}), so it cannot be checked; refusing it")
     })?;
-    verify(&data, &signature, key).map_err(|e| format!("{url}: {e}; refusing it"))?;
+    verify(&data, &signature, keys).map_err(|e| format!("{url}: {e}; refusing it"))?;
     String::from_utf8(data)
         .map(Some)
         .map_err(|_| format!("{url} is not text"))
@@ -113,25 +134,52 @@ pub(crate) mod tests {
     #[test]
     fn signatures_in_hex_or_raw() {
         let (pair, public) = key_pair();
-        let key = decode_hex(&public).unwrap();
+        let keys = vec![decode_hex(&public).unwrap()];
         let sums = b"abc  velt-0.1.0-x.tar.gz\n";
         let sig = pair.sign(sums);
-        verify(sums, sig.as_ref(), &key).unwrap();
-        verify(sums, format!("{}\n", hex(sig.as_ref())).as_bytes(), &key).unwrap();
-        let err = verify(b"abc  velt-0.1.0-y.tar.gz\n", sig.as_ref(), &key).unwrap_err();
+        verify(sums, sig.as_ref(), &keys).unwrap();
+        verify(sums, format!("{}\n", hex(sig.as_ref())).as_bytes(), &keys).unwrap();
+        let err = verify(b"abc  velt-0.1.0-y.tar.gz\n", sig.as_ref(), &keys).unwrap_err();
         assert!(err.contains("does not match"), "{err}");
         let (other, _) = key_pair();
-        assert!(verify(sums, other.sign(sums).as_ref(), &key).is_err());
-        assert!(verify(sums, b"zz", &key).is_err());
+        assert!(verify(sums, other.sign(sums).as_ref(), &keys).is_err());
+        assert!(verify(sums, b"zz", &keys).is_err());
+        assert!(verify(sums, sig.as_ref(), &[]).is_err());
     }
 
     #[test]
-    fn the_built_in_key_is_an_ed25519_key() {
-        let key = decode_hex(RELEASE_PUBLIC_KEY).unwrap();
-        assert_eq!(key.len(), 32);
-        // A signature made with another key does not pass with it.
+    fn a_signature_by_any_trusted_key_passes() {
+        let (signing, signing_public) = key_pair();
+        let (backup, backup_public) = key_pair();
+        let (stranger, _) = key_pair();
+        let keys = parse_keys(&format!("{signing_public}, {backup_public}"), "test").unwrap();
+        assert_eq!(keys.len(), 2);
+        let data = b"SHA256SUMS";
+        verify(data, signing.sign(data).as_ref(), &keys).unwrap();
+        verify(data, backup.sign(data).as_ref(), &keys).unwrap();
+        assert!(verify(data, stranger.sign(data).as_ref(), &keys).is_err());
+    }
+
+    #[test]
+    fn key_lists() {
+        let (_, a) = key_pair();
+        assert_eq!(parse_keys(&format!("  {a} "), "x").unwrap().len(), 1);
+        let err = parse_keys(&format!("{a},abc"), "$X").unwrap_err();
+        assert!(
+            err.starts_with("$X: `abc` is not an Ed25519 public key"),
+            "{err}"
+        );
+        assert!(parse_keys(" , ", "x").unwrap_err().contains("names no key"));
+    }
+
+    #[test]
+    fn the_built_in_keys_are_two_ed25519_keys() {
+        assert_eq!(RELEASE_PUBLIC_KEYS.len(), 2, "the signing key and a backup");
+        let keys = parse_keys(&RELEASE_PUBLIC_KEYS.join(","), "built in").unwrap();
+        assert_ne!(keys[0], keys[1]);
+        // A signature made with another key does not pass with them.
         let (other, _) = key_pair();
-        assert!(verify(b"x", other.sign(b"x").as_ref(), &key).is_err());
+        assert!(verify(b"x", other.sign(b"x").as_ref(), &keys).is_err());
     }
 
     #[test]

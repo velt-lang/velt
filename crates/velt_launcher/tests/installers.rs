@@ -413,11 +413,12 @@ fn release_index_sh_writes_what_the_launcher_reads() {
     );
 }
 
-/// The key get-velt.sh checks releases with is the one velt is built with
-/// (velt_toolchain::signature::RELEASE_PUBLIC_KEY), as scripts/release-sign.sh derives it.
+/// The keys get-velt.sh checks releases with are the ones velt is built with
+/// (velt_toolchain::signature::RELEASE_PUBLIC_KEYS: the signing key and the backup), as
+/// scripts/release-sign.sh derives them.
 #[cfg(unix)]
 #[test]
-fn the_installer_and_the_signing_script_use_the_built_in_key() {
+fn the_installer_and_the_signing_script_use_the_built_in_keys() {
     if Command::new("openssl").arg("version").output().is_err() {
         eprintln!("skipping: no openssl");
         return;
@@ -427,24 +428,23 @@ fn the_installer_and_the_signing_script_use_the_built_in_key() {
         .arg("--public-key")
         .output()
         .unwrap();
-    let pem = ok(out);
-    let base64 = pem.lines().nth(1).unwrap();
+    let pems = ok(out);
+    let base64: Vec<&str> = pems.lines().filter(|l| !l.starts_with("-----")).collect();
+    let built_in = velt_toolchain::signature::RELEASE_PUBLIC_KEYS;
+    assert_eq!(base64.len(), built_in.len(), "{pems}");
     let installer = std::fs::read_to_string(repo().join("scripts/get-velt.sh")).unwrap();
-    assert!(
-        installer.contains(base64),
-        "get-velt.sh does not embed {base64}"
-    );
-    // The DER is a fixed header and the raw key, which RELEASE_PUBLIC_KEY holds in hex.
-    let tail = velt_toolchain::signature::RELEASE_PUBLIC_KEY;
-    assert_eq!(tail.len(), 64);
-    let der = ok(Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "printf '%s\\n' '{base64}' | openssl base64 -d -A | od -An -v -tx1 | tr -d ' \\n'"
-        ))
-        .output()
-        .unwrap());
-    assert_eq!(der, format!("302a300506032b6570032100{tail}"));
+    for (b64, hex) in base64.iter().zip(built_in) {
+        assert!(installer.contains(b64), "get-velt.sh does not embed {b64}");
+        // The DER is a fixed header and the raw key, which RELEASE_PUBLIC_KEYS holds in hex.
+        let der = ok(Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "printf '%s\\n' '{b64}' | openssl base64 -d -A | od -An -v -tx1 | tr -d ' \\n'"
+            ))
+            .output()
+            .unwrap());
+        assert_eq!(der, format!("302a300506032b6570032100{hex}"));
+    }
 }
 
 /// scripts/install.sh puts a dist directory beside the installed versions, replacing a copy of
