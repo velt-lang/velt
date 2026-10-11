@@ -3,10 +3,12 @@
 //! Scalar locals whose address is never taken live in registers: a local assigned exactly once
 //! is the SSA value of its assignment (`Storage::Value`), any other becomes a
 //! `cranelift_frontend::Variable` (SSA construction is left to `FunctionBuilder`). Aggregates and
-//! address-taken scalars live in explicit stack slots, and so do locals that hold a source
-//! variable for debuggers (`LocalDecl::debug`, debug builds) where the object gets DWARF
-//! variables (`debug_info::describes_variables`): their slot is keyed by the local's index, so
-//! debug_info finds it in the compiled frame. Submodules handle one concern each on
+//! address-taken scalars live in explicit stack slots. A scalar local that holds a source
+//! variable for debuggers (`LocalDecl::debug`, debug builds, where the object gets DWARF
+//! variables: `debug_info::describes_variables`) stays in a register for its reads, and each
+//! write also goes to a shadow stack slot, which debug info names: one store per assignment,
+//! where a slot of its own cost a load at every use. Slots are keyed by the local's index, so
+//! debug_info finds them in the compiled frame. Submodules handle one concern each on
 //! the shared `Translator`.
 //!
 //! Why single assignments bypass `Variable`: `FunctionBuilder` keeps, per variable, a table
@@ -28,6 +30,7 @@ mod terminator;
 
 use std::collections::HashMap;
 
+use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKey, StackSlotKind};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -114,6 +117,16 @@ struct Translator<'a, 'b, M: Module> {
     /// Cranelift `SourceLoc` is an index into this table.
     srclocs: Vec<SrcLoc>,
     srcloc_ids: HashMap<SrcLoc, u32>,
+    /// Shadow slots of described scalar locals (see the module docs), by local; and of those
+    /// stored as `Variable`s, by variable index.
+    shadows: Shadows,
+}
+
+/// The shadow stack slots that debug info reads described scalar locals from.
+#[derive(Default)]
+struct Shadows {
+    by_local: HashMap<u32, ir::StackSlot>,
+    by_var: HashMap<usize, ir::StackSlot>,
 }
 
 /// Translate `function` into `func` (whose signature and name are already set). Returns the
@@ -177,7 +190,8 @@ fn translate_once<M: Module>(
     let rounding_instructions = rounding::has_rounding_instructions(module.isa());
     let mut builder = FunctionBuilder::new(func, builder_ctx);
     let describe = crate::debug_info::describes_variables(triple);
-    let storage = allocate_locals(&mut builder, program, function, in_memory, single, describe)?;
+    let (storage, shadows) =
+        allocate_locals(&mut builder, program, function, in_memory, single, describe)?;
     let mut translator = Translator {
         module,
         program,
@@ -197,6 +211,7 @@ fn translate_once<M: Module>(
         rounding_instructions,
         srclocs: Vec::new(),
         srcloc_ids: HashMap::new(),
+        shadows,
     };
     translator.run()?;
     translator.builder.seal_all_blocks();
@@ -292,26 +307,43 @@ fn allocate_locals(
     in_memory: &[bool],
     single: &[bool],
     describe: bool,
-) -> CodegenResult<Vec<Storage>> {
+) -> CodegenResult<(Vec<Storage>, Shadows)> {
     let mut storage = Vec::with_capacity(function.locals.len());
+    let mut shadows = Shadows::default();
+    let keyed_slot = |builder: &mut FunctionBuilder, i: usize, ty: Ty| {
+        let (size, align) = size_align(program, ty)?;
+        Ok::<_, String>(builder.create_sized_stack_slot(StackSlotData::new_with_key(
+            StackSlotKind::ExplicitSlot,
+            size.max(1),
+            align.trailing_zeros() as u8,
+            StackSlotKey::new(i as u64),
+        )))
+    };
     for (i, local) in function.locals.iter().enumerate() {
+        let shadow = describe && local.debug.is_some();
         storage.push(match local.ty {
             Ty::Unit => Storage::Unit,
-            ty if in_memory[i] || (describe && local.debug.is_some()) => {
-                let (size, align) = size_align(program, ty)?;
-                let slot = builder.create_sized_stack_slot(StackSlotData::new_with_key(
-                    StackSlotKind::ExplicitSlot,
-                    size.max(1),
-                    align.trailing_zeros() as u8,
-                    StackSlotKey::new(i as u64),
-                ));
-                Storage::Slot(slot)
+            ty if in_memory[i] => Storage::Slot(keyed_slot(builder, i, ty)?),
+            ty if single[i] => {
+                if shadow {
+                    shadows
+                        .by_local
+                        .insert(i as u32, keyed_slot(builder, i, ty)?);
+                }
+                Storage::Value(i as u32)
             }
-            _ if single[i] => Storage::Value(i as u32),
-            ty => Storage::Var(builder.declare_var(scalar_type(ty))),
+            ty => {
+                let var = builder.declare_var(scalar_type(ty));
+                if shadow {
+                    shadows
+                        .by_var
+                        .insert(var.index(), keyed_slot(builder, i, ty)?);
+                }
+                Storage::Var(var)
+            }
         });
     }
-    Ok(storage)
+    Ok((storage, shadows))
 }
 
 impl<M: Module> Translator<'_, '_, M> {

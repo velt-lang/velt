@@ -22,15 +22,18 @@ Four steps, each its own pull request:
    and its layout in terms of the aggregates lowering already made (field names over VIR field
    indexes, variant views of tagged types). Optimizations may store a `number` local as an
    integer, so backends take a scalar local's encoding from its VIR type. Only debug builds made
-   for debugging ask for it (`velt build`, `velt dev --exe`; the next step keeps described
-   variables in memory, which slows hot loops by about a quarter, so `velt run` and `velt test`
-   don't), and release code is unchanged; dead-code elimination keeps described locals, and
+   for debugging ask for it (`velt build`, `velt dev --exe`; the next step stores each assignment
+   of a described variable to a stack slot, a few percent in hot loops, so `velt run` and `velt
+   test` don't), and release code is unchanged; dead-code elimination keeps described locals, and
    `numrep` moves a description to the narrowed local.
-2. **Cranelift emits them.** Described locals live in stack slots (`StackSlotKey` finds them
-   after compilation); each becomes a `DW_TAG_variable` / `DW_TAG_formal_parameter` with a
-   frame-base location (plus `DW_OP_deref` when held by reference) and a DWARF type built from
-   its debug type: base types, structures with named members, pointers to class objects,
-   enumerations.
+2. **Cranelift emits them.** A described scalar stays in a register for its reads, and each
+   assignment also stores it to a shadow stack slot; aggregates live in stack slots anyway
+   (`StackSlotKey` finds the slots after compilation). Cranelift's own value locations
+   (`set_val_label`) were tried and dropped: at this optimization level they lose most values
+   between uses, so a debugger showed `w`, `h` and loop counters as unavailable. Each becomes a
+   `DW_TAG_variable` / `DW_TAG_formal_parameter` with a frame-base location (plus `DW_OP_deref`
+   when held by reference) and a DWARF type built from its debug type: base types, structures
+   with named members, pointers to class objects, enumerations.
 3. **LLDB formatters** (`share/velt/lldb/velt_lldb.py`, loaded by the VS Code extension) show
    strings as text, arrays as their elements, options as `null` or the value and tagged types
    as their active variant, matching debug type names. A value that cannot be one (a variable
