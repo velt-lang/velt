@@ -118,7 +118,9 @@ so elements pushed meanwhile are not visited. Elements removed meanwhile:
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
-`fill`, plus `set(src, offset)` and `copyWithin(target, start, end)` like Node's `Buffer`.
+`fill`, `slice` and `concat`, plus `set(src, offset)` and `copyWithin(target, start, end)` like
+Node's `Buffer`, and `xorMask(mask: u32, start?, end?)`, which XORs the bytes with the four bytes
+of `mask` (most significant first) repeating from `start`: WebSocket masking (RFC 6455 §5.3).
 `Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
 number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
 bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
