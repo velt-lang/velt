@@ -137,7 +137,10 @@ impl Effects {
             // A module constant's initializer runs at each use.
             E::Global(d) => {
                 if let Some(DefInfo::Global(g)) = cx.info.get(d.0 as usize) {
-                    if g.init.as_ref().is_some_and(|x| !matches!(x.kind, E::Lit(_))) {
+                    if g.init
+                        .as_ref()
+                        .is_some_and(|x| !matches!(x.kind, E::Lit(_)))
+                    {
                         self.calls.push((*d, Frame::Unknown));
                     }
                 }
