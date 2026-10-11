@@ -62,6 +62,7 @@ fn run(args: &[OsString]) -> Result<i32, String> {
     ctx.ignore_lock = args.first().is_some_and(|a| a == "update");
     let selection = select::select(&ctx)?;
     let resolved = select::resolve(&ctx, &selection)?;
+    select::notice(&ctx, &resolved);
     exec::exec(&resolved, args, &exe)
 }
 

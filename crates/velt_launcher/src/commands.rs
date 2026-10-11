@@ -182,7 +182,10 @@ fn list(ctx: &Context, available: bool) -> Result<(), String> {
                 state.push_str("  (installed)");
             }
             if let Some(why) = &release.yanked {
-                state.push_str(&format!("  (yanked: {why})"));
+                state.push_str(&format!(
+                    "  (yanked: {})",
+                    velt_toolchain::release::display_text(why)
+                ));
             }
             println!("{v}{state}");
         }

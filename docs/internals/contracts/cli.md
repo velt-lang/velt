@@ -259,7 +259,19 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `lib/targets/<triple>/kit.stamp` whose name is `[a-z0-9_.-]+` not starting with `-` or `.`,
   the host's excluded), after `velt: adding the target packs velt <old> had to velt <new>: …` on
   stderr; the packs that fail are named in a warning with `velt +<new> target add …`, and the
-  install succeeds. `velt toolchain` (`velt_launcher::commands`): `list` prints a
+  install succeeds. Before running a release version, the launcher prints `velt: <notice>` on stderr when the
+  index it last fetched (`<root>/index-cache.json`, written by every verified fetch;
+  `velt_toolchain::release::notice_for`) marks that version yanked or gives it an `advisory`
+  (`security: true`: "has a security problem", also when it is yanked, the advisory after the
+  yank reason), naming the newest release of the same minor with neither and `` (`velt update`
+  in a package pinned to it, or `velt toolchain install <v>`) ``; at most once a day per version
+  (`<root>/notices/<version>`). Yank reasons and advisories are printed through
+  `velt_toolchain::release::display_text` (here and in `list --available`): control characters
+  and bidi overrides (U+202A–202E, U+2066–2069) become `?`, line breaks and tabs a space, cut at
+  200 characters with `…`. For `update` in a pinned package (the package's `velt` field, not
+  `+<req>` or `$VELT_TOOLCHAIN`) it first takes the newest published version the requirement
+  accepts from the index, installing it, unless an installed version it accepts is as new or
+  newer (an unreachable index: a note, then as usual). `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.

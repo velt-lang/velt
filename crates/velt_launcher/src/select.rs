@@ -213,6 +213,29 @@ pub fn resolve(ctx: &Context, selection: &Selection) -> Result<Resolved, String>
             reason: selection.reason.clone(),
         })
     };
+    // `velt update` in a pinned package moves to the newest published version the pin accepts,
+    // installing it, not only the newest installed one; never to an older one than is installed
+    // (a version the index doesn't list: a mirror, an archive install). Without the network it
+    // goes on with what is there.
+    if let (true, true, Reason::Pin(_), Wanted::Requirement(req)) = (
+        ctx.ignore_lock,
+        ctx.auto_install,
+        &selection.reason,
+        &selection.wanted,
+    ) {
+        match newest_published(ctx, req) {
+            Ok(newest) if req.best(&root.versions()).is_none_or(|have| *have < newest) => {
+                eprintln!(
+                    "velt: installing velt {newest} ({}) from {}",
+                    selection.reason, ctx.base
+                );
+                install(ctx, &newest)?;
+                return done(Toolchain::Version(newest));
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("velt: note: not looking for a newer velt: {e}"),
+        }
+    }
     if let Some(toolchain) = installed(root, selection) {
         return done(toolchain);
     }
@@ -374,4 +397,32 @@ pub fn install(ctx: &Context, version: &Version) -> Result<PathBuf, String> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Tell the user when the version about to run is yanked or has an advisory, from the last index
+/// fetched (no network), at most once a day per version (`<root>/notices/<version>`).
+pub fn notice(ctx: &Context, resolved: &Resolved) {
+    let Toolchain::Version(version) = &resolved.toolchain else {
+        return;
+    };
+    let Some(index) = release::cached_index(&ctx.root) else {
+        return;
+    };
+    let Some(text) = release::notice_for(&index, version) else {
+        return;
+    };
+    let stamp = ctx.root.dir().join("notices").join(version.to_string());
+    let recent = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60));
+    if recent {
+        return;
+    }
+    eprintln!("velt: {text}");
+    if let Some(dir) = stamp.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&stamp, b"");
 }
