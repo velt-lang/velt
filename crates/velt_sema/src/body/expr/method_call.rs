@@ -244,6 +244,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if let Some((_, fty)) = self.field_of(recv.ty, &prop.name) {
+            if fty == self.cx.ty.error {
+                // The field's own error was reported where it was declared.
+                for a in args {
+                    self.expr(a, None, Want::Move);
+                }
+                return self.error_expr(span);
+            }
             if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. }) {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),

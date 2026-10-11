@@ -1,0 +1,31 @@
+// Parameter forms Velt reports as not supported yet, each with its own error.
+//
+// The defaults inside a destructured parameter run in the body, when JavaScript runs them: before
+// the later parameters' defaults. Velt evaluates those where the function is called, so a later
+// default would run first; it must be a constant for now (Node prints `eval a`, then `eval b`).
+function se(t: string, v: number): number {
+  console.log("eval " + t);
+  return v;
+}
+
+const g = ({ a = se("a", 1) }: { a?: number }, b: number = se("b", 2)): number => a + b;
+
+// A default may use an earlier parameter in TypeScript (`q = p + 1`, also a name a destructured
+// parameter binds); Velt reports it rather than read another `p`.
+const p = 100;
+
+function h({ p }: { p: number }, q: number = p + 1): number {
+  return p + q;
+}
+
+// A rest parameter of an object-literal method: the error names the method, and nothing else is
+// reported for it.
+const o = {
+  sum(...xs: number[]): number {
+    return xs.length;
+  },
+};
+
+function main() {
+  console.log(g({}), h({ p: 3 }), o.sum(1, 2));
+}

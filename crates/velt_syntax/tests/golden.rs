@@ -44,6 +44,7 @@ fn golden_m1_files_parse() {
                 | "object_literal_accessors.vlt"
                 | "ts_syntax_errors.vlt"
                 | "param_property_pattern.vlt"
+                | "param_defaults_unsupported.vlt"
         ) {
             continue;
         }

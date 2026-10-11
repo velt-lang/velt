@@ -288,7 +288,9 @@ impl FnCx<'_, '_> {
             declared.push(l);
         }
         self.destructure_params(
-            params.iter().map(|p| (&p.name, p.pattern.as_ref())),
+            params
+                .iter()
+                .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
             &mut locals,
         );
         let mut block = match body {

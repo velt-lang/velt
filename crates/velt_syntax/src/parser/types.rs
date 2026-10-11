@@ -423,8 +423,8 @@ impl<'a> Parser<'a> {
         Ok(t)
     }
 
-    /// `(a: A, B, ...xs: T[]) => R [throws E]` (from `lo`) — parameter names are optional and
-    /// dropped.
+    /// `(a: A, B, ...xs: T[]) => R [throws E]` (from `lo`) — parameter names (or destructuring
+    /// patterns, `[a, b]: [A, B]`) are optional and dropped.
     fn parse_fn_type(&mut self, lo: u32) -> PResult<TypeExpr> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
@@ -442,6 +442,16 @@ impl<'a> Parser<'a> {
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();
                 self.bump();
+            } else if matches!(self.peek(), Tok::LBracket | Tok::LBrace) {
+                // A destructured parameter (`([a, b]: [A, B]) => R`), named only for the
+                // reader, like `a:`; without the `:` the `[`/`{` starts the type.
+                self.speculate(|p| {
+                    p.parse_binding_pattern()?;
+                    match p.eat(Tok::Colon) {
+                        true => Ok(()),
+                        false => Err(Fail),
+                    }
+                });
             }
             params.push(self.parse_type()?);
             if !self.eat(Tok::Comma) {

@@ -15,7 +15,9 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
   [class fields](classes.md) without annotations). A missing return type is inferred from the
   body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
-  an interface use the interface's defaults.
+  an interface use the interface's defaults. A default is evaluated where the function is
+  called, so it cannot use an earlier parameter yet (`q: number = p + 1` is an error saying so;
+  take `q?: number` and write `const r = q ?? p + 1;` in the body).
 - An optional parameter `q?: T` is `q: T | null = null`.
 - A parameter of type `void` appears in function types and arrows (`(value: void) => void`),
   not in a `function` declaration (`function f(x: void)` is an error). Trailing `void`
@@ -501,7 +503,13 @@ a function type is expected takes the pattern's type from it (`pairs.map(([k, v]
 The body starts by destructuring the argument, exactly as `let [a, b] = arg;` would there, so a
 destructured parameter costs what destructuring by hand does, and its bindings are `let`
 variables (a closure may capture and assign them; each call has its own). As for `let`, an array
-pattern may bind fewer elements than a tuple has, but not more (TS2493).
+pattern may bind fewer elements than a tuple has, but not more (TS2493). A destructured
+parameter can't be optional (`{ a }?: P`, TS2463) or have a type that includes `null`
+(`{ a }: P | null`): `null` can't be destructured, and destructuring any value that may be
+`null` is an error, in a `let` too (TS2339, or TS2488 for an array pattern). The defaults inside
+a pattern run when the body starts, in order; since a later parameter's default is evaluated at
+the call, before them, a default after a destructured parameter with defaults must be a constant
+for now (`y = 10`, `s = "z"`, `xs = [1, 2]`).
 
 ```ts
 function label([name, n]: [string, number], { sep = "=" }: { sep?: string }): string {
@@ -648,10 +656,12 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   cannot be a value, and neither can a generic function that keeps a parameter whose type is a
   promise at the value's type arguments or still depends on a type parameter.
 - **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
-  and rest parameters of arrows, `(...xs: T[]) => …`), generic function types
-  (`<T>(description: string) => Token<T>`, a value each call instantiates) and construct
-  signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value). They parse, and
-  using one is an error saying it is not supported yet.
+  and rest parameters of arrows and object-literal methods, `(...xs: T[]) => …`), generic
+  function types (`<T>(description: string) => Token<T>`, a value each call instantiates)
+  and construct signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value).
+  They parse, and using one is an error saying it is not supported yet. A function type's
+  parameter may be named by a destructuring pattern (`([a, b]: [number, number]) => number`),
+  which, like a name, is only for the reader.
 
 ## Captures
 

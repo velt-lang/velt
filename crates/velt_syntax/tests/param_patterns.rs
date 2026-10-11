@@ -69,3 +69,53 @@ fn a_parameter_property_is_not_a_pattern() {
         "{errs:?}"
     );
 }
+
+#[test]
+fn defaults_that_would_run_out_of_order_are_errors() {
+    let has = |src: &str, msg: &str| {
+        let errs = errors(src);
+        assert!(errs.iter().any(|e| e.contains(msg)), "{src}: {errs:?}");
+    };
+    let order =
+        "a parameter default after a destructured parameter with defaults must be a constant";
+    has("function f({ x = g() }: P, y: number = h()) {}", order);
+    has(
+        "const f = ([a = g()]: number[], b: number = h()) => a;",
+        order,
+    );
+    has(
+        "class K { m({ a: [b = 1] }: P, { c }: Q = mk()) {} }",
+        order,
+    );
+    has(
+        "const o = { m({ x = 1 }: P, y: number = h()) { return 1; } };",
+        order,
+    );
+    let earlier = "a parameter default cannot use an earlier parameter (`p`) yet";
+    has(
+        "function h({ p }: { p: number }, q: number = p + 1) {}",
+        earlier,
+    );
+    has("function k(p: number, q: number = f({ p })) {}", earlier);
+    has("const k = (p: number, q = [p]) => q;", earlier);
+    has(
+        "class C { constructor([p]: number[], q: number = p) {} }",
+        earlier,
+    );
+    // Constants may follow, and defaults after a pattern without defaults are evaluated as
+    // usual (before the body, where the pattern is destructured).
+    parse_ok("function f({ x = g() }: P, y: number = -1, z = \"z\", w: number[] = [1, 2]) {}");
+    parse_ok("function f({ x }: P, { y }: Q = mk(), z: number = g()) {}");
+    parse_ok("function f(a: number, b: number = g(), c?: string, ...xs: number[]) {}");
+}
+
+#[test]
+fn a_rest_parameter_of_an_object_literal_method_names_the_method() {
+    let errs = errors("const o = { sum(...xs: number[]): number { return 0; } };");
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "rest parameters of object-literal methods (`sum(...xs)`) are not supported yet"
+        )),
+        "{errs:?}"
+    );
+}

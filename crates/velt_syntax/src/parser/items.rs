@@ -2,6 +2,7 @@
 //! `declare function`, type aliases and top-level variables. Struct/class/interface/enum bodies
 //! are in `type_decls`; imports and re-exports in `imports`.
 
+use super::param_patterns::ParamDefault;
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -433,6 +434,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
+        self.check_param_defaults(&checked);
         Ok(params)
     }
 

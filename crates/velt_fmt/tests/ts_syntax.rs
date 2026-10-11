@@ -114,3 +114,46 @@ fn rest_generic_and_construct_function_types() {
 ",
     );
 }
+
+#[test]
+fn destructured_parameters_in_types() {
+    round_trips(
+        "type Obj = { m([a, b]: [number, number]): void };
+",
+    );
+    round_trips(
+        "type F = ([a, b]: [number, number]) => number;
+",
+    );
+    round_trips(
+        "interface I {
+  m({ x, y: [z] }: P, n: number): void;
+}
+",
+    );
+    round_trips(
+        "type G = (x: string, { a }: P) => void;
+",
+    );
+}
+
+#[test]
+fn array_pattern_holes_stay_holes() {
+    round_trips(
+        "const f = ([, , c]: number[]) => c;
+",
+    );
+    round_trips(
+        "function g([, b]: [string, number], [_, d]: [string, number]) {}
+",
+    );
+    round_trips(
+        "function h() {
+  let [, x, , y] = xs;
+  const [a, , ] = ys;
+  const [, ...rest] = zs;
+  return x;
+}
+",
+    );
+}

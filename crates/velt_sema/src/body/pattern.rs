@@ -23,7 +23,23 @@ pub(crate) enum BindCtx {
 impl FnCx<'_, '_> {
     pub fn pattern(&mut self, p: &ast::Pattern, ty: TyId, ctx: BindCtx) -> hir::Pat {
         if let Some(inner) = self.cx.ty.opt_payload(ty).filter(|_| matches_payload(p)) {
-            // Destructuring a `T | null` value destructures its non-null payload.
+            // A `T | null` value may be `null`, which JS can't destructure (a TypeError), so
+            // tsc rejects it (TS2339 for `{ a }`, TS2488 for `[a]`). The payload's bindings are
+            // still declared, so nothing else is reported for them.
+            let tn = self.cx.display(ty);
+            let code = match p.kind {
+                ast::PatternKind::Array { .. } => "TS2488",
+                _ => "TS2339",
+            };
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "cannot destructure a value of type `{tn}`: it may be `null` (TypeScript's {code})"
+                    ),
+                    p.span,
+                )
+                .with_note("check for `null` first (`if (p !== null) { … }`), or give a value that can't be `null`"),
+            );
             let sub = self.pattern(p, inner, ctx);
             return hir::Pat {
                 kind: P::Some(Box::new(sub)),

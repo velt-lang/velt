@@ -149,3 +149,20 @@ fn rest_generic_and_construct_function_types() {
         .iter()
         .any(|e| e.contains("a rest parameter must be the last parameter")));
 }
+
+#[test]
+fn function_type_parameters_may_be_patterns() {
+    assert_eq!(
+        alias_ty("([a, b]: [i64, i64]) => i64"),
+        "fn([i64, i64]) => i64"
+    );
+    assert_eq!(
+        alias_ty("(x: string, { a, b: [c] }: P) => void"),
+        "fn(string, P) => void"
+    );
+    // Without a `:`, `[`/`{` starts the parameter's type.
+    assert_eq!(
+        alias_ty("([i64, string]) => void"),
+        "fn([i64, string]) => void"
+    );
+}

@@ -3,6 +3,7 @@
 //! plus `this.mass = mass;` at the start of the constructor body, or right after its
 //! top-level `super(...)` call (sema requires that call to come first in such a class).
 
+use super::param_patterns::ParamDefault;
 use super::{PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -50,6 +51,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
+        self.check_param_defaults(&checked);
         Ok((params, fields))
     }
 

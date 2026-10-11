@@ -7,6 +7,7 @@
 //! `(`-started arrows are recognized by speculatively parsing a parameter list followed by `=>`;
 //! on failure the parser rewinds and the `(` is parsed as a parenthesized expression.
 
+use super::param_patterns::ParamDefault;
 use super::{PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -170,6 +171,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_arrow_param).collect();
+        self.check_param_defaults(&checked);
         Ok(params)
     }
 
