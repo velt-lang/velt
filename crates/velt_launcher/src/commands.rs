@@ -19,6 +19,9 @@ Commands:
   install <version> [--default]
                                install a release: `0.1.3`, or the newest match of `0.1`; the
                                first one installed becomes the default
+  install --from <file> [--unverified] [--default]
+                               install a downloaded velt-<version>-<triple>.tar.gz, checked
+                               against the SHA256SUMS and SHA256SUMS.sig beside it
   remove <toolchain> [--force] remove a version (debug executables it built stop running) or a
                                link; --force removes the default too
   prune [--dry-run]            remove every version but the default and the newest of each
@@ -63,7 +66,7 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         .collect();
     let known_flags: &[&str] = match command {
         "list" => &["--available"],
-        "install" => &["--default"],
+        "install" => &["--default", "--from", "--unverified"],
         "remove" => &["--force"],
         "prune" => &["--dry-run"],
         _ => &[],
@@ -93,6 +96,27 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
             list(ctx, flag("--available"))
         }
         "install" => {
+            // `--from <file>` takes a value, which the generic parsing counts as positional.
+            if let Some(at) = rest.iter().position(|a| *a == "--from") {
+                let file = rest.get(at + 1).filter(|f| !f.starts_with('-')).ok_or(
+                    "usage: velt toolchain install --from <file> [--unverified] [--default]",
+                )?;
+                if positional.len() != 1 {
+                    return Err(
+                        "usage: velt toolchain install --from <file> [--unverified] [--default]"
+                            .into(),
+                    );
+                }
+                return install_from(
+                    ctx,
+                    Path::new(file),
+                    flag("--unverified"),
+                    flag("--default"),
+                );
+            }
+            if flag("--unverified") {
+                return Err("--unverified goes with --from <file>".into());
+            }
             arity(1, "install <version> [--default]")?;
             install(ctx, positional[0], flag("--default"))
         }
@@ -217,6 +241,27 @@ fn install(ctx: &Context, spec: &str, make_default: bool) -> Result<(), String> 
     }
     if make_default || root.default()?.is_none() {
         root.set_default(&toolchain)?;
+        println!("velt {version} is the default");
+    }
+    Ok(())
+}
+
+/// `install --from <file>`: a toolchain archive downloaded before (no network needed).
+fn install_from(
+    ctx: &Context,
+    file: &Path,
+    unverified: bool,
+    make_default: bool,
+) -> Result<(), String> {
+    let version = select::install_from(ctx, file, unverified)?;
+    println!(
+        "installed velt {version} from {} into {}",
+        file.display(),
+        ctx.root.version_dir(&version).display()
+    );
+    let toolchain = Toolchain::Version(version.clone());
+    if make_default || ctx.root.default()?.is_none() {
+        ctx.root.set_default(&toolchain)?;
         println!("velt {version} is the default");
     }
     Ok(())

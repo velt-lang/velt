@@ -213,7 +213,10 @@ only. The hash shows the
 download is intact; the signature that the velt project published it, whatever served it. The
 launcher the installers put in place checks the signature of everything it downloads after
 that. velt 0.1.0 was published before signing and before the launcher; the installers and the
-launcher install later releases.
+launcher install later releases. It hashes with `sha256sum`, `shasum` or `openssl`, and refuses to install without
+one of them. On a machine without access to the releases, download the archive with its
+release's `SHA256SUMS` and `SHA256SUMS.sig` and run `velt toolchain install --from <archive>`
+there (or `get-velt.sh --archive <archive>` for the first install).
 
 **The index of releases.** The launcher learns which versions exist (to install the newest one
 `"0.1"` accepts, and to list them with `velt toolchain list --available`) from

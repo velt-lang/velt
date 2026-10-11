@@ -46,7 +46,7 @@
 
 mod index_trust;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use semver::Version;
 
@@ -55,8 +55,8 @@ use crate::install::{
 };
 use crate::layout::{velt_exe, Root};
 use crate::signature::{
-    hex_of, record_revoked, signed_sums, signed_text_by, trust, trust_from, Trust, LEGACY_SERIES,
-    OFFICIAL_SERIES,
+    hex_of, record_revoked, signed_sums, signed_text_by, trust, trust_from, verify_by, Trust,
+    LEGACY_SERIES, OFFICIAL_SERIES,
 };
 pub use index_trust::MAX_INDEX_AHEAD;
 use index_trust::{apply_revocations, remember_index, unix_now};
@@ -305,26 +305,91 @@ pub fn install_toolchain_with_key(
     let archive =
         download(&format!("{release}/{name}"), MAX_ARCHIVE)?.ok_or_else(|| missing(&name))?;
     check_sha256(&archive, &sums, &name)?;
+    install_archive(root, version, &stem, &archive)
+}
+
+/// Unpack the checked toolchain `archive` (top directory `stem`) as `<root>/toolchains/<version>`.
+fn install_archive(
+    root: &Root,
+    version: &Version,
+    stem: &str,
+    archive: &[u8],
+) -> Result<PathBuf, String> {
     let dest = root.version_dir(version);
     // A version never changes: one installed meanwhile (another launcher) is kept, not
     // swapped out from under the commands running it.
-    install_dir(
-        &archive,
-        &stem,
-        &dest,
-        "toolchain archive",
-        Existing::Keep,
-        |dir| {
-            let exe = velt_exe(dir);
-            (!exe.is_file()).then(|| {
-                format!(
-                    "it has no {}",
-                    exe.strip_prefix(dir).unwrap_or(&exe).display()
-                )
-            })
-        },
-    )?;
+    install_dir(archive, stem, &dest, "toolchain archive", Existing::Keep, |dir| {
+        let exe = velt_exe(dir);
+        (!exe.is_file()).then(|| {
+            format!(
+                "it has no {}",
+                exe.strip_prefix(dir).unwrap_or(&exe).display()
+            )
+        })
+    })?;
     Ok(dest)
+}
+
+/// Install a toolchain archive downloaded before (`velt toolchain install --from`, for machines
+/// without access to the releases): `velt-<version>-<this machine>.tar.gz`, checked against the
+/// `SHA256SUMS` and `SHA256SUMS.sig` of its release beside it, with the keys `root` trusts (`key`
+/// for a test), unless `unverified`. Returns the version and its prefix.
+pub fn install_toolchain_from_file(
+    root: &Root,
+    file: &Path,
+    unverified: bool,
+    key: Option<&[u8]>,
+) -> Result<(Version, PathBuf), String> {
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let host = host_triple();
+    let version = name
+        .strip_prefix("velt-")
+        .and_then(|rest| rest.strip_suffix(&format!("-{host}.tar.gz")))
+        .and_then(|v| Version::parse(v).ok())
+        .ok_or_else(|| {
+            format!(
+                "{} is not a toolchain archive for this machine: its name must be \
+                 velt-<version>-{host}.tar.gz",
+                file.display()
+            )
+        })?;
+    let size = std::fs::metadata(file)
+        .map_err(|e| format!("cannot read {}: {e}", file.display()))?
+        .len();
+    if size > MAX_ARCHIVE as u64 {
+        return Err(format!("{} is larger than a toolchain archive", file.display()));
+    }
+    let archive =
+        std::fs::read(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    if unverified {
+        eprintln!(
+            "velt: warning: installing {} without checking it (--unverified)",
+            file.display()
+        );
+    } else {
+        let beside = |n: &str| file.with_file_name(n);
+        let read = |p: &Path| std::fs::read(p).ok();
+        let (Some(sums), Some(signature)) =
+            (read(&beside(SUMS_FILE)), read(&beside(&format!("{SUMS_FILE}.sig"))))
+        else {
+            return Err(format!(
+                "cannot check {}: put its release's {SUMS_FILE} and {SUMS_FILE}.sig beside it, or \
+                 pass --unverified to install it unchecked",
+                file.display()
+            ));
+        };
+        let trust = trusted(root, key)?;
+        verify_by(&sums, &signature, &trust.keys)
+            .map_err(|e| format!("{} beside {}: {e}; refusing it", SUMS_FILE, file.display()))?;
+        let sums = String::from_utf8_lossy(&sums);
+        check_sha256(&archive, &sums, &name)?;
+    }
+    let stem = archive_stem(&version, &host);
+    let prefix = install_archive(root, &version, &stem, &archive)?;
+    Ok((version, prefix))
 }
 
 #[cfg(test)]

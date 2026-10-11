@@ -248,8 +248,9 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
             ],
         ));
         assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
-        // Not a key: refused, and a `*` is not expanded to file names.
-        for bad in ["*", &format!("{key},zz"), " , "] {
+        // Not a key: refused, and a `*` is not expanded to file names; a key with an extra
+        // byte too (OpenSSL would read the first 32 and ignore the rest).
+        for bad in ["*", &format!("{key},zz"), " , ", &format!("{key}00")] {
             let out = get_velt(
                 &home,
                 &["--no-modify-path", "--force", "--version", version],
@@ -267,6 +268,21 @@ fn get_velt_sh_checks_a_download_against_the_signed_sums() {
         }
     }
     good.stop();
+    if has_ed25519 {
+        // A signature written in hex, as the launcher also reads it.
+        let home = tmp.path().join("hex");
+        std::fs::create_dir_all(&home).unwrap();
+        let hex: String = signer
+            .sign(sums.as_bytes())
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let server = serve(format!("{hex}\n").into_bytes());
+        let out = ok(run(&server, &home));
+        server.stop();
+        assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
+    }
     if has_ed25519 {
         assert!(out.contains("checked the signature of SHA256SUMS"), "{out}");
     } else {

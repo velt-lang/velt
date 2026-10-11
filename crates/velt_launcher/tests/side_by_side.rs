@@ -817,3 +817,78 @@ fn the_locked_toolchain_runs_in_its_package() {
     let stdout = m.ok(&pkg, &["+0.1.2", "build"]);
     assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
 }
+
+/// `velt toolchain install --from <file>` installs a downloaded archive without the network:
+/// checked against the signed SHA256SUMS beside it, or unchecked with --unverified.
+#[test]
+fn install_from_a_downloaded_archive() {
+    let releases = Releases::new(&[]);
+    let m = Machine::new(&releases);
+    let offline = [("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")];
+    let dir = m.work.join("downloads");
+    std::fs::create_dir_all(&dir).unwrap();
+    let name = format!("velt-0.3.0-{}.tar.gz", host());
+    let file = dir.join(&name);
+    let bytes = archive("0.3.0");
+    std::fs::write(&file, &bytes).unwrap();
+    let sums = format!("{}  {name}\n", velt_toolchain::install::sha256_hex(&bytes));
+    std::fs::write(dir.join("SHA256SUMS"), &sums).unwrap();
+    std::fs::write(
+        dir.join("SHA256SUMS.sig"),
+        releases.signer.sign(sums.as_bytes()).as_ref(),
+    )
+    .unwrap();
+    let path = file.to_str().unwrap();
+
+    let out = m.ok_with(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(
+        out.contains("installed velt 0.3.0 from") && out.contains("is the default"),
+        "{out}"
+    );
+    assert!(m.toolchain("0.3.0").join("std/VERSION").is_file());
+
+    // Tampered: refused. No SHA256SUMS: refused unless --unverified.
+    std::fs::write(&file, archive("0.3.9")).unwrap();
+    m.ok(&m.work, &["toolchain", "remove", "0.3.0", "--force"]);
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("SHA-256"), "{err}");
+    std::fs::remove_file(dir.join("SHA256SUMS")).unwrap();
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("pass --unverified"), "{err}");
+    // Unchecked, an archive still has to be what its name says (its top directory).
+    std::fs::write(&file, &bytes).unwrap();
+    let out = m.run(
+        &m.work,
+        &["toolchain", "install", "--from", path, "--unverified"],
+        &offline,
+    );
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("without checking it"), "{stderr}");
+    assert!(m.toolchain("0.3.0").join("std/VERSION").is_file());
+
+    // Another machine's archive, or no file name to read the version from: refused.
+    let other = dir.join("velt-0.3.0-some-other-triple.tar.gz");
+    std::fs::write(&other, &bytes).unwrap();
+    let err = m.fail(
+        &m.work,
+        &[
+            "toolchain",
+            "install",
+            "--from",
+            other.to_str().unwrap(),
+            "--unverified",
+        ],
+        &offline,
+    );
+    assert!(
+        err.contains("not a toolchain archive for this machine"),
+        "{err}"
+    );
+    let err = m.fail(
+        &m.work,
+        &["toolchain", "install", "--unverified", "0.3.0"],
+        &offline,
+    );
+    assert!(err.contains("--unverified goes with --from"), "{err}");
+}

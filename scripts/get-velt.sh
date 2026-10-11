@@ -133,9 +133,21 @@ sha256_of() {
         sha256sum "$1" | cut -d ' ' -f 1
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | cut -d ' ' -f 1
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 -r "$1" | cut -d ' ' -f 1
     else
         return 1
     fi
+}
+
+# Hex digits to the bytes they stand for, through printf's octal escapes (POSIX sh has no \x).
+hex_to_bytes() {
+    # shellcheck disable=SC2059
+    printf "$(printf '%s' "$1" | tr 'A-F' 'a-f' | awk '{
+        h = "0123456789abcdef"
+        for (i = 1; i < length($0); i += 2)
+            printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+    }')"
 }
 
 # SHA256SUMS against SHA256SUMS.sig with the release key: the checksum shows the download is
@@ -158,6 +170,12 @@ check_signature() { # <release url>
         # No file-name expansion of the words (`*` would name files).
         set -f
         for hex in $(printf '%s' "$VELT_INSTALL_PUBLIC_KEY" | tr ',' ' '); do
+            # Exactly 32 bytes in hex, as the launcher reads them (OpenSSL would ignore extras).
+            case "$hex" in
+                *[!0-9a-fA-F]*) err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)" ;;
+            esac
+            [ "${#hex}" = 64 ] ||
+                err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)"
             der=$(printf '302a300506032b6570032100%s' "$hex" | tr 'A-F' 'a-f' | awk '{
                 h = "0123456789abcdef"
                 for (i = 1; i < length($0); i += 2)
@@ -175,7 +193,17 @@ check_signature() { # <release url>
     fi
     fetch "$1/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
         err "download failed: $1/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
-    # The release workflow writes the signature as its 64 raw bytes.
+    # The release workflow writes the signature as its 64 raw bytes; hex is read too, as the
+    # launcher does.
+    sig_hex=$(LC_ALL=C tr -d ' \r\n' < "$tmp/SHA256SUMS.sig")
+    case "$sig_hex" in
+        *[!0-9a-fA-F]*) ;;
+        *)
+            if [ "${#sig_hex}" = 128 ]; then
+                hex_to_bytes "$sig_hex" > "$tmp/SHA256SUMS.sig"
+            fi
+            ;;
+    esac
     for b64 in $release_keys; do
         pem "$b64" > "$tmp/release-key.pem"
         if openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
@@ -212,11 +240,11 @@ else
     fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || err "download failed: $url/SHA256SUMS"
     expected=$(awk -v f="$name.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
     [ -n "$expected" ] || err "SHA256SUMS has no entry for $name.tar.gz"
-    if actual=$(sha256_of "$tmp/$name.tar.gz"); then
-        [ "$actual" = "$expected" ] || err "checksum mismatch for $name.tar.gz (expected $expected, got $actual)"
-    else
-        say "warning: neither sha256sum nor shasum is installed; skipping the checksum check" >&2
-    fi
+    # The signature vouches for SHA256SUMS only: without the archive's hash it vouches for
+    # nothing installed, so there is no going on without one.
+    actual=$(sha256_of "$tmp/$name.tar.gz") ||
+        err "cannot hash the download: install sha256sum, shasum or openssl"
+    [ "$actual" = "$expected" ] || err "checksum mismatch for $name.tar.gz (expected $expected, got $actual)"
     check_signature "$url"
     archive="$tmp/$name.tar.gz"
 fi
