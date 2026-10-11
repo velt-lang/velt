@@ -364,7 +364,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
-| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop and a task stays on the worker it started on). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; sockets stay on the worker that registered them (accepted connections on the listener's worker); spawn bursts and cross-worker request/reply are much slower than with `stealing` |
+| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
 | `CLICOLOR_FORCE` | force colored output |
