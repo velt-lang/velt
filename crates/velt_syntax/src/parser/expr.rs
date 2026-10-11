@@ -139,7 +139,7 @@ impl<'a> Parser<'a> {
         }
         let then = match self.skip_speculated_branch(question) {
             Some(skipped) => skipped,
-            None => self.guarded(|p| p.parse_assign())?,
+            None => self.guarded(|p| p.allow_in(|p| p.parse_assign()))?,
         };
         self.expect(Tok::Colon)?;
         let els = self.guarded(|p| p.parse_assign())?;

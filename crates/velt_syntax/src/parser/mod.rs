@@ -83,8 +83,9 @@ pub(crate) struct Parser<'a> {
     /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
     /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
     computed_keys: BTreeSet<String>,
-    /// In the head of a `for` loop before its first `;`, outside parentheses: `in` there is the
-    /// loop's (`for (k in o)`), not the operator (`"k" in o`), as in JavaScript's grammar.
+    /// In the head of a `for` loop before its first `;`, outside the places `allow_in` covers:
+    /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
+    /// JavaScript's grammar (`[~In]`).
     no_in: bool,
 }
 
@@ -396,6 +397,16 @@ impl<'a> Parser<'a> {
         self.depth += 1;
         let r = f(self);
         self.depth -= 1;
+        r
+    }
+
+    /// Runs `f` where `in` is the operator again (`[+In]` in JavaScript's grammar: inside
+    /// parentheses, brackets, braces, call arguments, template substitutions and a
+    /// conditional's consequent), also within a `for` head's initializer.
+    pub(super) fn allow_in<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let no_in = std::mem::replace(&mut self.no_in, false);
+        let r = f(self);
+        self.no_in = no_in;
         r
     }
 

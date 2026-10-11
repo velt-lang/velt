@@ -1,13 +1,18 @@
 // Generator methods in object literals (`*name()`, `async *name()`) are properties holding
-// generator functions, as in Node. Expected output from node.
+// generator functions, as in Node; leaving a loop over one early closes it. Expected output from
+// node.
 const bag = {
   label: "bag",
-  items: function* (n: number): Generator<number> {
-    for (let i = 0; i < n; i++) {
-      yield i * 2;
+  *items(n: number): Generator<number> {
+    try {
+      for (let i = 0; i < n; i++) {
+        yield i * 2;
+      }
+    } finally {
+      console.log("closed");
     }
   },
-  ticks: async function* (): AsyncGenerator<string> {
+  async *ticks(): AsyncGenerator<string> {
     yield "a";
     yield "b";
   },
@@ -15,7 +20,14 @@ const bag = {
 
 async function main() {
   console.log([...bag.items(3)], bag.label);
+  for (const v of bag.items(10)) {
+    if (v > 2) {
+      break;
+    }
+    console.log(v);
+  }
   for await (const t of bag.ticks()) {
     console.log(t);
   }
+  console.log("items" in bag, "ticks" in bag, "next" in bag);
 }

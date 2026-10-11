@@ -54,10 +54,7 @@ impl<'a> Parser<'a> {
             Tok::Ident if self.at_word("undefined") => self.undefined_expr(span),
             Tok::LParen => {
                 self.bump();
-                let no_in = std::mem::replace(&mut self.no_in, false);
-                let inner = self.parse_expr();
-                self.no_in = no_in;
-                let inner = inner?;
+                let inner = self.allow_in(|p| p.parse_expr())?;
                 self.expect(Tok::RParen)?;
                 // Parentheses around a JSX element are layout only (a formatter adds them to
                 // multi-line elements), so they leave no `Paren` node.
@@ -170,6 +167,10 @@ impl<'a> Parser<'a> {
 
     /// `{ key: value, shorthand, "quoted": v, ...spread }` — current token is `{`.
     fn parse_object_props(&mut self) -> PResult<Vec<ObjectProp>> {
+        self.allow_in(|p| p.parse_object_props_in())
+    }
+
+    fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
         // `value: undefined` (its position, and its diagnostic's).
@@ -413,7 +414,7 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         if part == TplPart::Head {
             loop {
-                exprs.push(self.parse_expr()?);
+                exprs.push(self.allow_in(|p| p.parse_expr())?);
                 let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) = self.peek()
                 else {
                     self.error_expected("`}`");
