@@ -107,6 +107,10 @@ pub(crate) struct Ctx<'m> {
     pub groups: Option<crate::throws::Groups>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Values found crossing threads by the lock checks (`ownership::check_locked`) whose types
+    /// `crate::weak_threads` checks for weak collections: the function the type is in terms
+    /// of, the type, how it crosses and where.
+    pub weak_crossings: Vec<(DefId, TyId, crate::body::GenCopy, Span)>,
     /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
     /// error type is inferred: it must turn out `never`, since the interface's iterator type
     /// is fixed before bodies are checked (throws/checks.rs).
@@ -255,6 +259,7 @@ impl<'m> Ctx<'m> {
             fn_values: vec![],
             groups: None,
             throw_checks: vec![],
+            weak_crossings: vec![],
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),

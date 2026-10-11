@@ -218,7 +218,11 @@ Differences from JavaScript:
   does) or return one (in its result, or captured by a function it returns): the lock guards the
   value only while `with` runs, and a key or target from the value would be released or read by
   another thread without it. Use the weak collection outside `with`, or make it inside and drop
-  it there.
+  it there. The same holds for a value that may hold one without its type saying so: an
+  interface value when some class converted to that interface in the program holds a weak
+  collection, a base-class value when such a subclass is used as it, a type parameter where a
+  generic function (`lockWith<T, R>(m, f): R { return m.with(f); }`) is called with such a type,
+  and a function that captures one, passed to another task or stored into a `Mutex`'s value.
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.

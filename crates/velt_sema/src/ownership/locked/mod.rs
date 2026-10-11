@@ -206,6 +206,7 @@ struct Crossings {
     made: Vec<promises::Made>,
     unfixable: Vec<stores::Unfixable>,
     inward: Vec<(crate::hir::LocalId, Span, bool)>,
+    stored_fns: Vec<(DefId, Span)>,
 }
 
 /// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
@@ -242,17 +243,20 @@ fn crossings(
         unfixable.extend(resource_results(cx, &r, c, f));
     }
     let mut inward = vec![];
+    let mut stored_fns = vec![];
     if !std {
         for (d, f) in bodies.iter_mut() {
-            let (u, i) = stores::visit(cx, &mut r, s, *d, f, true);
+            let (u, i, fns) = stores::visit(cx, &mut r, s, *d, f, true);
             unfixable.extend(u);
             inward.extend(i);
+            stored_fns.extend(fns);
         }
     }
     Crossings {
         made,
         unfixable,
         inward,
+        stored_fns,
     }
 }
 
@@ -273,6 +277,12 @@ fn check_callback(
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
+    for (n, at) in found.stored_fns {
+        for (ty, name, _) in crate::weak_threads::captures(cx, n) {
+            let what = crate::body::GenCopy::LockFn(name);
+            cx.weak_crossings.push((n, ty, what, at));
+        }
+    }
     for m in found.made {
         let span = made_span(&m);
         if !reported.insert(span) {
@@ -292,7 +302,10 @@ fn check_callback(
 /// A weak collection used across the lock (docs/internals/design/weak-refs.md "Threads and
 /// `shared`"): captured from outside by a closure `with` calls (`with`'s argument itself is
 /// checked by body/expr/sync.rs `no_weak_in_lock` when it is written there), or captured by a
-/// closure made under the lock when `with` returns a function value.
+/// closure made under the lock when `with` returns a function value; or the result of a
+/// callback not written at the `with` (`lockWith(m, (v) => new WeakRef(v.k))`, where a
+/// generic helper calls `m.with(f)`). A type that may hide one (an interface value, a base
+/// class, a type parameter) is checked by `crate::weak_threads`, which sees the whole program.
 fn weak_across(
     cx: &mut Ctx,
     c: DefId,
@@ -313,7 +326,20 @@ fn weak_across(
         let mut b = f.body.block.clone();
         visit::block(&mut b, &mut made);
     }
-    let returns_fn = cx.holds_fn(cx.fn_info(c).ret);
+    let ret = cx.fn_info(c).ret;
+    if !direct {
+        let at = cx.fn_info(c).span;
+        let what = crate::body::GenCopy::LockResult;
+        if cx.holds_weak(ret) {
+            if reported.insert(at) {
+                let d = crate::body::weak_copy_error(cx, ret, &what, at);
+                cx.error(d);
+            }
+        } else {
+            cx.weak_crossings.push((c, ret, what, at));
+        }
+    }
+    let returns_fn = cx.holds_fn(ret);
     for (d, f) in bodies {
         let inside = made.0.contains(d);
         if (*d == c && direct) || (inside && !returns_fn) {
@@ -322,7 +348,12 @@ fn weak_across(
         for cap in &f.captures {
             let l = &f.body.locals[cap.inner.0 as usize];
             let (ty, at) = (l.ty, l.span);
-            if !cx.holds_weak(ty) || !reported.insert(at) {
+            if !cx.holds_weak(ty) {
+                let what = crate::body::GenCopy::LockCapture(l.name.clone());
+                cx.weak_crossings.push((*d, ty, what, at));
+                continue;
+            }
+            if !reported.insert(at) {
                 continue;
             }
             let msg = if inside {

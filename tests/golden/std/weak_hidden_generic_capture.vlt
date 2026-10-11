@@ -1,0 +1,10 @@
+// A with callback in a generic helper captures a value of a type parameter.
+class K { n: number; constructor(n: number) { this.n = n; } }
+class Box { ks: K[]; constructor() { this.ks = []; } }
+function each<T>(m: shared<Mutex<Box>>, x: T, f: (k: K, x: T) => void): void { m.with((v) => { for (const k of v.ks) f(k, x); }); }
+async function main() {
+  const m = shared(new Mutex<Box>(new Box()));
+  const wm = new WeakMap<K, number>();
+  each(m, wm, (k, w) => { w.set(k, 1); });
+  console.log(1);
+}

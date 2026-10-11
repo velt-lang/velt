@@ -166,18 +166,41 @@ impl Ctx<'_> {
 
     /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
     /// or payload)? They belong to the task that made them (a copy would share the runtime
-    /// handle), so such values cannot be copied or passed to another task. Interface values are not looked into.
+    /// handle), so such values cannot be copied or passed to another task. This looks at the
+    /// written type only: an interface value, a base-class value that may be a subclass, and a
+    /// type parameter are looked into by the whole-program check of the values crossing
+    /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
     pub fn holds_weak(&mut self, t: TyId) -> bool {
-        self.holds_weak_in(t, &mut std::collections::HashSet::new())
+        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
     }
 
-    fn holds_weak_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+    /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
+    /// one when its interface or class is in `hiding` (some class converted to it holds one).
+    pub(crate) fn holds_weak_with(
+        &mut self,
+        t: TyId,
+        hiding: &std::collections::HashSet<DefId>,
+    ) -> bool {
+        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+    }
+
+    fn holds_weak_in(
+        &mut self,
+        t: TyId,
+        hiding: Option<&std::collections::HashSet<DefId>>,
+        seen: &mut std::collections::HashSet<TyId>,
+    ) -> bool {
         if !seen.insert(t) {
             return false;
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Adt(d, _) if self.is_weak_class(d) => return true,
-            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) if hiding.is_some_and(|h| h.contains(&d)) => {
+                return true
+            }
+            TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
+            TyKind::Dyn(_, args) if hiding.is_some() => args,
+            TyKind::Dyn(..) => return false,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
@@ -192,7 +215,9 @@ impl Ctx<'_> {
             }
             k => crate::types::children(&k),
         };
-        parts.into_iter().any(|p| self.holds_weak_in(p, seen))
+        parts
+            .into_iter()
+            .any(|p| self.holds_weak_in(p, hiding, seen))
     }
 
     /// Does a value of type `t` hold a function value (in a field, element or payload)?

@@ -146,7 +146,23 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   (`tests/golden/std/weakmap_mutex_value.vlt`), and a `WeakRef` taken out of `with` would hand
   out a strong reference to an object the Mutex owns (`weakref_mutex.vlt`). A weak collection
   made under the lock and dropped there is allowed (`weakmap_mutex_local.vlt`). Interface calls
-  under the lock already get a copy of a part of the value (#398). `async main` keeps its maps
+  under the lock already get a copy of a part of the value (#398).
+  These checks see the written type (`Ctx::holds_weak`). What it hides is found after all bodies
+  by `weak_threads.rs`, over the whole program, for the same crossings (`with`'s result and the
+  callback's captures, `shared(...)` values, `spawn` arguments, channel messages, async-closure
+  captures): an interface value holds a weak collection when some class converted to the
+  interface anywhere (`ToDyn`) holds one, a class value when a subclass upcast to it does (a
+  fixed point, since a class can hold an interface value); a crossing whose type mentions a type
+  parameter is checked at every instantiation, propagated to the callers with the calls' type
+  arguments like `promise_copies.rs`'s copies (`weak_hidden_generic_*.vlt`), and so are
+  conversions to an interface in generic code. A callback not written at the `with` (a generic
+  helper's `m.with(f)`) has its result checked by `weak_across` too
+  (`weakref_mutex_generic.vlt`). A closure literal passed to another task, or stored into the
+  locked value (`ownership/locked/stores.rs`), is checked by its captures: at run time either
+  would panic (a function value's environment is opaque to the transfer). Plain interface use
+  stays legal: an interface none of whose converted classes holds a weak collection is not
+  affected (`weak_hidden_ok_iface_plain.vlt`). Not covered: a function value held in a field
+  (its captures are not in its type), which the run-time transfer still rejects with a panic. `async main` keeps its maps
   across `await`s and spawned tasks use maps of their own at once (`weakmap_async.vlt`).
 
 ## Weak maps and `WeakRef`
