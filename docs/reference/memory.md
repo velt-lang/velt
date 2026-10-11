@@ -54,7 +54,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). The
   target of an assignment is evaluated before its right-hand side: a call at its root runs
   once, first (`get().v = f()`, `m.get(k)!.v = f()`). An assignment or compound assignment to
-  a field of a class object reached through a place writes to the object its target named
+  a field of a class object, or of an object literal another name refers to (`const keep =
+  o.inner`), reached through a place writes to the object its target named
   before the right-hand side ran: in `o.inner.v = f()` or `o.inner.v += f()`, when `f`
   replaces `o.inner`, the old object gets the value and the new one keeps its own, as in JS.
   This holds however deep the target is (`o.a.b.c.v = f()` when `f` replaces `o.a` and
@@ -63,11 +64,36 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   object and then installs a new one at the same place (`o.inner = null; o.inner = new P()`),
   the allocator may give the new object the freed address; the write then goes to the new
   object, where Node writes to the unreachable old one
-  ([#825](https://github.com/velt-lang/velt/issues/825)). A target in an object literal
-  (`o.inner.v = f()` with `o = { inner: { v: 1 } }`) is written in the object the right-hand
-  side installed ([#876](https://github.com/velt-lang/velt/issues/876)), and so is an array
+  ([#825](https://github.com/velt-lang/velt/issues/825)); the same holds for an array
   element whose array the right-hand side replaces
   ([#820](https://github.com/velt-lang/velt/issues/820)).
+- **An object literal nothing else refers to is stored inside its holder** (an object
+  literal or a class object), so an assignment into it whose right-hand side may replace it
+  is an error
+  ([#876](https://github.com/velt-lang/velt/issues/876)): in `o.inner.v = f()` with
+  `o = { inner: { v: 1 } }`, where `f` (or a function it calls) assigns a new object to
+  `o.inner` or to `o`, and no other name refers to an object of that type, Node writes to the
+  old object, which nothing can see any more, and Velt would write to the new one. The fix
+  computes the value first, which runs the same in TypeScript: `const v = f(); o.inner.v = v;`.
+  The check looks at what the right-hand side may run: reads, arithmetic and new values
+  compile as written, and so do calls that assign neither the field holding the object (that
+  field of that object type: assigning `b.vel` does not replace `b.pos`) nor one holding a
+  holder above it. A callback written in the call (`rows.map((r) => r.n)`) or held in a
+  constant counts as itself, `null` as nothing, and a function's own callback parameter as
+  what its callers pass, unless the function is itself used as a value (`fs.map((f) => f())`);
+  any other function value counts as any function the program uses as a value. A method call
+  through a base class or interface counts as every method of that name, and an `await` as
+  anything in the program. A generic function's field of type `T` counts as the type the call
+  passes for `T`, or, where that is not known, as any type the program passes as a type
+  argument. Code that runs without being called counts as called: a class's `toString()`,
+  `toJSON()`, `__inspect()` and own `clone()` when the right-hand side formats, serialises or
+  copies a value that may hold that class (`String(x)`, `[x].join()`, `JSON.stringify`,
+  `console.log`, `x.clone()`), its `[Symbol.dispose]()` wherever such a value is dropped, the
+  body of any generator in the program at each `next()`, `for...of` or spread over a
+  generator, and initializers evaluated where they are used. A variable of the function that
+  no closure captures (not a parameter) is replaced only by an assignment in the right-hand
+  side itself, so a function that reassigns a variable of its own (`s = apply(s, t)`) does not
+  count.
 
 ```ts
 class Box {

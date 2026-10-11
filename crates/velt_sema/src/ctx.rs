@@ -80,6 +80,10 @@ pub(crate) struct Ctx<'m> {
     pub laid_out: HashSet<DefId>,
     /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
     pub canon_memo: HashMap<TyId, TyId>,
+    /// Object types the replaced-holder check (`crate::replaced_holders`) accepted assignments
+    /// for because they are shared: lowering counts them from its first pass
+    /// (`hir::Program::counted_objects`).
+    pub counted_objects: Vec<TyId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -243,6 +247,7 @@ impl<'m> Ctx<'m> {
             shaping: vec![],
             laid_out: HashSet::new(),
             canon_memo: HashMap::new(),
+            counted_objects: Vec::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

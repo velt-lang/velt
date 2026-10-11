@@ -1,0 +1,4 @@
+assign_target_replaced_holder_call.vlt:22:3: error: the right-hand side may replace `p.inner`, the object `p.inner.v = …` writes into
+assign_target_replaced_holder_call.vlt:28:3: error: the right-hand side may replace `d.mid.inner`, the object `d.mid.inner.v += …` writes into
+note: compute the value first: `const v = g(); d.mid.inner.v += v;`
+assign_target_replaced_holder_call.vlt:34:3: error: the right-hand side may replace `b.inner`, the object `b.inner.v = …` writes into

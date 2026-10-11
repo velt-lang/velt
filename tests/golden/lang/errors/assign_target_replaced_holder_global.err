@@ -1,0 +1,2 @@
+assign_target_replaced_holder_global.vlt:11:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_global.vlt:13:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

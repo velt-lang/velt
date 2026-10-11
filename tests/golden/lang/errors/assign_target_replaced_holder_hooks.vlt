@@ -1,0 +1,329 @@
+// Class hooks that glue calls without a call in the program (#876): toString() from String(x),
+// join and templates, toJSON() from JSON.stringify, __inspect() from console.log, and
+// [Symbol.dispose]() from drop glue, reached directly, through containers, generic code, a base
+// class and a using declaration, and a resource class's own clone(), which spawn runs to copy
+// the arguments and receiver of an async call through a function value, a vtable or an
+// interface. Each hook calls a function value that replaces o.inner, so each assignment is an
+// error (JavaScript writes into the old object and prints 100).
+type Inner = { v: number };
+type Outer = { inner: Inner };
+// 01 (q08)
+class T_01 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } }
+function t01(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_01(bump);
+  o.inner.v = [t].join().length;
+  console.log(o.inner.v);
+}
+// 02 (q09)
+class T_02 { f: () => number; constructor(f: () => number) { this.f = f; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t02(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_02(bump);
+  o.inner.v = JSON.stringify(t).length;
+  console.log(o.inner.v);
+}
+// 03 (q39)
+class T_03 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } }
+function t03(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_03(bump);
+  o.inner.v = [t].toString().length;
+  console.log(o.inner.v);
+}
+// 04 (r02)
+class T_04 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t04(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_04(bump);
+  o.inner.v = JSON.stringify({ a: t }).length + 4;
+  console.log(o.inner.v);
+}
+// 05 (r03)
+class T_05 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t05(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_05(bump);
+  o.inner.v = JSON.stringify([t]).length + 4;
+  console.log(o.inner.v);
+}
+// 06 (r04)
+class T_06 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t06(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_06(bump);
+  o.inner.v = [[t]].join().length;
+  console.log(o.inner.v);
+}
+// 07 (r05)
+class T_07 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t07(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_07(bump);
+  o.inner.v = [t].join("-").length;
+  console.log(o.inner.v);
+}
+// 08 (r08)
+class T_08 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t08(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_08(bump);
+  o.inner.v = JSON.stringify(new Map([["a", t]]).get("a")).length;
+  console.log(o.inner.v);
+}
+// 09 (r09)
+class T_09 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t09(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const ts: T_09[] = [new T_09(bump)];
+  o.inner.v = ts.join().length;
+  console.log(o.inner.v);
+}
+// 10 (r19)
+class T_10 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t10(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_10(bump);
+  o.inner.v = new Map([["k", t]]).size + 12 + (String([t].join()).length - 13);
+  console.log(o.inner.v);
+}
+// 11 (r20)
+class T_11 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } }
+function t11(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_11(bump);
+  o.inner.v = JSON.stringify({ a: [t] }, null, 0).length;
+  console.log(o.inner.v);
+}
+// 12 (e01)
+class T_12 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_12"; } }
+
+function t12(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_12(bump);
+  o.inner.v = String([t]).length;
+  console.log(o.inner.v);
+}
+// 13 (e02)
+class T_13 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_13"; } }
+function logIt_13(x: T_13): number { console.log(x); return 13; }
+
+function t13(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_13(bump);
+  o.inner.v = logIt_13(t);
+  console.log(o.inner.v);
+}
+// 14 (e04)
+class T_14 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_14"; } }
+
+function t14(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_14(bump);
+  const r: Record<string, T_14> = { a: t };
+  o.inner.v = JSON.stringify(r).length;
+  console.log(o.inner.v);
+}
+// 15 (e05)
+class T_15 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_15"; } }
+function show_15<X>(x: X): number { return String(x).length; }
+
+function t15(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_15(bump);
+  o.inner.v = show_15(t);
+  console.log(o.inner.v);
+}
+// 16 (e07)
+class Base_16 { n: number = 1; }
+class Der_16 extends Base_16 { f: () => number; constructor(f: () => number) { super(); this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } }
+
+function t16(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const b: Base_16 = new Der_16(bump);
+  o.inner.v = String(b).length;
+  console.log(o.inner.v);
+}
+// 17 (e13)
+class Box_17<X> { x: X; constructor(x: X) { this.x = x; } toString(): string { return String(this.x); } }
+class T_17 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_17"; } }
+
+function t17(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_17(bump);
+  o.inner.v = String(new Box_17(t)).length;
+  console.log(o.inner.v);
+}
+// 18 (e14)
+class T_18 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_18"; } }
+function logAll_18(xs: T_18[]): number { console.log(xs); return 13; }
+
+function t18(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_18(bump);
+  o.inner.v = logAll_18([t]);
+  console.log(o.inner.v);
+}
+// 19 (e15)
+class T_19 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_19"; } }
+type W_19 = { items: T_19[] };
+
+function t19(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const w: W_19 = { items: [new T_19(bump)] };
+  o.inner.v = JSON.stringify([w]).length - 2;
+  console.log(o.inner.v);
+}
+// 20 (e16)
+class T_20 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_20"; } }
+
+function t20(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_20(bump);
+  const m = new Map<string, T_20[]>([["a", [t]]]);
+  o.inner.v = (m.get("a") ?? []).join().length;
+  console.log(o.inner.v);
+}
+// 21 (e17)
+class P_21 { f: () => number; constructor(f: () => number) { this.f = f; } get n(): number { return this.f(); } }
+function viaGetter_21(p: P_21): number { return p.n; }
+
+function t21(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const p = new P_21(bump);
+  o.inner.v = viaGetter_21(p);
+  console.log(o.inner.v);
+}
+// 22 (e20)
+class T_22 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_22"; } }
+function tpl_22(ts: T_22[]): number { return `${ts}`.length; }
+
+function t22(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_22(bump);
+  o.inner.v = tpl_22([t]);
+  console.log(o.inner.v);
+}
+// 23 (e22)
+class T_23 { f: () => number; constructor(f: () => number) { this.f = f; } toString(): string { this.f(); return "abcdefghijklm"; } toJSON(): string { this.f(); return "abcdefghijk"; } __inspect(): string { this.f(); return "T_23"; } }
+
+function t23(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const t = new T_23(bump);
+  const ts = [[t], [t]];
+  o.inner.v = ts.flat().join("").length - 13;
+  console.log(o.inner.v);
+}
+// 24 (d01)
+class D_24 { f: () => number; constructor(f: () => number) { this.f = f; } [Symbol.dispose](): void { this.f(); } }
+function consume_24(d: D_24): number { using x = d; return 13; }
+function t24(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const d = new D_24(bump);
+  o.inner.v = consume_24(d);
+  console.log(o.inner.v);
+}
+// 25 (d02)
+class D_25 { f: () => number; constructor(f: () => number) { this.f = f; } [Symbol.dispose](): void { this.f(); } }
+function t25(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  let d = new D_25(bump);
+  o.inner.v = (() => { using x = d; return 13; })();
+  console.log(o.inner.v);
+}
+// 26 (a2: spawn of an async call through a function value copies with clone())
+class R_26 {
+  f: () => number;
+  constructor(f: () => number) { this.f = f; }
+  clone(): R_26 { console.log("clone"); this.f(); return new R_26(this.f); }
+  [Symbol.dispose](): void {}
+}
+async function use_26(r: R_26): Promise<number> { return 1; }
+function take_26(p: Promise<number>): number { return 13; }
+function t26(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const r = new R_26(bump);
+  const af = use_26;
+  o.inner.v = take_26(spawn(af(r)));
+  console.log(o.inner.v, o.inner === o.inner);
+}
+// 27 (a3: spawn of an async call through a virtual method copies with clone())
+class R_27 {
+  f: () => number;
+  constructor(f: () => number) { this.f = f; }
+  clone(): R_27 { console.log("clone"); this.f(); return new R_27(this.f); }
+  [Symbol.dispose](): void {}
+}
+class S_27 { async use(r: R_27): Promise<number> { return 1; } }
+class T_27 extends S_27 { override async use(r: R_27): Promise<number> { return 2; } }
+function take_27(p: Promise<number>): number { return 13; }
+function t27(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const r = new R_27(bump);
+  const s: S_27 = new T_27();
+  o.inner.v = take_27(spawn(s.use(r)));
+  console.log(o.inner.v, r.f());
+}
+// 28 (a4: spawn of an async call through an interface method copies with clone())
+class R_28 {
+  f: () => number;
+  constructor(f: () => number) { this.f = f; }
+  clone(): R_28 { console.log("clone"); this.f(); return new R_28(this.f); }
+  [Symbol.dispose](): void {}
+}
+interface U_28 { use(r: R_28): Promise<number>; }
+class S_28 implements U_28 { async use(r: R_28): Promise<number> { return 1; } }
+function take_28(p: Promise<number>): number { return 13; }
+function t28(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const r = new R_28(bump);
+  const s: U_28 = new S_28();
+  o.inner.v = take_28(spawn(s.use(r)));
+  console.log(o.inner.v, r.f());
+}
+// 29 (a11: spawn of an async call through an interface method (receiver only) copies with clone())
+class R_29 {
+  f: () => number;
+  constructor(f: () => number) { this.f = f; }
+  clone(): R_29 { console.log("clone"); this.f(); return new R_29(this.f); }
+  [Symbol.dispose](): void {}
+}
+interface Job_29 { go(): Promise<number>; }
+class W_29 implements Job_29 { r: R_29; constructor(r: R_29) { this.r = r; } async go(): Promise<number> { return 1; } }
+function take_29(p: Promise<number>): number { return 13; }
+function t29(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const j: Job_29 = new W_29(new R_29(bump));
+  o.inner.v = take_29(spawn(j.go()));
+  console.log(o.inner.v);
+}
+function main(): void {}

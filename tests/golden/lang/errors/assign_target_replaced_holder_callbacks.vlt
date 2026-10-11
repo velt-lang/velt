@@ -1,0 +1,19 @@
+// A callback that receives its function from an array method or a generic function runs what
+// that function holds (#876): each right-hand side may replace `o.inner`, so each assignment is
+// an error with a fix. (JavaScript prints 100 after each.)
+type Inner = { v: number };
+type Outer = { inner: Inner };
+function put<T>(h: { inner: T }, x: T) {
+  h.inner = x;
+}
+const o: Outer = { inner: { v: 0 } };
+const fs: Array<() => number> = [() => { o.inner = { v: 100 }; return 13; }];
+o.inner.v = fs.map((f) => f())[0];
+o.inner.v = fs.reduce((a, f) => a + f(), 0);
+function run(f: () => number): number { return f(); }
+o.inner.v = fs.map((f) => run(f))[0];
+function first<T>(xs: T[], f: (x: T) => number): number { return f(xs[0]); }
+o.inner.v = first(fs, (g) => g());
+const p: (h: Outer, x: Inner) => void = put;
+o.inner.v = [p].map((f) => { f(o, { v: 100 }); return 13; })[0];
+console.log(o.inner.v);
