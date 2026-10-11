@@ -62,6 +62,8 @@ GDB: `gdb target/velt/app`, then `break app.vlt:12` and `run`.
    offers to install CodeLLDB.
 2. Press **F5** in a package (a folder with `package.vlt`), or with a `.vlt` file open outside
    one. Or use **▶ Run | Debug** above `main`, or the run and debug buttons of the editor title.
+   In a test file, **▶ Run test | Debug test** above each test runs it, or debugs its test
+   program (`velt test <file> --filter <test> --exact --no-run --json` builds it).
 
 The extension runs `velt build --json` (in the default, Cranelift build, so clang is not
 needed), shows build errors in the *Problems* view, and starts the debugger on the executable

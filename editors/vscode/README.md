@@ -27,7 +27,7 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
   - semantic highlighting: types, functions, methods, parameters, properties, enum members;
     `let` bindings carry the `mutable` modifier (to underline them, add
     `"editor.semanticTokenColorCustomizations": { "rules": { "*.mutable:velt": { "underline": true } } }`);
-  - **▶ Run | Debug** above `main`.
+  - **▶ Run | Debug** above `main`, and **▶ Run test | Debug test** above each test.
 - Debugging (F5): breakpoints in `.vlt` files, stepping and the call stack, with nothing to
   configure. See [Debugging](#debugging).
 

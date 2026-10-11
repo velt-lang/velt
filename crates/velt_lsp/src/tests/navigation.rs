@@ -333,6 +333,47 @@ fn code_lenses_run_and_debug_main() {
     client.shutdown();
 }
 
+/// In a test file, each test `velt test` would run gets "▶ Run test" and "Debug test" with its
+/// name; a `test_*` function it skips (not exported, or with parameters) gets none.
+#[test]
+fn code_lenses_run_and_debug_tests() {
+    let mut client = Client::start_with(json!({
+        "capabilities": {},
+        "initializationOptions": { "runLenses": true },
+    }));
+    const TESTS: &str = "export function test_add() {\n  assert(1 + 1 == 2);\n}\n\n\
+                         function test_hidden() {}\n\n\
+                         export function test_with(n: number) {}\n";
+    let file = uri("math.test.vlt");
+    client.open(&file, TESTS);
+    let lenses = client.request(
+        "textDocument/codeLens",
+        json!({ "textDocument": { "uri": file } }),
+    );
+    let got: Vec<(String, String, Value, u64)> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["command"]["title"].as_str().unwrap().to_string(),
+                l["command"]["command"].as_str().unwrap().to_string(),
+                l["command"]["arguments"].clone(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let args = json!([file, "test_add"]);
+    assert_eq!(
+        got,
+        [
+            ("▶ Run test".into(), "velt.runTest".into(), args.clone(), 0),
+            ("Debug test".into(), "velt.debugTest".into(), args, 0)
+        ]
+    );
+    client.shutdown();
+}
+
 /// Other clients (Neovim, Helix, Zed) don't have the lenses' commands, so they get none.
 #[test]
 fn plain_clients_get_no_code_lenses() {

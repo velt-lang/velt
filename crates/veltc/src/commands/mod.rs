@@ -64,7 +64,21 @@ pub fn execute(cmd: Command) -> ExitCode {
             release,
             locked,
             watch,
-        } => return test::test_command(path.as_deref(), release, locked, watch),
+            filter,
+            exact,
+            no_run,
+            json,
+        } => {
+            let opts = test::TestOptions {
+                release,
+                locked,
+                filter,
+                exact,
+                no_run,
+                json,
+            };
+            return test::test_command(path.as_deref(), &opts, watch);
+        }
         Command::Fmt { paths, check } => return fmt::fmt_command(&paths, check),
         Command::Lsp => lsp::lsp_command(),
         Command::Doc(args) => doc::doc_command(&args),

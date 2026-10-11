@@ -134,6 +134,14 @@ pub enum Command {
         locked: bool,
         /// `--watch`: rerun on every change.
         watch: bool,
+        /// `--filter <text>`: only the tests whose name contains it.
+        filter: Option<String>,
+        /// `--exact`: only the test whose name is the filter.
+        exact: bool,
+        /// `--no-run`: build the test harnesses (for a debugger) without running them.
+        no_run: bool,
+        /// `--json` (with `--no-run`): report the harnesses as JSON.
+        json: bool,
     },
     /// `velt fmt [paths...] [--check]`: no paths → the current package's `src/` (or the cwd).
     Fmt { paths: Vec<PathBuf>, check: bool },

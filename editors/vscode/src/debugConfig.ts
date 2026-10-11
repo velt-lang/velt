@@ -51,15 +51,23 @@ export interface VeltConfig {
   build?: boolean;
   /** Extra `velt build` options, e.g. `["--backend", "llvm"]`. */
   buildArgs?: string[];
+  /** Debug this test of `file` (a `test_*` function) instead of a program. */
+  test?: string;
   stopOnEntry?: boolean;
   /** Attach: the process id. */
   pid?: number | string;
   [key: string]: unknown;
 }
 
-/** The arguments of `velt build` for `config`: the file (if any), its `buildArgs`, `--json`. */
+/**
+ * The velt arguments that build `config`'s program: `velt build` with the file (if any), its
+ * `buildArgs` and `--json`; for a test, `velt test <file> --filter <test> --exact --no-run --json`.
+ */
 export function buildArgs(config: VeltConfig): string[] {
   const file = config.file ? [config.file] : [];
+  if (config.test) {
+    return ["test", ...file, "--filter", config.test, "--exact", "--no-run", "--json"];
+  }
   return ["build", ...file, ...(config.buildArgs ?? []), "--json"];
 }
 
@@ -77,26 +85,41 @@ export interface BuildDiagnostic {
   notes: string[];
 }
 
-/** What `velt build --json` prints. */
+/** What `velt build --json` prints (and the program of `velt test --no-run --json`). */
 export interface BuildResult {
   executable: string | null;
   debugInfo: boolean | null;
   lldbScript: string | null;
+  /** Variables to run the program with (a test harness's `VELT_SCRIPT`). */
+  env: Record<string, string>;
   diagnostics: BuildDiagnostic[];
   errors: number;
   warnings: number;
 }
 
-/** Parse the stdout of `velt build --json`; throws if it is not that document. */
+/** One test harness of `velt test --no-run --json`. */
+interface Harness {
+  executable: string;
+  tests: string[];
+  env?: Record<string, string>;
+  debugInfo?: boolean;
+}
+
+/**
+ * Parse the stdout of `velt build --json`, or of `velt test --no-run --json` (its first
+ * harness is the program); throws if it is neither.
+ */
 export function parseBuildResult(stdout: string): BuildResult {
-  const value = JSON.parse(stdout) as Partial<BuildResult>;
+  const value = JSON.parse(stdout) as Partial<BuildResult> & { harnesses?: Harness[] };
   if (typeof value !== "object" || value === null || !Array.isArray(value.diagnostics)) {
     throw new Error("`velt build --json` printed something else");
   }
+  const harness = value.harnesses?.[0];
   return {
-    executable: value.executable ?? null,
-    debugInfo: value.debugInfo ?? null,
+    executable: harness?.executable ?? value.executable ?? null,
+    debugInfo: harness?.debugInfo ?? value.debugInfo ?? null,
     lldbScript: value.lldbScript ?? null,
+    env: harness?.env ?? {},
     diagnostics: value.diagnostics,
     errors: value.errors ?? 0,
     warnings: value.warnings ?? 0,
