@@ -15,6 +15,8 @@
 //! - `jit`: an in-memory ELF image with absolute addresses for `velt dev`'s JIT code, announced
 //!   to GDB and LLDB through the GDB JIT interface.
 
+use std::cmp::Reverse;
+
 use cranelift_codegen::gimli::write::{
     Address, AttributeValue, DwarfUnit, Expression, FileId, LineProgram, LineString, Range,
     RangeList, UnitEntryId,
@@ -295,19 +297,121 @@ pub(crate) fn build_unit(
             let mut base = Expression::new();
             base.op_reg(frame);
             sub.set(gimli::DW_AT_frame_base, AttributeValue::Exprloc(base));
-            for v in &f.vars {
-                add_variable(&mut dwarf, &mut types, sub_id, v, file_of(v.debug.decl));
+            // A variable is in scope from its declaration to the end of its block: source
+            // ranges that nest (blocks do), so each variable's lexical block goes inside the one
+            // of the innermost variable whose range holds its own. Debuggers expect sibling
+            // blocks not to overlap.
+            let mut vars: Vec<&Variable> = f.vars.iter().collect();
+            vars.sort_by_key(|v| {
+                (
+                    !v.debug.param,
+                    v.debug.decl.line,
+                    Reverse(end_key(&v.debug)),
+                )
+            });
+            let mut open: Vec<(&vir::LocalDebug, UnitEntryId)> = vec![];
+            for v in vars {
+                while open.last().is_some_and(|(o, _)| !holds(o, &v.debug)) {
+                    open.pop();
+                }
+                let parent = open.last().map_or(sub_id, |(_, e)| *e);
+                let parent = match scope_ranges(f, &v.debug) {
+                    None => parent,
+                    Some(ranges) => {
+                        let ranges = ranges
+                            .into_iter()
+                            .map(|(begin, end)| Range::StartLength {
+                                begin: offset(address(i), begin),
+                                length: u64::from(end - begin),
+                            })
+                            .collect();
+                        let ranges = dwarf.unit.ranges.add(RangeList(ranges));
+                        let block = dwarf.unit.add(parent, gimli::DW_TAG_lexical_block);
+                        dwarf
+                            .unit
+                            .get_mut(block)
+                            .set(gimli::DW_AT_ranges, AttributeValue::RangeListRef(ranges));
+                        block
+                    }
+                };
+                if !v.debug.param {
+                    open.push((&v.debug, parent));
+                }
+                add_variable(&mut dwarf, &mut types, parent, v, file_of(v.debug.decl));
             }
         }
     }
     dwarf
 }
 
-/// A `DW_TAG_variable` (or `DW_TAG_formal_parameter`) for `v` under subprogram `sub`.
+/// The code ranges (offsets in `f`) where `var` is in scope: code located from its declaration
+/// line (a whole line in one block: debuggers make a breakpoint location per block a line's
+/// code is in) up to the end of its block. `None` when that is the whole function (params,
+/// variables of the function's own block declared at its start).
+fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
+    if var.param {
+        return None;
+    }
+    let inside = |l: &Option<SrcLoc>| {
+        l.is_some_and(|l| {
+            l.file == var.decl.file
+                && l.line >= var.decl.line
+                && var.end.is_none_or(|e| at(l) < at(e))
+        })
+    };
+    let mut ranges: Vec<(u32, u32)> = vec![];
+    let mut whole = true;
+    for (k, (start, loc)) in f.rows.iter().enumerate() {
+        let end = f.rows.get(k + 1).map_or(f.size, |r| r.0);
+        if *start >= end {
+            continue;
+        }
+        if !inside(loc) {
+            whole = false;
+            continue;
+        }
+        match ranges.last_mut() {
+            Some(last) if last.1 == *start => last.1 = end,
+            _ => ranges.push((*start, end)),
+        }
+    }
+    (!whole).then_some(ranges)
+}
+
+/// A source position, ordered.
+fn at(l: SrcLoc) -> (u32, u32) {
+    (l.line, l.col)
+}
+
+/// The end of a variable's scope, ordered (`None`, the function's end, is last).
+fn end_key(v: &vir::LocalDebug) -> (bool, (u32, u32)) {
+    (v.end.is_none(), v.end.map_or((0, 0), at))
+}
+
+/// Whether `outer`'s scope holds `inner`'s (both in one file).
+fn holds(outer: &vir::LocalDebug, inner: &vir::LocalDebug) -> bool {
+    outer.decl.file == inner.decl.file
+        && outer.decl.line <= inner.decl.line
+        && end_key(inner) <= end_key(outer)
+}
+
+/// `a` plus `by` bytes.
+fn offset(a: Address, by: u32) -> Address {
+    match a {
+        Address::Constant(c) => Address::Constant(c + u64::from(by)),
+        Address::Symbol { symbol, addend } => Address::Symbol {
+            symbol,
+            addend: addend + i64::from(by),
+        },
+    }
+}
+
+/// A `DW_TAG_variable` (or `DW_TAG_formal_parameter`) for `v` under `parent` (its subprogram or
+/// lexical block).
 fn add_variable(
     dwarf: &mut DwarfUnit,
     types: &mut types::Types<'_>,
-    sub: UnitEntryId,
+    parent: UnitEntryId,
     v: &Variable,
     file: Option<FileId>,
 ) {
@@ -325,7 +429,7 @@ fn add_variable(
     if v.debug.by_ref {
         location.op_deref();
     }
-    let var = dwarf.unit.add(sub, tag);
+    let var = dwarf.unit.add(parent, tag);
     let var = dwarf.unit.get_mut(var);
     var.set(gimli::DW_AT_name, AttributeValue::StringRef(name));
     var.set(gimli::DW_AT_type, AttributeValue::UnitRef(ty));

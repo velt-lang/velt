@@ -268,6 +268,7 @@ impl FnLower<'_, '_> {
 
     /// Block expression (`x++`/`++x` encodings, match arms): its value outlives its scope.
     fn block_expr(&mut self, b: &hir::Block, ty: TyId) -> Operand {
+        self.note_scope_ends(b, false);
         self.push_scope(ScopeKind::Block);
         for s in &b.stmts {
             self.stmt(s);
