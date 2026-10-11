@@ -94,7 +94,8 @@ fi
 cat > "$out/README.md" <<EOF
 # Velt $version ($host)
 
-Install:  get-velt.sh --archive <this .tar.gz> (an asset of every release), or
+Install:  get-velt.sh --archive <this .tar.gz> (an asset of every release; put the release's
+          SHA256SUMS and SHA256SUMS.sig beside it, so it is checked), or
           scripts/install.sh <this directory> from a source checkout. Both install it as
           ~/.velt/toolchains/$version beside other versions, with bin/velt-launcher as
           ~/.velt/bin/velt; or run bin/velt from this directory as it is.

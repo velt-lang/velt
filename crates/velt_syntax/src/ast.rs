@@ -324,6 +324,25 @@ pub enum TypeExprKind {
     Literal(SignedLit),
     /// Object type `{ kind: "circle"; r: f64 }` (an anonymous object type).
     Object(Vec<ObjectTypeField>),
+    /// An object type with an index signature: `{ [key: string]: T }`, possibly with named
+    /// members (`{ name?: string; [key: string]: string | null }`). An interface whose body has
+    /// an index signature is parsed as a type alias to one.
+    IndexSig {
+        /// The named members, in source order.
+        fields: Vec<ObjectTypeField>,
+        /// The key: `key: string` in `[key: string]`.
+        key: Box<IndexKey>,
+        /// The values' type.
+        value: Box<TypeExpr>,
+        /// `readonly [key: string]: T`
+        readonly: bool,
+    },
+    /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
+    /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof
+    /// import("m")`, `typeof f<T>`); sema resolves it to the error type without a diagnostic.
+    Query(Vec<Ident>),
+    /// `keyof T`: the union of `T`'s keys.
+    KeyOf(Box<TypeExpr>),
     /// `null` in type position.
     Null,
     /// `undefined` in type position (issue #930).
@@ -339,6 +358,13 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
+}
+
+/// The key of an index signature, `[name: ty]` (the name is documentation only).
+#[derive(Clone, Debug)]
+pub struct IndexKey {
+    pub name: Ident,
+    pub ty: TypeExpr,
 }
 
 /// `name: T` / `name?: T` / `readonly name: T` in an object type.

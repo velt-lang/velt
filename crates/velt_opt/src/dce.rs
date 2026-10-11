@@ -277,6 +277,7 @@ mod tests {
                 line: 1,
                 col: 1,
             },
+            end: None,
             ty: velt_vir::vir::DebugTyId(0),
             by_ref: false,
             param: false,

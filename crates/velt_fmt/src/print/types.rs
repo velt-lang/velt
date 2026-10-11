@@ -5,7 +5,7 @@
 //! sits inside (each comment stays with its field, as in a class body).
 
 use velt_common::Span;
-use velt_syntax::ast::{Ident, Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
+use velt_syntax::ast::{Ident, IndexKey, Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
 
 use super::decls::braced;
 use super::Printer;
@@ -77,6 +77,20 @@ impl<'a> Printer<'a> {
                 text(signed_lit(lit, spelled.first()))
             }
             TypeExprKind::Object(fields) => self.object_type(fields, t.span),
+            TypeExprKind::IndexSig {
+                fields,
+                key,
+                value,
+                readonly,
+            } => {
+                let members = index_sig_members(fields, key, value, *readonly);
+                self.index_sig_type(&members, t.span)
+            }
+            TypeExprKind::Query(path) => {
+                let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+                text(format!("typeof {}", path.join(".")))
+            }
+            TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
@@ -115,6 +129,56 @@ impl<'a> Printer<'a> {
             line(),
             "}"
         ])
+    }
+
+    /// `{ a?: T; [key: string]: V }`, like an object type (`object_type`).
+    fn index_sig_type(&mut self, members: &[IndexSigMember], span: Span) -> Doc {
+        if self.comments.any_within(span.lo, span.hi) {
+            let before = self.comments.take_before(span.lo);
+            let body = self.index_sig_lines(members, span.hi);
+            return cat![self.leading_doc(&before), braced(body)];
+        }
+        let docs = members.iter().map(|m| self.index_sig_member(m)).collect();
+        group(cat![
+            "{",
+            indent(cat![line(), join(&cat![";", line()], docs)]),
+            if_break(";", ""),
+            line(),
+            "}"
+        ])
+    }
+
+    /// The members of an object type or interface with an index signature, one per line.
+    pub(super) fn index_sig_lines(&mut self, members: &[IndexSigMember], end: u32) -> Doc {
+        self.lines(
+            members,
+            end,
+            |m| m.range(),
+            |_, _| false,
+            |p, m| cat![p.index_sig_member(m), ";"],
+        )
+    }
+
+    fn index_sig_member(&mut self, m: &IndexSigMember) -> Doc {
+        match m {
+            IndexSigMember::Field(f) => self.object_type_field(f),
+            IndexSigMember::Index {
+                key,
+                value,
+                readonly,
+            } => {
+                let readonly = if *readonly { "readonly " } else { "" };
+                cat![
+                    readonly,
+                    "[",
+                    key.name.name.clone(),
+                    ": ",
+                    self.ty(&key.ty),
+                    "]: ",
+                    self.ty(value)
+                ]
+            }
+        }
     }
 
     /// `name: T` / `name?: T` / `readonly name: T`
@@ -189,6 +253,7 @@ impl<'a> Printer<'a> {
         match t.kind {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
+            | TypeExprKind::KeyOf(_)
             | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)
@@ -298,4 +363,50 @@ fn is_readonly_op(src: &str) -> bool {
     src.trim_start_matches(|c: char| c == '(' || c.is_whitespace())
         .strip_prefix("readonly")
         .is_some_and(|r| r.starts_with(char::is_whitespace))
+}
+
+/// A member of an object type with an index signature, in source order.
+pub(super) enum IndexSigMember<'a> {
+    Field(&'a ObjectTypeField),
+    Index {
+        key: &'a IndexKey,
+        value: &'a TypeExpr,
+        readonly: bool,
+    },
+}
+
+impl IndexSigMember<'_> {
+    fn range(&self) -> (u32, u32) {
+        match self {
+            IndexSigMember::Field(f) => (f.span.lo, f.span.hi),
+            IndexSigMember::Index { key, value, .. } => (key.name.span.lo, value.span.hi),
+        }
+    }
+}
+
+/// The named members and the index signature of an object type, in source order.
+pub(super) fn index_sig_members<'a>(
+    fields: &'a [ObjectTypeField],
+    key: &'a IndexKey,
+    value: &'a TypeExpr,
+    readonly: bool,
+) -> Vec<IndexSigMember<'a>> {
+    let at = key.name.span.lo;
+    let mut out: Vec<IndexSigMember> = fields
+        .iter()
+        .filter(|f| f.span.lo < at)
+        .map(IndexSigMember::Field)
+        .collect();
+    out.push(IndexSigMember::Index {
+        key,
+        value,
+        readonly,
+    });
+    out.extend(
+        fields
+            .iter()
+            .filter(|f| f.span.lo > at)
+            .map(IndexSigMember::Field),
+    );
+    out
 }

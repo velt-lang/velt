@@ -163,7 +163,14 @@ fn add(target: &str, from: Option<&Path>, unverified: bool) -> Result<(), String
                              to install a pack nothing can check"
                         )
                     };
-                    let keys = velt_toolchain::signature::public_keys().map_err(way_out)?;
+                    // The release keys, without those the root this toolchain is installed in
+                    // has seen revoked.
+                    let root = std::env::current_exe()
+                        .ok()
+                        .and_then(|exe| velt_toolchain::Root::of_toolchain_exe(&exe));
+                    let keys = velt_toolchain::signature::trust(root.as_ref())
+                        .map_err(way_out)?
+                        .keys;
                     let sums = velt_toolchain::signature::signed_sums(&release, &keys)
                         .map_err(way_out)?
                         .ok_or_else(|| {

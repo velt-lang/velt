@@ -27,7 +27,7 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
   - semantic highlighting: types, functions, methods, parameters, properties, enum members;
     `let` bindings carry the `mutable` modifier (to underline them, add
     `"editor.semanticTokenColorCustomizations": { "rules": { "*.mutable:velt": { "underline": true } } }`);
-  - **▶ Run | Debug** above `main`.
+  - **▶ Run | Debug** above `main`, and **▶ Run test | Debug test** above each test.
 - Debugging (F5): breakpoints in `.vlt` files, stepping and the call stack, with nothing to
   configure. See [Debugging](#debugging).
 
@@ -73,8 +73,8 @@ needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes o
 { "type": "velt", "request": "launch", "name": "Debug", "args": ["--port", "8080"] }
 ```
 
-`velt new` already adds it. On Windows the default build has no line information yet; add
-`"buildArgs": ["--backend", "llvm"]` (needs clang). `templates/` has examples, including
+`velt new` already adds it. On Windows use CodeLLDB or LLDB DAP; the C/C++ extension's Visual
+Studio debugger needs `"buildArgs": ["--backend", "llvm"]` (needs clang), whose build has a PDB. `templates/` has examples, including
 attaching to a program that `velt dev --exe` restarts on every change.
 
 ## Settings

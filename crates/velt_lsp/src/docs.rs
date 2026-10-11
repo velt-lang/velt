@@ -272,13 +272,25 @@ impl FileDocs {
                     self.type_fields(&f.ty);
                 }
             }
+            ast::TypeExprKind::IndexSig {
+                fields, key, value, ..
+            } => {
+                for f in fields {
+                    self.add(&f.name, f.span.lo);
+                    self.type_fields(&f.ty);
+                }
+                self.type_fields(&key.ty);
+                self.type_fields(value);
+            }
+            ast::TypeExprKind::KeyOf(t) => self.type_fields(t),
             ast::TypeExprKind::Predicate { ty, .. } => {
                 ty.iter().for_each(|t| self.type_fields(t));
             }
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null
             | ast::TypeExprKind::Undefined
-            | ast::TypeExprKind::Void => {}
+            | ast::TypeExprKind::Void
+            | ast::TypeExprKind::Query(_) => {}
         }
     }
 }

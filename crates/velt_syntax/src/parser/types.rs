@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        let mut ty = if self.at_ident_like() {
+        let mut ty = if self.at_ident_like() && !self.at_keyof() {
             let named = self.parse_named_type_with(true)?;
             self.parse_array_suffixes(lo, named)
         } else {
@@ -263,12 +263,90 @@ impl<'a> Parser<'a> {
                     span,
                 })
             }
+            Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            _ if self.at_keyof() => {
+                self.bump(); // keyof
+                let inner = self.parse_type_no_union()?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::KeyOf(Box::new(inner)),
+                    span: self.span_from(lo),
+                })
+            }
             t if Self::is_ident_like(t) => self.parse_named_type(),
             _ => {
                 self.error_expected("type");
                 Err(Fail)
             }
         }
+    }
+
+    /// `keyof` as a type operator (not a type named `keyof`).
+    pub(super) fn at_keyof(&mut self) -> bool {
+        self.at_word("keyof")
+            && (Self::is_ident_like(self.nth(1))
+                || matches!(
+                    self.nth(1),
+                    Tok::Kw(Kw::Typeof) | Tok::LBrace | Tok::LParen | Tok::LBracket
+                ))
+    }
+
+    /// `typeof x` / `typeof ns.f` / `typeof obj.field` in a type (a type query). `typeof
+    /// import("m")` and type arguments after the name (`typeof f<string>`) are not supported yet:
+    /// they are reported here and parsed as an empty query, which sema skips.
+    fn parse_type_query(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.bump(); // typeof
+        if self.at(Tok::Kw(Kw::Import)) {
+            self.bump();
+            self.expect(Tok::LParen)?;
+            if matches!(self.peek(), Tok::Str(_)) {
+                self.bump();
+            }
+            self.expect(Tok::RParen)?;
+            while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
+                self.bump();
+                self.bump();
+            }
+            let span = self.span_from(lo);
+            self.error(
+                "`typeof import(...)` types are not supported yet (#936)",
+                span,
+            );
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Query(vec![]),
+                span,
+            });
+        }
+        let mut path = if self.at(Tok::Kw(Kw::This)) {
+            let span = self.cur_span();
+            self.bump();
+            vec![Ident {
+                name: "this".into(),
+                span,
+            }]
+        } else {
+            vec![self.parse_ident()?]
+        };
+        while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
+            self.bump();
+            path.push(self.take_ident());
+        }
+        if self.at(Tok::Lt) {
+            let args_lo = self.cur_lo();
+            let args = self.speculate(|p| p.parse_type_args());
+            if args.is_some() {
+                let span = self.span_from(args_lo);
+                self.error(
+                    "type arguments after `typeof f` (an instantiation expression) are not supported yet (#936)",
+                    span,
+                );
+                path.clear();
+            }
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Query(path),
+            span: self.span_from(lo),
+        })
     }
 
     /// A string / number / `true` / `false` literal (numbers may have a leading `-`).
@@ -288,6 +366,7 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();
+        let mut index: Option<IndexSignature> = None;
         while !self.at(Tok::RBrace) {
             let flo = self.cur_lo();
             // `readonly` is a modifier only when a field name follows (a field may be named
@@ -299,6 +378,14 @@ impl<'a> Parser<'a> {
                 );
             if readonly {
                 self.bump();
+            }
+            if self.at_index_signature() {
+                let sig = self.parse_index_signature(flo, readonly)?;
+                self.add_index_signature(&mut index, sig);
+                if !self.eat(Tok::Semi) && !self.eat(Tok::Comma) {
+                    break;
+                }
+                continue;
             }
             let name = self.parse_prop_key()?;
             let optional = self.eat(Tok::Question);
@@ -323,10 +410,63 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RBrace)?;
+        let kind = match index {
+            Some(ix) => ix.into_type(fields),
+            None => TypeExprKind::Object(fields),
+        };
         Ok(TypeExpr {
-            kind: TypeExprKind::Object(fields),
+            kind,
             span: self.span_from(lo),
         })
+    }
+
+    /// At `[name: K]` (an index signature, after any `readonly`)?
+    pub(super) fn at_index_signature(&mut self) -> bool {
+        self.at(Tok::LBracket) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::Colon
+    }
+
+    /// `[key: K]: V` (the cursor at `[`).
+    pub(super) fn parse_index_signature(
+        &mut self,
+        lo: u32,
+        readonly: bool,
+    ) -> PResult<IndexSignature> {
+        self.bump(); // [
+        let key_name = self.take_ident();
+        self.bump(); // :
+        let key = self.parse_type()?;
+        self.expect(Tok::RBracket)?;
+        if self.at(Tok::Question) {
+            let span = self.cur_span();
+            self.error("an index signature cannot be optional", span);
+            self.bump();
+        }
+        self.expect(Tok::Colon)?;
+        let value = self.parse_type()?;
+        Ok(IndexSignature {
+            key_name,
+            key,
+            value,
+            readonly,
+            span: self.span_from(lo),
+        })
+    }
+
+    /// Records index signature `sig` of an object type or interface; a second one (`[k:
+    /// number]` next to `[k: string]`) is not supported yet.
+    pub(super) fn add_index_signature(
+        &mut self,
+        index: &mut Option<IndexSignature>,
+        sig: IndexSignature,
+    ) {
+        if index.is_some() {
+            self.error(
+                "more than one index signature in a type is not supported yet (#937)",
+                sig.span,
+            );
+            return;
+        }
+        *index = Some(sig);
     }
 
     /// Tuple element types up to (not including) `]`. Element labels (`[kind: string, b64:
@@ -607,5 +747,29 @@ pub(super) fn or_null(ty: TypeExpr) -> TypeExpr {
             kind: TypeExprKind::Union(vec![ty, null]),
             span,
         },
+    }
+}
+
+/// An index signature while its object type or interface is parsed.
+pub(super) struct IndexSignature {
+    pub key_name: Ident,
+    pub key: TypeExpr,
+    pub value: TypeExpr,
+    pub readonly: bool,
+    pub span: Span,
+}
+
+impl IndexSignature {
+    /// The object type with this index signature and the named members `fields`.
+    pub(super) fn into_type(self, fields: Vec<ObjectTypeField>) -> TypeExprKind {
+        TypeExprKind::IndexSig {
+            fields,
+            key: Box::new(IndexKey {
+                name: self.key_name,
+                ty: self.key,
+            }),
+            value: Box::new(self.value),
+            readonly: self.readonly,
+        }
     }
 }

@@ -251,8 +251,12 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
 
 1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
    a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
-2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
-   version it accepts;
+2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the version the
+   package's [`velt.lock.json`](manifest.md#veltlockjson) records when the field accepts it
+   (installed first if it is missing), so every machine builds a commit with the same velt;
+   otherwise the newest installed version the field accepts. `velt update` takes the newest
+   *installed* one (`velt toolchain install 0.2` fetches a newer patch first),
+   which then records itself in the lock;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
 
@@ -279,6 +283,7 @@ $ velt toolchain list
 |---|---|
 | `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
 | `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
+| `install --from <file> [--unverified] [--default]` | install a toolchain archive downloaded before (`velt-<version>-<triple>.tar.gz` for this machine), without the network: checked against its release's `SHA256SUMS` and `SHA256SUMS.sig` beside it, or, with `--unverified`, not checked. Without the network it checks only the revocations this root already stored: a key revoked after the root last read the index of releases is still trusted. Installing a version that is already installed keeps it, and says so |
 | `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
 | `prune [--dry-run]` | remove every installed version but the default, the one this directory runs, those a link points into, and, for each `major.minor`, the one a pin like `"0.1"` runs (its newest release, or its newest pre-release when it has no release yet), saying how much space each frees; `--dry-run` only lists them. A version a lockfile still names is installed again when it is next used |
 | `default [<toolchain>]` | show or set the default |
@@ -360,7 +365,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
-| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop and a task stays on the worker it started on). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; sockets stay on the worker that registered them (accepted connections on the listener's worker); spawn bursts and cross-worker request/reply are much slower than with `stealing` |
+| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
 | `CLICOLOR_FORCE` | force colored output |

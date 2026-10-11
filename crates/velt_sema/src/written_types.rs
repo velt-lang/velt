@@ -62,6 +62,32 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             let fs: Vec<String> = fs.iter().map(object_field).collect();
             format!("{{ {} }}", fs.join("; "))
         }
+        T::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+        } => {
+            let mut fs: Vec<String> = fields.iter().map(object_field).collect();
+            let ro = if *readonly { "readonly " } else { "" };
+            fs.push(format!(
+                "{ro}[{}: {}]: {}",
+                key.name.name,
+                written(&key.ty),
+                written(value)
+            ));
+            format!("{{ {} }}", fs.join("; "))
+        }
+        T::Query(path) => {
+            let path: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
+            format!("typeof {}", path.join("."))
+        }
+        T::KeyOf(t) => match t.kind {
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("keyof ({})", written(t))
+            }
+            _ => format!("keyof {}", written(t)),
+        },
         T::Null => "null".into(),
         T::Undefined => "undefined".into(),
         T::Void => "void".into(),

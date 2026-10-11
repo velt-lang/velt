@@ -1,4 +1,4 @@
-//! DWARF line tables: in objects (ELF, Mach-O; none for COFF) and in the in-memory images of
+//! DWARF line tables: in objects (ELF, Mach-O, COFF) and in the in-memory images of
 //! JIT code registered through the GDB JIT interface.
 
 use std::borrow::Cow;
@@ -13,6 +13,7 @@ use super::programs;
 use super::*;
 use crate::debug_info::jit;
 use crate::{emit_object, CodegenOptions};
+use velt_vir::vir;
 
 /// Line of statement `stmt` (the terminator: `stmts.len()`) of block `block` of function `func`.
 fn line_of(func: usize, block: usize, stmt: usize) -> u32 {
@@ -116,11 +117,27 @@ fn objects_carry_line_tables() {
         let line_section = file
             .sections()
             .find(|s| s.name().is_ok_and(|n| n.ends_with("debug_line")));
-        if fmt == BinaryFormat::Coff {
-            assert!(line_section.is_none(), "{triple}: COFF gets no DWARF");
-            continue;
-        }
         let line_section = line_section.unwrap_or_else(|| panic!("{triple}: no debug_line"));
+        if fmt == BinaryFormat::Coff {
+            // The long name through the string table; offsets into other debug sections are
+            // section-relative (an address would be wrong once lld-link places the section).
+            assert_eq!(line_section.name().unwrap(), ".debug_line", "{triple}");
+            let info = file.section_by_name(".debug_info").expect("debug_info");
+            let kinds: Vec<object::RelocationKind> =
+                info.relocations().map(|(_, r)| r.kind()).collect();
+            assert!(
+                kinds.contains(&object::RelocationKind::SectionOffset),
+                "{triple}: {kinds:?}"
+            );
+            assert!(info.relocations().all(|(_, r)| match r.target() {
+                object::RelocationTarget::Symbol(i) => {
+                    let s = file.symbol_by_index(i).unwrap();
+                    s.kind() == object::SymbolKind::Text
+                        || r.kind() == object::RelocationKind::SectionOffset
+                }
+                _ => r.kind() == object::RelocationKind::SectionOffset,
+            }));
+        }
         if fmt == BinaryFormat::MachO {
             assert_eq!(line_section.name().unwrap(), "__debug_line", "{triple}");
             assert_eq!(
@@ -181,6 +198,163 @@ fn objects_carry_line_tables() {
     }
 }
 
+/// `located_fib` with `fib`'s param `n` and its local `s` (the sum) described as `number`
+/// variables.
+fn fib_with_variables() -> Program {
+    let mut program = located_fib();
+    program.debug_types = vec![vir::DebugTy {
+        name: "number".into(),
+        kind: vir::DebugKind::Scalar(Ty::I64),
+    }];
+    let fib = program
+        .funcs
+        .iter_mut()
+        .find(|f| f.symbol == "fib")
+        .unwrap();
+    for (local, name, line) in [(0, "n", 1), (6, "s", 5)] {
+        let l = &mut fib.locals[local];
+        l.name = Some(name.into());
+        l.debug = Some(vir::LocalDebug {
+            decl: SrcLoc {
+                file: 0,
+                line,
+                col: 1,
+            },
+            end: None,
+            ty: vir::DebugTyId(0),
+            by_ref: false,
+            param: local == 0,
+        });
+    }
+    program
+}
+
+/// A variable read back: (tag, name, type name, location expression, lexical blocks around it).
+type Var = (gimli::DwTag, String, String, Vec<u8>, usize);
+
+/// The variables under the subprogram `symbol`.
+fn read_variables(file: &object::File, symbol: &str) -> Vec<Var> {
+    let load = |id: gimli::SectionId| -> Result<Cow<'_, [u8]>, gimli::Error> {
+        let names = [id.name().to_string(), format!("__{}", &id.name()[1..])];
+        let data = (file.sections())
+            .find(|s| s.name().is_ok_and(|n| names.iter().any(|m| m == n)))
+            .and_then(|s| s.data().ok())
+            .unwrap_or(&[]);
+        Ok(Cow::Borrowed(data))
+    };
+    let sections = gimli::DwarfSections::load(load).unwrap();
+    let dwarf = sections.borrow(|s| gimli::EndianSlice::new(s, gimli::LittleEndian));
+    let mut units = dwarf.units();
+    let header = units.next().unwrap().expect("a unit");
+    let unit = dwarf.unit(header).unwrap();
+    let string = |e: &gimli::DebuggingInformationEntry<_>, at| {
+        let v = e.attr_value(at)?;
+        Some(
+            dwarf
+                .attr_string(&unit, v)
+                .ok()?
+                .to_string_lossy()
+                .into_owned(),
+        )
+    };
+    let mut out = vec![];
+    // Depth-first: the variables below the subprogram, directly or in lexical blocks.
+    let mut inside = None;
+    let mut entries = unit.entries();
+    while let Some(e) = entries.next_dfs().unwrap() {
+        let depth = e.depth();
+        if inside.is_some_and(|d| depth <= d) {
+            inside = None;
+        }
+        if e.tag() == gimli::DW_TAG_subprogram {
+            if string(e, gimli::DW_AT_linkage_name).as_deref() == Some(symbol) {
+                inside = Some(depth);
+            }
+            continue;
+        }
+        let Some(sub_depth) = inside else { continue };
+        if !matches!(
+            e.tag(),
+            gimli::DW_TAG_variable | gimli::DW_TAG_formal_parameter
+        ) {
+            continue;
+        }
+        let ty = match e.attr_value(gimli::DW_AT_type) {
+            Some(gimli::AttributeValue::UnitRef(o)) => {
+                let t = unit.entry(o).unwrap();
+                string(&t, gimli::DW_AT_name).unwrap_or_default()
+            }
+            other => panic!("type {other:?}"),
+        };
+        let location = match e.attr_value(gimli::DW_AT_location) {
+            Some(gimli::AttributeValue::Exprloc(x)) => x.0.slice().to_vec(),
+            other => panic!("location {other:?}"),
+        };
+        let name = string(e, gimli::DW_AT_name).unwrap_or_default();
+        let blocks = (depth - sub_depth - 1) as usize;
+        out.push((e.tag(), name, ty, location, blocks));
+    }
+    out
+}
+
+#[test]
+fn objects_describe_variables() {
+    let program = fib_with_variables();
+    for (triple, fmt, _) in TARGETS {
+        if fmt == BinaryFormat::Coff {
+            continue;
+        }
+        let opts = CodegenOptions {
+            target: triple.into(),
+            optimize: false,
+        };
+        let bytes = emit_object(&program, &opts).unwrap();
+        let file = object::File::parse(&*bytes).unwrap();
+        let vars = read_variables(&file, "fib");
+        let summary: Vec<(gimli::DwTag, &str, &str, usize)> = vars
+            .iter()
+            .map(|(t, n, ty, _, blocks)| (*t, n.as_str(), ty.as_str(), *blocks))
+            .collect();
+        // `s` is in scope from its declaration (line 5) on, after the code of the first lines:
+        // a lexical block.
+        assert_eq!(
+            summary,
+            [
+                (gimli::DW_TAG_formal_parameter, "n", "number", 0),
+                (gimli::DW_TAG_variable, "s", "number", 1),
+            ],
+            "{triple}"
+        );
+        // Each in its own frame slot, below the frame pointer.
+        let offsets: Vec<i64> = vars
+            .iter()
+            .map(|(_, _, _, loc, _)| {
+                assert_eq!(loc[0], gimli::DW_OP_fbreg.0, "{triple}: {loc:?}");
+                let mut r = gimli::EndianSlice::new(&loc[1..], gimli::LittleEndian);
+                gimli::leb128::read::signed(&mut r).unwrap()
+            })
+            .collect();
+        assert_ne!(offsets[0], offsets[1], "{triple}");
+    }
+}
+
+/// Where objects get no DWARF variables (COFF), describing them changes no code: their locals
+/// keep their registers.
+#[test]
+fn coff_code_ignores_variable_descriptions() {
+    let opts = CodegenOptions {
+        target: "x86_64-pc-windows-msvc".into(),
+        optimize: false,
+    };
+    let text = |program: &Program| {
+        let bytes = emit_object(program, &opts).unwrap();
+        let file = object::File::parse(&*bytes).unwrap();
+        let text = file.section_by_name(".text").expect(".text");
+        text.data().unwrap().to_vec()
+    };
+    assert_eq!(text(&located_fib()), text(&fib_with_variables()));
+}
+
 #[test]
 fn no_debug_info_without_locations() {
     let program = programs::fib().program;
@@ -213,7 +387,7 @@ fn jit_image_describes_the_code() {
     let addresses: Vec<u64> = (built.lines.iter())
         .map(|f| module.get_finalized_function(f.id) as u64)
         .collect();
-    let image = jit::elf_image(&program.files, &built.lines, &addresses).unwrap();
+    let image = jit::elf_image(&program, &built.lines, &addresses).unwrap();
     let file = object::File::parse(&*image).unwrap();
 
     let start = *addresses.iter().min().unwrap();

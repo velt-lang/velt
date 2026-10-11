@@ -257,15 +257,24 @@ async fn accept_connections<S: OwnedStore>(
         };
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
-        // connection.
-        crate::task::runtime::spawn(async move {
-            match tls {
-                None => serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await,
-                Some(acceptor) => {
-                    if let Ok(Ok(s)) =
-                        tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
-                    {
-                        serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
+        // connection. Per-core: served where placement puts it; its socket moves there only if
+        // that is another worker.
+        crate::task::runtime::spawn_with(move |moves| {
+            let stream = crate::net::tcp::Handoff::new(stream, moves);
+            async move {
+                let Ok(stream) = stream.and_then(crate::net::tcp::Handoff::attach) else {
+                    return;
+                };
+                match tls {
+                    None => {
+                        serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await
+                    }
+                    Some(acceptor) => {
+                        if let Ok(Ok(s)) =
+                            tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream)).await
+                        {
+                            serve_connection::<S, _>(TokioIo::new(s), shared, conn, watcher).await;
+                        }
                     }
                 }
             }

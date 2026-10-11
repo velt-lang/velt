@@ -61,6 +61,12 @@ pub(super) fn check_debug(p: &Program, errs: &mut Vec<String>) {
                     f.symbol, d.decl.file
                 ));
             }
+            if d.end.is_some_and(|e| e.file != d.decl.file) {
+                errs.push(format!(
+                    "{}: local _{li}'s scope ends in another file than it starts",
+                    f.symbol
+                ));
+            }
             if d.by_ref && l.ty != Ty::Ptr {
                 errs.push(format!(
                     "{}: local _{li} holds its variable by reference but is not a Ptr",

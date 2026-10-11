@@ -202,6 +202,8 @@ impl FnLower<'_, '_> {
             }
             None => self.drop_glue(Place::local(slot), err_ty),
         }
+        // The handler's statements are lowered here, not through `block`.
+        self.note_scope_ends(handler, false);
         for s in &handler.stmts {
             self.stmt(s);
         }

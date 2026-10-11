@@ -78,7 +78,7 @@ use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
 pub(crate) use defaults::param_defaults;
-pub(crate) use driver::{check_bodies, ensure_body, field_defaults, printable};
+pub(crate) use driver::{check_bodies, ensure_body, ensure_global, field_defaults, printable};
 
 /// What the consumer of an expression's value does with it (only matters for non-Copy types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -15,7 +15,9 @@
 #   --prefix <dir>    the root (VELT_INSTALL_PREFIX); default: ~/.velt
 #   --default         make this version the default (the first one installed always is)
 #   --force           reinstall a version that is already installed
-#   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading
+#   --archive <file>  install a downloaded velt-<version>-<target>.tar.gz instead of downloading,
+#                     checked against its release's SHA256SUMS and SHA256SUMS.sig beside it
+#   --unverified      with --archive: install it without those (unchecked)
 #   --no-modify-path  do not add <root>/bin to PATH in your shell profiles
 # VELT_INSTALL_BASE_URL replaces https://github.com/velt-lang/velt (forks, mirrors, tests), and
 # VELT_INSTALL_PUBLIC_KEY (64 hex digits per key, several separated by commas) the release keys,
@@ -34,6 +36,7 @@ base_url=${VELT_INSTALL_BASE_URL:-https://github.com/velt-lang/velt}
 version=${VELT_INSTALL_VERSION:-}
 prefix=${VELT_INSTALL_PREFIX:-"$HOME/.velt"}
 archive=
+unverified=0
 modify_path=1
 make_default=0
 force=0
@@ -54,15 +57,19 @@ while [ $# -gt 0 ]; do
         --version) [ $# -ge 2 ] || err "--version needs a value"; version=$2; shift 2 ;;
         --prefix) [ $# -ge 2 ] || err "--prefix needs a value"; prefix=$2; shift 2 ;;
         --archive) [ $# -ge 2 ] || err "--archive needs a value"; archive=$2; shift 2 ;;
+        --unverified) unverified=1; shift ;;
         --no-modify-path) modify_path=0; shift ;;
         --default) make_default=1; shift ;;
         --force) force=1; shift ;;
         -h|--help)
-            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--default] [--force] [--archive <file>] [--no-modify-path]"
+            say "usage: get-velt.sh [--version <v>] [--prefix <dir>] [--default] [--force] [--archive <file> [--unverified]] [--no-modify-path]"
             exit 0 ;;
         *) err "unknown option: $1 (see --help)" ;;
     esac
 done
+if [ "$unverified" = 1 ] && [ -z "$archive" ]; then
+    err "--unverified goes with --archive <file>"
+fi
 
 # --- the target triple of this machine -------------------------------------------------------
 detect_target() {
@@ -133,14 +140,37 @@ sha256_of() {
         sha256sum "$1" | cut -d ' ' -f 1
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | cut -d ' ' -f 1
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 -r "$1" | cut -d ' ' -f 1
     else
         return 1
     fi
 }
 
-# SHA256SUMS against SHA256SUMS.sig with the release key: the checksum shows the download is
-# intact, the signature that the velt project published it (whatever mirror served it).
-check_signature() { # <release url>
+# Hex digits to the bytes they stand for, through printf's octal escapes (POSIX sh has no \x).
+hex_to_bytes() {
+    # shellcheck disable=SC2059
+    printf "$(printf '%s' "$1" | tr 'A-F' 'a-f' | awk '{
+        h = "0123456789abcdef"
+        for (i = 1; i < length($0); i += 2)
+            printf "\\%03o", (index(h, substr($0, i, 1)) - 1) * 16 + index(h, substr($0, i + 1, 1)) - 1
+    }')"
+}
+
+# <file> against its entry <name> in $tmp/SHA256SUMS. The signature vouches for SHA256SUMS only:
+# without the archive's hash it vouches for nothing installed, so there is no going on without one.
+check_sums() { # <file> <name>
+    expected=$(awk -v f="$2" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
+    [ -n "$expected" ] || err "SHA256SUMS has no entry for $2"
+    actual=$(sha256_of "$1") ||
+        err "cannot hash $2: install sha256sum, shasum or openssl"
+    [ "$actual" = "$expected" ] || err "checksum mismatch for $2 (expected $expected, got $actual)"
+}
+
+# $tmp/SHA256SUMS against $tmp/SHA256SUMS.sig with the release key: the checksum shows the
+# download is intact, the signature that the velt project published it (whatever mirror served
+# it).
+check_signature() {
     if ! command -v openssl >/dev/null 2>&1 ||
         ! pem "$(printf '%s\n' "$release_keys" | head -n 1)" | openssl pkey -pubin -noout >/dev/null 2>&1 ||
         ! openssl pkeyutl -help 2>&1 | grep -q -- -rawin; then
@@ -158,6 +188,12 @@ check_signature() { # <release url>
         # No file-name expansion of the words (`*` would name files).
         set -f
         for hex in $(printf '%s' "$VELT_INSTALL_PUBLIC_KEY" | tr ',' ' '); do
+            # Exactly 32 bytes in hex, as the launcher reads them (OpenSSL would ignore extras).
+            case "$hex" in
+                *[!0-9a-fA-F]*) err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)" ;;
+            esac
+            [ "${#hex}" = 64 ] ||
+                err "VELT_INSTALL_PUBLIC_KEY: $hex is not an Ed25519 public key (64 hex digits)"
             der=$(printf '302a300506032b6570032100%s' "$hex" | tr 'A-F' 'a-f' | awk '{
                 h = "0123456789abcdef"
                 for (i = 1; i < length($0); i += 2)
@@ -173,9 +209,23 @@ check_signature() { # <release url>
         set +f
         [ -n "$release_keys" ] || err "VELT_INSTALL_PUBLIC_KEY names no key"
     fi
-    fetch "$1/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
-        err "download failed: $1/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
-    # The release workflow writes the signature as its 64 raw bytes.
+    # The release workflow writes the signature as its 64 raw bytes; hex is read too, as the
+    # launcher does. Only a file the size of one in hex (128 digits, and a line end) is read as
+    # text: the shell would warn about the NUL bytes of a raw signature.
+    sig_size=$(wc -c < "$tmp/SHA256SUMS.sig" | tr -d ' ')
+    case "$sig_size" in
+        128|129|130)
+            sig_hex=$(LC_ALL=C tr -d ' \r\n' < "$tmp/SHA256SUMS.sig")
+            case "$sig_hex" in
+                *[!0-9a-fA-F]*) ;;
+                *)
+                    if [ "${#sig_hex}" = 128 ]; then
+                        hex_to_bytes "$sig_hex" > "$tmp/SHA256SUMS.sig"
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
     for b64 in $release_keys; do
         pem "$b64" > "$tmp/release-key.pem"
         if openssl pkeyutl -verify -rawin -pubin -inkey "$tmp/release-key.pem" \
@@ -194,6 +244,19 @@ trap 'rm -rf "$tmp"; if [ -n "$staging" ]; then rm -rf "$staging"; fi' EXIT INT 
 if [ -n "$archive" ]; then
     [ -f "$archive" ] || err "no such archive: $archive"
     say "installing Velt from $archive"
+    if [ "$unverified" = 1 ]; then
+        say "warning: installing $archive without checking it (--unverified)" >&2
+    else
+        # As `velt toolchain install --from`: the release's SHA256SUMS and its signature beside it.
+        beside=$(dirname -- "$archive")
+        if [ ! -f "$beside/SHA256SUMS" ] || [ ! -f "$beside/SHA256SUMS.sig" ]; then
+            err "cannot check $archive: put its release's SHA256SUMS and SHA256SUMS.sig beside it, or pass --unverified to install it unchecked"
+        fi
+        cp "$beside/SHA256SUMS" "$tmp/SHA256SUMS"
+        cp "$beside/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig"
+        check_sums "$archive" "$(basename -- "$archive")"
+        check_signature
+    fi
 else
     target=$(detect_target)
     if [ -z "$version" ] && [ "${published_version#@}" = "$published_version" ]; then
@@ -210,14 +273,10 @@ else
     fetch "$url/$name.tar.gz" "$tmp/$name.tar.gz" ||
         err "download failed: $url/$name.tar.gz (is $version a release with a $target build?)"
     fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || err "download failed: $url/SHA256SUMS"
-    expected=$(awk -v f="$name.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
-    [ -n "$expected" ] || err "SHA256SUMS has no entry for $name.tar.gz"
-    if actual=$(sha256_of "$tmp/$name.tar.gz"); then
-        [ "$actual" = "$expected" ] || err "checksum mismatch for $name.tar.gz (expected $expected, got $actual)"
-    else
-        say "warning: neither sha256sum nor shasum is installed; skipping the checksum check" >&2
-    fi
-    check_signature "$url"
+    check_sums "$tmp/$name.tar.gz" "$name.tar.gz"
+    fetch "$url/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" ||
+        err "download failed: $url/SHA256SUMS.sig (velt 0.1.0 was published unsigned; this installer installs later releases)"
+    check_signature
     archive="$tmp/$name.tar.gz"
 fi
 
