@@ -38,3 +38,5 @@ assign_target_replaced_holder_values.vlt:372:3: error: the right-hand side may r
 assign_target_replaced_holder_values.vlt:382:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
 assign_target_replaced_holder_values.vlt:392:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
 assign_target_replaced_holder_values.vlt:401:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_values.vlt:410:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_values.vlt:411:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

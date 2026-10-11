@@ -157,7 +157,7 @@ enum FnValue {
 
 impl Scope {
     /// A constant holding a function: calling it runs that function.
-    fn constant(&mut self, locals: &[LocalDef], s: &Stmt) {
+    fn constant(&mut self, cx: &Ctx, locals: &[LocalDef], s: &Stmt) {
         if let S::Let {
             local,
             init: Some(init),
@@ -166,16 +166,34 @@ impl Scope {
             let fixed = locals
                 .get(local.0 as usize)
                 .is_some_and(|l| !l.mutable && !l.boxed);
-            if let (true, FnValue::Known(d, f)) = (fixed, Scope::default().classify(init)) {
+            if let (true, FnValue::Known(d, f)) = (fixed, Scope::default().classify(cx, init)) {
                 self.known.insert(*local, (d, f));
             }
         }
     }
 
-    fn classify(&self, x: &Expr) -> FnValue {
+    fn classify(&self, cx: &Ctx, x: &Expr) -> FnValue {
         match &x.kind {
             E::Lit(Lit::Null) => FnValue::Own,
-            E::WrapSome(x) | E::UnwrapSome(x, _) | E::Upcast(x) => self.classify(x),
+            E::WrapSome(x) | E::UnwrapSome(x, _) | E::Upcast(x) => self.classify(cx, x),
+            // A module-level constant: its value, computed at each use.
+            E::Global(d) => match cx.info.get(d.0 as usize) {
+                Some(DefInfo::Global(g)) if g.init.is_some() => {
+                    let Some(mut e) = g.init.as_ref() else {
+                        return FnValue::Other;
+                    };
+                    while let E::WrapSome(x) | E::Upcast(x) = &e.kind {
+                        e = x;
+                    }
+                    match e.kind {
+                        E::Closure(_) | E::FnRef(..) | E::Lit(Lit::Null) => {
+                            Scope::default().classify(cx, e)
+                        }
+                        _ => FnValue::Other,
+                    }
+                }
+                _ => FnValue::Other,
+            },
             E::Closure(d) => FnValue::Known(*d, Frame::Inherit),
             E::FnRef(d, targs) => FnValue::Known(*d, Frame::Known(targs.clone())),
             E::Local(l, _) if self.params.contains(l) => FnValue::Own,
@@ -308,7 +326,7 @@ impl Effects {
                 Callee::Intrinsic(_) => self.callbacks(cx, scope, args, None),
                 Callee::Indirect(f) => {
                     self.callbacks(cx, scope, args, None);
-                    self.run(scope.classify(f));
+                    self.run(scope.classify(cx, f));
                 }
                 Callee::Virtual { slot } => {
                     self.callbacks(cx, scope, args, None);
@@ -396,7 +414,7 @@ impl Effects {
                 skip < 0 || s.get((i as isize + skip) as usize).copied().unwrap_or(true)
             });
             if slot || fn_or_null(cx, a.ty) {
-                self.run(scope.classify(a));
+                self.run(scope.classify(cx, a));
             }
         }
     }
@@ -440,7 +458,7 @@ struct Scan<'a, 'm> {
 
 impl VisitMut for Scan<'_, '_> {
     fn stmt(&mut self, s: &mut Stmt) {
-        self.scope.constant(self.locals, s);
+        self.scope.constant(self.cx, self.locals, s);
     }
 
     fn expr(&mut self, e: &mut Expr) {
@@ -470,7 +488,7 @@ struct Rhs<'a, 'm> {
 
 impl VisitMut for Rhs<'_, '_> {
     fn stmt(&mut self, s: &mut Stmt) {
-        self.scope.constant(self.locals, s);
+        self.scope.constant(self.cx, self.locals, s);
     }
 
     fn expr(&mut self, e: &mut Expr) {
@@ -501,6 +519,26 @@ fn any_candidate(cx: &mut Ctx) -> bool {
         }
     }
     false
+}
+
+/// Collects the functions an expression uses as values, and the type arguments it passes.
+struct Values<'a>(&'a mut Vec<DefId>, &'a mut Vec<TyId>);
+
+impl VisitMut for Values<'_> {
+    fn expr(&mut self, e: &mut Expr) {
+        match &e.kind {
+            E::Closure(d) => self.0.push(*d),
+            E::FnRef(d, targs) => {
+                self.0.push(*d);
+                self.1.extend(targs);
+            }
+            E::Call {
+                callee: Callee::Def(_, targs),
+                ..
+            } => self.1.extend(targs),
+            _ => {}
+        }
+    }
 }
 
 /// Report the assignments the module docs describe.
@@ -585,6 +623,14 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
     if candidates.is_empty() {
         return;
+    }
+    // Functions module-level constants hold (their value is computed at each use).
+    for d in &cx.info {
+        if let DefInfo::Global(g) = d {
+            if let Some(init) = &g.init {
+                visit::expr(&mut init.clone(), &mut Values(&mut values, &mut type_args));
+            }
+        }
     }
     // A function used as a value runs with whatever its caller passes.
     for d in &values {

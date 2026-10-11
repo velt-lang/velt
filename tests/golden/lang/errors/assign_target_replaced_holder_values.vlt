@@ -401,6 +401,16 @@ function t40() {
   o.inner.v = each_40(fs, (g_40) => g_40());
   console.log(o.inner.v);
 }
+// 41: a module-level constant holding a function, passed and called
+function reset_41(o: Outer): number { o.inner = { v: 100 }; return 13; }
+function run_41(f: (o: Outer) => number, o: Outer): number { return f(o); }
+const R_41 = reset_41;
+function t41() {
+  const o: Outer = { inner: { v: 0 } };
+  o.inner.v = run_41(R_41, o);
+  o.inner.v = R_41(o);
+  console.log(o.inner.v);
+}
 async function main() {
   t01();
   t02();
@@ -442,4 +452,5 @@ async function main() {
   t38();
   t39();
   t40();
+  t41();
 }
