@@ -303,7 +303,14 @@ impl FnLower<'_, '_> {
             {
                 continue;
             }
-            let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(ld.span)) else {
+            // A capture is in scope in the whole closure: it is declared where the closure starts
+            // (its own local is spanned at its first use, #983).
+            let span = if i < f.captures.len() {
+                f.span
+            } else {
+                ld.span
+            };
+            let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(span)) else {
                 continue;
             };
             let debug = LocalDebug {
