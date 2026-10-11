@@ -1,0 +1,47 @@
+// Assigning another field of the same object type, or the same field of another type, does not
+// replace the object a target writes into (#876): these compile and print what Node prints.
+type Vec = { x: number; y: number };
+class Body {
+  pos: Vec = { x: 0, y: 0 };
+  vel: Vec = { x: 1, y: 2 };
+  step(dt: number): number {
+    this.vel = { x: this.vel.x * 0.5, y: this.vel.y };
+    return this.vel.x * dt;
+  }
+}
+type Inner = { v: number };
+type Outer = { inner: Inner; other: Inner };
+type Wide = { inner: Inner; k: number };
+type Deep = { mid: Outer; side: Outer };
+
+function swap(a: Outer, b: Outer): number {
+  const t = a.other;
+  a.other = b.other;
+  b.other = t;
+  return 13;
+}
+
+function main() {
+  const b = new Body();
+  const others = [new Body(), new Body()];
+  b.pos.y = others.map((o) => o.step(2)).reduce((a, c) => a + c, 0);
+  b.pos.x += others[0].step(1);
+  console.log(b.pos.x, b.pos.y, b.vel.x);
+
+  const o: Outer = { inner: { v: 0 }, other: { v: 0 } };
+  const w: Wide = { inner: { v: 0 }, k: 1 };
+  const f = (): number => { o.other = { v: 5 }; return 13; };
+  const g = (): number => { w.inner = { v: 5 }; return 14; };
+  o.inner.v = f();
+  o.inner.v += g();
+  console.log(o.inner.v, o.other.v, w.inner.v);
+
+  const p: Outer = { inner: { v: 7 }, other: { v: 8 } };
+  o.inner.v = swap(o, p);
+  console.log(o.inner.v, o.other.v, p.other.v);
+
+  const d: Deep = { mid: { inner: { v: 0 }, other: { v: 0 } }, side: { inner: { v: 0 }, other: { v: 0 } } };
+  const h = (): number => { d.side = { inner: { v: 5 }, other: { v: 6 } }; return 13; };
+  d.mid.inner.v = h();
+  console.log(d.mid.inner.v, d.side.inner.v);
+}
