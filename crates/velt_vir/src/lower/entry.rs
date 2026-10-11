@@ -19,6 +19,10 @@ use crate::vir::{self, BinOp, Function, Linkage, Operand, Place, Proj, Rvalue, T
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_main(cx: &'c mut super::Cx<'h>) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
+        if lw.cx.uses_placement {
+            // Before anything starts the runtime (#211).
+            lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
+        }
         lw.init_natives();
         let Some(def) = lw.cx.hir.entry else {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));

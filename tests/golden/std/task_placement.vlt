@@ -1,0 +1,86 @@
+// check: no leaks
+// Task placement (#211): `spawn(p, { worker })` pins a task to a worker, and using the placement
+// API selects the per-core scheduler. A caller pinned next to its shard makes request/reply calls
+// that stay on one worker.
+import { workerCount, currentWorker } from "velt:task";
+import { channel, Channel } from "velt:channel";
+
+async function where(): Promise<i64> {
+  return currentWorker();
+}
+
+// A pinned task never moves: its worker is the same after every kind of suspension.
+async function stays(rounds: i64): Promise<i64> {
+  const ch = channel<i64>();
+  let moves = 0;
+  for (let i = 0; i < rounds; i++) {
+    let w = currentWorker();
+    await sleep(0);
+    if (currentWorker() != w) {
+      moves++;
+    }
+    w = currentWorker();
+    await yieldNow();
+    if (currentWorker() != w) {
+      moves++;
+    }
+    w = currentWorker();
+    await ch.send(i);
+    await ch.receive();
+    if (currentWorker() != w) {
+      moves++;
+    }
+  }
+  return moves;
+}
+
+type Call = { key: string; reply: (n: i64) => void };
+
+async function shard(inbox: Channel<Call>): Promise<void> {
+  const counts = new Map<string, i64>();
+  while (true) {
+    const c = await inbox.receive();
+    if (c == null) {
+      return;
+    }
+    const n = (counts.get(c.key) ?? 0) + 1;
+    counts.set(c.key, n);
+    c.reply(n);
+  }
+}
+
+async function caller(inbox: Channel<Call>): Promise<i64> {
+  let last = 0;
+  for (let i = 0; i < 100; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    inbox.trySend({ key: "a", reply: resolve });
+    last = await promise;
+  }
+  return last;
+}
+
+async function main() {
+  const n = workerCount();
+  console.log("workers > 0:", n > 0);
+  let ok = 0;
+  for (let w = 0; w < n; w++) {
+    if ((await spawn(where(), { worker: w })) == w) {
+      ok++;
+    }
+  }
+  console.log("pinned on their worker:", ok == n);
+  let moves = 0;
+  for (let w = 0; w < n; w++) {
+    moves += await spawn(stays(50), { worker: w });
+  }
+  console.log("moves after sleep, yieldNow and channel round trips:", moves);
+  const worker = n - 1;
+  console.log("shorthand:", (await spawn(where(), { worker })) == worker);
+  const inbox = channel<Call>();
+  spawn(shard(inbox), { worker: 0 });
+  console.log("calls:", await spawn(caller(inbox), { worker: 0 }));
+  inbox.close();
+  const pick = n > 1;
+  console.log("cond:", (await spawn(pick ? where() : where(), { worker: 0 })) == 0);
+  console.log("empty options:", (await spawn(where(), {})) >= 0);
+}

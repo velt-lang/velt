@@ -127,3 +127,29 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
     let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
     executor::spawn(f, 0, None);
 }
+
+/// WebAssembly has one thread: one worker. The scheduler request is ignored.
+#[no_mangle]
+pub extern "C" fn velt_rt_set_scheduler(_kind: u32) {}
+
+/// `workerCount()`: 1 (one thread).
+#[no_mangle]
+pub extern "C" fn velt_rt_worker_count() -> u64 {
+    1
+}
+
+/// `currentWorker()`: always worker 0.
+#[no_mangle]
+pub extern "C" fn velt_rt_current_worker() -> u64 {
+    0
+}
+
+/// `spawn(p, { worker })`: worker 0 is the only one; any other index is a panic.
+#[no_mangle]
+pub extern "C" fn velt_rt_spawn_target(worker: i64) {
+    if worker != 0 {
+        crate::panic::fatal(&format!(
+            "spawn: worker {worker} is out of range (the runtime has 1 worker)"
+        ));
+    }
+}

@@ -131,9 +131,14 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.vlt). Additive. |
 | `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
+| `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. With the stealing scheduler the task is spawned as usual. Additive. |
+| `velt_rt_worker_count` | `() -> u64` | `workerCount()`: the per-core workers, or the stealing runtime's worker threads (1 on WebAssembly). Additive. |
+| `velt_rt_current_worker` | `() -> u64` | `currentWorker()`: the per-core worker running this task; with the stealing scheduler an index for this worker thread. Additive. |
+| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: per-core. `velt_main` calls it first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`); otherwise it isn't called (`workerCount()` and `currentWorker()` alone don't select per-core). `VELT_SCHEDULER` overrides it. A no-op on WebAssembly. Additive. |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
-`VELT_SCHEDULER=per-core` (experimental, #211) makes every worker a `current_thread` runtime with
+The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program that pins a task, or
+`VELT_SCHEDULER=per-core`) makes every worker a `current_thread` runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
 (`task/runtime.rs`). A connection's socket and its tasks stay on one worker: `accept()`

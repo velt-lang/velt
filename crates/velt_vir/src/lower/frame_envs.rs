@@ -150,7 +150,13 @@ impl Scan<'_> {
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Spawn | Intrinsic::SpawnHandled),
                 args,
-            } => args.iter().for_each(|a| self.spawned(a)),
+            } => {
+                // The promise, then `spawn(p, { worker })`'s worker index (a plain value).
+                if let Some((p, rest)) = args.split_first() {
+                    self.spawned(p);
+                    rest.iter().for_each(|a| self.expr(a));
+                }
+            }
             E::Block(b) => self.block(b),
             _ => children(e, &mut |x| self.expr(x)),
         }
