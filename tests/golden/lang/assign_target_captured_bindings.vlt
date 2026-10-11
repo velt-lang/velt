@@ -1,0 +1,18 @@
+// Loop bindings a closure assigns live in cells of their own (#962), so the holder is a counted
+// object and the write lands in the object the target named, as in Node (#876).
+type Inner = { v: number };
+type Outer = { inner: Inner };
+function run(): void {
+  const outers: Outer[] = [{ inner: { v: 0 } }];
+  for (let o of outers) {
+    const reset = (): number => { o = { inner: { v: 100 } }; return 13; };
+    o.inner.v = reset();
+    console.log(o.inner.v);
+  }
+  for (let [k, p] of new Map<string, Outer>([["a", { inner: { v: 0 } }]])) {
+    const r3 = (): number => { p = { inner: { v: 100 } }; return 13; };
+    p.inner.v = r3();
+    console.log(k, p.inner.v);
+  }
+}
+run();

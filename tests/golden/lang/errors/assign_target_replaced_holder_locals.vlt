@@ -1,6 +1,6 @@
 // A variable holding the object: a right-hand side that assigns it itself, or a closure that
-// captures it, may replace it (#876). Each assignment is an error (JavaScript writes into the
-// old object and prints 100).
+// captures it without a cell of its own, may replace it (#876). Each assignment is an error
+// (JavaScript writes into the old object and prints 100).
 type Inner = { v: number };
 type Outer = { inner: Inner };
 function keep(o: Outer): number { return 13; }
@@ -14,14 +14,6 @@ function t02(): void {
   const reset = (): number => { o = { inner: { v: 100 } }; return 13; };
   o.inner.v = reset();
   console.log(o.inner.v);
-}
-function t03(): void {
-  const outers: Outer[] = [{ inner: { v: 0 } }];
-  for (let o of outers) {
-    const reset = (): number => { o = { inner: { v: 100 } }; return 13; };
-    o.inner.v = reset();
-    console.log(o.inner.v);
-  }
 }
 function t04(): void {
   let o: Outer = { inner: { v: 0 } };
