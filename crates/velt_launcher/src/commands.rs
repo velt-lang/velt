@@ -269,11 +269,18 @@ fn prune(ctx: &Context, dry_run: bool) -> Result<(), String> {
             Err(e) => failed.push(e),
         }
     }
-    let verb = if dry_run { "would free" } else { "freed" };
-    println!(
-        "{verb} {}; debug executables those versions built no longer run (rebuild them)",
-        megabytes(freed)
-    );
+    if dry_run {
+        println!(
+            "would free {}; nothing was removed (debug executables those versions built would \
+             stop running)",
+            megabytes(freed)
+        );
+    } else {
+        println!(
+            "freed {}; debug executables those versions built no longer run (rebuild them)",
+            megabytes(freed)
+        );
+    }
     if failed.is_empty() {
         Ok(())
     } else {

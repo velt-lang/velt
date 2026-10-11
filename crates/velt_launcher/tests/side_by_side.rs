@@ -665,6 +665,10 @@ fn prune_removes_old_patches_but_not_the_default() {
         "{dry}"
     );
     assert!(
+        dry.contains("nothing was removed") && !dry.contains("no longer run"),
+        "{dry}"
+    );
+    assert!(
         !dry.contains("0.1.0") && !dry.contains("0.1.2") && !dry.contains("0.2.0"),
         "{dry}"
     );

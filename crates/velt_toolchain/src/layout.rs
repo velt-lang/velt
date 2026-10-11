@@ -266,16 +266,22 @@ impl Root {
     }
 }
 
-/// The installed versions `velt toolchain prune` removes from `versions`: all but the default and
-/// the newest of each `major.minor` (what a pin like `"0.1"` runs). One a lockfile still names is
-/// installed again when it is next used.
+/// The installed versions `velt toolchain prune` removes from `versions`: all but the default and,
+/// for each `major.minor`, the version a pin like `"0.1"` runs: its newest release (a pin skips
+/// pre-releases), or its newest pre-release when it has no release yet. One a lockfile still
+/// names is installed again when it is next used.
 pub fn prunable(versions: &[Version], default: Option<&Toolchain>) -> Vec<Version> {
     let newest_of_minor = |v: &Version| {
-        versions
-            .iter()
-            .filter(|o| o.major == v.major && o.minor == v.minor)
+        let minor = || {
+            versions
+                .iter()
+                .filter(|o| o.major == v.major && o.minor == v.minor)
+        };
+        let kept = minor()
+            .filter(|o| o.pre.is_empty())
             .max()
-            == Some(v)
+            .or_else(|| minor().max());
+        kept == Some(v)
     };
     let is_default = |v: &Version| default == Some(&Toolchain::Version(v.clone()));
     versions
@@ -436,6 +442,16 @@ mod tests {
         assert_eq!(
             shown(prunable(&versions, None)),
             ["0.1.0", "0.1.2", "0.2.0-rc.1"]
+        );
+        // A newer pre-release doesn't displace the release a pin runs; a minor with only
+        // pre-releases keeps its newest.
+        let with_rc: Vec<Version> = ["0.1.3", "0.1.4-rc.1", "0.3.0-rc.1", "0.3.0-rc.2"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        assert_eq!(
+            shown(prunable(&with_rc, None)),
+            ["0.1.4-rc.1", "0.3.0-rc.1"]
         );
         let default = Toolchain::Version(v("0.1.0"));
         assert_eq!(
