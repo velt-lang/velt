@@ -203,8 +203,10 @@ Work on a branch and open a pull request against `main`; nothing is pushed to `m
 Reference the issue it resolves (`Closes #123`) and say which gate you ran.
 
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
-  them) on Linux, as three parallel jobs: lint, test and golden. The label `ci:full` makes them
-  check everything (add it before pushing, or close and reopen the pull request). When a pull
+  them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
+  (below) is also linted (fmt, clippy) on Windows and macOS, so `cfg(windows)`-only findings
+  show before the queue. The label `ci:full` makes them check everything (add it before
+  pushing, or close and reopen the pull request). When a pull
   request is ready, add it to the **merge queue**: the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
