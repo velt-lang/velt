@@ -1,0 +1,29 @@
+// A template part typed by a type parameter is formatted by glue (`TemplateToString`, #923),
+// which calls a class's toString(). Here toString() calls a function value that replaces
+// o.inner, so the assignment is an error (#876; JavaScript writes into the old object and
+// prints 100).
+type Inner = { v: number };
+type Outer = { inner: Inner };
+class T {
+  f: () => number;
+  constructor(f: () => number) {
+    this.f = f;
+  }
+  toString(): string {
+    this.f();
+    return "abcdefghijklm";
+  }
+}
+function show<X>(x: X): string {
+  return `${x}`;
+}
+function main(): void {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => {
+    o.inner = { v: 100 };
+    return 13;
+  };
+  const t = new T(bump);
+  o.inner.v = show(t).length;
+  console.log(o.inner.v);
+}
