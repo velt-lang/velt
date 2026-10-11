@@ -44,6 +44,7 @@ fn run(args: &[OsString]) -> Result<i32, String> {
             exe.display()
         )
     })?;
+    sweep(&root);
     let mut ctx = select::Context::from_env(root)?;
     let mut args = args;
     if let Some(name) = args
@@ -62,4 +63,19 @@ fn run(args: &[OsString]) -> Result<i32, String> {
     let selection = select::select(&ctx)?;
     let resolved = select::resolve(&ctx, &selection)?;
     exec::exec(&resolved, args, &exe)
+}
+
+/// Delete launchers a `self-update` moved aside on Windows (`<root>/bin/.velt.exe.old-*`), which
+/// couldn't be deleted while they ran. Best effort.
+pub(crate) fn sweep(root: &velt_toolchain::Root) {
+    let Ok(entries) = std::fs::read_dir(root.dir().join("bin")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".velt") && name.contains(".old-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

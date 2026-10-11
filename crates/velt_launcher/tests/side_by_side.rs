@@ -35,6 +35,12 @@ fn archive(version: &str) -> Vec<u8> {
         &std::fs::read(fake_velt()).unwrap(),
         0o755,
     );
+    // The release's launcher: the fake toolchain stands in (a test sees it replace bin/velt).
+    add(
+        format!("{top}/bin/velt-launcher{EXE}"),
+        &std::fs::read(fake_velt()).unwrap(),
+        0o755,
+    );
     add(format!("{top}/std/VERSION"), version.as_bytes(), 0o644);
     tar.into_inner().unwrap().finish().unwrap()
 }
@@ -915,4 +921,45 @@ fn install_from_a_downloaded_archive() {
         &offline,
     );
     assert!(err.contains("--unverified goes with --from"), "{err}");
+/// `velt toolchain self-update` replaces the launcher with the one of the newest release the
+/// index names (installing that toolchain first), and says when there is none newer.
+#[test]
+fn self_update_replaces_the_launcher_with_the_newest_one() {
+    let releases = Releases::new(&["99.0.0"]);
+    let own = env!("CARGO_PKG_VERSION");
+    releases.index_with(&[("99.0.0", None)], Some(own), None);
+    let m = Machine::new(&releases);
+    let out = m.ok(&m.work, &["toolchain", "self-update"]);
+    assert!(
+        out.contains(&format!("the velt launcher is up to date ({own})")),
+        "{out}"
+    );
+
+    // A launcher moved aside by an earlier self-update on Windows is swept away.
+    let aside = m.root.join(format!("bin/.velt{EXE}.old-1"));
+    std::fs::write(&aside, b"old").unwrap();
+    releases.index_with(&[("99.0.0", None)], Some("99.0.0"), None);
+    let out = m.run(&m.work, &["toolchain", "self-update"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("installing velt 99.0.0, which brings the launcher"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("updated the velt launcher: {own} → 99.0.0")),
+        "{stdout}"
+    );
+    assert!(!aside.exists(), "the moved-aside launcher is swept");
+    // bin/velt is now that release's launcher (here the stand-in toolchain).
+    assert_eq!(
+        std::fs::read(m.root.join(format!("bin/velt{EXE}"))).unwrap(),
+        std::fs::read(fake_velt()).unwrap()
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(m.root.join("bin"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }

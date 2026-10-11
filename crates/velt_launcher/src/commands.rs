@@ -24,6 +24,7 @@ Commands:
                                against the SHA256SUMS and SHA256SUMS.sig beside it
   remove <toolchain> [--force] remove a version (debug executables it built stop running) or a
                                link; --force removes the default too
+  self-update                  replace this launcher with the newest release's
   prune [--dry-run]            remove every version but the default and the newest of each
                                major.minor; --dry-run lists them
   default [<toolchain>]        show or set the toolchain used outside pinned packages
@@ -69,6 +70,7 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         "install" => &["--default", "--from", "--unverified"],
         "remove" => &["--force"],
         "prune" => &["--dry-run"],
+        "self-update" => &[],
         _ => &[],
     };
     if let Some(bad) = rest
@@ -123,6 +125,10 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         "remove" => {
             arity(1, "remove <toolchain> [--force]")?;
             remove(ctx, positional[0], flag("--force"))
+        }
+        "self-update" => {
+            arity(0, "self-update")?;
+            self_update(ctx)
         }
         "prune" => {
             arity(0, "prune [--dry-run]")?;
@@ -289,6 +295,63 @@ fn remove(ctx: &Context, text: &str, force: bool) -> Result<(), String> {
             println!("removed velt {v}; debug executables it built no longer run (rebuild them)")
         }
         Toolchain::Linked(name) => println!("unlinked {name}"),
+    }
+    Ok(())
+}
+
+/// Replace this launcher with the newest one the signed index names: the `bin/velt-launcher` of
+/// that velt's toolchain, installed first when it isn't (checked as every install is).
+fn self_update(ctx: &Context) -> Result<(), String> {
+    let own = Version::parse(env!("CARGO_PKG_VERSION")).expect("ICE: the crate version");
+    let index = velt_toolchain::release::fetch_index(&ctx.root, &ctx.base)?;
+    let Some(newest) = index.launcher.filter(|l| *l > own) else {
+        println!("the velt launcher is up to date ({own})");
+        return Ok(());
+    };
+    let toolchain = Toolchain::Version(newest.clone());
+    let prefix = if ctx.root.is_installed(&toolchain) {
+        ctx.root.version_dir(&newest)
+    } else {
+        eprintln!("installing velt {newest}, which brings the launcher...");
+        select::install(ctx, &newest)?
+    };
+    let launcher = prefix
+        .join("bin")
+        .join(format!("velt-launcher{}", std::env::consts::EXE_SUFFIX));
+    if !launcher.is_file() {
+        return Err(format!(
+            "velt {newest} has no launcher ({}); run the installer again",
+            launcher.display()
+        ));
+    }
+    replace_launcher(&ctx.root, &launcher)?;
+    println!("updated the velt launcher: {own} → {newest}");
+    Ok(())
+}
+
+/// Put `new` in place of `<root>/bin/velt`: copied beside it, then renamed over it, so the launcher
+/// is never half written. A running `velt.exe` can't be replaced on Windows, but can be renamed:
+/// it is moved aside first (`.velt.exe.old-*`, deleted by a later run, `crate::sweep`).
+fn replace_launcher(root: &velt_toolchain::Root, new: &Path) -> Result<(), String> {
+    let bin = root.dir().join("bin");
+    let exe = std::env::consts::EXE_SUFFIX;
+    let dest = bin.join(format!("velt{exe}"));
+    let staged = bin.join(format!(".velt-new-{}{exe}", std::process::id()));
+    std::fs::copy(new, &staged).map_err(|e| format!("cannot copy {}: {e}", new.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("cannot make {} executable: {e}", staged.display()))?;
+    }
+    let aside = bin.join(format!(".velt{exe}.old-{}", std::process::id()));
+    let moved_aside = cfg!(windows) && dest.exists() && std::fs::rename(&dest, &aside).is_ok();
+    if let Err(e) = std::fs::rename(&staged, &dest) {
+        if moved_aside {
+            let _ = std::fs::rename(&aside, &dest);
+        }
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!("cannot replace {}: {e}", dest.display()));
     }
     Ok(())
 }
