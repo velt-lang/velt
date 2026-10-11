@@ -154,6 +154,28 @@ fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
     }
 }
 
+/// The `$GITHUB_OUTPUT` lines for `plan`: which parts have anything to do, the OSes the queue
+/// checks (`os`), and the OSes besides Linux a pull request lints on (`other_os`, empty unless
+/// the change touches OS-specific code: PR CI otherwise runs on Linux only).
+fn github_output_text(plan: &Plan) -> String {
+    let flag = |b: bool| if b { "true" } else { "false" };
+    let (os, other_os) = if plan.other_os.is_some() {
+        (
+            r#"["ubuntu-latest","windows-latest","macos-latest"]"#,
+            r#"["windows-latest","macos-latest"]"#,
+        )
+    } else {
+        (r#"["ubuntu-latest"]"#, "[]")
+    };
+    format!(
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\n",
+        flag(plan.full),
+        "true",
+        flag(plan.needs_build() || plan.difftest || plan.vscode),
+        flag(plan.goldens != plan::Goldens::None),
+    )
+}
+
 /// For CI: which parts have anything to do, and the plan as the job summary.
 fn github_outputs(plan: &Plan) -> Result<(), String> {
     let append = |var: &str, text: &str| -> Result<(), String> {
@@ -169,20 +191,7 @@ fn github_outputs(plan: &Plan) -> Result<(), String> {
         f.write_all(text.as_bytes())
             .map_err(|e| format!("{var}: {e}"))
     };
-    let flag = |b: bool| if b { "true" } else { "false" };
-    let os = if plan.other_os.is_some() {
-        r#"["ubuntu-latest","windows-latest","macos-latest"]"#
-    } else {
-        r#"["ubuntu-latest"]"#
-    };
-    let outputs = format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\n",
-        flag(plan.full),
-        "true",
-        flag(plan.needs_build() || plan.difftest || plan.vscode),
-        flag(plan.goldens != plan::Goldens::None),
-    );
-    append("GITHUB_OUTPUT", &outputs)?;
+    append("GITHUB_OUTPUT", &github_output_text(plan))?;
     append(
         "GITHUB_STEP_SUMMARY",
         &format!("```\n{}```\n", plan.describe()),
@@ -262,5 +271,24 @@ name = \"a\"
             root.display()
         );
         assert!(root.join("crates").join("xtask").is_dir());
+    }
+
+    #[test]
+    fn other_oses_lint_a_pull_request_only_for_os_specific_changes() {
+        let everything = Plan::everything("test");
+        assert!(everything.other_os.is_some());
+        let text = github_output_text(&everything);
+        assert!(
+            text.contains("\nother_os=[\"windows-latest\",\"macos-latest\"]\n"),
+            "{text}"
+        );
+        assert!(text.contains("\nos=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"));
+        let mut linux_only = Plan::everything("test");
+        linux_only.other_os = None;
+        let text = github_output_text(&linux_only);
+        assert!(
+            text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
+            "{text}"
+        );
     }
 }
