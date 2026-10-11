@@ -66,10 +66,10 @@ mod throws;
 mod ts_protocol;
 mod type_defaults;
 mod types;
+mod undefined_args;
 mod unions;
 mod utility_types;
 mod visit;
-mod undefined_args;
 mod void_fields;
 mod written_types;
 

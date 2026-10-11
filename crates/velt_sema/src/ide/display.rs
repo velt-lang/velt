@@ -69,7 +69,9 @@ impl Names {
             TyKind::Error => "unknown".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.table.kind(*e) {
-                TyKind::Option(..) | TyKind::FnPtr { .. } => format!("({})[]", self.show(*e, param)),
+                TyKind::Option(..) | TyKind::FnPtr { .. } => {
+                    format!("({})[]", self.show(*e, param))
+                }
                 _ => format!("{}[]", self.show(*e, param)),
             },
             TyKind::Map(k, v) => with_args("Map", &[*k, *v]),

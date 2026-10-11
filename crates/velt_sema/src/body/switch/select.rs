@@ -30,7 +30,11 @@ impl FnCx<'_, '_> {
             ScrutKind::Plain | ScrutKind::Enum(_) => None,
             _ => self.literal_const(test),
         });
-        let null = matches!(strip_parens(test).kind, ast::ExprKind::Lit(ast::Lit::Null));
+        // `case null` / `case undefined`: the nothing of a `T | null` / `T | undefined`.
+        let null = matches!(
+            strip_parens(test).kind,
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+        );
         match (&s.kind, lit) {
             (_, _) if null => self.null_sel(s, test.span),
             (ScrutKind::Discriminant(vals), Some(l)) => {
@@ -345,9 +349,7 @@ impl FnCx<'_, '_> {
                     self.base_lit_expr(&vals[v as usize], span)
                 }
                 (ScrutKind::TypeOf, Some(m), _) => self.str_lit(self.cx.typeof_tag(m), span),
-                (ScrutKind::TypeOf, None, _) => {
-                    self.str_lit(nothing_tag(self.cx, s.expr.ty), span)
-                }
+                (ScrutKind::TypeOf, None, _) => self.str_lit(nothing_tag(self.cx, s.expr.ty), span),
                 _ => return None,
             };
             arms.push(hir::Arm {

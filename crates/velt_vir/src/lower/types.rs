@@ -363,7 +363,9 @@ impl<'h> Cx<'h> {
             TyKind::Option(inner, _) if self.has_null_niche(inner) => Ty::Ptr,
             // No payload to store (`void`, `never`, a literal): the option is its present flag.
             TyKind::Option(inner, _) if self.ty(inner) == Ty::Unit => Ty::Bool,
-            TyKind::Tuple(_) | TyKind::Option(..) | TyKind::Result(..) => Ty::Agg(self.value_agg(t)),
+            TyKind::Tuple(_) | TyKind::Option(..) | TyKind::Result(..) => {
+                Ty::Agg(self.value_agg(t))
+            }
             TyKind::Array(_) => Ty::Agg(self.array_agg()),
             TyKind::Shared(_) | TyKind::Promise(..) => Ty::Ptr,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => Ty::Agg(self.closure_agg()),

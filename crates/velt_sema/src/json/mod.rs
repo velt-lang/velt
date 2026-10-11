@@ -239,7 +239,10 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         cx.object_copies.observe(t, span, seen);
     }
     if let Some(what) = undefined_problem(cx, t, parse) {
-        cx.error(Diagnostic::error(format!("{what} is not supported yet"), span));
+        cx.error(Diagnostic::error(
+            format!("{what} is not supported yet"),
+            span,
+        ));
         return true;
     }
     let mut stack = vec![];
@@ -415,7 +418,9 @@ fn undefined_problem(cx: &Ctx, t: TyId, parse: bool) -> Option<&'static str> {
         if let TyKind::Adt(d, args) = cx.ty.kind(t) {
             let map = [cx.prelude_adt("Map"), cx.prelude_adt("Record")].contains(&Some(*d));
             if map && args.iter().any(|a| undef(*a)) {
-                return Some("`JSON.stringify` of a `Map` or `Record` whose values may be `undefined`");
+                return Some(
+                    "`JSON.stringify` of a `Map` or `Record` whose values may be `undefined`",
+                );
             }
             stack.extend(raw_field_tys(cx, *d));
         }

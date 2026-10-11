@@ -216,9 +216,7 @@ impl FnCx<'_, '_> {
         let core = self.cx.display(core);
         self.cx.error(
             Diagnostic::error(
-                format!(
-                    "type `{what}` is not assignable to type `{tn}` (TypeScript's TS2322)"
-                ),
+                format!("type `{what}` is not assignable to type `{tn}` (TypeScript's TS2322)"),
                 span,
             )
             .with_note(format!("make the type allow it: `{core} | {what}`")),

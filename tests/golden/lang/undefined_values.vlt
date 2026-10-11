@@ -88,6 +88,13 @@ function main(): void {
       console.log("sw number");
       break;
   }
+  switch (n) {
+    case undefined:
+      console.log("case undefined");
+      break;
+    default:
+      console.log("case value");
+  }
   console.log(show(undefined), show("s"), show(1));
   const xs: U[] = ["a", undefined, 2];
   console.log(xs);

@@ -19,7 +19,13 @@ use crate::types::collect_params;
 
 /// The JS `typeof` tags Velt supports, in the order used by diagnostics.
 pub(crate) const TYPEOF_TAGS: [&str; 7] = [
-    "string", "number", "boolean", "symbol", "object", "function", "undefined",
+    "string",
+    "number",
+    "boolean",
+    "symbol",
+    "object",
+    "function",
+    "undefined",
 ];
 
 impl Ctx<'_> {

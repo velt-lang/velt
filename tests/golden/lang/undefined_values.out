@@ -18,8 +18,10 @@ stmt
 undef
 6
 Box { v: undefined }
+false object
 undefined
 sw undefined
+case undefined
 none string number
 [ 'a', undefined, 2 ]
 ["a",null,2]

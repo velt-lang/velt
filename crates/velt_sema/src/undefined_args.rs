@@ -66,10 +66,10 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let mut optioned: HashMap<DefId, Vec<bool>> = HashMap::new();
     let mut reported: HashSet<Span> = HashSet::new();
     for (d, targs, span) in uses {
-        let undefined_at = targs.iter().position(|t| {
-            cx.ty.nothing_of(*t) == Some(Nothing::Undefined)
-        });
-        let Some(_) = undefined_at else { continue };
+        let undefined = |t: &TyId| cx.ty.nothing_of(*t) == Some(Nothing::Undefined);
+        if !targs.iter().any(undefined) {
+            continue;
+        }
         let flags = optioned
             .entry(d)
             .or_insert_with(|| optioned_params(cx, d))

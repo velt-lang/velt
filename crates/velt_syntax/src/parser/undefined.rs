@@ -17,7 +17,10 @@ mod tests {
         let src =
             "function f(a: string | undefined) {\n  const x = undefined;\n  const y = void 0;\n}";
         assert!(messages(src).is_empty());
-        let (file, _) = parse_file(FileId(0), "const x = undefined; void g(); let t: undefined;");
+        let (file, _) = parse_file(
+            FileId(0),
+            "const x = undefined; void g(); let t: undefined;",
+        );
         let shown = format!("{:?}", file.items);
         assert!(shown.contains(&format!("{:?}", ExprKind::Lit(Lit::Undefined))));
         assert!(shown.contains(&format!("op: {:?}", UnaryOp::Void)));

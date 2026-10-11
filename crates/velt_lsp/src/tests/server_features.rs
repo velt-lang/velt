@@ -253,13 +253,7 @@ fn fixes_apply_to_the_whole_file() {
         .iter()
         .map(|a| a["title"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        titles,
-        [
-            "Remove `mut`",
-            "Fix all in file: Remove `mut`",
-        ]
-    );
+    assert_eq!(titles, ["Remove `mut`", "Fix all in file: Remove `mut`",]);
     assert_eq!((edits_of(&offered[0]), edits_of(&offered[1])), (1, 2));
     // `source.fixAll` only when asked for.
     let source_only = request(&mut client, json!(["source.fixAll"]));
