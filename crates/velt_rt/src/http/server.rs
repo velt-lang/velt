@@ -61,6 +61,8 @@ static SERVERS: Registry<ServerObj> = Registry::new();
 pub struct ServerObj {
     port: u16,
     accept_loop: AbortHandle,
+    /// Closed once the accept loop dropped the listening socket (see [`Bound`]).
+    unbound: watch::Receiver<()>,
     /// Signals (by closing) that the handler was released; see `Shared::released`.
     released: watch::Receiver<()>,
 }
@@ -212,24 +214,61 @@ fn handle<S: OwnedStore>(
     HandlerFut::new(shared, req, parked)
 }
 
-async fn accept_loop<S: OwnedStore>(
+/// A server's listening socket and, dropped right after it, the signal that the port is free
+/// again: `close()` stops the accept loop (which owns this) asynchronously, so a `serve` on the
+/// same port waits for the signal instead of failing with "address in use" (#1020).
+struct Bound {
     listener: TcpListener,
-    shared: Arc<Shared>,
-    tls: Option<TlsAcceptor>,
-) {
+    _unbound: watch::Sender<()>,
+}
+
+/// Ports of servers closed whose listening socket may not be dropped yet, and the signal of each.
+static UNBINDING: std::sync::Mutex<Vec<(u16, watch::Receiver<()>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// How long `serve` waits for a just-closed server's socket on its port to be released.
+const UNBIND_WAIT: Duration = Duration::from_secs(5);
+
+/// Before binding `addr`: wait until a server closed on its port has released the socket.
+async fn wait_unbound(addr: &str) {
+    let Some(port) = addr
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.parse::<u16>().ok())
+    else {
+        return;
+    };
+    if port == 0 {
+        return;
+    }
+    let waiting: Vec<_> = {
+        let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
+        let (here, rest) = std::mem::take(&mut *closing)
+            .into_iter()
+            .partition(|(p, _)| *p == port);
+        *closing = rest;
+        here
+    };
+    for (_, mut unbound) in waiting {
+        let released = async { while unbound.changed().await.is_ok() {} };
+        let _ = tokio::time::timeout(UNBIND_WAIT, released).await;
+    }
+}
+
+async fn accept_loop<S: OwnedStore>(bound: Bound, shared: Arc<Shared>, tls: Option<TlsAcceptor>) {
+    let listener = &bound.listener;
     // Dropping this (when `close()` aborts the loop) makes every open connection finish its
     // in-flight requests and close.
     let graceful = GracefulShutdown::new();
     let Some(mut stop) = crate::dev::shutdown::register() else {
-        return accept_connections::<S>(&listener, shared, &graceful, tls).await;
+        return accept_connections::<S>(listener, shared, &graceful, tls).await;
     };
     // Dev mode: on SIGTERM stop accepting (the supervisor keeps the socket, so new connections
     // wait for the next version) and let in-flight requests finish before the process exits.
     {
-        let accept = std::pin::pin!(accept_connections::<S>(&listener, shared, &graceful, tls));
+        let accept = std::pin::pin!(accept_connections::<S>(listener, shared, &graceful, tls));
         futures_util::future::select(accept, std::pin::pin!(stop.requested())).await;
     }
-    drop(listener);
+    drop(bound);
     let _ = tokio::time::timeout(crate::dev::shutdown::DRAIN, graceful.shutdown()).await;
     drop(stop);
 }
@@ -303,8 +342,14 @@ where
 unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) -> *mut VeltFut {
     let shared = Shared::new(handler);
     new_leaf(async move {
+        wait_unbound(&addr).await;
         let r = crate::dev::bind(addr.as_str()).await.and_then(|l| {
             let port = l.local_addr()?.port();
+            let (unbound_tx, unbound) = watch::channel(());
+            let bound = Bound {
+                listener: l,
+                _unbound: unbound_tx,
+            };
             let desc = shared.handler();
             let released = shared.released();
             // Dev mode: a replacement handler may need any state size, so store states on the
@@ -315,13 +360,14 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
                 (desc.state_size as usize, desc.state_align as usize)
             };
             let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
-                accept_loop::<S>(l, shared, tls)
+                accept_loop::<S>(bound, shared, tls)
             ));
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {
                 port,
                 accept_loop: task.abort_handle(),
+                unbound,
                 released,
             })
         });
@@ -396,6 +442,11 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
     s.accept_loop.abort();
+    let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
+    // Forget the ones already released (their sender is gone), then remember this one.
+    closing.retain(|(_, r)| r.has_changed().is_ok());
+    closing.push((s.port, s.unbound.clone()));
+    drop(closing);
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }

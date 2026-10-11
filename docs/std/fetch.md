@@ -3,7 +3,9 @@
 `fetch`, `Request`, `Response` and `Headers` are global, as in Node: no import. They follow the
 WHATWG Fetch standard, which TypeScript's `lib.dom.d.ts` types, and run on hyper with pooled
 connections (HTTP/1.1 keep-alive, and HTTP/2 when an `https://` server offers it), rustls for
-HTTPS, and redirects followed as the standard says. A [`velt:http`](http.md) server's handlers
+HTTPS, and redirects followed as the standard says. A request whose pooled connection the server
+had closed (it fails before any response) is sent once more on another connection when its
+method is idempotent (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`). A [`velt:http`](http.md) server's handlers
 take and return the same `Request` and `Response`, as in Deno and Bun. The option types of their
 signatures (`RequestInit`, `RequestRedirect`, `ResponseInit`, `HeadersInit`, `BodyInit`) are
 global too, as in TypeScript, so an init object can be built before the call:

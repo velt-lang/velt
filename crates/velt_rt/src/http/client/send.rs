@@ -167,6 +167,49 @@ fn request(o: &mut Outgoing, keep: bool) -> Request<Full<Bytes>> {
     req
 }
 
+/// Methods that may be sent twice (RFC 9110 §9.2.2).
+fn idempotent(m: &Method) -> bool {
+    matches!(
+        *m,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE | Method::PUT | Method::DELETE
+    )
+}
+
+/// A second copy of `req` (body `body`), for [`idempotent`] requests that may be sent again.
+fn copy(req: &Request<Full<Bytes>>, body: &Bytes) -> Request<Full<Bytes>> {
+    let mut r = Request::new(Full::new(body.clone()));
+    *r.method_mut() = req.method().clone();
+    *r.uri_mut() = req.uri().clone();
+    *r.headers_mut() = req.headers().clone();
+    r
+}
+
+/// Whether `e` is a connection that broke before a response: a reused connection the server had
+/// closed (not a failed connect, which a new connection would not fix).
+fn stale_connection(e: &hyper_util::client::legacy::Error) -> bool {
+    use std::error::Error;
+    use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
+    if e.is_connect() {
+        return false;
+    }
+    let mut source = e.source();
+    while let Some(s) = source {
+        if let Some(h) = s.downcast_ref::<hyper::Error>() {
+            if h.is_incomplete_message() || h.is_canceled() || h.is_closed() {
+                return true;
+            }
+        }
+        if let Some(io) = s.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof
+            );
+        }
+        source = s.source();
+    }
+    false
+}
+
 /// A response with the URL it came from and whether a redirect led there.
 pub(super) struct Received {
     pub response: Response<Incoming>,
@@ -184,7 +227,18 @@ pub(super) async fn send(
     let mut redirected = false;
     for _ in 0..=MAX_REDIRECTS {
         let req = request(&mut o, mode == Redirect::Follow);
-        let response = client.request(req).await.map_err(|e| failed(&e))?;
+        let again = idempotent(req.method()).then(|| copy(&req, &o.body));
+        let response = match client.request(req).await {
+            Ok(r) => r,
+            // A pooled keep-alive connection the server closed meanwhile fails before a
+            // response: an idempotent request goes out once more, on another connection (#1020).
+            Err(e) => match again {
+                Some(req) if stale_connection(&e) => {
+                    client.request(req).await.map_err(|e| failed(&e))?
+                }
+                _ => return Err(failed(&e)),
+            },
+        };
         let status = response.status();
         // Only a redirect's `location` is looked up.
         let location = (status.is_redirection() && mode != Redirect::Manual)
