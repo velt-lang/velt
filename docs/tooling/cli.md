@@ -257,7 +257,9 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
    package use.
 
 A version the package pins that isn't installed is downloaded from the release on first use and
-installed, with a message on stderr. The release's `SHA256SUMS` and the list of releases are
+installed, with a message on stderr. A new patch version gets the target packs
+([`velt target add`](platforms.md#cross-compiling)) the newest older patch of its minor had, so
+`velt build --target …` keeps working after an update. The release's `SHA256SUMS` and the list of releases are
 signed with the velt release key, which is built into velt, so a mirror or a replaced file can't
 substitute a toolchain. A requirement such as `"0.1"` picks the newest release it accepts that
 hasn't been yanked (withdrawn for a serious bug). Set
