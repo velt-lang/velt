@@ -1,0 +1,38 @@
+// Object.keys / Object.values of 20,000-key records that have no array-index key: one decoded
+// from JSON, one keyed by dates ("2024-01-5"), which start with a digit (#756).
+function decoded(): number {
+  const parts: string[] = [];
+  for (let i = 0; i < 20000; i++) {
+    parts.push(`"k${i}":${i}`);
+  }
+  const r = JSON.parse<Record<string, number>>(`{${parts.join(",")}}`);
+  const t0 = performance.now();
+  let n = 0;
+  for (let j = 0; j < 200; j++) {
+    n += Object.keys(r).length + Object.values(r).length;
+  }
+  const ms = performance.now() - t0;
+  console.log("decoded:", n);
+  return ms;
+}
+
+function dates(): number {
+  const r: Record<string, number> = {};
+  for (let i = 0; i < 20000; i++) {
+    r[`2024-01-${i}`] = i;
+  }
+  const t0 = performance.now();
+  let n = 0;
+  for (let j = 0; j < 200; j++) {
+    n += Object.values(r).length;
+  }
+  const ms = performance.now() - t0;
+  console.log("dates:", n);
+  return ms;
+}
+
+function main() {
+  const a = decoded();
+  const b = dates();
+  console.error(`record_reads decoded ${a.toFixed(1)} ms, dates ${b.toFixed(1)} ms`);
+}

@@ -1006,8 +1006,13 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 
 ### 14.9 WebSockets (`velt:websocket`)
 
-`VeltWs` is an `Arc`; its send and receive halves are locked separately (one task may wait in
-`receive` while others send). Pings are answered automatically. No callbacks are stored.
+`VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
+RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
+at the call (call order is wire order, also before a server-side upgrade completes) and
+completes once it is queued; a writer task per connection sends everything queued in one
+write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
+reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
+Pings are answered automatically. No callbacks are stored.
 
 ```c
 typedef struct { VeltWs ws; VeltResp response; } VeltWsAccept;                    // 16 bytes
@@ -1019,11 +1024,15 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 |---|---|---|
 | `velt_rt_ws_accept` | `(u64 upgrade_key, const VeltStr* sec_websocket_key, IoResult<VeltWsAccept>* out)` | claims the parked upgrade (§14.8) and builds the `101` response (handshake headers) the handler must return; the connection's first operation waits for the upgrade; `EINVAL` if not an upgrade request |
 | `velt_rt_ws_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltWs>`; `ws://` / `wss://` (TLS as §14.8, extra CAs in `ca_pem`); HTTP/1.1 handshake |
-| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>`; copied |
-| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; copied |
+| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
+| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
 | `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>`: close frame; closing a closed connection succeeds |
+| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
 | `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
+| `velt_rt_ws_subscribe` | `(VeltWs ws, const VeltStr* topic) -> VeltFut*` | `IoResult<()>` once the connection is open; subscribing twice is a no-op |
+| `velt_rt_ws_unsubscribe` | `(VeltWs ws, const VeltStr* topic)` | leaves the topic (nothing if not subscribed or not open yet) |
+| `velt_rt_ws_publish` | `(const VeltStr* topic, const VeltStr* text, VeltWs except) -> u64` | text frame encoded once, queued for every subscriber but `except` (0: none) with at most 16 MiB queued; returns how many |
+| `velt_rt_ws_publish_binary` | `(const VeltStr* topic, const VeltBytes* data, VeltWs except) -> u64` | the same, binary |
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 

@@ -357,6 +357,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             "toolchain list [--available]",
             "toolchain install <version> [--default]",
             "toolchain remove <toolchain> [--force]",
+            "toolchain prune [--dry-run]",
             "toolchain default [<toolchain>]",
             "toolchain which",
             "toolchain link <name> <prefix>",
@@ -598,7 +599,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_INSTALL_PUBLIC_KEY",
-        "key release signatures are checked with instead of velt's (another build's releases)",
+        "keys release signatures are checked with instead of velt's (another build's releases)",
     ),
     ("NO_COLOR", "set to disable colored output"),
 ];

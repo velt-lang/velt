@@ -84,6 +84,7 @@ impl PB {
             impls: self.impls,
             anon_shapes: Default::default(),
             union_shapes: Default::default(),
+            counted_objects: Vec::new(),
         }
     }
 }

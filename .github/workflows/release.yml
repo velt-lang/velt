@@ -347,8 +347,10 @@ jobs:
         shell: bash
         run: scripts/cross.sh run "$RUNNER_TEMP/cross" ${{ matrix.targets }}
 
-  # The release signing key (secret VELT_RELEASE_SIGNING_KEY) must be the private half of the key
-  # velt is built with: checked on every run, so a mismatch shows before a tag is pushed.
+  # The release signing key (secret VELT_RELEASE_SIGNING_KEY) must be the private half of the
+  # signing key velt is built with (velt_toolchain::signature::RELEASE_PUBLIC_KEYS[0]; the backup
+  # key stays offline, and scripts/release-sign.sh refuses it here): checked on every run, so a
+  # mismatch shows before a tag is pushed.
   signing-key:
     runs-on: ubuntu-latest
     # The signing key is a secret of this environment, which only `main` and `v*` tags may use.

@@ -1,7 +1,7 @@
 //! Which toolchain a command runs with, and installing it when it is missing.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use semver::Version;
 use velt_toolchain::layout::velt_exe;
@@ -273,10 +273,59 @@ pub fn newest_published(ctx: &Context, req: &Requirement) -> Result<Version, Str
     }
 }
 
-/// Install release `version`; another launcher finishing the same install first is fine.
+/// Add to the newly installed `version` (at `prefix`) the target packs of the version it follows
+/// ([`velt_toolchain::layout::predecessor`]), so `velt build --target …` keeps working after a
+/// patch update. The new toolchain's own `velt target add` downloads and checks them against its
+/// release; a failure is a warning, never a failed install.
+fn carry_target_packs(ctx: &Context, before: &[Version], version: &Version, prefix: &Path) {
+    let Some(previous) = velt_toolchain::layout::predecessor(before, version) else {
+        return;
+    };
+    let packs = velt_toolchain::layout::installed_target_packs(&ctx.root.version_dir(&previous));
+    if packs.is_empty() {
+        return;
+    }
+    eprintln!(
+        "velt: adding the target packs velt {previous} had to velt {version}: {}",
+        packs.join(", ")
+    );
+    // One at a time, so one that fails doesn't stop the others; the child's output goes to
+    // stderr, since this runs before the command the user asked for (`velt run | jq`).
+    let failed: Vec<&String> = packs
+        .iter()
+        .filter(|pack| {
+            let status = std::process::Command::new(velt_exe(prefix))
+                .arg("target")
+                .arg("add")
+                .arg(pack.as_str())
+                .env(
+                    crate::ENV_LAUNCHER,
+                    std::env::current_exe().unwrap_or_default(),
+                )
+                .stdout(std::process::Stdio::from(std::io::stderr()))
+                .status();
+            !status.is_ok_and(|s| s.success())
+        })
+        .collect();
+    if !failed.is_empty() {
+        let names: Vec<&str> = failed.iter().map(|p| p.as_str()).collect();
+        eprintln!(
+            "velt: warning: could not add {}; run `velt +{version} target add {}`",
+            names.join(", "),
+            names.join(" ")
+        );
+    }
+}
+
+/// Install release `version`; another launcher finishing the same install first is fine. The
+/// target packs the version it follows had are added to it ([`carry_target_packs`]).
 pub fn install(ctx: &Context, version: &Version) -> Result<PathBuf, String> {
+    let before = ctx.root.versions();
     match release::install_toolchain(&ctx.root, version, &ctx.base) {
-        Ok(prefix) => Ok(prefix),
+        Ok(prefix) => {
+            carry_target_packs(ctx, &before, version, &prefix);
+            Ok(prefix)
+        }
         Err(_) if ctx.root.is_installed(&Toolchain::Version(version.clone())) => {
             Ok(ctx.root.version_dir(version))
         }

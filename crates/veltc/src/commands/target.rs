@@ -163,8 +163,8 @@ fn add(target: &str, from: Option<&Path>, unverified: bool) -> Result<(), String
                              to install a pack nothing can check"
                         )
                     };
-                    let key = velt_toolchain::signature::public_key().map_err(way_out)?;
-                    let sums = velt_toolchain::signature::signed_sums(&release, &key)
+                    let keys = velt_toolchain::signature::public_keys().map_err(way_out)?;
+                    let sums = velt_toolchain::signature::signed_sums(&release, &keys)
                         .map_err(way_out)?
                         .ok_or_else(|| {
                             format!(
