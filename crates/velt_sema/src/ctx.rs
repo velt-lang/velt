@@ -125,14 +125,12 @@ pub(crate) struct Ctx<'m> {
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
-    /// For each nested definition: names bound in its enclosing functions (for the
-    /// "nested functions cannot capture" error).
+    /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
     pub enclosing_class: HashMap<DefId, DefId>,
-    /// Static methods using `this` or `super`, and their copies: the class `this` is in each
-    /// (`collect::static_this`).
+    /// Static methods using `this`/`super` and their copies: the class `this` is (`static_this`).
     pub static_this: HashMap<DefId, DefId>,
     /// The copy of a static method (using `this`) whose `this` is a given subclass.
     pub static_copies: HashMap<(DefId, DefId), DefId>,
@@ -143,8 +141,7 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of every function made from a generic arrow, module-level ones included
     /// (diagnostics show them as arrows).
     pub generic_arrow_all: HashSet<Span>,
-    /// The program has TypeScript-form overloads (`crate::overloads`): calls of a name with
-    /// signatures `name#k` choose among them.
+    /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
