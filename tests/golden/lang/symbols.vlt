@@ -1,0 +1,46 @@
+// `symbol` values: `Symbol(desc)` makes a new symbol, compared by identity; `Symbol.for(key)`
+// returns the registry's symbol for `key`; `description`, `toString()`, `String(s)`, `typeof`
+// and printing work as in Node, and symbols are `Map` and `Set` keys. Expected output from node.
+const BRAND = Symbol("brand");
+
+function kindOf(x: string | symbol | number): string {
+  return typeof x;
+}
+
+function label(s: symbol): string {
+  return s === BRAND ? "brand" : (s.description ?? "anonymous");
+}
+
+function main() {
+  const a = Symbol("a");
+  const b = Symbol("a");
+  const plain = Symbol();
+  console.log(a, b, plain, typeof a);
+  console.log(a === b, a === a, a !== b, BRAND === BRAND);
+  console.log(a.toString(), String(b), a.description, plain.toString());
+  console.log(kindOf("s"), kindOf(Symbol("k")), kindOf(1));
+  console.log(label(BRAND), label(a), label(plain));
+
+  const k1 = Symbol.for("app.key");
+  const k2 = Symbol.for("app.key");
+  console.log(k1 === k2, k1 === Symbol("app.key"), Symbol.keyFor(k1), Symbol.keyFor(a) == null);
+
+  console.log(Symbol.iterator, Symbol.asyncIterator === Symbol.asyncIterator);
+  console.log([a, Symbol.toStringTag, BRAND]);
+
+  const names = new Map<symbol, string>();
+  names.set(a, "first");
+  names.set(b, "second");
+  names.set(k1, "registered");
+  console.log(names.get(a), names.get(b), names.get(Symbol.for("app.key")), names.has(plain));
+  console.log(names);
+
+  const seen = new Set<symbol>();
+  seen.add(a);
+  seen.add(a);
+  seen.add(BRAND);
+  console.log(seen.size, seen.has(BRAND), seen.has(b));
+
+  const maybe: symbol | null = Math.random() < 2 ? BRAND : null;
+  console.log(maybe, maybe === BRAND);
+}

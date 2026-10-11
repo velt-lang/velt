@@ -334,7 +334,9 @@ impl<'h> Cx<'h> {
 
     /// `Option<t>` uses the null pointer for none.
     pub(super) fn has_null_niche(&self, t: TyId) -> bool {
-        self.is_class(t) || self.boxed(t) || matches!(self.types.kind(t), TyKind::Shared(_))
+        self.is_class(t)
+            || self.boxed(t)
+            || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)
     }
 
     /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value), and
@@ -346,6 +348,8 @@ impl<'h> Cx<'h> {
             TyKind::Float(FloatTy::F64) => Ty::F64,
             TyKind::Bool => Ty::Bool,
             TyKind::Str => Ty::Agg(STR_AGG),
+            // The address of a symbol record (rt_abi.md "Symbols"), never null.
+            TyKind::Symbol => Ty::Ptr,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,
             _ if self.boxed(t) => Ty::Ptr,
@@ -521,6 +525,7 @@ impl<'h> Cx<'h> {
             },
             TyKind::Str => "string".into(),
             TyKind::Bool => "boolean".into(),
+            TyKind::Symbol => "symbol".into(),
             TyKind::Int(_) | TyKind::Float(_) => "number".into(),
             // Spelled without intern indices: aggregate names must not change with unrelated
             // edits either (`velt dev` compares layouts across versions by name).

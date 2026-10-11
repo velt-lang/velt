@@ -1,0 +1,32 @@
+// A template literal part whose type parameter is a union holding `symbol` (`T = string |
+// symbol`) checks the active member at run time: other members are written as Node writes them
+// (`null` too), and a symbol throws JavaScript's `TypeError`, as `ToString` does. Velt panics
+// (exit code 101; `try`/`catch` cannot catch it, unlike Node); the lines before are printed.
+function show<T>(x: T): string {
+  return `v=${x}`;
+}
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  text(): string {
+    return `box(${this.v})`;
+  }
+}
+function pick(i: number): string | symbol {
+  return i === 0 ? "text" : Symbol("s");
+}
+function main(): void {
+  const a: string | symbol = pick(0);
+  const n: number | symbol = 4.5;
+  const lit: "on" | symbol = "on";
+  const none: string | symbol | null = null;
+  const t: boolean | symbol = true;
+  console.log(show(a), show(n), show(lit), show(none), show(t));
+  console.log(new Box<string | symbol>("b").text(), new Box<number | symbol | null>(null).text());
+  const xs: (string | symbol)[] = ["a", "b"];
+  console.log(xs.join("-"), show(xs), String(xs));
+  console.log(String(pick(1)));
+  console.log(show(pick(1)));
+}

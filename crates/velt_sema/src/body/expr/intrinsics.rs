@@ -70,6 +70,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "weakmap_value" => I::WeakMapValue,
         "weakref_new" => I::WeakRefNew,
         "weakref_deref" => I::WeakRefDeref,
+        "symbol_static" => I::SymbolStatic,
+        "symbol_registry" => I::SymbolRegistry,
         _ => return None,
     })
 }
@@ -226,6 +228,11 @@ impl FnCx<'_, '_> {
             I::ChanTrySend => (vec![(u64_, C), (t, O)], ty.bool_, true),
             I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
+            I::SymbolStatic => {
+                let sym = ty.intern(TyKind::Symbol);
+                (vec![(i64_, C), (str_, B), (ty.bool_, C)], sym, false)
+            }
+            I::SymbolRegistry => (vec![], ty.intern(TyKind::Symbol), false),
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),
             I::SharedGet => (vec![(shared, B)], t, true),

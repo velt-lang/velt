@@ -1,0 +1,21 @@
+// A method or accessor keyed by a computed name must be a key the compiler knows, as a field's
+// is: a module constant holding a symbol (`Symbol("...")`, `Symbol.for("...")`) or a string, or
+// a well-known symbol. TypeScript accepts a number constant here; Velt reports it rather than
+// registering the member under a name `o[SLOT]` would not find. A quoted key starting with the
+// noncharacter U+FFFF is reserved for symbol keys (TypeScript accepts it).
+const SLOT = 3;
+
+interface Keyed {
+  [SLOT](): number;
+}
+
+class Box {
+  get [SLOT](): number {
+    return 1;
+  }
+}
+
+function main() {
+  const o = { "\uFFFFSymbol(k)": 1 };
+  console.log(new Box(), o);
+}

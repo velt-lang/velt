@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
         };
         let alone = rest.iter().all(|p| match p {
             Part::Text(_) => true,
-            Part::Str(e) | Part::Format(e) => leaves_alone(e, &target, &is_fn),
+            Part::Str(e) | Part::Format(e, _) => leaves_alone(e, &target, &is_fn),
         });
         Some(match alone {
             true => self.append_now(place, rest, ty),
@@ -210,7 +210,7 @@ fn later_parts(rest: &[Part]) -> Later {
     rest.iter()
         .map(|p| match p {
             Part::Text(_) => Later::default(),
-            Part::Str(e) | Part::Format(e) => Later::of(e),
+            Part::Str(e) | Part::Format(e, _) => Later::of(e),
         })
         .fold(Later::default(), Later::or)
 }
@@ -261,7 +261,13 @@ fn leaves_alone(e: &hir::Expr, t: &Target, is_fn: &dyn Fn(TyId) -> bool) -> bool
         K::Binary { lhs, rhs, .. } => alone(lhs) && alone(rhs),
         K::If { cond, then, els } => alone(cond) && alone(then) && alone(els),
         K::Call {
-            callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::StrConcat | Intrinsic::Share),
+            callee:
+                Callee::Intrinsic(
+                    Intrinsic::ToString
+                    | Intrinsic::TemplateToString
+                    | Intrinsic::StrConcat
+                    | Intrinsic::Share,
+                ),
             args,
         } => all(args),
         // A closure passed along may capture the target without boxing it.
@@ -279,7 +285,7 @@ fn leaves_alone(e: &hir::Expr, t: &Target, is_fn: &dyn Fn(TyId) -> bool) -> bool
 fn may_fail(part: &Part) -> bool {
     match part {
         Part::Text(_) => false,
-        Part::Str(e) | Part::Format(e) => !infallible(e),
+        Part::Str(e) | Part::Format(e, _) => !infallible(e),
     }
 }
 

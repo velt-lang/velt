@@ -101,14 +101,21 @@ pub(super) fn union_decode_problem(cx: &mut Ctx, u: TyId) -> Option<String> {
     None
 }
 
-/// Field names of object type `t` with whether each is required (not `T | null`).
+/// Field names of object type `t` with whether each is required (not `T | null`), leaving out
+/// the members a symbol names, which no JSON key fills.
 fn object_fields(cx: &mut Ctx, t: TyId) -> Vec<(String, TyId, bool)> {
     let TyKind::Adt(d, args) = cx.ty.kind(t).clone() else {
         return vec![];
     };
     let fields: Vec<(String, TyId)> = cx
         .adt(d)
-        .map(|a| a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect())
+        .map(|a| {
+            a.fields
+                .iter()
+                .filter(|f| !crate::property_order::is_hidden_key(&f.name))
+                .map(|f| (f.name.clone(), f.ty))
+                .collect()
+        })
         .unwrap_or_default();
     fields
         .into_iter()

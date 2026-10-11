@@ -34,8 +34,9 @@ const REUSE_MIN: u64 = 1024;
 pub(super) enum Part<'e> {
     /// Static text (a string literal).
     Text(&'e str),
-    /// `ToString(e)` of a non-string value.
-    Format(&'e hir::Expr),
+    /// `ToString(e)` of a non-string value; `true` for a `TemplateToString`, which throws for a
+    /// symbol.
+    Format(&'e hir::Expr, bool),
     /// A string-typed expression.
     Str(&'e hir::Expr),
 }
@@ -56,13 +57,17 @@ pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
             flatten(&args[1], out);
         }
         hir::ExprKind::Call {
-            callee: hir::Callee::Intrinsic(Intrinsic::ToString),
+            callee: hir::Callee::Intrinsic(i @ (Intrinsic::ToString | Intrinsic::TemplateToString)),
             args,
-        } if args.len() == 1 => out.push(Part::Format(&args[0])),
+        } if args.len() == 1 => out.push(Part::Format(&args[0], *i == Intrinsic::TemplateToString)),
         hir::ExprKind::Lit(hir::Lit::Str(s)) => out.push(Part::Text(s)),
         _ => out.push(Part::Str(e)),
     }
 }
+
+mod symbol_text;
+
+use symbol_text::SYMBOL_TO_STRING;
 
 impl FnLower<'_, '_> {
     /// `StrConcat(a, b)`, flattened with any nested concatenations and `ToString`s.
@@ -118,7 +123,7 @@ impl FnLower<'_, '_> {
                     }
                     strings = true;
                 }
-                Part::Format(e) => {
+                Part::Format(e, _) => {
                     let t = self.sub(e.ty);
                     if !matches!(
                         self.cx.kind(t),
@@ -141,7 +146,7 @@ impl FnLower<'_, '_> {
         let mut acc = Later::default();
         for (i, p) in parts.iter().enumerate().rev() {
             later[i] = acc;
-            if let Part::Str(e) | Part::Format(e) = p {
+            if let Part::Str(e) | Part::Format(e, _) = p {
                 let l = Later::of(e);
                 acc.locals |= l.locals;
                 acc.memory |= l.memory;
@@ -154,7 +159,7 @@ impl FnLower<'_, '_> {
             let Part::Str(e) = &parts[i] else { continue };
             let Some(root) = root_local(e) else { continue };
             let moved = parts[i + 1..].iter().any(|p| match p {
-                Part::Str(x) | Part::Format(x) => may_move_local(x, root),
+                Part::Str(x) | Part::Format(x, _) => may_move_local(x, root),
                 Part::Text(_) => false,
             });
             later[i].locals |= moved;
@@ -169,7 +174,7 @@ impl FnLower<'_, '_> {
                     self.drop_arguments(&before, &v);
                     Some(v)
                 }
-                Part::Str(e) | Part::Format(e) => Some(self.expr_held(e, later[i])),
+                Part::Str(e) | Part::Format(e, _) => Some(self.expr_held(e, later[i])),
             });
         }
         let mut fixed = 0u64;
@@ -212,7 +217,7 @@ impl FnLower<'_, '_> {
     fn fixed_width(&mut self, p: &Part) -> u64 {
         match p {
             Part::Text(s) => s.len() as u64,
-            Part::Format(e) => {
+            Part::Format(e, _) => {
                 let t = self.sub(e.ty);
                 match self.cx.kind(t) {
                     TyKind::Bool => 5,
@@ -229,7 +234,7 @@ impl FnLower<'_, '_> {
     fn push_part(&mut self, bp: &Operand, p: &Part, v: Option<Operand>) {
         match (p, v) {
             (Part::Text(s), _) => self.push_text(bp, s),
-            (Part::Format(e), Some(v)) => {
+            (Part::Format(e, _), Some(v)) => {
                 let t = self.sub(e.ty);
                 self.push_scalar(bp, v, t);
             }
@@ -511,7 +516,7 @@ impl FnLower<'_, '_> {
         for p in parts {
             match p {
                 Part::Text(s) => self.push_text(bp, s),
-                Part::Format(e) => self.push_formatted(bp, e),
+                Part::Format(e, implicit) => self.push_formatted(bp, e, *implicit),
                 Part::Str(e) => {
                     let v = self.expr(e);
                     let a = self.operand_addr(v, STR);
@@ -529,7 +534,7 @@ impl FnLower<'_, '_> {
             n += match p {
                 Part::Text(s) => s.len() as u64,
                 Part::Str(_) => 16,
-                Part::Format(e) => {
+                Part::Format(e, _) => {
                     let t = self.sub(e.ty);
                     match self.cx.kind(t) {
                         // A number is most often a count or an index (`${x},${y}`): as short as
@@ -544,8 +549,9 @@ impl FnLower<'_, '_> {
         n
     }
 
-    /// Evaluate `e` and append its `console.log` text to the builder at `buf`.
-    fn push_formatted(&mut self, buf: &Operand, e: &hir::Expr) {
+    /// Evaluate `e` and append its `console.log` text to the builder at `buf` (`implicit`: a
+    /// `TemplateToString`, where a symbol throws).
+    fn push_formatted(&mut self, buf: &Operand, e: &hir::Expr, implicit: bool) {
         let v = self.expr(e);
         let t = self.sub(e.ty);
         match self.cx.kind(t) {
@@ -553,6 +559,9 @@ impl FnLower<'_, '_> {
             TyKind::Never => {}
             _ => {
                 let p = self.place_of(v, t);
+                if implicit && self.push_symbol_text(buf, &p, t) {
+                    return;
+                }
                 if !self.push_js_object(buf, &p, t) {
                     self.push_js_string(buf, &p, t);
                 }
@@ -620,7 +629,8 @@ impl FnLower<'_, '_> {
     /// An element of an array being written by [`push_js_string`](Self::push_js_string):
     /// `null` is empty text, a union member is written as itself, a class instance through its
     /// `toString()` (#818), and any other object as JS's default `Object.prototype.toString`
-    /// writes it (`[object Object]`, `[object Map]`, ...). Sema rejects the element types whose
+    /// writes it (`[object Object]`, `[object Map]`, ...). A symbol stops the program with JS's
+    /// `TypeError`. Sema rejects the element types whose
     /// JS text comes from a method lowering cannot call (a struct's `toString()`, `Error`,
     /// `RegExp`; velt_sema's js_list.rs), except through a type parameter.
     fn push_js_element(&mut self, buf: &Operand, place: &Place, ty: TyId) {
@@ -634,6 +644,9 @@ impl FnLower<'_, '_> {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
             }
+            // `[s].join()`, `String([s])`: JS's `Array.prototype.join` converts each element
+            // with `ToString`, which throws for a symbol (sema rejects the direct conversions).
+            TyKind::Symbol => self.panic_msg(SYMBOL_TO_STRING),
             TyKind::Option(e) => {
                 let (some_bb, done) = (self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
@@ -683,7 +696,8 @@ impl FnLower<'_, '_> {
 
     /// `ToString(x)` → owned string: `velt_rt_str_from_*` for scalars, a clone for strings, the
     /// format glue into a builder for everything else.
-    pub(super) fn stringify(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
+    /// `implicit`: a `TemplateToString`, where a symbol throws.
+    pub(super) fn stringify(&mut self, a: &hir::Expr, ty: TyId, implicit: bool) -> Operand {
         let aty = self.sub(a.ty);
         let ty = self.sub(ty);
         let kind = self.cx.kind(aty);
@@ -693,7 +707,7 @@ impl FnLower<'_, '_> {
         ) {
             let (buf, bp) = self.new_strbuf(32);
             self.own_temp(buf, ty);
-            self.push_formatted(&bp, a);
+            self.push_formatted(&bp, a, implicit);
             return Operand::Copy(Place::local(buf));
         }
         let v = self.expr(a);

@@ -31,7 +31,7 @@ impl<'a> Parser<'a> {
                     args: self.parse_args()?,
                     optional: false,
                 },
-                Tok::LBracket if self.at_symbol_key() => ExprKind::Member {
+                Tok::LBracket if self.at_well_known_key() => ExprKind::Member {
                     object: Box::new(e),
                     prop: self.parse_symbol_key()?,
                     optional: false,

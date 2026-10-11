@@ -89,9 +89,10 @@ impl<'a> Parser<'a> {
                 None if self.at_word("protected") && !m.is_private && !m.is_public => {
                     &mut m.is_protected
                 }
-                // `get name(` starts a getter; `get(` / `get: T` are a member named `get`.
-                None if self.at_word("get") && self.nth(2) == Tok::LParen => &mut m.is_getter,
-                None if self.at_word("set") && self.nth(2) == Tok::LParen => &mut m.is_setter,
+                // `get name(` (or `get [Symbol.toStringTag](`) starts a getter; `get(` /
+                // `get: T` are a member named `get`.
+                None if self.at_word("get") && self.at_accessor_name() => &mut m.is_getter,
+                None if self.at_word("set") && self.at_accessor_name() => &mut m.is_setter,
                 _ => break,
             };
             if *flag {
@@ -101,6 +102,16 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         m
+    }
+
+    /// After `get` / `set`: is the next token a name (or the next tokens a symbol key) followed
+    /// by `(`?
+    fn at_accessor_name(&mut self) -> bool {
+        let key = self.symbol_key_len(1);
+        match key {
+            0 => self.nth(2) == Tok::LParen,
+            n => self.nth(1 + n) == Tok::LParen,
+        }
     }
 
     /// One `struct`/`class`/`extend` member.
