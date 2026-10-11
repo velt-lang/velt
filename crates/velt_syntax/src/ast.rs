@@ -299,7 +299,17 @@ pub enum TypeExprKind {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
         throws: Option<Box<TypeExpr>>,
+        /// `(a: A, ...xs: T[]) => R`: the last parameter is a rest parameter.
+        rest: bool,
     },
+    /// `<T>(x: T) => T`: a generic function type (`ty` is the function type).
+    GenericFunction {
+        type_params: Vec<GenericParam>,
+        ty: Box<TypeExpr>,
+    },
+    /// `new (a: A) => R`: a construct signature, the type of a class used as a value (the
+    /// function type, generic or not, after `new`).
+    Construct(Box<TypeExpr>),
     /// `A | B` (a union type; `T | null` is an optional `T`).
     Union(Vec<TypeExpr>),
     /// `A & B` (an intersection; binds tighter than `|`). Generic bounds (`T extends A & B`)

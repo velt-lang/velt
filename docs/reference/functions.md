@@ -647,6 +647,11 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   the caller's object. A function whose parameter takes ownership of a promise (one owner)
   cannot be a value, and neither can a generic function that keeps a parameter whose type is a
   promise at the value's type arguments or still depends on a type parameter.
+- **Planned** (#943): rest parameters in function types (`(event: string, ...args: T[]) => void`,
+  and rest parameters of arrows, `(...xs: T[]) => …`), generic function types
+  (`<T>(description: string) => Token<T>`, a value each call instantiates) and construct
+  signatures (`new (buffer: ArrayBuffer) => View`, a class passed as a value). They parse, and
+  using one is an error saying it is not supported yet.
 
 ## Captures
 

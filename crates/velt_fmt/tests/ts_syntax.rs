@@ -94,3 +94,23 @@ fn destructured_parameters_and_types_from_defaults() {
 ",
     );
 }
+
+#[test]
+fn rest_generic_and_construct_function_types() {
+    round_trips(
+        "type Emit = (event: string, ...args: number[]) => void;
+",
+    );
+    round_trips(
+        "type Make = <T>(description: string) => Token<T>;
+",
+    );
+    round_trips(
+        "type Ctor = new (buffer: ArrayBuffer) => View;
+",
+    );
+    round_trips(
+        "type O = { m(a: number, ...rest: string[]): void };
+",
+    );
+}

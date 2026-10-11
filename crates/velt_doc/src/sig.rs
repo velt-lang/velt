@@ -150,13 +150,22 @@ impl Printer<'_> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let params: Vec<String> = params.iter().map(|p| self.fn_type_param(p)).collect();
+                let mut params: Vec<String> =
+                    params.iter().map(|p| self.fn_type_param(p)).collect();
+                if let Some(last) = params.last_mut().filter(|_| *rest) {
+                    last.insert_str(0, "...");
+                }
                 let throws = throws
                     .as_ref()
                     .map_or(String::new(), |t| format!(" throws {}", self.ty(t)));
                 format!("({}) => {}{throws}", params.join(", "), self.ty(ret))
             }
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                format!("{}{}", self.generics(type_params), self.ty(ty))
+            }
+            TypeExprKind::Construct(ty) => format!("new {}", self.ty(ty)),
             TypeExprKind::Union(members) => {
                 let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
                 members.join(" | ")

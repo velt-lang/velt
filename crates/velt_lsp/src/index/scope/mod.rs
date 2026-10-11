@@ -322,10 +322,14 @@ impl<'a> Walker<'a> {
                 params,
                 ret,
                 throws,
+                ..
             } => {
                 params.iter().for_each(|t| self.ty(t));
                 self.ty(ret);
                 throws.iter().for_each(|t| self.ty(t));
+            }
+            ast::TypeExprKind::GenericFunction { ty, .. } | ast::TypeExprKind::Construct(ty) => {
+                self.ty(ty)
             }
             ast::TypeExprKind::Object(fields) => fields.iter().for_each(|f| self.ty(&f.ty)),
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),

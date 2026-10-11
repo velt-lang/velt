@@ -227,6 +227,25 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::LParen => self.parse_fn_or_paren_type(),
+            // `<T>(x: T) => T`: a generic function type.
+            Tok::Lt => {
+                let type_params = self.parse_generic_params()?;
+                let fn_lo = self.cur_lo();
+                let ty = Box::new(self.parse_fn_type(fn_lo)?);
+                Ok(TypeExpr {
+                    kind: TypeExprKind::GenericFunction { type_params, ty },
+                    span: self.span_from(lo),
+                })
+            }
+            // `new (a: A) => R`: a construct signature.
+            Tok::Kw(Kw::New) if matches!(self.nth(1), Tok::LParen | Tok::Lt) => {
+                self.bump();
+                let ty = Box::new(self.parse_type_prim()?);
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Construct(ty),
+                    span: self.span_from(lo),
+                })
+            }
             Tok::LBrace => self.parse_object_type(),
             _ if self.at_literal_type() => {
                 let negative = self.eat(Tok::Minus);
@@ -380,6 +399,7 @@ impl<'a> Parser<'a> {
         });
         Ok(TypeExpr {
             kind: TypeExprKind::Function {
+                rest: sig.params.last().is_some_and(|p| p.rest),
                 params: sig.params.into_iter().map(|p| p.ty).collect(),
                 ret: Box::new(ret),
                 throws: sig.throws.map(Box::new),
@@ -394,7 +414,7 @@ impl<'a> Parser<'a> {
     fn parse_fn_or_paren_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         if self.after_matching_paren(0) == Some(Tok::FatArrow) {
-            return self.parse_fn_type();
+            return self.parse_fn_type(lo);
         }
         self.bump(); // (
         let mut t = self.parse_type()?;
@@ -403,16 +423,22 @@ impl<'a> Parser<'a> {
         Ok(t)
     }
 
-    /// `(a: A, B) => R [throws E]` — parameter names are optional and dropped.
-    fn parse_fn_type(&mut self) -> PResult<TypeExpr> {
-        let lo = self.cur_lo();
+    /// `(a: A, B, ...xs: T[]) => R [throws E]` (from `lo`) — parameter names are optional and
+    /// dropped.
+    fn parse_fn_type(&mut self, lo: u32) -> PResult<TypeExpr> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
+        let mut rest = false;
         while !self.at(Tok::RParen) {
+            if rest {
+                let span = self.cur_span();
+                self.error("a rest parameter must be the last parameter", span);
+            }
             if self.at_word("mut") && Self::is_ident_like(self.nth(1)) && self.nth(2) == Tok::Colon
             {
                 self.reject_mut_modifier();
             }
+            rest = self.eat(Tok::DotDotDot);
             if self.at_ident_like() && self.nth(1) == Tok::Colon {
                 self.bump();
                 self.bump();
@@ -431,6 +457,7 @@ impl<'a> Parser<'a> {
                 params,
                 ret: Box::new(ret),
                 throws,
+                rest,
             },
             span: self.span_from(lo),
         })
