@@ -44,6 +44,11 @@ fn stack_exhausted(cx: &Ctx) -> bool {
 
 /// The result type of function `d` (used at `at`), inferring it from the body if needed.
 pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
+    if cx.bodies_ok && !(cx.deferred_sigs.is_empty() && cx.filling_sigs.is_empty()) {
+        if let Some(t) = pending_sig(cx, d, at) {
+            return t;
+        }
+    }
     let f = cx.fn_info(d);
     match f.ret_source.clone() {
         RetSource::Known => f.ret,
@@ -68,6 +73,30 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
             r
         }
     }
+}
+
+/// While type queries fill deferred signatures (`collect::sigs::fill_pending`): `d`'s result is
+/// needed at `at`, so its signature is filled first; if it is being filled and its result comes
+/// from its body, which needs its parameters, that is a cycle (TS7023), reported here.
+fn pending_sig(cx: &mut Ctx, d: DefId, at: Span) -> Option<TyId> {
+    let Some((_, param)) = cx.filling_sigs.iter().find(|f| f.0 == d).cloned() else {
+        crate::collect::sigs::fill_pending(cx, d);
+        return None;
+    };
+    if cx.fn_info(d).ret_source == RetSource::Known {
+        return None;
+    }
+    let name = super::recursion::short_name(cx, d);
+    cx.error(
+        Diagnostic::error(
+            format!("the result of `{name}` is needed to resolve its own signature"),
+            at,
+        )
+        .with_note(format!(
+            "the type of `{param}` needs it, and `{name}` takes its result from its body; write the return type of `{name}`"
+        )),
+    );
+    Some(cx.ty.error)
 }
 
 /// `d`'s result is needed at `at`, inside a chain of bodies checked for their result types

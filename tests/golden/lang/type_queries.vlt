@@ -55,6 +55,20 @@ function props(n: number): string[] {
   return keysOf(collect(n));
 }
 
+// A signature may name the inferred result of a function declared after it.
+function chainA(x: ReturnType<typeof chainB>) {
+  return x + 1;
+}
+function chainB(y: ReturnType<typeof chainC>) {
+  return y * 10;
+}
+function chainC() {
+  return 1;
+}
+
+// A constant initialized with an integer is a `number`: `/` divides as in TypeScript.
+const RATE = 3;
+
 function main() {
   const c: Config = { host: "example.org", port: 443, tags: "" };
   console.log(c.host, c.port, c.tags.length);
@@ -81,4 +95,9 @@ function main() {
   console.log(props(7));
   let timer: ReturnType<typeof setTimeout> | null = null;
   console.log(timer === null);
+  console.log(chainA(chainB(chainC())));
+  let total: typeof RATE = RATE;
+  console.log(total / 2);
+  const rates: (typeof RATE)[] = [RATE];
+  console.log(rates.map((x) => x / 4));
 }

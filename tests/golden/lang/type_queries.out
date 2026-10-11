@@ -9,3 +9,6 @@ host="localhost" port=8080 tags="a,b"
 root
 [ 'k7', 'k8' ]
 true
+11
+1.5
+[ 0.75 ]

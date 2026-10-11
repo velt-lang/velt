@@ -338,6 +338,8 @@ pub enum TypeExprKind {
         readonly: bool,
     },
     /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
+    /// `Query(vec![])` is the placeholder for a query the parser already reported (`typeof
+    /// import("m")`, `typeof f<T>`); sema resolves it to the error type without a diagnostic.
     Query(Vec<Ident>),
     /// `keyof T`: the union of `T`'s keys.
     KeyOf(Box<TypeExpr>),

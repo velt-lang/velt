@@ -1,8 +1,13 @@
 // Index signatures: a `number` key and named members next to an index signature are not
 // supported yet; a key that is not `string`, `number` or `symbol` is an error as in TypeScript
-// (TS1268).
+// (TS1268). A value type that includes `null` is not supported yet: the record would drop a
+// `null` value (#1005).
 type ByIndex = { [i: number]: string };
 type Meta = { name: string; [key: string]: string };
 type Flags = { [k: boolean]: string };
+type MaybeNum = { [k: string]: number | null };
+interface Slots {
+  [name: string]: string | number | null;
+}
 
 function main() {}

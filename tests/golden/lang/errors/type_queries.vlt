@@ -2,6 +2,9 @@
 // generic or async function's type, a class's own type, `keyof` of a class or of a string-keyed
 // record), and what TypeScript rejects is an error too: a type used as a value (TS2693), an
 // unknown name (TS2304), `ReturnType` of a non-function (TS2344) and a missing field (TS2339).
+// A signature that needs its own type is an error (TS2502), directly, through other functions
+// or through a body that calls the function (TS7023); `typeof f` of a function with a rest,
+// optional or default parameter is not supported yet.
 function id<T>(x: T): T {
   return x;
 }
@@ -24,6 +27,47 @@ type E = typeof missing;
 type G = keyof Point;
 type H = keyof { [k: string]: number };
 type I = ReturnType<number>;
+
+function me(z: ReturnType<typeof me>) {
+  return z;
+}
+function ping(x: ReturnType<typeof pong>) {
+  return x;
+}
+function pong(y: ReturnType<typeof ping>) {
+  return y;
+}
+function n1(x: Parameters<typeof n2>) {
+  return 1;
+}
+function n2(y: ReturnType<typeof n3>) {
+  return 2;
+}
+function n3(w: ReturnType<typeof n1>) {
+  return w;
+}
+function selfRet(): ReturnType<typeof selfRet> {
+  return 1;
+}
+function viaBody(x: ReturnType<typeof caller>) {
+  return x + 1;
+}
+function caller() {
+  return viaBody(1);
+}
+
+function restf(...xs: number[]) {
+  return xs.length;
+}
+function opt(a: number, b?: number) {
+  return a;
+}
+function dflt(a: number, b: number = 2) {
+  return a + b;
+}
+type J = Parameters<typeof restf>;
+type K = Parameters<typeof opt>;
+type L = typeof dflt;
 
 function main() {
   const p = new Point();

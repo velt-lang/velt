@@ -15,7 +15,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::ctx::{Ctx, Item};
-use crate::defs::{DefInfo, RetSource};
+use crate::defs::{DefInfo, FnSource, RetSource};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
@@ -109,6 +109,14 @@ impl Ctx<'_> {
                 }
                 // `const s = "a"` is the literal type `"a"`, as in TypeScript.
                 if let Some(lit) = init.and_then(literal_init) {
+                    // `const N = 4` is the literal type `4` of `number` in TypeScript; Velt's
+                    // number literal types divide as integers and take no arithmetic yet
+                    // (#462), so it is `number` until they do.
+                    if let ast::Lit::Int { suffix: None, .. }
+                    | ast::Lit::Float { suffix: None, .. } = lit.lit
+                    {
+                        return self.ty.f64;
+                    }
                     return match self.lit_value_of(&lit, span) {
                         Some(v) => self.lit_type(v),
                         None => self.ty.error,
@@ -139,6 +147,32 @@ impl Ctx<'_> {
 
     /// `typeof f` for function `f`: its function type, with the result its body gives.
     fn query_fn(&mut self, d: DefId, name: &str, span: Span) -> TyId {
+        if self.bodies_ok {
+            // `function a(x: ReturnType<typeof b>)` before `b`: fill `b`'s signature first,
+            // unless it is the one being resolved (TS2502).
+            if let Some(i) = self.filling_sigs.iter().position(|f| f.0 == d) {
+                let whose = self.filling_sigs.last().map_or("", |f| f.1.as_str());
+                let whose = if whose.is_empty() { name } else { whose };
+                let cycle: Vec<String> = self.filling_sigs[i..]
+                    .iter()
+                    .map(|f| format!("`{}`", self.fn_info(f.0).name))
+                    .collect();
+                let note = match &cycle[..] {
+                    [_] => format!("the signature of `{name}` needs its own type"),
+                    [rest @ .., last] => format!(
+                        "the signatures of {} and {last} need each other's types",
+                        rest.join(", ")
+                    ),
+                    [] => unreachable!("ICE: an empty cycle of signatures"),
+                };
+                self.error(
+                    Diagnostic::error(format!("`{whose}` is referenced in its own type"), span)
+                        .with_note(note),
+                );
+                return self.ty.error;
+            }
+            crate::collect::sigs::fill_pending(self, d);
+        }
         let f = self.fn_info(d);
         if f.generics.len() > 0 {
             self.error(
@@ -162,9 +196,28 @@ impl Ctx<'_> {
             );
             return self.ty.error;
         }
+        let ast_params = match f.source {
+            Some(FnSource::Decl(decl)) => &decl.sig.params[..],
+            Some(FnSource::Default(sig, _)) => &sig.params[..],
+            None => &crate::collect::sigs::extern_sig(self, d, f.module).params[..],
+        };
+        let special = ast_params.iter().find_map(|p| match () {
+            _ if p.rest => Some("a rest parameter"),
+            _ if p.optional => Some("an optional parameter"),
+            _ if p.default.is_some() => Some("a parameter with a default"),
+            _ => None,
+        });
+        if let Some(what) = special {
+            self.err(
+                format!("`typeof {name}` of a function with {what} is not supported yet (#936)"),
+                span,
+            );
+            return self.ty.error;
+        }
         if !self.bodies_ok {
             return self.query_needs_body(name, "function", span);
         }
+        let f = self.fn_info(d);
         let params: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
         let ret = match f.ret_source {
             RetSource::Known => f.ret,
@@ -299,6 +352,8 @@ impl Ctx<'_> {
         match self.ty.kind(f).clone() {
             TyKind::FnPtr { params, ret, .. } => match name {
                 "ReturnType" => ret,
+                // A parameter already reported (a cycle): no tuple with an error inside.
+                _ if params.contains(&self.ty.error) => self.ty.error,
                 _ => self.ty.intern(TyKind::Tuple(params)),
             },
             TyKind::Param(_) => {

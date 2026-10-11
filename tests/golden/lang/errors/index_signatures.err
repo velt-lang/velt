@@ -1,6 +1,10 @@
-index_signatures.vlt:4:22: error: a `number` index signature is not supported yet (#937)
+index_signatures.vlt:5:22: error: a `number` index signature is not supported yet (#937)
   = note: use an array, a `Map<number, V>`, or a `string` key (`{ [key: string]: V }`)
-index_signatures.vlt:5:15: error: a named member (`name`) next to an index signature is not supported yet (#937)
+index_signatures.vlt:6:15: error: a named member (`name`) next to an index signature is not supported yet (#937)
   = note: an object type with only an index signature is a `Record<string, V>`; with named members, each would need its own type (and an optional one `undefined`, #930)
-index_signatures.vlt:6:20: error: an index signature's key must be `string` or `number`; found `boolean`
+index_signatures.vlt:7:20: error: an index signature's key must be `string` or `number`; found `boolean`
   = note: for a fixed set of keys, write `Record<K, V>` or an object type
+index_signatures.vlt:8:32: error: an index signature whose values may be `null` (`f64 | null`) is not supported yet (#1005)
+  = note: a `null` value would be dropped from the record; leave the key out instead (a missing key reads `null`)
+index_signatures.vlt:10:19: error: an index signature whose values may be `null` (`string | f64 | null`) is not supported yet (#1005)
+  = note: a `null` value would be dropped from the record; leave the key out instead (a missing key reads `null`)

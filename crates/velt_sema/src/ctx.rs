@@ -78,8 +78,12 @@ pub(crate) struct Ctx<'m> {
     pub sig_fill: bool,
     /// Set when the signature being resolved was deferred (`sig_fill`).
     pub sig_deferred: bool,
-    /// Free functions whose signatures wait for `bodies_ok` (`collect::sigs::fill_deferred`).
-    pub deferred_sigs: Vec<(DefId, &'m velt_syntax::ast::FnSig, usize)>,
+    /// Free functions whose signatures wait for `bodies_ok` (`collect::sigs::fill_deferred`); a
+    /// type query fills one on demand (`collect::sigs::fill_pending`).
+    pub deferred_sigs: std::collections::BTreeMap<DefId, (&'m velt_syntax::ast::FnSig, usize)>,
+    /// Deferred signatures being filled now, each with the name of the parameter (or function)
+    /// whose type is being resolved: a query reaching one of them is a cycle (TS2502).
+    pub filling_sigs: Vec<(DefId, String)>,
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
@@ -254,7 +258,8 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sig_fill: false,
             sig_deferred: false,
-            deferred_sigs: vec![],
+            deferred_sigs: Default::default(),
+            filling_sigs: vec![],
             checking_unused_aliases: false,
             shaped: HashSet::new(),
             shaping: vec![],

@@ -36,7 +36,7 @@ mod lookup;
 mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
-mod sigs;
+pub(crate) mod sigs;
 mod static_this;
 
 use crate::ctx::Ctx;

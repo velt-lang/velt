@@ -685,10 +685,16 @@ supported yet (#350).
 `typeof x` in a type is the type of the value `x`, as in TypeScript: a module constant, a
 function, a local variable or parameter (in a function body), or a field of one (`typeof
 config.port`); `typeof ns.f` names an export of a namespace import. A constant initialized with a
-literal has that literal type (`const N = 4` gives `typeof N`, the type `4`). A function's type
+string or boolean literal has that literal type (`const s = "a"` gives `typeof s`, the type
+`"a"`). With a number literal it is `number`, where TypeScript gives the literal type (`const N =
+4` gives `4`; number literal types are not complete yet, #462), so `/` on it divides as in
+TypeScript. A function's type
 includes the result its body gives, so `ReturnType<typeof f>` names a result type nobody wrote
-down, even in the signature of another function. `ReturnType<F>` is the result type of function
-type `F`, and `Parameters<F>` its parameter types as a tuple.
+down, even in the signature of another function, declared before or after it. A signature that
+needs its own type (`function f(x: ReturnType<typeof f>)`, also through other functions) is an
+error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function type `F`, and
+`Parameters<F>` its parameter types as a tuple. `typeof f` of a function with a rest, optional or
+default parameter is not supported yet (#936).
 
 `keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
 string }` is `"a" | "b"`), and on a `Record` with literal keys it is the key type.
@@ -969,13 +975,17 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Index signatures**: an object type or interface with an index signature and no other
   members, `{ [key: string]: V }`, is `Record<string, V>`, as in TypeScript where the two are
   interchangeable: a value converts between them and stays the same object, and everything
-  above holds (any key may be read, written and deleted, keys keep insertion order). A generic
+  above holds (any key may be read, written and deleted; keys keep insertion order, also
+  integer-like keys such as `"2"`, which JavaScript lists first, #756). A generic
   interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
-  there gives `null` where JavaScript gives `undefined`, so a read is `V | null` (TypeScript
-  types it `V`): write `d[k] ?? 0` or `d[k]?.push(x)`. As for `readonly T[]`, a `readonly`
+  there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
+  (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
+  missing key, `d.k === undefined` is a compile error, and `d[k] ?? 0`, `d[k] || 0` and
+  `d[k]?.push(x)` work as in JavaScript. As for `readonly T[]`, a `readonly`
   index signature is not checked for writes yet. Not supported yet (each is an error): named
   members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
-  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
+  which needs `undefined`, #930), a value type that includes `null` (`{ [k: string]: number |
+  null }`: a `null` value would be dropped, #1005), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
