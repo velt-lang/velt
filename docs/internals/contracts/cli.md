@@ -242,8 +242,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   the running launcher. `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
-  `--force`. `prune` removes every installed version but the default and, per `major.minor`,
-  its newest release (its newest pre-release when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per
+  `--force`. `prune` removes every installed version but the default, the version the cwd
+  selects (`select` then `installed`), those whose directory is a link's prefix or contains it
+  (`Root::linked_versions`), and per `major.minor` its newest release (its newest pre-release
+  when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per
   version and `freed <n> MB` (`--dry-run`: `would remove` / `would free`, nothing removed; none
   to remove: `nothing to prune: …`); a version that cannot be removed (in use) is reported and
   the others still go, and the exit status is then 1. `default <t>` requires it installed. `which` prints `<toolchain> (<reason>)` and

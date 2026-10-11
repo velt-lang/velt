@@ -245,10 +245,19 @@ fn remove(ctx: &Context, text: &str, force: bool) -> Result<(), String> {
 /// One in use (Windows) is reported and kept, and the others are still removed.
 fn prune(ctx: &Context, dry_run: bool) -> Result<(), String> {
     let root = &ctx.root;
-    let prunable = velt_toolchain::layout::prunable(&root.versions(), root.default()?.as_ref());
+    // Kept besides the newest of each minor: the default, the version the current directory
+    // selects (a package's pin or lock), and versions a link points into.
+    let mut keep = root.linked_versions();
+    let chosen = [root.default()?, selected_here(ctx)];
+    keep.extend(chosen.into_iter().flatten().filter_map(|t| match t {
+        Toolchain::Version(v) => Some(v),
+        Toolchain::Linked(_) => None,
+    }));
+    let prunable = velt_toolchain::layout::prunable(&root.versions(), &keep);
     if prunable.is_empty() {
         println!(
-            "nothing to prune: each installed version is the default or the newest of its minor"
+            "nothing to prune: each installed version is the default, the newest of its minor, \
+             the one this directory selects, or one a link points into"
         );
         return Ok(());
     }
