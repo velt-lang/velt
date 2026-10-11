@@ -211,7 +211,12 @@ Differences from JavaScript:
 - **One task.** A weak collection belongs to the task that made it (it keeps working when an
   `await` resumes the task on another thread): it cannot be passed to a spawned task, sent on a
   channel, captured by an async closure that may run on another thread, put in `shared(...)` or
-  cloned (an error says so; in JavaScript, `structuredClone` rejects them too).
+  cloned (an error says so; in JavaScript, `structuredClone` rejects them too). Nor can a
+  `Mutex`'s `with` callback use one from outside the lock (capture it, or call a closure that
+  does) or return one (in its result, or captured by a function it returns): the lock guards the
+  value only while `with` runs, and a key or target from the value would be released or read by
+  another thread without it. Use the weak collection outside `with`, or make it inside and drop
+  it there.
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.

@@ -25,7 +25,8 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   and two small counts used by the ephemeron rule (`hint`, `observed`). A weakly held object is
   used by one task at a time (its count is not atomic), but not on one thread: an async task
   resumes on any worker after an `await`, and a `shared` `Mutex` hands its value to whichever
-  task locks it. So map ids, `WeakRef` slots and records mean the same on every thread. The
+  task locks it (a `with` callback may key a map of its own on the value and drop it there). So
+  map ids, `WeakRef` slots and records mean the same on every thread. The
   lock is taken only on the cold paths (weak map and `WeakRef` operations, and releases of
   objects with `RC_WEAK` set); a program without weak collections never takes it.
 - **Weak maps** are runtime-owned hash tables keyed by object address (the key is not counted),
@@ -134,10 +135,19 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   argument, a channel message, a capture of an async closure that may run on another thread,
   the value of `shared(...)` and the receiver of `clone()`. A weak-capable object that is not
   weakly held may still cross threads (it is copied when shared, and the copy is not weakly
-  held). A weakly held object reached through a `shared` `Mutex` (a key read inside `with`) is
-  released by whichever task holds the lock, on its thread, through the same table
-  (`tests/golden/std/weakmap_mutex.vlt`); `async main` keeps its maps across `await`s and
-  spawned tasks use maps of their own at once (`weakmap_async.vlt`).
+  held). A `Mutex`'s `with` callback cannot use a weak collection from outside the lock: a
+  capture holding one is an error (`body/expr/sync.rs` `no_weak_in_lock`), and so is one
+  captured by a closure the callback calls, found through the function values `with` resolves
+  (`ownership/locked` `weak_across`; a function value it cannot resolve is already an error
+  there). Nor can the callback's result hold one, or be a function value whose closure made under
+  the lock captures one. The table's lock protects the table, not the objects: a key from the
+  locked value in a map of the caller's would be released by the next task to replace it, on its
+  thread, together with the entry's value that the caller still uses
+  (`tests/golden/std/weakmap_mutex_value.vlt`), and a `WeakRef` taken out of `with` would hand
+  out a strong reference to an object the Mutex owns (`weakref_mutex.vlt`). A weak collection
+  made under the lock and dropped there is allowed (`weakmap_mutex_local.vlt`). Interface calls
+  under the lock already get a copy of a part of the value (#398). `async main` keeps its maps
+  across `await`s and spawned tasks use maps of their own at once (`weakmap_async.vlt`).
 
 ## Weak maps and `WeakRef`
 
@@ -215,7 +225,9 @@ The unit tests (`src/weak/tests/ephemeron.rs`) release the outside references in
 thread than the one that made them, runs eight threads with maps of their own at once, releases
 values that release other maps' keys or drop other maps (nothing re-enters the lock), and checks
 that an object marked without a record is an ICE reported before the count changes. The goldens
-`weakmap_async`, `weakmap_mutex` and `weakmap_nested` do the same from Velt programs.
+`weakmap_async` and `weakmap_nested` do the same from Velt programs; `weakmap_mutex`,
+`weakmap_mutex_call`, `weakmap_mutex_value`, `weakref_mutex`, `weakref_mutex_closure` and
+`weakref_mutex_result` check that a weak collection cannot cross a `with` lock.
 
 The soak test creates and drops reactive objects (raw, handler capturing it, proxy; a nested
 proxied child every third time) through a window of live ones, and checks after every step that

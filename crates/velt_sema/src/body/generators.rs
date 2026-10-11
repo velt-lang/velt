@@ -273,6 +273,8 @@ impl FnCx<'_, '_> {
                 format!("an async closure cannot capture the generator `{name}`"),
                 "an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
             ),
+            // Only weak collections are checked at a lock.
+            GenCopy::LockCapture(_) | GenCopy::LockResult => return,
         };
         self.cx.error(Diagnostic::error(msg, span).with_note(note));
     }
@@ -282,7 +284,7 @@ impl FnCx<'_, '_> {
     /// A `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it (a handle into the
     /// runtime's table, which a copy would drop twice; docs/internals/design/weak-refs.md):
     /// report `what` copying the value of type `t` at `span`.
-    fn no_weak_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
+    pub(crate) fn no_weak_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
         let tn = self.cx.display(t);
         let direct = matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if self.cx.is_weak_class(*d));
         let it = match direct {
@@ -306,10 +308,21 @@ impl FnCx<'_, '_> {
                 format!("an async closure cannot capture the weak collection `{name}`"),
                 "an async closure that may run as a task on another thread copies what it captures, and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: make it inside the closure, or pass it to an async function".to_string(),
             ),
+            GenCopy::LockCapture(name) => (
+                format!("the function passed to `with` cannot use the weak collection `{name}`"),
+                LOCK_NOTE.to_string(),
+            ),
+            GenCopy::LockResult => (
+                format!("{it} cannot be returned from `with`"),
+                LOCK_NOTE.to_string(),
+            ),
         };
         self.cx.error(Diagnostic::error(msg, span).with_note(note));
     }
 }
+
+/// Why a weak collection cannot cross a `with` lock.
+pub(crate) const LOCK_NOTE: &str = "the lock protects the locked value only while `with` runs, and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: one used across the lock would let another thread release or read a part of the value without the lock; use the weak collection outside `with`, or make it inside and drop it there";
 
 /// How a value would be copied, for [`FnCx::no_generator_copy`].
 pub(crate) enum GenCopy {
@@ -321,4 +334,8 @@ pub(crate) enum GenCopy {
     Capture(String),
     /// The value given to `shared(...)`.
     Shared,
+    /// A capture (named) of a `with` callback, or of a closure it calls.
+    LockCapture(String),
+    /// The result of a `with` callback.
+    LockResult,
 }

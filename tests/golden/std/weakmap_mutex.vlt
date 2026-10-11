@@ -1,6 +1,6 @@
-// check: no leaks
-// A weak key reached through a `shared` `Mutex`: tasks on other threads replace it, and the
-// release of the old key (on whichever thread holds the lock) takes it out of the map.
+// A weak collection cannot be used inside a `shared` `Mutex`'s `with`: tasks on other threads
+// replace the key, and its release would update the map's entry (and release its value) on their
+// thread, outside the lock that guards the value.
 class K {
   n: number;
   constructor(n: number) {

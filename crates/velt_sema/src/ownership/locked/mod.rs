@@ -82,7 +82,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
             }
             continue;
         }
-        check_callback(cx, &summaries, &mut res, c, &mut reported);
+        check_callback(cx, &summaries, &mut res, c, direct, &mut reported);
     }
 }
 
@@ -264,9 +264,11 @@ fn check_callback(
     s: &summary::Summaries,
     res: &mut values::Resolver,
     c: DefId,
+    direct: bool,
     reported: &mut HashSet<Span>,
 ) {
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
+    weak_across(cx, c, direct, &bodies, reported);
     let found = crossings(cx, s, c, &mut bodies, resolved, named);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
@@ -285,6 +287,56 @@ fn check_callback(
         unfixable_error(cx, u);
     }
     later_uses(cx, res, c, found.inward, reported);
+}
+
+/// A weak collection used across the lock (docs/internals/design/weak-refs.md "Threads and
+/// `shared`"): captured from outside by a closure `with` calls (`with`'s argument itself is
+/// checked by body/expr/sync.rs `no_weak_in_lock` when it is written there), or captured by a
+/// closure made under the lock when `with` returns a function value.
+fn weak_across(
+    cx: &mut Ctx,
+    c: DefId,
+    direct: bool,
+    bodies: &[(DefId, FnDef)],
+    reported: &mut HashSet<Span>,
+) {
+    struct Made(HashSet<DefId>);
+    impl VisitMut for Made {
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::Closure(n) = e.kind {
+                self.0.insert(n);
+            }
+        }
+    }
+    let mut made = Made(HashSet::new());
+    for (_, f) in bodies {
+        let mut b = f.body.block.clone();
+        visit::block(&mut b, &mut made);
+    }
+    let returns_fn = cx.holds_fn(cx.fn_info(c).ret);
+    for (d, f) in bodies {
+        let inside = made.0.contains(d);
+        if (*d == c && direct) || (inside && !returns_fn) {
+            continue;
+        }
+        for cap in &f.captures {
+            let l = &f.body.locals[cap.inner.0 as usize];
+            let (ty, at) = (l.ty, l.span);
+            if !cx.holds_weak(ty) || !reported.insert(at) {
+                continue;
+            }
+            let msg = if inside {
+                format!(
+                    "a function returned from `with` cannot capture the weak collection `{}`",
+                    l.name
+                )
+            } else {
+                format!("`with` calls a function that uses the weak collection `{}`", l.name)
+            };
+            let note = crate::body::LOCK_NOTE;
+            cx.error(Diagnostic::error(msg, at).with_note(note));
+        }
+    }
 }
 
 fn made_span(m: &promises::Made) -> Span {
