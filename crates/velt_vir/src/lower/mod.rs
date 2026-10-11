@@ -403,6 +403,8 @@ struct FnLower<'c, 'h> {
     div_zero_bbs: Vec<(Option<SrcLoc>, BlockId)>,
     /// Locals bound by reference in patterns (they hold a pointer to the matched part).
     ref_bindings: HashSet<LocalId>,
+    /// With debug info: where the block declaring a local ends (debug_vars.rs).
+    scope_ends: HashMap<LocalId, SrcLoc>,
     /// Set while lowering the body of an async function (a poll function).
     asyncx: Option<async_fn::AsyncCx>,
     /// The next call lowered is awaited or spawned right away: its promise is not started

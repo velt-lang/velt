@@ -251,8 +251,12 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
 
 1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
    a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
-2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
-   version it accepts;
+2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the version the
+   package's [`velt.lock.json`](manifest.md#veltlockjson) records when the field accepts it
+   (installed first if it is missing), so every machine builds a commit with the same velt;
+   otherwise the newest installed version the field accepts. `velt update` takes the newest
+   *installed* one (`velt toolchain install 0.2` fetches a newer patch first),
+   which then records itself in the lock;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
 
@@ -360,7 +364,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
-| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop and a task stays on the worker it started on). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; sockets stay on the worker that registered them (accepted connections on the listener's worker); spawn bursts and cross-worker request/reply are much slower than with `stealing` |
+| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
 | `CLICOLOR_FORCE` | force colored output |

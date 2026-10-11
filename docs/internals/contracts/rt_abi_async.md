@@ -136,11 +136,16 @@ Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the numb
 `VELT_SCHEDULER=per-core` (experimental, #211) makes every worker a `current_thread` runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
-(`task/runtime.rs`). The default, `stealing`, is one multi-thread runtime. Per-core trade-offs
-today: a task never moves after its first poll, so a CPU-bound task delays every task on its
-worker; placement counts live tasks, not CPU; a socket stays on the worker whose driver
-registered it (an accepted connection on the listener's worker); spawn bursts and cross-worker
-request/reply are much slower than stealing (no batch steal-before-start yet, #997).
+(`task/runtime.rs`). A connection's socket and its tasks stay on one worker: `accept()`
+registers the connection with the caller's worker, and `serve`'s accept loop spawns each
+connection where placement puts it (`runtime::spawn_with`), moving its socket to that worker's
+driver only when it is another worker. A listening socket has one registration (per-worker
+duplicates woke every worker for each connection, and on Windows could block a worker in
+`accept`). The default, `stealing`, is one
+multi-thread runtime. Per-core trade-offs today: a task never moves after its first poll, so a
+CPU-bound task delays every task on its worker; placement counts live tasks, not CPU; a socket
+stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
+much slower than stealing (no batch steal-before-start yet, #997).
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
 64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).

@@ -769,6 +769,55 @@ of the fields' types, as in TypeScript: `Person["name"]` is `string`. A key that
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
+### Type queries and `keyof`
+
+`typeof x` in a type is the type of the value `x`, as in TypeScript: a module constant, a
+function, a local variable or parameter (in a function body), or a field of one (`typeof
+config.port`); `typeof ns.f` names an export of a namespace import. A constant initialized with a
+string or boolean literal has that literal type (`const s = "a"` gives `typeof s`, the type
+`"a"`). With a number literal it is `number`, where TypeScript gives the literal type (`const N =
+4` gives `4`; number literal types are not complete yet, #462), so `/` on it divides as in
+TypeScript. A function's type
+includes the result its body gives, so `ReturnType<typeof f>` names a result type nobody wrote
+down, even in the signature of another function, declared before or after it. A signature that
+needs its own type (`function f(x: ReturnType<typeof f>)`, also through other functions) is an
+error, as in TypeScript (TS2502). `ReturnType<F>` is the result type of function type `F`, and
+`Parameters<F>` its parameter types as a tuple. `typeof f` of a function with a rest, optional or
+default parameter is not supported yet (#936).
+
+`keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
+string }` is `"a" | "b"`), and on a `Record` with literal keys it is the key type.
+
+```ts
+const DEFAULTS = { host: "localhost", port: 8080 };
+type Settings = typeof DEFAULTS; // { host: string; port: number }
+
+function parse(line: string) {
+  const [key, value] = line.split("=");
+  return { key, value };
+}
+
+function show(entry: ReturnType<typeof parse>): string {
+  return `${entry.key} -> ${entry.value}`;
+}
+
+function read(s: Settings, k: keyof typeof DEFAULTS): string {
+  return `${s[k]}`;
+}
+
+const s: Settings = { host: "example.org", port: 443 };
+console.log(show(parse("a=1")), read(s, "port")); // a -> 1 443
+```
+
+Not supported yet (each is an error): `typeof` of a generic, `async` or generator function
+(function types have no type parameters), of a class or enum itself (TypeScript's constructor
+and enum object types; the type of a class's instances is its name), of `this` and of a local
+function value; `typeof import("./m")`; type arguments after the name (`typeof f<string>`);
+`typeof` of a function or a constant without a type annotation in classes and interfaces (their
+fields and methods); `keyof` of a class, of a type parameter (#350) and of a string-keyed `Record`
+(TypeScript's `string | number`). A local's type is its declared type: TypeScript's `typeof x`
+sees a narrowing (`if (x !== null)`) that Velt's doesn't.
+
 ## Enums
 
 TypeScript-style enums only:
@@ -1013,6 +1062,35 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   error: struct values carry no class). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
+- **Index signatures**: an object type or interface with an index signature and no other
+  members, `{ [key: string]: V }`, is `Record<string, V>`, as in TypeScript where the two are
+  interchangeable: a value converts between them and stays the same object, and everything
+  above holds (any key may be read, written and deleted; keys are listed in JavaScript's
+  order, array-index keys such as `"2"` first). A generic
+  interface works too (`interface Groups<T> { [name: string]: T[] }`). Reading a key that is not
+  there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
+  (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
+  missing key, `d.k === undefined` is a compile error, and `d[k] ?? 0`, `d[k] || 0` and
+  `d[k]?.push(x)` work as in JavaScript. As for `readonly T[]`, a `readonly`
+  index signature is not checked for writes yet. Not supported yet (each is an error): named
+  members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
+  which needs `undefined`, #930), a value type that includes `null` (`{ [k: string]: number |
+  null }`: a `null` value would be dropped, #1005), a `number` or `symbol` key, two index signatures in one type,
+  and an interface with an index signature that also has methods or `extends`. An object of a
+  named object type does not convert to an index-signature type (TypeScript allows it for type
+  aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
+
+```ts
+interface Scores {
+  [player: string]: number;
+}
+
+const s: Scores = { bob: 2 };
+s.alice = 3;
+s["carol"] = (s["carol"] ?? 0) + 1;
+const r: Record<string, number> = s; // the same object
+console.log(Object.keys(r), s.dave ?? "none"); // [ 'bob', 'alice', 'carol' ] none
+```
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
   `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)).

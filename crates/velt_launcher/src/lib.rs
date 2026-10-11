@@ -57,6 +57,8 @@ fn run(args: &[OsString]) -> Result<i32, String> {
     if args.first().is_some_and(|a| a == "toolchain") {
         return commands::run(&ctx, &args[1..]).map(|()| 0);
     }
+    // `velt update` runs the newest toolchain the pin accepts, which records itself in the lock.
+    ctx.ignore_lock = args.first().is_some_and(|a| a == "update");
     let selection = select::select(&ctx)?;
     let resolved = select::resolve(&ctx, &selection)?;
     exec::exec(&resolved, args, &exe)

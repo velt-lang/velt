@@ -6,7 +6,8 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 velt check [<file.vlt>] [--json] [--locked] [-v]
 velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
-velt test  [<file|dir>] [--release] [--locked] [--watch]
+velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]
+velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
 velt init  --editor vscode [--dir <d>] # only .vscode/launch.json + extensions.json, kept if present
@@ -36,11 +37,24 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   "errors", "warnings"}`. `executable` is the absolute path of the linked program (`null` on
   failure or with `--emit obj|vir|llvm`); `debugInfo` is whether the program has line
   information for debuggers: debug info was asked for and the backend emits it for the target
-  (`false` for Cranelift builds for Windows; `null` if the options could not be resolved);
+  (`false` for Cranelift builds for Windows linked by `link.exe` instead of the bundled lld:
+  they carry no DWARF; `null` if the options could not be resolved);
   `lldbScript` is the absolute path of the toolchain's `share/velt/lldb/velt_lldb.py` (`null`
   if missing). The diagnostics are those of `check --json`, with a non-source failure (linker,
   missing runtime) as an error with `location: null`. Exit codes as for `build`. The VS Code
   extension's `velt` debug type relies on it.
+- `test --filter <text>` (additive): only the tests whose name contains `<text>` run (`--exact`:
+  only the test named `<text>`; a file with none is skipped; no match at all prints `no tests
+  match` and exits 0). `test --no-run` (additive): builds each test file's harness without running
+  it, into `target/velt/test/debug/` (with variables for debuggers, as `velt build`), and prints
+  the executables' paths; with `--json`, one document on stdout: `{"harnesses": [{"file",
+  "executable", "tests", "env", "debugInfo"}], "lldbScript", "diagnostics", "errors", "warnings"}`
+  (`file` the test file, `executable` the harness, both absolute; `tests` the test functions it
+  runs, in order; `env` the variables to run it with, `VELT_SCRIPT` for `process.argv[1]`;
+  `debugInfo` and `lldbScript` as for `build --json`). The diagnostics are those of every harness
+  build and of test files that do not parse, as in `check --json`. Exits 1 when a harness did not
+  build. `--json` needs `--no-run`, `--exact` needs `--filter`, and `--watch` does not go with
+  `--no-run`. The VS Code extension's "Run test" and "Debug test" rely on it.
 - `new` / `init` (additive): every template also writes `.vscode/launch.json` (one
   `{"type": "velt", "request": "launch", "name": "Debug"}` configuration) and
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
@@ -214,7 +228,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (both: a full version is that
   version, a `[a-z]…` name a link, anything else a requirement read like a pin),
   else the `velt` requirement of the nearest `package.vlt` above the cwd
-  (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin), else
+  (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin): the
+  version the `velt` field of the `velt.lock.json` beside it records, as an exact toolchain
+  (reason `velt.lock.json, with velt: "<req>" in <manifest>:<line>`), when the requirement
+  accepts it and the command is not `update` (`velt_toolchain::pin::locked_version`; a missing
+  or unreadable lock or field counts as none); else the requirement, else
   `<root>/default`; none → exit 1 naming `velt toolchain install`. A requirement selects the
   newest installed version it accepts (`<root>/toolchains/<v>/` with a `bin/velt`). When none
   is installed: with `$VELT_TOOLCHAIN_AUTO_INSTALL` `0`/`false`/`no`/`off`, exit 1 naming
@@ -264,8 +282,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
   debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line
-  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, line tables in ELF and
-  Mach-O objects (checked on Linux; macOS untested) and function symbols on Windows.
+  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
+  Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
+  build that `link.exe` links emits none, leaving function symbols).
 - Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
   an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
 - `run` builds then executes the program with inherited stdio and **exits with the program's exit

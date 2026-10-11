@@ -1,0 +1,20 @@
+// Not supported yet: an interface with an index signature and methods or `extends`, two index
+// signatures in one type, and `typeof import(...)`.
+interface WithMethods {
+  [key: string]: number;
+  size(): number;
+}
+
+interface Base {
+  id: string;
+}
+
+interface Extended extends Base {
+  [key: string]: string;
+}
+
+type Two = { [k: string]: string; [i: number]: string };
+
+type Mod = typeof import("./other");
+
+function main() {}

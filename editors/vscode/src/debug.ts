@@ -1,7 +1,9 @@
 // The `velt` debug type: F5 builds the package (or the open file) with `velt build --json`, shows
 // build errors in Problems, and starts the installed debugger extension (CodeLLDB, lldb-dap or the
-// C/C++ extension) on the executable, with the Velt LLDB formatters loaded. Also the "Run File",
-// "Debug File" and "Generate launch.json" commands. Modeled on rust-analyzer's debug support.
+// C/C++ extension) on the executable, with the Velt LLDB formatters loaded. A `test` configuration
+// builds that test's harness with `velt test --no-run --json` instead. Also the "Run File",
+// "Debug File", "Run Test", "Debug Test" and "Generate launch.json" commands. Modeled on
+// rust-analyzer's debug support.
 
 import * as cp from "child_process";
 import * as fs from "fs";
@@ -18,6 +20,7 @@ import {
   parseBuildResult,
   parsePs,
   parseTasklist,
+  needsLlvmBuild,
   pickEngine,
   sortProcesses,
   RECOMMENDED_EXTENSION,
@@ -42,6 +45,11 @@ export function registerDebugging(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("velt.debugFile", (uri?: vscode.Uri | string) => debugFile(fileOf(uri))),
     vscode.commands.registerCommand("velt.runFile", (uri?: vscode.Uri | string) => runFile(fileOf(uri))),
+    // The language server's lenses above each test: the test file's URI and the test's name.
+    vscode.commands.registerCommand("velt.debugTest", (uri: string, test: string) =>
+      debugTest(fileOf(uri), test),
+    ),
+    vscode.commands.registerCommand("velt.runTest", (uri: string, test: string) => runTest(fileOf(uri), test)),
     vscode.commands.registerCommand("velt.generateLaunchJson", () => generateLaunchJson()),
     // `${command:pickProcess}` in a `velt` configuration (package.json maps it here).
     vscode.commands.registerCommand("velt.pickProcess", () => pickProcess()),
@@ -108,6 +116,7 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
     const cwd = velt.cwd ?? target?.uri.fsPath ?? (velt.file ? path.dirname(velt.file) : process.cwd());
     let program = velt.program;
     let lldbScript: string | null = null;
+    let env = velt.env;
     if (velt.request === "launch" && velt.build !== false) {
       const built = await build(velt, cwd, token);
       if (!built) {
@@ -115,11 +124,18 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
       }
       program = program ?? built.executable ?? undefined;
       lldbScript = built.lldbScript;
+      env = { ...built.env, ...velt.env };
       if (built.debugInfo === false) {
         void vscode.window.showWarningMessage(
-          "Velt: this build has no line information, so breakpoints will not bind. On Windows the " +
-            'default build has none yet: add "buildArgs": ["--backend", "llvm"] (needs clang) to the ' +
-            "launch configuration.",
+          "Velt: this build has no line information, so breakpoints will not bind. On Windows it " +
+            "needs the bundled linker (`velt doctor` shows the linker), or add " +
+            '"buildArgs": ["--backend", "llvm"] (needs clang) to the launch configuration.',
+        );
+      } else if (needsLlvmBuild(engine, velt, process.platform)) {
+        void vscode.window.showWarningMessage(
+          "Velt: the Visual Studio debugger (C/C++ extension) reads only PDBs, so breakpoints in " +
+            "the default build will not bind. Install CodeLLDB, or add " +
+            '"buildArgs": ["--backend", "llvm"] (needs clang) to the launch configuration.',
         );
       }
     }
@@ -127,7 +143,7 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
       void vscode.window.showErrorMessage("Velt: nothing to debug (set `program`, or `build: true`).");
       return undefined;
     }
-    const concrete = concreteConfig(engine, { ...velt, cwd }, program, lldbScript, process.platform);
+    const concrete = concreteConfig(engine, { ...velt, cwd, env }, program, lldbScript, process.platform);
     await vscode.debug.startDebugging(target, concrete as vscode.DebugConfiguration);
     return undefined;
   }
@@ -148,7 +164,7 @@ async function build(
   );
   if (output.error) {
     void vscode.window.showErrorMessage(
-      `Velt: could not run \`${command} build\` (${output.error}). ` +
+      `Velt: could not run \`${command} ${args[0]}\` (${output.error}). ` +
         'Install velt or set "velt.serverPath" to the velt executable.',
     );
     return undefined;
@@ -158,11 +174,15 @@ async function build(
     result = parseBuildResult(output.stdout);
   } catch {
     void vscode.window.showErrorMessage(
-      `Velt: \`velt build --json\` failed; is this velt too old? ${output.stderr.trim()}`,
+      `Velt: \`velt ${args[0]} --json\` failed; is this velt too old? ${output.stderr.trim()}`,
     );
     return undefined;
   }
   showDiagnostics(result, cwd);
+  if (config.test && result.errors === 0 && !result.executable) {
+    void vscode.window.showErrorMessage(`Velt: no test matching \`${config.test}\` in ${config.file ?? "the package"}.`);
+    return undefined;
+  }
   if (result.errors > 0 || !result.executable) {
     const failures = failureMessages(result);
     const message = failures.length > 0 ? failures.join("; ") : `${result.errors} error(s)`;
@@ -249,6 +269,46 @@ async function debugFile(file: string | undefined): Promise<void> {
   });
 }
 
+// "Debug Test": the test's harness, built by `velt test --no-run`, under the debugger.
+async function debugTest(file: string | undefined, test: string): Promise<void> {
+  if (!file) {
+    void vscode.window.showErrorMessage("Velt: open a test file to debug a test.");
+    return;
+  }
+  await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file)), {
+    type: DEBUG_TYPE,
+    request: "launch",
+    name: `Debug ${test}`,
+    file,
+    test,
+  });
+}
+
+// "Run Test": `velt test <file> --filter <test> --exact` in a terminal (velt itself, not a
+// shell).
+async function runTest(file: string | undefined, test: string): Promise<void> {
+  if (!file) {
+    void vscode.window.showErrorMessage("Velt: open a test file to run a test.");
+    return;
+  }
+  await saveIfDirty(file);
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
+  const terminal = vscode.window.createTerminal({
+    name: `Velt: ${test}`,
+    cwd: folder?.uri.fsPath ?? path.dirname(file),
+    shellPath: veltCommand(),
+    shellArgs: ["test", file, "--filter", test, "--exact"],
+  });
+  terminal.show();
+}
+
+async function saveIfDirty(file: string): Promise<void> {
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.scheme === "file" && d.uri.fsPath === file);
+  if (doc?.isDirty) {
+    await doc.save();
+  }
+}
+
 // "Run File": `velt run <file>` in a terminal. The terminal runs velt itself, not a shell, so
 // nothing in the file name is interpreted.
 async function runFile(file: string | undefined): Promise<void> {
@@ -256,10 +316,7 @@ async function runFile(file: string | undefined): Promise<void> {
     void vscode.window.showErrorMessage("Velt: open a .vlt file to run it.");
     return;
   }
-  const doc = vscode.workspace.textDocuments.find((d) => d.uri.scheme === "file" && d.uri.fsPath === file);
-  if (doc?.isDirty) {
-    await doc.save();
-  }
+  await saveIfDirty(file);
   const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file));
   const terminal = vscode.window.createTerminal({
     name: `Velt: ${path.basename(file)}`,

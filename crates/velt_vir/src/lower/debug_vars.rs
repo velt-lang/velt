@@ -4,10 +4,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use velt_common::Span;
 use velt_sema::hir::{self, AdtKind, FloatTy, FnDef, TyId, TyKind};
 
 use super::{ice, Cx, FnLower};
-use crate::vir::{DebugField, DebugKind, DebugTy, DebugTyId, DebugVariant, LocalDebug, Ty};
+use crate::vir::{DebugField, DebugKind, DebugTy, DebugTyId, DebugVariant, LocalDebug, SrcLoc, Ty};
 
 /// The debug types of a program being lowered (`Program::debug_types`).
 #[derive(Default)]
@@ -250,6 +251,40 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
+    /// With debug info, record where block `b` ends for the variables its statements declare
+    /// (`LocalDebug::end`): `let` and destructuring bindings, and the bindings of a `for … of`
+    /// or a `catch`, which end with their own body. In the function's own block (`body`) the
+    /// `let`s last to the end of the function, which needs no end.
+    pub(super) fn note_scope_ends(&mut self, b: &hir::Block, body: bool) {
+        let Some(locs) = self.cx.locs.as_ref().filter(|_| self.cx.debug.is_some()) else {
+            return;
+        };
+        let end_of = |span: Span| locs.loc(Span::new(span.file, span.hi, span.hi));
+        let mut found: Vec<(hir::LocalId, Span)> = vec![];
+        for s in &b.stmts {
+            match &s.kind {
+                hir::StmtKind::Let { .. } | hir::StmtKind::LetPat { .. } if body => {}
+                hir::StmtKind::Let { local, .. } => found.push((*local, b.span)),
+                hir::StmtKind::LetPat { pat, .. } => {
+                    pat_locals(pat, &mut |l| found.push((l, b.span)));
+                }
+                hir::StmtKind::ForOf { binding, body, .. } => {
+                    pat_locals(binding, &mut |l| found.push((l, body.span)));
+                }
+                hir::StmtKind::Try {
+                    catch: Some((Some(l), handler)),
+                    ..
+                } => found.push((*l, handler.span)),
+                _ => {}
+            }
+        }
+        let ends: Vec<(hir::LocalId, SrcLoc)> = found
+            .into_iter()
+            .filter_map(|(l, span)| Some((l, end_of(span)?)))
+            .collect();
+        self.scope_ends.extend(ends);
+    }
+
     /// Describe the locals that hold `f`'s source variables (with `LowerOptions::debug_info`):
     /// params, captures and named locals, as they are bound once the prologue is done. Locals
     /// sema made up (`#arg0`, `<nullish>`: names no identifier starts with) stay undescribed.
@@ -268,11 +303,19 @@ impl FnLower<'_, '_> {
             {
                 continue;
             }
-            let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(ld.span)) else {
+            // A capture is in scope in the whole closure: it is declared where the closure starts
+            // (its own local is spanned at its first use, #983).
+            let span = if i < f.captures.len() {
+                f.span
+            } else {
+                ld.span
+            };
+            let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(span)) else {
                 continue;
             };
             let debug = LocalDebug {
                 decl,
+                end: self.scope_ends.get(&hir::LocalId(i as u32)).copied(),
                 ty: self.cx.debug_ty(ty),
                 by_ref,
                 // A closure's captures come first among its params; they are not its params.
@@ -280,5 +323,25 @@ impl FnLower<'_, '_> {
             };
             self.locals[local.0 as usize].debug = Some(debug);
         }
+    }
+}
+
+/// Every local `p` binds.
+fn pat_locals(p: &hir::Pat, f: &mut dyn FnMut(hir::LocalId)) {
+    use hir::PatKind as P;
+    match &p.kind {
+        P::Binding(l, _) => f(*l),
+        P::Variant { args: ps, .. } | P::Tuple(ps) | P::Or(ps) => {
+            ps.iter().for_each(|p| pat_locals(p, f));
+        }
+        P::Adt { fields } => fields.iter().for_each(|(_, p)| pat_locals(p, f)),
+        P::Array { elems, rest } => {
+            elems.iter().for_each(|p| pat_locals(p, f));
+            if let Some(l) = rest {
+                f(*l);
+            }
+        }
+        P::Some(p) => pat_locals(p, f),
+        P::Wildcard | P::Lit(_) | P::None | P::InstanceOf(_) => {}
     }
 }

@@ -234,10 +234,10 @@ fn the_tsc_oracle_runs_the_lint_tests() {
 }
 
 #[test]
-fn the_lldb_script_runs_the_install_layout_test() {
+fn the_lldb_script_runs_the_install_layout_and_debugger_tests() {
     let p = plan(&["editors/lldb/velt_lldb.py"]);
     assert!(p.packages.is_empty());
-    assert_eq!(p.veltc, Veltc::Some(set(&["install_layout"])));
+    assert_eq!(p.veltc, Veltc::Some(set(&["install_layout", "debugger"])));
     assert_eq!(p.goldens, Goldens::None);
 }
 

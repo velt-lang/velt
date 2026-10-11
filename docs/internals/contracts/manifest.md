@@ -80,8 +80,18 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
   and `velt manifest --json` prints them when present.
 - A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
-- `velt.lock.json` (generated JSON: `{ "version": 1, "packages": [...] }`, pretty-printed, stable
-  key order, trailing newline) pins exact versions + content hashes; a package with only the
+- `velt.lock.json` (generated JSON: `{ "version": 1, "velt": "<version>", "packages": [...] }`,
+  pretty-printed, stable key order, trailing newline) pins exact versions + content hashes, and
+  (additive, #960; optional, so still format 1) the toolchain version that builds the package:
+  for a package with a `velt` requirement only (none otherwise, and a recorded one is dropped):
+  `vpm::install` writes the running version into a new lock, keeps the recorded one unless
+  `update` runs or the requirement no longer accepts it (then it writes the running one), and
+  under `--locked` neither adds nor changes it and fails when they differ: "`velt.lock.json` pins
+  velt <locked>, but this is velt <running>, and --locked was passed: …", or, when the
+  requirement no longer accepts the locked version, "… which the package's velt pin "<req>" no
+  longer accepts, and --locked was passed: run `velt install` (or `velt update`) without
+  --locked to record velt <running>". A `velt` that is not a semver version is an error when the
+  lock is read; a package with only the
   former `velt.lock` (TOML) gets an error saying to run `velt install`. The registry for the POC is a
   local directory (`$VELT_REGISTRY`, default `~/.velt/registry/<name>/<version>/`), cache in
   `~/.velt/cache`.

@@ -195,6 +195,37 @@ impl Printer<'_> {
                     .collect();
                 format!("{{ {} }}", fields.join("; "))
             }
+            TypeExprKind::IndexSig {
+                fields,
+                key,
+                value,
+                readonly,
+            } => {
+                let mut parts: Vec<String> = fields
+                    .iter()
+                    .map(|f| {
+                        let readonly = if f.readonly { "readonly " } else { "" };
+                        if f.optional {
+                            format!("{readonly}{}?: {}", f.name.name, self.ty_optional(&f.ty))
+                        } else {
+                            format!("{readonly}{}: {}", f.name.name, self.ty(&f.ty))
+                        }
+                    })
+                    .collect();
+                let readonly = if *readonly { "readonly " } else { "" };
+                parts.push(format!(
+                    "{readonly}[{}: {}]: {}",
+                    key.name.name,
+                    self.ty(&key.ty),
+                    self.ty(value)
+                ));
+                format!("{{ {} }}", parts.join("; "))
+            }
+            TypeExprKind::Query(path) => {
+                let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+                format!("typeof {}", path.join("."))
+            }
+            TypeExprKind::KeyOf(inner) => format!("keyof {}", self.ty_operand(inner)),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
             TypeExprKind::Predicate { param, ty, asserts } => {
@@ -233,6 +264,7 @@ impl Printer<'_> {
         match t.kind {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
+            | TypeExprKind::KeyOf(_)
             | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }

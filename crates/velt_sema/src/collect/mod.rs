@@ -36,7 +36,7 @@ mod lookup;
 mod nested;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
-mod sigs;
+pub(crate) mod sigs;
 mod static_this;
 
 use crate::ctx::Ctx;
@@ -70,5 +70,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     impls::build_impls(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
+    cx.bodies_ok = true;
+    sigs::fill_deferred(cx);
     items
 }
