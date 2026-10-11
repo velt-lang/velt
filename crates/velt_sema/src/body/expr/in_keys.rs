@@ -99,25 +99,6 @@ impl FnCx<'_, '_> {
             };
         }
         let declared = self.cx.declared_presence(t, name);
-        if declared.is_none() || declared == Some(Presence::No) {
-            if let Some(holder) = self.holder_declaring(t, name) {
-                if report {
-                    let tn = self.cx.display(t);
-                    let hn = self
-                        .cx
-                        .adt(holder)
-                        .map_or(String::new(), |a| a.name.clone());
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("cannot tell whether a `{tn}` has \"{name}\" while compiling: it may hold a `{hn}`, which declares it"),
-                            at,
-                        )
-                        .with_note(format!("`in` on a value whose class is known only at run time is not supported yet; test `instanceof {hn}`")),
-                    );
-                }
-                return None;
-            }
-        }
         if declared.is_none() && report {
             self.cx.error(
                 Diagnostic::error(
@@ -147,41 +128,110 @@ impl FnCx<'_, '_> {
         p
     }
 
-    /// A class whose instances a value of type `t` (a class or an interface the program
-    /// declares) may hold at run time that declares member `name`, which `t` doesn't: a
-    /// subclass, or a class implementing the interface.
-    fn holder_declaring(&self, t: TyId, name: &str) -> Option<DefId> {
-        let held = |cx: &crate::ctx::Ctx, d: DefId| match cx.ty.kind(t) {
-            TyKind::Adt(c, _) => *c != d && extends(cx, d, *c),
-            TyKind::Dyn(i, _) => implements(cx, d, *i),
-            _ => false,
+    /// [`Self::in_presence`], with the classes declaring the member whose instances the value
+    /// may hold when its type lacks the member or has it optional (`held_declaring`): `k in o`
+    /// tests the value's class for those at run time, as Node finds the member on them.
+    pub(crate) fn in_test(
+        &mut self,
+        t: TyId,
+        key: &InKey,
+        at: Span,
+        report: bool,
+    ) -> Option<(Presence, Vec<DefId>)> {
+        let p = self.in_presence(t, key, at, report)?;
+        let held = match p {
+            Presence::No | Presence::Optional(_) => self.held_declaring(t, key.name()),
+            Presence::Yes | Presence::Entry => vec![],
         };
-        (0..self.cx.info.len() as u32).map(DefId).find(|&d| {
-            self.cx
-                .adt(d)
-                .is_some_and(|a| a.kind == AdtKind::Class && !self.cx.scopes[a.module].is_std)
-                && held(self.cx, d)
-                && declares(self.cx, d, name)
-        })
+        if p == Presence::No {
+            if let Some(other) = self.other_holder_declaring(t, key.name()) {
+                if report {
+                    let (tn, name) = (self.cx.display(t), key.name());
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("cannot tell whether a `{tn}` has \"{name}\" while compiling: it may hold a `{other}`, which declares it"),
+                            at,
+                        )
+                        .with_note(format!("`{other}` implements the interface and is not a class, so its values cannot be told apart at run time; declare \"{name}\" in the interface (optional: `{name}?: T`)")),
+                    );
+                }
+                return None;
+            }
+        }
+        Some((p, held))
     }
 
-    /// `k in o` where `k` is known only at run time: on a `Record<string, V>`, `{ const <k> =
-    /// lhs; o.__has(<k>) || __objectPrototypeKey(<k>) }`; elsewhere an error.
+    /// A type of the program that is not a class, implements interface type `t` and declares
+    /// member `name` (its name): an interface value may hold one, and only classes can be
+    /// told apart at run time.
+    fn other_holder_declaring(&mut self, t: TyId, name: &str) -> Option<String> {
+        let TyKind::Dyn(i, _) = self.cx.ty.kind(t).clone() else {
+            return None;
+        };
+        for d in (0..self.cx.info.len() as u32).map(DefId) {
+            let Some(a) = self.cx.adt(d) else { continue };
+            if a.kind == AdtKind::Class || self.cx.scopes[a.module].is_std {
+                continue;
+            }
+            let (declared, shown) = (
+                crate::symbols::has_instance_member(&a.fields, &a.methods, name),
+                a.name.clone(),
+            );
+            if declared && self.implements(d, i) {
+                return Some(shown);
+            }
+        }
+        None
+    }
+
+    /// The classes of the program declaring (or inheriting) member `name` whose instances a
+    /// value of type `t` may hold: subclasses of a class, or classes an interface value may
+    /// hold (TypeScript-compiled classes define every field, an optional one too).
+    fn held_declaring(&mut self, t: TyId, name: &str) -> Vec<DefId> {
+        let classes: Vec<DefId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Adt(..) => self.class_subclasses(t).unwrap_or_default(),
+            TyKind::Dyn(i, _) => {
+                let user_classes: Vec<DefId> = (0..self.cx.info.len() as u32)
+                    .map(DefId)
+                    .filter(|&d| {
+                        self.cx.adt(d).is_some_and(|a| {
+                            a.kind == AdtKind::Class && !self.cx.scopes[a.module].is_std
+                        })
+                    })
+                    .collect();
+                user_classes
+                    .into_iter()
+                    .filter(|&d| self.holds_class(d, i))
+                    .collect()
+            }
+            _ => vec![],
+        };
+        classes
+            .into_iter()
+            .filter(|&d| declares(self.cx, d, name))
+            .collect()
+    }
+
+    /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
+    /// `__recordIn(k, o)` (std/prelude/record.vlt; a number key as `String(k)`, as JavaScript
+    /// converts it); elsewhere an error.
     pub(crate) fn dynamic_key_in(
         &mut self,
         lhs: &ast::Expr,
         rhs: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        let key_ty = self.trial_expr(lhs).ty;
         let target = self.trial_expr(rhs).ty;
+        let tag = self.cx.typeof_tag(key_ty);
         let open = self
             .record_args(target)
             .is_some_and(|(k, _)| k == self.cx.ty.str_);
-        if !open {
+        if !open || !matches!(tag, "string" | "number") {
             let k = self.expr(lhs, None, Want::Borrow);
             self.expr(rhs, None, Want::Borrow);
             if !self.cx.ty.is_bottom(k.ty) && !self.cx.ty.is_bottom(target) {
-                let msg = match self.cx.typeof_tag(k.ty) {
+                let msg = match tag {
                     "string" | "number" | "symbol" => format!(
                         "`in` with a key known only at run time is not supported on `{}`",
                         self.cx.display(target)
@@ -198,77 +248,14 @@ impl FnCx<'_, '_> {
             }
             return self.error_expr(span);
         }
-        self.push_scope_until(span.hi);
         let syn = Synth::new(span, self.f.locals.len());
-        let mut lets = vec![];
-        let str_ = self.cx.ty.str_;
-        let k = self.expr_coerce(lhs, str_, Want::Move);
-        self.hidden_local(syn.ident(&syn.value), k, false, &mut lets);
-        // An empty span marks the `__has` call as the compiler's (`record_internal_call`).
-        let has = syn.call(syn.member(rhs.clone(), "__has"), vec![syn.name(&syn.value)]);
-        let proto = syn.call(syn.name("__objectPrototypeKey"), vec![syn.name(&syn.value)]);
-        let test = syn.expr(ast::ExprKind::Binary {
-            op: ast::BinaryOp::Or,
-            lhs: Box::new(has),
-            rhs: Box::new(proto),
-        });
-        let h = self.expr(&test, None, Want::Move);
-        self.pop_scope();
-        self.with_lets(lets, h)
-    }
-}
-
-/// Does class `d` extend class `base`, directly or not?
-fn extends(cx: &crate::ctx::Ctx, d: DefId, base: DefId) -> bool {
-    let mut cur = Some(d);
-    for _ in 0..64 {
-        let Some(c) = cur else {
-            return false;
+        let key = match tag {
+            "number" => syn.call(syn.name("String"), vec![lhs.clone()]),
+            _ => lhs.clone(),
         };
-        if c == base {
-            return true;
-        }
-        cur = cx
-            .adt(c)
-            .and_then(|a| a.base)
-            .and_then(|b| match cx.ty.kind(b) {
-                TyKind::Adt(bd, _) => Some(*bd),
-                _ => None,
-            });
+        let test = syn.call(syn.name("__recordIn"), vec![key, rhs.clone()]);
+        self.expr(&test, None, Want::Move)
     }
-    false
-}
-
-/// Does class `d` (or a base class) implement interface `i` (or an interface extending it)?
-fn implements(cx: &crate::ctx::Ctx, d: DefId, i: DefId) -> bool {
-    let mut cur = Some(d);
-    for _ in 0..64 {
-        let Some(a) = cur.and_then(|c| cx.adt(c)) else {
-            return false;
-        };
-        if a.implements
-            .iter()
-            .any(|b| iface_extends(cx, b.iface, i, 0))
-        {
-            return true;
-        }
-        cur = a.base.and_then(|b| match cx.ty.kind(b) {
-            TyKind::Adt(bd, _) => Some(*bd),
-            _ => None,
-        });
-    }
-    false
-}
-
-/// Is interface `j` interface `i`, or does it extend it?
-fn iface_extends(cx: &crate::ctx::Ctx, j: DefId, i: DefId, depth: u32) -> bool {
-    j == i
-        || (depth < 32
-            && cx.iface(j).is_some_and(|f| {
-                f.parents
-                    .iter()
-                    .any(|p| iface_extends(cx, p.iface, i, depth + 1))
-            }))
 }
 
 /// Does class `d` declare (or inherit) a field, method or accessor named `name`?
@@ -278,7 +265,7 @@ fn declares(cx: &crate::ctx::Ctx, d: DefId, name: &str) -> bool {
         let Some(a) = cur.and_then(|c| cx.adt(c)) else {
             return false;
         };
-        if a.fields.iter().any(|f| f.name == name) || a.methods.contains_key(name) {
+        if crate::symbols::has_instance_member(&a.fields, &a.methods, name) {
             return true;
         }
         cur = a.base.and_then(|b| match cx.ty.kind(b) {

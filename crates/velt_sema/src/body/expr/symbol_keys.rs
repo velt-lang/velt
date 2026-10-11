@@ -7,7 +7,9 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::hir::{self, ExprKind as H, PatKind as P, TyId, TyKind};
+use super::in_keys::InKey;
+use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
 /// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
@@ -158,36 +160,44 @@ impl FnCx<'_, '_> {
         let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
         let mut found = Vec::with_capacity(members.len());
         for &m in &members {
-            match self.in_presence(m, &key, lhs.span, true) {
+            match self.in_test(m, &key, lhs.span, true) {
                 Some(p) => found.push(p),
                 None => return self.error_expr(span),
             }
         }
         let mut arms = vec![];
         let b = self.cx.ty.bool_;
-        for (v, (&m, p)) in members.iter().zip(&found).enumerate() {
+        for (v, (&m, (p, held))) in members.iter().zip(&found).enumerate() {
+            if *p == Presence::No {
+                if let InKey::Str(k) = &key {
+                    // A copy made for a narrower object type lacks the original's other fields.
+                    let at = self.cx.object_copies.in_key(k);
+                    self.cx.object_copies.observe(m, span, Seen::In(at));
+                }
+            }
             let (pat, body) = match p {
-                Presence::No => continue,
+                Presence::No if held.is_empty() => continue,
                 Presence::Yes => {
                     let wild = self.pat(P::Wildcard, m, span);
                     (wild, self.mk(H::Lit(hir::Lit::Bool(true)), b, span))
                 }
-                Presence::Optional(flag) => {
+                _ => {
                     let (l, mode) = self.option_binding(&s, m, "<in>", false);
                     let bind = self.pat(P::Binding(l, mode), m, span);
                     let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
-                    (bind, self.present_test(obj, key.name(), *flag, span))
-                }
-                Presence::Entry => {
-                    let (l, mode) = self.option_binding(&s, m, "<in>", false);
-                    let bind = self.pat(P::Binding(l, mode), m, span);
-                    let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
-                    let lit = ast::Expr {
-                        id: ast::NodeId(u32::MAX),
-                        kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
-                        span: lhs.span,
+                    let test = match p {
+                        Presence::Optional(flag) => self.present_test(obj, key.name(), *flag, span),
+                        Presence::Entry => {
+                            let lit = ast::Expr {
+                                id: ast::NodeId(u32::MAX),
+                                kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
+                                span: lhs.span,
+                            };
+                            self.record_call(obj, "__has", &[lit], span)
+                        }
+                        _ => self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
                     };
-                    (bind, self.record_call(obj, "__has", &[lit], span))
+                    (bind, self.class_or(l, m, held, test, span))
                 }
             };
             let pat = match union {
@@ -217,6 +227,41 @@ impl FnCx<'_, '_> {
         }
         let kind = H::Match {
             scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, b, span)
+    }
+
+    /// `test`, or `true` when the value bound to `l` (type `t`) is an instance of one of the
+    /// classes `held` (`match (l) { InstanceOf(C) => true, ..., _ => test }`).
+    fn class_or(
+        &mut self,
+        l: hir::LocalId,
+        t: TyId,
+        held: &[DefId],
+        test: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        if held.is_empty() {
+            return test;
+        }
+        let b = self.cx.ty.bool_;
+        let mut arms: Vec<hir::Arm> = held
+            .iter()
+            .map(|&c| hir::Arm {
+                pat: self.pat(P::InstanceOf(c), t, span),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Bool(true)), b, span),
+            })
+            .collect();
+        arms.push(hir::Arm {
+            pat: self.pat(P::Wildcard, t, span),
+            guard: None,
+            body: test,
+        });
+        let obj = self.mk(H::Local(l, hir::UseMode::Borrow), t, span);
+        let kind = H::Match {
+            scrutinee: Box::new(obj),
             arms,
         };
         self.mk(kind, b, span)

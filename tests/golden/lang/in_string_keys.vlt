@@ -3,7 +3,10 @@
 // `Object.prototype` (`"toString"`) on every object, and a `Record<string, V>`'s keys are tested
 // at run time (also a key known only then, and after `delete`). On a union `in` narrows to the
 // members that may have the key, also negated, in `&&` and in a conditional, as tsc does.
-// Expected output from node.
+// Static members and `#private` names are not instance keys, a setter is (`"w"`, never
+// `"set w"`); a value whose class is known only at run time is tested for the subclasses and
+// implementing classes that declare the key; a number key on a record is its string, and a key
+// in a call argument or in a `for (;;)` head works. Expected output from node.
 interface Fish {
   swim(): string;
   name: string;
@@ -27,7 +30,7 @@ class Salmon implements Fish {
 
 class Crow implements Bird {
   name = "b";
-  wings: number | null = null;
+  wings?: number;
   fly(): string {
     return "flies";
   }
@@ -38,6 +41,43 @@ class Base {
   greet(): string {
     return "hi";
   }
+}
+
+class Sub extends Base {
+  y: number = 2;
+}
+
+interface Shape {
+  area(): number;
+}
+
+class Sq implements Shape {
+  side: number = 2;
+  area(): number {
+    return 4;
+  }
+}
+
+class Circle implements Shape {
+  area(): number {
+    return 3;
+  }
+}
+
+class S {
+  static s(): void {}
+  #p = 1;
+  h = 0;
+  set w(v: number) {
+    this.h = v;
+  }
+  get g(): number {
+    return this.#p;
+  }
+}
+
+function id<T>(x: T): T {
+  return x;
 }
 
 function move(p: Fish | Bird): string {
@@ -111,4 +151,32 @@ function main() {
   console.log("size" in new Sized(), "length" in new Sized());
   const counts: Record<string, number> = { a: 5 };
   console.log(count(counts), count({}), count({ kind: "k", a: 2 }));
+  console.log("wings" in b, "fly" in b);
+  const sc = new S();
+  console.log("s" in sc, "#p" in sc, "w" in sc, "set w" in sc, "g" in sc, "get g" in sc);
+  const sub: Base = new Sub();
+  const base: Base = new Base();
+  console.log("y" in sub, "y" in base, "x" in sub);
+  const shapes: Shape[] = [new Sq(), new Circle()];
+  for (const s of shapes) {
+    console.log("side" in s, "area" in s);
+  }
+  const nums: Record<string, number> = { "1": 1, "2.5": 2 };
+  const one = 1;
+  console.log(1 in nums, 2 in nums, 2.5 in nums, one in nums);
+  for (const kk of ["1", "3"]) {
+    console.log(kk, kk in nums);
+  }
+  let x: boolean;
+  for (x = id("a" in o); x; x = false) {
+    console.log("x", x);
+  }
+  let st: string;
+  for (st = `${"a" in o}`; st !== ""; st = "") {
+    console.log("st", st);
+  }
+  let y: number;
+  for (y = true ? "z" in o ? 1 : 2 : 3; y > 0; y = 0) {
+    console.log("y", y);
+  }
 }

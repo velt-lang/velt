@@ -690,8 +690,9 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
   value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
-  expected type, or spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
-  or copy the original's fields, in its order), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
+  or copy the original's fields, in its order), or tests a value of the expected type with `in`
+  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -1131,24 +1132,32 @@ console.log(ports.get("https")); // 443
 `"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects
 have fixed fields, so a literal key is answered from `o`'s type while compiling: a field, method
 or accessor its object type, class (or a base class) or interface declares is always there, and
-one it doesn't declare is not. An optional field of an object type or interface (`b?: T`) is
-tested at run time: it is there once the object has it, also holding `null`, where the type
-keeps that apart. A class's optional field is always there (TypeScript-compiled classes define
-it). The members every object inherits from `Object.prototype` (`"toString"`, `"constructor"`,
-`"hasOwnProperty"`, …) are there on every object, as in Node. A `Record<string, V>` is a
-dictionary, so its keys are tested at run time, also a key known only then (`k in r`): a key
-`delete` removed is gone. A closed record (`Record<"x" | "y", V>`) has exactly its keys. On a
-union, `in` answers for the member the value holds, and in a condition it narrows the union
+one it doesn't declare is not. A setter makes its name a member (`"w" in o` for `set w(v)`);
+static members are the class's, not its instances', and a `#private` name is never a string key
+(`"#p" in o` is `false`). An optional field of an object type or interface (`b?: T`) is tested
+at run time: it is there once the object has it, also holding `null`, where the type keeps that
+apart. A class's optional field is always there (TypeScript-compiled classes define it). A value
+whose class is known only at run time is tested for it: a `Base` holding a `Sub` has the members
+`Sub` declares, and an interface value has those of the class it holds, an optional field the
+interface declares included. The members every object inherits from `Object.prototype`
+(`"toString"`, `"constructor"`, `"hasOwnProperty"`, …) are there on every object, as in Node. A
+`Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
+then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
+`"1"`). A closed record (`Record<"x" | "y", V>`) has exactly its keys. On a union, `in` answers
+for the member the value holds, and in a condition it narrows the union
 ([union types](#union-types)).
 
 A key known only at run time on anything but a `Record<string, V>` is an error (``` `in` with a
 key known only at run time is not supported on `T` ```): there is no table of names to look in.
-So is a key Velt cannot answer while compiling: a member declared only by a subclass of the
-value's class or by a class implementing its interface (``cannot tell whether a `Base` has "y"
-while compiling``; test `instanceof Sub`), and a string key on a built-in or standard library
-value (an array, a `Map`). A primitive right operand is an error (TypeScript's TS2322; JavaScript
-throws a `TypeError`), as is a possibly `null` one (TS18047). Symbol keys are described under
-[Symbols](#symbols), and `#x in o` under [private names](classes.md).
+So is a key Velt cannot answer while compiling: a member declared by a struct an interface value
+may hold (structs carry no class to tell them apart), and a string key on a built-in or standard
+library value (an array, a `Map`). A value converted to a narrower object type by copying its
+fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
+tests it for a key the copy left out, since Node would find it on the original. A primitive
+right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
+possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
+symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under
+[private names](classes.md).
 
 ```ts
 type Circle = { kind: "circle"; radius: number };
@@ -1158,6 +1167,13 @@ function area(s: Circle | Square): number {
   return "radius" in s ? 3 * s.radius * s.radius : s.side * s.side;
 }
 
+class Base {
+  x = 1;
+}
+class Sub extends Base {
+  y = 2;
+}
+
 function main() {
   const sq: Square = { kind: "square", side: 2 };
   console.log(area(sq), "label" in sq, "toString" in sq); // 4 false true
@@ -1165,6 +1181,8 @@ function main() {
   const k: string = "a";
   delete seen[k];
   console.log(k in seen); // false
+  const b: Base = new Sub();
+  console.log("y" in b, 1 in seen); // true false
 }
 ```
 

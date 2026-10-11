@@ -1,22 +1,12 @@
 // `"k" in o` must be answered correctly or rejected, never a silent `false`: a key known only at
-// run time on an object with fixed fields, a value whose class may be a subclass or an
-// implementing class declaring the key, and a built-in value are errors. A primitive right
-// operand (TS2322, TS18047 for a nullable one) and a left operand that is not a string, number
-// or symbol (TS2322) are errors at the positions tsc reports.
-class Base {
-  x: number = 1;
-}
-class Sub extends Base {
-  y: number = 2;
-}
-interface Shape {
-  area(): number;
-}
-class Sq implements Shape {
-  side: number = 2;
-  area(): number {
-    return 4;
-  }
+// run time on an object with fixed fields, a built-in value, and a key a narrower object type
+// left out of its copy (`const p: P = full`) are errors. A primitive right operand (TS2322,
+// TS18047 for a nullable one) and a left operand that is not a string, number or symbol (TS2322,
+// also on a record) are errors at the positions tsc reports, once each.
+type P = { x: number };
+
+function hasY(p: P): boolean {
+  return "y" in p;
 }
 
 function main() {
@@ -25,11 +15,12 @@ function main() {
   console.log(k in o);
   console.log("a" in 5);
   console.log(true in o);
-  const b: Base = new Sub();
-  console.log("y" in b);
-  const s: Shape = new Sq();
-  console.log("side" in s);
+  const full = { x: 1, y: 2 };
+  console.log(hasY(full));
   console.log("length" in [1, 2]);
   const n: { a: number } | null = null;
   console.log("a" in n);
+  const r: Record<string, number> = { a: 1 };
+  console.log("a" in o in r);
+  console.log(true in r);
 }

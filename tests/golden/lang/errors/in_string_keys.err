@@ -1,7 +1,9 @@
-in_string_keys.vlt:25:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
-in_string_keys.vlt:26:22: error: the right operand of `in` must be an object, found `f64`
-in_string_keys.vlt:27:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
-in_string_keys.vlt:29:15: error: cannot tell whether a `Base` has "y" while compiling: it may hold a `Sub`, which declares it
-in_string_keys.vlt:31:15: error: cannot tell whether a `Shape` has "side" while compiling: it may hold a `Sq`, which declares it
-in_string_keys.vlt:32:15: error: cannot tell whether a `f64[]` has "length"
-in_string_keys.vlt:34:22: error: the right operand of `in` must be an object, found `{ a: f64 } | null`
+in_string_keys.vlt:15:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
+in_string_keys.vlt:16:22: error: the right operand of `in` must be an object, found `f64`
+in_string_keys.vlt:17:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
+in_string_keys.vlt:19:20: error: a value of type `{ x: f64; y: f64 }` converts to `P` by copying its fields, and this program tests a `P` for "y" with `in`: the copy lacks the original's other fields, which Node would find
+in_string_keys.vlt:9:10: here, or in the function this calls
+in_string_keys.vlt:20:15: error: cannot tell whether a `f64[]` has "length"
+in_string_keys.vlt:22:22: error: the right operand of `in` must be an object, found `{ a: f64 } | null`
+in_string_keys.vlt:24:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
+in_string_keys.vlt:25:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)

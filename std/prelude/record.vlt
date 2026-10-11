@@ -253,3 +253,11 @@ export function __objectPrototypeKey(key: string): bool {
       return false;
   }
 }
+
+/**
+ * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
+ * `key`, or `key` names a member every object inherits from `Object.prototype`.
+ */
+export function __recordIn<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || __objectPrototypeKey(key);
+}

@@ -12,7 +12,8 @@
 //! - it prints, serializes (`JSON.stringify`) or lists the keys (`Object.keys`) of a value whose
 //!   type holds the converted-to type (Node shows the original's keys, in its order);
 //! - it spreads a value of the converted-to type into an object literal (Node copies the
-//!   original's fields, all of them).
+//!   original's fields, all of them);
+//! - it tests a value of the converted-to type for a key the copy left out (`"y" in p`).
 //!
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
@@ -59,6 +60,8 @@ pub(crate) enum Seen {
     Identity,
     /// `{ ...x }`: the top-level fields.
     Spread,
+    /// `"k" in x` for a key `x`'s type lacks: `Copies::in_keys[i]`.
+    In(u32),
 }
 
 /// The conversions, field writes and looks seen so far.
@@ -67,6 +70,8 @@ pub(crate) struct Copies {
     pub copies: Vec<Copy>,
     pub writes: Vec<Write>,
     pub seen: Vec<(TyId, Span, Seen)>,
+    /// The keys of `Seen::In` (only ever added to).
+    pub in_keys: Vec<String>,
 }
 
 impl Copies {
@@ -82,6 +87,17 @@ impl Copies {
         self.seen.truncate(mark[2]);
     }
 
+    /// The index of key `k` in `in_keys` (for `Seen::In`).
+    pub(crate) fn in_key(&mut self, k: &str) -> u32 {
+        match self.in_keys.iter().position(|x| x == k) {
+            Some(i) => i as u32,
+            None => {
+                self.in_keys.push(k.to_string());
+                (self.in_keys.len() - 1) as u32
+            }
+        }
+    }
+
     /// The program looks at a value of type `t` at `span`.
     pub(crate) fn observe(&mut self, t: TyId, span: Span, how: Seen) {
         self.seen.push((t, span, how));
@@ -94,12 +110,15 @@ pub(crate) fn check(cx: &mut Ctx) {
         copies,
         writes,
         seen,
+        in_keys,
     } = std::mem::take(&mut cx.object_copies);
     for c in &copies {
         if let Some(w) = assigned(cx, c, &writes) {
             report_write(cx, c, w);
-        } else if let Some(&(t, span, how)) = seen.iter().find(|s| sees(cx, c, s.0, s.2)) {
-            report_seen(cx, c, t, span, how);
+        } else if let Some(&(t, span, how)) =
+            seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys))
+        {
+            report_seen(cx, c, t, span, how, &in_keys);
         }
     }
 }
@@ -117,8 +136,15 @@ fn assigned<'w>(cx: &mut Ctx, c: &Copy, writes: &'w [Write]) -> Option<&'w Write
 }
 
 /// Does looking at a `t` (`how`) show that `c` made a copy?
-fn sees(cx: &mut Ctx, c: &Copy, t: TyId, how: Seen) -> bool {
+fn sees(cx: &mut Ctx, c: &Copy, t: TyId, how: Seen, in_keys: &[String]) -> bool {
     match how {
+        Seen::In(i) => {
+            let k = &in_keys[i as usize];
+            related(cx, t, c.to)
+                && cx
+                    .declared_presence(c.from, k)
+                    .is_some_and(|p| p != crate::symbols::Presence::No)
+        }
         Seen::Identity => {
             !c.fresh
                 && compared(cx, t, &mut HashSet::new())
@@ -191,7 +217,7 @@ fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
     cx.error(d);
 }
 
-fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen) {
+fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: &[String]) {
     let (from, to, shown) = (cx.display(c.from), cx.display(c.to), cx.display(t));
     let what = match how {
         Seen::Printed => format!("prints a `{shown}`"),
@@ -199,10 +225,12 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen) {
         Seen::Keys => format!("lists the keys of a `{shown}`"),
         Seen::Identity => format!("compares `{shown}` values with `===`"),
         Seen::Spread => format!("spreads a `{shown}`"),
+        Seen::In(i) => format!("tests a `{shown}` for \"{}\" with `in`", in_keys[i as usize]),
     };
     let why = match how {
         Seen::Identity => "two copies of one object are not `===`",
         Seen::Spread => "Node would copy all the original object's fields, in its order",
+        Seen::In(_) => "the copy lacks the original's other fields, which Node would find",
         _ => "Node would show the original object's fields, in its order",
     };
     let d = Diagnostic::error(

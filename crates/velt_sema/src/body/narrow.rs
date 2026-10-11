@@ -355,8 +355,12 @@ impl FnCx<'_, '_> {
         };
         let (mut yes, mut no) = (vec![], vec![]);
         for (i, m) in members.into_iter().enumerate() {
-            let p = self.in_presence(m, &key, lhs.span, false);
-            if p != Some(Presence::No) {
+            // A value whose class is known only at run time may have it (`in_test`).
+            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
+                Some((p, held)) => (Some(p), !held.is_empty()),
+                None => (None, false),
+            };
+            if p != Some(Presence::No) || held {
                 yes.push(i as u32);
             }
             if p != Some(Presence::Yes) {

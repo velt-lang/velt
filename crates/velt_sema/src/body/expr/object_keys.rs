@@ -297,7 +297,7 @@ impl FnCx<'_, '_> {
 
     /// May an interface value of `iface` hold an instance of class `d`: does `d`, a base class
     /// of it or one of its subclasses implement `iface`?
-    fn holds_class(&mut self, d: DefId, iface: DefId) -> bool {
+    pub(super) fn holds_class(&mut self, d: DefId, iface: DefId) -> bool {
         if self.class_tree_implements(d, iface) {
             return true;
         }
@@ -312,7 +312,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Does type definition `d` (over its own type parameters) implement `iface`?
-    fn implements(&mut self, d: DefId, iface: DefId) -> bool {
+    pub(super) fn implements(&mut self, d: DefId, iface: DefId) -> bool {
         let n = self.cx.adt(d).map_or(0, |a| a.generics.len());
         let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let t = self.cx.ty.intern(TyKind::Adt(d, params));

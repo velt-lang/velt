@@ -337,13 +337,13 @@ impl Ctx<'_> {
                 if a.kind != AdtKind::Anon && self.scopes[a.module].is_std {
                     return None;
                 }
-                if let Some(f) = a.fields.iter().find(|f| f.name == name) {
+                if let Some(f) = a.fields.iter().find(|f| f.name == name && !is_private(name)) {
                     return Some(match f.optional && a.kind != AdtKind::Class {
                         true => Presence::Optional(crate::anon::has_presence(&self.ty, a.kind, f)),
                         false => Presence::Yes,
                     });
                 }
-                if a.methods.contains_key(name) {
+                if has_instance_method(&a.methods, name) {
                     return Some(Presence::Yes);
                 }
                 match a.base {
@@ -367,13 +367,19 @@ impl Ctx<'_> {
         if depth > 32 {
             return Some(Presence::No);
         }
+        if is_private(name) {
+            return Some(Presence::No);
+        }
         if let Some(f) = i.fields.iter().find(|f| f.name == name) {
             return Some(match f.optional {
                 true => Presence::Optional(false),
                 false => Presence::Yes,
             });
         }
-        if i.methods.iter().any(|m| m.name == name) {
+        if i.methods
+            .iter()
+            .any(|m| crate::defs::key_member_name(&m.name) == name)
+        {
             return Some(Presence::Yes);
         }
         for p in &i.parents {
@@ -384,4 +390,32 @@ impl Ctx<'_> {
         }
         Some(Presence::No)
     }
+}
+
+/// Is `name` an ES private name (`#x`)? A string key never names one: `"#x" in o` is false.
+fn is_private(name: &str) -> bool {
+    name.starts_with(velt_syntax::ast::PRIVATE_NAME_PREFIX)
+}
+
+/// Does a method table give instances a member `name`, as `"name" in o` sees it: an instance
+/// method, a getter or a setter (key `set name`). Static methods are the class's, and a key
+/// never matches the table's internal spellings (`"set x"`) or a `#private` name.
+pub(crate) fn has_instance_method(methods: &HashMap<String, crate::defs::MethodRef>, name: &str) -> bool {
+    !is_private(name)
+        && methods.iter().any(|(k, m)| {
+            !m.is_static
+                && !k.starts_with("static ")
+                && crate::defs::key_member_name(k) == name
+        })
+}
+
+/// Does a class or object type with `fields` and `methods` give instances a member `name`
+/// (`"name" in o`; [`has_instance_method`]), not counting base classes?
+pub(crate) fn has_instance_member(
+    fields: &[crate::defs::FieldInfo],
+    methods: &HashMap<String, crate::defs::MethodRef>,
+    name: &str,
+) -> bool {
+    (!is_private(name) && fields.iter().any(|f| f.name == name))
+        || has_instance_method(methods, name)
 }
