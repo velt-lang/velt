@@ -10,8 +10,8 @@
 //!
 //! Two schedulers (#211), chosen once per process by `VELT_SCHEDULER`:
 //! - `stealing` (the default): one tokio multi-thread runtime; idle workers steal tasks.
-//! - `per-core`: every worker is a tokio `current_thread` runtime with its own I/O and timer
-//!   driver, and a task stays on the worker it started on, so its sockets, timers and data stay
+//! - `per-core`: every worker is a one-worker tokio multi-thread runtime with its own I/O and
+//!   timer driver, and a task stays on the worker it started on, so its sockets, timers and data stay
 //!   on one core and no other worker is woken to run it. An unpinned spawn starts on the
 //!   spawning worker unless that worker runs [`STEAL_MARGIN`] more tasks than the least loaded
 //!   one, which then gets it: an idle worker taking a task before its first poll (steal before
@@ -216,7 +216,14 @@ pub fn current_worker() -> Option<usize> {
 }
 
 fn start_workers() -> Vec<Worker> {
-    (0..worker_count())
+    start_n_workers(worker_count())
+}
+
+/// `n` per-core workers, started in parallel. Never blocks on a runtime, so it works from any
+/// context (also inside another runtime, where `block_on` would panic).
+fn start_n_workers(n: usize) -> Vec<Worker> {
+    let (marked, ready) = std::sync::mpsc::channel();
+    let handles: Vec<Handle> = (0..n)
         .map(|i| {
             // A multi-thread runtime with one worker thread, not a current-thread runtime: a wake
             // from another worker queues the task and unparks this worker only when it is idle,
@@ -234,14 +241,29 @@ fn start_workers() -> Vec<Worker> {
                     crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
                 });
             let handle = rt.handle().clone();
-            // Mark the worker thread (tasks only ever run there).
-            let _ = rt.block_on(handle.spawn(async move { WORKER.with(|w| w.set(i)) }));
+            // Mark the worker thread (tasks only ever run there), then report.
+            let marked = marked.clone();
+            handle.spawn(async move {
+                WORKER.with(|w| w.set(i));
+                let _ = marked.send(());
+            });
             // The runtime lives as long as the process (like the threads it replaces).
             std::mem::forget(rt);
-            Worker {
-                handle,
-                load: AtomicUsize::new(0),
-            }
+            handle
+        })
+        .collect();
+    drop(marked);
+    // Every worker marked its thread before any task is placed on it.
+    for _ in 0..n {
+        if ready.recv().is_err() {
+            crate::panic::fatal("cannot start the async runtime: a worker did not start");
+        }
+    }
+    handles
+        .into_iter()
+        .map(|handle| Worker {
+            handle,
+            load: AtomicUsize::new(0),
         })
         .collect()
 }
@@ -409,6 +431,22 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn per_core_workers_start_inside_another_runtime_and_mark_their_threads() {
+        // `block_on` would panic here ("Cannot start a runtime from within a runtime").
+        let outer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        outer.block_on(async {
+            let workers = start_n_workers(2);
+            for (i, w) in workers.iter().enumerate() {
+                let on = w.handle.spawn(async { current_worker() }).await.unwrap();
+                assert_eq!(on, Some(i), "worker {i} reports its own index");
+            }
+        });
+    }
 
     #[test]
     fn releasing_a_keep_alive_publishes_this_threads_output_first() {
