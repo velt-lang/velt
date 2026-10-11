@@ -38,7 +38,9 @@ async function main() {
   click({
     id: "async",
     onClick: async () => {
-      await delay(5);
+      // Far apart: timers only a few ms apart can fire on the same tick, in either order, on
+      // Windows (whose timer tick is about 15.6 ms).
+      await delay(60);
       console.log("async onClick finished");
     },
   });
@@ -48,6 +50,6 @@ async function main() {
   });
   console.log(kind(() => count++), kind(async () => {}), kind(null));
   console.log(`count ${count}`);
-  await delay(20);
+  await delay(150);
   console.log("done");
 }
