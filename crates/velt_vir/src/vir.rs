@@ -38,8 +38,17 @@
 //!    uphold them: `velt_opt` keeps them on clones and specializations and drops a param's
 //!    attributes when it rewrites that param. Backends may use them (LLVM param attributes) or
 //!    ignore them.
+//! 10. Debug variables (additive, optional; vir/debug.rs): `Program::debug_types` is empty and
+//!     every `LocalDecl::debug` is `None` unless `LowerOptions::debug_info` asked for them. Each
+//!     `LocalDebug::ty` and every debug type's own references index `debug_types`, and every
+//!     `AggId` and field index in them names an existing aggregate field (checked by `verify`).
+//!     `velt_opt` passes keep a local's description on the local holding the variable's value
+//!     and drop it where no single local does.
 
 use std::fmt;
+
+mod debug;
+pub use debug::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FuncId(pub u32);
@@ -134,6 +143,8 @@ pub struct Program {
     pub statics: Vec<StaticData>,
     /// Source path per `FileId` (index = `SrcLoc::file`); empty without source locations.
     pub files: Vec<String>,
+    /// Debug types of source variables, by `DebugTyId` (invariant 10); empty without them.
+    pub debug_types: Vec<DebugTy>,
 }
 
 /// A source position: 1-based line and column (in bytes) in `Program::files[file]`.
@@ -147,6 +158,9 @@ pub struct SrcLoc {
 impl Program {
     pub fn agg(&self, id: AggId) -> &AggLayout {
         &self.aggs[id.0 as usize]
+    }
+    pub fn debug_ty(&self, id: DebugTyId) -> &DebugTy {
+        &self.debug_types[id.0 as usize]
     }
     pub fn func(&self, id: FuncId) -> &Function {
         &self.funcs[id.0 as usize]
@@ -269,12 +283,18 @@ pub struct LocalDecl {
     pub ty: Ty,
     /// Source name for debugging, if any.
     pub name: Option<String>,
+    /// The source variable this local holds, for debuggers (invariant 10).
+    pub debug: Option<LocalDebug>,
 }
 
 impl LocalDecl {
     /// A local of type `ty`, named `name` in the source (`None` for temporaries).
     pub fn new(ty: Ty, name: Option<String>) -> Self {
-        LocalDecl { ty, name }
+        LocalDecl {
+            ty,
+            name,
+            debug: None,
+        }
     }
 }
 

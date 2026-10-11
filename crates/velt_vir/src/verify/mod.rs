@@ -1,6 +1,7 @@
 //! VIR verifier: checks the invariants listed in the `vir.rs` header — program-level layout and
 //! symbol rules here, per-function typing in typing.rs, definite assignment in init.rs.
 
+mod debug;
 mod dominators;
 mod init;
 mod typing;
@@ -22,6 +23,7 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     }
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);
+    debug::check_debug(p, &mut errs);
     for (i, f) in p.funcs.iter().enumerate() {
         check_locs(p, f, &mut errs);
         check_param_attrs(f, &mut errs);
