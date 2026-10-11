@@ -146,12 +146,6 @@ pub fn current_worker() -> Option<usize> {
     (i != usize::MAX).then_some(i)
 }
 
-/// The per-core workers' runtimes (`None` with the stealing scheduler), in worker order: for
-/// starting something on every worker (a listener's accept loops).
-pub fn worker_handles() -> Option<impl ExactSizeIterator<Item = &'static Handle>> {
-    per_core().map(|ws| ws.iter().map(|w| &w.handle))
-}
-
 fn start_workers() -> Vec<Worker> {
     let n = worker_count();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -253,20 +247,23 @@ where
     }
 }
 
-/// Spawns `fut` on this per-core worker whatever the load (a task whose I/O is registered with
-/// this worker's driver, such as a connection it accepted); elsewhere like [`spawn`].
-pub fn spawn_here<F>(fut: F) -> JoinHandle<F::Output>
+/// Like [`spawn`], but placement runs first and `make` learns whether the task will run on another
+/// per-core worker than this thread's, so it can prepare to move (a socket to detach from this
+/// worker's I/O driver). Always `false` with the stealing scheduler.
+pub fn spawn_with<F>(make: impl FnOnce(bool) -> F) -> JoinHandle<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    match (per_core(), current_worker()) {
-        (Some(workers), Some(i)) => {
+    match per_core() {
+        None => runtime().spawn(make(false)),
+        Some(workers) => {
+            let i = place(workers);
+            let fut = make(current_worker() != Some(i));
             let w = &workers[i];
             w.load.fetch_add(1, Ordering::Relaxed);
             w.handle.spawn(Counted { fut, load: &w.load })
         }
-        _ => spawn(fut),
     }
 }
 

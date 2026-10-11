@@ -1,7 +1,7 @@
 // check: no leaks
-// Eight tasks accept on one listener (with the per-core scheduler, on several workers, each on
-// its own registration of the socket); every connection is answered once, and after `close()`
-// the port can be listened on again at once.
+// Eight tasks accept on one listener (with the per-core scheduler, on several workers, sharing
+// one registration of the socket); every connection is answered once, and after `close()` the
+// port can be listened on again at once.
 import { listen, connect, TcpListener } from "velt:net";
 import { IoError } from "velt:io";
 

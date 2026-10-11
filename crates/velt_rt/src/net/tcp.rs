@@ -27,27 +27,22 @@ pub struct StreamObj {
     utf8: Mutex<Utf8Decoder>,
 }
 
-/// Whether accepts run on every per-core worker, each on its own registration of the listening
-/// socket (a duplicated descriptor in that worker's I/O driver), so new connections are accepted
-/// in parallel and each stays on the worker that accepted it. Not on Windows: there a worker that
-/// lost an accept race on a duplicated socket could stay blocked in `accept` on its thread (#993),
-/// so one registration accepts and each connection is handed to its worker ([`Handoff`]).
-pub(crate) fn accepts_per_worker() -> bool {
-    cfg!(unix) && crate::task::runtime::worker_handles().is_some()
-}
-
-/// An accepted connection on its way to the task that serves it, when one registration accepts
-/// for every worker: with the per-core scheduler the socket is detached from the accepting
-/// worker's I/O driver and registered again (`attach`) by the task that serves it, with its own
-/// worker's driver, so its wakes go there.
+/// An accepted connection on its way to the task that serves it. With the per-core scheduler a
+/// socket is registered with the I/O driver of the worker that accepted it; when its task runs on
+/// another worker, the socket is detached here and registered again (`attach`) by that task, with
+/// its own worker's driver, so its wakes go there. One registration of a listening socket serves
+/// every accept: per-worker duplicates woke every worker for each connection (3–5× slower
+/// connection churn on a loaded machine) and, on Windows, left losers of an accept race blocked
+/// in `accept` (#993).
 pub(crate) enum Handoff {
     Here(TcpStream),
     Detached(std::net::TcpStream),
 }
 
 impl Handoff {
-    pub(crate) fn new(stream: TcpStream) -> io::Result<Handoff> {
-        if crate::task::runtime::current_worker().is_none() {
+    /// `moves`: the stream will be used on another worker (detach it from this one's driver).
+    pub(crate) fn new(stream: TcpStream, moves: bool) -> io::Result<Handoff> {
+        if !moves {
             return Ok(Handoff::Here(stream));
         }
         stream.into_std().map(Handoff::Detached)
@@ -62,69 +57,12 @@ impl Handoff {
     }
 }
 
-/// A listening socket: one registration, or ([`accepts_per_worker`]) one per worker with the
-/// original registered with none.
-pub enum ListenerObj {
-    One(TcpListener),
-    PerWorker {
-        /// The unregistered original: the address, and what the registrations duplicate.
-        source: std::net::TcpListener,
-        regs: Vec<TcpListener>,
-    },
-}
-
-/// One registration of `source` per per-core worker (in worker order), each in that worker's
-/// I/O driver; empty with the stealing scheduler. All or nothing: an error registers none.
-/// Only where [`accepts_per_worker`].
-pub(crate) fn per_worker_listeners(source: &std::net::TcpListener) -> io::Result<Vec<TcpListener>> {
-    let Some(workers) = crate::task::runtime::worker_handles() else {
-        return Ok(Vec::new());
-    };
-    workers
-        .map(|h| {
-            let dup: std::net::TcpListener = socket2::SockRef::from(source).try_clone()?.into();
-            dup.set_nonblocking(true)?;
-            let _in = h.enter();
-            TcpListener::from_std(dup)
-        })
-        .collect()
-}
-
-impl ListenerObj {
-    fn new(listener: TcpListener) -> io::Result<ListenerObj> {
-        if !accepts_per_worker() {
-            return Ok(ListenerObj::One(listener));
-        }
-        let source = listener.into_std()?;
-        let regs = per_worker_listeners(&source)?;
-        Ok(ListenerObj::PerWorker { source, regs })
-    }
-
-    /// The registration to accept on from this thread (outside a worker, the first's: correct,
-    /// with a wake across workers).
-    fn here(&self) -> &TcpListener {
-        match self {
-            ListenerObj::One(l) => l,
-            ListenerObj::PerWorker { regs, .. } => {
-                &regs[crate::task::runtime::current_worker().map_or(0, |i| i.min(regs.len() - 1))]
-            }
-        }
-    }
-
-    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
-        match self {
-            ListenerObj::One(l) => l.local_addr(),
-            ListenerObj::PerWorker { source, .. } => source.local_addr(),
-        }
-    }
-}
-
 /// Opaque listener handle.
-pub type ListenerHandle = Key<ListenerObj>;
+pub type ListenerHandle = Key<TcpListener>;
 /// Opaque stream handle.
 pub type StreamHandle = Key<StreamObj>;
 
-static LISTENERS: Registry<ListenerObj> = Registry::new();
+static LISTENERS: Registry<TcpListener> = Registry::new();
 static STREAMS: Registry<StreamObj> = Registry::new();
 
 /// Owned text of a string argument (copied: async operations outlive the call).
@@ -147,9 +85,7 @@ fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
 pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFut {
     let addr = text_arg(addr);
     new_leaf(async move {
-        let r = crate::dev::bind(addr.as_str())
-            .await
-            .and_then(ListenerObj::new);
+        let r = crate::dev::bind(addr.as_str()).await;
         IoResult::from_io(r, |l| LISTENERS.insert(l))
     })
 }
@@ -174,14 +110,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
     LISTENERS.op::<StreamHandle>(l, |listener| {
-        new_leaf(async move {
-            let accepted = listener.here().accept().await;
-            stream_result(accepted.and_then(|(s, _)| match &*listener {
-                ListenerObj::PerWorker { .. } => Ok(s),
-                // One registration: move the connection to this (the caller's) worker.
-                ListenerObj::One(_) => Handoff::new(s)?.attach(),
-            }))
-        })
+        new_leaf(async move { stream_result(listener.accept().await.map(|(s, _)| s)) })
     })
 }
 
