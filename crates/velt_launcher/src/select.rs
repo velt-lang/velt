@@ -266,9 +266,8 @@ pub fn index(ctx: &Context) -> Result<release::Index, String> {
     let own = Version::parse(env!("CARGO_PKG_VERSION")).expect("ICE: the crate version");
     if let Some(newer) = index.newer_launcher(&own) {
         eprintln!(
-            "velt: a newer velt launcher ({newer}) is available; run the installer again to \
-             update {} (this one is {own})",
-            ctx.root.dir().join("bin").display()
+            "velt: a newer velt launcher ({newer}) is available (this one is {own}): run \
+             `velt toolchain self-update`"
         );
     }
     Ok(index)

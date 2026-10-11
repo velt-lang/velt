@@ -231,10 +231,10 @@ that never reads the index of releases never learns of a key revoked after that.
 signed releases, which ones are yanked (withdrawn for a serious bug: a requirement no longer
 selects them, though `=<version>` still installs one), the time it was written (a launcher
 refuses an index older than one it has seen, so a mirror can't hide later releases, and one
-written more than a day ahead of its clock), the
-newest launcher (an older launcher says to run the installer again), and release keys that
-leaked (`revoked_keys`: a launcher refuses such a key from then on, when the index is signed by
-the backup key; CONTRIBUTING.md "Replacing the signing key").
+written more than a day ahead of its clock), the newest launcher (an older launcher says to run
+`velt toolchain self-update`), and release keys that leaked (`revoked_keys`: a launcher refuses
+such a key from then on, when the index is signed by the backup key; CONTRIBUTING.md "Replacing
+the signing key").
 
 Each release also has a **target pack** per target, `velt-<version>-target-<triple>.tar.gz`
 (also for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`), which

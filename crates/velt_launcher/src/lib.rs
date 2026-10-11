@@ -44,6 +44,7 @@ fn run(args: &[OsString]) -> Result<i32, String> {
             exe.display()
         )
     })?;
+    sweep(&root);
     let mut ctx = select::Context::from_env(root)?;
     let mut args = args;
     if let Some(name) = args
@@ -62,4 +63,30 @@ fn run(args: &[OsString]) -> Result<i32, String> {
     let selection = select::select(&ctx)?;
     let resolved = select::resolve(&ctx, &selection)?;
     exec::exec(&resolved, args, &exe)
+}
+
+/// Delete what a `self-update` left in `<root>/bin`: launchers it moved aside on Windows
+/// (`.velt.exe.old-*`), which couldn't be deleted while they ran, and launchers it staged
+/// (`.velt-new-*`) but didn't put in place, once an hour old (a fresh one may be one a running
+/// `self-update` is checking). Best effort.
+pub(crate) fn sweep(root: &velt_toolchain::Root) {
+    let Ok(entries) = std::fs::read_dir(root.dir().join("bin")) else {
+        return;
+    };
+    let stale = |entry: &std::fs::DirEntry| {
+        entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > std::time::Duration::from_secs(3600))
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let moved_aside = name.starts_with(".velt") && name.contains(".old-");
+        if moved_aside || (name.starts_with(".velt-new-") && stale(&entry)) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
