@@ -282,6 +282,16 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        // `spawn(p, { worker })` (#211): the task pinned to a worker; the index is checked
+        // after `p`, as its second argument, and passed to the runtime right before the spawn.
+        if let [p, opts] = args {
+            let worker = self.spawn_worker(p, opts);
+            let mut e = self.spawn_call(std::slice::from_ref(p), exp, span);
+            if let (Some(w), H::Call { args, .. }) = (worker, &mut e.kind) {
+                args.push(w);
+            }
+            return e;
+        }
         let [arg] = args else {
             return self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
         };
@@ -320,6 +330,91 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// The worker index of `spawn(p, opts)`: `opts` is an object literal with an optional
+    /// `worker: i64` (`{}` pins nothing). `p` must be a call or a task body: a promise that
+    /// already started stays on its task.
+    fn spawn_worker(&mut self, p: &ast::Expr, opts: &ast::Expr) -> Option<hir::Expr> {
+        if !not_started(p) {
+            self.cx.error(
+                Diagnostic::error(
+                    "a started promise stays on its task; pass the call: `spawn(f(), { worker })`",
+                    p.span,
+                )
+                .with_note("only a call or an async task body can be placed on a worker"),
+            );
+        }
+        let mut o = opts;
+        while let ast::ExprKind::Paren(x) = &o.kind {
+            o = x;
+        }
+        let ast::ExprKind::Object(props) = &o.kind else {
+            self.cx.error(
+                Diagnostic::error("`spawn`'s options must be an object literal", opts.span)
+                    .with_note("write `spawn(f(), { worker: i })`"),
+            );
+            return None;
+        };
+        let i64_ty = self.cx.ty.i64;
+        let mut worker = None;
+        for prop in props {
+            let (name, value) = match prop {
+                ast::ObjectProp::KeyValue(k, v) => (k, Some(v)),
+                ast::ObjectProp::Shorthand(k) => (k, None),
+                ast::ObjectProp::Spread(e) => {
+                    self.cx.error(
+                        Diagnostic::error("`spawn`'s options can't be spread", e.span)
+                            .with_note("write `spawn(f(), { worker: i })`"),
+                    );
+                    continue;
+                }
+                ast::ObjectProp::Method(m) => {
+                    self.cx.err(
+                        "`spawn`'s options take no methods".to_string(),
+                        m.sig.name.span,
+                    );
+                    continue;
+                }
+            };
+            if name.name != "worker" {
+                self.cx.error(
+                    Diagnostic::error(format!("unknown `spawn` option `{}`", name.name), name.span)
+                        .with_note("the only option is `worker`"),
+                );
+                continue;
+            }
+            let ident;
+            let v = match value {
+                Some(v) => v,
+                None => {
+                    ident = ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Ident(name.clone()),
+                        span: name.span,
+                    };
+                    &ident
+                }
+            };
+            let h = self.expr(v, Some(i64_ty), Want::Move);
+            worker = Some(self.coerce(h, i64_ty));
+        }
+        worker
+    }
+}
+
+/// `spawn(p, { worker })`'s `p`: a call (of a function, a method or a function value), an async
+/// task body, or a conditional choosing between them; not a promise already started.
+fn not_started(p: &ast::Expr) -> bool {
+    match &p.kind {
+        ast::ExprKind::Paren(x) => not_started(x),
+        ast::ExprKind::Call { .. } | ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => {
+            true
+        }
+        ast::ExprKind::Cond { then, els, .. } => not_started(then) && not_started(els),
+        _ => false,
     }
 }
 

@@ -121,6 +121,11 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
         }
+        // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
+        cx.func(Work::Main);
+        while let Some((fid, work)) = cx.queue.pop_front() {
+            cx.build_now(fid, &work);
+        }
         let next = cx.close_boxing();
         if next == counted {
             if cx.facts.unmet {
@@ -233,6 +238,10 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// Native library inits `velt_main` runs first (entry.rs).
     native_inits: Vec<crate::NativeInit>,
+    /// The program uses the placement API (`spawn(…, { worker })`, `workerCount()`,
+    /// `currentWorker()`): `velt_main` selects the per-core scheduler. Known once every function
+    /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
+    uses_placement: bool,
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,

@@ -193,7 +193,8 @@ impl VisitMut for Promises<'_, '_, '_, '_> {
                 callee: Callee::Intrinsic(Intrinsic::Spawn),
                 args,
             } => {
-                self.spawned.extend(args.iter().map(|a| a.span));
+                // The promise (a `{ worker }` index after it is a plain value).
+                self.spawned.extend(args.first().map(|a| a.span));
             }
             // Widens a promise made in its argument (found there).
             E::Call {

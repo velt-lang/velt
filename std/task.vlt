@@ -1,4 +1,4 @@
-// std/task: cancellation, timeouts and task scopes (docs/std/task.md).
+// std/task: cancellation, timeouts, task scopes and task placement (docs/std/task.md).
 //
 // `AbortController` / `AbortSignal` follow TypeScript's shapes. Cancellation is cooperative:
 // `abort()` sets the signal and wakes the tasks waiting on it; code that accepts a signal checks
@@ -27,6 +27,32 @@ declare function velt_rt_group_enter(g: u64): bool;
 declare function velt_rt_group_leave(g: u64);
 declare async function velt_rt_group_wait(g: u64): Promise<void>;
 declare function velt_rt_group_free(g: u64);
+declare function velt_rt_worker_count(): u64;
+declare function velt_rt_current_worker(): u64;
+
+/**
+ * The options of `spawn(p, options)`: `worker` pins the task to that worker (`0` to
+ * `workerCount() - 1`), where it starts and stays.
+ */
+export type SpawnOptions = { worker?: i64 };
+
+/**
+ * How many workers run tasks: fixed for the process (`VELT_THREADS`, else the number of cores;
+ * 1 on WebAssembly). Using it (or `currentWorker()` or `spawn(p, { worker })`) runs the program
+ * on the per-core scheduler.
+ */
+export function workerCount(): i64 {
+  return velt_rt_worker_count() as i64;
+}
+
+/**
+ * The worker running this task, from `0` to `workerCount() - 1`. A task stays on its worker
+ * with the per-core scheduler (which a program using this gets); with
+ * `VELT_SCHEDULER=stealing` it may move at any `await`.
+ */
+export function currentWorker(): i64 {
+  return velt_rt_current_worker() as i64;
+}
 
 const DEFAULT_REASON: string = "This operation was aborted";
 
