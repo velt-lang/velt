@@ -649,3 +649,35 @@ fn the_launcher_says_its_own_version() {
         format!("velt-launcher {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
+
+/// `velt toolchain prune` keeps the default and the newest of each minor, and removes the rest.
+#[test]
+fn prune_removes_old_patches_but_not_the_default() {
+    let releases = Releases::new(&["0.1.0", "0.1.1", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    for v in ["0.1.0", "0.1.1", "0.1.2", "0.2.0"] {
+        m.ok(&m.work, &["toolchain", "install", v]);
+    }
+    // The first one installed is the default.
+    let dry = m.ok(&m.work, &["toolchain", "prune", "--dry-run"]);
+    assert!(
+        dry.contains("would remove velt 0.1.1 (") && dry.contains("would free"),
+        "{dry}"
+    );
+    assert!(
+        !dry.contains("0.1.0") && !dry.contains("0.1.2") && !dry.contains("0.2.0"),
+        "{dry}"
+    );
+    assert!(m.toolchain("0.1.1").exists());
+    let out = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(
+        out.contains("removed velt 0.1.1 (") && out.contains("freed"),
+        "{out}"
+    );
+    assert!(!m.toolchain("0.1.1").exists());
+    for kept in ["0.1.0", "0.1.2", "0.2.0"] {
+        assert!(m.toolchain(kept).exists(), "{kept}");
+    }
+    let again = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(again.contains("nothing to prune"), "{again}");
+}

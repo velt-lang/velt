@@ -266,6 +266,40 @@ impl Root {
     }
 }
 
+/// The installed versions `velt toolchain prune` removes from `versions`: all but the default and
+/// the newest of each `major.minor` (what a pin like `"0.1"` runs). One a lockfile still names is
+/// installed again when it is next used.
+pub fn prunable(versions: &[Version], default: Option<&Toolchain>) -> Vec<Version> {
+    let newest_of_minor = |v: &Version| {
+        versions
+            .iter()
+            .filter(|o| o.major == v.major && o.minor == v.minor)
+            .max()
+            == Some(v)
+    };
+    let is_default = |v: &Version| default == Some(&Toolchain::Version(v.clone()));
+    versions
+        .iter()
+        .filter(|v| !newest_of_minor(v) && !is_default(v))
+        .cloned()
+        .collect()
+}
+
+/// The bytes the files under `path` take (0 when it can't be read).
+pub fn dir_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Write `text` to `path` through a temporary file, so a reader never sees half of it.
 pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
@@ -390,5 +424,29 @@ mod tests {
             assert!(err.contains("device name on Windows"), "{device}: {err}");
         }
         assert!(Toolchain::parse("console").is_ok() && Toolchain::parse("com").is_ok());
+    }
+
+    #[test]
+    fn prune_keeps_the_default_and_the_newest_of_each_minor() {
+        let versions: Vec<Version> = ["0.1.0", "0.1.2", "0.1.3", "0.2.0-rc.1", "0.2.0", "1.0.0"]
+            .iter()
+            .map(|s| v(s))
+            .collect();
+        let shown = |p: Vec<Version>| p.iter().map(Version::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            shown(prunable(&versions, None)),
+            ["0.1.0", "0.1.2", "0.2.0-rc.1"]
+        );
+        let default = Toolchain::Version(v("0.1.0"));
+        assert_eq!(
+            shown(prunable(&versions, Some(&default))),
+            ["0.1.2", "0.2.0-rc.1"]
+        );
+        assert!(prunable(&[v("0.1.0")], None).is_empty());
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/b")).unwrap();
+        std::fs::write(tmp.path().join("a/b/f"), [0u8; 1000]).unwrap();
+        std::fs::write(tmp.path().join("g"), [0u8; 24]).unwrap();
+        assert_eq!(dir_size(tmp.path()), 1024);
     }
 }

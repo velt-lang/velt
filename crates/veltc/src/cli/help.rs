@@ -357,6 +357,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             "toolchain list [--available]",
             "toolchain install <version> [--default]",
             "toolchain remove <toolchain> [--force]",
+            "toolchain prune [--dry-run]",
             "toolchain default [<toolchain>]",
             "toolchain which",
             "toolchain link <name> <prefix>",

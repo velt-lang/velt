@@ -21,6 +21,8 @@ Commands:
                                first one installed becomes the default
   remove <toolchain> [--force] remove a version (debug executables it built stop running) or a
                                link; --force removes the default too
+  prune [--dry-run]            remove every version but the default and the newest of each
+                               major.minor; --dry-run lists them
   default [<toolchain>]        show or set the toolchain used outside pinned packages
   which                        the toolchain this directory selects, and why
   link <name> <prefix>         use a toolchain built elsewhere (a checkout) as <name>
@@ -63,6 +65,7 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         "list" => &["--available"],
         "install" => &["--default"],
         "remove" => &["--force"],
+        "prune" => &["--dry-run"],
         _ => &[],
     };
     if let Some(bad) = rest
@@ -96,6 +99,10 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         "remove" => {
             arity(1, "remove <toolchain> [--force]")?;
             remove(ctx, positional[0], flag("--force"))
+        }
+        "prune" => {
+            arity(0, "prune [--dry-run]")?;
+            prune(ctx, flag("--dry-run"))
         }
         "default" => match positional.as_slice() {
             [] => show_default(ctx),
@@ -232,6 +239,50 @@ fn remove(ctx: &Context, text: &str, force: bool) -> Result<(), String> {
         Toolchain::Linked(name) => println!("unlinked {name}"),
     }
     Ok(())
+}
+
+/// Remove the versions [`velt_toolchain::layout::prunable`] names, saying how much each frees.
+/// One in use (Windows) is reported and kept, and the others are still removed.
+fn prune(ctx: &Context, dry_run: bool) -> Result<(), String> {
+    let root = &ctx.root;
+    let prunable = velt_toolchain::layout::prunable(&root.versions(), root.default()?.as_ref());
+    if prunable.is_empty() {
+        println!(
+            "nothing to prune: each installed version is the default or the newest of its minor"
+        );
+        return Ok(());
+    }
+    let mut freed = 0;
+    let mut failed = vec![];
+    for v in &prunable {
+        let size = velt_toolchain::layout::dir_size(&root.version_dir(v));
+        if dry_run {
+            println!("would remove velt {v} ({})", megabytes(size));
+            freed += size;
+            continue;
+        }
+        match root.remove(&Toolchain::Version(v.clone())) {
+            Ok(()) => {
+                println!("removed velt {v} ({})", megabytes(size));
+                freed += size;
+            }
+            Err(e) => failed.push(e),
+        }
+    }
+    let verb = if dry_run { "would free" } else { "freed" };
+    println!(
+        "{verb} {}; debug executables those versions built no longer run (rebuild them)",
+        megabytes(freed)
+    );
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("\n"))
+    }
+}
+
+fn megabytes(bytes: u64) -> String {
+    format!("{} MB", (bytes + 500_000) / 1_000_000)
 }
 
 fn show_default(ctx: &Context) -> Result<(), String> {
