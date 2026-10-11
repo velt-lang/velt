@@ -158,14 +158,8 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // `T | null | null` is `T | null`: an option of an option is the inner option (one
-        // `null`, as in JavaScript), however it was built (substituting `U | null` with a
-        // nullable `U`, for instance). Wrapping a value whose type is already that option is the
-        // identity (`ExprKind::WrapSome`, `UnwrapSome`).
-        // An option built around an option keeps the inner one's nothing (issue #930, phase 1):
-        // `V | null` in generic code instantiated with `V = T | undefined` is `T | undefined`,
-        // so its nothing is JavaScript's `undefined` (`Map.get`, `pop`, `?.`). A written
-        // `T | null | undefined` is resolved by `Ctx::union_with`, which reports it.
+        // An option of an option is the inner option, with the inner one's nothing (`T | null |
+        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
         if let TyKind::Option(inner, _) = kind {
             if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
                 return inner;
