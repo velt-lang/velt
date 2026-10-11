@@ -771,3 +771,49 @@ fn a_new_patch_version_gets_the_target_packs_of_the_one_it_follows() {
         "{stdout}{stderr}"
     );
 }
+
+/// In a pinned package, the toolchain `velt.lock.json` records runs (installed first when
+/// missing), so every machine builds the commit with it; `velt update` runs the newest the pin
+/// accepts, and a locked version the pin no longer accepts is not used.
+#[test]
+fn the_locked_toolchain_runs_in_its_package() {
+    let releases = Releases::new(&["0.1.0", "0.1.2"]);
+    let m = Machine::new(&releases);
+    let pkg = m.package("app", Some("0.1"));
+    let lock = |velt: &str| {
+        std::fs::write(
+            pkg.join("velt.lock.json"),
+            format!("{{\n  \"version\": 1,\n  \"velt\": \"{velt}\",\n  \"packages\": []\n}}\n"),
+        )
+        .unwrap();
+    };
+    m.ok(&m.work, &["toolchain", "install", "0.1.2"]);
+
+    // Locked to 0.1.0, which is not installed: installed and run, although 0.1.2 is.
+    lock("0.1.0");
+    let stdout = m.ok(&pkg, &["build"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.0")), "{stdout}");
+    assert!(
+        stdout.contains("selected=0.1.0 (velt.lock.json, with velt: \"0.1\" in "),
+        "{stdout}"
+    );
+    let which = m.ok(&pkg, &["toolchain", "which"]);
+    assert!(which.starts_with("0.1.0 (velt.lock.json"), "{which}");
+
+    // `velt update` runs the newest the pin accepts (which then records itself).
+    let stdout = m.ok(&pkg, &["update"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+    assert!(
+        stdout.contains("selected=0.1.2 (velt: \"0.1\" in "),
+        "{stdout}"
+    );
+
+    // A locked version the pin doesn't accept is not used.
+    lock("0.0.9");
+    let stdout = m.ok(&pkg, &["build"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+    // `+` and $VELT_TOOLCHAIN still win over the lock.
+    lock("0.1.0");
+    let stdout = m.ok(&pkg, &["+0.1.2", "build"]);
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+}

@@ -251,8 +251,12 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
 
 1. `velt +<toolchain> <command>` or `$VELT_TOOLCHAIN`, for one command: a version (`+0.2.0`),
    a requirement read like a pin (`+0.2`: the newest 0.2.x), or a linked name (`+dev`);
-2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the newest installed
-   version it accepts;
+2. else the [`velt` field](manifest.md#velt) of the nearest `package.vlt`: the version the
+   package's [`velt.lock.json`](manifest.md#veltlockjson) records when the field accepts it
+   (installed first if it is missing), so every machine builds a commit with the same velt;
+   otherwise the newest installed version the field accepts. `velt update` takes the newest
+   *installed* one (`velt toolchain install 0.2` fetches a newer patch first),
+   which then records itself in the lock;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
 

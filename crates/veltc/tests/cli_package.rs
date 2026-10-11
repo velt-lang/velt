@@ -711,3 +711,63 @@ fn target_add_from_an_unsigned_release_names_the_way_out() {
         "{err}"
     );
 }
+
+#[test]
+fn the_lock_records_the_toolchain_and_locked_builds_refuse_another() {
+    // #960: velt.lock.json says which velt builds the package; --locked holds to it.
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["install"]);
+    let version = env!("CARGO_PKG_VERSION");
+    let lock = s.read("app/velt.lock.json");
+    assert!(lock.contains(&format!("\"velt\": \"{version}\"")), "{lock}");
+
+    // Another toolchain's lock: a normal build leaves it (another velt ran this one), --locked
+    // refuses, `velt update` moves it to this toolchain.
+    let minor = version.rsplit_once('.').unwrap().0;
+    let other = format!("{minor}.999");
+    s.write("app/velt.lock.json", &lock.replace(version, &other));
+    s.ok("app", &["install"]);
+    assert!(s.read("app/velt.lock.json").contains(&other));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains(&format!(
+            "velt.lock.json pins velt {other}, but this is velt {version}"
+        )),
+        "{err}"
+    );
+    s.ok("app", &["update"]);
+    assert!(s
+        .read("app/velt.lock.json")
+        .contains(&format!("\"velt\": \"{version}\"")));
+
+    // A locked version the pin no longer accepts: --locked says to record this one instead.
+    let pinned = s.read("app/velt.lock.json");
+    s.write("app/velt.lock.json", &pinned.replace(version, "0.0.9"));
+    let err = s.fail("app", &["install", "--locked"]);
+    assert!(
+        err.contains("pins velt 0.0.9, which the package's velt pin")
+            && err.contains(&format!("to record velt {version}")),
+        "{err}"
+    );
+    // Not a version: refused when the lock is read, shown escaped.
+    s.write("app/velt.lock.json", &pinned.replace(version, "../../x"));
+    let err = s.fail("app", &["install"]);
+    assert!(err.contains("not a velt version"), "{err}");
+    s.write("app/velt.lock.json", &pinned);
+
+    // A package without a `velt` pin records none (the launcher only follows a pinned lock).
+    s.ok("", &["new", "unpinned"]);
+    let manifest = s.read("unpinned/package.vlt");
+    let unpinned = manifest.replace(&format!(", velt: \"{minor}\""), "");
+    assert_ne!(unpinned, manifest, "{manifest}");
+    s.write("unpinned/package.vlt", &unpinned);
+    s.ok("unpinned", &["install"]);
+    assert!(!s.read("unpinned/velt.lock.json").contains("\"velt\""));
+
+    // A lock from before the field is fine under --locked, and stays as it is.
+    let old = "{\n  \"version\": 1,\n  \"packages\": []\n}\n";
+    s.write("app/velt.lock.json", old);
+    s.ok("app", &["install", "--locked"]);
+    assert_eq!(s.read("app/velt.lock.json"), old);
+}
