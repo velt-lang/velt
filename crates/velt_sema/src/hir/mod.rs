@@ -29,12 +29,14 @@
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
 mod intrinsic;
+mod nothing;
 
 use std::collections::HashMap;
 
 use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
+pub use nothing::Nothing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -132,54 +134,6 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
-}
-
-/// Which nothings a `TyKind::Option` allows (issue #930, hir_encodings.md "Undefined").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Nothing {
-    /// `T | null`
-    Null,
-    /// `T | undefined`
-    Undefined,
-    /// `T | null | undefined`
-    Both,
-}
-
-impl Nothing {
-    /// The nothings of `(T | self) | other`.
-    pub fn join(self, other: Nothing) -> Nothing {
-        if self == other {
-            self
-        } else {
-            Nothing::Both
-        }
-    }
-
-    pub fn has_null(self) -> bool {
-        self != Nothing::Undefined
-    }
-
-    pub fn has_undefined(self) -> bool {
-        self != Nothing::Null
-    }
-
-    /// How a value of a two-state option prints its nothing: `null` or `undefined` (a
-    /// three-state option never reaches lowering in this phase).
-    pub fn word(self) -> &'static str {
-        match self {
-            Nothing::Undefined => "undefined",
-            _ => "null",
-        }
-    }
-
-    /// How a type shows it: `" | null"`, `" | undefined"`, `" | null | undefined"`.
-    pub fn suffix(self) -> &'static str {
-        match self {
-            Nothing::Null => " | null",
-            Nothing::Undefined => " | undefined",
-            Nothing::Both => " | null | undefined",
-        }
-    }
 }
 
 /// The value of a literal type.
