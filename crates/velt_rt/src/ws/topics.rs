@@ -29,12 +29,22 @@ static TOPICS: LazyLock<RwLock<HashMap<String, Topic>>> = LazyLock::new(Default:
 
 /// Adds `conn` to `topic` (again is a no-op); true if it was not subscribed yet.
 pub(super) fn subscribe(conn: &Conn, topic: &str) -> bool {
-    let t = {
-        let read = TOPICS.read();
-        read.get(topic).cloned()
-    };
-    let t = t.unwrap_or_else(|| TOPICS.write().entry(topic.to_string()).or_default().clone());
-    let mut subs = t.lock();
+    // The map stays locked while joining: an `unsubscribe` that empties the topic removes it
+    // under the write lock, so it cannot remove the list this connection is joining (which
+    // every later publish would miss). Lock order: the map, then the topic.
+    {
+        let all = TOPICS.read();
+        if let Some(t) = all.get(topic) {
+            return join(&mut t.lock(), conn);
+        }
+    }
+    let mut all = TOPICS.write();
+    let t = all.entry(topic.to_string()).or_default();
+    let joined = join(&mut t.lock(), conn);
+    joined
+}
+
+fn join(subs: &mut Vec<Sub>, conn: &Conn) -> bool {
     if subs.iter().any(|s| s.conn == conn.id) {
         return false;
     }

@@ -249,6 +249,34 @@ fn publish_reaches_subscribers_once_and_drop_leaves_topics() {
 }
 
 #[test]
+fn a_subscription_racing_an_unsubscribe_that_empties_the_topic_is_kept() {
+    rt().block_on(async {
+        let (s1, c1) = pair().await;
+        let (s2, c2) = pair().await;
+        let topic = format!("race{}", s1.id);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut lost = 0;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    topics::subscribe(&s2, &topic);
+                    topics::unsubscribe(s2.id, &topic);
+                }
+            });
+            for _ in 0..20_000 {
+                topics::subscribe(&s1, &topic);
+                // s1 must be reachable whatever s2 did meanwhile.
+                lost += (topics::publish(&topic, Op::Text, b"", s2.id) != 1) as u32;
+                topics::unsubscribe(s1.id, &topic);
+            }
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        assert_eq!(lost, 0, "subscriptions lost to a concurrent unsubscribe");
+        drop((s1, c1, s2, c2));
+    });
+}
+
+#[test]
 fn pings_are_answered_and_fragments_joined() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
