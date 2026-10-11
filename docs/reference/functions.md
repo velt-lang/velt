@@ -694,8 +694,11 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   return x; })` gives `a!` and `b!`). The same holds for the variables a destructuring `let`
   declares, each time it runs. A closure called on the spot or a callback (`[1, 2].forEach(()
   => { x += "!"; })`) that assigns such a variable changes that variable too, never the array
-  element it was bound from: the array keeps its contents, as in JS. A closure passed to `push`
-  is stored, so it is escaping too.
+  element it was bound from: the array keeps its contents, as in JS. Such a variable cannot live
+  in a cell when it holds a promise or a spawned closure also captures it; a closure assigning
+  it then gets ``cannot assign to `x`, which borrows an array element``: copy it into a `let`
+  declared in the loop body and assign that. A closure passed to `push` is stored, so it is
+  escaping too.
 - An async closure that stays on the task that created it captures like any other escaping
   closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
   variables it captured, and every call sees the same objects and variables. Each call shares
