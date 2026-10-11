@@ -190,6 +190,10 @@ impl FnLower<'_, '_> {
         self.push_scope(ScopeKind::Block);
         match local.and_then(|l| self.local_target(l).map(|p| (l, p))) {
             Some((l, p)) => {
+                if self.info[l.0 as usize].cell && !self.dead() {
+                    // A caught error a closure assigns: a new cell for it (cells.rs).
+                    self.new_cell(l);
+                }
                 self.store(p, Operand::Copy(Place::local(slot)));
                 if self.info[l.0 as usize].droppable && !self.dead() {
                     self.mark_init(l);

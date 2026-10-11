@@ -1,2 +1,0 @@
-closure_nested_assigns_for_map.vlt:10:17: error: cannot move captured variable `v` out of the closure
-  = note: the closure may run more than once; use `v.clone()`
