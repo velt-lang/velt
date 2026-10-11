@@ -25,15 +25,26 @@
 //! ```
 //!
 //! - `generated`: when the workflow wrote it (Unix seconds). The newest one seen is kept in
-//!   `<root>/index-seen/<first release key>`, and an older index of those releases is refused:
-//!   its signature is valid, but a mirror serving it (behind, or on purpose) would hide later
-//!   releases and yanks. Per key, so another build's releases (`$VELT_INSTALL_PUBLIC_KEY`) and
-//!   their times don't block the official ones.
+//!   `<root>/index-seen/official` (another build's releases, `$VELT_INSTALL_PUBLIC_KEY`: under
+//!   their first key, hex), and an older index of those releases is refused: its signature is
+//!   valid, but a mirror serving it (behind, or on purpose) would hide later releases and
+//!   yanks. One series for the official releases whichever key signs, so it survives a
+//!   rotation; it starts from what 0.2.0 kept under its signing key. An index written more than
+//!   a day ahead of this machine's clock is refused, and never remembered.
+//! - `revoked_keys` (optional): release keys withdrawn because they leaked, in hex. A launcher
+//!   honours one only when the index is signed by an official key after it in its trust list
+//!   (the backup revokes the signing key, never the other way round, or a leaked signing key
+//!   could revoke the backup first; an index that tries is reported), and keeps it revoked for
+//!   good (`<root>/revoked-keys`): a later index that leaves it out doesn't undo it.
+//!   Revocations are applied before the freshness check, so an index dated ahead by the leaked
+//!   key can't block the one revoking it.
 //! - `launcher`: the newest launcher's version (optional); an older launcher says to run the
 //!   installer again, so launchers already out there learn about newer ones.
 //!
 //! Fields this launcher doesn't know are ignored, so later ones (advisories, dates) can be added
 //! without breaking it; a higher `format` is a change it must not misread, and is refused.
+
+mod index_trust;
 
 use std::path::PathBuf;
 
@@ -43,7 +54,12 @@ use crate::install::{
     check_download_url, check_sha256, download, install_dir, sha256_entry, Existing, MAX_ARCHIVE,
 };
 use crate::layout::{velt_exe, Root};
-use crate::signature::{public_keys, signed_sums, signed_text};
+use crate::signature::{
+    hex_of, record_revoked, signed_sums, signed_text_by, trust, trust_from, Trust, LEGACY_SERIES,
+    OFFICIAL_SERIES,
+};
+pub use index_trust::MAX_INDEX_AHEAD;
+use index_trust::{apply_revocations, remember_index, unix_now};
 
 /// Where releases are downloaded from unless `$VELT_INSTALL_BASE_URL` says otherwise (the
 /// installers read the same variable).
@@ -96,6 +112,11 @@ pub struct Index {
     pub generated: u64,
     /// The newest launcher's version.
     pub launcher: Option<Version>,
+    /// Release keys withdrawn because they leaked (`revoked_keys`, hex): a launcher honours one
+    /// only when the index is signed by a key after it in its trust list (the backup revokes
+    /// the signing key, never the other way round), and keeps it revoked for good
+    /// ([`crate::signature::REVOKED_KEYS_FILE`]).
+    pub revoked_keys: Vec<Vec<u8>>,
     /// Oldest first.
     pub releases: Vec<Published>,
 }
@@ -148,6 +169,23 @@ pub fn parse_index(text: &str) -> Result<Index, String> {
         }
         Some(other) => return Err(bad(format!("`launcher` is {other}, not a version"))),
     };
+    let revoked_keys = match value.get("revoked_keys") {
+        None | Some(serde_json::Value::Null) => vec![],
+        Some(serde_json::Value::Array(keys)) => keys
+            .iter()
+            .map(|k| {
+                k.as_str()
+                    .and_then(crate::signature::decode_hex)
+                    .filter(|k| k.len() == 32)
+                    .ok_or_else(|| {
+                        bad(format!(
+                            "`revoked_keys` holds {k}, not a key (64 hex digits)"
+                        ))
+                    })
+            })
+            .collect::<Result<_, _>>()?,
+        Some(other) => return Err(bad(format!("`revoked_keys` is {other}, not an array"))),
+    };
     let list = value
         .get("releases")
         .and_then(|v| v.as_array())
@@ -177,6 +215,7 @@ pub fn parse_index(text: &str) -> Result<Index, String> {
     Ok(Index {
         generated,
         launcher,
+        revoked_keys,
         releases,
     })
 }
@@ -187,49 +226,35 @@ pub fn fetch_index(root: &Root, base: &str) -> Result<Index, String> {
     fetch_index_with_key(root, base, None)
 }
 
-/// [`fetch_index`] checking with `key` instead of [`public_keys`].
+/// [`fetch_index`] checking with `key` instead of [`crate::signature::public_keys`].
 pub fn fetch_index_with_key(root: &Root, base: &str, key: Option<&[u8]>) -> Result<Index, String> {
     let url = index_url(base);
     check_download_url(&url)?;
-    let keys = trusted(key)?;
-    let text =
-        signed_text(&url, &keys)?.ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
+    fetch_index_trusting(root, &url, &trusted(root, key)?)
+}
+
+/// [`fetch_index`] from `url` with `trust`.
+fn fetch_index_trusting(root: &Root, url: &str, trust: &Trust) -> Result<Index, String> {
+    let (text, signer) = signed_text_by(url, &trust.keys)?
+        .ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
     let index = parse_index(&text)?;
-    remember_index(root, &index, &url, &keys[0])?;
+    // Revocations first, from any validly signed index: a stale or replayed one can't harm
+    // (they only grow, and only a later key revokes), and an index a leaked key dated far
+    // ahead can't block the one revoking it.
+    for note in apply_revocations(root, trust, &trust.keys[signer], &index.revoked_keys)? {
+        eprintln!("velt: {note}");
+    }
+    remember_index(root, &index, url, &trust.series, unix_now())?;
     Ok(index)
 }
 
-/// `key`, else the built-in keys ([`public_keys`]), the signing key first.
-fn trusted(key: Option<&[u8]>) -> Result<Vec<Vec<u8>>, String> {
+/// What `root` trusts: `key` (a test's), else the built-in keys
+/// ([`crate::signature::public_keys`]), without the revoked ones.
+fn trusted(root: &Root, key: Option<&[u8]>) -> Result<Trust, String> {
     match key {
-        Some(key) => Ok(vec![key.to_vec()]),
-        None => public_keys(),
+        Some(key) => trust_from(vec![key.to_vec()], hex_of(key), Some(root)),
+        None => trust(Some(root)),
     }
-}
-
-/// Refuse an index older than the newest `root` has seen from the releases of `key` (the first
-/// trusted key: the official releases' are one series whichever key signed them, another
-/// build's another); remember a newer one.
-fn remember_index(root: &Root, index: &Index, url: &str, key: &[u8]) -> Result<(), String> {
-    let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
-    let seen_file = root.dir().join(INDEX_SEEN_DIR).join(key_hex);
-    let seen: u64 = std::fs::read_to_string(&seen_file)
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    if index.generated < seen {
-        return Err(format!(
-            "{url} is older than an index seen before (written at {}, the newest seen at {seen}): \
-             the mirror is behind, or is hiding newer releases; use an up-to-date one, or delete \
-             {} to accept it",
-            index.generated,
-            seen_file.display()
-        ));
-    }
-    if index.generated > seen {
-        crate::layout::write_file(&seen_file, &format!("{}\n", index.generated))?;
-    }
-    Ok(())
 }
 
 /// The newest release `req` accepts that is not yanked (an exact requirement may name a yanked
@@ -254,7 +279,7 @@ pub fn install_toolchain(root: &Root, version: &Version, base: &str) -> Result<P
     install_toolchain_with_key(root, version, base, None)
 }
 
-/// [`install_toolchain`] checking with `key` instead of [`public_keys`].
+/// [`install_toolchain`] checking with `key` instead of [`crate::signature::public_keys`].
 pub fn install_toolchain_with_key(
     root: &Root,
     version: &Version,
@@ -270,8 +295,8 @@ pub fn install_toolchain_with_key(
     };
     // The expected hash first, so an archive the release lacks fails before a long download.
     check_download_url(&release)?;
-    let keys = trusted(key)?;
-    let sums = signed_sums(&release, &keys)?.ok_or_else(|| missing(SUMS_FILE))?;
+    let trust = trusted(root, key)?;
+    let sums = signed_sums(&release, &trust.keys)?.ok_or_else(|| missing(SUMS_FILE))?;
     if sha256_entry(&sums, &name).is_none() {
         return Err(format!(
             "velt {version} has no toolchain for {triple} (its {SUMS_FILE} lists no {name})"
@@ -384,7 +409,7 @@ mod tests {
     }
 
     /// Serve `files` (path → bytes) on loopback for the life of the returned server.
-    fn serve(files: Vec<(String, Vec<u8>)>) -> velt_http::Server {
+    pub(super) fn serve(files: Vec<(String, Vec<u8>)>) -> velt_http::Server {
         let files: std::collections::HashMap<String, Vec<u8>> = files.into_iter().collect();
         let handler =
             std::sync::Arc::new(move |req: velt_http::Request| match files.get(&req.path) {
@@ -527,5 +552,22 @@ mod tests {
                 && err.contains("plain http:// to another machine"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn revoked_keys_in_the_index_are_keys() {
+        let k = "11".repeat(32);
+        let index = parse_index(&format!(
+            r#"{{"format": 1, "generated": 1, "revoked_keys": ["{k}"], "releases": []}}"#
+        ))
+        .unwrap();
+        assert_eq!(index.revoked_keys, [vec![0x11; 32]]);
+        for bad in [r#"["zz"]"#, r#"["11"]"#, r#""x""#, "[1]"] {
+            let text = format!(
+                r#"{{"format": 1, "generated": 1, "revoked_keys": {bad}, "releases": []}}"#
+            );
+            let err = parse_index(&text).unwrap_err();
+            assert!(err.contains("revoked_keys"), "{bad}: {err}");
+        }
     }
 }

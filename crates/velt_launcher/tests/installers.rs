@@ -421,16 +421,21 @@ fn release_index_sh_writes_what_the_launcher_reads() {
         r#"{"0.1.10": "miscompiles \"closures\"; use 0.1.11"}"#,
     )
     .unwrap();
+    let revoked = tmp.path().join("revoked.json");
+    let leaked = "11".repeat(32);
+    std::fs::write(&revoked, format!(r#"["{leaked}"]"#)).unwrap();
     let out = Command::new("sh")
         .arg(repo().join("scripts/release-index.sh"))
         .arg(&releases)
         .arg(&yanks)
+        .arg(&revoked)
         .arg("1700000000")
         .output()
         .unwrap();
     let json = ok(out);
     let index = velt_toolchain::release::parse_index(&json).unwrap();
     assert_eq!(index.generated, 1_700_000_000);
+    assert_eq!(index.revoked_keys, [vec![0x11u8; 32]]);
     // The newest stable release that is not yanked: 0.1.10 is newer than 0.1.9 but yanked.
     assert_eq!(index.launcher.unwrap().to_string(), "0.1.9");
     let listed: Vec<(String, Option<String>)> = index

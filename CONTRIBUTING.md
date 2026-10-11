@@ -286,6 +286,12 @@ them, no release can be signed in a way installed launchers trust.
 4. Put the old backup's private key into the `release` environment's `VELT_RELEASE_SIGNING_KEY`
    (from then on it is the signing key) and release. Launchers that carry the old backup key
    accept the release; the launcher it brings trusts only the new pair.
+5. **If the old signing key leaked, revoke it:** add its public key (hex) to
+   `.github/release-revoked-keys.json` in the same pull request. The index of releases that
+   release writes, signed by the old backup, names it in `revoked_keys`; every launcher that
+   reads that index refuses the old signing key from then on, for good (`<root>/revoked-keys`),
+   because the backup comes after it in their trust list. (A key never revokes one after it: a
+   leaked signing key can't revoke the backup.)
 
 **If the backup key leaks** (the signing key is fine): release a launcher that drops it, signed
 with the signing key as usual, with a new backup key in its place (steps 1 and 2 without
@@ -293,15 +299,29 @@ dropping the signing key, and without step 3: earlier releases are signed with t
 
 **What this can't do.**
 
-- A leaked key can't be revoked. Every launcher that trusts it, and every `get-velt.sh` from
-  the releases that embed it, accepts what it signs until the user installs a launcher that
-  doesn't (`get-velt` again). The holder of the leaked key can also sign an index without the
-  "newer launcher" hint, so those launchers aren't told to update.
+- Revoking reaches a launcher only when it reads the index of releases (installing a version
+  or `velt toolchain list --available`), and only launchers from the release after 0.2.1 on
+  know `revoked_keys`. Until then, and in every `get-velt.sh` from the releases that embed the
+  leaked key, what it signs is accepted. The holder of the leaked key can serve those launchers
+  an older, unrevoking index, but not one older than the newest they have seen.
+- The backup key can't be revoked through the index (only a key after it could): release a
+  launcher without it instead (above).
 - The backup only helps launchers that carry it: those from the first release after 0.2.0
   on. 0.2.0's launcher and installer know only the signing key.
-- The freshness check of the index of releases (`<root>/index-seen/<first trusted key>`)
-  starts over after a rotation, because the first trusted key changes: until a launcher has
-  seen an index signed with the new keys, it accepts any index they signed.
+- The freshness check of the index of releases is one series for the official releases
+  (`<root>/index-seen/official`) whichever key signs, so it continues across a rotation. A
+  launcher applies an index's revocations before that check, and refuses (and never remembers)
+  an index written more than a day ahead of its clock, so the leaked key can't block the
+  revoking index by serving one dated far ahead.
+- `get-velt.sh` doesn't read stored revocations: it trusts every key it embeds, on a fresh
+  install and when it installs into a root that has `revoked-keys` (it leaves that file there,
+  so the launcher it installs still refuses those keys). A fresh install trusts a leaked key
+  until its launcher reads an index that revokes it.
+- Tampering with `<root>/revoked-keys` or `<root>/index-seen/` on the user's machine is outside
+  what this protects against: whoever can write the root can replace `bin/velt` itself.
+- Only the official keys revoke. Another build's keys (`$VELT_INSTALL_PUBLIC_KEY`) can't
+  withdraw them. A launcher that sees an index revoke a key after its signer ignores it and
+  warns, because no release does that: it means a misconfigured release or a leaked signing key.
 
 **Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
 (`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the
