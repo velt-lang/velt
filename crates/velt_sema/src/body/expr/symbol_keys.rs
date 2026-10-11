@@ -5,9 +5,9 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::in_keys::InKey;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use super::in_keys::InKey;
 use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
 use crate::object_copies::Seen;
 use crate::symbols::Presence;

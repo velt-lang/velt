@@ -115,8 +115,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     for c in &copies {
         if let Some(w) = assigned(cx, c, &writes) {
             report_write(cx, c, w);
-        } else if let Some(&(t, span, how)) =
-            seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys))
+        } else if let Some(&(t, span, how)) = seen.iter().find(|s| sees(cx, c, s.0, s.2, &in_keys))
         {
             report_seen(cx, c, t, span, how, &in_keys);
         }
@@ -225,7 +224,10 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         Seen::Keys => format!("lists the keys of a `{shown}`"),
         Seen::Identity => format!("compares `{shown}` values with `===`"),
         Seen::Spread => format!("spreads a `{shown}`"),
-        Seen::In(i) => format!("tests a `{shown}` for \"{}\" with `in`", in_keys[i as usize]),
+        Seen::In(i) => format!(
+            "tests a `{shown}` for \"{}\" with `in`",
+            in_keys[i as usize]
+        ),
     };
     let why = match how {
         Seen::Identity => "two copies of one object are not `===`",

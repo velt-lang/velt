@@ -337,7 +337,11 @@ impl Ctx<'_> {
                 if a.kind != AdtKind::Anon && self.scopes[a.module].is_std {
                     return None;
                 }
-                if let Some(f) = a.fields.iter().find(|f| f.name == name && !is_private(name)) {
+                if let Some(f) = a
+                    .fields
+                    .iter()
+                    .find(|f| f.name == name && !is_private(name))
+                {
                     return Some(match f.optional && a.kind != AdtKind::Class {
                         true => Presence::Optional(crate::anon::has_presence(&self.ty, a.kind, f)),
                         false => Presence::Yes,
@@ -400,12 +404,13 @@ fn is_private(name: &str) -> bool {
 /// Does a method table give instances a member `name`, as `"name" in o` sees it: an instance
 /// method, a getter or a setter (key `set name`). Static methods are the class's, and a key
 /// never matches the table's internal spellings (`"set x"`) or a `#private` name.
-pub(crate) fn has_instance_method(methods: &HashMap<String, crate::defs::MethodRef>, name: &str) -> bool {
+pub(crate) fn has_instance_method(
+    methods: &HashMap<String, crate::defs::MethodRef>,
+    name: &str,
+) -> bool {
     !is_private(name)
         && methods.iter().any(|(k, m)| {
-            !m.is_static
-                && !k.starts_with("static ")
-                && crate::defs::key_member_name(k) == name
+            !m.is_static && !k.starts_with("static ") && crate::defs::key_member_name(k) == name
         })
 }
 
