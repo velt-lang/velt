@@ -85,7 +85,15 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   through a base class or interface counts as every method of that name, and an `await` as
   anything in the program. A generic function's field of type `T` counts as the type the call
   passes for `T`, or, where that is not known, as any type the program passes as a type
-  argument.
+  argument. Code that runs without being called counts as called: a class's `toString()`,
+  `toJSON()`, `__inspect()` and own `clone()` when the right-hand side formats, serialises or
+  copies a value that may hold that class (`String(x)`, `[x].join()`, `JSON.stringify`,
+  `console.log`, `x.clone()`), its `[Symbol.dispose]()` wherever such a value is dropped, the
+  body of any generator in the program at each `next()`, `for...of` or spread over a
+  generator, and initializers evaluated where they are used. A variable of the function that
+  no closure captures (not a parameter) is replaced only by an assignment in the right-hand
+  side itself, so a function that reassigns a variable of its own (`s = apply(s, t)`) does not
+  count.
 
 ```ts
 class Box {

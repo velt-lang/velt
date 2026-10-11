@@ -31,7 +31,11 @@
 //!   function) may run any function value. A function used as a value is called by code that
 //!   passes anything (`fs.map((f) => f())`), so its calls of its parameters may run any
 //!   function value. A method call through a vtable or an interface runs the methods of that
-//!   name (and the interface's implementations), and an `await` anything. A right-hand side
+//!   name (and the interface's implementations), and an `await` anything. Code that runs
+//!   without a call in the HIR (class hooks glue calls, `[Symbol.dispose]()` on a drop,
+//!   generator bodies at a resume, initializers) counts as called (`implicit` lists every such
+//!   place). A variable of the function that is not a parameter, not boxed and captured by no
+//!   closure is replaced only by an assignment in the right-hand side itself. A right-hand side
 //!   that only reads, computes and builds values compiles.
 
 use std::collections::{HashMap, HashSet};
@@ -49,8 +53,10 @@ use crate::visit::{self, VisitMut};
 
 mod effects;
 mod fix;
+mod implicit;
 mod program;
 
+use implicit::Implicit;
 use program::Program;
 
 /// Most (function, type arguments) pairs [`Program::may_assign`] visits before it gives up and
@@ -77,6 +83,9 @@ struct Layer {
     field: Option<(FieldKey, LooseKey)>,
     /// `ty` mentions type parameters (in a generic function): any instance counts.
     generic: bool,
+    /// A variable of the function, not a parameter, not boxed and captured by no closure: only
+    /// the right-hand side itself can assign it.
+    local: Option<LocalId>,
 }
 
 /// One assignment whose target lies in an inline object literal.
@@ -139,6 +148,15 @@ struct Effects {
     values: Vec<DefId>,
     /// Type arguments it passes (to calls, `new`, function references).
     type_args: Vec<TyId>,
+    /// Types of the values it hands glue that may format, serialise or deep-copy them, calling
+    /// class hooks (`implicit` 1 and 2).
+    glue: HashSet<TyId>,
+    /// Types of the values it may drop, running `[Symbol.dispose]()` hooks (`implicit` 3).
+    drops: HashSet<TyId>,
+    /// It resumes a generator: any generator body may run (`implicit` 4).
+    resumes: bool,
+    /// Its own variables it assigns whole values to.
+    locals: HashSet<LocalId>,
 }
 
 /// The function values a body can name: its own parameters taking one (never reassigned) and
@@ -293,8 +311,11 @@ fn slot_of(slots: &[Option<Box<[bool]>>], d: DefId) -> Option<&[bool]> {
 struct Scan<'a, 'm> {
     cx: &'a Ctx<'m>,
     slots: &'a [Option<Box<[bool]>>],
+    im: &'a Implicit,
     names: &'a [String],
     locals: &'a [LocalDef],
+    /// The function's parameters (`this` too).
+    params: &'a HashSet<LocalId>,
     scope: Scope,
     fx: Effects,
     shared: &'a mut Vec<TyId>,
@@ -307,7 +328,7 @@ impl VisitMut for Scan<'_, '_> {
     }
 
     fn expr(&mut self, e: &mut Expr) {
-        self.fx.note(self.cx, self.slots, &self.scope, e);
+        self.fx.note(self.cx, self.slots, &self.scope, self.im, e);
         match &e.kind {
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Share),
@@ -326,6 +347,7 @@ impl VisitMut for Scan<'_, '_> {
 struct Rhs<'a, 'm> {
     cx: &'a Ctx<'m>,
     slots: &'a [Option<Box<[bool]>>],
+    im: &'a Implicit,
     locals: &'a [LocalDef],
     scope: Scope,
     fx: Effects,
@@ -337,7 +359,7 @@ impl VisitMut for Rhs<'_, '_> {
     }
 
     fn expr(&mut self, e: &mut Expr) {
-        self.fx.note(self.cx, self.slots, &self.scope, e);
+        self.fx.note(self.cx, self.slots, &self.scope, self.im, e);
     }
 }
 
@@ -392,6 +414,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let slots = fn_slots(cx);
+    let im = Implicit::new(cx);
     let mut fns: Vec<Option<Effects>> = (0..cx.defs.len()).map(|_| None).collect();
     let (mut values, mut methods) = (Vec::new(), Vec::new());
     let mut type_args: Vec<TyId> = Vec::new();
@@ -442,11 +465,15 @@ pub(crate) fn check(cx: &mut Ctx) {
             });
         }
         let locals = std::mem::take(&mut f.body.locals);
+        let own_params: HashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
+        let first = candidates.len();
         let mut scan = Scan {
             cx,
             slots: &slots,
+            im: &im,
             names: &names,
             locals: &locals,
+            params: &own_params,
             scope: Scope {
                 params,
                 known: HashMap::new(),
@@ -457,7 +484,34 @@ pub(crate) fn check(cx: &mut Ctx) {
         };
         visit::block(&mut f.body.block, &mut scan);
         let mut fx = scan.fx;
+        // Its variables are dropped at the end of their scopes.
+        for l in &locals {
+            if im.maybe(cx, l.ty) {
+                fx.drops.insert(l.ty);
+            }
+        }
         f.body.locals = locals;
+        if candidates[first..]
+            .iter()
+            .any(|c| c.path.iter().any(|l| l.local.is_some()))
+        {
+            // A variable a closure captures may be assigned by it.
+            let mut captured: HashSet<LocalId> = HashSet::new();
+            visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+                if let E::Closure(d) = e.kind {
+                    if let Some(Some(Def::Fn(c))) = cx.defs.get(d.0 as usize) {
+                        captured.extend(c.captures.iter().map(|c| c.outer));
+                    }
+                }
+            });
+            for c in &mut candidates[first..] {
+                for l in &mut c.path {
+                    if l.local.is_some_and(|x| captured.contains(&x)) {
+                        l.local = None;
+                    }
+                }
+            }
+        }
         values.extend(fx.values.iter().copied());
         type_args.append(&mut fx.type_args);
         if f.self_ty.is_some() {
@@ -469,14 +523,39 @@ pub(crate) fn check(cx: &mut Ctx) {
     if candidates.is_empty() {
         return;
     }
-    // Functions module-level constants hold (their value is computed at each use).
-    for d in &cx.info {
-        if let DefInfo::Global(g) = d {
-            if let Some(init) = &g.init {
-                visit::expr(&mut init.clone(), &mut Values(&mut values, &mut type_args));
-            }
+    // Module constants' initializers (computed at each use) and object types' field
+    // initializers (evaluated where a value is built): each a function of its own, in the slot
+    // of the constant's or the type's `DefId` (`implicit` 5).
+    for (i, d) in cx.info.iter().enumerate() {
+        let inits: Vec<&Expr> = match d {
+            DefInfo::Global(g) => g.init.iter().collect(),
+            DefInfo::Adt(a) => a.fields.iter().filter_map(|f| f.default.as_ref()).collect(),
+            _ => continue,
+        };
+        if inits.is_empty() {
+            continue;
+        }
+        let mut rhs = Rhs {
+            cx,
+            slots: &slots,
+            im: &im,
+            locals: &[],
+            scope: Scope::default(),
+            fx: Effects::default(),
+        };
+        for x in inits {
+            let mut x = x.clone();
+            visit::expr(&mut x, &mut Values(&mut values, &mut type_args));
+            visit::expr(&mut x, &mut rhs);
+        }
+        let mut fx = rhs.fx;
+        type_args.append(&mut fx.type_args);
+        if fns[i].is_none() && fx.runs_code() {
+            fns[i] = Some(fx);
         }
     }
+    // A resume may run any generator body: each is a function value (`implicit` 4).
+    values.extend(im.generators.iter().copied());
     // A function used as a value runs with whatever its caller passes.
     for d in &values {
         if let Some(Some(fx)) = fns.get_mut(d.0 as usize) {
@@ -490,6 +569,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         methods,
         type_args: (type_args, std::cell::OnceCell::new()),
         shared,
+        im,
     };
     let mut counted = Vec::new();
     for c in candidates {
@@ -537,6 +617,7 @@ fn candidate(scan: &mut Scan<'_, '_>, span: Span, place: &Expr, value: &Expr) ->
     let mut rhs = Rhs {
         cx,
         slots: scan.slots,
+        im: scan.im,
         locals: scan.locals,
         scope: Scope {
             params: HashSet::new(),
@@ -556,9 +637,21 @@ fn candidate(scan: &mut Scan<'_, '_>, span: Span, place: &Expr, value: &Expr) ->
         if is_class(cx, e.ty) {
             break;
         }
+        let start = path.len();
         let inner = peel(cx, e, &mut path);
         match &inner.kind {
             E::Field { base, .. } => e = base,
+            &E::Local(l, _) => {
+                // Another function reaches a variable only through a capture.
+                let own = !scan.params.contains(&l)
+                    && scan.locals.get(l.0 as usize).is_some_and(|d| !d.boxed);
+                if own {
+                    for x in &mut path[start..] {
+                        x.local = Some(l);
+                    }
+                }
+                break;
+            }
             _ => break,
         }
     }
@@ -591,6 +684,7 @@ fn peel<'e>(cx: &Ctx, mut e: &'e Expr, path: &mut Vec<Layer>) -> &'e Expr {
             ty: e.ty,
             field: None,
             generic: has_params(cx, e.ty),
+            local: None,
         });
         match &e.kind {
             E::UnwrapSome(x, _) | E::Downcast(x) | E::UnwrapVariant { expr: x, .. } => e = x,

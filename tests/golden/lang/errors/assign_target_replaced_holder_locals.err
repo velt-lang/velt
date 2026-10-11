@@ -1,0 +1,4 @@
+assign_target_replaced_holder_locals.vlt:9:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_locals.vlt:15:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_locals.vlt:22:5: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_locals.vlt:28:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

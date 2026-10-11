@@ -1,5 +1,6 @@
 //! What running an expression may do: the assignments, calls and function values it reaches.
 
+use super::implicit::{self, Implicit};
 use super::{field_keys, fn_or_null, has_params, member, slot_of, Effects, FnValue, Frame, Scope};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -14,6 +15,10 @@ impl Effects {
             || self.own
             || !self.methods.is_empty()
             || self.anything
+            || !self.glue.is_empty()
+            || !self.drops.is_empty()
+            || self.resumes
+            || !self.locals.is_empty()
     }
 
     pub(super) fn note(
@@ -21,11 +26,16 @@ impl Effects {
         cx: &Ctx,
         slots: &[Option<Box<[bool]>>],
         scope: &Scope,
+        im: &Implicit,
         e: &Expr,
     ) {
+        // A value computed here is dropped here (or by what it is handed to, counted there).
+        if !implicit::is_place(e) && im.maybe(cx, e.ty) {
+            self.drops.insert(e.ty);
+        }
         match &e.kind {
             // Only a field holds an object literal inline (an element replaced is #820).
-            E::Assign { place, .. } => match &place.kind {
+            E::Assign { place, .. } | E::CompoundAssign { place, .. } => match &place.kind {
                 E::Field { .. } if has_params(cx, place.ty) => self.generic.push(place.ty),
                 E::Field { base, index, .. } => {
                     self.assigns.insert(place.ty);
@@ -40,16 +50,29 @@ impl Effects {
                     }
                 }
                 _ => {
+                    if let E::Local(l, _) = place.kind {
+                        self.locals.insert(l);
+                    }
                     self.assigns.insert(place.ty);
                 }
             },
             E::Call { callee, args } => match callee {
                 Callee::Def(d, targs) => {
+                    // An async call's arguments are transferred when it is spawned.
+                    if matches!(cx.info.get(d.0 as usize), Some(DefInfo::Fn(f)) if f.is_async) {
+                        self.glue(cx, im, args);
+                    }
                     self.callbacks(cx, scope, args, slot_of(slots, *d));
                     self.calls.push((*d, Frame::Known(targs.clone())));
                     self.type_args.extend(targs);
                 }
-                Callee::Intrinsic(_) => self.callbacks(cx, scope, args, None),
+                Callee::Intrinsic(i) => {
+                    if implicit::glue_args(*i) {
+                        self.glue(cx, im, args);
+                    }
+                    self.resumes |= implicit::resumes(*i);
+                    self.callbacks(cx, scope, args, None);
+                }
                 Callee::Indirect(f) => {
                     self.callbacks(cx, scope, args, None);
                     self.run(scope.classify(cx, f));
@@ -108,6 +131,16 @@ impl Effects {
                         self.anything = true;
                     }
                 }
+                self.inits(cx, *def);
+            }
+            E::AdtLit { def, .. } => self.inits(cx, *def),
+            // A module constant's initializer runs at each use.
+            E::Global(d) => {
+                if let Some(DefInfo::Global(g)) = cx.info.get(d.0 as usize) {
+                    if g.init.as_ref().is_some_and(|x| !matches!(x.kind, E::Lit(_))) {
+                        self.calls.push((*d, Frame::Unknown));
+                    }
+                }
             }
             E::Closure(d) => self.values.push(*d),
             E::FnRef(d, targs) => {
@@ -116,6 +149,22 @@ impl Effects {
             }
             E::Await(_) => self.anything = true,
             _ => {}
+        }
+    }
+
+    /// The field initializers of object type `d`, evaluated where its value is built.
+    fn inits(&mut self, cx: &Ctx, d: DefId) {
+        if implicit::has_field_inits(cx, d) {
+            self.calls.push((d, Frame::Unknown));
+        }
+    }
+
+    /// Values handed to glue that may format, serialise or copy them.
+    fn glue(&mut self, cx: &Ctx, im: &Implicit, args: &[Expr]) {
+        for v in args.iter().flat_map(implicit::glue_values) {
+            if im.maybe(cx, v.ty) {
+                self.glue.insert(v.ty);
+            }
         }
     }
 

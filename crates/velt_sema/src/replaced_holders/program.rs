@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use super::implicit::{Implicit, Reach};
 use super::{adt_kind, has_params, Effects, Frame, Layer, MAX_VISITS};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -53,6 +54,8 @@ pub(super) struct Program {
     pub(super) type_args: (Vec<TyId>, std::cell::OnceCell<HashSet<TyId>>),
     /// Types shared values hold inline ([`close_shared`]).
     pub(super) shared: HashSet<TyId>,
+    /// The code that runs without a call ([`Implicit`]).
+    pub(super) im: Implicit,
 }
 
 impl Program {
@@ -66,6 +69,15 @@ impl Program {
     /// May running the right-hand side `rhs` (its direct effects) replace one of `path`'s
     /// objects, directly or in what it calls?
     pub(super) fn may_assign(&self, cx: &mut Ctx, rhs: &Effects, tys: &[Layer]) -> bool {
+        // A variable no other function can reach: only the right-hand side itself assigns it.
+        if tys
+            .iter()
+            .any(|l| l.local.is_some_and(|x| rhs.locals.contains(&x)))
+        {
+            return true;
+        }
+        let tys: Vec<Layer> = tys.iter().filter(|l| l.local.is_none()).copied().collect();
+        let tys = &tys[..];
         if tys.is_empty() {
             return false;
         }
@@ -81,11 +93,24 @@ impl Program {
         let mut work: Vec<(&Effects, Option<Vec<TyId>>)> = vec![(rhs, None)];
         let mut values = false;
         let mut names: HashSet<Option<String>> = HashSet::new();
+        let (mut resumed, mut open): (bool, Option<Reach>) = (false, None);
         while let Some((fx, frame)) = work.pop() {
             if self.hits(cx, fx, &frame, tys) {
                 return true;
             }
             let mut next: Vec<(DefId, Option<Vec<TyId>>)> = Vec::new();
+            // The hooks glue and drops call, and the generator bodies a resume runs.
+            for (set, dispose) in [(&fx.drops, true), (&fx.glue, false)] {
+                for &t in set {
+                    let args = self.type_args_all(cx);
+                    let r = self.im.resolve(cx, t, &frame, args, &mut open);
+                    next.extend(self.im.hooks_of(&r, dispose).into_iter().map(|d| (d, None)));
+                }
+            }
+            if fx.resumes && !resumed {
+                resumed = true;
+                next.extend(self.im.generators.iter().map(|d| (*d, None)));
+            }
             for (d, f) in &fx.calls {
                 let f = match f {
                     Frame::Inherit => frame.clone(),
@@ -123,6 +148,12 @@ impl Program {
             }
         }
         false
+    }
+
+    /// Every type the program passes as a type argument ([`type_args_closure`]).
+    fn type_args_all(&self, cx: &Ctx) -> &HashSet<TyId> {
+        let (passed, all) = &self.type_args;
+        all.get_or_init(|| type_args_closure(cx, passed.clone()))
     }
 
     /// Does `fx`, run with type arguments `frame` (`None`: not known), replace one of `path`'s
@@ -165,11 +196,7 @@ impl Program {
             return p == t;
         }
         match (cx.ty.kind(p).clone(), cx.ty.kind(t).clone()) {
-            (TyKind::Param(_), _) => {
-                let (passed, all) = &self.type_args;
-                all.get_or_init(|| type_args_closure(cx, passed.clone()))
-                    .contains(&t)
-            }
+            (TyKind::Param(_), _) => self.type_args_all(cx).contains(&t),
             (TyKind::Adt(d, a), TyKind::Adt(e, b)) if d == e => self.pairs(cx, &a, &b, depth),
             (TyKind::Adt(d, a), TyKind::Adt(e, b))
                 if adt_kind(cx, d) == Some(AdtKind::Anon)
