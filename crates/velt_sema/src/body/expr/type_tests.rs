@@ -84,6 +84,19 @@ impl FnCx<'_, '_> {
         let s = self.expr(operand, None, Want::Borrow);
         // The nothing arm is a "undefined" for `T | undefined`, an "object" for `T | null`.
         let nothing = self.cx.ty.nothing_of(s.ty);
+        if tag == "undefined" && nothing == Some(crate::hir::Nothing::Null) {
+            // As for `=== undefined` (`null_compare`): its `null` may be JavaScript's `undefined`.
+            let tn = self.cx.display(s.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`typeof` compared with \"undefined\" on a `{tn}` is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("its `null` may be JavaScript's `undefined` (an absent optional field, `Map.get`, `find`), which later phases of #930 give their own value")
+                .with_note("to test for either, write `== null`"),
+            );
+            return self.error_expr(span);
+        }
         if tag == "undefined" {
             let undef = nothing.is_some_and(|n| n.has_undefined());
             let test = self.type_test(s, &|_: &Ctx, _: TyId| false, undef, span);

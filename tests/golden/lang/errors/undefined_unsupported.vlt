@@ -34,4 +34,69 @@ function chain(n: Node | undefined) {
   const next = n?.next;
 }
 
-function main() {}
+// `=== undefined` on a `T | null`: its `null` may be JavaScript's `undefined` (`Map.get`).
+function strictOnNull(b: number | null, m: Map<string, number>) {
+  console.log(b === undefined, m.get("k") !== undefined, typeof b === "undefined");
+}
+
+function caseNull(x: number | undefined): string {
+  switch (x) {
+    case null:
+      return "null";
+  }
+  return "v";
+}
+
+// TS2322 between the two nothings, also through a generic.
+function id<T>(x: T): T {
+  return x;
+}
+
+function swap(u: number | undefined, n: number | null) {
+  const a: number | null = u;
+  const b: number | undefined = n;
+  const c: number | null = id(u);
+}
+
+// `as` keeps the value in TypeScript; this phase cannot hold it.
+function casts(u: number | undefined, n: string | null) {
+  const a = u as number | null;
+  const s = n as string | undefined;
+}
+
+// A default that JavaScript applies to a passed `undefined` too.
+function withDefault(x: number | undefined = 5): number | undefined {
+  return x;
+}
+
+// Generic code keeping the other nothing of a type argument, directly or through calls.
+function firstOne<T>(xs: T[]): T | undefined {
+  return xs.length > 0 ? xs[0] : undefined;
+}
+
+class Slot<T> {
+  v: T | undefined = undefined;
+}
+
+function firstOr<T>(xs: T[], d: T): T {
+  let r: T | null = null;
+  for (const x of xs) {
+    r = x;
+    break;
+  }
+  return r === null ? d : r;
+}
+
+function outer<T>(xs: T[], d: T): T {
+  return firstOr(xs, d);
+}
+
+function generics() {
+  const r = firstOne([] as (string | null)[]);
+  const s = new Slot<number | null>();
+  const o = outer<number | undefined>([undefined], 5);
+}
+
+function main() {
+  console.log(withDefault());
+}

@@ -63,15 +63,27 @@ impl FnCx<'_, '_> {
                 .with_note(format!("only `T | {word}` values can be {word}")),
             );
         }
-        let lacks = |n: Nothing| match word {
-            "undefined" => !n.has_undefined(),
-            _ => !n.has_null(),
-        };
-        if strict && self.cx.ty.nothing_of(s.ty).is_some_and(lacks) {
-            // Still evaluated; neither arm depends on which state it is in.
-            return self.constant_test(s, !is_eq, span);
+        match (strict, word, self.cx.ty.nothing_of(s.ty)) {
+            // A `T | undefined` is never `null`: still evaluated, then constant.
+            (true, "null", Some(Nothing::Undefined)) => self.constant_test(s, !is_eq, span),
+            // The `null` of a `T | null` may stand for JavaScript's `undefined` in this phase
+            // (an absent optional field, `Map.get`, `find`): which one is not known.
+            (true, "undefined", Some(Nothing::Null)) => {
+                let tn = self.cx.display(s.ty);
+                let op = if is_eq { "===" } else { "!==" };
+                let loose = if is_eq { "==" } else { "!=" };
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("`{op} undefined` on a `{tn}` is not supported yet (#930)"),
+                        span,
+                    )
+                    .with_note("its `null` may be JavaScript's `undefined` (an absent optional field, `Map.get`, `find`), which later phases of #930 give their own value")
+                    .with_note(format!("to test for either, write `{loose} null`")),
+                );
+                self.error_expr(span)
+            }
+            _ => self.null_test(s, is_eq, span),
         }
-        self.null_test(s, is_eq, span)
     }
 
     /// `s`, evaluated, then `value`.

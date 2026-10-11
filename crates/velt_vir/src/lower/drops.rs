@@ -228,7 +228,11 @@ impl FnLower<'_, '_> {
 
     /// Drop the fields of a struct/class value except those moved out (a class object is freed).
     pub(super) fn drop_fields_except(&mut self, place: Place, ty: TyId, moved: &[u32]) {
-        let fields = self.cx.adt_field_tys(ty);
+        // A tuple an element was moved out of (`const t1 = tup[1]`) drops its other elements.
+        let fields = match self.cx.kind(ty) {
+            TyKind::Tuple(ts) => ts,
+            _ => self.cx.adt_field_tys(ty),
+        };
         for (i, fty) in fields.into_iter().enumerate() {
             if !moved.contains(&(i as u32)) && self.cx.needs_drop(fty) {
                 let fp = self.field_place(&place, ty, i as u32);

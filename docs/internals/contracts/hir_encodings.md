@@ -574,5 +574,14 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
 - An option of an option keeps the inner option's `Nothing`: generic code's `U | null` with
   `U = T | undefined` is `T | undefined`, so its nothing is JavaScript's `undefined` (`pop`,
   `?.`). Generic code that keeps a `U | null` of a parameter given a `T | undefined` could not
-  tell its own `null` from the value's `undefined`; sema reports such instantiations
-  (`undefined_args`) until the three-state encoding lands.
+  tell its own `null` from the value's `undefined` (and the reverse); sema reports such
+  instantiations (`undefined_args`, following calls, closures, methods and the generic types a
+  definition uses to a fixpoint) until the three-state encoding lands. As a backstop,
+  `velt_vir::lower_checked` reports an error (not an ICE) for an instance whose substitution
+  makes an option of an option with another `Nothing`; `lower_with` and `lower` panic (`ICE:`)
+  there instead.
+- AST (additive): `ast::BinaryOp::StrictEq` / `StrictNotEq` are `===` / `!==`; `Eq` / `NotEq`
+  are `==` / `!=` (before #930 both spellings were `Eq` / `NotEq`). `BinaryOp::loose()` maps the
+  strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
+  either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
+  HIR keeps one `BinOp::Eq` / `NotEq`.

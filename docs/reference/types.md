@@ -386,18 +386,27 @@ console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [nu
 const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
 ```
 
-`x == null` and `x === undefined` both test a `T | undefined` for its nothing (`x === null` on a
-`T | undefined` does too: TypeScript rejects it, TS2367, and Velt does not report it yet),
-`typeof x === "undefined"` narrows, `?.` on a
-`T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field holding `undefined`
-and writes an array element as `null`. `null` where `T | undefined` is expected, and `undefined`
-where `T | null` is, are errors (TS2322).
+`x == null` and `x == undefined` match either nothing; `x === undefined` tests a
+`T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
+and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
+narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
+holding `undefined` and writes an array element as `null`. A destructuring default applies where
+the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
+array), never to a `null`. `null` where `T | undefined` is expected, and `undefined` where
+`T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
+expected and the reverse.
 
 Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
 a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
-of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`, and a
-`T | undefined` type argument of a generic that keeps a `T | null` of it (`Map.set`,
-`Array.prototype.find`). Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
+of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
+`x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
+`undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
+the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
+other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
+a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
+of it, directly or through what it calls (a `T | undefined` for `Map.set`,
+`Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
+a `T | undefined`). Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
 standard library still use `null` for now:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
@@ -1015,8 +1024,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
   is called (`const { area } = rect;`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
-  takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
-  too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
+  takes the default when the field is absent (optional) or `undefined`, and
+  `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
+  a field or element holding `null` keeps it. Defaults in `for...of` patterns and parameter patterns
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:
