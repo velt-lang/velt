@@ -215,43 +215,12 @@ fn handle<S: OwnedStore>(
 }
 
 /// A server's listening socket and, dropped right after it, the signal that the port is free
-/// again: `close()` stops the accept loop (which owns this) asynchronously, so a `serve` on the
-/// same port waits for the signal instead of failing with "address in use" (#1020).
+/// again: `close()` stops the accept loop (which owns this) asynchronously, so a `serve` or
+/// `listen` on the same port waits for the signal ([`crate::dev::unbinding`]) instead of failing
+/// with "address in use" (#1020).
 struct Bound {
     listener: TcpListener,
     _unbound: watch::Sender<()>,
-}
-
-/// Ports of servers closed whose listening socket may not be dropped yet, and the signal of each.
-static UNBINDING: std::sync::Mutex<Vec<(u16, watch::Receiver<()>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// How long `serve` waits for a just-closed server's socket on its port to be released.
-const UNBIND_WAIT: Duration = Duration::from_secs(5);
-
-/// Before binding `addr`: wait until a server closed on its port has released the socket.
-async fn wait_unbound(addr: &str) {
-    let Some(port) = addr
-        .rsplit_once(':')
-        .and_then(|(_, p)| p.parse::<u16>().ok())
-    else {
-        return;
-    };
-    if port == 0 {
-        return;
-    }
-    let waiting: Vec<_> = {
-        let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
-        let (here, rest) = std::mem::take(&mut *closing)
-            .into_iter()
-            .partition(|(p, _)| *p == port);
-        *closing = rest;
-        here
-    };
-    for (_, mut unbound) in waiting {
-        let released = async { while unbound.changed().await.is_ok() {} };
-        let _ = tokio::time::timeout(UNBIND_WAIT, released).await;
-    }
 }
 
 async fn accept_loop<S: OwnedStore>(bound: Bound, shared: Arc<Shared>, tls: Option<TlsAcceptor>) {
@@ -342,7 +311,6 @@ where
 unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) -> *mut VeltFut {
     let shared = Shared::new(handler);
     new_leaf(async move {
-        wait_unbound(&addr).await;
         let r = crate::dev::bind(addr.as_str()).await.and_then(|l| {
             let port = l.local_addr()?.port();
             let (unbound_tx, unbound) = watch::channel(());
@@ -442,11 +410,7 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
     s.accept_loop.abort();
-    let mut closing = UNBINDING.lock().unwrap_or_else(|e| e.into_inner());
-    // Forget the ones already released (their sender is gone), then remember this one.
-    closing.retain(|(_, r)| r.has_changed().is_ok());
-    closing.push((s.port, s.unbound.clone()));
-    drop(closing);
+    crate::dev::unbinding(s.port, s.unbound.clone());
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }

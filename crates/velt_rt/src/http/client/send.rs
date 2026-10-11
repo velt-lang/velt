@@ -2,6 +2,7 @@
 //! ([`Outgoing`]), redirects as the Fetch standard follows them ([`send`]), and the error
 //! messages Node's `fetch` gives.
 
+use super::stamp::{opened_before, Stamped};
 use super::target::Target;
 use super::Redirect;
 use crate::result::{code, VeltErr};
@@ -20,7 +21,7 @@ use std::time::Duration;
 use url::Url;
 
 /// A pooled HTTP/1.1 + HTTP/2 client (keep-alive connections are reused per origin).
-pub(super) type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub(super) type HttpClient = Client<Stamped<HttpsConnector<HttpConnector>>, Full<Bytes>>;
 
 /// How long connecting may take before `fetch` fails with `ETIMEDOUT` (undici's default).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -40,7 +41,7 @@ fn build(extra_ca_pem: &[u8]) -> Result<HttpClient, VeltErr> {
         .enable_http1()
         .enable_http2()
         .wrap_connector(http);
-    Ok(Client::builder(TokioExecutor::new()).build(https))
+    Ok(Client::builder(TokioExecutor::new()).build(Stamped(https)))
 }
 
 /// The pooled client trusting the built-in roots plus `extra_ca_pem` (one per CA text; the
@@ -175,8 +176,8 @@ fn idempotent(m: &Method) -> bool {
     )
 }
 
-/// Whether `e` is a connection that broke before a response: a reused connection the server had
-/// closed (not a failed connect, which a new connection would not fix).
+/// Whether `e` is a connection that broke before a response (not a failed connect, which a new
+/// connection would not fix); [`opened_before`] tells whether it was a reused one.
 fn stale_connection(e: &hyper_util::client::legacy::Error) -> bool {
     use std::error::Error;
     use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
@@ -222,12 +223,14 @@ pub(super) async fn send(
         // allocates nothing for most requests (the request itself is only rebuilt on a retry).
         let again = idempotent(&o.method).then(|| (o.url.uri.clone(), o.headers.clone()));
         let req = request(&mut o, mode == Redirect::Follow);
+        let sent = std::time::Instant::now();
         let response = match client.request(req).await {
             Ok(r) => r,
-            // A pooled keep-alive connection the server closed meanwhile fails before a
-            // response: an idempotent request goes out once more, on another connection (#1020).
+            // A reused pooled keep-alive connection the server closed meanwhile fails before a
+            // response: an idempotent request goes out once more, on another connection
+            // (#1020). Never on a fresh connection: that server got the request and failed.
             Err(e) => match again {
-                Some((uri, headers)) if stale_connection(&e) => {
+                Some((uri, headers)) if stale_connection(&e) && opened_before(&e, sent) => {
                     (o.url.uri, o.headers) = (uri, headers);
                     let req = request(&mut o, mode == Redirect::Follow);
                     client.request(req).await.map_err(|e| failed(&e))?

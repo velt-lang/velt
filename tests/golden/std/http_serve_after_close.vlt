@@ -1,8 +1,9 @@
 // check: no leaks
-// `close()` stops the accept loop asynchronously, yet serving on the same port right after
-// works (#1020); and a fetch whose pooled keep-alive connection went to a server that shut down
+// `close()` stops the accept loop asynchronously, yet serving or listening on the same port
+// right after works (#1020); and a fetch whose pooled keep-alive connection went to a server that shut down
 // is sent again on a new connection.
 import { serve } from "velt:http";
+import { listen } from "velt:net";
 
 async function hello(req: Request): Promise<Response> {
   return new Response("hello");
@@ -21,6 +22,18 @@ async function main() {
     again.close();
   }
   console.log("served again on the same port:", served);
+
+  let listened = 0;
+  for (let i = 0; i < 20; i++) {
+    const s = await serve({ port: port }, hello);
+    s.close();
+    const l = await listen(`127.0.0.1:${port}`);
+    if (l.port == port) {
+      listened++;
+    }
+    l.close();
+  }
+  console.log("listened on the port of a closed server:", listened);
 
   const a = await serve({ port: port }, hello);
   console.log("before:", await (await fetch(`http://127.0.0.1:${port}/`)).text());

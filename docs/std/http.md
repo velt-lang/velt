@@ -190,8 +190,8 @@ connections; once the last request finished the handler closure is dropped, so v
 captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same
 and resolves only after that (it consumes the `Server`); a program that exits right after
 `close()` may exit before the handler is dropped. Dropping the `Server` value does not stop it.
-`serve` on the port of a server just closed works: it waits (up to 5 seconds) until the closed
-server has released the port. The listen backlog is the OS maximum, so a burst of connections
+`serve` (or `velt:net` `listen`) on the port of a server just closed works: it waits (up to 5
+seconds) until the closed server has released the port. The listen backlog is the OS maximum, so a burst of connections
 waits to be accepted instead of being refused (macOS caps every listen queue at
 `kern.ipc.somaxconn`, 128 by default).
 Servers are built only by `serve`: `new Server()` holds no runtime object (its `port` is 0 and
