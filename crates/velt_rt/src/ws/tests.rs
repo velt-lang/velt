@@ -220,6 +220,63 @@ fn close_reasons_are_cut_at_a_character_boundary() {
 }
 
 #[test]
+fn publish_reaches_subscribers_once_and_drop_leaves_topics() {
+    rt().block_on(async {
+        let (s1, c1) = pair().await;
+        let (s2, c2) = pair().await;
+        let topic = format!("t{}", s1.id);
+        assert!(topics::subscribe(&s1, &topic));
+        assert!(
+            !topics::subscribe(&s1, &topic),
+            "subscribing twice is a no-op"
+        );
+        assert!(topics::subscribe(&s2, &topic));
+        // Everyone, then everyone but s1 (`ws.publish`).
+        assert_eq!(topics::publish(&topic, Op::Text, b"all", 0), 2);
+        assert_eq!(topics::publish(&topic, Op::Text, b"others", s1.id), 1);
+        assert_eq!(text(&c1.receive().await.unwrap()), "all");
+        assert_eq!(text(&c2.receive().await.unwrap()), "all");
+        assert_eq!(text(&c2.receive().await.unwrap()), "others");
+        topics::unsubscribe(s2.id, &topic);
+        assert_eq!(topics::publish(&topic, Op::Text, b"x", 0), 1);
+        assert_eq!(text(&c1.receive().await.unwrap()), "x");
+        // Dropping a subscribed connection leaves its topics (and an empty topic goes away).
+        s1.topics.lock().unwrap().push(topic.clone());
+        drop(s1);
+        assert_eq!(topics::publish(&topic, Op::Text, b"gone", 0), 0);
+        drop((c1, s2, c2));
+    });
+}
+
+#[test]
+fn a_subscription_racing_an_unsubscribe_that_empties_the_topic_is_kept() {
+    rt().block_on(async {
+        let (s1, c1) = pair().await;
+        let (s2, c2) = pair().await;
+        let topic = format!("race{}", s1.id);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut lost = 0;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    topics::subscribe(&s2, &topic);
+                    topics::unsubscribe(s2.id, &topic);
+                }
+            });
+            for _ in 0..20_000 {
+                topics::subscribe(&s1, &topic);
+                // s1 must be reachable whatever s2 did meanwhile.
+                lost += (topics::publish(&topic, Op::Text, b"", s2.id) != 1) as u32;
+                topics::unsubscribe(s1.id, &topic);
+            }
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        assert_eq!(lost, 0, "subscriptions lost to a concurrent unsubscribe");
+        drop((s1, c1, s2, c2));
+    });
+}
+
+#[test]
 fn pings_are_answered_and_fragments_joined() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
