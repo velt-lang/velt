@@ -27,38 +27,61 @@ pub struct StreamObj {
     utf8: Mutex<Utf8Decoder>,
 }
 
-/// A listening socket. With the per-core scheduler each worker that accepts gets its own
-/// registration of it (a duplicated descriptor in the worker's I/O driver), so accept loops on
-/// several workers share the port and every connection stays on the worker that accepted it.
-pub struct ListenerObj {
-    listener: TcpListener,
-    per_worker: Vec<std::sync::OnceLock<TcpListener>>,
+/// A listening socket. With the per-core scheduler every worker has its own registration of it
+/// (a duplicated descriptor in the worker's I/O driver) and the original is registered with
+/// none, so accept loops on several workers share the port and every connection is woken on,
+/// and stays on, the worker that accepted it.
+pub enum ListenerObj {
+    One(TcpListener),
+    PerWorker {
+        /// The unregistered original: the address, and what the registrations duplicate.
+        source: std::net::TcpListener,
+        regs: Vec<TcpListener>,
+    },
+}
+
+/// One registration of `source` per per-core worker (in worker order), each in that worker's
+/// I/O driver; empty with the stealing scheduler. All or nothing: an error registers none.
+pub(crate) fn per_worker_listeners(source: &std::net::TcpListener) -> io::Result<Vec<TcpListener>> {
+    let Some(workers) = crate::task::runtime::worker_handles() else {
+        return Ok(Vec::new());
+    };
+    workers
+        .map(|h| {
+            let dup: std::net::TcpListener = socket2::SockRef::from(source).try_clone()?.into();
+            dup.set_nonblocking(true)?;
+            let _in = h.enter();
+            TcpListener::from_std(dup)
+        })
+        .collect()
 }
 
 impl ListenerObj {
-    fn new(listener: TcpListener) -> ListenerObj {
-        let n = crate::task::runtime::worker_handles().map_or(0, |w| w.len());
-        ListenerObj {
-            listener,
-            per_worker: (0..n).map(|_| std::sync::OnceLock::new()).collect(),
+    fn new(listener: TcpListener) -> io::Result<ListenerObj> {
+        if crate::task::runtime::worker_handles().is_none() {
+            return Ok(ListenerObj::One(listener));
+        }
+        let source = listener.into_std()?;
+        let regs = per_worker_listeners(&source)?;
+        Ok(ListenerObj::PerWorker { source, regs })
+    }
+
+    /// The registration to accept on from this thread (outside a worker, the first's: correct,
+    /// with a wake across workers).
+    fn here(&self) -> &TcpListener {
+        match self {
+            ListenerObj::One(l) => l,
+            ListenerObj::PerWorker { regs, .. } => {
+                &regs[crate::task::runtime::current_worker().map_or(0, |i| i.min(regs.len() - 1))]
+            }
         }
     }
 
-    /// The registration to accept on from this thread.
-    fn here(&self) -> io::Result<&TcpListener> {
-        let Some(slot) =
-            crate::task::runtime::current_worker().and_then(|i| self.per_worker.get(i))
-        else {
-            return Ok(&self.listener);
-        };
-        if let Some(l) = slot.get() {
-            return Ok(l);
+    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+        match self {
+            ListenerObj::One(l) => l.local_addr(),
+            ListenerObj::PerWorker { source, .. } => source.local_addr(),
         }
-        // Only this worker's thread fills its slot, so nothing races us here.
-        let dup: std::net::TcpListener = socket2::SockRef::from(&self.listener).try_clone()?.into();
-        dup.set_nonblocking(true)?;
-        let _ = slot.set(TcpListener::from_std(dup)?);
-        Ok(slot.get().expect("ICE: worker listener just set"))
     }
 }
 
@@ -90,8 +113,10 @@ fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
 pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFut {
     let addr = text_arg(addr);
     new_leaf(async move {
-        let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |l| LISTENERS.insert(ListenerObj::new(l)))
+        let r = crate::dev::bind(addr.as_str())
+            .await
+            .and_then(ListenerObj::new);
+        IoResult::from_io(r, |l| LISTENERS.insert(l))
     })
 }
 
@@ -101,7 +126,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
 pub unsafe extern "C" fn velt_rt_tcp_listener_port(l: ListenerHandle) -> u32 {
     LISTENERS
         .get(l)
-        .and_then(|o| o.listener.local_addr().ok())
+        .and_then(|o| o.local_addr().ok())
         .map_or(0, |a| a.port() as u32)
 }
 
@@ -115,13 +140,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
     LISTENERS.op::<StreamHandle>(l, |listener| {
-        new_leaf(async move {
-            let accepted = match listener.here() {
-                Ok(l) => l.accept().await.map(|(s, _)| s),
-                Err(e) => Err(e),
-            };
-            stream_result(accepted)
-        })
+        new_leaf(async move { stream_result(listener.here().accept().await.map(|(s, _)| s)) })
     })
 }
 

@@ -258,7 +258,8 @@ async fn accept_connections<S: OwnedStore>(
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
         // connection.
-        crate::task::runtime::spawn(async move {
+        // The connection's socket is registered with this worker's driver: keep it here.
+        crate::task::runtime::spawn_here(async move {
             match tls {
                 None => serve_connection::<S, _>(TokioIo::new(stream), shared, conn, watcher).await,
                 Some(acceptor) => {
@@ -306,30 +307,15 @@ fn spawn_accept_loops<S: OwnedStore>(
         ))
         .abort_handle()]);
     };
-    let std_listener = l.into_std()?;
-    // Every registration first, so a failure starts no loop (none would be left running).
-    let dups = workers
-        .iter()
-        .map(|_| {
-            let dup: std::net::TcpListener =
-                socket2::SockRef::from(&std_listener).try_clone()?.into();
-            dup.set_nonblocking(true)?;
-            Ok(dup)
+    let regs = crate::net::tcp::per_worker_listeners(&l.into_std()?)?;
+    // Every registration exists before the first loop starts, so a failure starts none.
+    let loops = workers
+        .zip(regs)
+        .map(|(h, l)| {
+            h.spawn(accept_loop::<S>(l, shared.clone(), tls.clone()))
+                .abort_handle()
         })
-        .collect::<std::io::Result<Vec<_>>>()?;
-    let mut loops = Vec::with_capacity(workers.len());
-    for (h, dup) in workers.into_iter().zip(dups) {
-        let (shared, tls) = (shared.clone(), tls.clone());
-        loops.push(
-            h.spawn(async move {
-                // Registered with this worker's I/O driver (it runs here).
-                if let Ok(l) = TcpListener::from_std(dup) {
-                    accept_loop::<S>(l, shared, tls).await;
-                }
-            })
-            .abort_handle(),
-        );
-    }
+        .collect();
     Ok(loops)
 }
 
