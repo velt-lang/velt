@@ -51,7 +51,7 @@ impl FnLower<'_, '_> {
         let tys = self.cx.adt_field_tys(ty);
         match (self.cx.kind(tys[1]), self.cx.kind(tys[2])) {
             (TyKind::Array(k), TyKind::Array(slot)) => match self.cx.kind(slot) {
-                TyKind::Option(v) => Some((k, v)),
+                TyKind::Option(v, _) => Some((k, v)),
                 _ => None,
             },
             _ => None,

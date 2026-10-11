@@ -6,7 +6,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::type_tests::LitEq;
-use crate::body::narrow::{is_null, typeof_compare};
+use crate::body::narrow::{is_null, nothing_word, typeof_compare};
 use crate::body::{FnCx, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, TyKind};
 
@@ -112,6 +112,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if op == ast::UnaryOp::Void {
+            return self.void_expr(operand, exp, span);
+        }
         let exp = self.hint(exp);
         // A union expected (`string | i64`): its one number member.
         let exp = exp.map(|t| {
@@ -122,6 +125,7 @@ impl FnCx<'_, '_> {
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
+            ast::UnaryOp::Void => unreachable!("ICE: `void` handled above"),
             ast::UnaryOp::Neg => {
                 let int_exp = num_exp.is_some_and(|t| self.cx.ty.is_int(t));
                 let inner = match &operand.kind {
@@ -238,8 +242,11 @@ impl FnCx<'_, '_> {
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
-                let other = if is_null(rhs) { lhs } else { rhs };
-                return self.null_compare(other, op == B::Eq, span);
+                let (other, word) = match nothing_word(rhs) {
+                    Some(w) => (lhs, w),
+                    None => (rhs, nothing_word(lhs).unwrap_or("null")),
+                };
+                return self.null_compare(other, word, op == B::Eq, span);
             }
             B::Eq | B::NotEq => {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {

@@ -275,7 +275,10 @@ impl FileDocs {
             ast::TypeExprKind::Predicate { ty, .. } => {
                 ty.iter().for_each(|t| self.type_fields(t));
             }
-            ast::TypeExprKind::Literal(_) | ast::TypeExprKind::Null | ast::TypeExprKind::Void => {}
+            ast::TypeExprKind::Literal(_)
+            | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Undefined
+            | ast::TypeExprKind::Void => {}
         }
     }
 }

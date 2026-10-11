@@ -371,7 +371,13 @@ impl FnCx<'_, '_> {
             return (vec![], vec![]);
         };
         let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        self.split_facts(l, nullable, u, &pred, tag == "object")
+        let nothing = self.cx.ty.nothing_of(self.local_ty(l));
+        let none_matches = match tag {
+            "object" => nothing.is_none_or(|n| n.has_null()),
+            "undefined" => nothing.is_some_and(|n| n.has_undefined()),
+            _ => false,
+        };
+        self.split_facts(l, nullable, u, &pred, none_matches)
     }
 
     fn instanceof_facts(&mut self, e: &ast::Expr, ty: &ast::TypeExpr) -> (Vec<Fact>, Vec<Fact>) {
@@ -525,12 +531,19 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `null` (possibly parenthesized).
+/// `null` or `undefined` (possibly parenthesized): compared with either, a value of a type
+/// with one nothing (`T | null`, `T | undefined`) tests for that nothing (issue #930).
 pub(crate) fn is_null(e: &ast::Expr) -> bool {
+    nothing_word(e).is_some()
+}
+
+/// `"null"` / `"undefined"` for those literals (possibly parenthesized).
+pub(crate) fn nothing_word(e: &ast::Expr) -> Option<&'static str> {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) => true,
-        ast::ExprKind::Paren(inner) => is_null(inner),
-        _ => false,
+        ast::ExprKind::Lit(ast::Lit::Null) => Some("null"),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some("undefined"),
+        ast::ExprKind::Paren(inner) => nothing_word(inner),
+        _ => None,
     }
 }
 

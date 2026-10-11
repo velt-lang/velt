@@ -256,7 +256,13 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
-            Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Undefined,
+                    span,
+                })
+            }
             t if Self::is_ident_like(t) => self.parse_named_type(),
             _ => {
                 self.error_expected("type");

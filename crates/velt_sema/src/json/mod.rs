@@ -238,6 +238,10 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         let seen = crate::object_copies::Seen::Serialized;
         cx.object_copies.observe(t, span, seen);
     }
+    if let Some(what) = undefined_problem(cx, t, parse) {
+        cx.error(Diagnostic::error(format!("{what} is not supported yet"), span));
+        return true;
+    }
     let mut stack = vec![];
     let Some(bad) = unserializable(cx, t, &mut stack, parse) else {
         return false;
@@ -376,6 +380,59 @@ fn private_field(cx: &Ctx, t: TyId, parse: bool) -> Option<(String, Span)> {
     }
 }
 
+/// What this phase of `undefined` (issue #930) cannot convert yet: `JSON.parse` into a type
+/// that holds a `T | undefined` anywhere, and `JSON.stringify` of a value that may be
+/// `undefined` itself (Node returns `undefined`, not a string) or of a `Map` / `Record` value
+/// that may be. Object fields (left out) and array elements (`null`) are written as Node does.
+fn undefined_problem(cx: &Ctx, t: TyId, parse: bool) -> Option<&'static str> {
+    let undef = |t: TyId| cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+    if parse {
+        let mut stack = vec![t];
+        let mut seen = HashSet::new();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if undef(t) {
+                return Some("`JSON.parse` into a type that may hold `undefined`");
+            }
+            stack.extend(children(cx.ty.kind(t)));
+            if let TyKind::Adt(d, _) = cx.ty.kind(t) {
+                stack.extend(raw_field_tys(cx, *d));
+            }
+        }
+        return None;
+    }
+    if undef(t) {
+        return Some("`JSON.stringify` of a value that may be `undefined` (Node returns `undefined`, not a string)");
+    }
+    let mut stack = vec![t];
+    let mut seen = HashSet::new();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        if let TyKind::Adt(d, args) = cx.ty.kind(t) {
+            let map = [cx.prelude_adt("Map"), cx.prelude_adt("Record")].contains(&Some(*d));
+            if map && args.iter().any(|a| undef(*a)) {
+                return Some("`JSON.stringify` of a `Map` or `Record` whose values may be `undefined`");
+            }
+            stack.extend(raw_field_tys(cx, *d));
+        }
+        stack.extend(children(cx.ty.kind(t)));
+    }
+    None
+}
+
+/// The declared field types of struct / class `d` (and the payloads of enum `d`'s variants).
+fn raw_field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a.fields.iter().map(|f| f.ty).collect(),
+        Some(DefInfo::Enum(e)) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+        _ => vec![],
+    }
+}
+
 impl Ctx<'_> {
     /// Is type definition `d` declared in a std module?
     pub(crate) fn declared_in_std(&self, d: DefId) -> bool {
@@ -397,7 +454,7 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
         TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
-        TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         // Tuples are fixed-length arrays.
         TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {

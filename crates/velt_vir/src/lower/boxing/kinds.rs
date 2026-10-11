@@ -49,7 +49,7 @@ impl Cx<'_> {
                 hir::Def::Adt(_) if self.holds_mutex(t, 0) => ShareKind::Object,
                 _ => self.value_kind(t),
             },
-            TyKind::Option(_) | TyKind::Tuple(_) | TyKind::Result(..) => self.value_kind(t),
+            TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => self.value_kind(t),
             _ => ShareKind::Plain,
         }
     }
@@ -87,7 +87,7 @@ impl Cx<'_> {
         seen.push(t);
         match self.kind(t) {
             TyKind::Tuple(_) => out.push(t),
-            TyKind::Option(x) => self.collect_in_place(x, out, seen),
+            TyKind::Option(x, _) => self.collect_in_place(x, out, seen),
             TyKind::Result(a, b) => {
                 self.collect_in_place(a, out, seen);
                 self.collect_in_place(b, out, seen);

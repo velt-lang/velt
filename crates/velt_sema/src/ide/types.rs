@@ -158,7 +158,7 @@ impl Analysis {
             TyKind::Unit => TypeView::Void,
             TyKind::Never => TypeView::Never,
             TyKind::Literal(v) => TypeView::Literal(literal_kind(v)),
-            TyKind::Option(x) => TypeView::Nullable(here(*x)),
+            TyKind::Option(x, _) => TypeView::Nullable(here(*x)),
             TyKind::Array(x) => TypeView::Array(here(*x)),
             TyKind::Tuple(xs) => TypeView::Tuple(list(xs)),
             TyKind::Map(k, v) => TypeView::Map(here(*k), here(*v)),

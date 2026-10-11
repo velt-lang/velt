@@ -196,6 +196,7 @@ impl Printer<'_> {
                 format!("{{ {} }}", fields.join("; "))
             }
             TypeExprKind::Null => "null".into(),
+            TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
             TypeExprKind::Predicate { param, ty, asserts } => {
                 let asserts = if *asserts { "asserts " } else { "" };

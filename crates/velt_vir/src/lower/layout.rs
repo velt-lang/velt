@@ -157,7 +157,7 @@ impl Cx<'_> {
                 let tys = self.stored_tys(es);
                 self.new_agg("tuple".into(), &tys)
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let vt = self.ty(e);
                 self.new_agg("option".into(), &[Ty::Bool, vt])
             }

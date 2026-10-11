@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use crate::anon::ShapeField;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{TyId, TyKind};
+use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
@@ -83,6 +83,13 @@ impl Ctx<'_> {
             ast::TypeExprKind::Object(fields) => self.resolve_object(fields, env),
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
+                self.ty.error
+            }
+            ast::TypeExprKind::Undefined => {
+                self.err(
+                    "`undefined` alone as a type is not supported yet; write `T | undefined`",
+                    t.span,
+                );
                 self.ty.error
             }
         }
@@ -160,15 +167,20 @@ impl Ctx<'_> {
 
     /// `A | B | null` (canonicalized by `crate::unions`).
     fn resolve_union(&mut self, t: &ast::TypeExpr, parts: &[ast::TypeExpr], env: &TyEnv) -> TyId {
-        let mut nullable = false;
+        let mut nothing: Option<Nothing> = None;
         let mut members = vec![];
         for p in parts {
-            match p.kind {
-                ast::TypeExprKind::Null => nullable = true,
-                _ => members.push(self.resolve_type(p, env)),
-            }
+            let n = match p.kind {
+                ast::TypeExprKind::Null => Nothing::Null,
+                ast::TypeExprKind::Undefined => Nothing::Undefined,
+                _ => {
+                    members.push(self.resolve_type(p, env));
+                    continue;
+                }
+            };
+            nothing = Some(nothing.map_or(n, |m| m.join(n)));
         }
-        self.union_of(&members, nullable, t.span)
+        self.union_with(&members, nothing, t.span)
     }
 
     fn resolve_named(

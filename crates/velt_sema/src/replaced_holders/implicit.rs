@@ -225,7 +225,7 @@ impl Implicit {
                 None => out.param = true,
             },
             TyKind::FnPtr { .. } | TyKind::Closure(_) => out.fns = true,
-            TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => {
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => {
                 self.reach_in(cx, *x, env, stack, out)
             }
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {

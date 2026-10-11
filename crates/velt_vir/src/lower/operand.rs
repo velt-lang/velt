@@ -159,7 +159,7 @@ impl FnLower<'_, '_> {
             Ty::Ptr => cint(0, Ty::Ptr),
             Ty::Bool => Operand::Const(Const::Bool(false), Ty::Bool),
             Ty::Agg(a) => {
-                let TyKind::Option(inner) = self.cx.kind(opt) else {
+                let TyKind::Option(inner, _) = self.cx.kind(opt) else {
                     ice("null of a non-option type")
                 };
                 let vt = self.cx.ty(inner);

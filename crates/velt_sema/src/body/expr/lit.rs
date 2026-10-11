@@ -4,7 +4,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
 
 impl FnCx<'_, '_> {
@@ -17,6 +17,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let exp = match l {
             ast::Lit::Null => return self.null_lit(exp, span),
+            ast::Lit::Undefined => return self.undefined_lit(exp, span),
             _ => self.hint(exp),
         };
         // A literal expected as a union takes the type of the member it belongs to.
@@ -41,7 +42,7 @@ impl FnCx<'_, '_> {
             }
             ast::Lit::Str(s) => self.str_lit(s, span),
             ast::Lit::Bool(b) => self.mk(H::Lit(hir::Lit::Bool(*b)), self.cx.ty.bool_, span),
-            ast::Lit::Null => unreachable!("ICE: null handled above"),
+            ast::Lit::Null | ast::Lit::Undefined => unreachable!("ICE: nothings handled above"),
         }
     }
 
@@ -129,6 +130,9 @@ impl FnCx<'_, '_> {
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
         match exp {
+            Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
+                self.nothing_mismatch("null", t, span)
+            }
             Some(t)
                 if self
                     .cx
@@ -155,6 +159,69 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `undefined` takes its `T | undefined` type from context (issue #930). In HIR it is the
+    /// nothing of that option type, `Lit::Null` (hir_encodings.md "Undefined").
+    fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        match exp {
+            Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
+            Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) => self.nothing_mismatch("undefined", t, span),
+            None => {
+                self.cx.error(
+                    Diagnostic::error("cannot infer the type of `undefined`", span).with_note(
+                        "add a type annotation like `let x: T | undefined = undefined`",
+                    ),
+                );
+                self.error_expr(span)
+            }
+        }
+    }
+
+    /// `void operand` as a value: evaluates `operand`, then gives `undefined` (typed from
+    /// context, like the `undefined` literal). As a statement it is `StmtKind::Expr` of the
+    /// operand (`expr_stmt`).
+    pub(crate) fn void_expr(
+        &mut self,
+        operand: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(operand, None, Want::Borrow);
+        let undefined = self.undefined_lit(exp, span);
+        if undefined.ty == self.cx.ty.error {
+            return undefined;
+        }
+        let ty = undefined.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(value),
+                span: operand.span,
+            }],
+            value: Some(Box::new(undefined)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
+    fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        let tn = self.cx.display(t);
+        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.display(core);
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "type `{what}` is not assignable to type `{tn}` (TypeScript's TS2322)"
+                ),
+                span,
+            )
+            .with_note(format!("make the type allow it: `{core} | {what}`")),
+        );
+        self.error_expr(span)
     }
 
     pub(crate) fn str_lit(&self, s: &str, span: Span) -> hir::Expr {

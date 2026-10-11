@@ -191,7 +191,7 @@ fn holds_shared_in(cx: &mut Ctx, t: TyId, depth: u32) -> bool {
         return false;
     }
     let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
-        TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
         TyKind::Tuple(ts) => ts,
         TyKind::Adt(d, args) => {
             let fields: Vec<TyId> = cx

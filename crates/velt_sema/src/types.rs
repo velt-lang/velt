@@ -1,7 +1,7 @@
 //! Type interning helpers, classification, substitution of generic parameters and
 //! pattern matching of generic signatures against concrete types (type-argument inference).
 
-use crate::hir::{FloatTy, IntTy, TyId, TyKind, TyTable};
+use crate::hir::{FloatTy, IntTy, Nothing, TyId, TyKind, TyTable};
 
 pub(crate) struct Types {
     pub table: TyTable,
@@ -77,8 +77,22 @@ impl Types {
         t == self.error || t == self.never
     }
 
+    /// `t | null`
     pub fn option(&mut self, t: TyId) -> TyId {
-        self.intern(TyKind::Option(t))
+        self.intern(TyKind::Option(t, Nothing::Null))
+    }
+
+    /// `t | null`, `t | undefined` or both, per `n`.
+    pub fn option_of(&mut self, t: TyId, n: Nothing) -> TyId {
+        self.intern(TyKind::Option(t, n))
+    }
+
+    /// Which nothings option type `t` allows (`None` if `t` is not an option).
+    pub fn nothing_of(&self, t: TyId) -> Option<Nothing> {
+        match self.kind(t) {
+            TyKind::Option(_, n) => Some(*n),
+            _ => None,
+        }
     }
 
     pub fn array(&mut self, t: TyId) -> TyId {
@@ -89,10 +103,10 @@ impl Types {
         self.intern(TyKind::Param(n))
     }
 
-    /// Payload of `T | null`.
+    /// Payload of `T | null` (or `T | undefined`).
     pub fn opt_payload(&self, t: TyId) -> Option<TyId> {
         match self.kind(t) {
-            TyKind::Option(p) => Some(*p),
+            TyKind::Option(p, _) => Some(*p),
             _ => None,
         }
     }
@@ -191,7 +205,7 @@ impl Types {
             TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
             TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
             TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
-            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => any(&[*e]),
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => any(&[*e]),
             TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
             _ => false,
         }
@@ -215,7 +229,7 @@ impl Types {
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
             _ => return t,
@@ -236,7 +250,7 @@ impl Types {
             TyKind::Array(e) => TyKind::Array(m(self, e)),
             TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
             TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
-            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(m(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(m(self, v), m(self, e)),
             TyKind::Shared(e) => TyKind::Shared(m(self, e)),
@@ -285,7 +299,7 @@ impl Types {
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {
         TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.clone(),
-        TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => vec![*e],
+        TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![*a, *b],
         TyKind::FnPtr {
             params,

@@ -71,7 +71,7 @@ impl FnLower<'_, '_> {
             .into_iter()
             .zip(tys)
             .filter(|(n, _)| !velt_sema::property_order::is_hidden_key(n))
-            .map(|(n, ft)| (n, !matches!(self.cx.kind(ft), TyKind::Option(_))))
+            .map(|(n, ft)| (n, !matches!(self.cx.kind(ft), TyKind::Option(..))))
             .collect()
     }
 

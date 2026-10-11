@@ -170,7 +170,7 @@ fn param_uses(cx: &mut crate::ctx::Ctx, t: TyId, k: u32) -> (bool, bool) {
                 add(param_uses(cx, x, k));
             }
         }
-        TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => add(param_uses(cx, x, k)),
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => add(param_uses(cx, x, k)),
         TyKind::Map(a, b) | TyKind::Result(a, b) => {
             add(param_uses(cx, a, k));
             add(param_uses(cx, b, k));

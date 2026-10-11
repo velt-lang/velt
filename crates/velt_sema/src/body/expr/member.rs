@@ -395,7 +395,7 @@ impl FnCx<'_, '_> {
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
-            TyKind::Option(inner) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            TyKind::Option(inner, _) | TyKind::Shared(inner) => self.has_fields(inner, name),
             _ => false,
         }
     }

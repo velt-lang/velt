@@ -177,6 +177,14 @@ impl FnCx<'_, '_> {
             {
                 self.expr_stmt(inner)
             }
+            // `void e;`: evaluates `e` and ignores its value (also a promise's).
+            ast::ExprKind::Unary {
+                op: ast::UnaryOp::Void,
+                expr,
+            } => {
+                self.stmt_yields(expr);
+                self.expr(expr, None, Want::Borrow)
+            }
             _ => {
                 self.stmt_yields(e);
                 let h = self.expr(e, None, Want::Borrow);

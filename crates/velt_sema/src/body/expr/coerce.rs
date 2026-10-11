@@ -132,7 +132,7 @@ impl FnCx<'_, '_> {
         let (a, b) = (self.cx.ty.kind(exp).clone(), self.cx.ty.kind(found).clone());
         match (a, b) {
             (TyKind::Error, _) => true,
-            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x), TyKind::Option(y)) => {
+            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x, _), TyKind::Option(y, _)) => {
                 self.loosely_equal(x, y)
             }
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {

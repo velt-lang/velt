@@ -77,7 +77,7 @@ fn a_nullable_instance_of_a_nullable_parameter_has_one_null() {
     let (p, t) =
         params("type N<T> = T | null; function f(a: N<string | null>, b: string | null) {}");
     assert_eq!(t[0], t[1]);
-    let TyKind::Option(inner) = p.types.kind(t[0]) else {
+    let TyKind::Option(inner, _) = p.types.kind(t[0]) else {
         panic!("not nullable");
     };
     assert!(matches!(p.types.kind(*inner), TyKind::Str));
@@ -92,11 +92,11 @@ fn required_clears_only_the_optional_flag() {
     let fs = fields(&p, t[0]);
     assert!(fs.iter().all(|f| !f.optional));
     assert!(
-        matches!(p.types.kind(fs[0].ty), TyKind::Option(_)),
+        matches!(p.types.kind(fs[0].ty), TyKind::Option(..)),
         "a keeps its written null"
     );
     assert!(matches!(p.types.kind(fs[1].ty), TyKind::Float(_)));
-    assert!(matches!(p.types.kind(fs[2].ty), TyKind::Option(_)));
+    assert!(matches!(p.types.kind(fs[2].ty), TyKind::Option(..)));
 }
 
 #[test]

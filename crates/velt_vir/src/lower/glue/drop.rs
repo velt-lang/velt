@@ -102,7 +102,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.drop_option(place, ty, e),
+            TyKind::Option(e, _) => self.drop_option(place, ty, e),
             TyKind::Array(e) => self.drop_array(place, e),
             TyKind::Shared(e) => self.drop_shared(place, e),
             TyKind::Promise(..) => {

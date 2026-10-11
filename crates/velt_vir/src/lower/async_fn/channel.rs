@@ -81,7 +81,7 @@ impl FnLower<'_, '_> {
             let size = self.cx.size_align(vt).0;
             return (cint(size as i128, Ty::U64), cint(0, Ty::U64));
         }
-        let TyKind::Option(t) = self.cx.kind(opt) else {
+        let TyKind::Option(t, _) = self.cx.kind(opt) else {
             ice("channel item type is not `T | null`")
         };
         let vt = self.cx.ty(t);

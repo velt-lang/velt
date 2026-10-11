@@ -15,15 +15,17 @@ use velt_syntax::ast;
 use super::{ensure_body, FnCx, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, RetSource, RetWant};
-use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId};
 use crate::visit::{self, VisitMut};
 
 /// The `return`s of a body whose result type is being inferred.
 #[derive(Default, Clone)]
 pub(crate) struct Returns {
     values: Vec<Value>,
-    /// `return null` (typed once the result is known).
+    /// `return null` / `return undefined` (typed once the result is known).
     nulls: Vec<Span>,
+    /// Which nothings those `return`s give (`None` while there are none).
+    nothing: Option<Nothing>,
     /// `return;`
     bare: Vec<Span>,
 }
@@ -130,8 +132,10 @@ impl FnCx<'_, '_> {
             self.f.returns.bare.push(span);
             return None;
         };
-        if is_null(e) {
+        if let Some(n) = nothing_of_lit(e) {
             self.f.returns.nulls.push(e.span);
+            let r = &mut self.f.returns;
+            r.nothing = Some(r.nothing.map_or(n, |m| m.join(n)));
             return Some(self.mk(H::Lit(hir::Lit::Null), self.cx.ty.error, e.span));
         }
         // A value that takes its type from context (`[]`, a number, an arrow) gets the type of
@@ -205,7 +209,7 @@ impl FnCx<'_, '_> {
             return core;
         }
         let members = if tys.is_empty() { vec![] } else { vec![core] };
-        self.cx.union_of(&members, true, span)
+        self.cx.union_with(&members, r.nothing, span)
     }
 
     /// A `void` value returned next to other values (`return log(x)` and `return 1`, or
@@ -308,10 +312,12 @@ impl VisitMut for CoerceReturns<'_, '_, '_> {
 }
 
 /// `null` (possibly parenthesized).
-fn is_null(e: &ast::Expr) -> bool {
+/// `null` / `undefined` (possibly parenthesized): which nothing it is.
+fn nothing_of_lit(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) => true,
-        ast::ExprKind::Paren(inner) => is_null(inner),
-        _ => false,
+        ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
+        ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),
+        ast::ExprKind::Paren(inner) => nothing_of_lit(inner),
+        _ => None,
     }
 }

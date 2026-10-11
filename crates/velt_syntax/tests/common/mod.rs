@@ -53,6 +53,7 @@ pub fn lit(l: &Lit) -> String {
         Lit::Str(s) => format!("{:?}", s),
         Lit::Bool(b) => b.to_string(),
         Lit::Null => "null".into(),
+        Lit::Undefined => "undefined".into(),
     }
 }
 

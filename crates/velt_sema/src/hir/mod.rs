@@ -107,8 +107,8 @@ pub enum TyKind {
     Array(TyId),
     Map(TyId, TyId),
     Tuple(Vec<TyId>),
-    /// `T | null`
-    Option(TyId),
+    /// `T | null`, `T | undefined` or `T | null | undefined` (which nothings: `Nothing`).
+    Option(TyId, Nothing),
     /// Lowering-internal `Result<ret, E>` ABI of throwing functions (sema never produces it).
     Result(TyId, TyId),
     /// `Promise<T, E>`: resolves to `T` or rejects with `E` (`Never`: never rejects).
@@ -132,6 +132,54 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+}
+
+/// Which nothings a `TyKind::Option` allows (issue #930, hir_encodings.md "Undefined").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Nothing {
+    /// `T | null`
+    Null,
+    /// `T | undefined`
+    Undefined,
+    /// `T | null | undefined`
+    Both,
+}
+
+impl Nothing {
+    /// The nothings of `(T | self) | other`.
+    pub fn join(self, other: Nothing) -> Nothing {
+        if self == other {
+            self
+        } else {
+            Nothing::Both
+        }
+    }
+
+    pub fn has_null(self) -> bool {
+        self != Nothing::Undefined
+    }
+
+    pub fn has_undefined(self) -> bool {
+        self != Nothing::Null
+    }
+
+    /// How a value of a two-state option prints its nothing: `null` or `undefined` (a
+    /// three-state option never reaches lowering in this phase).
+    pub fn word(self) -> &'static str {
+        match self {
+            Nothing::Undefined => "undefined",
+            _ => "null",
+        }
+    }
+
+    /// How a type shows it: `" | null"`, `" | undefined"`, `" | null | undefined"`.
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Nothing::Null => " | null",
+            Nothing::Undefined => " | undefined",
+            Nothing::Both => " | null | undefined",
+        }
+    }
 }
 
 /// The value of a literal type.
@@ -160,8 +208,12 @@ impl TyTable {
         // `null`, as in JavaScript), however it was built (substituting `U | null` with a
         // nullable `U`, for instance). Wrapping a value whose type is already that option is the
         // identity (`ExprKind::WrapSome`, `UnwrapSome`).
-        if let TyKind::Option(inner) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(_)) {
+        // An option built around an option keeps the inner one's nothing (issue #930, phase 1):
+        // `V | null` in generic code instantiated with `V = T | undefined` is `T | undefined`,
+        // so its nothing is JavaScript's `undefined` (`Map.get`, `pop`, `?.`). A written
+        // `T | null | undefined` is resolved by `Ctx::union_with`, which reports it.
+        if let TyKind::Option(inner, _) = kind {
+            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
                 return inner;
             }
         }

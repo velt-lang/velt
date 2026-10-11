@@ -40,7 +40,7 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
                 walk_type(t, v);
             }
         }
-        T::Literal(_) | T::Null | T::Void => {}
+        T::Literal(_) | T::Null | T::Undefined | T::Void => {}
     }
 }
 

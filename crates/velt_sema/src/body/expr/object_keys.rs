@@ -498,7 +498,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(d, _) if self.cx.is_json_value(*d) => {
                 Some("list a JSON object's keys with `v.keys()`")
             }
-            TyKind::Option(_) => Some("test for `null` first"),
+            TyKind::Option(..) => Some("test for `null` first"),
             _ => None,
         };
         if let Some(fix) = fix {

@@ -66,7 +66,7 @@ impl FnLower<'_, '_> {
     /// The owned result `v` (of type `t`) as a value of the attempt's type `u`: widened into
     /// the union, or for `E | null`, `null` on success and the error otherwise.
     fn attempt_value(&mut self, v: Operand, t: TyId, u: TyId, failed: bool) -> Operand {
-        let TyKind::Option(inner) = self.cx.kind(u) else {
+        let TyKind::Option(inner, _) = self.cx.kind(u) else {
             return self.widen_error(v, t, u);
         };
         if !failed {

@@ -326,6 +326,8 @@ pub enum TypeExprKind {
     Object(Vec<ObjectTypeField>),
     /// `null` in type position.
     Null,
+    /// `undefined` in type position (issue #930).
+    Undefined,
     /// `void`
     Void,
     /// A type predicate as a return type (TypeScript's user-defined type guards):
@@ -487,6 +489,8 @@ pub enum Lit {
     Str(String),
     Bool(bool),
     Null,
+    /// `undefined` (issue #930): the nothing of a `T | undefined` type.
+    Undefined,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -497,6 +501,7 @@ pub enum UnaryOp {
     BitNot, // ~x
     TypeOf, // typeof x
     Delete, // delete r[k] (only on `Record`s; sema checks)
+    Void,   // void x: evaluates x, the value is `undefined`
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -146,6 +146,7 @@ fn source(e: &ast::Expr, depth: u32) -> Option<String> {
                 ast::UnaryOp::BitNot => "~",
                 ast::UnaryOp::TypeOf => "typeof ",
                 ast::UnaryOp::Delete => "delete ",
+                ast::UnaryOp::Void => "void ",
             };
             format!("{op}{}", s(expr)?)
         }

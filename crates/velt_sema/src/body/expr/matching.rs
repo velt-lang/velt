@@ -9,7 +9,7 @@ use velt_syntax::ast;
 
 use crate::body::places::{is_place, place_root, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, ExprKind as H, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId, UseMode};
 
 impl FnCx<'_, '_> {
     /// A synthesized binding for a desugared match on `T | null`.
@@ -37,7 +37,14 @@ impl FnCx<'_, '_> {
     }
 
     /// `x == null` / `x != null` as a value.
-    pub(crate) fn null_compare(&mut self, other: &ast::Expr, is_eq: bool, span: Span) -> hir::Expr {
+    /// `other == null` / `other == undefined` (`word`), `==` or `===`.
+    pub(crate) fn null_compare(
+        &mut self,
+        other: &ast::Expr,
+        word: &str,
+        is_eq: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mut s = self.expr(other, None, Want::Borrow);
         // A narrowed value may be tested again (TS allows it): compare the value itself.
         if let H::UnwrapSome(base, _) = s.kind {
@@ -47,10 +54,10 @@ impl FnCx<'_, '_> {
             let tn = self.cx.display(s.ty);
             self.cx.error(
                 Diagnostic::error(
-                    format!("comparison with `null`, but `{tn}` is never null"),
+                    format!("comparison with `{word}`, but `{tn}` is never {word}"),
                     span,
                 )
-                .with_note("only `T | null` values can be null"),
+                .with_note(format!("only `T | {word}` values can be {word}")),
             );
         }
         self.null_test(s, is_eq, span)
@@ -290,10 +297,27 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
+        // On a `T | undefined` object, the short-circuit gives `undefined`, as in JavaScript
+        // (issue #930; on a `T | null` one it is still `null` in this phase).
+        let nothing = match self.cx.ty.nothing_of(s.ty) {
+            Some(Nothing::Undefined) => Nothing::Undefined,
+            _ => Nothing::Null,
+        };
+        if nothing == Nothing::Undefined && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null) {
+            let tn = self.cx.display(r.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`?.` on a value that may be `undefined`, giving a `{tn}`, is not supported yet"),
+                    span,
+                )
+                .with_note("its type would hold both `null` and `undefined`, which is not supported yet"),
+            );
+            return self.error_expr(span);
+        }
         let (ty, body) = if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
             (r.ty, r)
         } else {
-            let t = self.cx.ty.option(r.ty);
+            let t = self.cx.ty.option_of(r.ty, nothing);
             (t, self.mk(H::WrapSome(Box::new(r)), t, span))
         };
         let none_body = if ty == self.cx.ty.unit {

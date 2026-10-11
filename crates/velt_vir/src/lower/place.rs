@@ -157,7 +157,7 @@ impl FnLower<'_, '_> {
         let pty = if self.sub(ty) == oty {
             oty
         } else {
-            let TyKind::Option(pty) = self.cx.kind(oty) else {
+            let TyKind::Option(pty, _) = self.cx.kind(oty) else {
                 ice("unwrap of a non-option")
             };
             pty

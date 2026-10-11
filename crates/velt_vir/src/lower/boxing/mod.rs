@@ -96,7 +96,7 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>)
                     .into_iter()
                     .any(|f| reaches(hir, f, target, seen))
         }
-        TyKind::Option(x) => reaches(hir, *x, target, seen),
+        TyKind::Option(x, _) => reaches(hir, *x, target, seen),
         TyKind::Tuple(ts) => ts.iter().any(|x| reaches(hir, *x, target, seen)),
         TyKind::Result(a, b) => reaches(hir, *a, target, seen) || reaches(hir, *b, target, seen),
         _ => false,

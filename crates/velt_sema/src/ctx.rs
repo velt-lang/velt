@@ -584,7 +584,7 @@ impl<'m> Ctx<'m> {
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Promise(..) => return true,
-            TyKind::Array(e) | TyKind::Option(e) => vec![e],
+            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
             TyKind::Tuple(ts) => ts,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
@@ -623,7 +623,7 @@ impl<'m> Ctx<'m> {
             | TyKind::Never
             | TyKind::Error => true,
             TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t) => self.is_copy_depth(t, depth + 1),
+            TyKind::Option(t, _) => self.is_copy_depth(t, depth + 1),
             TyKind::Result(a, b) => {
                 self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
             }
@@ -683,7 +683,7 @@ impl<'m> Ctx<'m> {
             TyKind::Error => "_".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.ty.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => {
+                TyKind::Option(..) | TyKind::FnPtr { .. } => {
                     format!("({})[]", self.display_in(*e, names))
                 }
                 _ if self.union_def(*e).is_some() => format!("({})[]", self.display_in(*e, names)),
@@ -695,7 +695,7 @@ impl<'m> Ctx<'m> {
                 self.display_in(*v, names)
             ),
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
-            TyKind::Option(t) => format!("{} | null", self.display_in(*t, names)),
+            TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),

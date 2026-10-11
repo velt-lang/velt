@@ -90,7 +90,7 @@ impl Cx<'_> {
             return false;
         }
         match self.kind(t) {
-            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => {
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => {
                 self.leads_to(e, target, fns, seen)
             }
             TyKind::Map(k, v) => {

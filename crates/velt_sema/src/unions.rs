@@ -14,22 +14,28 @@ use velt_common::Span;
 
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, EnumInfo, Generics, VariantInfo};
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{DefId, Nothing, TyId, TyKind};
 use crate::types::collect_params;
 
 /// The JS `typeof` tags Velt supports, in the order used by diagnostics.
-pub(crate) const TYPEOF_TAGS: [&str; 6] = [
-    "string", "number", "boolean", "symbol", "object", "function",
+pub(crate) const TYPEOF_TAGS: [&str; 7] = [
+    "string", "number", "boolean", "symbol", "object", "function", "undefined",
 ];
 
 impl Ctx<'_> {
     /// The canonical type of the union of `members` (plus `null` when `nullable`); reports
     /// invalid members at `span` and returns `Error` for them.
     pub fn union_of(&mut self, members: &[TyId], nullable: bool, span: Span) -> TyId {
+        self.union_with(members, nullable.then_some(Nothing::Null), span)
+    }
+
+    /// `members | nothing`: `nothing` is the `null` / `undefined` the union allows besides the
+    /// members' own (`None`: none).
+    pub fn union_with(&mut self, members: &[TyId], nothing: Option<Nothing>, span: Span) -> TyId {
         let mut flat = vec![];
-        let mut nullable = nullable;
+        let mut nothing = nothing;
         for &m in members {
-            self.flatten_member(m, &mut flat, &mut nullable);
+            self.flatten_member(m, &mut flat, &mut nothing);
         }
         if flat.contains(&self.ty.error) {
             return self.ty.error;
@@ -49,25 +55,38 @@ impl Ctx<'_> {
         let ty = &self.ty;
         members.sort_by_key(|t| (has_params(ty, *t), t.0));
         let core = match members.len() {
-            0 if nullable => {
+            0 if nothing == Some(Nothing::Null) => {
                 self.err("`null` alone is not a type; write `T | null`", span);
+                return self.ty.error;
+            }
+            0 if nothing.is_some() => {
+                self.err(
+                    "`undefined` alone (or `null | undefined`) as a type is not supported yet",
+                    span,
+                );
                 return self.ty.error;
             }
             0 => return never,
             1 => members[0],
             _ => self.union_enum(&members),
         };
-        if nullable {
-            self.ty.option(core)
-        } else {
-            core
+        match nothing {
+            Some(Nothing::Both) => {
+                self.err(
+                    "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                    span,
+                );
+                self.ty.error
+            }
+            Some(n) => self.ty.option_of(core, n),
+            None => core,
         }
     }
 
-    fn flatten_member(&mut self, t: TyId, out: &mut Vec<TyId>, nullable: &mut bool) {
-        if let Some(p) = self.ty.opt_payload(t) {
-            *nullable = true;
-            return self.flatten_member(p, out, nullable);
+    fn flatten_member(&mut self, t: TyId, out: &mut Vec<TyId>, nothing: &mut Option<Nothing>) {
+        if let TyKind::Option(p, n) = *self.ty.kind(t) {
+            *nothing = Some(nothing.map_or(n, |m| m.join(n)));
+            return self.flatten_member(p, out, nothing);
         }
         match self.union_members(t) {
             Some(ms) => out.extend(ms),

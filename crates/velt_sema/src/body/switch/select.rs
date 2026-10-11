@@ -177,9 +177,10 @@ impl FnCx<'_, '_> {
                 return self.never_sel(s, span);
             }
         };
+        let none = nothing_tag(self.cx, s.expr.ty);
         let found = self.slot_sel(s, span, &|cx, slot| match slot.member {
             Some(m) => cx.cx.typeof_tag(m) == tag,
-            None => tag == "object",
+            None => tag == none,
         });
         found.unwrap_or_else(|| {
             let tn = self.cx.display(s.expr.ty);
@@ -344,7 +345,9 @@ impl FnCx<'_, '_> {
                     self.base_lit_expr(&vals[v as usize], span)
                 }
                 (ScrutKind::TypeOf, Some(m), _) => self.str_lit(self.cx.typeof_tag(m), span),
-                (ScrutKind::TypeOf, None, _) => self.str_lit("object", span),
+                (ScrutKind::TypeOf, None, _) => {
+                    self.str_lit(nothing_tag(self.cx, s.expr.ty), span)
+                }
                 _ => return None,
             };
             arms.push(hir::Arm {
@@ -443,5 +446,14 @@ impl FnCx<'_, '_> {
         self.cx
             .rec_ref(prop.span, crate::ide::record::Target::Variant(d, v));
         Some(v)
+    }
+}
+
+/// `typeof` of the nothing of option type `t`: `"undefined"` for `T | undefined`, else
+/// `"object"` (`typeof null`).
+fn nothing_tag(cx: &crate::ctx::Ctx, t: crate::hir::TyId) -> &'static str {
+    match cx.ty.nothing_of(t) {
+        Some(crate::hir::Nothing::Undefined) => "undefined",
+        _ => "object",
     }
 }

@@ -69,6 +69,7 @@ mod types;
 mod unions;
 mod utility_types;
 mod visit;
+mod undefined_args;
 mod void_fields;
 mod written_types;
 
@@ -292,6 +293,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     record_keys::check_instantiations(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);
+    undefined_args::check_instantiations(cx);
     ownership::soften_moves(cx);
     ownership::validate_moves(cx);
     let moved = moves::check_all(cx);

@@ -342,7 +342,7 @@ impl<'a> Parser<'a> {
             {
                 self.delete_expr()?
             }
-            Tok::Kw(Kw::Void) => self.void_expr()?,
+            Tok::Kw(Kw::Void) => self.finish_prefix(UnaryOp::Void)?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
                 op: self.bump_update_op(),
                 prefix: true,

@@ -56,7 +56,9 @@ pub(crate) fn want_of(mode: PassMode) -> Want {
 /// Does this argument take its type from the parameter (checked in the second round)?
 pub(crate) fn deferred(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) | ast::ExprKind::Arrow { .. } => true,
+        ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) | ast::ExprKind::Arrow { .. } => {
+            true
+        }
         ast::ExprKind::Array(xs) => xs.is_empty(),
         ast::ExprKind::Paren(x) => deferred(x),
         _ => untyped(e),
