@@ -109,6 +109,26 @@ pub fn ty(t: &TypeExpr) -> String {
                 .collect();
             format!("{{{}}}", parts.join("; "))
         }
+        TypeExprKind::IndexSig {
+            fields,
+            key,
+            value,
+            readonly,
+            ..
+        } => {
+            let mut parts: Vec<String> = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name.name, ty(&f.ty)))
+                .collect();
+            let ro = if *readonly { "readonly " } else { "" };
+            parts.push(format!("{ro}[{}]: {}", ty(&key.ty), ty(value)));
+            format!("{{{}}}", parts.join("; "))
+        }
+        TypeExprKind::Query(path) => {
+            let path: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
+            format!("typeof {}", path.join("."))
+        }
+        TypeExprKind::KeyOf(t) => format!("keyof {}", ty(t)),
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Void => "void".into(),
         TypeExprKind::GenericFunction { type_params, ty: t } => {

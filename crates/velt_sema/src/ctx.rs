@@ -68,6 +68,14 @@ pub(crate) struct Ctx<'m> {
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
+    /// Type queries (`crate::type_queries`): the locals a body's type annotation may name
+    /// (`typeof x`), set by the body checker around each annotation it resolves.
+    pub query_locals: Vec<(String, TyId)>,
+    /// Collection is finished, so a type query may check a body (a function's inferred result,
+    /// a constant without a type annotation).
+    pub bodies_ok: bool,
+    /// Free functions' signatures that wait for a body (`crate::type_queries::SigQueries`).
+    pub sigq: crate::type_queries::SigQueries<'m>,
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
@@ -117,14 +125,12 @@ pub(crate) struct Ctx<'m> {
     pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
-    /// For each nested definition: names bound in its enclosing functions (for the
-    /// "nested functions cannot capture" error).
+    /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
     pub enclosing_class: HashMap<DefId, DefId>,
-    /// Static methods using `this` or `super`, and their copies: the class `this` is in each
-    /// (`collect::static_this`).
+    /// Static methods using `this`/`super` and their copies: the class `this` is (`static_this`).
     pub static_this: HashMap<DefId, DefId>,
     /// The copy of a static method (using `this`) whose `this` is a given subclass.
     pub static_copies: HashMap<(DefId, DefId), DefId>,
@@ -135,8 +141,7 @@ pub(crate) struct Ctx<'m> {
     /// Name spans of every function made from a generic arrow, module-level ones included
     /// (diagnostics show them as arrows).
     pub generic_arrow_all: HashSet<Span>,
-    /// The program has TypeScript-form overloads (`crate::overloads`): calls of a name with
-    /// signatures `name#k` choose among them.
+    /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
     pub overloaded_methods: HashSet<String>,
@@ -244,6 +249,9 @@ impl<'m> Ctx<'m> {
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
+            query_locals: vec![],
+            bodies_ok: false,
+            sigq: Default::default(),
             checking_unused_aliases: false,
             shaped: HashSet::new(),
             shaping: vec![],

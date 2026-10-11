@@ -455,7 +455,22 @@ impl FnCx<'_, '_> {
 
     pub fn resolve(&mut self, t: &ast::TypeExpr) -> hir::TyId {
         let env = self.env.clone();
-        self.cx.resolve_type(t, &env)
+        // `typeof x` may name the locals in scope (`crate::type_queries`).
+        let mut heads = vec![];
+        velt_syntax::visit::type_queries(t, &mut |path| {
+            if let Some(h) = path.first() {
+                heads.push(h.name.clone());
+            }
+        });
+        let base = self.cx.query_locals.len();
+        for h in heads {
+            if let Some(ty) = self.peek_local_ty(&h) {
+                self.cx.query_locals.push((h, ty));
+            }
+        }
+        let ty = self.cx.resolve_type(t, &env);
+        self.cx.query_locals.truncate(base);
+        ty
     }
 }
 

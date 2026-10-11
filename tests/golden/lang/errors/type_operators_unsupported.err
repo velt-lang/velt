@@ -1,0 +1,4 @@
+type_operators_unsupported.vlt:4:3: error: an interface with an index signature and methods is not supported yet (#937)
+type_operators_unsupported.vlt:13:3: error: an interface with an index signature and `extends` is not supported yet (#937)
+type_operators_unsupported.vlt:16:35: error: more than one index signature in a type is not supported yet (#937)
+type_operators_unsupported.vlt:18:12: error: `typeof import(...)` types are not supported yet (#936)
