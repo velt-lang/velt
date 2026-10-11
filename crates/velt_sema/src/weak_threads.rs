@@ -196,8 +196,8 @@ fn checked_where_written(what: &GenCopy) -> bool {
     )
 }
 
-pub(crate) fn check(cx: &mut Ctx) {
-    let recorded = std::mem::take(&mut cx.weak_crossings);
+/// `recorded`: the crossings `ownership::check_locked` found.
+pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
     // Each function's crossings and conversions.
     let sends = cx.channel_sends();
     let mut own: HashMap<DefId, Vec<(TyId, Need)>> = HashMap::new();

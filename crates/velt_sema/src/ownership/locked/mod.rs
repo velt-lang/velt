@@ -42,12 +42,17 @@ use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, TyKind};
 use crate::visit::{self, VisitMut};
 
-/// Check and rewrite every `with` callback (module docs).
-pub(crate) fn check_locked(cx: &mut Ctx) {
+/// Values crossing the lock whose types `crate::weak_threads` checks for weak collections: the
+/// function the type is in terms of, the type, how it crosses and where.
+pub(crate) type WeakCrossings = Vec<(DefId, crate::hir::TyId, crate::body::GenCopy, Span)>;
+
+/// Check and rewrite every `with` callback (module docs). Returns the crossings for
+/// `crate::weak_threads`.
+pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
     if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {
-        return;
+        return vec![];
     }
     let summaries = summary::Summaries::compute(cx);
     // Before the callbacks are rewritten: a candidate is checked as written. Only programs with
@@ -71,6 +76,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
     }
     let mut done = HashSet::new();
     let mut reported = HashSet::new();
+    let mut weak = vec![];
     for (c, direct) in callbacks {
         if !done.insert(c) {
             continue;
@@ -82,8 +88,16 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
             }
             continue;
         }
-        check_callback(cx, &summaries, &mut res, c, direct, &mut reported);
+        check_callback(
+            cx,
+            &summaries,
+            &mut res,
+            (c, direct),
+            &mut reported,
+            &mut weak,
+        );
     }
+    weak
 }
 
 /// A named function passed to `with` (`m.with(fire)`), checked like `(v) => fire(v)`: it has
@@ -267,12 +281,12 @@ fn check_callback(
     cx: &mut Ctx,
     s: &summary::Summaries,
     res: &mut values::Resolver,
-    c: DefId,
-    direct: bool,
+    (c, direct): (DefId, bool),
     reported: &mut HashSet<Span>,
+    weak: &mut WeakCrossings,
 ) {
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
-    weak_across(cx, c, direct, &bodies, reported);
+    weak_across(cx, (c, direct), &bodies, reported, weak);
     let found = crossings(cx, s, c, &mut bodies, resolved, named);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
@@ -280,7 +294,7 @@ fn check_callback(
     for (n, at) in found.stored_fns {
         for (ty, name, _) in crate::weak_threads::captures(cx, n) {
             let what = crate::body::GenCopy::LockFn(name);
-            cx.weak_crossings.push((n, ty, what, at));
+            weak.push((n, ty, what, at));
         }
     }
     for m in found.made {
@@ -308,10 +322,10 @@ fn check_callback(
 /// class, a type parameter) is checked by `crate::weak_threads`, which sees the whole program.
 fn weak_across(
     cx: &mut Ctx,
-    c: DefId,
-    direct: bool,
+    (c, direct): (DefId, bool),
     bodies: &[(DefId, FnDef)],
     reported: &mut HashSet<Span>,
+    weak: &mut WeakCrossings,
 ) {
     struct Made(HashSet<DefId>);
     impl VisitMut for Made {
@@ -336,7 +350,7 @@ fn weak_across(
                 cx.error(d);
             }
         } else {
-            cx.weak_crossings.push((c, ret, what, at));
+            weak.push((c, ret, what, at));
         }
     }
     let returns_fn = cx.holds_fn(ret);
@@ -350,7 +364,7 @@ fn weak_across(
             let (ty, at) = (l.ty, l.span);
             if !cx.holds_weak(ty) {
                 let what = crate::body::GenCopy::LockCapture(l.name.clone());
-                cx.weak_crossings.push((*d, ty, what, at));
+                weak.push((*d, ty, what, at));
                 continue;
             }
             if !reported.insert(at) {
