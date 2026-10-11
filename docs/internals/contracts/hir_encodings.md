@@ -516,7 +516,8 @@ whose type declares the key (a field, method or accessor; a class's optional fie
 `Symbol.asyncIterator in o` are `true` or `false` from `o`'s type's methods.
 
 `Intrinsic::TemplateToString` is a template literal part whose type mentions a type parameter:
-`ToString`, except that a `symbol` (once substituted) panics with JS's `TypeError`.
+`ToString`, except that a `symbol` (once substituted, also as the active member of a union or
+`T | null`, tested at run time) panics with JS's `TypeError`.
 
 ## Types with no HIR form
 

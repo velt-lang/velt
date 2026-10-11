@@ -251,9 +251,10 @@ Converting a symbol to a string implicitly (`${s}`, `"k" + s`, also of a `string
 error, as JavaScript throws a `TypeError` there; `String(s)` is allowed. Where the compiler
 cannot see the symbol, Velt panics with that `TypeError` (exit code 101) instead: joining an
 array or tuple that holds one (`[s].join()`, `String([s])`, `${[s]}`, `${pair}` of a
-`[string, symbol]`), and a template literal part whose type is a type parameter that is
-`symbol` (`` `v=${x}` `` with `x: T`, called with a symbol). Unlike Node's `TypeError`, this
-panic cannot be caught with `try`/`catch`. The API is [`Symbol`](../std/symbol.md).
+`[string, symbol]`, also of a `(string | symbol)[]` that holds one), and a template literal part
+whose type is a type parameter that is `symbol` or a union holding a symbol (`` `v=${x}` `` with
+`x: T`, called with a symbol; the union's other members are written as usual). Unlike Node's
+`TypeError`, this panic cannot be caught with `try`/`catch`. The API is [`Symbol`](../std/symbol.md).
 
 A symbol a module constant holds names a member: `[KEY]: T` in an interface, an object type or
 a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The constant is
