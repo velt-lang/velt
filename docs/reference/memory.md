@@ -76,12 +76,16 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   old object, which nothing can see any more, and Velt would write to the new one. The fix
   computes the value first, which runs the same in TypeScript: `const v = f(); o.inner.v = v;`.
   The check looks at what the right-hand side may run: reads, arithmetic and new values
-  compile as written, and so do calls that assign no object of the holder's type (or of a
-  holder above it). A callback written in the call (`rows.map((r) => r.n)`) counts as itself;
-  any other function value as any function the program uses as a value. A method call through
-  a base class or interface counts as every method of that name, and an `await` as anything in
-  the program. A generic function's field of type `T` counts as the type the call passes for
-  `T`, or, where that is not known, as any type the program passes as a type argument.
+  compile as written, and so do calls that assign neither the field holding the object (that
+  field of that object type: assigning `b.vel` does not replace `b.pos`) nor one holding a
+  holder above it. A callback written in the call (`rows.map((r) => r.n)`) or held in a
+  constant counts as itself, `null` as nothing, and a function's own callback parameter as
+  what its callers pass, unless the function is itself used as a value (`fs.map((f) => f())`);
+  any other function value counts as any function the program uses as a value. A method call
+  through a base class or interface counts as every method of that name, and an `await` as
+  anything in the program. A generic function's field of type `T` counts as the type the call
+  passes for `T`, or, where that is not known, as any type the program passes as a type
+  argument.
 
 ```ts
 class Box {

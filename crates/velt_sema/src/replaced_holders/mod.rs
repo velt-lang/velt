@@ -14,16 +14,25 @@
 //!   and lowering writes to the object the target named before the right-hand side ran. The
 //!   exemption is binding: such a type goes to `hir::Program::counted_objects`, which lowering
 //!   counts whether or not the code sharing it is lowered;
-//! - the right-hand side may assign a whole value of the type of the target's object or of a
-//!   holder above it (up to the nearest class object or shared object, which lowering pins):
-//!   directly, or in a function it calls (transitively). A generic function's field of a
-//!   type-parameter type is substituted with the call's type arguments; where those are not
-//!   known, it may be any type the program uses as a type argument. A call through a function
-//!   value may run any function the program uses as a value, except that a callback written in
-//!   a call's arguments is followed instead, and a function calling its own parameter runs what
-//!   its callers passed. A method call through a vtable or an interface runs the methods of
-//!   that name (and the interface's implementations), and an `await` anything. A right-hand
-//!   side that only reads, computes and builds values compiles.
+//! - the right-hand side may replace the target's object or a holder above it (up to the
+//!   nearest class object or shared object, which lowering pins), directly or in a function it
+//!   calls (transitively): assign the field holding it (that field of that object type: of a
+//!   readonly view's plain twin, of the base class declaring it; another object type holding
+//!   the same object converts by copying), or a whole value of its type to a variable or an
+//!   element where it is not held in a field. A generic function's field of a type-parameter
+//!   type is substituted with the call's type arguments; where those are not known, it may be
+//!   any type the program uses as a type argument. A call through a function value may run any
+//!   function the program uses as a value, except that a function a call's argument or a
+//!   constant names is followed instead, and a function calling its own parameter (of a
+//!   function type, or one `| null`, never reassigned) runs what its callers passed. That holds
+//!   only for a function never used as a value, so every caller writes the arguments: one
+//!   naming a function is followed, the caller's own parameter and `null` are fine, and
+//!   anything else in such a parameter (of any type: a type parameter's value may hold a
+//!   function) may run any function value. A function used as a value is called by code that
+//!   passes anything (`fs.map((f) => f())`), so its calls of its parameters may run any
+//!   function value. A method call through a vtable or an interface runs the methods of that
+//!   name (and the interface's implementations), and an `await` anything. A right-hand side
+//!   that only reads, computes and builds values compiles.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
