@@ -296,7 +296,7 @@ function main() {
   console.log(tokens.get(Symbol.for("app.model")), typeof VNODE); // model symbol
 }
 
-type Cell = { value: number; [VNODE]?: true };
+type Cell = { value: number; [VNODE]?: boolean };
 
 function describe(c: Cell | VNode): string {
   if (VNODE in c) {
