@@ -555,8 +555,8 @@ interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, Async
   return exactly `Iterator<T, E>`), so its result is not itself iterable; the prelude classes
   `ArrayIterator<T>` and `StringIterator` are the implementations.
 - `Map` and `Set` iterators see the entries as of the call; JS's are live. `Map.keys()` /
-  `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map place (or its
-  `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
+  `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map (a place, a
+  getter, an element or a call result; or its `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
   finds its place again by sequence number when a compaction, a pop or a clear renumbers them
   (std/prelude/map.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`). The loop
   holds the map in a hidden local from its start, so reassigning the source does not redirect it.

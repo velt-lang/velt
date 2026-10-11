@@ -1,8 +1,11 @@
 //! The object an assignment writes to is fixed before its right-hand side runs (JS evaluates
 //! the reference first). In `o.inner.v = f()` and `o.inner.v += f()`, when `f` replaces
 //! `o.inner`, JavaScript writes to the object `o.inner` held before the call, and the new
-//! object keeps its value (#581, #622). Only targets inside a class object reached through a
-//! place the right-hand side may change are affected, and only there is anything paid:
+//! object keeps its value (#581, #622). Only targets inside a class object or a boxed object
+//! literal (an object type another name shares, #876) reached through a place the right-hand
+//! side may change are affected, and only there is anything paid (an object literal stored
+//! inline that the right-hand side may replace is a compile error, `velt_sema`
+//! `replaced_holders`):
 //! - a counted object is retained before the right-hand side and written through that
 //!   reference afterwards (released at the end of the statement);
 //! - an object that is not counted has a single owner, the field or variable it was read from.
@@ -49,7 +52,7 @@ impl FnLower<'_, '_> {
             return None;
         }
         let (base, cty) = self.object_hop(place)?;
-        // The class objects above the target's: `hops` (the target's own pointer is `bp`).
+        // The objects (class or boxed) above the target's: `hops` (the target's own pointer is `bp`).
         let (bp, hops) = self.class_path(base, &mut pre.clone());
         // A variable that is not in a cell changes only by a direct assignment in the
         // right-hand side (`o.v = (o = p).v`), which is left as it was.
@@ -139,7 +142,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The place of `e` (formed as `place_expr_with` does), with every class object pointer on
+    /// The place of `e` (formed as `place_expr_with` does), with every object pointer (class or box) on
     /// its trailing run of fields: the projections up to that pointer and the class type, from
     /// the root inwards.
     fn class_path(
@@ -152,20 +155,26 @@ impl FnLower<'_, '_> {
         };
         let bty = self.sub(base.ty);
         let (bp, mut hops) = self.class_path(base, pre);
-        if self.cx.is_class(bty) {
+        if self.holder(bty) {
             hops.push((bp.proj.len(), bty));
         }
         (self.field_place(&bp, bty, *index), hops)
     }
 
-    /// The base of the class object the field `place` lies in (through fields of inline
+    /// Is `t` reached through a pointer of its own: a class object, or an object type or array
+    /// stored as a counted box (an object literal another name shares, #876)?
+    fn holder(&self, t: TyId) -> bool {
+        self.cx.is_class(t) || self.cx.boxed(t)
+    }
+
+    /// The base of the class object or box the field `place` lies in (through fields of inline
     /// structs), with the class type.
     fn object_hop<'e>(&mut self, place: &'e hir::Expr) -> Option<(&'e hir::Expr, TyId)> {
         let hir::ExprKind::Field { base, .. } = &place.kind else {
             return None;
         };
         let bty = self.sub(base.ty);
-        if self.cx.is_class(bty) {
+        if self.holder(bty) {
             return Some((base, bty));
         }
         match self.cx.kind(bty) {

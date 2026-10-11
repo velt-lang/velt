@@ -59,13 +59,14 @@ fn for_of_borrows_or_copies_elements() {
 
 #[test]
 fn for_of_over_a_map_iterates_entries() {
-    // Over a map variable: the live cursor loop (`body/for_map.rs`); over a temporary map: the
-    // array of its entries.
+    // Over a map variable or a call's result: the live cursor loop (`body/for_map.rs`, #877);
+    // over a `new` map: the array of its entries.
     let p = ok_src(
         "function make(): Map<string, i64> { return new Map<string, i64>(); }
          function live() { const m = new Map<string, i64>(); for (const [k, v] of m) { console.log(k, v); } }
-         function temp() { for (const [k, v] of make()) { console.log(k, v); } }
-         function main() { live(); temp(); }",
+         function called() { for (const [k, v] of make()) { console.log(k, v); } }
+         function temp() { for (const [k, v] of new Map<string, i64>()) { console.log(k, v); } }
+         function main() { live(); called(); temp(); }",
     );
     let method = |name: &str| {
         p.defs
@@ -82,6 +83,8 @@ fn for_of_over_a_map_iterates_entries() {
     assert!(calls_method("live", "Map.__advance"));
     assert!(calls_method("live", "Map.__entryAt"));
     assert!(!calls_method("live", "Map.entries"));
+    assert!(calls_method("called", "Map.__advance"));
+    assert!(!calls_method("called", "Map.entries"));
     assert!(calls_method("temp", "Map.entries"));
 }
 
@@ -400,4 +403,28 @@ fn array_constructors() {
         r.contains("`new Array(n)` would hold `n` empty slots"),
         "{r}"
     );
+}
+
+#[test]
+fn assignment_into_an_object_literal_its_right_hand_side_may_replace() {
+    // #876: `p.inner` is stored inside `p`; `h` replaces it.
+    let decls = "type Inner = { v: number; name: string }; type Outer = { inner: Inner };";
+    let replaced = "const p: Outer = { inner: { v: 1, name: \"a\" } }; const h = (): number => { p.inner = { v: 2, name: \"b\" }; return 3; };";
+    let r = err_src(&format!(
+        "{decls} function main() {{ {replaced} p.inner.v = h(); console.log(p.inner.v); }}"
+    ));
+    assert!(
+        r.contains("the right-hand side may replace `p.inner`"),
+        "{r}"
+    );
+    assert!(r.contains("const v = h(); p.inner.v = v;"), "{r}");
+    // Computing the value first, a right-hand side that only reads, and a call that replaces no
+    // object of these types compile.
+    ok_src(&format!(
+        "{decls} function two(): number {{ return 2; }} function main() {{ {replaced} const v = h(); p.inner.v = v; p.inner.v = p.inner.v + 1; p.inner.v = two(); }}"
+    ));
+    // Another name refers to `p.inner`: the object is counted, and the write goes to the old one.
+    ok_src(&format!(
+        "{decls} function main() {{ {replaced} const keep = p.inner; p.inner.v = h(); console.log(keep.v); }}"
+    ));
 }

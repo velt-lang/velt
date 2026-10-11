@@ -19,10 +19,11 @@
 //! (`o.inner.m`) the hidden local holds a share of the map, which keeps it alive when the body
 //! replaces the field through another reference to its object. A `const`
 //! variable or `this` cannot be assigned, so there `<map@N>` is `m` itself: a second name for
-//! a map that is still used can make the program count its maps. Only a place
-//! written without calls qualifies (a variable, `this`, fields of those; no getter); the body
-//! may change the map, since nothing borrows it between steps. Any other source iterates the
-//! array `entries()`, `keys()` or `values()` returns (`loops.rs`).
+//! a map that is still used can make the program count its maps. A source reached through an
+//! element, a getter or a call (`ms[0]`, `g.m`, `get()!`) is read once into the hidden local
+//! too, so the loop walks the live map JS iterates (#877); the body may change the map, since
+//! nothing borrows it between steps. A source with an optional chain, a spread or a function
+//! expression iterates the array `entries()`, `keys()` or `values()` returns (`loops.rs`).
 
 use velt_syntax::ast;
 
@@ -40,11 +41,11 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) -> bool {
-        let Some((recv, read)) = self.live_map_source(iter, it) else {
+        let Some((recv, read, fixed)) = self.live_map_source(iter, it) else {
             return false;
         };
         let mut names = CursorLoop::new(p.span, recv, iter.span);
-        names.held = !self.fixed_source(it);
+        names.held = !fixed;
         let block = ast::Stmt {
             kind: ast::StmtKind::Block(names.desugar(&p, read)),
             span: p.span,
@@ -87,16 +88,9 @@ impl FnCx<'_, '_> {
         };
     }
 
-    /// Does the map source `it` (checked), or the receiver of its `keys()`, `values()` or
-    /// `entries()` call, always name the same map: a `const` variable or `this`?
-    fn fixed_source(&self, it: &hir::Expr) -> bool {
-        let src = match &it.kind {
-            H::Call { args, .. } => match args.first() {
-                Some(r) => r,
-                None => return false,
-            },
-            _ => it,
-        };
+    /// Does the map source `src` (checked: the map itself, or the receiver of a `keys()`,
+    /// `values()` or `entries()` call) always name the same map: a `const` variable or `this`?
+    fn fixed_source(&self, src: &hir::Expr) -> bool {
         match &src.kind {
             H::Local(id, _) => matches!(
                 self.local_kind(*id),
@@ -106,15 +100,17 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The map place and the cursor method reading each value, when `iter` is one per the
-    /// module docs.
+    /// The map expression, the cursor method reading each value, and whether the map
+    /// expression always names the same map ([`Self::fixed_source`]), when `iter` is one per
+    /// the module docs.
     fn live_map_source<'e>(
         &mut self,
         iter: &'e ast::Expr,
         it: &hir::Expr,
-    ) -> Option<(&'e ast::Expr, &'static str)> {
-        if super::places::is_place(it) && self.is_prelude_map(it.ty) {
-            return pure_place(iter).then_some((iter, "__entryAt"));
+    ) -> Option<(&'e ast::Expr, &'static str, bool)> {
+        if self.is_prelude_map(it.ty) {
+            let fixed = self.fixed_source(it);
+            return liftable(iter).then_some((iter, "__entryAt", fixed));
         }
         let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
             return None;
@@ -137,25 +133,36 @@ impl FnCx<'_, '_> {
             return None;
         };
         let recv = hargs.first()?;
-        let live = args.is_empty()
-            && pure_place(object)
-            && super::places::is_place(recv)
-            && self.is_prelude_map(recv.ty);
-        live.then_some((&**object, read))
+        let live = args.is_empty() && liftable(object) && self.is_prelude_map(recv.ty);
+        let fixed = self.fixed_source(recv);
+        live.then_some((&**object, read, fixed))
     }
 }
 
-/// Is `e` a variable, `this` or a field of one (no call, index or optional chain), so
-/// evaluating it again at every step reads the same map?
-fn pure_place(e: &ast::Expr) -> bool {
+/// Can `e` be moved into the hidden local's initializer, where it is checked again: variables,
+/// `this`, literals, and fields (getters too), elements and calls (`ms[0]`, `g.m`, `f(x)!`) of
+/// those, without optional chains, spreads or functions? Every other source iterates an array.
+fn liftable(e: &ast::Expr) -> bool {
+    use ast::ExprKind as E;
     match &e.kind {
-        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
-        ast::ExprKind::Member {
+        E::Ident(_) | E::This | E::Lit(_) => true,
+        E::Member {
             object,
             optional: false,
             ..
-        } => pure_place(object),
-        ast::ExprKind::Paren(x) => pure_place(x),
+        } => liftable(object),
+        E::Index {
+            object,
+            index,
+            optional: false,
+        } => liftable(object) && liftable(index),
+        E::Call {
+            callee,
+            args,
+            optional: false,
+            ..
+        } => liftable(callee) && args.iter().all(liftable),
+        E::Paren(x) | E::NonNull(x) => liftable(x),
         _ => false,
     }
 }

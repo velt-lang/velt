@@ -1,0 +1,16 @@
+// A tuple holding the holder's type is copied, which shares the type and exempts
+// `o.inner.v = g()` from the replaced-holder error (#876); lowering counts the type anyway, so
+// the write lands in the old object as in JavaScript.
+type Inner = { v: number };
+type Outer = { inner: Inner };
+function main() {
+  const o: Outer = { inner: { v: 0 } };
+  const g = (): number => {
+    o.inner = { v: 100 };
+    return 13;
+  };
+  const t: [Inner, number] = [{ v: 3 }, 1];
+  const t2 = t;
+  o.inner.v = g();
+  console.log(o.inner.v, t2[0].v, t[0].v);
+}
