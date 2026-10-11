@@ -289,6 +289,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     let t = Instant::now();
     let std_root = loader::std_root();
     let native_inits = crate::native::inits(opts.packages.as_ref());
+    let line_info = opts.has_line_info();
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
         std_root: std_root.as_deref(),
@@ -296,12 +297,12 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // A debug compiler links the debug runtime, which checks that no two tasks use one
         // captured variable's cell (#916); release programs and release compilers skip it.
         cell_checks: !opts.release && cfg!(debug_assertions),
-        // Variables for debuggers in debug builds made for debugging; release builds with `-g`
-        // keep line information only, and their optimizations stay as they are.
-        debug_info: !opts.release && opts.debug_vars,
+        // Variables for debuggers in debug builds made for debugging that keep their line
+        // information (they refer to its files); release builds with `-g` keep line information
+        // only, and their optimizations stay as they are.
+        debug_info: !opts.release && opts.debug_vars && line_info,
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
-    let line_info = opts.has_line_info();
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
