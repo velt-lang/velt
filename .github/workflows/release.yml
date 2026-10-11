@@ -123,7 +123,8 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           root="$RUNNER_TEMP/velt"
-          sh scripts/get-velt.sh --no-modify-path --prefix "$root" \
+          # The archive just built: its SHA256SUMS is written and signed later, in `publish`.
+          sh scripts/get-velt.sh --no-modify-path --prefix "$root" --unverified \
             --archive "dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz"
           [ -f "$root/toolchains/${{ needs.version.outputs.version }}/bin/velt" ]
           "$root/bin/velt" --version | grep -F "velt ${{ needs.version.outputs.version }} "

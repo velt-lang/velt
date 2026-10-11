@@ -265,7 +265,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
   Reading the index refuses one whose `generated` is older than `<root>/index-seen`, and prints
   `velt: a newer velt launcher (<v>) is available; …` on stderr when its `launcher` is newer than
-  the running launcher. `install <spec>`: a full version is exact,
+  the running launcher. `install --from <file> [--unverified] [--default]`
+  (`velt_toolchain::release::install_toolchain_from_file`): `<file>` must be named
+  `velt-<semver>-<host>.tar.gz`; unless `--unverified` (a warning on stderr), `SHA256SUMS` and
+  `SHA256SUMS.sig` beside it are checked with the root's trusted keys and the archive against
+  `SHA256SUMS` (refused unless UTF-8); the archive's top directory must be `velt-<v>-<host>`; then
+  as `install`. When `<v>` is installed already it is kept and the file is not read (stdout
+  `velt <v> is already installed; kept it …`). `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
   `--force`. `prune` removes every installed version but the default, the version the cwd

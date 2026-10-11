@@ -213,7 +213,15 @@ only. The hash shows the
 download is intact; the signature that the velt project published it, whatever served it. The
 launcher the installers put in place checks the signature of everything it downloads after
 that. velt 0.1.0 was published before signing and before the launcher; the installers and the
-launcher install later releases.
+launcher install later releases. It hashes with `sha256sum`, `shasum` or `openssl`, and refuses to install without
+one of them. On a machine without access to the releases, download the archive with its
+release's `SHA256SUMS` and `SHA256SUMS.sig`, put the three files in one directory, and run
+`velt toolchain install --from <archive>` there (or `get-velt.sh --archive <archive>` for the
+first install). Both check the archive against those two files as they would a download, and
+refuse it without them unless you pass `--unverified` (then it is installed unchecked).
+`get-velt.ps1 -Archive` installs the `.zip` unchecked. Offline, a launcher checks only the
+revocations its root has already stored (CONTRIBUTING.md "Replacing the signing key"): a machine
+that never reads the index of releases never learns of a key revoked after that.
 
 **The index of releases.** The launcher learns which versions exist (to install the newest one
 `"0.1"` accepts, and to list them with `velt toolchain list --available`) from
@@ -240,7 +248,8 @@ anywhere with the musl target packs.
 | `--prefix <dir>` | `-Prefix <dir>` | `VELT_INSTALL_PREFIX` | the root; default `~/.velt`, `%LOCALAPPDATA%\velt` |
 | `--default` | `-Default` | | make this version the default (the first one installed always is) |
 | `--force` | `-Force` | | reinstall a version that is already installed |
-| `--archive <file>` | `-Archive <file>` | | install an archive you downloaded instead of downloading one |
+| `--archive <file>` | `-Archive <file>` | | install an archive you downloaded instead of downloading one; `get-velt.sh` checks it against the `SHA256SUMS` and `SHA256SUMS.sig` beside it, `get-velt.ps1` doesn't check it |
+| `--unverified` | | | with `--archive`: install it without `SHA256SUMS` and its signature (unchecked) |
 | `--no-modify-path` | `-NoModifyPath` | | leave `PATH` alone |
 | | | `VELT_INSTALL_BASE_URL` | the repository to download from (default `https://github.com/velt-lang/velt`) |
 | | | `VELT_INSTALL_PUBLIC_KEY` | the release keys to check signatures with (64 hex digits each, separated by commas), for another build's releases |
