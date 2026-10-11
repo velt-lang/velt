@@ -4,6 +4,7 @@
 //! ```json
 //! {
 //!   "version": 1,
+//!   "velt": "0.2.0",
 //!   "packages": [
 //!     {
 //!       "name": "json",
@@ -25,6 +26,11 @@
 //! ```
 //! `native` pins the prebuilt library of **every** published target, so the lockfile is the same
 //! on every platform and each machine verifies the one it uses.
+//! `velt` is the toolchain version that builds the package (#960): written when the lock is
+//! created, then kept until `velt update` or until the package's `velt` pin no longer accepts it
+//! ([`crate::install`]). The velt launcher runs that version in the package, when the pin
+//! accepts it, so every machine builds a commit with the same compiler; `--locked` fails on
+//! another. Optional: a lock without it is still format 1.
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
 //! listed (its dependencies come from package.vlt). The former `velt.lock` (TOML) is not read: a
 //! package that still has one gets an error saying to run `velt install`.
@@ -45,6 +51,9 @@ const FORMAT_VERSION: u32 = 1;
 pub struct Lockfile {
     /// Lockfile format version (currently 1).
     pub version: u32,
+    /// The toolchain version that builds the package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub velt: Option<String>,
     /// Resolved packages, sorted by name.
     #[serde(default)]
     pub packages: Vec<LockedPackage>,
@@ -79,6 +88,7 @@ impl Lockfile {
         packages.sort_by(|a, b| a.name.cmp(&b.name));
         Lockfile {
             version: FORMAT_VERSION,
+            velt: None,
             packages,
         }
     }
@@ -91,6 +101,15 @@ impl Lockfile {
                 "unsupported {LOCK_FILE} format version {} (expected {FORMAT_VERSION})",
                 lock.version
             ));
+        }
+        if let Some(velt) = &lock.velt {
+            // Shown in messages and run as `velt +<it>`: only ever a version.
+            if semver::Version::parse(velt).is_err() {
+                return Err(format!(
+                    "{LOCK_FILE}: `velt` is {velt:?}, not a velt version; delete that line and run \
+                     `velt install`"
+                ));
+            }
         }
         Ok(lock)
     }
@@ -166,6 +185,15 @@ mod tests {
         assert!(text.ends_with("}\n"));
         assert_eq!(Lockfile::parse(&text).unwrap(), lock);
         assert_eq!(lock.get("util").unwrap().version, "0.1.0");
+        // The toolchain version, when there is one, follows the format version.
+        let mut pinned = lock.clone();
+        pinned.velt = Some("0.2.0".into());
+        let text = pinned.to_json();
+        assert!(
+            text.starts_with("{\n  \"version\": 1,\n  \"velt\": \"0.2.0\",\n  \"packages\": [\n"),
+            "{text}"
+        );
+        assert_eq!(Lockfile::parse(&text).unwrap(), pinned);
     }
 
     #[test]
@@ -191,5 +219,24 @@ mod tests {
         assert!(err.contains("velt install"), "{err}");
         Lockfile::new(vec![]).write(tmp.path()).unwrap();
         assert!(Lockfile::read(tmp.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_toolchain_must_be_a_version() {
+        for bad in ["../../x", "\u{1b}[31mHACK\u{1b}[0m", "latest", ""] {
+            let text = format!(
+                "{{\"version\": 1, \"velt\": {}, \"packages\": []}}",
+                serde_json::to_string(bad).unwrap()
+            );
+            let err = Lockfile::parse(&text).unwrap_err();
+            assert!(err.contains("not a velt version"), "{bad:?}: {err}");
+            assert!(
+                !err.contains('\u{1b}'),
+                "the escape is shown escaped: {err}"
+            );
+        }
+        let ok =
+            Lockfile::parse(r#"{"version": 1, "velt": "0.2.0-rc.1", "packages": []}"#).unwrap();
+        assert_eq!(ok.velt.as_deref(), Some("0.2.0-rc.1"));
     }
 }

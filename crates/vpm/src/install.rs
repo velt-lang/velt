@@ -52,6 +52,66 @@ impl Installed {
     }
 }
 
+/// This toolchain's version, which a new lockfile records.
+const TOOLCHAIN_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The toolchain version the lockfile records (`velt`): none for a package without a `velt` pin
+/// (`pin`; the launcher only follows a lock inside a pinned package); else the one it has, unless
+/// `velt update` runs (`opts.update`) or the pin no longer accepts it; then `running`.
+/// `--locked` never adds or moves it (a lock from before the field stays without one).
+fn locked_toolchain(
+    locked: Option<&str>,
+    pin: Option<&str>,
+    running: &str,
+    opts: &InstallOptions,
+) -> Option<String> {
+    if opts.locked {
+        return locked.map(str::to_string);
+    }
+    let pin = pin?;
+    match locked {
+        Some(v) if !opts.update && pin_accepts(pin, v) => Some(v.to_string()),
+        _ => Some(running.to_string()),
+    }
+}
+
+/// Whether the `velt` requirement `pin` accepts version `v` (false when either doesn't parse).
+fn pin_accepts(pin: &str, v: &str) -> bool {
+    match (
+        velt_toolchain::Requirement::parse(pin),
+        velt_toolchain::Version::parse(v),
+    ) {
+        (Ok(req), Ok(v)) => req.matches(&v),
+        _ => false,
+    }
+}
+
+/// Under `--locked`: the lock's `velt` must be the running toolchain, in a pinned package.
+fn check_locked_toolchain(
+    locked: Option<&str>,
+    pin: Option<&str>,
+    running: &str,
+) -> Result<(), String> {
+    let (Some(locked), Some(pin)) = (locked, pin) else {
+        return Ok(());
+    };
+    if locked == running {
+        return Ok(());
+    }
+    if !pin_accepts(pin, locked) {
+        return Err(format!(
+            "{LOCK_FILE} pins velt {locked}, which the package's velt pin \"{pin}\" no longer \
+             accepts, and --locked was passed: run `velt install` (or `velt update`) without \
+             --locked to record velt {running}"
+        ));
+    }
+    Err(format!(
+        "{LOCK_FILE} pins velt {locked}, but this is velt {running}, and --locked was passed: \
+         run the velt launcher, which runs {locked} here (`velt +{locked} …`), or `velt update` \
+         to build with this one"
+    ))
+}
+
 /// Install the dependencies of the package rooted at `root`.
 pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Installed, String> {
     let root = relpath::absolute(root);
@@ -65,6 +125,19 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         if let Some(old) = &existing {
             keep_locked_native(old, &mut lockfile);
         }
+    }
+    lockfile.velt = locked_toolchain(
+        existing.as_ref().and_then(|l| l.velt.as_deref()),
+        manifest.toolchain.as_deref(),
+        TOOLCHAIN_VERSION,
+        &opts,
+    );
+    if opts.locked {
+        check_locked_toolchain(
+            lockfile.velt.as_deref(),
+            manifest.toolchain.as_deref(),
+            TOOLCHAIN_VERSION,
+        )?;
     }
     let lock_changed = existing.as_ref() != Some(&lockfile);
     if lock_changed && opts.locked {
@@ -371,4 +444,75 @@ fn build_graph(
 fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
     package.paths = manifest.paths.clone();
     package.jsx_import_source = manifest.jsx.as_ref().and_then(|j| j.import_source.clone());
+}
+
+#[cfg(test)]
+mod toolchain_tests {
+    use super::*;
+
+    fn opts(locked: bool, update: bool) -> InstallOptions {
+        InstallOptions {
+            locked,
+            update,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn the_lock_keeps_its_toolchain_until_update_or_the_pin_moves() {
+        let normal = opts(false, false);
+        // A new lock records the running toolchain.
+        assert_eq!(
+            locked_toolchain(None, Some("0.2"), "0.2.1", &normal).as_deref(),
+            Some("0.2.1")
+        );
+        // Without a pin, nothing is recorded (and a recorded one is dropped).
+        assert_eq!(locked_toolchain(None, None, "0.2.1", &normal), None);
+        assert_eq!(
+            locked_toolchain(Some("0.1.0"), None, "0.2.1", &normal),
+            None
+        );
+        // Another toolchain running the package (an editor, $VELT_TOOLCHAIN) leaves it alone.
+        assert_eq!(
+            locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1", &normal).as_deref(),
+            Some("0.2.0")
+        );
+        // `velt update` moves it to the running toolchain (the launcher ran the newest).
+        assert_eq!(
+            locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1", &opts(false, true)).as_deref(),
+            Some("0.2.1")
+        );
+        // A pin that no longer accepts it moves it too.
+        assert_eq!(
+            locked_toolchain(Some("0.2.0"), Some("0.3"), "0.3.0", &normal).as_deref(),
+            Some("0.3.0")
+        );
+        // --locked never adds or moves it.
+        let locked = opts(true, false);
+        assert_eq!(locked_toolchain(None, Some("0.2"), "0.2.1", &locked), None);
+        assert_eq!(
+            locked_toolchain(Some("0.2.0"), Some("0.3"), "0.3.0", &locked).as_deref(),
+            Some("0.2.0")
+        );
+    }
+
+    #[test]
+    fn locked_checks_the_toolchain_in_pinned_packages_only() {
+        check_locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.0").unwrap();
+        check_locked_toolchain(None, Some("0.2"), "0.2.0").unwrap();
+        // Unpinned: the launcher doesn't follow the lock there, so it isn't checked.
+        check_locked_toolchain(Some("0.1.0"), None, "0.2.0").unwrap();
+        let other = check_locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1").unwrap_err();
+        assert!(
+            other.contains("runs 0.2.0 here (`velt +0.2.0 …`)"),
+            "{other}"
+        );
+        let moved = check_locked_toolchain(Some("0.1.9"), Some("0.2"), "0.2.0").unwrap_err();
+        assert!(
+            moved.contains(
+                "pins velt 0.1.9, which the package's velt pin \"0.2\" no longer accepts"
+            ) && moved.contains("to record velt 0.2.0"),
+            "{moved}"
+        );
+    }
 }

@@ -24,6 +24,18 @@ pub struct Pin {
     pub line: usize,
 }
 
+/// The package's lockfile, beside its `package.vlt` (`vpm::lockfile::LOCK_FILE`).
+pub const LOCK_FILE: &str = "velt.lock.json";
+
+/// The toolchain version the lockfile beside `manifest` records (its `velt` field, #960), if
+/// any. A missing or unreadable lock, or one without the field, is `None`: the toolchain that
+/// runs reports a broken lock.
+pub fn locked_version(manifest: &Path) -> Option<semver::Version> {
+    let text = std::fs::read_to_string(manifest.with_file_name(LOCK_FILE)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    semver::Version::parse(value.get("velt")?.as_str()?).ok()
+}
+
 /// The nearest directory at or above `start` holding a `package.vlt`.
 pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     start
@@ -149,5 +161,21 @@ mod tests {
         .unwrap();
         let err = find_pin(&pkg).unwrap_err();
         assert!(err.contains("package.vlt:1: `velt`"), "{err}");
+    }
+
+    #[test]
+    fn reads_the_toolchain_the_lock_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = tmp.path().join(MANIFEST_FILE);
+        assert_eq!(locked_version(&manifest), None);
+        let lock = tmp.path().join(LOCK_FILE);
+        std::fs::write(&lock, r#"{"version": 1, "packages": []}"#).unwrap();
+        assert_eq!(locked_version(&manifest), None);
+        std::fs::write(&lock, r#"{"version": 1, "velt": "0.2.1", "packages": []}"#).unwrap();
+        assert_eq!(locked_version(&manifest).unwrap().to_string(), "0.2.1");
+        std::fs::write(&lock, r#"{"version": 1, "velt": "latest"}"#).unwrap();
+        assert_eq!(locked_version(&manifest), None);
+        std::fs::write(&lock, "not json").unwrap();
+        assert_eq!(locked_version(&manifest), None);
     }
 }
