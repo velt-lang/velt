@@ -51,11 +51,16 @@ impl<'a> Printer<'a> {
                 params,
                 ret,
                 throws,
+                rest,
             } => {
-                let docs = params.iter().map(|p| self.fn_type_param(p)).collect();
+                let docs = self.fn_type_params(params, *rest);
                 let throws = self.throws_clause(throws.as_deref());
                 cat!["(", join(&text(", "), docs), ") => ", self.ty(ret), throws]
             }
+            TypeExprKind::GenericFunction { type_params, ty } => {
+                cat![self.generic_params(type_params), self.ty(ty)]
+            }
+            TypeExprKind::Construct(ty) => cat!["new ", self.ty(ty)],
             TypeExprKind::Union(members) => {
                 let docs = members.iter().map(|m| self.ty_operand(m)).collect();
                 join(&text(" | "), docs)
@@ -222,11 +227,13 @@ impl<'a> Printer<'a> {
             params,
             ret,
             throws,
+            rest,
+            ..
         } = &f.kind
         else {
             return None;
         };
-        let docs = params.iter().map(|p| self.fn_type_param(p)).collect();
+        let docs = self.fn_type_params(params, *rest);
         let throws = self.throws_clause(throws.as_deref());
         let key = self.prop_key(name);
         let q = if optional { "?" } else { "" };
@@ -237,6 +244,23 @@ impl<'a> Printer<'a> {
             cat![": ", self.ty(ret)]
         };
         Some(cat![key, q, "(", join(&text(", "), docs), ")", ret, throws])
+    }
+
+    /// A function type's parameters, the last one a rest parameter (`...xs: T[]`) when `rest`.
+    fn fn_type_params(&mut self, params: &[TypeExpr], rest: bool) -> Vec<Doc> {
+        let n = params.len();
+        params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let doc = self.fn_type_param(p);
+                if rest && i + 1 == n {
+                    cat!["...", doc]
+                } else {
+                    doc
+                }
+            })
+            .collect()
     }
 
     fn fn_type_param(&mut self, t: &TypeExpr) -> Doc {

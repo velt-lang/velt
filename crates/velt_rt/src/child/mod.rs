@@ -93,7 +93,7 @@ fn start(spec: &VeltCommand) -> Result<ChildObj, VeltErr> {
         status: rx,
         kill: kill.clone(),
     };
-    tokio::spawn(async move {
+    crate::task::runtime::spawn(async move {
         let status = loop {
             let killed = {
                 let wait = std::pin::pin!(child.wait());

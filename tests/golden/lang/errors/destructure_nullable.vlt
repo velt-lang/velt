@@ -1,0 +1,21 @@
+// Destructuring a value that may be `null` is an error, as in tsc (TS2339 for an object
+// pattern, TS2488 for an array pattern); Node throws a TypeError when it is `null`.
+interface P {
+  a: number;
+  s: string;
+}
+
+function find(): P | null {
+  return null;
+}
+
+function list(): number[] | null {
+  return null;
+}
+
+function main() {
+  const p = find();
+  let { a, s } = p;
+  const [x] = list();
+  console.log(a, s, x);
+}

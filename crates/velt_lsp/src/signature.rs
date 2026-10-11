@@ -110,10 +110,19 @@ fn params(analysis: &Analysis, ps: &[ast::Param]) -> String {
 }
 
 fn param_text(analysis: &Analysis, p: &ast::Param) -> String {
+    // A destructured parameter shows its pattern as written.
+    let name = match &p.pattern {
+        Some(q) => analysis.snippet(q.span).to_string(),
+        None => p.name.name.clone(),
+    };
     if p.optional {
-        return format!("{}?: {}", p.name.name, analysis.snippet(p.ty.span));
+        return format!("{name}?: {}", analysis.snippet(p.ty.span));
     }
-    let mut s = format!("{}: {}", p.name.name, analysis.snippet(p.ty.span));
+    // `status = 302`: the type is the default's (it has the default's span).
+    if p.default.as_ref().is_some_and(|d| d.span == p.ty.span) {
+        return format!("{name} = {}", analysis.snippet(p.ty.span));
+    }
+    let mut s = format!("{name}: {}", analysis.snippet(p.ty.span));
     if let Some(d) = &p.default {
         s.push_str(&format!(" = {}", analysis.snippet(d.span)));
     }
@@ -127,9 +136,13 @@ pub fn param(analysis: &Analysis, p: &ast::Param) -> String {
 
 /// Hover text of an arrow-function parameter.
 pub fn arrow_param(analysis: &Analysis, p: &ast::ArrowParam) -> String {
+    let name = match &p.pattern {
+        Some(q) => analysis.snippet(q.span).to_string(),
+        None => p.name.name.clone(),
+    };
     match &p.ty {
-        Some(ty) => format!("(parameter) {}: {}", p.name.name, analysis.snippet(ty.span)),
-        None => format!("(parameter) {}", p.name.name),
+        Some(ty) => format!("(parameter) {name}: {}", analysis.snippet(ty.span)),
+        None => format!("(parameter) {name}"),
     }
 }
 

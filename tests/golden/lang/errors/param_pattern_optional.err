@@ -1,0 +1,2 @@
+param_pattern_optional.vlt:3:12
+error: a destructured parameter cannot be optional (TypeScript's TS2463)

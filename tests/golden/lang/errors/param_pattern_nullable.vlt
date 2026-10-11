@@ -1,0 +1,11 @@
+// A destructured parameter whose type includes `null` may be `null`, which can't be destructured
+// (tsc: TS2339 "Property 'a' does not exist on type 'P | null'").
+interface P {
+  a: number;
+}
+
+const g = ({ a }: P | null = null): number => a;
+
+function main() {
+  console.log(g());
+}

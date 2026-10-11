@@ -150,6 +150,23 @@ pub(crate) fn has_modifier(src: &str, lo: u32, name_lo: u32, word: &str) -> bool
 pub(crate) fn fn_type_param_name(src: &str, type_lo: u32) -> Option<&str> {
     let before = src.get(..type_lo as usize)?.trim_end();
     let before = before.strip_suffix(':')?.trim_end();
+    if before.ends_with([']', '}']) {
+        // A destructured parameter (`([a, b]: [A, B]) => R`): the balanced pattern.
+        let mut depth = 0usize;
+        for (i, c) in before.char_indices().rev() {
+            match c {
+                ']' | '}' => depth += 1,
+                '[' | '{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&before[i..]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
     let name_start = before
         .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
         .map_or(0, |i| i + 1);
@@ -200,5 +217,9 @@ mod tests {
         assert_eq!(fn_type_param_name(src, 6), Some("acc"));
         assert_eq!(fn_type_param_name(src, 14), Some("x"));
         assert_eq!(fn_type_param_name(src, 17), None);
+        let src = "type F = ([a, { b }]: T, x: U) => R;";
+        assert_eq!(fn_type_param_name(src, 22), Some("[a, { b }]"));
+        assert_eq!(fn_type_param_name(src, 28), Some("x"));
+        assert_eq!(fn_type_param_name("x = a]: T", 8), None);
     }
 }

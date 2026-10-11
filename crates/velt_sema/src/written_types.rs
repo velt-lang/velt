@@ -26,17 +26,27 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             params,
             ret,
             throws,
+            rest,
         } => {
+            let n = params.len();
             let ps: Vec<String> = params
                 .iter()
                 .enumerate()
-                .map(|(i, p)| format!("p{i}: {}", written(p)))
+                .map(|(i, p)| {
+                    let dots = if *rest && i + 1 == n { "..." } else { "" };
+                    format!("{dots}p{i}: {}", written(p))
+                })
                 .collect();
             let th = throws
                 .as_ref()
                 .map_or(String::new(), |e| format!(" throws {}", written(e)));
             format!("({}) => {}{th}", ps.join(", "), written(ret))
         }
+        T::GenericFunction { type_params, ty } => {
+            let names: Vec<&str> = type_params.iter().map(|g| g.name.name.as_str()).collect();
+            format!("<{}>{}", names.join(", "), written(ty))
+        }
+        T::Construct(ty) => format!("new {}", written(ty)),
         T::Union(ts) => list(ts, " | "),
         T::Intersection(ts) => ts
             .iter()

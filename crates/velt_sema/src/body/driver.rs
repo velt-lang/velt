@@ -314,6 +314,13 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         fcx.ctor_begin(&f, d);
     }
     let diags_before = fcx.cx.diags.len();
+    let sig_params = &crate::body::defaults::fn_sig_ast(src).params;
+    fcx.destructure_params(
+        sig_params
+            .iter()
+            .map(|p| (&p.name, p.pattern.as_ref(), p.optional)),
+        &mut stmts,
+    );
     fcx.stmts_into(&body.stmts, &mut stmts);
     let mut block = hir::Block {
         stmts,

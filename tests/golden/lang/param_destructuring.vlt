@@ -1,0 +1,194 @@
+// Destructured parameters (`function f([a, b]: [string, number])`, `.map(([k, v]) => …)`,
+// `({ a, b }: P) => …`, defaults and elisions inside the patterns) and parameter types taken from
+// a default (`status = 302` is a `number`), as in TypeScript. Strings, arrays, objects and class
+// instances destructured from parameters, captured and assigned by closures (each binding its own
+// cell), are leak-free.
+function f([a, b]: [string, number]): string {
+  return a + b;
+}
+
+function g({ name, n }: { name: string; n: number }): string {
+  return name + n;
+}
+
+function h([a, b = 5]: number[], { x = "dx", y }: { x?: string; y: string }): string {
+  return `${a} ${b} ${x} ${y}`;
+}
+
+function redirect(location: string, status = 302): string {
+  return location + status;
+}
+
+function flag(live = true): boolean {
+  return live;
+}
+
+function part1() {
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+  ]);
+  const pairs: [string, number][] = [
+    ["k", 1],
+    ["v", 2],
+  ];
+  console.log(f(["x", 1]), g({ name: "y", n: 2 }));
+  console.log(h([1], { y: "yy" }), h([1, 2], { x: "xx", y: "yy" }));
+  console.log(redirect("/a"), redirect("/b", 301), flag(), flag(false));
+  console.log(pairs.map(([k, v]) => k + v).join(","));
+  console.log(
+    [...m.entries()]
+      .filter(([k, v]) => v > 1 && k !== "z")
+      .map(([k]) => k)
+      .join(","),
+  );
+  const objs = [
+    { a: 1, b: "x" },
+    { a: 2, b: "y" },
+  ];
+  console.log(objs.map(({ a, b }) => b + a).join(","));
+  const KINDS: [string, number][] = [
+    ["i", 1],
+    ["j", 2],
+  ];
+  console.log(KINDS.some(([_, C]) => C === 2));
+}
+
+class Pt {
+  x: number;
+  label: string;
+  constructor(x: number, label: string) {
+    this.x = x;
+    this.label = label;
+  }
+}
+
+function strs([a, b]: [string, string]): string {
+  a = a + "!";
+  return a + b;
+}
+
+function objs({ name, tags }: { name: string; tags: string[] }): string {
+  return name + ":" + tags.join("|");
+}
+
+function inst([p, q]: [Pt, Pt]): string {
+  return p.label + q.label + (p.x + q.x);
+}
+
+function capture([a, b]: [string, string]): () => string {
+  return () => a + b;
+}
+
+function assignInClosure([a, b]: [string, string]): string {
+  const add = (s: string) => {
+    a += s;
+  };
+  add("1");
+  add("2");
+  return a + b;
+}
+
+function storedAssign({ s }: { s: string }): (() => string)[] {
+  const fs: (() => string)[] = [];
+  fs.push(() => {
+    s += "+";
+    return s;
+  });
+  fs.push(() => s);
+  return fs;
+}
+
+async function asyncP([a, n]: [string, number]): Promise<string> {
+  await Promise.resolve(0);
+  return a.repeat(n);
+}
+
+class Box {
+  items: string[] = [];
+  add([k, v]: [string, string]): void {
+    this.items.push(k + "=" + v);
+  }
+}
+
+function nested([[a, b], { c }]: [[string, string], { c: string }]): string {
+  return a + b + c;
+}
+
+interface Opts {
+  host: string;
+  port: number;
+}
+
+function connect({ host, port }: Opts = { host: "localhost", port: 80 }): string {
+  return host + ":" + port;
+}
+
+function* pairsOf([a, b]: [string, string]): Generator<string> {
+  yield a;
+  yield b;
+}
+
+const handler = {
+  run([x, y]: [number, number]): number {
+    return x * y;
+  },
+};
+
+type Fn = (e: [string, string[]]) => string;
+
+const join: Fn = ([head, tail]) => head + tail.join("");
+
+function outer(): string {
+  function inner({ v }: { v: string }): string {
+    return v + "!";
+  }
+  return inner({ v: "in" });
+}
+
+const swap = ([a, b]: [string, string]): [string, string] => [b, a];
+
+async function part3() {
+  console.log(connect(), connect({ host: "h", port: 1 }));
+  console.log([...pairsOf(["p", "q"])].join(","));
+  console.log(handler.run([3, 4]), join(["a", ["b", "c"]]), outer(), swap(["1", "2"])[0]);
+  let status = 0;
+  const set = ([n]: [number]) => {
+    status = n;
+  };
+  set([7]);
+  console.log(status);
+}
+
+async function main() {
+  part1();
+  await part3();
+  console.log(strs(["a", "b"]), objs({ name: "n", tags: ["x", "y"] }));
+  console.log(inst([new Pt(1, "p"), new Pt(2, "q")]));
+  const c = capture(["c", "d"]);
+  console.log(c(), c());
+  console.log(assignInClosure(["e", "f"]));
+  const fs = storedAssign({ s: "s" });
+  console.log(fs[0](), fs[0](), fs[1]());
+  console.log(await asyncP(["ab", 3]));
+  const b = new Box();
+  b.add(["k1", "v1"]);
+  [["k2", "v2"] as [string, string]].forEach(([k, v]) => b.add([k, v]));
+  console.log(b.items.join(","));
+  console.log(nested([["a", "b"], { c: "c" }]));
+  const words = ["x", "yy", "zzz"];
+  console.log(
+    words
+      .map((w, i) => [w, i] as [string, number])
+      .map(([w, i]) => w + i)
+      .join(" "),
+  );
+  const keep: (() => string)[] = [];
+  words.map((w) => [w, w.toUpperCase()] as [string, string]).forEach(([lo, up]) => {
+    keep.push(() => {
+      lo += up;
+      return lo;
+    });
+  });
+  console.log(keep.map((f) => f()).join(","), keep.map((f) => f()).join(","));
+}

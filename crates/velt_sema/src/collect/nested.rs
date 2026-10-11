@@ -138,7 +138,13 @@ fn fn_body<'m>(
         return;
     }
     let mut locals: Vec<String> = outer.to_vec();
-    locals.extend(params.iter().map(|p| p.name.name.clone()));
+    for p in params {
+        param_bindings(p, &mut |f| {
+            if let Found::Bind(n) = f {
+                locals.push(n.to_string());
+            }
+        });
+    }
     for f in &found {
         if let Found::Bind(n) = f {
             locals.push(n.to_string());
@@ -309,11 +315,24 @@ fn bindings<'m>(p: &'m ast::Pattern, f: &mut dyn FnMut(Found<'m>)) {
     }
 }
 
+/// The names a parameter binds: its own, or those of the pattern it destructures.
+fn param_bindings<'m>(p: &'m ast::Param, f: &mut dyn FnMut(Found<'m>)) {
+    match &p.pattern {
+        Some(q) => bindings(q, f),
+        None => f(Found::Bind(&p.name.name)),
+    }
+}
+
 fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
     use ast::ExprKind as E;
     match &e.kind {
         E::Arrow { params, body, .. } => {
-            params.iter().for_each(|p| f(Found::Bind(&p.name.name)));
+            for p in params {
+                match &p.pattern {
+                    Some(q) => bindings(q, f),
+                    None => f(Found::Bind(&p.name.name)),
+                }
+            }
             match body {
                 ast::ArrowBody::Expr(x) => walk_expr(x, f),
                 ast::ArrowBody::Block(b) => walk_block(b, f),
@@ -324,7 +343,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
             for p in props {
                 if let ast::ObjectProp::Method(d) = p {
                     for p in &d.sig.params {
-                        f(Found::Bind(&p.name.name));
+                        param_bindings(p, f);
                     }
                     walk_block(&d.body, f);
                 }
@@ -335,7 +354,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
                 f(Found::Bind(&d.sig.name.name));
             }
             for p in &d.sig.params {
-                f(Found::Bind(&p.name.name));
+                param_bindings(p, f);
                 p.default.iter().for_each(|x| walk_expr(x, f));
             }
             walk_block(&d.body, f);

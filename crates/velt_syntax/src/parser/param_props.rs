@@ -3,6 +3,7 @@
 //! plus `this.mass = mass;` at the start of the constructor body, or right after its
 //! top-level `super(...)` call (sema requires that call to come first in such a class).
 
+use super::param_patterns::ParamDefault;
 use super::{PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
@@ -23,10 +24,16 @@ impl<'a> Parser<'a> {
         while !self.at(Tok::RParen) {
             let lo = self.cur_lo();
             let mods = self.parse_prop_mods();
-            let mut p = self.parse_param()?;
+            let mut p = self.parse_param(params.len())?;
             // The span covers the modifiers, so `velt fmt` keeps them.
             p.span.lo = lo;
-            if mods.any {
+            if mods.any && p.pattern.is_some() {
+                // TS1187.
+                self.error(
+                    "a parameter property cannot be declared using a binding pattern",
+                    p.name.span,
+                );
+            } else if mods.any {
                 fields.push(Field {
                     name: p.name.clone(),
                     ty: p.ty.clone(),
@@ -44,6 +51,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RParen)?;
+        let checked: Vec<_> = params.iter().map(ParamDefault::of_param).collect();
+        self.check_param_defaults(&checked);
         Ok((params, fields))
     }
 
@@ -54,7 +63,8 @@ impl<'a> Parser<'a> {
             readonly: false,
             is_private: false,
         };
-        while Self::is_name(self.nth(1)) {
+        // A modifier is followed by the parameter's name (or a pattern, rejected later).
+        while Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::LBracket | Tok::LBrace) {
             if self.at_word("private") {
                 m.is_private = true;
             } else if self.at_kw(Kw::Readonly) {

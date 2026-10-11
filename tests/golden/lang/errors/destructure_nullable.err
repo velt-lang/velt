@@ -1,0 +1,4 @@
+destructure_nullable.vlt:18:7
+error: cannot destructure a value of type `P | null`: it may be `null` (TypeScript's TS2339)
+destructure_nullable.vlt:19:9
+error: cannot destructure a value of type `f64[] | null`: it may be `null` (TypeScript's TS2488)

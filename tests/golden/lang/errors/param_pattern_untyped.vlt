@@ -1,0 +1,6 @@
+// A destructured parameter of an arrow that no function type types needs an annotation:
+// TypeScript reports TS7031 ("Binding element 'a' implicitly has an 'any' type") under `strict`.
+function main() {
+  const f = ([a, b]) => a + b;
+  console.log(f([1, 2]));
+}

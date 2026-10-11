@@ -391,6 +391,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
         .iter()
         .map(|(n, t)| Param {
             name: ident(n),
+            pattern: None,
             ty: ty(t),
             default: None,
             optional: false,

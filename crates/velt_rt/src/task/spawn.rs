@@ -193,7 +193,7 @@ unsafe extern "C" fn join_drop<const R: usize>(f: *mut VeltFut) {
         }
     }
     // Still running (or not yet observable here): take its output when it finishes.
-    super::runtime::handle().spawn(async move {
+    super::runtime::spawn(async move {
         if let Ok(mut out) = handle.await {
             out.result_drop = quiet;
         }
@@ -220,7 +220,7 @@ fn spawn_body<B: TaskBody, const R: usize>(
     result_drop: Option<ResultDropFn>,
 ) -> JoinHandle<TaskOutput<R>> {
     crate::io::publish_before_handoff();
-    super::runtime::handle().spawn(TaskFut::<B, R> {
+    super::runtime::spawn(TaskFut::<B, R> {
         body,
         result_size,
         result_drop,

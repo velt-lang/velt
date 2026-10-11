@@ -24,7 +24,7 @@ impl Parser<'_> {
 }
 
 /// The type initializer `e` plainly states (see the module docs).
-fn stated_type(e: &Expr) -> Option<TypeExpr> {
+pub(super) fn stated_type(e: &Expr) -> Option<TypeExpr> {
     let named = |n: &str| TypeExpr {
         kind: TypeExprKind::Named {
             path: vec![Ident {

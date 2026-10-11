@@ -320,6 +320,18 @@ impl<'a> Parser<'a> {
     fn finish_method_prop(&mut self, lo: u32, name: Ident, is_async: bool) -> PResult<ObjectProp> {
         let type_params = self.parse_generic_params()?;
         let params = self.parse_arrow_params()?;
+        if let Some(p) = params.iter().find(|p| p.rest) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "rest parameters of object-literal methods (`{}(...xs)`) are not supported yet",
+                        name.name
+                    ),
+                    p.name.span,
+                )
+                .with_note("take an array (`sum(xs: number[])`) and pass one, or declare a class with the method"),
+            );
+        }
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
