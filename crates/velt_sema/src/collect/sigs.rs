@@ -28,7 +28,17 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
                     Some(FnSource::Decl(decl)) => &decl.sig,
                     _ => extern_sig(cx, d, module),
                 };
+                // A type query in the signature that needs a body (`ReturnType<typeof f>` of a
+                // function with an inferred result) resolves it again when collection is done.
+                let reported = cx.diags.len();
+                cx.sig_fill = true;
+                cx.sig_deferred = false;
                 fill_sig(cx, d, sig, &Generics::default(), module);
+                cx.sig_fill = false;
+                if cx.sig_deferred {
+                    cx.diags.truncate(reported);
+                    cx.deferred_sigs.push((d, sig, module));
+                }
             }
             DefInfo::Adt(_) => adt_methods(cx, d),
             DefInfo::Iface(_) => iface_methods(cx, d),
@@ -43,6 +53,13 @@ pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
                 extension(cx, m, e, &mut used);
             }
         }
+    }
+}
+
+/// The signatures `resolve_sigs` deferred, now that bodies may be checked (`Ctx::bodies_ok`).
+pub(super) fn fill_deferred(cx: &mut Ctx) {
+    for (d, sig, module) in std::mem::take(&mut cx.deferred_sigs) {
+        fill_sig(cx, d, sig, &Generics::default(), module);
     }
 }
 

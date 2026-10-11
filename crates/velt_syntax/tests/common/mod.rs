@@ -123,6 +123,11 @@ pub fn ty(t: &TypeExpr) -> String {
             parts.push(format!("{ro}[{}]: {}", ty(&key.ty), ty(value)));
             format!("{{{}}}", parts.join("; "))
         }
+        TypeExprKind::Query(path) => {
+            let path: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
+            format!("typeof {}", path.join("."))
+        }
+        TypeExprKind::KeyOf(t) => format!("keyof {}", ty(t)),
         TypeExprKind::Null => "null".into(),
         TypeExprKind::Void => "void".into(),
         TypeExprKind::Predicate {

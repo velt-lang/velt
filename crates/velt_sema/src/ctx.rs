@@ -68,6 +68,18 @@ pub(crate) struct Ctx<'m> {
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
+    /// Type queries (`crate::type_queries`): the locals a body's type annotation may name
+    /// (`typeof x`), set by the body checker around each annotation it resolves.
+    pub query_locals: Vec<(String, TyId)>,
+    /// Collection is finished, so a type query may check a body (a function's inferred result,
+    /// a constant without a type annotation).
+    pub bodies_ok: bool,
+    /// A free function's signature is being resolved: a type query that needs a body defers it.
+    pub sig_fill: bool,
+    /// Set when the signature being resolved was deferred (`sig_fill`).
+    pub sig_deferred: bool,
+    /// Free functions whose signatures wait for `bodies_ok` (`collect::sigs::fill_deferred`).
+    pub deferred_sigs: Vec<(DefId, &'m velt_syntax::ast::FnSig, usize)>,
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
@@ -238,6 +250,11 @@ impl<'m> Ctx<'m> {
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
+            query_locals: vec![],
+            bodies_ok: false,
+            sig_fill: false,
+            sig_deferred: false,
+            deferred_sigs: vec![],
             checking_unused_aliases: false,
             shaped: HashSet::new(),
             shaping: vec![],

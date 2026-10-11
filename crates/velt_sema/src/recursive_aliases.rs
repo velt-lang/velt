@@ -127,7 +127,8 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
         } => {
             fields.iter().any(|f| names(&f.ty, name)) || names(&key.ty, name) || names(value, name)
         }
+        K::KeyOf(t) => names(t, name),
         K::Predicate { ty, .. } => ty.as_deref().is_some_and(|x| names(x, name)),
-        K::Literal(_) | K::Null | K::Void => false,
+        K::Literal(_) | K::Null | K::Void | K::Query(_) => false,
     }
 }

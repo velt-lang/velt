@@ -680,6 +680,49 @@ of the fields' types, as in TypeScript: `Person["name"]` is `string`. A key that
 is an error. The key is a string literal type or a union of them; on a type parameter it is not
 supported yet (#350).
 
+### Type queries and `keyof`
+
+`typeof x` in a type is the type of the value `x`, as in TypeScript: a module constant, a
+function, a local variable or parameter (in a function body), or a field of one (`typeof
+config.port`); `typeof ns.f` names an export of a namespace import. A constant initialized with a
+literal has that literal type (`const N = 4` gives `typeof N`, the type `4`). A function's type
+includes the result its body gives, so `ReturnType<typeof f>` names a result type nobody wrote
+down, even in the signature of another function. `ReturnType<F>` is the result type of function
+type `F`, and `Parameters<F>` its parameter types as a tuple.
+
+`keyof T` is the union of an object type's keys as string literal types (`keyof { a: number; b:
+string }` is `"a" | "b"`), and on a `Record` with literal keys it is the key type.
+
+```ts
+const DEFAULTS = { host: "localhost", port: 8080 };
+type Settings = typeof DEFAULTS; // { host: string; port: number }
+
+function parse(line: string) {
+  const [key, value] = line.split("=");
+  return { key, value };
+}
+
+function show(entry: ReturnType<typeof parse>): string {
+  return `${entry.key} -> ${entry.value}`;
+}
+
+function read(s: Settings, k: keyof typeof DEFAULTS): string {
+  return `${s[k]}`;
+}
+
+const s: Settings = { host: "example.org", port: 443 };
+console.log(show(parse("a=1")), read(s, "port")); // a -> 1 443
+```
+
+Not supported yet (each is an error): `typeof` of a generic, `async` or generator function
+(function types have no type parameters), of a class or enum itself (TypeScript's constructor
+and enum object types; the type of a class's instances is its name), of `this` and of a local
+function value; `typeof import("./m")`; type arguments after the name (`typeof f<string>`);
+`typeof` of a function or a constant without a type annotation in classes and interfaces (their
+fields and methods); `keyof` of a class, of a type parameter (#350) and of a string-keyed `Record`
+(TypeScript's `string | number`). A local's type is its declared type: TypeScript's `typeof x`
+sees a narrowing (`if (x !== null)`) that Velt's doesn't.
+
 ## Enums
 
 TypeScript-style enums only:

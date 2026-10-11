@@ -330,8 +330,12 @@ impl<'a> Walker<'a> {
                 self.ty(&key.ty);
                 self.ty(value);
             }
+            ast::TypeExprKind::KeyOf(t) => self.ty(t),
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
-            ast::TypeExprKind::Literal(_) | ast::TypeExprKind::Null | ast::TypeExprKind::Void => {}
+            ast::TypeExprKind::Literal(_)
+            | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Void
+            | ast::TypeExprKind::Query(_) => {}
         }
     }
 

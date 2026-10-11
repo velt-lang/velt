@@ -69,5 +69,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     impls::build_impls(cx);
     comparable::extension_impls(cx);
     iterable::extension_impls(cx);
+    cx.bodies_ok = true;
+    sigs::fill_deferred(cx);
     items
 }

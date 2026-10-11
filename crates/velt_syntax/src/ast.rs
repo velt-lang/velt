@@ -321,6 +321,10 @@ pub enum TypeExprKind {
         /// `readonly [key: string]: T`
         readonly: bool,
     },
+    /// `typeof x`, `typeof ns.f`, `typeof obj.field` (a type query: the type of a value).
+    Query(Vec<Ident>),
+    /// `keyof T`: the union of `T`'s keys.
+    KeyOf(Box<TypeExpr>),
     /// `null` in type position.
     Null,
     /// `void`

@@ -1,0 +1,84 @@
+// `typeof` in type positions, as in TypeScript: the type of a constant, function, local or
+// field (`typeof x`, `typeof cfg.port`), `ReturnType<typeof f>` and `Parameters<typeof f>`
+// (including a function whose result type is inferred), and `keyof typeof obj`.
+const config = { host: "localhost", port: 8080, tags: "a,b" };
+
+type Config = typeof config;
+type ConfigKey = keyof typeof config;
+
+const LIMIT = 10;
+const NAME = "velt";
+
+function describe(n: number) {
+  return { plain: [n, n * 2], label: `n=${n}` };
+}
+
+function labels(state: ReturnType<typeof describe>): string[] {
+  return state.plain.map((x) => `${state.label}:${x}`);
+}
+
+function twice(x: number): number {
+  return x * 2;
+}
+
+const apply = (f: typeof twice, v: number): number => f(v);
+
+function setting(k: ConfigKey): string {
+  return `${k}=${JSON.stringify(config[k])}`;
+}
+
+class TreeNode {
+  name: string;
+  parent: TreeNode | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function rootName(n: TreeNode): string {
+  let node = n;
+  while (node.parent !== null) {
+    node = node.parent as typeof node;
+  }
+  return node.name;
+}
+
+// The sigx pattern: a nested function whose parameter is another nested function's inferred
+// result.
+function props(n: number): string[] {
+  function collect(v: number) {
+    return { keys: [`k${v}`, `k${v + 1}`], count: 2 };
+  }
+  function keysOf(state: ReturnType<typeof collect>): string[] {
+    return state.keys.slice(0, state.count);
+  }
+  return keysOf(collect(n));
+}
+
+function main() {
+  const c: Config = { host: "example.org", port: 443, tags: "" };
+  console.log(c.host, c.port, c.tags.length);
+  const limit: typeof LIMIT = LIMIT;
+  const name: typeof NAME = "velt";
+  console.log(limit, name);
+  console.log(labels(describe(3)));
+  console.log(apply(twice, 21));
+  let port: typeof config.port = 5;
+  port += 1;
+  console.log(port);
+  const xs = [1, 2, 3];
+  const rest: typeof xs = xs.slice(1);
+  console.log(rest);
+  const args: Parameters<typeof twice> = [4];
+  console.log(twice(...args));
+  console.log(setting("host"), setting("port"), setting("tags"));
+  const root = new TreeNode("root");
+  const leaf = new TreeNode("leaf");
+  const mid = new TreeNode("mid");
+  mid.parent = root;
+  leaf.parent = mid;
+  console.log(rootName(leaf));
+  console.log(props(7));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  console.log(timer === null);
+}

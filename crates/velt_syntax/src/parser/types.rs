@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        let mut ty = if self.at_ident_like() {
+        let mut ty = if self.at_ident_like() && !self.at_keyof() {
             let named = self.parse_named_type_with(true)?;
             self.parse_array_suffixes(lo, named)
         } else {
@@ -238,12 +238,90 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
+            Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            _ if self.at_keyof() => {
+                self.bump(); // keyof
+                let inner = self.parse_type_no_union()?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::KeyOf(Box::new(inner)),
+                    span: self.span_from(lo),
+                })
+            }
             t if Self::is_ident_like(t) => self.parse_named_type(),
             _ => {
                 self.error_expected("type");
                 Err(Fail)
             }
         }
+    }
+
+    /// `keyof` as a type operator (not a type named `keyof`).
+    pub(super) fn at_keyof(&mut self) -> bool {
+        self.at_word("keyof")
+            && (Self::is_ident_like(self.nth(1))
+                || matches!(
+                    self.nth(1),
+                    Tok::Kw(Kw::Typeof) | Tok::LBrace | Tok::LParen | Tok::LBracket
+                ))
+    }
+
+    /// `typeof x` / `typeof ns.f` / `typeof obj.field` in a type (a type query). `typeof
+    /// import("m")` and type arguments after the name (`typeof f<string>`) are not supported yet:
+    /// they are reported here and parsed as an empty query, which sema skips.
+    fn parse_type_query(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.bump(); // typeof
+        if self.at(Tok::Kw(Kw::Import)) {
+            self.bump();
+            self.expect(Tok::LParen)?;
+            if matches!(self.peek(), Tok::Str(_)) {
+                self.bump();
+            }
+            self.expect(Tok::RParen)?;
+            while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
+                self.bump();
+                self.bump();
+            }
+            let span = self.span_from(lo);
+            self.error(
+                "`typeof import(...)` types are not supported yet (#936)",
+                span,
+            );
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Query(vec![]),
+                span,
+            });
+        }
+        let mut path = if self.at(Tok::Kw(Kw::This)) {
+            let span = self.cur_span();
+            self.bump();
+            vec![Ident {
+                name: "this".into(),
+                span,
+            }]
+        } else {
+            vec![self.parse_ident()?]
+        };
+        while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
+            self.bump();
+            path.push(self.take_ident());
+        }
+        if self.at(Tok::Lt) {
+            let args_lo = self.cur_lo();
+            let args = self.speculate(|p| p.parse_type_args());
+            if args.is_some() {
+                let span = self.span_from(args_lo);
+                self.error(
+                    "type arguments after `typeof f` (an instantiation expression) are not supported yet (#936)",
+                    span,
+                );
+                path.clear();
+            }
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Query(path),
+            span: self.span_from(lo),
+        })
     }
 
     /// A string / number / `true` / `false` literal (numbers may have a leading `-`).

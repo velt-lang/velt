@@ -1,5 +1,5 @@
-// Not supported yet: an interface with an index signature and methods or `extends`, and two
-// index signatures in one type.
+// Not supported yet: an interface with an index signature and methods or `extends`, two index
+// signatures in one type, and `typeof import(...)`.
 interface WithMethods {
   [key: string]: number;
   size(): number;
@@ -14,5 +14,7 @@ interface Extended extends Base {
 }
 
 type Two = { [k: string]: string; [i: number]: string };
+
+type Mod = typeof import("./other");
 
 function main() {}

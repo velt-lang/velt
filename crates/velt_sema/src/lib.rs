@@ -64,6 +64,7 @@ mod suggest;
 mod throws;
 mod ts_protocol;
 mod type_defaults;
+mod type_queries;
 mod types;
 mod unions;
 mod utility_types;

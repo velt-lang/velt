@@ -68,6 +68,16 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             ));
             format!("{{ {} }}", fs.join("; "))
         }
+        T::Query(path) => {
+            let path: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
+            format!("typeof {}", path.join("."))
+        }
+        T::KeyOf(t) => match t.kind {
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("keyof ({})", written(t))
+            }
+            _ => format!("keyof {}", written(t)),
+        },
         T::Null => "null".into(),
         T::Void => "void".into(),
         T::Predicate { param, ty, asserts } => {

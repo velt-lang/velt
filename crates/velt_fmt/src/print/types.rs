@@ -81,6 +81,11 @@ impl<'a> Printer<'a> {
                 let members = index_sig_members(fields, key, value, *readonly);
                 self.index_sig_type(&members, t.span)
             }
+            TypeExprKind::Query(path) => {
+                let path: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+                text(format!("typeof {}", path.join(".")))
+            }
+            TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
             TypeExprKind::Predicate { param, ty, asserts } => {
@@ -242,6 +247,7 @@ impl<'a> Printer<'a> {
         match t.kind {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
+            | TypeExprKind::KeyOf(_)
             | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)

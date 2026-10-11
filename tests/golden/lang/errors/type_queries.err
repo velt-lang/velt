@@ -1,0 +1,11 @@
+type_queries.vlt:30:21: error: no field `y` on type `Point`
+type_queries.vlt:19:10: error: `typeof id` of a generic function is not supported yet (#936)
+  = note: Velt's function types have no type parameters
+type_queries.vlt:20:10: error: `typeof load` of an async function is not supported yet (#936)
+type_queries.vlt:21:10: error: `typeof Point` (the type of `Point` itself, not of its values) is not supported yet (#936)
+  = note: the type of its instances is `Point`
+type_queries.vlt:22:10: error: `Shape` is a type, not a value: `typeof` needs a value
+type_queries.vlt:23:10: error: cannot find `missing` in this scope
+type_queries.vlt:24:10: error: `keyof Point` is not supported yet (#936): `keyof` works on object types
+type_queries.vlt:25:10: error: `keyof Record<string, f64>` (`string | number` in TypeScript) is not supported yet (#936)
+type_queries.vlt:26:10: error: `ReturnType` needs a function type; found `f64`
