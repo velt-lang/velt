@@ -1,0 +1,13 @@
+// A value that may be a symbol is not converted to a string implicitly either: JavaScript throws
+// a `TypeError` for `${u}` and `"" + u` when `u` holds a symbol (TypeScript: TS2731 and TS2469).
+function show(u: string | symbol): string {
+  return `${u}`;
+}
+
+function label(u: string | symbol | null): string {
+  return "key: " + u;
+}
+
+function main() {
+  console.log(show("a"), label("b"));
+}

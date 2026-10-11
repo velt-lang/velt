@@ -1,0 +1,17 @@
+// A symbol-keyed member's name is out of reach of string keys: a quoted key that reads like a
+// symbol (`"[Symbol(k)]"`) is an ordinary string key, and `JSON.parse` never fills a member a
+// symbol names, whatever keys the text has (Node's `JSON.parse` makes no symbol keys).
+// Expected output from node.
+const K = Symbol("k");
+
+type T = { a: number; [K]?: boolean };
+type Both = { "[Symbol(k)]": number; [K]: number };
+
+function main() {
+  const q = { "[x]": 3, "[Symbol(k)]": 2 };
+  console.log(q, q["[Symbol(k)]"], q["[x]"], Object.keys(q), JSON.stringify(q));
+  const t: T = JSON.parse('{"a":1,"[Symbol(k)]":true}');
+  console.log(K in t, t.a, t[K] === true);
+  const b: Both = { "[Symbol(k)]": 1, [K]: 2 };
+  console.log(b, b["[Symbol(k)]"], b[K], JSON.stringify(b));
+}

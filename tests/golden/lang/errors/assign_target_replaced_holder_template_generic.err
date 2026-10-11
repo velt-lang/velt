@@ -1,0 +1,1 @@
+assign_target_replaced_holder_template_generic.vlt:27:3: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

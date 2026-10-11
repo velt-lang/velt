@@ -193,7 +193,7 @@ impl FnCx<'_, '_> {
 
     /// A primitive member (string, number, boolean, ...) that union value `h` may hold here
     /// (members a narrowing ruled out don't count).
-    fn primitive_member(&mut self, h: &hir::Expr) -> Option<TyId> {
+    pub(super) fn primitive_member(&mut self, h: &hir::Expr) -> Option<TyId> {
         let members = self.cx.union_members(h.ty)?;
         let allowed = self.narrowed_variants(h);
         let may_hold = |i: usize| allowed.as_ref().is_none_or(|vs| vs.contains(&(i as u32)));
@@ -208,6 +208,7 @@ impl FnCx<'_, '_> {
                     | TyKind::Float(_)
                     | TyKind::Bool
                     | TyKind::Str
+                    | TyKind::Symbol
                     | TyKind::Unit
                     | TyKind::Literal(_)
             )
@@ -531,7 +532,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `match (s) { <members satisfying pred> => true, _ => false }`.
-    fn type_test(
+    pub(super) fn type_test(
         &mut self,
         s: hir::Expr,
         pred: &dyn Fn(&Ctx, TyId) -> bool,
@@ -680,7 +681,7 @@ impl FnCx<'_, '_> {
 }
 
 /// A built type test and, if it can never be true on a union, the union's name.
-struct TypeTest {
-    expr: hir::Expr,
-    never_msg: Option<String>,
+pub(super) struct TypeTest {
+    pub(super) expr: hir::Expr,
+    pub(super) never_msg: Option<String>,
 }

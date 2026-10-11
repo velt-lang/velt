@@ -164,7 +164,10 @@ impl FnCx<'_, '_> {
         }
         let tn = self.cx.display(t);
         let mut d = Diagnostic::error(
-            format!("no field `{}` on type `{tn}`", prop.name),
+            format!(
+                "no field `{}` on type `{tn}`",
+                self.cx.shown_name(&prop.name)
+            ),
             prop.span,
         );
         if self.adt_of(t).is_some() {
@@ -179,10 +182,13 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         }
         if self.method_exists(t, &prop.name) {
-            d = d.with_note(format!(
-                "`{}` is a method: call it with `.{}()`",
-                prop.name, prop.name
-            ));
+            d = d.with_note(match self.cx.key_spelling(&prop.name) {
+                Some(key) => format!("`{key}` is a method: call it with `o{key}()`"),
+                None => format!(
+                    "`{}` is a method: call it with `.{}()`",
+                    prop.name, prop.name
+                ),
+            });
         }
         self.cx.error(d);
     }
@@ -402,6 +408,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let t = obj.ty;
+        // `o[KEY]` with a symbol constant: the member the symbol names.
+        if let Some(key) = self.symbol_key_of(index) {
+            if self.has_fields(t, &key) {
+                return self.symbol_index(obj, key, index, want, span);
+            }
+        }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)

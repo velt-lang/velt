@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
 use crate::ctx::Ctx;
-use crate::defs::{member_key, MethodRef};
+use crate::defs::MethodRef;
 use crate::hir::{AdtKind, DefId, TyId};
 
 pub(super) fn check_classes(cx: &mut Ctx) {
@@ -59,7 +59,8 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
             .filter(|m| m.is_override && !m.decl.sig.name.is_private_name())
         {
             let name = &m.decl.sig.name;
-            let key = member_key(&name.name, m.is_setter);
+            let module = cx.adt(d).expect("ICE: adt").module;
+            let key = cx.method_key(module, name, m.is_setter);
             match introducer(cx, d, &key) {
                 // Generic methods get no vtable slot: calls through a base class are rejected
                 // (`body::expr::method_call`), calls on the concrete class are direct.
@@ -100,7 +101,7 @@ fn introducer(cx: &Ctx, d: DefId, name: &str) -> Option<DefId> {
         if instance.is_some() {
             let is_override = a.decl.is_some_and(|t| {
                 t.methods.iter().any(|x| {
-                    x.is_override && member_key(&x.decl.sig.name.name, x.is_setter) == name
+                    x.is_override && cx.method_key(a.module, &x.decl.sig.name, x.is_setter) == name
                 })
             });
             found = Some(c);
@@ -183,10 +184,10 @@ fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden) {
 /// `override` rules for `d`'s own methods; overrides replace slots, overridden ones get one.
 fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable) {
     let a = cx.adt(d).expect("ICE: adt");
-    let (decl, base_ty) = (a.decl.expect("ICE: adt decl"), a.base);
+    let (decl, base_ty, module) = (a.decl.expect("ICE: adt decl"), a.base, a.module);
     for m in decl.methods.iter().filter(|m| !m.is_static) {
         let name = &m.decl.sig.name;
-        let key = member_key(&name.name, m.is_setter);
+        let key = cx.method_key(module, name, m.is_setter);
         let Some(mref) = cx.adt(d).and_then(|a| a.methods.get(&key)).copied() else {
             continue;
         };

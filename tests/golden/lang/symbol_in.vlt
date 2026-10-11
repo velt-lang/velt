@@ -1,0 +1,69 @@
+// `KEY in o` with a symbol key, as in Node: an optional member (`[KEY]?: T`) is tested at run
+// time (absent: false), a declared one is always there, a union value answers for the member it
+// holds, and `in` narrows a union to the members that may have the key. Built-in arrays, maps,
+// sets and generators have `Symbol.iterator`, async generators `Symbol.asyncIterator`. Quoted
+// keys starting with `[` (`"[x]"`) are ordinary keys, and a class may declare a getter with a
+// symbol key. Expected output from node.
+const CELL = Symbol("cell");
+const TAG = Symbol.for("velt:tag");
+
+type Cell = { value: number; [CELL]?: boolean };
+type Maybe = { value: number; [CELL]?: boolean | null };
+
+interface Branded {
+  a: number;
+  [CELL]: boolean;
+}
+
+interface Plain {
+  b: number;
+}
+
+interface Tagged {
+  [TAG]?: string;
+  name: string;
+}
+
+class Named {
+  get [Symbol.toStringTag](): string {
+    return "Named";
+  }
+  [Symbol.iterator](): Iterator<number> {
+    return [1, 2][Symbol.iterator]();
+  }
+}
+
+function pick(x: Branded | Plain): number {
+  if (CELL in x) {
+    return x.a;
+  }
+  return x.b;
+}
+
+function* count(): Generator<number> {
+  yield 1;
+}
+
+async function* ticks(): AsyncGenerator<number> {
+  yield 1;
+}
+
+function main() {
+  const absent: Cell = { value: 1 };
+  const present: Cell = { value: 1, [CELL]: false };
+  console.log(CELL in absent ? 1 : 2, !(CELL in absent), CELL in present);
+  const nul: Maybe = { value: 2, [CELL]: null };
+  const none: Maybe = { value: 2 };
+  console.log(CELL in nul, CELL in none);
+  const t: Tagged = { name: "t" };
+  const u: Tagged = { name: "u", [TAG]: "yes" };
+  console.log(TAG in t, TAG in u, TAG === Symbol.for("velt:tag"));
+  console.log(pick({ a: 1, [CELL]: true }), pick({ b: 2 }));
+  const m = new Map<string, number>();
+  console.log(Symbol.iterator in [1, 2], Symbol.iterator in m, Symbol.iterator in new Set<number>());
+  console.log(Symbol.iterator in count(), Symbol.asyncIterator in ticks());
+  const n = new Named();
+  console.log(n[Symbol.toStringTag], Symbol.toStringTag in n, Symbol.iterator in n, CELL in n);
+  const q = { "[x]": 3, b: 1 };
+  console.log(q, q["[x]"]);
+}

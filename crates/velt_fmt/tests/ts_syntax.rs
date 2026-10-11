@@ -68,6 +68,17 @@ fn object_literal_methods() {
 }
 
 #[test]
+fn symbol_keys() {
+    round_trips("const KEY: unique symbol = Symbol(\"k\");\n");
+    round_trips(
+        "interface VNode {\n  readonly [KEY]: true;\n  [Symbol.iterator](): Iterator<number>;\n}\n",
+    );
+    round_trips("type T = { [KEY]?: number };\n");
+    round_trips("function f(o: T): boolean {\n  return KEY in o && Symbol.iterator in o;\n}\n");
+    round_trips("const o = { [KEY]: 1, a: 2 };\n");
+}
+
+#[test]
 fn destructured_parameters_and_types_from_defaults() {
     round_trips(
         "function f([a, b = 1]: [string, number], { c, d: e }: P): string {

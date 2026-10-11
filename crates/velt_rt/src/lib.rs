@@ -60,6 +60,7 @@ pub mod str;
 pub mod str_array;
 pub mod str_ops;
 pub mod strbuf;
+pub mod symbol;
 pub mod task;
 pub mod timer;
 pub mod tls;

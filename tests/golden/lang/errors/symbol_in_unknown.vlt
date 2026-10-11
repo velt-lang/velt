@@ -1,0 +1,20 @@
+// `KEY in o` must be answered correctly or rejected: a well-known symbol other than
+// `Symbol.iterator` / `Symbol.asyncIterator` on a built-in object (`Symbol.toStringTag in m` is
+// true in Node) is an error, never a silent `false`. A primitive right operand is an error
+// (TypeScript: TS2322; JavaScript throws a `TypeError`), and so is a symbol key a type lacks
+// (TS7053), shown as written (`[KEY]`).
+const KEY = Symbol("app:key");
+
+interface Keyed {
+  [KEY]: number;
+}
+
+function main() {
+  const m = new Map<string, number>();
+  console.log(Symbol.toStringTag in m);
+  const s = "text";
+  console.log(KEY in s);
+  const k: Keyed = { [KEY]: 1 };
+  const o = { a: 1 };
+  console.log(k, o[KEY]);
+}

@@ -9,7 +9,7 @@ use velt_syntax::ast;
 use super::driver::detached;
 use super::Want;
 use crate::ctx::Ctx;
-use crate::defs::{member_key, FnSource};
+use crate::defs::FnSource;
 use crate::hir::{DefId, TyId};
 
 pub(crate) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
@@ -101,7 +101,7 @@ fn own_iface_defaults(cx: &mut Ctx, d: DefId) {
     let mut names = i.generics.names.clone();
     names.push("Self".into());
     for m in &decl.methods {
-        let key = member_key(&m.sig.name.name, m.is_setter);
+        let key = cx.method_key(module, &m.sig.name, m.is_setter);
         let Some(slot) = cx
             .iface(d)
             .and_then(|i| i.methods.iter().position(|x| x.name == key))
@@ -137,7 +137,7 @@ fn inherited_iface_defaults(cx: &mut Ctx, d: DefId) {
         .map(|decl| {
             decl.methods
                 .iter()
-                .map(|m| member_key(&m.sig.name.name, m.is_setter))
+                .map(|m| cx.method_key(i.module, &m.sig.name, m.is_setter))
                 .collect()
         })
         .unwrap_or_default();
@@ -156,7 +156,7 @@ fn inherited_iface_defaults(cx: &mut Ctx, d: DefId) {
                 .decl?
                 .methods
                 .iter()
-                .any(|x| member_key(&x.sig.name.name, x.is_setter) == m.name);
+                .any(|x| cx.method_key(ai.module, &x.sig.name, x.is_setter) == m.name);
             let am = ai.methods.iter().find(|x| x.name == m.name)?;
             declares.then(|| (a.args.clone(), am.params.clone()))
         });

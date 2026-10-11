@@ -1,0 +1,23 @@
+// Symbol keys in a script (top-level statements, no `main`): a top-level `const` that a computed
+// key names stays a module constant, so `[K]` resolves in object literals, interfaces, classes
+// and `K in o` wherever the file uses it. Expected output from node.
+const K = Symbol("k");
+const R = Symbol.for("r");
+const o = { a: 1, [K]: 2 };
+console.log(o[K], K in o, o);
+
+interface I {
+  [K]: number;
+  b: string;
+}
+const i: I = { [K]: 5, b: "x" };
+console.log(i[K], K in i, R in i, i);
+
+class Tagged {
+  [R]: string = "registered";
+  get [K](): number {
+    return 7;
+  }
+}
+const t = new Tagged();
+console.log(t[R], t[K], K in t, R in t, t);

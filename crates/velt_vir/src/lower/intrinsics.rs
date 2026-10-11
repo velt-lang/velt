@@ -35,6 +35,8 @@ impl FnLower<'_, '_> {
                 self.gen_embed_value(&e)
             }
             (I::Print, _) => self.print(1, args),
+            (I::SymbolStatic, [_, _, _]) => self.symbol_static(args),
+            (I::SymbolRegistry, []) => self.symbol_registry(),
             (I::FieldAbsent, []) => {
                 // Outside a literal (which keeps the flag clear, adt.rs) it is just `null`.
                 let t = self.sub(ty);
@@ -48,7 +50,8 @@ impl FnLower<'_, '_> {
                 }
             }
             (I::PrintErr, _) => self.print(2, args),
-            (I::ToString, [a]) => self.stringify(a, ty),
+            (I::ToString, [a]) => self.stringify(a, ty, false),
+            (I::TemplateToString, [a]) => self.stringify(a, ty, true),
             (I::StrConcat, [a, b]) => self.str_concat(a, b, ty),
             (I::StrLen, [a]) => {
                 let v = self.expr(a);

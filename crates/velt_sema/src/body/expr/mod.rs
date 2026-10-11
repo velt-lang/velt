@@ -69,6 +69,7 @@ pub(crate) mod static_copy;
 mod std_glue;
 mod structured_clone;
 mod supers;
+mod symbol_keys;
 mod sync;
 mod tasks;
 mod truthiness;

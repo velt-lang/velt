@@ -62,9 +62,14 @@ impl FnCx<'_, '_> {
                 if self.record_args(obj.ty).is_some() {
                     return Some(AssignTarget::Record(obj));
                 }
-                // `c["v"] = x` with a constant key is `c.v = x`: a setter or a getter-only
-                // accessor is handled the same way.
-                if let Some(name) = self.single_key(index) {
+                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
+                // key the member it names: a setter or a getter-only accessor is handled the
+                // same way.
+                let key = match self.symbol_key_of(index) {
+                    Some(key) => Some(key),
+                    None => self.single_key(index),
+                };
+                if let Some(name) = key {
                     let prop = ast::Ident {
                         name,
                         span: index.span,

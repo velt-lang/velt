@@ -1,0 +1,8 @@
+{ type: 'div', key: null, [Symbol(sigx:vnode)]: true }
+true true false
+{ value: 1, [Symbol(sigx.model)]: true } true 1
+{"type":"div","key":null} {"value":1} [ 'type', 'key' ]
+true false true false
+Box { name: 'box', [Symbol(sigx:vnode)]: 4 } 4 box
+true false
+{ x: 2, [Symbol(sigx:asyncCell)]: 1 } 3

@@ -1,0 +1,8 @@
+// Joining an array that holds a symbol stops the program with JavaScript's `TypeError`
+// (`Array.prototype.join` converts each element with `ToString`, which throws for a symbol);
+// `String(s)` and `console.log` write a symbol, and the line before the join is printed.
+function main() {
+  const s = Symbol("x");
+  console.log(String(s), [s]);
+  console.log([s].join(","));
+}

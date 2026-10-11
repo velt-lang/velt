@@ -1,0 +1,3 @@
+2 true { a: 1, [Symbol(k)]: 2 }
+5 true false { b: 'x', [Symbol(k)]: 5 }
+registered 7 true true Tagged { [Symbol(r)]: 'registered' }

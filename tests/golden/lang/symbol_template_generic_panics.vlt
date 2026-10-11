@@ -1,0 +1,27 @@
+// A template literal part whose type is a type parameter instantiated as `symbol` converts it
+// with JavaScript's `ToString`, which throws a `TypeError` for a symbol, as `[s].join()` does
+// (sema rejects `${s}` when it sees the symbol). Velt panics (exit code 101); `String(x)` writes
+// the symbol, and the lines before the conversion are printed.
+function show<T>(x: T): string {
+  return `v=${x}`;
+}
+
+function text<T>(x: T): string {
+  return String(x);
+}
+
+class Wrap<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  describe(): string {
+    return `w=${this.v}`;
+  }
+}
+
+function main() {
+  console.log(show(1), show("s"), show([1, 2]), new Wrap(true).describe());
+  console.log(text(Symbol("ok")));
+  console.log(new Wrap(Symbol("x")).describe());
+}

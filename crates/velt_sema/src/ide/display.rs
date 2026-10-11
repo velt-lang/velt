@@ -63,6 +63,7 @@ impl Names {
             TyKind::Float(FloatTy::F64) => "f64".into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
+            TyKind::Symbol => "symbol".into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "unknown".into(),

@@ -2,7 +2,8 @@
 //! outside declarations, they run, in order, in a generated `main` (`async` when one of them
 //! awaits). A top-level `const`/`let` moves into `main` with them, unless a declaration (a
 //! function, class, struct, `extend` block or a module constant that stays) refers to it
-//! (`script_names`): then it stays a module constant, which those declarations can see.
+//! (`script_names`) or a computed key names it (`[KEY]`, a symbol or string constant): then it
+//! stays a module constant, which those declarations can see.
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! reject statements in an imported module (only the root file runs them).
@@ -90,12 +91,23 @@ impl Parser<'_> {
         *items = rest;
     }
 
-    /// Per item: is it a top-level variable that stays at module level? Exported ones do, and
-    /// those a staying declaration refers to (to a fixed point).
+    /// Per item: is it a top-level variable that stays at module level? Exported ones do, a
+    /// `const` a computed key `[NAME]` names anywhere in the file (sema resolves the key to the
+    /// symbol or string the module constant holds), and those a staying declaration refers to
+    /// (to a fixed point).
     fn kept_vars(&self, items: &[Item]) -> Vec<bool> {
         let mut keep: Vec<bool> = items
             .iter()
-            .map(|i| !matches!(i.kind, ItemKind::Var(_)) || i.exported)
+            .map(|i| match &i.kind {
+                ItemKind::Var(v) => {
+                    i.exported
+                        || (v.kind == VarKind::Const
+                            && bound_names(&v.pattern)
+                                .iter()
+                                .any(|n| self.computed_keys.contains(n)))
+                }
+                _ => true,
+            })
             .collect();
         let free: Vec<_> = items.iter().map(super::script_names::free_names).collect();
         loop {
