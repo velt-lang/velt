@@ -318,15 +318,22 @@ fn install_archive(
     let dest = root.version_dir(version);
     // A version never changes: one installed meanwhile (another launcher) is kept, not
     // swapped out from under the commands running it.
-    install_dir(archive, stem, &dest, "toolchain archive", Existing::Keep, |dir| {
-        let exe = velt_exe(dir);
-        (!exe.is_file()).then(|| {
-            format!(
-                "it has no {}",
-                exe.strip_prefix(dir).unwrap_or(&exe).display()
-            )
-        })
-    })?;
+    install_dir(
+        archive,
+        stem,
+        &dest,
+        "toolchain archive",
+        Existing::Keep,
+        |dir| {
+            let exe = velt_exe(dir);
+            (!exe.is_file()).then(|| {
+                format!(
+                    "it has no {}",
+                    exe.strip_prefix(dir).unwrap_or(&exe).display()
+                )
+            })
+        },
+    )?;
     Ok(dest)
 }
 
@@ -360,7 +367,10 @@ pub fn install_toolchain_from_file(
         .map_err(|e| format!("cannot read {}: {e}", file.display()))?
         .len();
     if size > MAX_ARCHIVE as u64 {
-        return Err(format!("{} is larger than a toolchain archive", file.display()));
+        return Err(format!(
+            "{} is larger than a toolchain archive",
+            file.display()
+        ));
     }
     let archive =
         std::fs::read(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
@@ -372,9 +382,10 @@ pub fn install_toolchain_from_file(
     } else {
         let beside = |n: &str| file.with_file_name(n);
         let read = |p: &Path| std::fs::read(p).ok();
-        let (Some(sums), Some(signature)) =
-            (read(&beside(SUMS_FILE)), read(&beside(&format!("{SUMS_FILE}.sig"))))
-        else {
+        let (Some(sums), Some(signature)) = (
+            read(&beside(SUMS_FILE)),
+            read(&beside(&format!("{SUMS_FILE}.sig"))),
+        ) else {
             return Err(format!(
                 "cannot check {}: put its release's {SUMS_FILE} and {SUMS_FILE}.sig beside it, or \
                  pass --unverified to install it unchecked",
