@@ -478,8 +478,36 @@ impl VisitMut for Rhs<'_, '_> {
     }
 }
 
+/// Does the program assign into an object literal read as a field of another (the shape of a
+/// [`Candidate`])? Most programs do not, and then nothing else needs to be looked at.
+fn any_candidate(cx: &mut Ctx) -> bool {
+    let mut found = false;
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+            continue;
+        };
+        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+                if let E::Field { base, .. } = &place.kind {
+                    found |= matches!(cx.ty.kind(base.ty), &TyKind::Adt(d, _)
+                        if adt_kind(cx, d) == Some(AdtKind::Anon))
+                        && matches!(unnarrowed(base).kind, E::Field { .. });
+                }
+            }
+        });
+        cx.defs[i] = Some(Def::Fn(f));
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 /// Report the assignments the module docs describe.
 pub(crate) fn check(cx: &mut Ctx) {
+    if !any_candidate(cx) {
+        return;
+    }
     let slots = fn_slots(cx);
     let mut fns: Vec<Option<Effects>> = (0..cx.defs.len()).map(|_| None).collect();
     let (mut values, mut methods) = (Vec::new(), Vec::new());
@@ -859,6 +887,14 @@ fn candidate(scan: &mut Scan<'_, '_>, span: Span, place: &Expr, value: &Expr) ->
         parent_text: text(cx, names, parent),
         target_text: format!("{}.{}", text(cx, names, h), field_name(cx, holder, *index)),
     })
+}
+
+/// `e` without the narrowing around it (`o.inner!`).
+fn unnarrowed(mut e: &Expr) -> &Expr {
+    while let E::UnwrapSome(x, _) | E::Downcast(x) | E::UnwrapVariant { expr: x, .. } = &e.kind {
+        e = x;
+    }
+    e
 }
 
 /// `e` without the narrowing around it (`o.inner!`), recording a layer for each type it is
