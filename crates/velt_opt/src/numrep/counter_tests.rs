@@ -244,7 +244,7 @@ fn integer_counters_read_through_a_copy_are_capped_within_their_type() {
         let n = Local(f.locals.len() as u32);
         let (t, u) = (Local(n.0 + 1), Local(n.0 + 2));
         for _ in 0..3 {
-            f.locals.push(velt_vir::vir::LocalDecl { ty, name: None });
+            f.locals.push(velt_vir::vir::LocalDecl::new(ty, None));
         }
         f.blocks[0].stmts.insert(
             0,
@@ -265,10 +265,7 @@ fn integer_counters_read_through_a_copy_are_capped_within_their_type() {
         f.locs.clear();
         // `len` is compared, so it is tracked.
         let cmp = Local(f.locals.len() as u32);
-        f.locals.push(velt_vir::vir::LocalDecl {
-            ty: Ty::Bool,
-            name: None,
-        });
+        f.locals.push(velt_vir::vir::LocalDecl::new(Ty::Bool, None));
         let last = f.blocks.len() - 1;
         f.blocks[last].stmts.push(Stmt::Assign(
             Place::local(cmp),
@@ -288,14 +285,8 @@ fn a_sum_of_bounded_values_is_capped_by_its_trips() {
         Local(f.locals.len() as u32),
         Local(f.locals.len() as u32 + 1),
     );
-    f.locals.push(velt_vir::vir::LocalDecl {
-        ty: Ty::U8,
-        name: None,
-    });
-    f.locals.push(velt_vir::vir::LocalDecl {
-        ty: Ty::F64,
-        name: None,
-    });
+    f.locals.push(velt_vir::vir::LocalDecl::new(Ty::U8, None));
+    f.locals.push(velt_vir::vir::LocalDecl::new(Ty::F64, None));
     let (bi, si) = f
         .blocks
         .iter()

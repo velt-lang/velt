@@ -25,18 +25,11 @@ fn load(l: u32, ty: Ty) -> Rvalue {
 
 fn leaf(symbol: &str, v: i128) -> Function {
     Function {
-        symbol: symbol.into(),
-        params: vec![],
-        ret: Ty::I64,
-        locals: vec![],
         blocks: vec![BasicBlock {
             stmts: vec![],
             term: Terminator::Return(int(v, Ty::I64)),
         }],
-        linkage: Linkage::Internal,
-        locs: vec![],
-        param_attrs: vec![],
-        is_poll: false,
+        ..Function::new(symbol.into(), vec![], Ty::I64, Linkage::Internal)
     }
 }
 
@@ -71,7 +64,7 @@ pub(super) fn vtable_program() -> Program {
         Ty::U8,   // 9 byte
         Ty::I32,  // 10 exit code
     ];
-    let locals = tys.iter().map(|&ty| LocalDecl { ty, name: None }).collect();
+    let locals = tys.iter().map(|&ty| LocalDecl::new(ty, None)).collect();
     let field = |n| {
         Operand::Copy(Place {
             local: Local(4),
@@ -178,15 +171,9 @@ pub(super) fn vtable_program() -> Program {
         ret_block(3),
     ];
     let main = Function {
-        symbol: "velt_main".into(),
-        params: vec![],
-        ret: Ty::I32,
         locals,
         blocks,
-        linkage: Linkage::Export,
-        locs: vec![],
-        param_attrs: vec![],
-        is_poll: false,
+        ..Function::new("velt_main".into(), vec![], Ty::I32, Linkage::Export)
     };
     Program {
         aggs: vec![
@@ -204,7 +191,6 @@ pub(super) fn vtable_program() -> Program {
             },
         ],
         funcs: vec![main, leaf("f1", 4), leaf("f2", 2)],
-        externs: vec![],
         statics: vec![
             StaticData {
                 bytes: vec![0; 24],
@@ -221,7 +207,7 @@ pub(super) fn vtable_program() -> Program {
                 relocs: vec![],
             },
         ],
-        files: vec![],
+        ..Default::default()
     }
 }
 
