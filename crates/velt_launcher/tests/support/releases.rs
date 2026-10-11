@@ -147,6 +147,23 @@ impl Releases {
         files.insert(path.into(), index.into_bytes());
     }
 
+    /// Publish a signed index whose `releases` array is `entries` (JSON objects, as written).
+    pub fn index_entries(&self, entries: &[&str]) {
+        use std::sync::atomic::Ordering;
+        let generated = self.generated.fetch_add(1, Ordering::Relaxed) + 1;
+        let index = format!(
+            "{{\"format\": 1, \"generated\": {generated}, \"releases\": [{}]}}",
+            entries.join(", ")
+        );
+        let path = "/releases/download/index/releases.json";
+        let mut files = self.files.lock().unwrap();
+        files.insert(
+            format!("{path}.sig"),
+            self.signer.sign(index.as_bytes()).as_ref().to_vec(),
+        );
+        files.insert(path.into(), index.into_bytes());
+    }
+
     pub fn url(&self) -> String {
         format!("http://{}", self.server.as_ref().unwrap().addr())
     }

@@ -652,3 +652,103 @@ fn install_from_a_downloaded_archive() {
     );
     assert!(err.contains("--unverified goes with --from"), "{err}");
 }
+
+/// The launcher tells users of a version with an advisory (or yanked), from the last index it
+/// fetched, once a day per version.
+#[test]
+fn a_version_with_an_advisory_says_so_once_a_day() {
+    let releases = Releases::new(&["0.1.0", "0.1.1"]);
+    releases.index_entries(&[
+        r#"{"version": "0.1.0", "advisory": "TLS certificates are not checked", "security": true}"#,
+        r#"{"version": "0.1.1"}"#,
+        // Escape sequences and a forged line in the (signed) text are not printed as they are.
+        r#"{"version": "0.0.9", "yanked": "\u001b[31mred\u001b]0;title\u0007\r\nvelt: all good\u202e"}"#,
+    ]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    let (listed, _) = text(&m.run(&m.work, &["toolchain", "list", "--available"], &[]));
+    assert!(
+        listed.contains("0.0.9  (yanked: ?[31mred?]0;title?  velt: all good?)"),
+        "{listed:?}"
+    );
+    // Reading the index keeps it (here `list --available`; also installing by a requirement).
+    m.ok(&m.work, &["toolchain", "list", "--available"]);
+    let (_, stderr) = text(&m.run(&m.work, &["+0.1.0", "build"], &[]));
+    assert!(
+        stderr.contains("velt 0.1.0 has a security problem: TLS certificates are not checked")
+            && stderr.contains("velt 0.1.1 doesn't have it"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
+    let (_, again) = text(&m.run(&m.work, &["+0.1.0", "build"], &[]));
+    assert!(!again.contains("security problem"), "once a day: {again}");
+    // Offline too: the notice comes from the kept index.
+    std::fs::remove_dir_all(m.root.join("notices")).unwrap();
+    let (_, offline) = text(&m.run(
+        &m.work,
+        &["+0.1.0", "build"],
+        &[("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")],
+    ));
+    assert!(offline.contains("security problem"), "{offline}");
+}
+
+/// `velt update` in a pinned package runs the newest *published* version the pin accepts,
+/// installing it; without the network it goes on with the newest installed.
+#[test]
+fn update_installs_the_newest_published_patch() {
+    let releases = Releases::new(&["0.1.0", "0.1.2"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    let pkg = m.package("app", Some("0.1"));
+    // Offline: the installed 0.1.0, with a note.
+    let out = m.run(
+        &pkg,
+        &["update"],
+        &[("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")],
+    );
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("not looking for a newer velt"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.0")), "{stdout}");
+    // Online: 0.1.2 is installed and runs `update`.
+    let out = m.run(&pkg, &["update"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("installing velt 0.1.2"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+    assert!(stdout.contains("args=update"), "{stdout}");
+}
+
+/// `velt update` never moves to an older version than the newest installed one the pin
+/// accepts (one the index doesn't list: a mirror, an archive install), and only a package's pin
+/// takes the newest published version: `+0.1` and `$VELT_TOOLCHAIN` keep to what is installed.
+#[test]
+fn update_never_goes_back_and_only_follows_a_pin() {
+    let releases = Releases::new(&["0.1.0", "0.1.2", "0.1.3"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.3"]);
+    releases.index(&[("0.1.0", None), ("0.1.2", None)]);
+    let pkg = m.package("app", Some("0.1"));
+    let out = m.run(&pkg, &["update"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(!stderr.contains("installing"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.3")), "{stdout}");
+    // Outside a package, a requirement chosen by hand doesn't fetch 0.1.2.
+    let releases = Releases::new(&["0.1.0", "0.1.2"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    for (args, env) in [
+        (&["+0.1", "update"][..], &[][..]),
+        (&["update"][..], &[("VELT_TOOLCHAIN", "0.1")][..]),
+    ] {
+        let out = m.run(&m.work, args, env);
+        let (stdout, stderr) = text(&out);
+        assert!(!stderr.contains("installing"), "{args:?}: {stderr}");
+        assert!(
+            same(&prefix_of(&stdout), &m.toolchain("0.1.0")),
+            "{args:?}: {stdout}{stderr}"
+        );
+    }
+    assert!(!m.root.join("toolchains/0.1.2").exists());
+}

@@ -255,7 +255,8 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
    package's [`velt.lock.json`](manifest.md#veltlockjson) records when the field accepts it
    (installed first if it is missing), so every machine builds a commit with the same velt;
    otherwise the newest installed version the field accepts. `velt update` takes the newest
-   *installed* one (`velt toolchain install 0.2` fetches a newer patch first),
+   *published* one the field accepts, installing it first, or the newest installed one when
+   that is newer (without the network, the newest installed one),
    which then records itself in the lock;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
@@ -294,6 +295,13 @@ $ velt toolchain list
 
 The launcher runs `velt toolchain` itself, so it works the same whichever version a package
 pins. A toolchain's own `bin/velt`, started directly, says so instead.
+
+When the release that is about to run has a problem (it was yanked, or the index of releases
+carries an advisory for it, such as a security one), the launcher says so on stderr, at most
+once a day per version, with the newest release of the same minor that doesn't have it and how
+to move to it (`velt update` in a package pinned to the version, or `velt toolchain install
+<version>`). It reads the last index it fetched, so it needs no network. Text from the index is
+shown with control characters replaced and cut at 200 characters.
 
 ## `velt doctor`
 

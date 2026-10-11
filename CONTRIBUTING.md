@@ -330,6 +330,15 @@ version when they choose the newest a requirement accepts (an exact `=0.1.2` sti
 it), and `velt toolchain list --available` shows why. Remove the entry and run the workflow
 again to unyank it. The release itself stays.
 
+**Advisories.** To tell users of a release about a problem without withdrawing it, give the
+version an object in `.github/release-yanks.json`: `{"0.2.0": {"advisory": "TLS certificates
+are not checked", "security": true}}` (an object may also say `"yanked"`), then run the
+`release-index` workflow. A launcher running that version says so on stderr once a day, from the
+last index it read (no network), and names the newest release of the same minor without a
+problem. `scripts/release-index.sh` checks the file (a string, or an object with only `yanked`
+and `advisory` strings and a `security` boolean) and fails the workflow on anything else, so a
+typo never reaches the launchers.
+
 Never commit secrets, tokens or personal data.
 
 By contributing, you agree that your contributions are licensed under the project's dual
