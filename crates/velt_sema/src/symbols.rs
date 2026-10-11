@@ -315,6 +315,8 @@ pub(crate) enum Presence {
     /// While its optional field is present (`[KEY]?: T` in an object type or interface): not
     /// null, or for `[KEY]?: T | null` in an object type its presence flag (`true`).
     Optional(bool),
+    /// While a `Record<string, V>` has the entry (a string key; tested at run time).
+    Entry,
 }
 
 impl Ctx<'_> {

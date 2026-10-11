@@ -522,9 +522,10 @@ pub enum BinaryOp {
     Shl,
     Shr,
     UShr,
-    /// `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the parser
-    /// builds one, only here). `KEY in o` / `Symbol.iterator in o`: the left operand is an
-    /// `Ident` or a `Member` of `Symbol` (a symbol key).
+    /// `k in o`. `#x in o`: the left operand is an `Ident` named `#x` (a private name; only the
+    /// parser builds one, only here). Otherwise any expression (`"k" in o`, `KEY in o`,
+    /// `Symbol.iterator in o`); in a `for` head before the first `;`, `in` outside parentheses
+    /// is the loop's.
     In,
 }
 

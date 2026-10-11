@@ -54,7 +54,10 @@ impl<'a> Parser<'a> {
             Tok::Ident if self.at_word("undefined") => self.undefined_expr(span),
             Tok::LParen => {
                 self.bump();
-                let inner = self.parse_expr()?;
+                let no_in = std::mem::replace(&mut self.no_in, false);
+                let inner = self.parse_expr();
+                self.no_in = no_in;
+                let inner = inner?;
                 self.expect(Tok::RParen)?;
                 // Parentheses around a JSX element are layout only (a formatter adds them to
                 // multi-line elements), so they leave no `Paren` node.

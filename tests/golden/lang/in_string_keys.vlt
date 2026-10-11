@@ -1,0 +1,114 @@
+// `"k" in o` with a string key, as in Node: a declared member (field, method, accessor) is always
+// there, an optional field of an object type only while present, the members of
+// `Object.prototype` (`"toString"`) on every object, and a `Record<string, V>`'s keys are tested
+// at run time (also a key known only then, and after `delete`). On a union `in` narrows to the
+// members that may have the key, also negated, in `&&` and in a conditional, as tsc does.
+// Expected output from node.
+interface Fish {
+  swim(): string;
+  name: string;
+}
+
+interface Bird {
+  fly(): string;
+  name: string;
+  wings?: number;
+}
+
+type A = { kind: string; a: number };
+type B = { kind: string; b?: string };
+
+class Salmon implements Fish {
+  name = "f";
+  swim(): string {
+    return "swims";
+  }
+}
+
+class Crow implements Bird {
+  name = "b";
+  wings: number | null = null;
+  fly(): string {
+    return "flies";
+  }
+}
+
+class Base {
+  x: number = 1;
+  greet(): string {
+    return "hi";
+  }
+}
+
+function move(p: Fish | Bird): string {
+  if ("swim" in p) {
+    return p.swim();
+  }
+  return p.fly();
+}
+
+function describe(v: A | B): string {
+  return "a" in v ? `A ${v.a}` : `B ${v.kind}`;
+}
+
+function notIn(v: A | B): string {
+  if (!("a" in v)) {
+    return "no a: " + v.kind;
+  }
+  return "a=" + v.a;
+}
+
+function both(v: A | B): boolean {
+  return "b" in v && v.kind === "x";
+}
+
+class Sized {
+  get size(): number {
+    return 3;
+  }
+}
+
+function count(v: Record<string, number> | A): number {
+  if ("a" in v) {
+    return 1;
+  }
+  return 0;
+}
+
+function main() {
+  const f: Fish = new Salmon();
+  const b: Bird = new Crow();
+  console.log(move(f), move(b));
+  console.log(describe({ kind: "k", a: 1 }), describe({ kind: "j" }));
+  console.log(notIn({ kind: "k", a: 1 }), notIn({ kind: "j" }));
+  const o = { a: 1, b: "x" };
+  console.log("a" in o, "c" in o, "toString" in o, "constructor" in o);
+  const opt: B = { kind: "x" };
+  const opt2: B = { kind: "x", b: "y" };
+  console.log("b" in opt, "b" in opt2, both(opt), both(opt2));
+  const c = new Base();
+  console.log("x" in c, "greet" in c, "y" in c, "valueOf" in c);
+  const r: Record<string, number> = { one: 1 };
+  const k = "one";
+  let key: string = "two";
+  console.log("one" in r, "two" in r, k in r, key in r);
+  r[key] = 2;
+  console.log(key in r);
+  delete r["one"];
+  console.log("one" in r, "toString" in r, "hasOwnProperty" in r);
+  key = "valueOf";
+  console.log(key in r);
+  const closed: Record<"x" | "y", number> = { x: 1, y: 2 };
+  console.log("x" in closed, "z" in closed);
+  console.log(("a" in o) === true);
+  for (let i = 0; "a" in o && i < 2; i++) {
+    console.log("loop", i);
+  }
+  for (const kk in o) {
+    console.log(kk);
+  }
+  console.log(f.name, b.wings ?? 0);
+  console.log("size" in new Sized(), "length" in new Sized());
+  const counts: Record<string, number> = { a: 5 };
+  console.log(count(counts), count({}), count({ kind: "k", a: 2 }));
+}

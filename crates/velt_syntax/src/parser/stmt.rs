@@ -9,6 +9,8 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> PResult<Block> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
+        // A function body in a `for` head (`for (f = () => { … }; …)`) has its own `in`.
+        let no_in = std::mem::replace(&mut self.no_in, false);
         let mut stmts = Vec::new();
         loop {
             match self.peek() {
@@ -24,6 +26,7 @@ impl<'a> Parser<'a> {
             }
             self.parse_stmt_recovering(&mut stmts);
         }
+        self.no_in = no_in;
         Ok(Block {
             stmts,
             span: self.span_from(lo),

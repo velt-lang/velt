@@ -83,6 +83,9 @@ pub(crate) struct Parser<'a> {
     /// The names computed keys `[NAME]` mention (`parse_symbol_key`): a script keeps a top-level
     /// `const` of such a name at module level, where sema can resolve the key (`kept_vars`).
     computed_keys: BTreeSet<String>,
+    /// In the head of a `for` loop before its first `;`, outside parentheses: `in` there is the
+    /// loop's (`for (k in o)`), not the operator (`"k" in o`), as in JavaScript's grammar.
+    no_in: bool,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -128,6 +131,7 @@ impl<'a> Parser<'a> {
             plain_ts: false,
             more_vars: Vec::new(),
             computed_keys: BTreeSet::new(),
+            no_in: false,
         }
     }
 

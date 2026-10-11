@@ -1,0 +1,35 @@
+// `"k" in o` must be answered correctly or rejected, never a silent `false`: a key known only at
+// run time on an object with fixed fields, a value whose class may be a subclass or an
+// implementing class declaring the key, and a built-in value are errors. A primitive right
+// operand (TS2322, TS18047 for a nullable one) and a left operand that is not a string, number
+// or symbol (TS2322) are errors at the positions tsc reports.
+class Base {
+  x: number = 1;
+}
+class Sub extends Base {
+  y: number = 2;
+}
+interface Shape {
+  area(): number;
+}
+class Sq implements Shape {
+  side: number = 2;
+  area(): number {
+    return 4;
+  }
+}
+
+function main() {
+  const o = { a: 1 };
+  const k: string = "a";
+  console.log(k in o);
+  console.log("a" in 5);
+  console.log(true in o);
+  const b: Base = new Sub();
+  console.log("y" in b);
+  const s: Shape = new Sq();
+  console.log("side" in s);
+  console.log("length" in [1, 2]);
+  const n: { a: number } | null = null;
+  console.log("a" in n);
+}

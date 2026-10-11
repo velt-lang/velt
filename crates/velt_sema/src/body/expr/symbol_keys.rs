@@ -126,22 +126,14 @@ impl FnCx<'_, '_> {
         true
     }
 
-    /// `key in o` with a symbol key (a symbol constant or a well-known symbol): whether the
-    /// value has that member, known from its type (on a union, from the member it holds), and
-    /// for an optional member of an object type or interface (`[KEY]?: T`), whether it is
-    /// present (tested at run time).
+    /// `key in o` with a key known while compiling (a symbol constant, a well-known symbol or a
+    /// string literal): whether the value has that member, known from its type (on a union,
+    /// from the member it holds), and for an optional member of an object type or interface
+    /// (`[KEY]?: T`, `a?: T`) or a record's entry, whether it is present (tested at run time).
+    /// A key known only at run time is `in_keys.rs`'s.
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
-        let Some(key) = self.symbol_key_of(lhs) else {
-            self.expr(lhs, None, Want::Borrow);
-            self.expr(rhs, None, Want::Borrow);
-            self.cx.error(
-                Diagnostic::error(
-                    "the left operand of `in` must be a symbol the compiler knows",
-                    lhs.span,
-                )
-                .with_note("Velt objects have fixed fields, so `in` tests a key known while compiling: a module constant initialized with `Symbol(\"...\")` or `Symbol.for(\"...\")`, a well-known symbol (`Symbol.iterator`), or a private name (`#x in o`)"),
-            );
-            return self.error_expr(span);
+        let Some(key) = self.in_key_of(lhs) else {
+            return self.dynamic_key_in(lhs, rhs, span);
         };
         let s = self.expr(rhs, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
@@ -166,19 +158,9 @@ impl FnCx<'_, '_> {
         let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
         let mut found = Vec::with_capacity(members.len());
         for &m in &members {
-            match self.key_presence(m, &key) {
+            match self.in_presence(m, &key, lhs.span, true) {
                 Some(p) => found.push(p),
-                None => {
-                    let (shown, tn) = (self.cx.shown_name(&key), self.cx.display(m));
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("cannot tell whether a `{tn}` has `{shown}`"),
-                            lhs.span,
-                        )
-                        .with_note("Velt knows the well-known symbols of built-in and standard library types only for `Symbol.iterator` and `Symbol.asyncIterator`"),
-                    );
-                    return self.error_expr(span);
-                }
+                None => return self.error_expr(span),
             }
         }
         let mut arms = vec![];
@@ -194,7 +176,18 @@ impl FnCx<'_, '_> {
                     let (l, mode) = self.option_binding(&s, m, "<in>", false);
                     let bind = self.pat(P::Binding(l, mode), m, span);
                     let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
-                    (bind, self.present_test(obj, &key, *flag, span))
+                    (bind, self.present_test(obj, key.name(), *flag, span))
+                }
+                Presence::Entry => {
+                    let (l, mode) = self.option_binding(&s, m, "<in>", false);
+                    let bind = self.pat(P::Binding(l, mode), m, span);
+                    let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
+                    let lit = ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
+                        span: lhs.span,
+                    };
+                    (bind, self.record_call(obj, "__has", &[lit], span))
                 }
             };
             let pat = match union {

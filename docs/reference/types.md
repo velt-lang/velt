@@ -515,6 +515,8 @@ the nullable type; `void` cannot be a member.
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
     promise member (`View | Promise<View>`), when no class named `Promise` is in scope.
   - `x == literal` / `x != literal` selects the literal's member.
+  - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
+    `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
@@ -1041,6 +1043,48 @@ for (const [word, n] of counts) {
 console.log(moved, first, rest, [3, 1, 2].map((x) => x * 2).filter((x) => x > 2));
 const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
+```
+
+### The `in` operator
+
+`"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects
+have fixed fields, so a literal key is answered from `o`'s type while compiling: a field, method
+or accessor its object type, class (or a base class) or interface declares is always there, and
+one it doesn't declare is not. An optional field of an object type or interface (`b?: T`) is
+tested at run time: it is there once the object has it, also holding `null`, where the type
+keeps that apart. A class's optional field is always there (TypeScript-compiled classes define
+it). The members every object inherits from `Object.prototype` (`"toString"`, `"constructor"`,
+`"hasOwnProperty"`, …) are there on every object, as in Node. A `Record<string, V>` is a
+dictionary, so its keys are tested at run time, also a key known only then (`k in r`): a key
+`delete` removed is gone. A closed record (`Record<"x" | "y", V>`) has exactly its keys. On a
+union, `in` answers for the member the value holds, and in a condition it narrows the union
+([union types](#union-types)).
+
+A key known only at run time on anything but a `Record<string, V>` is an error (``` `in` with a
+key known only at run time is not supported on `T` ```): there is no table of names to look in.
+So is a key Velt cannot answer while compiling: a member declared only by a subclass of the
+value's class or by a class implementing its interface (``cannot tell whether a `Base` has "y"
+while compiling``; test `instanceof Sub`), and a string key on a built-in or standard library
+value (an array, a `Map`). A primitive right operand is an error (TypeScript's TS2322; JavaScript
+throws a `TypeError`), as is a possibly `null` one (TS18047). Symbol keys are described under
+[Symbols](#symbols), and `#x in o` under [private names](classes.md).
+
+```ts
+type Circle = { kind: "circle"; radius: number };
+type Square = { kind: "square"; side: number; label?: string };
+
+function area(s: Circle | Square): number {
+  return "radius" in s ? 3 * s.radius * s.radius : s.side * s.side;
+}
+
+function main() {
+  const sq: Square = { kind: "square", side: 2 };
+  console.log(area(sq), "label" in sq, "toString" in sq); // 4 false true
+  const seen: Record<string, number> = { a: 1 };
+  const k: string = "a";
+  delete seen[k];
+  console.log(k in seen); // false
+}
 ```
 
 ### Iterable object literals
