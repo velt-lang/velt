@@ -20,10 +20,13 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs.
 - Topics: `await ws.subscribe(topic)`, `ws.unsubscribe(topic)`; `publish(topic, text)` and
   `publishBytes(topic, data)` send to every subscriber, `ws.publish(topic, text)` /
   `ws.publishBytes` to every subscriber but `ws` (like Bun's `server.publish` and
-  `ws.publish`). They return the number of connections the message was queued for: the frame
-  is encoded once and queued for each subscriber, so a publish costs no task or promise per
-  socket. A subscriber with more than 16 MiB already queued misses the message (a slow reader
-  can't grow the server's memory); a closed connection leaves its topics.
+  `ws.publish`: the same connections receive the message). They return the number of
+  connections the message was queued for (Bun's return bytes sent, 0 or −1): the frame is
+  encoded once and queued for each subscriber, so a publish costs no task or promise per
+  socket. A subscriber with more than 16 MiB already queued is skipped for that message, not
+  closed (a slow reader can't grow the server's memory). A connection stays subscribed until
+  `unsubscribe` or until `close()` releases it, also after the peer disconnected while the
+  handler still holds the handle.
 
 ```ts
 import { serve } from "velt:http";
@@ -50,6 +53,34 @@ async function main() {
   console.log((await ws.receive())?.text ?? ""); // hi
   await ws.close();
   server.close();
+}
+```
+
+A chat room: every message a client sends goes to everyone else in the room.
+
+```ts
+import { serve } from "velt:http";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+
+async function member(ws: WebSocket): Promise<void> {
+  await ws.subscribe("room");
+  for await (const m of ws) {
+    ws.publish("room", m.text);
+  }
+  await ws.close();
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (!isWebSocketRequest(req)) {
+      return new Response("chat room", { status: 400 });
+    }
+    const up = upgradeWebSocket(req);
+    spawn(member(up.socket));
+    return up.response;
+  });
+  console.log(`listening on ${server.port}`);
+  await server.shutdown();
 }
 ```
 
