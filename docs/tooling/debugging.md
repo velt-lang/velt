@@ -9,15 +9,17 @@ builds and debugs with nothing to configure ([VS Code](#vs-code)).
 
 | Build | Line info (`.vlt` file:line) | Variables | Use it for |
 |---|---|---|---|
-| `velt build` (Cranelift, the debug default) | yes on Linux and macOS; on Windows function symbols only | yes on Linux and macOS | stepping, breakpoints, backtraces, inspecting values |
+| `velt build` (Cranelift, the debug default) | yes; on Windows when the bundled linker links it (the default of a released toolchain), else function symbols only | yes on Linux and macOS | stepping, breakpoints, backtraces, inspecting values |
 | `velt run`, `velt test` | as `velt build` | no (values stay in registers, which is faster) | running and testing |
 | `velt build --backend llvm` | yes, unoptimized | no | stepping, breakpoints, backtraces |
 | `velt build --release -g` | yes, optimized (LLVM when clang is installed) | no | profiling, crash addresses |
 | `velt dev --exe` | as `velt build` | as `velt build` | attaching to a running version |
 | `velt dev` (JIT) | yes with GDB or LLDB on Linux; macOS untested (LLDB needs `plugin.jit-loader.gdb.enable on`); none on Windows | no | breakpoints and stepping in the running program |
 
-The LLVM backend needs clang ([Platforms](platforms.md#prerequisites)). On Windows the linker
-writes a `.pdb` next to the `.exe` (CodeView); elsewhere the debug info is DWARF. On macOS it
+The LLVM backend needs clang ([Platforms](platforms.md#prerequisites)). On Windows its builds
+get a `.pdb` next to the `.exe` (CodeView), which the Visual Studio debugger reads; the default
+(Cranelift) build keeps DWARF in the `.exe` itself, which LLDB (CodeLLDB) reads, beside the
+`.pdb`. Elsewhere the debug info is DWARF. On macOS it
 stays in the object files next to the executable (`target/velt/<name>.o`, plus `<name>.cgu1.o`,
 … when a large program is split into codegen units), so keep them there, or run `dsymutil
 target/velt/<name>` to bundle it.
@@ -30,8 +32,10 @@ extension loads, [Command line](#command-line) shows how) also shows a string as
 array as `len=N` with its elements, a union by its active member, and other options as `null` or
 their value; without them those are raw words. Variables of `async` functions, generators and
 inlined code are not shown yet. A variable is shown from the line declaring it to the end of its
-block; inside a closure, the variables it captures are shown too. On Windows, Cranelift builds
-have function symbols only. On macOS, executables are signed ad hoc without the hardened
+block; inside a closure, the variables it captures are shown too. On Windows the default build
+has line information but no variables yet; one linked by MSVC's `link.exe` (a toolchain without
+the bundled linker, or `VELT_LINKER=system`) has function symbols only, since `link.exe` would
+cut the DWARF sections' names. On macOS, executables are signed ad hoc without the hardened
 runtime, so LLDB can launch and attach to them.
 
 Panics print `panic: <message> at <file>:<line>:<col>` even without a debugger, and exit with
@@ -70,10 +74,11 @@ needed), shows build errors in the *Problems* view, and starts the debugger on t
 the build reports. It picks the first installed of CodeLLDB, LLDB DAP and C/C++; the
 `velt.debug.engine` setting chooses one.
 
-**Windows:** the default build has no line information yet, so breakpoints in `.vlt` files do
-not bind (the extension warns). With clang installed, add `"buildArgs": ["--backend", "llvm"]` to
-the configuration: that build has line information (a `.pdb`), which the C/C++ extension's
-Visual Studio debugger reads.
+**Windows:** debug with CodeLLDB or LLDB DAP, which read the DWARF of the default build. The
+C/C++ extension's Visual Studio debugger reads only PDBs: for it, add `"buildArgs":
+["--backend", "llvm"]` (needs clang) to the configuration (the extension warns otherwise).
+Linked by `link.exe` instead of the bundled linker, the default build has no line information,
+and the extension warns that breakpoints will not bind.
 
 A `launch.json` is optional. `velt new` and `velt init` write one, `velt init --editor vscode`
 adds one to an existing package (it keeps files that exist), and so does **Velt: Generate

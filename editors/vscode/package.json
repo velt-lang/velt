@@ -221,7 +221,7 @@
                   "type": "string"
                 },
                 "default": [],
-                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (line information on Windows, which the default build lacks yet)."
+                "description": "Extra `velt build` options, e.g. [\"--backend\", \"llvm\"] (a PDB on Windows, for the Visual Studio debugger)."
               },
               "stopOnEntry": {
                 "type": "boolean",

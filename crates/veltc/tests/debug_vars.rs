@@ -83,6 +83,9 @@ fn compile_source(src: &str, release: bool, debug_vars: bool) -> Program {
         root_source: Some(src.to_string()),
         release,
         debug_vars,
+        // An object: whatever links it keeps the line information variables need (on Windows
+        // an executable linked by `link.exe` has none).
+        emit: veltc::cli::Emit::Obj,
         ..BuildOptions::default()
     };
     let mut sess = Session::new();
@@ -325,6 +328,7 @@ fn every_golden_compiles_with_variables() {
                 let opts = BuildOptions {
                     input: path.clone(),
                     debug_vars: true,
+                    emit: veltc::cli::Emit::Obj,
                     ..BuildOptions::default()
                 };
                 let mut sess = Session::new();
@@ -476,4 +480,28 @@ fn dwarf_of_handlers_and_cases_verifies() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+/// A Windows executable that MSVC's `link.exe` links has no line information, so it describes
+/// no variables either (regression: they named the files the driver had dropped, an ICE in
+/// every debug `velt build` on such a machine). Here the bundled linker has no Windows kit.
+#[test]
+fn a_build_without_line_information_describes_no_variables() {
+    let opts = BuildOptions {
+        input: PathBuf::from("main.vlt"),
+        root_source: Some(SRC.to_string()),
+        target: Some("x86_64-pc-windows-msvc".into()),
+        debug_vars: true,
+        ..BuildOptions::default()
+    };
+    if opts.has_line_info() {
+        eprintln!("note: this machine links Windows programs with the bundled lld; skipping");
+        return;
+    }
+    let mut sess = Session::new();
+    let p = driver::compile(&mut sess, &opts)
+        .unwrap_or_else(|e| panic!("{e:?}\n{}", sess.render_diagnostics()));
+    velt_vir::verify(&p).unwrap();
+    assert!(p.files.is_empty());
+    assert!(p.debug_types.is_empty());
 }

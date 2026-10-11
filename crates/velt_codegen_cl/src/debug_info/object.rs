@@ -1,9 +1,16 @@
-//! DWARF sections in ELF and Mach-O objects.
+//! DWARF sections in ELF, Mach-O and COFF objects.
 //!
 //! Code addresses are relocations against the function symbols. Offsets into other DWARF
 //! sections (abbreviations, lines, strings, ranges) are relocations against those sections on
-//! ELF, whose linker concatenates them with the runtime's own debug info; Mach-O leaves DWARF in
-//! the objects (debuggers find it through the executable's debug map), so there they are plain.
+//! ELF and COFF, whose linkers concatenate them with other objects' debug info (on COFF they
+//! are section-relative, `SECREL`); Mach-O leaves DWARF in the objects (debuggers find it
+//! through the executable's debug map), so there they are plain.
+//!
+//! On COFF the sections keep their `.debug_*` names, longer than COFF's 8 bytes, through the
+//! string table (as MinGW's objects do); the bundled `lld-link /DEBUG` keeps them in the
+//! executable, where LLDB reads them, beside the PDB. MSVC's `link.exe` would cut their names to
+//! 8 bytes, so a build it links gets none (the driver drops the line information,
+//! `BuildOptions::has_line_info`).
 //!
 //! On Mach-O, debuggers read code addresses as they stand in the object (LLDB maps them to the
 //! executable through the debug map without applying relocations), so the value in place must
@@ -26,14 +33,17 @@ use crate::CodegenResult;
 use velt_vir::vir;
 
 /// Append the debug sections describing `functions` of `program`.
-/// COFF objects get none (see the module docs of `debug_info`).
 pub(crate) fn add_debug_info(
     product: &mut ObjectProduct,
     program: &vir::Program,
     functions: &[FunctionLines],
 ) -> CodegenResult<()> {
     let format = product.object.format();
-    if functions.is_empty() || !matches!(format, BinaryFormat::Elf | BinaryFormat::MachO) {
+    let supported = matches!(
+        format,
+        BinaryFormat::Elf | BinaryFormat::MachO | BinaryFormat::Coff
+    );
+    if functions.is_empty() || !supported {
         return Ok(());
     }
     let symbols: Vec<SymbolId> = functions
@@ -106,12 +116,18 @@ pub(crate) fn add_debug_info(
                     (obj.section_symbol(target), reloc.addend, reloc.size)
                 }
             };
+            // COFF: an offset into another debug section is relative to that section (`SECREL`),
+            // not an address.
+            let kind = match reloc.target {
+                Target::Section(_) if format == BinaryFormat::Coff => RelocationKind::SectionOffset,
+                _ => RelocationKind::Absolute,
+            };
             let relocation = Relocation {
                 offset: reloc.offset,
                 symbol,
                 addend,
                 flags: RelocationFlags::Generic {
-                    kind: RelocationKind::Absolute,
+                    kind,
                     encoding: RelocationEncoding::Generic,
                     size: size * 8,
                 },

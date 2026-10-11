@@ -265,3 +265,13 @@ export function sortProcesses(entries: ProcessEntry[]): ProcessEntry[] {
   const isVelt = (e: ProcessEntry) => /target[\\/]velt[\\/]/.test(e.command);
   return [...entries].sort((a, b) => Number(isVelt(b)) - Number(isVelt(a)) || b.pid - a.pid);
 }
+
+/**
+ * Whether debugging `config` with `engine` needs the LLVM backend to bind breakpoints: on
+ * Windows the C/C++ extension's Visual Studio debugger reads only PDBs, which only an LLVM
+ * build's CodeView fills (the default build's DWARF is for LLDB).
+ */
+export function needsLlvmBuild(engine: Engine, config: VeltConfig, platform: NodeJS.Platform): boolean {
+  const llvm = (config.buildArgs ?? []).some((a) => a === "llvm" || a === "--backend=llvm");
+  return engine === "cpptools" && platform === "win32" && !llvm;
+}

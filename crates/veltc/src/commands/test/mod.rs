@@ -304,7 +304,7 @@ impl Run<'_> {
                     "executable": artifact_path(artifact).to_string_lossy(),
                     "tests": found.tests,
                     "env": { super::build::SCRIPT_VAR: script.to_string_lossy() },
-                    "debugInfo": super::build::has_line_info(&opts),
+                    "debugInfo": opts.has_line_info(),
                 }));
             }
             Err(_) => self.failed += found.tests.len(),
