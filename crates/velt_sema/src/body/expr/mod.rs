@@ -71,7 +71,7 @@ mod structured_clone;
 mod supers;
 mod symbol_keys;
 mod sync;
-mod tasks;
+pub(crate) mod tasks;
 mod truthiness;
 mod type_tests;
 mod union_coerce;

@@ -1,0 +1,1 @@
+`Pair`, which holds a weak collection, cannot be the result of a spawned task

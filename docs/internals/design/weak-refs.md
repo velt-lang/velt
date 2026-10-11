@@ -132,7 +132,9 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   and `shared` values are not looked into, and classes in a hierarchy with a vtable are opaque
   (null glue), so a glue never reads a field the dynamic type does not have.
 - **Threads and `shared`.** Sema rejects a weak collection (or a value holding one) as a `spawn`
-  argument, a channel message, a capture of an async closure that may run on another thread,
+  argument (each branch's call of `spawn(c ? f(x) : g(y))`, `tasks.rs` `spawned_calls`), the
+  result of a spawned task or the error it throws (both copied for the awaiting task's thread,
+  checked by `weak_threads.rs` with the hidden forms below), a channel message, a capture of an async closure that may run on another thread,
   the value of `shared(...)` and the receiver of `clone()`. A weak-capable object that is not
   weakly held may still cross threads (it is copied when shared, and the copy is not weakly
   held). A `Mutex`'s `with` callback cannot use a weak collection from outside the lock: a
@@ -161,7 +163,10 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   locked value (`ownership/locked/stores.rs`), is checked by its captures: at run time either
   would panic (a function value's environment is opaque to the transfer). Plain interface use
   stays legal: an interface none of whose converted classes holds a weak collection is not
-  affected (`weak_hidden_ok_iface_plain.vlt`).
+  affected (`weak_hidden_ok_iface_plain.vlt`). The other way round, the rule is program-wide:
+  once any weak-holding class is converted to an interface, even one used on a single task,
+  every value of that interface counts as holding a weak collection where it crosses threads
+  (the diagnostic's note names the class).
   **Known gap (a run-time panic, not a compile error):** a function value held in a field, or
   reached through a variable rather than written as a closure literal where it crosses, whose
   closure captures a weak collection: its captures are not in its type (`class F { f: () =>

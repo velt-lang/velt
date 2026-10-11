@@ -85,16 +85,23 @@ impl VisitMut for Found<'_, '_> {
                 callee: Callee::Intrinsic(Intrinsic::Spawn),
                 args,
             } => {
-                if let Some(E::Call {
-                    args: call_args, ..
-                }) = args.first().map(|a| &a.kind)
-                {
-                    for a in call_args {
-                        self.needs.push((a.ty, Need::Cross(GenCopy::Task, a.span)));
-                        if let E::Closure(n) = peel(a).kind {
-                            self.task_fns.push((n, a.span));
-                        }
+                let mut calls = vec![];
+                if let Some(p) = args.first() {
+                    crate::body::expr::tasks::spawned_calls(p, &mut calls);
+                }
+                for a in calls.into_iter().flatten() {
+                    self.needs.push((a.ty, Need::Cross(GenCopy::Task, a.span)));
+                    if let E::Closure(n) = peel(a).kind {
+                        self.task_fns.push((n, a.span));
                     }
+                }
+                // What the task's thread hands back: its result and the error it throws.
+                if let TyKind::Promise(t, err) = self.cx.ty.kind(e.ty) {
+                    let (t, err) = (*t, *err);
+                    self.needs
+                        .push((t, Need::Cross(GenCopy::TaskResult, e.span)));
+                    self.needs
+                        .push((err, Need::Cross(GenCopy::TaskError, e.span)));
                 }
             }
             E::Call {
@@ -183,7 +190,10 @@ fn is_generic(cx: &Ctx, t: TyId) -> bool {
 /// Was a crossing of this kind with a written type holding a weak collection reported where
 /// it is written? (Closures are checked here only.)
 fn checked_where_written(what: &GenCopy) -> bool {
-    !matches!(what, GenCopy::TaskFn(_) | GenCopy::LockFn(_))
+    !matches!(
+        what,
+        GenCopy::TaskFn(_) | GenCopy::LockFn(_) | GenCopy::TaskResult | GenCopy::TaskError
+    )
 }
 
 pub(crate) fn check(cx: &mut Ctx) {

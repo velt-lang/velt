@@ -277,7 +277,9 @@ impl FnCx<'_, '_> {
             GenCopy::LockCapture(_)
             | GenCopy::LockResult
             | GenCopy::TaskFn(_)
-            | GenCopy::LockFn(_) => return,
+            | GenCopy::LockFn(_)
+            | GenCopy::TaskResult
+            | GenCopy::TaskError => return,
         };
         self.cx.error(Diagnostic::error(msg, span).with_note(note));
     }
@@ -340,6 +342,14 @@ pub(crate) fn weak_copy_error(
             format!("{it} cannot be returned from `with`"),
             LOCK_NOTE.to_string(),
         ),
+        GenCopy::TaskResult => (
+            format!("{it} cannot be the result of a spawned task"),
+            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and a spawned task's result is copied for the task that awaits it: return what the weak collection gives (`ref.deref()`, `map.get(k)`) instead".to_string(),
+        ),
+        GenCopy::TaskError => (
+            format!("{it} cannot be thrown from a spawned task"),
+            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and the error a spawned task throws is copied for the task that awaits it: put what the weak collection gives in the error instead".to_string(),
+        ),
     };
     Diagnostic::error(msg, span).with_note(note)
 }
@@ -367,4 +377,8 @@ pub(crate) enum GenCopy {
     TaskFn(String),
     /// A closure stored into the locked value that captures (named) a weak collection.
     LockFn(String),
+    /// The result of a spawned task, handed back to the awaiting task's thread.
+    TaskResult,
+    /// The error a spawned task throws, handed back to the awaiting task's thread.
+    TaskError,
 }

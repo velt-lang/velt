@@ -356,14 +356,12 @@ impl FnCx<'_, '_> {
         let H::Call { args, .. } = &h.kind else {
             return;
         };
-        let Some(H::Call {
-            args: call_args, ..
-        }) = args.first().map(|a| &a.kind)
-        else {
-            return;
-        };
+        let mut calls = vec![];
+        if let Some(p) = args.first() {
+            spawned_calls(p, &mut calls);
+        }
         let mut checks = vec![];
-        for a in call_args {
+        for a in calls.into_iter().flatten() {
             let (place, coerced) = arg_place(a);
             let using = match place.kind {
                 H::Local(l, _) => self.local_kind(l) == LocalKind::Using,
@@ -451,6 +449,25 @@ impl FnCx<'_, '_> {
 
 /// The place an argument passes (under re-wrapping: `Some`, an up- or downcast, a union member), and
 /// the interface value coercion it went through, if any.
+/// The argument lists of the calls `spawn(p)` starts: `p`'s, or each branch's of a conditional
+/// (`spawn(c ? f(x) : g(y))`, docs/reference/async.md) and of a block's value (also
+/// `crate::weak_threads`).
+pub(crate) fn spawned_calls<'e>(p: &'e hir::Expr, out: &mut Vec<&'e [hir::Expr]>) {
+    match &p.kind {
+        H::Call { args, .. } => out.push(args),
+        H::If { then, els, .. } => {
+            spawned_calls(then, out);
+            spawned_calls(els, out);
+        }
+        H::Block(b) => {
+            if let Some(v) = &b.value {
+                spawned_calls(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;

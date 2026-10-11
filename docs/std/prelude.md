@@ -211,7 +211,8 @@ Differences from JavaScript:
   Node keeps returning the object until a later garbage collection, and at least until the
   current job ends.
 - **One task.** A weak collection belongs to the task that made it (it keeps working when an
-  `await` resumes the task on another thread): it cannot be passed to a spawned task, sent on a
+  `await` resumes the task on another thread): it cannot be passed to a spawned task (in either
+  branch of `spawn(c ? f(x) : g(y))`), be its result or the error it throws, sent on a
   channel, captured by an async closure that may run on another thread, put in `shared(...)` or
   cloned (an error says so; in JavaScript, `structuredClone` rejects them too). Nor can a
   `Mutex`'s `with` callback use one from outside the lock (capture it, or call a closure that
@@ -223,6 +224,9 @@ Differences from JavaScript:
   collection, a base-class value when such a subclass is used as it, a type parameter where a
   generic function (`lockWith<T, R>(m, f): R { return m.with(f); }`) is called with such a type,
   and a function that captures one, passed to another task or stored into a `Mutex`'s value.
+  This is decided for the whole program: once any class holding a weak collection is converted
+  to an interface (even on one task only), every value of that interface counts as holding one
+  wherever it crosses threads.
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.
