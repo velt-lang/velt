@@ -60,7 +60,7 @@ static SERVERS: Registry<ServerObj> = Registry::new();
 /// A running server (`VeltServer` in the ABI docs).
 pub struct ServerObj {
     port: u16,
-    accept_loop: AbortHandle,
+    accept_loops: Vec<AbortHandle>,
     /// Signals (by closing) that the handler was released; see `Shared::released`.
     released: watch::Receiver<()>,
 }
@@ -212,21 +212,27 @@ fn handle<S: OwnedStore>(
     HandlerFut::new(shared, req, parked)
 }
 
+/// `per_worker`: one of the per-worker loops ([`crate::net::tcp::accepts_per_worker`]), whose
+/// connections stay on this worker; else the one loop, whose connections go where placement puts
+/// them, their sockets moved there.
 async fn accept_loop<S: OwnedStore>(
     listener: TcpListener,
     shared: Arc<Shared>,
     tls: Option<TlsAcceptor>,
+    per_worker: bool,
 ) {
     // Dropping this (when `close()` aborts the loop) makes every open connection finish its
     // in-flight requests and close.
     let graceful = GracefulShutdown::new();
     let Some(mut stop) = crate::dev::shutdown::register() else {
-        return accept_connections::<S>(&listener, shared, &graceful, tls).await;
+        return accept_connections::<S>(&listener, shared, &graceful, tls, per_worker).await;
     };
     // Dev mode: on SIGTERM stop accepting (the supervisor keeps the socket, so new connections
     // wait for the next version) and let in-flight requests finish before the process exits.
     {
-        let accept = std::pin::pin!(accept_connections::<S>(&listener, shared, &graceful, tls));
+        let accept = std::pin::pin!(accept_connections::<S>(
+            &listener, shared, &graceful, tls, per_worker
+        ));
         futures_util::future::select(accept, std::pin::pin!(stop.requested())).await;
     }
     drop(listener);
@@ -239,6 +245,7 @@ async fn accept_connections<S: OwnedStore>(
     shared: Arc<Shared>,
     graceful: &GracefulShutdown,
     tls: Option<TlsAcceptor>,
+    per_worker: bool,
 ) {
     loop {
         let (stream, remote) = match listener.accept().await {
@@ -255,14 +262,18 @@ async fn accept_connections<S: OwnedStore>(
             local: stream.local_addr().unwrap_or(remote),
             tls: tls.is_some(),
         };
-        // Per-core: served on the worker placement picks, with the socket registered there.
-        let Ok(stream) = crate::net::tcp::Handoff::new(stream) else {
-            continue;
+        let stream = if per_worker {
+            crate::net::tcp::Handoff::Here(stream)
+        } else {
+            match crate::net::tcp::Handoff::new(stream) {
+                Ok(s) => s,
+                Err(_) => continue,
+            }
         };
         let (shared, watcher, tls) = (shared.clone(), graceful.watcher(), tls.clone());
         // Connection errors (client hung up mid-request, failed TLS handshake...) only end that
         // connection.
-        crate::task::runtime::spawn(async move {
+        let task = async move {
             let Ok(stream) = stream.attach() else {
                 return;
             };
@@ -276,7 +287,13 @@ async fn accept_connections<S: OwnedStore>(
                     }
                 }
             }
-        });
+        };
+        if per_worker {
+            // Its socket is registered with this worker's driver: keep it here.
+            crate::task::runtime::spawn_here(task);
+        } else {
+            crate::task::runtime::spawn(task);
+        }
     }
 }
 
@@ -297,6 +314,36 @@ where
     let _ = watcher.watch(conn).await;
 }
 
+/// Starts the accept loop: one, or where [`crate::net::tcp::accepts_per_worker`] one per worker,
+/// each accepting on its own registration of the listening socket, so a connection (and the
+/// tasks its handler spawns) stays on the worker that accepted it (#211 step 4). Dev mode keeps
+/// one loop (its handover socket).
+fn spawn_accept_loops<S: OwnedStore>(
+    l: TcpListener,
+    shared: Arc<Shared>,
+    tls: Option<TlsAcceptor>,
+) -> std::io::Result<Vec<AbortHandle>> {
+    let workers = crate::task::runtime::worker_handles();
+    let Some(workers) =
+        workers.filter(|_| crate::net::tcp::accepts_per_worker() && !crate::dev::enabled())
+    else {
+        return Ok(vec![crate::task::runtime::spawn(accept_loop::<S>(
+            l, shared, tls, false,
+        ))
+        .abort_handle()]);
+    };
+    let regs = crate::net::tcp::per_worker_listeners(&l.into_std()?)?;
+    // Every registration exists before the first loop starts, so a failure starts none.
+    let loops = workers
+        .zip(regs)
+        .map(|(h, l)| {
+            h.spawn(accept_loop::<S>(l, shared.clone(), tls.clone(), true))
+                .abort_handle()
+        })
+        .collect();
+    Ok(loops)
+}
+
 /// Binds and starts the accept loop; `tls` = serve HTTPS.
 unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) -> *mut VeltFut {
     let shared = Shared::new(handler);
@@ -312,14 +359,13 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
             } else {
                 (desc.state_size as usize, desc.state_align as usize)
             };
-            let task = with_state_store!(size, align, |S| crate::task::runtime::spawn(
-                accept_loop::<S>(l, shared, tls)
-            ));
+            let accept_loops =
+                with_state_store!(size, align, |S| spawn_accept_loops::<S>(l, shared, tls))?;
             // A listening server keeps the process alive after `async main` (like Node).
             crate::task::runtime::keep_alive_acquire();
             Ok(ServerObj {
                 port,
-                accept_loop: task.abort_handle(),
+                accept_loops,
                 released,
             })
         });
@@ -393,7 +439,9 @@ pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut V
 
 fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
     let s = SERVERS.remove(s)?;
-    s.accept_loop.abort();
+    for l in &s.accept_loops {
+        l.abort();
+    }
     crate::task::runtime::keep_alive_release();
     Some(s.released.clone())
 }
