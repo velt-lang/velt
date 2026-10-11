@@ -1,0 +1,37 @@
+// Velt's own `Map` methods with null values (#1005): `upsert`, `update` and `getOrInsert` see
+// an entry holding null as present, `deepEqual` and `clone` keep it, and the callback of an
+// `upsert` that deletes its own key still stores the null it returns.
+
+function main() {
+  const m = new Map<string, number | null>();
+  m.set("a", null);
+  m.upsert("a", 1, (v) => (v === null ? 10 : v + 1));
+  m.upsert("b", null, (v) => v);
+  m.upsert("b", 5, (v) => (v === null ? 20 : v));
+  console.log(m);
+
+  m.set("c", null);
+  let seen = "";
+  const present = m.update("c", (v) => {
+    seen = `${v}`;
+  });
+  console.log(present, seen);
+  console.log(m.update("zz", (v) => {}));
+  console.log(m.getOrInsert("c", () => 7), m.getOrInsert("d", () => null), m.size);
+
+  // The callback deletes its key through another reference: the result is appended again.
+  const alias = m;
+  m.upsert("a", 0, (v) => {
+    alias.delete("a");
+    return null;
+  });
+  console.log([...m.keys()], m.get("a"), m.has("a"));
+
+  const copy = m.clone();
+  console.log(deepEqual(copy, m), copy);
+  copy.set("c", 0);
+  console.log(deepEqual(copy, m));
+  const other = new Map<string, number | null>([["x", null]]);
+  const same = new Map<string, number | null>([["y", null]]);
+  console.log(deepEqual(other, same), deepEqual(other, new Map<string, number | null>([["x", null]])));
+}

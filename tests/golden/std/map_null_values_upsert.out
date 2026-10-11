@@ -1,0 +1,8 @@
+Map(2) { 'a' => 10, 'b' => 20 }
+true null
+false
+null null 4
+[ 'b', 'c', 'd', 'a' ] null true
+true Map(4) { 'b' => 20, 'c' => null, 'd' => null, 'a' => null }
+false
+false true

@@ -240,6 +240,7 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::NeedsTransfer
                     | Intrinsic::NeedsDrop
                     | Intrinsic::MayAlias
+                    | Intrinsic::HoldsNull
             )
         );
         if let Callee::Intrinsic(Intrinsic::Spawn) = callee {

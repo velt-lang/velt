@@ -983,7 +983,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   two equal object literals are two different keys). Float keys compare like JS's
   (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
   after insertion makes its entry unreachable
-  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS.
+  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
+  include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
+  `null` is present like any other (`has` is true, it is counted, iterated and printed), and
+  `get` gives `null` both for it and for a missing key (use `has` to tell them apart).
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
