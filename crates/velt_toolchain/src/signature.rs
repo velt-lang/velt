@@ -9,8 +9,8 @@
 //! if the signing key is lost or leaks, releases are signed with the backup and the launchers
 //! that carry it (those from the release after 0.2.0 on; 0.2.0's knows only the signing key)
 //! keep checking them; the next release then names a new backup (CONTRIBUTING.md "Replacing the
-//! signing key", which also says what this can't do: a leaked key can't be revoked from
-//! launchers that trust it). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
+//! signing key", which also says how a leaked key is revoked through the index of releases and
+//! what that can't reach). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
 //! replaces them, for releases of another build (a fork's, a test's): whoever can set your
 //! environment can already run programs as you, so it opens nothing new.
 
@@ -112,6 +112,9 @@ pub struct Trust {
 pub const REVOKED_KEYS_FILE: &str = "revoked-keys";
 /// The series of the built-in keys.
 pub const OFFICIAL_SERIES: &str = "official";
+/// Where 0.2.0 kept the official series: under its signing key, in hex. Fixed, so a launcher
+/// built after that key is rotated out still takes over the time 0.2.0 kept.
+pub const LEGACY_SERIES: &str = "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb";
 
 /// What `root` trusts: [`public_keys`] without the keys revoked there. `root` is `None` when
 /// there is no root to read (a toolchain run from a checkout).
@@ -200,8 +203,10 @@ pub fn signed_text_by(url: &str, keys: &[Vec<u8>]) -> Result<Option<(String, usi
         .map_err(|_| format!("{url} is not text"))
 }
 
+/// `text`'s bytes, two hex digits each; `None` unless it is only hex digits (`from_str_radix`
+/// alone would take a sign: `+f`).
 pub(crate) fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..text.len())
@@ -286,6 +291,10 @@ pub(crate) mod tests {
         assert_eq!(decode_hex("0"), None);
         assert_eq!(decode_hex("zz"), None);
         assert_eq!(decode_hex("é0"), None);
+        assert_eq!(decode_hex("+f+f"), None);
+        assert_eq!(decode_hex("-f"), None);
+        assert_eq!(decode_hex("0x"), None);
+        assert!(parse_keys(&format!("+f{}", "f".repeat(62)), "x").is_err());
     }
 
     #[test]

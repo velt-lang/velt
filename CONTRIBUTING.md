@@ -309,7 +309,19 @@ dropping the signing key, and without step 3: earlier releases are signed with t
 - The backup only helps launchers that carry it: those from the first release after 0.2.0
   on. 0.2.0's launcher and installer know only the signing key.
 - The freshness check of the index of releases is one series for the official releases
-  (`<root>/index-seen/official`) whichever key signs, so it continues across a rotation.
+  (`<root>/index-seen/official`) whichever key signs, so it continues across a rotation. A
+  launcher applies an index's revocations before that check, and refuses (and never remembers)
+  an index written more than a day ahead of its clock, so the leaked key can't block the
+  revoking index by serving one dated far ahead.
+- `get-velt.sh` doesn't read stored revocations: it trusts every key it embeds, on a fresh
+  install and when it installs into a root that has `revoked-keys` (it leaves that file there,
+  so the launcher it installs still refuses those keys). A fresh install trusts a leaked key
+  until its launcher reads an index that revokes it.
+- Tampering with `<root>/revoked-keys` or `<root>/index-seen/` on the user's machine is outside
+  what this protects against: whoever can write the root can replace `bin/velt` itself.
+- Only the official keys revoke. Another build's keys (`$VELT_INSTALL_PUBLIC_KEY`) can't
+  withdraw them. A launcher that sees an index revoke a key after its signer ignores it and
+  warns, because no release does that: it means a misconfigured release or a leaked signing key.
 
 **Yanking.** To withdraw a release with a serious bug, add it to `.github/release-yanks.json`
 (`{"0.1.2": "miscompiles closures; use 0.1.3"}`) in a pull request, merge it, and run the

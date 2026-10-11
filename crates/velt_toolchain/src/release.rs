@@ -29,17 +29,22 @@
 //!   their first key, hex), and an older index of those releases is refused: its signature is
 //!   valid, but a mirror serving it (behind, or on purpose) would hide later releases and
 //!   yanks. One series for the official releases whichever key signs, so it survives a
-//!   rotation; it starts from what 0.2.0 kept per key.
+//!   rotation; it starts from what 0.2.0 kept under its signing key. An index written more than
+//!   a day ahead of this machine's clock is refused, and never remembered.
 //! - `revoked_keys` (optional): release keys withdrawn because they leaked, in hex. A launcher
-//!   honours one only when the index is signed by a key after it in its trust list (the backup
-//!   revokes the signing key, never the other way round, or a leaked signing key could revoke
-//!   the backup first), and keeps it revoked for good (`<root>/revoked-keys`): a later index
-//!   that leaves it out doesn't undo it.
+//!   honours one only when the index is signed by an official key after it in its trust list
+//!   (the backup revokes the signing key, never the other way round, or a leaked signing key
+//!   could revoke the backup first; an index that tries is reported), and keeps it revoked for
+//!   good (`<root>/revoked-keys`): a later index that leaves it out doesn't undo it.
+//!   Revocations are applied before the freshness check, so an index dated ahead by the leaked
+//!   key can't block the one revoking it.
 //! - `launcher`: the newest launcher's version (optional); an older launcher says to run the
 //!   installer again, so launchers already out there learn about newer ones.
 //!
 //! Fields this launcher doesn't know are ignored, so later ones (advisories, dates) can be added
 //! without breaking it; a higher `format` is a change it must not misread, and is refused.
+
+mod index_trust;
 
 use std::path::PathBuf;
 
@@ -50,9 +55,11 @@ use crate::install::{
 };
 use crate::layout::{velt_exe, Root};
 use crate::signature::{
-    hex_of, record_revoked, signed_sums, signed_text_by, trust, trust_from, Trust, OFFICIAL_SERIES,
-    RELEASE_PUBLIC_KEYS,
+    hex_of, record_revoked, signed_sums, signed_text_by, trust, trust_from, Trust, LEGACY_SERIES,
+    OFFICIAL_SERIES,
 };
+pub use index_trust::MAX_INDEX_AHEAD;
+use index_trust::{apply_revocations, remember_index, unix_now};
 
 /// Where releases are downloaded from unless `$VELT_INSTALL_BASE_URL` says otherwise (the
 /// installers read the same variable).
@@ -231,79 +238,23 @@ fn fetch_index_trusting(root: &Root, url: &str, trust: &Trust) -> Result<Index, 
     let (text, signer) = signed_text_by(url, &trust.keys)?
         .ok_or_else(|| format!("{url} does not exist (HTTP 404)"))?;
     let index = parse_index(&text)?;
-    remember_index(root, &index, url, &trust.series)?;
-    apply_revocations(root, trust, &trust.keys[signer], &index.revoked_keys)?;
+    // Revocations first, from any validly signed index: a stale or replayed one can't harm
+    // (they only grow, and only a later key revokes), and an index a leaked key dated far
+    // ahead can't block the one revoking it.
+    for note in apply_revocations(root, trust, &trust.keys[signer], &index.revoked_keys)? {
+        eprintln!("velt: {note}");
+    }
+    remember_index(root, &index, url, &trust.series, unix_now())?;
     Ok(index)
 }
 
-/// What `root` trusts: `key` (a test's), else the built-in keys ([`public_keys`]), without the
-/// revoked ones.
+/// What `root` trusts: `key` (a test's), else the built-in keys
+/// ([`crate::signature::public_keys`]), without the revoked ones.
 fn trusted(root: &Root, key: Option<&[u8]>) -> Result<Trust, String> {
     match key {
         Some(key) => trust_from(vec![key.to_vec()], hex_of(key), Some(root)),
         None => trust(Some(root)),
     }
-}
-
-/// Revoke the keys of `revoked` that come before `signer` in `trust.all` (the backup revokes
-/// the signing key; a key never revokes one after it, so a leaked signing key can't revoke the
-/// backup). Keys this launcher doesn't trust are not its concern.
-fn apply_revocations(
-    root: &Root,
-    trust: &Trust,
-    signer: &[u8],
-    revoked: &[Vec<u8>],
-) -> Result<(), String> {
-    let Some(signer_at) = trust.all.iter().position(|k| k == signer) else {
-        return Ok(());
-    };
-    for key in revoked {
-        let Some(at) = trust.all.iter().position(|k| k == key) else {
-            continue;
-        };
-        if at < signer_at && trust.keys.contains(key) {
-            record_revoked(root, key)?;
-            eprintln!(
-                "velt: release key {}… is revoked (the index of releases says so, signed with the \
-                 backup key); it is no longer trusted",
-                &hex_of(key)[..8]
-            );
-        }
-    }
-    Ok(())
-}
-
-/// Refuse an index older than the newest `root` has seen in `series` ([`Trust::series`]: the
-/// official releases are one series whichever key signed them, another build's another);
-/// remember a newer one. The official series starts from what 0.2.0 kept per key.
-fn remember_index(root: &Root, index: &Index, url: &str, series: &str) -> Result<(), String> {
-    let dir = root.dir().join(INDEX_SEEN_DIR);
-    let read = |name: &str| -> Option<u64> {
-        std::fs::read_to_string(dir.join(name))
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-    };
-    let seen_file = dir.join(series);
-    let seen: u64 = read(series)
-        .or_else(|| {
-            (series == OFFICIAL_SERIES)
-                .then(|| RELEASE_PUBLIC_KEYS.iter().filter_map(|k| read(k)).max())
-                .flatten()
-        })
-        .unwrap_or(0);
-    if index.generated < seen {
-        return Err(format!(
-            "{url} is older than an index seen before (written at {}, the newest seen at {seen}): \
-             the mirror is behind, or is hiding newer releases; use an up-to-date one, or delete \
-             {} to accept it",
-            index.generated,
-            seen_file.display()
-        ));
-    }
-    if index.generated > seen {
-        crate::layout::write_file(&seen_file, &format!("{}\n", index.generated))?;
-    }
-    Ok(())
 }
 
 /// The newest release `req` accepts that is not yanked (an exact requirement may name a yanked
@@ -458,7 +409,7 @@ mod tests {
     }
 
     /// Serve `files` (path → bytes) on loopback for the life of the returned server.
-    fn serve(files: Vec<(String, Vec<u8>)>) -> velt_http::Server {
+    pub(super) fn serve(files: Vec<(String, Vec<u8>)>) -> velt_http::Server {
         let files: std::collections::HashMap<String, Vec<u8>> = files.into_iter().collect();
         let handler =
             std::sync::Arc::new(move |req: velt_http::Request| match files.get(&req.path) {
@@ -601,86 +552,6 @@ mod tests {
                 && err.contains("plain http:// to another machine"),
             "{err}"
         );
-    }
-
-    #[test]
-    fn the_backup_key_revokes_the_signing_key_for_good() {
-        use crate::signature::tests::key_pair;
-        use crate::signature::{revoked_keys, trust_from};
-        let (signing, signing_hex) = key_pair();
-        let (backup, backup_hex) = key_pair();
-        let key = |h: &str| crate::signature::decode_hex(h).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let root = Root::new(tmp.path());
-        let path = "/releases/download/index/releases.json".to_string();
-        let mut generated = 10;
-        // An index naming `revoked`, signed by `by`, served on loopback.
-        let mut fetch = |by: &ring::signature::Ed25519KeyPair, revoked: &[&str]| {
-            generated += 1;
-            let list: Vec<String> = revoked.iter().map(|h| format!("\"{h}\"")).collect();
-            let text = format!(
-                r#"{{"format": 1, "generated": {generated}, "revoked_keys": [{}], "releases": []}}"#,
-                list.join(", ")
-            );
-            let server = serve(vec![
-                (path.clone(), text.clone().into_bytes()),
-                (
-                    format!("{path}.sig"),
-                    by.sign(text.as_bytes()).as_ref().to_vec(),
-                ),
-            ]);
-            let trust = trust_from(
-                vec![key(&signing_hex), key(&backup_hex)],
-                "test".into(),
-                Some(&root),
-            );
-            let result = trust.and_then(|t| {
-                fetch_index_trusting(&root, &format!("http://{}{path}", server.addr()), &t)
-            });
-            server.stop();
-            result
-        };
-        // The signing key can't revoke the backup.
-        fetch(&signing, &[&backup_hex]).unwrap();
-        assert!(revoked_keys(&root).is_empty());
-        // The backup revokes the signing key; kept even when a later index leaves it out.
-        fetch(&backup, &[&signing_hex]).unwrap();
-        assert_eq!(revoked_keys(&root), [key(&signing_hex)]);
-        fetch(&backup, &[]).unwrap();
-        assert_eq!(revoked_keys(&root), [key(&signing_hex)]);
-        // From then on, what the revoked key signs is refused.
-        let err = fetch(&signing, &[]).unwrap_err();
-        assert!(err.contains("does not match the release key"), "{err}");
-        // A key nobody trusts here is not this launcher's concern.
-        let (_, stranger) = key_pair();
-        fetch(&backup, &[&stranger]).unwrap();
-        assert_eq!(revoked_keys(&root).len(), 1);
-    }
-
-    #[test]
-    fn the_official_series_starts_from_the_time_0_2_0_kept_per_key() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = Root::new(tmp.path());
-        let dir = root.dir().join(INDEX_SEEN_DIR);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(RELEASE_PUBLIC_KEYS[0]), "100\n").unwrap();
-        let index = |generated: u64| Index {
-            generated,
-            launcher: None,
-            revoked_keys: vec![],
-            releases: vec![],
-        };
-        let err = remember_index(&root, &index(50), "u", OFFICIAL_SERIES).unwrap_err();
-        assert!(err.contains("older than an index seen before"), "{err}");
-        remember_index(&root, &index(150), "u", OFFICIAL_SERIES).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(dir.join(OFFICIAL_SERIES))
-                .unwrap()
-                .trim(),
-            "150"
-        );
-        // Another build's series is its own.
-        remember_index(&root, &index(5), "u", "abcd").unwrap();
     }
 
     #[test]

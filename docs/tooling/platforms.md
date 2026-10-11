@@ -222,7 +222,8 @@ launcher install later releases.
 "latest"). The release workflow rewrites it for every release and every yank. It lists the
 signed releases, which ones are yanked (withdrawn for a serious bug: a requirement no longer
 selects them, though `=<version>` still installs one), the time it was written (a launcher
-refuses an index older than one it has seen, so a mirror can't hide later releases), the
+refuses an index older than one it has seen, so a mirror can't hide later releases, and one
+written more than a day ahead of its clock), the
 newest launcher (an older launcher says to run the installer again), and release keys that
 leaked (`revoked_keys`: a launcher refuses such a key from then on, when the index is signed by
 the backup key; CONTRIBUTING.md "Replacing the signing key").
