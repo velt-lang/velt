@@ -58,6 +58,7 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
             ("test", "--filter") => {
                 flags.filter = Some(take_value(inline.as_deref(), &mut it, "--filter")?)
             }
+            ("test", "--exact") => flags.exact = true,
             ("test", "--no-run") => flags.no_run = true,
             ("test", "--json") => flags.json = true,
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
@@ -78,6 +79,7 @@ struct Flags {
     release: bool,
     watch: bool,
     filter: Option<String>,
+    exact: bool,
     no_run: bool,
     json: bool,
     path: Option<String>,
@@ -166,6 +168,9 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
         "test" if flags.json && !flags.no_run => {
             Err("`--json` goes with `--no-run` (`velt test --no-run --json`)".into())
         }
+        "test" if flags.exact && flags.filter.is_none() => {
+            Err("`--exact` goes with `--filter <name>`".into())
+        }
         "test" if flags.watch && flags.no_run => {
             Err("`--watch` runs the tests; it does not go with `--no-run`".into())
         }
@@ -175,6 +180,7 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             locked: flags.locked,
             watch: flags.watch,
             filter: flags.filter,
+            exact: flags.exact,
             no_run: flags.no_run,
             json: flags.json,
         }),
@@ -316,6 +322,7 @@ mod tests {
                 locked: false,
                 watch: false,
                 filter: None,
+                exact: false,
                 no_run: false,
                 json: false,
             }
@@ -328,6 +335,7 @@ mod tests {
                 locked: false,
                 watch: true,
                 filter: None,
+                exact: false,
                 no_run: false,
                 json: false,
             }
@@ -348,11 +356,13 @@ mod tests {
                 locked: false,
                 watch: false,
                 filter: Some("test_add".into()),
+                exact: false,
                 no_run: true,
                 json: true,
             }
         );
         assert!(p(&["test", "--json"]).unwrap_err().contains("`--no-run`"));
+        assert!(p(&["test", "--exact"]).unwrap_err().contains("`--filter"));
         assert!(p(&["test", "--no-run", "--watch"])
             .unwrap_err()
             .contains("`--watch`"));

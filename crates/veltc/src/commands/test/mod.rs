@@ -2,9 +2,10 @@
 //! compile a generated harness per file ([`harness`]) and run it, printing `ok <name>` / `FAILED
 //! <name>` and a summary. Exit code 1 if any test failed or did not build.
 //!
-//! `--filter <text>` keeps the tests whose name contains it. `--no-run` builds the harnesses
-//! without running them, with variables for debuggers, and lists them (`--json`: as JSON, which
-//! the VS Code extension's "Debug test" reads).
+//! `--filter <text>` keeps the tests whose name contains it (`--exact`: is it). `--no-run` builds
+//! the harnesses without running them, with variables for debuggers, into
+//! `target/velt/test/debug/` (a harness being debugged must not block the next run's link), and
+//! lists them (`--json`: as JSON, which the VS Code extension's "Debug test" reads).
 
 pub(crate) mod discover;
 mod harness;
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
-use velt_common::{FileId, SourceMap};
+use velt_common::FileId;
 
 use super::build::{failure_code, report};
 use super::project::Project;
@@ -32,6 +33,8 @@ pub struct TestOptions {
     pub locked: bool,
     /// Only the tests whose name contains this.
     pub filter: Option<String>,
+    /// With `filter`: only the test with exactly that name.
+    pub exact: bool,
     /// Build the harnesses without running them.
     pub no_run: bool,
     /// With `no_run`: list them as JSON on stdout.
@@ -91,8 +94,8 @@ pub fn test_command(path: Option<&Path>, opts: &TestOptions, watch: bool) -> Exi
     }
 }
 
-/// `--no-run --json`: `{"harnesses": [{"file", "executable", "tests", "env"}], "lldbScript",
-/// "diagnostics", "errors", "warnings"}`.
+/// `--no-run --json`: `{"harnesses": [{"file", "executable", "tests", "env", "debugInfo"}],
+/// "lldbScript", "diagnostics", "errors", "warnings"}`.
 fn print_json(harnesses: &[Value], diagnostics: Vec<Value>) {
     let count = |sev: &str| diagnostics.iter().filter(|d| d["severity"] == sev).count();
     let (errors, warnings) = (count("error"), count("warning"));
@@ -200,15 +203,17 @@ impl Run<'_> {
             ));
         };
         let Some(mut found) = self.discover(file)? else {
+            // `--json`: the parse errors are in the document.
             if !self.opts.json {
                 println!("{} {} (does not parse)", failed(), file.display());
             }
             self.failed += 1;
             return Ok(());
         };
-        if let Some(filter) = &self.opts.filter {
-            found.tests.retain(|t| t.contains(filter.as_str()));
-            found.async_tests.retain(|t| t.contains(filter.as_str()));
+        if self.opts.filter.is_some() {
+            found.tests.retain(|t| self.selects(t));
+            found.async_tests.retain(|t| self.selects(t));
+            found.skipped.retain(|(t, _)| self.selects(t));
             if found.tests.is_empty() {
                 return Ok(());
             }
@@ -233,16 +238,38 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// Parse `file` and list its tests; `None` (after printing the errors) if it does not parse.
-    fn discover(&self, file: &Path) -> Result<Option<discover::TestFunctions>, String> {
+    /// Whether `--filter` (and `--exact`) select the test `name`.
+    fn selects(&self, name: &str) -> bool {
+        match &self.opts.filter {
+            None => true,
+            Some(filter) if self.opts.exact => name == filter,
+            Some(filter) => name.contains(filter.as_str()),
+        }
+    }
+
+    /// Parse `file` and list its tests; `None` if it does not parse, after printing the errors
+    /// (`--json`: adding them to the document).
+    fn discover(&mut self, file: &Path) -> Result<Option<discover::TestFunctions>, String> {
         let src = std::fs::read_to_string(file)
             .map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
         let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
         if diags.iter().any(|d| d.is_error()) {
-            let mut sm = SourceMap::new();
-            sm.add(file, src);
-            let rendered: Vec<String> = diags.iter().map(|d| d.render(&sm)).collect();
-            eprintln!("{}", rendered.join("\n\n"));
+            let mut sess = Session::new();
+            sess.sm.add(file, src);
+            sess.diagnostics = diags;
+            if self.opts.json {
+                let report = super::check::report_json(&sess, None, &[]);
+                if let Value::Array(ds) = &report["diagnostics"] {
+                    self.diagnostics.extend(ds.iter().cloned());
+                }
+            } else {
+                let rendered: Vec<String> = sess
+                    .diagnostics
+                    .iter()
+                    .map(|d| d.render(&sess.sm))
+                    .collect();
+                eprintln!("{}", rendered.join("\n\n"));
+            }
             return Ok(None);
         }
         Ok(Some(discover::test_functions(&module)))
@@ -277,6 +304,7 @@ impl Run<'_> {
                     "executable": artifact_path(artifact).to_string_lossy(),
                     "tests": found.tests,
                     "env": { super::build::SCRIPT_VAR: script.to_string_lossy() },
+                    "debugInfo": super::build::has_line_info(&opts),
                 }));
             }
             Err(_) => self.failed += found.tests.len(),
@@ -292,6 +320,12 @@ impl Run<'_> {
         async_tests: &[String],
     ) -> BuildOptions {
         let dir = file.parent().unwrap_or(Path::new(""));
+        // `--no-run` harnesses get a directory of their own: one being debugged must not keep
+        // the next run from linking its harness (Windows locks a running executable).
+        let out_dir = match self.opts.no_run {
+            true => self.out_dir.join("debug"),
+            false => self.out_dir.clone(),
+        };
         let opts = BuildOptions {
             input: dir.join(format!("__velt_test_{module_name}.vlt")),
             // With its extension: `a.test.vlt` and `a.test.ts` side by side are not ambiguous here.
@@ -304,12 +338,14 @@ impl Run<'_> {
                 async_tests,
             )),
             packages: self.packages.clone(),
-            output: Some(self.out_dir.join(format!(
+            output: Some(out_dir.join(format!(
                 "{}_{}",
                 module_name.replace('.', "_"),
                 self.builds
             ))),
             release: self.opts.release,
+            // What `--no-run` builds is for a debugger.
+            debug_vars: self.opts.no_run,
             ..Default::default()
         };
         self.builds += 1;

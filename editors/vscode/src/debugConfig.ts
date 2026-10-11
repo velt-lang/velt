@@ -61,12 +61,12 @@ export interface VeltConfig {
 
 /**
  * The velt arguments that build `config`'s program: `velt build` with the file (if any), its
- * `buildArgs` and `--json`; for a test, `velt test <file> --filter <test> --no-run --json`.
+ * `buildArgs` and `--json`; for a test, `velt test <file> --filter <test> --exact --no-run --json`.
  */
 export function buildArgs(config: VeltConfig): string[] {
   const file = config.file ? [config.file] : [];
   if (config.test) {
-    return ["test", ...file, "--filter", config.test, "--no-run", "--json"];
+    return ["test", ...file, "--filter", config.test, "--exact", "--no-run", "--json"];
   }
   return ["build", ...file, ...(config.buildArgs ?? []), "--json"];
 }
@@ -102,6 +102,7 @@ interface Harness {
   executable: string;
   tests: string[];
   env?: Record<string, string>;
+  debugInfo?: boolean;
 }
 
 /**
@@ -116,7 +117,7 @@ export function parseBuildResult(stdout: string): BuildResult {
   const harness = value.harnesses?.[0];
   return {
     executable: harness?.executable ?? value.executable ?? null,
-    debugInfo: value.debugInfo ?? null,
+    debugInfo: harness?.debugInfo ?? value.debugInfo ?? null,
     lldbScript: value.lldbScript ?? null,
     env: harness?.env ?? {},
     diagnostics: value.diagnostics,

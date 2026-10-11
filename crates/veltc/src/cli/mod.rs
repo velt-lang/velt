@@ -136,6 +136,8 @@ pub enum Command {
         watch: bool,
         /// `--filter <text>`: only the tests whose name contains it.
         filter: Option<String>,
+        /// `--exact`: only the test whose name is the filter.
+        exact: bool,
         /// `--no-run`: build the test harnesses (for a debugger) without running them.
         no_run: bool,
         /// `--json` (with `--no-run`): report the harnesses as JSON.

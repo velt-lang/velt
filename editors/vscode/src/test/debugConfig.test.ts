@@ -51,6 +51,7 @@ test("a test builds its harness with velt test", () => {
     "/w/math.test.vlt",
     "--filter",
     "test_add",
+    "--exact",
     "--no-run",
     "--json",
   ]);
@@ -62,6 +63,7 @@ test("a test builds its harness with velt test", () => {
           executable: "/w/target/velt/test/math_test_0",
           tests: ["test_add"],
           env: { VELT_SCRIPT: "/w/math.test.vlt" },
+          debugInfo: false,
         },
       ],
       lldbScript: "/opt/velt/share/velt/lldb/velt_lldb.py",
@@ -73,6 +75,8 @@ test("a test builds its harness with velt test", () => {
   assert.equal(built.executable, "/w/target/velt/test/math_test_0");
   assert.deepEqual(built.env, { VELT_SCRIPT: "/w/math.test.vlt" });
   assert.equal(built.lldbScript, "/opt/velt/share/velt/lldb/velt_lldb.py");
+  // The harness's own debugInfo (a Windows build without line information warns).
+  assert.equal(built.debugInfo, false);
   // No harness (the test is gone, or the build failed): nothing to debug.
   assert.equal(parseBuildResult('{"harnesses": [], "diagnostics": [], "errors": 0}').executable, null);
 });

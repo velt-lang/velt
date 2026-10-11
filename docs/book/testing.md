@@ -76,6 +76,7 @@ FAILED test_uncaught (exit code 1)
 velt test                       # every *.test.vlt (.ts, .tsx) of the package (or under the current directory)
 velt test tests/api.test.vlt    # one file
 velt test --filter parse        # the tests whose name contains `parse`
+velt test --filter test_parse --exact  # just `test_parse`
 velt test --release             # optimized build
 velt test --watch               # rerun on every change
 velt test --no-run              # build the test programs without running them

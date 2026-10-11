@@ -447,6 +447,47 @@ fn test_filter_and_no_run() {
     let exe = Path::new(h["executable"].as_str().unwrap());
     let run = std::process::Command::new(exe).output().unwrap();
     assert_eq!(run.status.code(), Some(101));
+    // In a directory of its own, so debugging it doesn't block the next run's link.
+    assert_eq!(
+        exe.parent().and_then(|d| d.file_name()),
+        Some(std::ffi::OsStr::new("debug")),
+        "{out}"
+    );
+    assert!(h["debugInfo"].is_boolean(), "{out}");
+    if !cfg!(windows) {
+        assert_eq!(h["debugInfo"], true, "{out}");
+    }
+
+    // `--exact`: `test_add` alone, not `test_add_more`.
+    let o = s.velt(
+        "app",
+        &[
+            "test", "--filter", "test_add", "--exact", "--no-run", "--json",
+        ],
+    );
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(
+        out["harnesses"][0]["tests"],
+        serde_json::json!(["test_add"]),
+        "{out}"
+    );
+    let o = s.velt("app", &["test", "--filter", "test_add", "--exact"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
+
+    // A test file that does not parse: its errors, with their location, are in the JSON.
+    s.write("app/src/garbled.test.vlt", "export function test_y( {\n");
+    let o = s.velt("app", &["test", "--filter", "test_y", "--no-run", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+    let located = out["diagnostics"].as_array().unwrap().iter().any(|d| {
+        d["location"]["file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with("garbled.test.vlt"))
+    });
+    assert!(located, "{out}");
+    std::fs::remove_file(s.dir.join("app/src/garbled.test.vlt")).unwrap();
 
     // A test that does not build is reported in the JSON.
     s.write(

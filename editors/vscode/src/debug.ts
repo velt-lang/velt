@@ -157,7 +157,7 @@ async function build(
   );
   if (output.error) {
     void vscode.window.showErrorMessage(
-      `Velt: could not run \`${command} build\` (${output.error}). ` +
+      `Velt: could not run \`${command} ${args[0]}\` (${output.error}). ` +
         'Install velt or set "velt.serverPath" to the velt executable.',
     );
     return undefined;
@@ -167,7 +167,7 @@ async function build(
     result = parseBuildResult(output.stdout);
   } catch {
     void vscode.window.showErrorMessage(
-      `Velt: \`velt build --json\` failed; is this velt too old? ${output.stderr.trim()}`,
+      `Velt: \`velt ${args[0]} --json\` failed; is this velt too old? ${output.stderr.trim()}`,
     );
     return undefined;
   }
@@ -277,7 +277,8 @@ async function debugTest(file: string | undefined, test: string): Promise<void> 
   });
 }
 
-// "Run Test": `velt test <file> --filter <test>` in a terminal (velt itself, not a shell).
+// "Run Test": `velt test <file> --filter <test> --exact` in a terminal (velt itself, not a
+// shell).
 async function runTest(file: string | undefined, test: string): Promise<void> {
   if (!file) {
     void vscode.window.showErrorMessage("Velt: open a test file to run a test.");
@@ -289,7 +290,7 @@ async function runTest(file: string | undefined, test: string): Promise<void> {
     name: `Velt: ${test}`,
     cwd: folder?.uri.fsPath ?? path.dirname(file),
     shellPath: veltCommand(),
-    shellArgs: ["test", file, "--filter", test],
+    shellArgs: ["test", file, "--filter", test, "--exact"],
   });
   terminal.show();
 }

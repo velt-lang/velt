@@ -213,14 +213,15 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "test",
         summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &[
-            "test [<file|dir>] [--filter <text>] [--release] [--locked] [--watch]",
-            "test [<file|dir>] [--filter <text>] --no-run [--json]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--watch]",
+            "test [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
                 *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed.",
         options: &[
             ("--filter <text>", "only the tests whose name contains <text>"),
+            ("--exact", "with --filter: only the test named <text>"),
             ("--release", "build the tests optimized"),
             LOCKED,
             ("--watch", "rerun on every change"),

@@ -65,6 +65,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             locked,
             watch,
             filter,
+            exact,
             no_run,
             json,
         } => {
@@ -72,6 +73,7 @@ pub fn execute(cmd: Command) -> ExitCode {
                 release,
                 locked,
                 filter,
+                exact,
                 no_run,
                 json,
             };

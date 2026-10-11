@@ -142,7 +142,7 @@ fn finish_executable(opts: &BuildOptions, artifact: &Artifact) -> Result<(), Str
 /// Whether the build's program has line information a debugger can use: debug info was asked
 /// for, and the backend emits it for the target. Cranelift writes no DWARF or CodeView into COFF
 /// (Windows) objects yet, only function symbols.
-fn has_line_info(opts: &BuildOptions) -> bool {
+pub(crate) fn has_line_info(opts: &BuildOptions) -> bool {
     let cranelift_coff = opts.target().contains("windows") && opts.backend != Some(Backend::Llvm);
     opts.wants_debug_info() && !cranelift_coff
 }
