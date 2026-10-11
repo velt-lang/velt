@@ -4,7 +4,8 @@
 //! in the right functions (checked without running the program, so no debugger permission is
 //! needed). On macOS the debug info stays in the object, which the executable's debug map names.
 //! Where LLDB may run programs, a default build also shows local variables with their source
-//! types (skipped where it may not).
+//! types, and with the formatters of `editors/lldb/velt_lldb.py` strings, arrays, unions and
+//! options as Velt prints them (skipped where it may not).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -272,6 +273,92 @@ fn lldb_resolves_breakpoints_in_llvm_builds() {
     let out = breakpoints("golden-work-debugger", &["--backend", "llvm"]);
     assert!(out.contains("at app.vlt:2"), "{out}");
     assert!(out.contains("at app.vlt:7"), "{out}");
+}
+
+const VALUES: &str = r#"type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+type Pair = { x: number; y: number };
+
+function show(s: Shape, v: string | number, n: number | null, words: string[]): void {
+  const lit = "hello";
+  const short = "abc" + "def";
+  const long = "a fairly long string that lives on the heap " + "!";
+  const uni = "héllo" + "✓";
+  const none: number | null = null;
+  const q: Pair | null = { x: 1, y: 2 };
+  const lone = "a" + String.fromCharCode(0xd800) + "b";
+  console.log(s.kind, v, n, none, words.length, lit, short, long, uni, q == null, lone.length);
+}
+
+function points(): number {
+  const ps: Pair[] = [{ x: 1, y: 2 }];
+  return ps.length;
+}
+
+function main() {
+  show({ kind: "circle", r: 2 }, "x", 4, ["one", "two"]);
+  console.log(points());
+}
+"#;
+
+/// The formatters the VS Code extension loads: every string form as its text, array elements,
+/// the active member of a union, options as `null` or their value.
+#[test]
+fn lldb_formats_velt_values() {
+    if cfg!(windows) {
+        eprintln!("note: Windows builds carry no DWARF yet; skipping");
+        return;
+    }
+    if !lldb_runs() {
+        return;
+    }
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let (work, exe) = build("golden-work-debugger-values", VALUES, &[]);
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -f app.vlt -l 12",
+            // At the entry of `points`, `ps` is not initialized: whatever its words hold, the
+            // formatters must neither hang nor read a huge array.
+            "breakpoint set -n _V6points",
+            "run",
+            "frame variable",
+            "frame variable words[1]",
+            "frame variable q.x",
+            "continue",
+            "frame variable",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        r#"(string) lit = "hello""#,
+        r#"(string) short = "abcdef""#,
+        r#"(string) long = "a fairly long string that lives on the heap !""#,
+        r#"(string) uni = "héllo✓""#,
+        r#"(string | number) v = "x""#,
+        "(number | null) n = 4",
+        "(number | null) none = null",
+        "(string[]) words = len=2",
+        r#"[0] = "one""#,
+        r#"(string) words[1] = "two""#,
+        "r = 2",
+        "(number) q.x = 1",
+        // A lone surrogate is one replacement character.
+        "(string) lone = \"a\u{fffd}b\"",
+        // Stopped at the entry of `points`: an array, valid or not, and no hang.
+        "({ x: number; y: number }[]) ps = ",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+    // Strings show no raw words, and unions of scalars or strings no raw `value` child.
+    assert!(!out.contains("w0 ="), "{out}");
+    assert!(!out.contains("value ="), "{out}");
 }
 
 const ENTRY: &str = "function area(w: number, h: number): number {
