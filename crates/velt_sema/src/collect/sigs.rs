@@ -11,8 +11,8 @@ use super::shapes::{resolve_bounds, self_type};
 use super::ItemDefs;
 use crate::ctx::Ctx;
 use crate::defs::{
-    is_setter_key, member_key, static_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind,
-    FnSource, Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
+    is_setter_key, static_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind, FnSource,
+    Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
 };
 use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
@@ -342,7 +342,8 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         let key = if m.is_static && instance.contains(&name.name.as_str()) {
             static_key(&name.name)
         } else {
-            member_key(&name.name, m.is_setter)
+            cx.check_method_key(module, name);
+            cx.method_key(module, name, m.is_setter)
         };
         let def = method_def(cx, &owner, m, &key);
         if methods.contains_key(&key) {
@@ -466,7 +467,8 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
     let mut methods: Vec<IfaceMethod> = vec![];
     for m in &decl.methods {
         let name = &m.sig.name;
-        let key = member_key(&name.name, m.is_setter);
+        cx.check_method_key(module, name);
+        let key = cx.method_key(module, name, m.is_setter);
         if m.sig.is_async && m.body.is_none() {
             cx.error(
                 Diagnostic::error(
@@ -569,7 +571,7 @@ fn default_method<'m>(
 ) -> DefId {
     let name = &m.sig.name;
     let mut info = fn_placeholder(
-        format!("{qual}.{}", member_key(&name.name, m.is_setter)),
+        format!("{qual}.{}", cx.method_key(module, name, m.is_setter)),
         name.span,
         m.sig.span,
         module,
@@ -601,7 +603,7 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
     let mut methods = HashMap::new();
     for meth in &e.methods {
         let name = &meth.decl.sig.name;
-        let key = member_key(&name.name, meth.is_setter);
+        let key = cx.method_key(m, name, meth.is_setter);
         let mut full = format!("{prefix}.{key}");
         let mut n = 2;
         while !used.insert(full.clone()) {

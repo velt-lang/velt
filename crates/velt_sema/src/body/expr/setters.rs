@@ -13,15 +13,6 @@ use crate::body::FnCx;
 use crate::defs::member_key;
 use crate::hir::{self, TyId};
 
-/// `(object, prop)` of an assignment target `object.prop` or `object["prop"]` (parentheses
-/// removed).
-fn member_parts(target: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
-    match &target.kind {
-        ast::ExprKind::Paren(inner) => member_parts(inner),
-        _ => super::member::member_view(target),
-    }
-}
-
 /// Evaluating `e` twice is the same as once: a variable, `this` or a field path of those.
 pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
     match &e.kind {
@@ -50,6 +41,29 @@ pub(super) fn synth(kind: ast::ExprKind, span: Span) -> ast::Expr {
 }
 
 impl FnCx<'_, '_> {
+    /// `(object, prop)` of an assignment target `object.prop`, `object["prop"]` or `object[KEY]`
+    /// with a symbol key (parentheses removed).
+    fn member_parts<'e>(&mut self, target: &'e ast::Expr) -> Option<(&'e ast::Expr, ast::Ident)> {
+        match &target.kind {
+            ast::ExprKind::Paren(inner) => self.member_parts(inner),
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+            } => match self.symbol_key_of(index) {
+                Some(name) => Some((
+                    object,
+                    ast::Ident {
+                        name,
+                        span: index.span,
+                    },
+                )),
+                None => super::member::member_view(target),
+            },
+            _ => super::member::member_view(target),
+        }
+    }
+
     /// Does type `t` have a setter `name` (and no field of that name)?
     pub(crate) fn has_setter(&mut self, t: TyId, name: &str) -> bool {
         self.field_of(t, name).is_none()
@@ -106,7 +120,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        let (object, prop) = self
+            .member_parts(target)
+            .expect("ICE: setter target is a member");
         let prop = &prop;
         if self.private_accessor_outside(obj.ty, prop, true) {
             self.check_args_loose(std::slice::from_ref(value));
@@ -141,7 +157,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let (object, prop) = member_parts(target).expect("ICE: setter target is a member");
+        let (object, prop) = self
+            .member_parts(target)
+            .expect("ICE: setter target is a member");
         let prop = &prop;
         if self.private_accessor_outside(obj.ty, prop, true) || !self.readable(obj.ty, prop) {
             return self.error_expr(span);
@@ -156,7 +174,10 @@ impl FnCx<'_, '_> {
             return true;
         }
         self.cx.err(
-            format!("cannot read `{}`: it has a setter but no getter", prop.name),
+            format!(
+                "cannot read `{}`: it has a setter but no getter",
+                self.cx.shown_name(&prop.name)
+            ),
             prop.span,
         );
         false

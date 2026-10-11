@@ -81,10 +81,10 @@ fn symbol_keys_name_members() {
         panic!("index")
     };
     assert!(matches!(index.kind, ExprKind::Index { .. }));
-    let e = errors("class I { [Symbol.species]() {} }");
+    let e = errors("class I { [Symbol.foo]() {} }");
     assert!(
         e.iter()
-            .any(|m| m.contains("`Symbol.species` is not supported")),
+            .any(|m| m.contains("`Symbol.foo` is not a well-known symbol")),
         "{e:?}"
     );
 }

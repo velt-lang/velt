@@ -120,6 +120,7 @@ impl FnLower<'_, '_> {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Str
+            | TyKind::Symbol
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Literal(_)
@@ -149,6 +150,10 @@ impl FnLower<'_, '_> {
             TyKind::Str => {
                 let a = self.addr(place.clone());
                 self.call_rt(Rt::StrbufPushInspectStr, vec![buf.clone(), a], None);
+            }
+            TyKind::Symbol => {
+                let s = Operand::Copy(place.clone());
+                self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
             }
             TyKind::Unit => self.push_text(buf, "undefined"),
             TyKind::Never => {}

@@ -1,0 +1,3 @@
+symbol_to_string.vlt:6:18: error: a symbol cannot be converted to a string implicitly: JavaScript throws a `TypeError`
+symbol_to_string.vlt:7:25: error: a symbol cannot be converted to a string implicitly: JavaScript throws a `TypeError`
+symbol_to_string.vlt:8:21: error: mismatched types

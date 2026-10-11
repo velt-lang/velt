@@ -1,0 +1,9 @@
+// A symbol is not converted to a string implicitly: JavaScript throws a `TypeError` for
+// `${s}` and `"" + s` (TypeScript: TS2731). `String(s)`, `s.toString()` and `s.description`
+// convert it explicitly.
+function main() {
+  const s = Symbol("s");
+  console.log(`${s}`);
+  console.log("key: " + s);
+  const n: number = s;
+}

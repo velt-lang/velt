@@ -226,6 +226,8 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let mut lhs = if self.at(Tok::PrivateName) && self.nth(1) == Tok::Kw(Kw::In) {
             self.parse_private_in(lo)?
+        } else if self.at_key_in() {
+            self.parse_key_in(lo)?
         } else {
             self.parse_unary()?
         };
@@ -284,6 +286,31 @@ impl<'a> Parser<'a> {
         let name = self.take_ident();
         let span = name.span;
         let lhs = self.mk_expr(ExprKind::Ident(name), span);
+        self.bump(); // in
+        let rhs = self.guarded(|p| p.parse_binary(PREC_REL + 1))?;
+        let span = self.span_from(lo);
+        let kind = ExprKind::Binary {
+            op: BinaryOp::In,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        };
+        Ok(self.mk_expr(kind, span))
+    }
+
+    /// Is the cursor at `NAME in` or `Symbol.name in`: a key test (`KEY in o`)?
+    fn at_key_in(&mut self) -> bool {
+        let named = |p: &mut Self, n: usize| p.nth(n) == Tok::Kw(Kw::In);
+        (self.at(Tok::Ident) && named(self, 1))
+            || (self.at_word("Symbol")
+                && self.nth(1) == Tok::Dot
+                && Self::is_name(self.nth(2))
+                && named(self, 3))
+    }
+
+    /// `KEY in o` / `Symbol.iterator in o` (the caller checked [`Self::at_key_in`]): a test for a
+    /// member a symbol names. Like `#x in o`, a relational operand.
+    fn parse_key_in(&mut self, lo: u32) -> PResult<Expr> {
+        let lhs = self.parse_unary()?;
         self.bump(); // in
         let rhs = self.guarded(|p| p.parse_binary(PREC_REL + 1))?;
         let span = self.span_from(lo);

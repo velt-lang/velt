@@ -23,12 +23,13 @@ use object::{Object, ObjectSection};
 
 use super::{build_unit, FunctionLines};
 use crate::CodegenResult;
+use velt_vir::vir;
 
-/// Append the debug sections describing `functions` (of a program with source `files`).
+/// Append the debug sections describing `functions` of `program`.
 /// COFF objects get none (see the module docs of `debug_info`).
 pub(crate) fn add_debug_info(
     product: &mut ObjectProduct,
-    files: &[String],
+    program: &vir::Program,
     functions: &[FunctionLines],
 ) -> CodegenResult<()> {
     let format = product.object.format();
@@ -39,10 +40,16 @@ pub(crate) fn add_debug_info(
         .iter()
         .map(|f| product.function_symbol(f.id))
         .collect();
-    let mut dwarf = build_unit(files, functions, |i| Address::Symbol {
-        symbol: i,
-        addend: 0,
-    });
+    let frame = super::frame_register(product.object.architecture());
+    let mut dwarf = build_unit(
+        program,
+        functions,
+        |i| Address::Symbol {
+            symbol: i,
+            addend: 0,
+        },
+        frame,
+    );
     // Every supported target (x86_64, aarch64) is little-endian.
     let mut sections = Sections::new(RelocWriter::new(RunTimeEndian::Little));
     dwarf

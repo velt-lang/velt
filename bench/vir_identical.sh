@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Do two compilers emit the same VIR for the programs under bench/? Prints each program whose
+# VIR differs and a summary (programs the base compiler cannot build are counted apart).
+#
+#   bench/vir_identical.sh <base velt> <head velt> <base std dir> <head std dir>
+#
+# The VIR holds the paths of std files (in panic locations, " at <std>/prelude/array.vlt:127:22",
+# and in their lengths), so each compiler reads its std from a copy at one and the same path
+# ($VELT_STD): the base's for every base build, then the head's for every head build.
+set -uo pipefail
+base=$1
+head=$2
+base_std=$(cd "$3" && pwd)
+head_std=$(cd "$4" && pwd)
+cd "$(dirname "$0")"
+tmp=$(mktemp -d)
+mkdir -p "$tmp/base" "$tmp/head"
+programs=(*.vlt */*.vlt)
+
+# Emit the VIR of every program with compiler $1 and std $2 into directory $3.
+emit_all() {
+  rm -rf "$tmp/std"
+  cp -r "$2" "$tmp/std"
+  for f in "${programs[@]}"; do
+    VELT_STD="$tmp/std" "$1" build "$f" --emit vir >"$3/${f//\//_}.vir" 2>/dev/null ||
+      rm -f "$3/${f//\//_}.vir"
+  done
+}
+
+emit_all "$base" "$base_std" "$tmp/base"
+emit_all "$head" "$head_std" "$tmp/head"
+same=0 differ=0 skipped=0
+for f in "${programs[@]}"; do
+  v=${f//\//_}.vir
+  if [ ! -f "$tmp/base/$v" ]; then
+    skipped=$((skipped + 1))
+  elif cmp -s "$tmp/base/$v" "$tmp/head/$v"; then
+    same=$((same + 1))
+  else
+    differ=$((differ + 1))
+    echo "differs: $f"
+  fi
+done
+rm -rf "$tmp"
+echo "identical=$same differ=$differ not-built=$skipped"

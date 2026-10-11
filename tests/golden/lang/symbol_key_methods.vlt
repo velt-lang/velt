@@ -1,0 +1,50 @@
+// Methods, getters and setters keyed by a symbol constant (or a string constant) are members
+// like fields: `o[K]`, `o[K]()`, `o[K] = v`, `o[K] += v` and `K in o` find them, also through a
+// base class, an override and an interface. Expected output from node.
+const K = Symbol("k");
+const S = Symbol.for("s");
+const NAME = "named";
+
+interface HasK {
+  get [K](): number;
+}
+
+interface Doubler {
+  [S](x: number): number;
+}
+
+class Base implements HasK, Doubler {
+  #v = 1;
+  get [K](): number {
+    return this.#v;
+  }
+  set [K](v: number) {
+    this.#v = v;
+  }
+  [S](x: number): number {
+    return x * 2;
+  }
+  [NAME](): string {
+    return "by string constant";
+  }
+}
+
+class Derived extends Base {
+  override [S](x: number): number {
+    return x * 3;
+  }
+}
+
+function main() {
+  const b = new Base();
+  console.log(K in b, S in b, b[K], b[S](2), b.named());
+  b[K] = 5;
+  b[K]++;
+  b[K] += 10;
+  console.log(b[K], b);
+  const d: Base = new Derived();
+  console.log(d[S](2), S in d, d[K]);
+  const h: HasK = b;
+  const x: Doubler = d;
+  console.log(h[K], K in h, x[S](5), S in x);
+}

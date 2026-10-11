@@ -1,0 +1,3 @@
+symbol_in_unknown.vlt:14:15: error: cannot tell whether a `Map<string, f64>` has `[Symbol.toStringTag]`
+symbol_in_unknown.vlt:16:22: error: the right operand of `in` must be an object, found `string`
+symbol_in_unknown.vlt:19:20: error: no field `[KEY]` on type `{ a: f64 }`

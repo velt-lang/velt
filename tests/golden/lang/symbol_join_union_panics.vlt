@@ -1,0 +1,19 @@
+// Joining an array whose element type is a union holding `symbol` checks each element at run
+// time: strings are joined, and a symbol throws JavaScript's `TypeError` (`Array.prototype.join`
+// converts each element with `ToString`). Velt panics (exit code 101; `try`/`catch` cannot catch
+// it, unlike Node); the lines before are printed.
+function pick(i: number): string | symbol {
+  return i === 0 ? "text" : Symbol("s");
+}
+
+function wrap<T>(xs: T[]): string {
+  return `[${xs}]`;
+}
+
+function main(): void {
+  const ok: (string | symbol)[] = ["a", pick(0)];
+  console.log(ok.join("-"), String(ok), wrap(ok));
+  const bad: (string | symbol)[] = ["a", pick(1)];
+  console.log(bad.length);
+  console.log(bad.join("-"));
+}

@@ -149,6 +149,13 @@ impl FnCx<'_, '_> {
         id
     }
 
+    /// Does a local named `name` (of this function or an enclosing one) hide the module-level
+    /// item of that name here? Unlike [`Self::lookup_local`], nothing is captured.
+    pub fn local_hides(&self, name: &str) -> bool {
+        frame_lookup(&self.f, name).is_some()
+            || self.outer.iter().any(|f| frame_lookup(f, name).is_some())
+    }
+
     /// A local visible here: the current frame's, or one of an enclosing function (which is then
     /// captured by every closure frame in between).
     pub fn lookup_local(&mut self, name: &str, span: Span) -> Option<LocalId> {

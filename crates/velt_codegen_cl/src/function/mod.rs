@@ -3,8 +3,11 @@
 //! Scalar locals whose address is never taken live in registers: a local assigned exactly once
 //! is the SSA value of its assignment (`Storage::Value`), any other becomes a
 //! `cranelift_frontend::Variable` (SSA construction is left to `FunctionBuilder`). Aggregates and
-//! address-taken scalars live in explicit stack slots. Submodules handle one concern each on the
-//! shared `Translator`.
+//! address-taken scalars live in explicit stack slots, and so do locals that hold a source
+//! variable for debuggers (`LocalDecl::debug`, debug builds) where the object gets DWARF
+//! variables (`debug_info::describes_variables`): their slot is keyed by the local's index, so
+//! debug_info finds it in the compiled frame. Submodules handle one concern each on
+//! the shared `Translator`.
 //!
 //! Why single assignments bypass `Variable`: `FunctionBuilder` keeps, per variable, a table
 //! indexed by block, so its memory grows with variables × blocks. VIR names every temporary, so
@@ -25,7 +28,7 @@ mod terminator;
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKey, StackSlotKind};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataId, FuncId, Module};
@@ -173,7 +176,8 @@ fn translate_once<M: Module>(
         && triple.binary_format == BinaryFormat::Coff;
     let rounding_instructions = rounding::has_rounding_instructions(module.isa());
     let mut builder = FunctionBuilder::new(func, builder_ctx);
-    let storage = allocate_locals(&mut builder, program, function, in_memory, single)?;
+    let describe = crate::debug_info::describes_variables(triple);
+    let storage = allocate_locals(&mut builder, program, function, in_memory, single, describe)?;
     let mut translator = Translator {
         module,
         program,
@@ -287,17 +291,19 @@ fn allocate_locals(
     function: &vir::Function,
     in_memory: &[bool],
     single: &[bool],
+    describe: bool,
 ) -> CodegenResult<Vec<Storage>> {
     let mut storage = Vec::with_capacity(function.locals.len());
     for (i, local) in function.locals.iter().enumerate() {
         storage.push(match local.ty {
             Ty::Unit => Storage::Unit,
-            ty if in_memory[i] => {
+            ty if in_memory[i] || (describe && local.debug.is_some()) => {
                 let (size, align) = size_align(program, ty)?;
-                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                let slot = builder.create_sized_stack_slot(StackSlotData::new_with_key(
                     StackSlotKind::ExplicitSlot,
                     size.max(1),
                     align.trailing_zeros() as u8,
+                    StackSlotKey::new(i as u64),
                 ));
                 Storage::Slot(slot)
             }
@@ -318,7 +324,9 @@ impl<M: Module> Translator<'_, '_, M> {
             .map(|_| self.builder.create_block())
             .collect();
         self.builder.switch_to_block(entry);
-        self.set_location(self.function.first_loc());
+        // Storing the params has no location, so the function's body (its first located code,
+        // where debuggers stop) starts with them stored.
+        self.set_location(None);
         let params = self.builder.block_params(entry).to_vec();
         for (i, value) in params.into_iter().enumerate() {
             let loc = self.place(&Place::local(vir::Local(i as u32)))?;

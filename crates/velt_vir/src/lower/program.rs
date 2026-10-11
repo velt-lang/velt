@@ -46,6 +46,7 @@ impl<'h> Cx<'h> {
             debug: None,
             tracked: HashMap::new(),
             str_objects: HashMap::new(),
+            symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
             iface_impls: None,
@@ -67,7 +68,8 @@ impl<'h> Cx<'h> {
         self.func(Work::Main);
     }
 
-    pub(super) fn finish(self) -> vir::Program {
+    pub(super) fn finish(mut self) -> vir::Program {
+        self.fill_registry();
         let mut funcs: Vec<Function> = self
             .funcs
             .into_iter()

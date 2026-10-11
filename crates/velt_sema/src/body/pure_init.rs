@@ -253,6 +253,15 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
         })
     };
     let name_span = info.name_span;
+    // `Symbol.for(key)` gives the same symbol for a key at every call, so a constant it
+    // initializes is the same at each use (std/symbol's runtime function, which only std may
+    // declare).
+    if info.kind == FnKind::Extern
+        && info.name == "velt_rt_symbol_for"
+        && cx.modules[info.module].path == "std/symbol"
+    {
+        return Ok(());
+    }
     if info.kind == FnKind::Extern {
         return at(
             "calls an external function, which may have effects",
@@ -427,7 +436,10 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::Trunc
         | I::FAbs
         | I::JsonStringify
-        | I::SourceLocation => return None,
+        | I::SourceLocation
+        | I::SymbolStatic
+        | I::SymbolRegistry
+        | I::TemplateToString => return None,
         _ => return Some("uses an operation with effects".into()),
     };
     Some(format!("calls `{name}`, which has effects"))

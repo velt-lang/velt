@@ -56,6 +56,7 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    cx.name_symbol_keys();
     field_only::declare(cx);
     crate::type_defaults::check_all(cx);
     shapes::resolve_shapes(cx, &items);

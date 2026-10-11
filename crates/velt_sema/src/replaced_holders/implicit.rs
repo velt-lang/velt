@@ -218,6 +218,7 @@ impl Implicit {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error
+            | TyKind::Symbol
             | TyKind::Literal(_) => {}
             TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {
                 Some(r) => out.add(r),
@@ -345,6 +346,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::Print
         | I::PrintErr
         | I::ToString
+        | I::TemplateToString
         | I::JsonStringify
         | I::Clone
         | I::Transfer
@@ -414,7 +416,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AsyncGeneratorResume
         | I::AsyncGeneratorValue
         | I::AsyncGeneratorReturn
-        | I::AsyncGeneratorDispose => false,
+        | I::AsyncGeneratorDispose
+        | I::SymbolStatic
+        | I::SymbolRegistry => false,
     }
 }
 
