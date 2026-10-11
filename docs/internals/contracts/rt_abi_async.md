@@ -1029,6 +1029,10 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 | `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
 | `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
 | `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
+| `velt_rt_ws_subscribe` | `(VeltWs ws, const VeltStr* topic) -> VeltFut*` | `IoResult<()>` once the connection is open; subscribing twice is a no-op |
+| `velt_rt_ws_unsubscribe` | `(VeltWs ws, const VeltStr* topic)` | leaves the topic (nothing if not subscribed or not open yet) |
+| `velt_rt_ws_publish` | `(const VeltStr* topic, const VeltStr* text, VeltWs except) -> u64` | text frame encoded once, queued for every subscriber but `except` (0: none) with at most 16 MiB queued; returns how many |
+| `velt_rt_ws_publish_binary` | `(const VeltStr* topic, const VeltBytes* data, VeltWs except) -> u64` | the same, binary |
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 

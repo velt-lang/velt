@@ -1,0 +1,456 @@
+// Ways a right-hand side can run a function value that replaces `o.inner` (#876): stored,
+// returned, bound, passed through generic and higher-order functions, awaited, called by a
+// setter, a getter, a constructor or an override. Each assignment is an error (JavaScript writes
+// into the old object and prints 100 for each).
+type Inner = { v: number };
+type Outer = { inner: Inner };
+// 01
+function t01() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const h = { cb: bump };
+  o.inner.v = h.cb();
+  console.log(o.inner.v);
+}
+// 02
+function mk_02(o: Outer): () => number { return () => { o.inner = { v: 100 }; return 13; }; }
+function t02() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = mk_02(o)();
+  console.log(o.inner.v);
+}
+// 03
+class K_03 { o: Outer; constructor(o: Outer) { this.o = o; } step(): number { this.o.inner = { v: 100 }; return 13; } }
+function t03() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const k = new K_03(o);
+  const m = (): number => k.step();
+  o.inner.v = m();
+  console.log(o.inner.v);
+}
+// 04
+function t04() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function apply_04<T, R_04>(f: (x: T) => R_04, x: T): R_04 { return f(x); }
+  o.inner.v = apply_04((g_04) => g_04(), fs[0]);
+  console.log(o.inner.v);
+}
+// 05
+function t05() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_05(f: () => number): number { return f(); }
+  function apply_05<T, R_05>(f: (x: T) => R_05, x: T): R_05 { return f(x); }
+  o.inner.v = apply_05(run_05, fs[0]);
+  console.log(o.inner.v);
+}
+// 06
+function t06() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function twice_06<T>(f: (x: T) => T, x: T): T { return f(f(x)); }
+  function call0_06(g_06: () => number): () => number { g_06(); return g_06; }
+  o.inner.v = twice_06(call0_06, fs[0])();
+  console.log(o.inner.v);
+}
+// 07
+async function a_07(f: () => number): Promise<number> { return f(); }
+async function t07(): Promise<void> {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = await a_07(fs[0]);
+  console.log(o.inner.v);
+}
+// 08
+function t08() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function g_08(cb: () => number): number { return [1].map(() => cb())[0]; }
+  o.inner.v = g_08(fs[0]);
+  console.log(o.inner.v);
+}
+// 09
+class Holder_09 { f: (() => number) | null = null; }
+function reg_09(holder: Holder_09, cb: () => number): number { holder.f = cb; return 1; }
+function t09() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const holder = new Holder_09();
+  reg_09(holder, bump);
+  o.inner.v = holder.f!();
+  console.log(o.inner.v);
+}
+// 10
+class S_10 { v = 0; set cb(f: () => number) { this.v = f(); } }
+function setIt_10(s: S_10, fs: Array<() => number>): number { s.cb = fs[0]; return s.v; }
+function t10() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const s = new S_10();
+  o.inner.v = setIt_10(s, fs);
+  console.log(o.inner.v);
+}
+// 11
+class G_11 { fs: Array<() => number>; constructor(fs: Array<() => number>) { this.fs = fs; } get f(): () => number { return this.fs[0]; } }
+function t11() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const g_11 = new G_11(fs);
+  const h = g_11.f;
+  o.inner.v = h();
+  console.log(o.inner.v);
+}
+// 12
+function t12() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function g_12(p: { cb: () => number }): number { const { cb } = p; return cb(); }
+  o.inner.v = g_12({ cb: fs[0] });
+  console.log(o.inner.v);
+}
+// 13
+function t13() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  interface R_13 { run(f: () => number): number }
+  class RI_13 implements R_13 { run(f: () => number): number { return f(); } }
+  const r: R_13 = new RI_13();
+  o.inner.v = r.run(fs[0]);
+  console.log(o.inner.v);
+}
+// 14
+function t14() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function first_14<T>(xs: T[]): T { return xs[0]; }
+  function run_14(f: () => number): number { return f(); }
+  o.inner.v = run_14(first_14(fs));
+  console.log(o.inner.v);
+}
+// 15
+function pick_15(fs: Array<() => number>, i: number): () => number { return fs[i]; }
+function run_15(f: () => number): number { return f(); }
+function t15() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = run_15(pick_15(fs, 0));
+  console.log(o.inner.v);
+}
+// 16
+function t16() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const m = new Map<string, () => number>([["a_16", bump]]);
+  function run_16(f: () => number): number { return f(); }
+  o.inner.v = run_16(m.get("a_16")!);
+  console.log(o.inner.v);
+}
+// 17
+function t17() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_17(f: () => number): number { return f(); }
+  function outer_17(f: () => number): number { return run_17(f); }
+  const fns = [outer_17];
+  o.inner.v = fns[0](bump);
+  console.log(o.inner.v);
+}
+// 18
+function t18() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_18(f: (() => number) | null): number { return f === null ? 0 : f(); }
+  o.inner.v = run_18(fs[0]);
+  console.log(o.inner.v);
+}
+// 19
+function t19() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_19(f: () => number): number { const g_19 = f; return g_19(); }
+  o.inner.v = run_19(fs[0]);
+  console.log(o.inner.v);
+}
+// 20
+function t20() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_20(...fns: (() => number)[]): number { return fns[0](); }
+  o.inner.v = run_20(bump);
+  console.log(o.inner.v);
+}
+// 21
+function noop_21(): number { return 1; }
+function run_21(g_21: () => number, f: () => number = noop_21): number { g_21(); return f(); }
+function t21() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = run_21(bump);
+  console.log(o.inner.v);
+}
+// 22
+function t22() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  class A_22 { m(f: () => number): number { return 1; } }
+  class B_22 extends A_22 { override m(f: () => number): number { return f(); } }
+  const a_22: A_22 = new B_22();
+  o.inner.v = a_22.m(bump);
+  console.log(o.inner.v);
+}
+// 23
+function t23() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function* gen_23(f: () => number): Generator<number> { yield f(); }
+  o.inner.v = [...gen_23(bump)][0];
+  console.log(o.inner.v);
+}
+// 24
+function t24() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  class C_24 { f: () => number; constructor(f: () => number) { this.f = f; } go(): number { return this.f(); } }
+  o.inner.v = new C_24(bump).go();
+  console.log(o.inner.v);
+}
+// 25
+function t25() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_25(f: () => number): number { return f(); }
+  const tuple: [() => number, number] = [bump, 1];
+  o.inner.v = run_25(tuple[0]);
+  console.log(o.inner.v);
+}
+// 26
+function t26() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function compose_26(f: () => number, g_26: (x: number) => number): () => number { return () => g_26(f()); }
+  o.inner.v = compose_26(bump, (x) => x)();
+  console.log(o.inner.v);
+}
+// 27
+function t27() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_27(f: () => number): number { return f(); }
+  o.inner.v = [bump].reduce((a_27, f) => a_27 + run_27(f), 0);
+  console.log(o.inner.v);
+}
+// 28
+function t28() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_28(f: () => number): number { return f(); }
+  function viaThis_28(f: () => number): number { return run_28(f); }
+  const vt = viaThis_28;
+  o.inner.v = vt(bump);
+  console.log(o.inner.v);
+}
+// 29
+function t29() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_29(f: () => number): number { return f(); }
+  o.inner.v = run_29(fs.find(() => true)!);
+  console.log(o.inner.v);
+}
+// 30
+function t30() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  function run_30(f: () => number): number { return f(); }
+  o.inner.v = run_30(true ? fs[0] : bump);
+  console.log(o.inner.v);
+}
+// 31
+class S_31 { v = 0; set cb(f: () => number) { this.v = f(); } }
+function t31() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const s = new S_31();
+  const setAndRead = (): number => { s.cb = fs[0]; return s.v; };
+  o.inner.v = setAndRead();
+  console.log(o.inner.v);
+}
+// 32
+function store_32(fs: Array<() => number>, f: () => number): number { fs.push(f); return 0; }
+function callLast_32(fs: Array<() => number>): number { return fs[fs.length - 1](); }
+function t32() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const more: Array<() => number> = [];
+  store_32(more, bump);
+  o.inner.v = callLast_32(more);
+  console.log(o.inner.v);
+}
+// 33
+function id_33<T>(x: T): T { return x; }
+function run_33(f: () => number): number { return f(); }
+function t33() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = run_33(id_33(fs[0]));
+  console.log(o.inner.v);
+}
+// 34
+function run_34(f: () => number): number { return f(); }
+function viaOpt_34(f: (() => number) | null): number { return run_34(f!); }
+function t34() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = viaOpt_34(fs[0]);
+  console.log(o.inner.v);
+}
+// 35
+function run_35(f: () => number): number { return f(); }
+function t35() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const c = fs[0];
+  o.inner.v = run_35(c);
+  console.log(o.inner.v);
+}
+// 36
+function run_36(f: () => number): number { return f(); }
+function t36() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  let c = (): number => 1;
+  c = bump;
+  o.inner.v = run_36(c);
+  console.log(o.inner.v);
+}
+// 37
+function apply2_37<T>(x: T, f: (y: T) => number): number { return f(x); }
+function call_37(g_37: () => number): number { return g_37(); }
+function t37() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = apply2_37(fs[0], call_37);
+  console.log(o.inner.v);
+}
+// 38
+function each_38<T>(xs: T[], f: (y: T) => void) { for (const x of xs) { f(x); } }
+function t38() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  const go = (): number => { let r = 0; each_38(fs, (g_38) => { r = g_38(); }); return r; };
+  o.inner.v = go();
+  console.log(o.inner.v);
+}
+// 39
+function each_39<T>(xs: T[], f: (y: T) => number): number { let r = 0; for (const x of xs) { r = f(x); } return r; }
+function call_39(g_39: () => number): number { return g_39(); }
+function t39() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = each_39(fs, call_39);
+  console.log(o.inner.v);
+}
+// 40
+function each_40<T>(xs: T[], f: (y: T) => number): number { let r = 0; for (const x of xs) { r = f(x); } return r; }
+function t40() {
+  const o: Outer = { inner: { v: 0 } };
+  const bump = (): number => { o.inner = { v: 100 }; return 13; };
+  const fs: Array<() => number> = [bump];
+  o.inner.v = each_40(fs, (g_40) => g_40());
+  console.log(o.inner.v);
+}
+// 41: a module-level constant holding a function, passed and called
+function reset_41(o: Outer): number { o.inner = { v: 100 }; return 13; }
+function run_41(f: (o: Outer) => number, o: Outer): number { return f(o); }
+const R_41 = reset_41;
+function t41() {
+  const o: Outer = { inner: { v: 0 } };
+  o.inner.v = run_41(R_41, o);
+  o.inner.v = R_41(o);
+  console.log(o.inner.v);
+}
+async function main() {
+  t01();
+  t02();
+  t03();
+  t04();
+  t05();
+  t06();
+  await t07();
+  t08();
+  t09();
+  t10();
+  t11();
+  t12();
+  t13();
+  t14();
+  t15();
+  t16();
+  t17();
+  t18();
+  t19();
+  t20();
+  t21();
+  t22();
+  t23();
+  t24();
+  t25();
+  t26();
+  t27();
+  t28();
+  t29();
+  t30();
+  t31();
+  t32();
+  t33();
+  t34();
+  t35();
+  t36();
+  t37();
+  t38();
+  t39();
+  t40();
+  t41();
+}

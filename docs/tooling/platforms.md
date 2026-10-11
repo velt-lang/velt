@@ -164,8 +164,8 @@ velt target remove x86_64-pc-windows-msvc
   (`lib/targets/PACKS.sha256`, every target's packs of that release), so a pack replaced on the
   way is refused. A toolchain without that list (built from source) checks downloads against the
   release's `SHA256SUMS` instead, after checking that file's signature (`SHA256SUMS.sig`)
-  against the velt release key built into velt, so a mirror or a replaced release can't
-  substitute a pack either. `$VELT_INSTALL_PUBLIC_KEY` (hex) sets another key, for the releases
+  against the velt release keys built into velt, so a mirror or a replaced release can't
+  substitute a pack either. `$VELT_INSTALL_PUBLIC_KEY` (hex) sets other keys, for the releases
   of another build.
 - A pack holds a runtime built with one velt: `velt build` uses it only with that velt (version
   and commit) and otherwise asks for `velt target add` again.
@@ -206,7 +206,9 @@ irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | ie
 
 **Checks.** `get-velt.sh` checks the archive against `SHA256SUMS` and, where OpenSSL can check
 Ed25519 signatures (OpenSSL 3.0 or newer; macOS's own LibreSSL and the OpenSSL 1.1 of Ubuntu 20.04, Debian 11 and RHEL 8 can't), `SHA256SUMS` against
-its signature with the velt release key. `get-velt.ps1` checks the hash only. The hash shows the
+its signature with the velt release keys (the signing key, or the backup key whose private half
+is kept offline, for when the signing key has to be replaced). `get-velt.ps1` checks the hash
+only. The hash shows the
 download is intact; the signature that the velt project published it, whatever served it. The
 launcher the installers put in place checks the signature of everything it downloads after
 that. velt 0.1.0 was published before signing and before the launcher; the installers and the
@@ -237,7 +239,7 @@ anywhere with the musl target packs.
 | `--archive <file>` | `-Archive <file>` | | install an archive you downloaded instead of downloading one |
 | `--no-modify-path` | `-NoModifyPath` | | leave `PATH` alone |
 | | | `VELT_INSTALL_BASE_URL` | the repository to download from (default `https://github.com/velt-lang/velt`) |
-| | | `VELT_INSTALL_PUBLIC_KEY` | the release key to check signatures with (64 hex digits), for another build's releases |
+| | | `VELT_INSTALL_PUBLIC_KEY` | the release keys to check signatures with (64 hex digits each, separated by commas), for another build's releases |
 
 Pass options through the pipe with `sh -s --`, for example
 `curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.1`; in PowerShell set the environment

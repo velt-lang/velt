@@ -24,7 +24,7 @@ prints every command's options and examples.
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
 | `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
 | `velt target list`, `add`, `remove` | the targets `velt build --target` builds for: install or remove target packs ([Cross-compiling](platforms.md#cross-compiling)) |
-| `velt toolchain list`, `install`, `remove`, `default`, `which`, `link` | the velt versions installed side by side, and which one runs ([`velt toolchain`](#velt-toolchain)) |
+| `velt toolchain list`, `install`, `remove`, `prune`, `default`, `which`, `link` | the velt versions installed side by side, and which one runs ([`velt toolchain`](#velt-toolchain)) |
 | `velt doctor` | check the installation and run a hello world |
 | `velt completions <shell>` | print a completion script for bash, zsh, fish or PowerShell |
 
@@ -257,7 +257,9 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
    package use.
 
 A version the package pins that isn't installed is downloaded from the release on first use and
-installed, with a message on stderr. The release's `SHA256SUMS` and the list of releases are
+installed, with a message on stderr. A new patch version gets the target packs
+([`velt target add`](platforms.md#cross-compiling)) the newest older patch of its minor had, so
+`velt build --target …` keeps working after an update. The release's `SHA256SUMS` and the list of releases are
 signed with the velt release key, which is built into velt, so a mirror or a replaced file can't
 substitute a toolchain. A requirement such as `"0.1"` picks the newest release it accepts that
 hasn't been yanked (withdrawn for a serious bug). Set
@@ -278,6 +280,7 @@ $ velt toolchain list
 | `list [--available]` | installed versions, newest first, and links; `*` marks the default and `>` the one this directory selects. `--available` lists the published versions, and marks the yanked ones, which a requirement such as `0.1` no longer selects |
 | `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
 | `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
+| `prune [--dry-run]` | remove every installed version but the default, the one this directory runs, those a link points into, and, for each `major.minor`, the one a pin like `"0.1"` runs (its newest release, or its newest pre-release when it has no release yet), saying how much space each frees; `--dry-run` only lists them. A version a lockfile still names is installed again when it is next used |
 | `default [<toolchain>]` | show or set the default |
 | `which` | the toolchain this directory runs, why, and its directory |
 | `--version` | the launcher's own version, `velt-launcher <version>` (`velt --version` is the selected toolchain's) |
@@ -351,7 +354,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_INSTALL_BASE_URL` | the repository whose releases the launcher, `velt toolchain install`, `velt target add` and the installers download from (default `https://github.com/velt-lang/velt`) |
 | `VELT_TOOLCHAIN` | the toolchain the launcher runs for this command: a version or a linked name, overriding the package's `velt` field ([`velt toolchain`](#velt-toolchain)) |
 | `VELT_TOOLCHAIN_AUTO_INSTALL` | `0`: the launcher fails instead of installing a missing version |
-| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 key (64 hex digits) release signatures (`SHA256SUMS.sig`) are checked with, instead of the velt release key: for the releases of another build |
+| `VELT_INSTALL_PUBLIC_KEY` | the Ed25519 keys (64 hex digits each, separated by commas) release signatures (`SHA256SUMS.sig`, `releases.json.sig`) are checked with, instead of the velt release keys: for the releases of another build |
 | `VELT_LINKER` | `bundled`: link with the toolchain's lld and link kit, an error if it has none; `system`: the system linker (`link.exe`, `cc`); a path: that linker program, given the system linker's arguments; default: the bundled linker when the toolchain has it ([Platforms](platforms.md#the-bundled-linker)) |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |

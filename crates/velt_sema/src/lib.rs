@@ -59,6 +59,7 @@ pub mod property_order;
 mod readonly;
 mod record_keys;
 mod recursive_aliases;
+mod replaced_holders;
 mod resolve;
 mod suggest;
 mod throws;
@@ -213,6 +214,7 @@ fn check_on_current_thread(
         defs,
         diags,
         impls,
+        counted_objects,
         ..
     } = cx;
     let defs = defs
@@ -226,6 +228,7 @@ fn check_on_current_thread(
         impls,
         anon_shapes,
         union_shapes,
+        counted_objects,
     };
     (Some(program), diags)
 }
@@ -275,6 +278,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     cx.borrow_pass_errors = error_count(cx) > before;
     // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
     object_copies::check(cx);
+    replaced_holders::check(cx);
 }
 
 /// The passes from `demote_local_closures` on: the ones whose errors may come from a held

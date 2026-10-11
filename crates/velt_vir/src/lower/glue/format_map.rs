@@ -2,7 +2,8 @@
 //! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
 //! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
-//! stands for: `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
+//! stands for, in JavaScript's key order (array indices first: the entry positions its
+//! `__positions` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
 //! `Map<T, bool>` in field 0) like node's: `Set(2) { 1, 2 }` (empty: `Set(0) {}`). Past node's
 //! depth limit they print as `[Map]`, `[Object]` and `[Set]`; a `Map` or `Set` shows its first
 //! 100 entries, then `... n more items`, and stops reading there.
@@ -11,6 +12,7 @@ use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::format_array::MAX_ARRAY_LENGTH;
 use crate::lower::glue::literals::inspect_key;
+use crate::lower::json::RecordOrder;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
@@ -150,7 +152,12 @@ impl FnLower<'_, '_> {
                 }
                 lw.push_text(buf, "{ ");
                 let types = (map_ty, kt, vt);
-                lw.format_map_entries(buf, &map, types, entries, size, &child);
+                let order = (entries == Entries::Record).then(|| lw.record_order(obj, ty));
+                let ord = order.as_ref();
+                lw.format_map_entries(buf, &map, types, (entries, ord), size, &child);
+                if let Some(o) = order {
+                    lw.drop_record_order(o);
+                }
                 lw.push_text(buf, " }");
             })
         });
@@ -205,13 +212,14 @@ impl FnLower<'_, '_> {
 
     /// The live entries of the `Map` at `obj` (of types `(map, key, value)`) with `size` of
     /// them, comma-separated, each part at node's depth `child`; a `Map` or `Set` stops after
-    /// the first 100 and adds `... n more items`.
+    /// the first 100 and adds `... n more items`. A record's entries come in `order` (its
+    /// `__positions`).
     fn format_map_entries(
         &mut self,
         buf: &Operand,
         obj: &Place,
         (ty, kt, vt): (TyId, TyId, TyId),
-        entries: Entries,
+        (entries, order): (Entries, Option<&RecordOrder>),
         size: Operand,
         child: &Operand,
     ) {
@@ -229,11 +237,13 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(shown), Rvalue::Use(cint(0, Ty::U64)));
         let stop = self.temp(Ty::U64);
         let len = Operand::Copy(proj(&keys, Proj::Field(1)));
+        let len = self.order_len(order, len);
         self.assign(Place::local(stop), Rvalue::Use(len));
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         let n = Operand::Copy(Place::local(shown));
         self.count_loop(k, Operand::Copy(Place::local(stop)), |lw, i| {
+            let i = lw.order_pos(order, i);
             let slot = lw.elem_place(&values, i.clone(), slot_t);
             let live = lw.option_is_some(&slot, slot_t);
             let (live_bb, skip) = (lw.new_block(), lw.new_block());

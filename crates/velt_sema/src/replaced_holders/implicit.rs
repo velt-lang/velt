@@ -1,0 +1,478 @@
+//! User code that runs without a call in the HIR: what lowering, its glue and the runtime call
+//! on their own. The analysis counts each as a call, so a right-hand side reaching one is
+//! checked like one that calls the code itself.
+//!
+//! The complete list (every place lowering or the runtime runs a function body that no HIR
+//! `Callee` names; a new one must be added here):
+//!
+//! 1. **Class hooks called by formatting and serialising glue** (`hir::AdtDef::to_string`,
+//!    `to_json`, `inspect`): `String(x)`, template literals, `+` on a string and `join` /
+//!    `toString` of arrays (std code over a `T`) call `toString()`; `JSON.stringify` calls
+//!    `toJSON()`; `console.log` / `console.error` call `__inspect()`, all for the value and for
+//!    every value it holds. Counted for the arguments of the intrinsics in [`glue_args`] whose
+//!    type reaches a class with such a method ([`Implicit::reach`]).
+//! 2. **A class's own `clone()`**, which a deep copy calls instead of copying a resource owner
+//!    field by field (velt_vir transfer.rs `own_clone`): `x.clone()` (`Intrinsic::Clone`), a
+//!    transfer to another task (`Transfer`, `spawn`, channels, `shared`, `Mutex`, promise
+//!    combinators, the arguments of an async call): for `spawn`, the arguments and receiver of
+//!    the call it starts, whatever the callee (a function value, a vtable or interface method:
+//!    velt_vir `async_fn/spawn.rs` `transfer_call`), the captures of an async closure, and
+//!    either branch of a conditional. Counted like the hooks of 1.
+//! 3. **`[Symbol.dispose]()`, run by drop glue** (`hir::AdtDef::dispose`): wherever a value is
+//!    dropped (the end of its variable's scope, a temporary, the old value an assignment
+//!    replaces, an element an array operation removes, a closure's environment, a `using`
+//!    declaration). Counted for every local of a function and every value an expression
+//!    computes (not a place it reads) whose type reaches a class with that method; a generic
+//!    type by the type arguments of the call, a function value by what closures capture.
+//! 4. **Generator bodies, run by a resume** (`Intrinsic::GeneratorResume`, `GeneratorReturn`,
+//!    their async forms; `next()`, `return()`, `for...of`, spread and `Array.from` reach them
+//!    through std's `Generator`), and by a generator's drop (its `[Symbol.dispose]()` runs the
+//!    body's `finally` blocks, 3). A resume may run the body of any generator function in the
+//!    program, so each counts as a function value too (its calls of its own parameters run
+//!    anything its callers could pass).
+//! 5. **Initializers evaluated where they are used**: a module constant's initializer at each
+//!    read (`E::Global`), and field initializers by `new` / an object literal of a class that
+//!    has no constructor of its own to run them. Each is scanned as a function of its own
+//!    (stored in the slot of the constant's or the type's `DefId`).
+//! 6. **Function values called by glue or the runtime** (thunks of named functions, promise
+//!    reactions, timers, `http` handlers, `Mutex.with`, `attempt`, sort comparators,
+//!    `Map`/`Set` callbacks, iterator helpers): always a function value some code passed, so
+//!    already counted where it is passed or created (`Effects::callbacks`, `Effects::values`).
+//! 7. **Async bodies after a suspension**: only at an `await` (`Effects::anything`).
+//!
+//! Not yet in the language: releasing a weakly held object (`WeakMap`, `WeakRef`, #969) drops
+//! entries' values from the runtime; once that lands it needs an entry here (a drop, 3).
+//!
+//! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
+//! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
+//! user code. Equality, hashing, sharing and truthiness are generated and call nothing.
+
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+use crate::ctx::Ctx;
+use crate::defs::DefInfo;
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+
+/// The methods glue calls on a class (1 and 2).
+const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", "__inspect", "clone"];
+
+/// What dropping, formatting or copying a value of some type may reach.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(super) struct Reach {
+    /// Classes with hooks (and their relatives, which a value of the type may be).
+    adts: BTreeSet<DefId>,
+    /// A type parameter: whatever the type arguments the program passes reach.
+    param: bool,
+    /// A function value: whatever a closure's captured values reach.
+    fns: bool,
+}
+
+impl Reach {
+    fn add(&mut self, o: &Reach) {
+        self.adts.extend(o.adts.iter().copied());
+        self.param |= o.param;
+        self.fns |= o.fns;
+    }
+}
+
+/// The implicit calls of the program: the hooks of each class, its generator functions and the
+/// initializers that run code.
+pub(super) struct Implicit {
+    /// Each class with a hook, and the hooks of its family (bases and subclasses, which a value
+    /// of it may be or inherit from): `[Symbol.dispose]()`, and the glue hooks.
+    hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)>,
+    /// Each class's subclasses (transitively).
+    family: HashMap<DefId, Vec<DefId>>,
+    /// Every generator function (4).
+    pub(super) generators: Vec<DefId>,
+    /// The types of the values closures capture.
+    captures: Vec<TyId>,
+    /// Some closure captures a value whose type may reach a hook.
+    captures_reach: bool,
+    /// [`Reach`] of each type seen without type arguments known (types mentioning type
+    /// parameters keep them as [`Reach::param`]).
+    memo: RefCell<HashMap<TyId, std::rc::Rc<Reach>>>,
+}
+
+impl Implicit {
+    pub(super) fn new(cx: &Ctx) -> Implicit {
+        let mut own: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+        let mut bases: Vec<(DefId, DefId)> = Vec::new();
+        for (i, info) in cx.info.iter().enumerate() {
+            let DefInfo::Adt(a) = info else { continue };
+            let d = DefId(i as u32);
+            let get = |n: &str| a.methods.get(n).filter(|m| !m.is_static).map(|m| m.def);
+            let dispose: Vec<DefId> = get(crate::collect::DISPOSE).into_iter().collect();
+            let glue: Vec<DefId> = GLUE_HOOKS.iter().filter_map(|n| get(n)).collect();
+            if !dispose.is_empty() || !glue.is_empty() {
+                own.insert(d, (dispose, glue));
+            }
+            if let Some(&TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b)) {
+                bases.push((d, b));
+            }
+        }
+        // Family: a class's bases and its subclasses, transitively.
+        let parent: HashMap<DefId, DefId> = bases.iter().copied().collect();
+        let mut children: HashMap<DefId, Vec<DefId>> = HashMap::new();
+        for &(d, b) in &bases {
+            children.entry(b).or_default().push(d);
+        }
+        let family: HashMap<DefId, Vec<DefId>> = parent
+            .keys()
+            .chain(children.keys())
+            .map(|&d| {
+                let mut v = vec![d];
+                let mut x = d;
+                while let Some(&b) = parent.get(&x) {
+                    if v.contains(&b) {
+                        break;
+                    }
+                    v.push(b);
+                    x = b;
+                }
+                let mut work = vec![d];
+                while let Some(x) = work.pop() {
+                    for &c in children.get(&x).into_iter().flatten() {
+                        if !v.contains(&c) {
+                            v.push(c);
+                            work.push(c);
+                        }
+                    }
+                }
+                (d, v)
+            })
+            .collect();
+        let mut hooks: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
+        for (&d, h) in &own {
+            for &m in family.get(&d).map_or(&[d][..], |v| &v[..]) {
+                let e = hooks.entry(m).or_default();
+                e.0.extend(&h.0);
+                e.1.extend(&h.1);
+            }
+        }
+        let mut generators = Vec::new();
+        let mut captures = Vec::new();
+        for (i, def) in cx.defs.iter().enumerate() {
+            let Some(Def::Fn(f)) = def else { continue };
+            if f.is_generator {
+                generators.push(DefId(i as u32));
+            }
+            for c in &f.captures {
+                if let Some(l) = f.body.locals.get(c.inner.0 as usize) {
+                    captures.push(l.ty);
+                }
+            }
+        }
+        captures.sort();
+        captures.dedup();
+        let mut im = Implicit {
+            hooks,
+            family,
+            generators,
+            captures,
+            captures_reach: false,
+            memo: RefCell::new(HashMap::new()),
+        };
+        im.captures_reach = im.captures.iter().any(|&t| {
+            let r = im.reach(cx, t);
+            !r.adts.is_empty() || r.param
+        });
+        im
+    }
+
+    /// May dropping, formatting or copying a value of type `t` run user code?
+    pub(super) fn maybe(&self, cx: &Ctx, t: TyId) -> bool {
+        let r = self.reach(cx, t);
+        !r.adts.is_empty() || r.param || (r.fns && self.captures_reach)
+    }
+
+    /// What a value of type `t` reaches (memoized).
+    pub(super) fn reach(&self, cx: &Ctx, t: TyId) -> std::rc::Rc<Reach> {
+        if let Some(r) = self.memo.borrow().get(&t) {
+            return r.clone();
+        }
+        let mut r = Reach::default();
+        self.reach_in(cx, t, None, &mut Vec::new(), &mut r);
+        let r = std::rc::Rc::new(r);
+        self.memo.borrow_mut().insert(t, r.clone());
+        r
+    }
+
+    /// Adds what `t` reaches to `out`; `env`: what the type parameters stand for (`None`: not
+    /// known, [`Reach::param`]); `stack`: the object types being walked (a type reached again
+    /// adds nothing new).
+    fn reach_in(
+        &self,
+        cx: &Ctx,
+        t: TyId,
+        env: Option<&[Reach]>,
+        stack: &mut Vec<DefId>,
+        out: &mut Reach,
+    ) {
+        match cx.ty.kind(t) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error
+            | TyKind::Literal(_) => {}
+            TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {
+                Some(r) => out.add(r),
+                None => out.param = true,
+            },
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => out.fns = true,
+            TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => {
+                self.reach_in(cx, *x, env, stack, out)
+            }
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                let (a, b) = (*a, *b);
+                self.reach_in(cx, a, env, stack, out);
+                self.reach_in(cx, b, env, stack, out);
+            }
+            TyKind::Tuple(ts) => {
+                for &x in ts {
+                    self.reach_in(cx, x, env, stack, out);
+                }
+            }
+            TyKind::Adt(d, args) => {
+                let (d, args) = (*d, args.clone());
+                if stack.contains(&d) {
+                    return;
+                }
+                let argr: Vec<Reach> = args
+                    .iter()
+                    .map(|&a| {
+                        let mut r = Reach::default();
+                        self.reach_in(cx, a, env, stack, &mut r);
+                        r
+                    })
+                    .collect();
+                stack.push(d);
+                let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
+                for m in family {
+                    if let Some(h) = self.hooks.get(&m) {
+                        if !h.0.is_empty() || !h.1.is_empty() {
+                            out.adts.insert(m);
+                        }
+                    }
+                    // A relative's fields: its own type parameters are not this type's.
+                    let e = if m == d { Some(&argr[..]) } else { None };
+                    for f in field_tys(cx, m) {
+                        self.reach_in(cx, f, e, stack, out);
+                    }
+                }
+                stack.pop();
+            }
+            TyKind::Dyn(i, _) => {
+                let i = *i;
+                for imp in cx.impls.iter().filter(|x| x.iface == i) {
+                    self.reach_in(cx, imp.ty, None, stack, out);
+                }
+            }
+        }
+    }
+
+    /// The `[Symbol.dispose]()` hooks (`dispose`) or glue hooks of the classes in `r`.
+    pub(super) fn hooks_of(&self, r: &Reach, dispose: bool) -> Vec<DefId> {
+        let pick = |h: &(Vec<DefId>, Vec<DefId>)| if dispose { h.0.clone() } else { h.1.clone() };
+        r.adts
+            .iter()
+            .filter_map(|d| self.hooks.get(d))
+            .flat_map(pick)
+            .collect()
+    }
+
+    /// [`Reach`] of `t` with its type parameters resolved: by `frame` where known, else by the
+    /// types in `args` (every type the program passes as a type argument), and function values
+    /// by what closures capture.
+    pub(super) fn resolve(
+        &self,
+        cx: &mut Ctx,
+        t: TyId,
+        frame: &Option<Vec<TyId>>,
+        args: &HashSet<TyId>,
+        open: &mut Option<Reach>,
+    ) -> Reach {
+        let t = match frame {
+            Some(f) if !f.is_empty() => cx.subst(t, f),
+            _ => t,
+        };
+        let mut r = (*self.reach(cx, t)).clone();
+        if r.param || (r.fns && self.captures_reach) {
+            let o = open.get_or_insert_with(|| self.open(cx, args));
+            r.adts.extend(o.adts.iter().copied());
+        }
+        r
+    }
+
+    /// What a type parameter or a function value may reach: what any type argument the program
+    /// passes and any captured value reaches.
+    fn open(&self, cx: &Ctx, args: &HashSet<TyId>) -> Reach {
+        let mut r = Reach::default();
+        for &t in args.iter().chain(&self.captures) {
+            r.add(&self.reach(cx, t));
+        }
+        r.param = false;
+        r.fns = false;
+        r
+    }
+}
+
+fn field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
+    match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Adt(a)) => a.fields.iter().map(|f| f.ty).collect(),
+        Some(DefInfo::Enum(e)) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+        _ => vec![],
+    }
+}
+
+/// Does an object type's literal or `new` evaluate field initializers itself (no constructor
+/// runs them)?
+pub(super) fn has_field_inits(cx: &Ctx, d: DefId) -> bool {
+    matches!(cx.info.get(d.0 as usize), Some(DefInfo::Adt(a))
+        if a.fields.iter().any(|f| f.default.is_some()))
+}
+
+/// The arguments of intrinsic `i` whose values glue may format, serialise or deep-copy, calling
+/// class hooks (1 and 2 of the module docs): all of them, or none. The match lists every
+/// intrinsic, so a new one must be classified.
+pub(super) fn glue_args(i: Intrinsic) -> bool {
+    use Intrinsic as I;
+    match i {
+        I::Print
+        | I::PrintErr
+        | I::ToString
+        | I::JsonStringify
+        | I::Clone
+        | I::Transfer
+        | I::Spawn
+        | I::SpawnHandled
+        | I::ChanSend
+        | I::ChanTrySend
+        | I::SharedNew
+        | I::SharedSet
+        | I::MutexNew
+        | I::MutexWith
+        | I::PromiseAll
+        | I::PromiseRace
+        | I::PromiseAny => true,
+        // Run no user code (what they drop is counted as drops; the function values they call
+        // as callbacks; generator resumes apart).
+        I::StrConcat
+        | I::StrLen
+        | I::Exit
+        | I::Panic
+        | I::ArrayWithCapacity
+        | I::ArrayLen
+        | I::ArrayPush
+        | I::ArrayPop
+        | I::ArraySwap
+        | I::ArrayRemove
+        | I::ArrayTruncate
+        | I::ArrayMove
+        | I::ArraySetLen
+        | I::Hash
+        | I::Eq
+        | I::Same
+        | I::Share
+        | I::FieldAbsent
+        | I::FieldPresent
+        | I::NeedsTransfer
+        | I::NeedsDrop
+        | I::MayAlias
+        | I::Truthy
+        | I::FnCapturesNothing
+        | I::Sqrt
+        | I::Floor
+        | I::Ceil
+        | I::Round
+        | I::Trunc
+        | I::FAbs
+        | I::Sleep
+        | I::YieldNow
+        | I::ChanReceive
+        | I::ChanTryReceive
+        | I::SourceLocation
+        | I::PromiseWiden
+        | I::PerfNow
+        | I::DateNow
+        | I::SharedAdd
+        | I::SharedGet
+        | I::JsonParse
+        | I::HttpHandler
+        | I::StrCharCodeAt
+        | I::ArrayDataPtr
+        | I::Attempt
+        | I::Yield
+        | I::GeneratorResume
+        | I::GeneratorValue
+        | I::GeneratorReturn
+        | I::GeneratorEmbed
+        | I::AsyncGeneratorResume
+        | I::AsyncGeneratorValue
+        | I::AsyncGeneratorReturn
+        | I::AsyncGeneratorDispose => false,
+    }
+}
+
+/// Does intrinsic `i` resume a generator (4)?
+pub(super) fn resumes(i: Intrinsic) -> bool {
+    matches!(
+        i,
+        Intrinsic::GeneratorResume
+            | Intrinsic::GeneratorReturn
+            | Intrinsic::AsyncGeneratorResume
+            | Intrinsic::AsyncGeneratorReturn
+            | Intrinsic::AsyncGeneratorDispose
+    )
+}
+
+/// Is `e` a place read (its value is dropped by whatever holds it, not here)?
+pub(super) fn is_place(e: &Expr) -> bool {
+    match &e.kind {
+        E::Local(..) | E::Field { .. } | E::Index { .. } | E::Lit(_) => true,
+        E::UnwrapSome(x, _) | E::Downcast(x) | E::Upcast(x) | E::UnwrapVariant { expr: x, .. } => {
+            is_place(x)
+        }
+        _ => false,
+    }
+}
+
+/// The types of the values a glue intrinsic's argument hands it (into `out`): the argument
+/// itself; the arguments of a call it makes, whatever the callee (an async call's arguments
+/// and receiver, `args[0]`, are transferred when it is spawned: velt_vir `async_fn/spawn.rs`,
+/// `dynamic_call` too), the function value of a call through one, and a closure's captures
+/// (`spawn(async () => …)`); through either branch of a conditional (`spawn_if`) and a block
+/// that only holds a value.
+pub(super) fn glue_types(cx: &Ctx, a: &Expr, out: &mut Vec<TyId>) {
+    out.push(a.ty);
+    match &a.kind {
+        E::Call { callee, args } => {
+            out.extend(args.iter().map(|x| x.ty));
+            if let Callee::Indirect(f) = callee {
+                glue_types(cx, f, out);
+            }
+        }
+        E::New { args, .. } => out.extend(args.iter().map(|x| x.ty)),
+        E::If { then, els, .. } => {
+            glue_types(cx, then, out);
+            glue_types(cx, els, out);
+        }
+        E::Block(b) if b.stmts.is_empty() => {
+            if let Some(v) = &b.value {
+                glue_types(cx, v, out);
+            }
+        }
+        E::Closure(d) => {
+            if let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) {
+                for c in &f.captures {
+                    out.extend(f.body.locals.get(c.inner.0 as usize).map(|l| l.ty));
+                }
+            }
+        }
+        _ => {}
+    }
+}

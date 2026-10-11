@@ -649,3 +649,125 @@ fn the_launcher_says_its_own_version() {
         format!("velt-launcher {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
+
+/// `velt toolchain prune` keeps the default and the newest of each minor, and removes the rest.
+#[test]
+fn prune_removes_old_patches_but_not_the_default() {
+    let releases = Releases::new(&["0.1.0", "0.1.1", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    for v in ["0.1.0", "0.1.1", "0.1.2", "0.2.0"] {
+        m.ok(&m.work, &["toolchain", "install", v]);
+    }
+    // The first one installed is the default.
+    let dry = m.ok(&m.work, &["toolchain", "prune", "--dry-run"]);
+    assert!(
+        dry.contains("would remove velt 0.1.1 (") && dry.contains("would free"),
+        "{dry}"
+    );
+    assert!(
+        dry.contains("nothing was removed") && !dry.contains("no longer run"),
+        "{dry}"
+    );
+    assert!(
+        !dry.contains("0.1.0") && !dry.contains("0.1.2") && !dry.contains("0.2.0"),
+        "{dry}"
+    );
+    assert!(m.toolchain("0.1.1").exists());
+    let out = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(
+        out.contains("removed velt 0.1.1 (") && out.contains("freed"),
+        "{out}"
+    );
+    assert!(!m.toolchain("0.1.1").exists());
+    for kept in ["0.1.0", "0.1.2", "0.2.0"] {
+        assert!(m.toolchain(kept).exists(), "{kept}");
+    }
+    let again = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(again.contains("nothing to prune"), "{again}");
+}
+
+/// `prune` keeps the version the current directory selects and versions a link points into.
+#[test]
+fn prune_keeps_what_this_directory_runs_and_linked_versions() {
+    let releases = Releases::new(&["0.1.0", "0.1.1", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    for v in ["0.1.0", "0.1.1", "0.1.2", "0.2.0"] {
+        m.ok(&m.work, &["toolchain", "install", v]);
+    }
+    m.ok(&m.work, &["toolchain", "default", "0.2.0"]);
+    let pinned = m.package("old", Some("=0.1.0"));
+    let linked = m.toolchain("0.1.1");
+    m.ok(
+        &m.work,
+        &["toolchain", "link", "dev", linked.to_str().unwrap()],
+    );
+
+    // In the package: 0.1.0 is what it runs, 0.1.1 is linked, 0.1.2 the newest of 0.1, 0.2.0
+    // the default.
+    let out = m.ok(&pinned, &["toolchain", "prune"]);
+    assert!(out.contains("nothing to prune"), "{out}");
+    // Outside it, 0.1.0 goes; the linked 0.1.1 stays, and its link still works.
+    let out = m.ok(&m.work, &["toolchain", "prune"]);
+    assert!(out.contains("removed velt 0.1.0 ("), "{out}");
+    assert!(!out.contains("0.1.1"), "{out}");
+    assert!(linked.exists());
+    let stdout = m.ok(&m.work, &["+dev", "run"]);
+    assert!(same(&prefix_of(&stdout), &linked), "{stdout}");
+}
+
+/// A newly installed patch version gets the target packs the version it follows had: the
+/// launcher runs the new toolchain's `velt target add` for them.
+#[test]
+fn a_new_patch_version_gets_the_target_packs_of_the_one_it_follows() {
+    let releases = Releases::new(&["0.1.0", "0.1.2", "0.2.0"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    // Packs `velt target add` installed into 0.1.0 (a staging directory, a stamp-less one and a
+    // name that is no target are not packs).
+    let targets = m.toolchain("0.1.0").join("lib/targets");
+    for (pack, stamp) in [
+        ("zz-test-target-a", true),
+        ("zz-fail", true),
+        ("zz-test-target-b", true),
+        ("partial", false),
+        ("--exit=3", true),
+    ] {
+        std::fs::create_dir_all(targets.join(pack)).unwrap();
+        if stamp {
+            std::fs::write(targets.join(pack).join("kit.stamp"), "").unwrap();
+        }
+    }
+    let out = m.run(&m.work, &["toolchain", "install", "0.1.2"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains(
+            "adding the target packs velt 0.1.0 had to velt 0.1.2: zz-fail, zz-test-target-a, \
+             zz-test-target-b"
+        ),
+        "{stderr}"
+    );
+    // One `target add` per pack, the new toolchain's, its output on stderr: one that fails
+    // doesn't stop the others, and only it is named.
+    for pack in ["zz-test-target-a", "zz-test-target-b"] {
+        assert!(
+            stderr.contains(&format!("args=target add {pack}\n")),
+            "{stderr}"
+        );
+    }
+    assert!(same(&prefix_of(&stderr), &m.toolchain("0.1.2")), "{stderr}");
+    assert!(
+        stderr.contains("could not add zz-fail; run `velt +0.1.2 target add zz-fail`"),
+        "{stderr}"
+    );
+    assert!(
+        !stdout.contains("args=") && !stderr.contains("--exit=3"),
+        "{stdout}{stderr}"
+    );
+    // Another minor starts without them.
+    let (stdout, stderr) = text(&m.run(&m.work, &["toolchain", "install", "0.2.0"], &[]));
+    assert!(
+        !stdout.contains("target add") && !stderr.contains("adding"),
+        "{stdout}{stderr}"
+    );
+}

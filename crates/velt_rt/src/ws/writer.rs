@@ -77,6 +77,21 @@ impl Writer {
         Ok(over)
     }
 
+    /// Appends an already encoded frame (a publish) unless the connection stopped, is closing,
+    /// or has more than `limit` bytes queued; true if appended.
+    pub(super) fn append(&self, frame: &[u8], limit: usize) -> bool {
+        {
+            let mut q = self.lock();
+            if q.stopped.is_some() || q.closing || q.buf.len() > limit {
+                return false;
+            }
+            q.buf.extend_from_slice(frame);
+            q.writer_running = true;
+        }
+        self.ready.notify_one();
+        true
+    }
+
     /// Waits until at most [`HIGH_WATER`] bytes are queued; an error if the writer stopped first.
     pub(super) async fn room(&self) -> io::Result<()> {
         loop {

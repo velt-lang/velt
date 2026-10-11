@@ -1,0 +1,77 @@
+// An assignment into an object literal writes to the object its target named before the
+// right-hand side ran, as JS evaluates the reference first: when the right-hand side replaces
+// the holder, the old object gets the value and the new one keeps its own (#876; class objects:
+// #581).
+type Inner = { v: number; name: string };
+type Outer = { inner: Inner };
+type Deep = { mid: Outer };
+
+function kept() {
+  const o: Outer = { inner: { v: 1, name: "a" } };
+  const g = (): number => {
+    o.inner = { v: 100, name: "b" };
+    return 13;
+  };
+  const keep = o.inner;
+  o.inner.v = g();
+  console.log(keep.v, o.inner.v);
+}
+
+function unkept() {
+  const p: Outer = { inner: { v: 1, name: "a" } };
+  const h = (): number => {
+    p.inner = { v: 200, name: "b" };
+    return 14;
+  };
+  p.inner.v = h();
+  console.log(p.inner.v);
+}
+
+function compound() {
+  const o: Outer = { inner: { v: 1, name: "a" } };
+  const g = (): number => {
+    o.inner = { v: 100, name: "b" };
+    return 13;
+  };
+  const rename = (): string => {
+    o.inner = { v: 300, name: "c" };
+    return "!";
+  };
+  const keep = o.inner;
+  o.inner.v += g();
+  console.log(keep.v, o.inner.v);
+  const keep2 = o.inner;
+  o.inner.name += rename();
+  console.log(keep2.name, o.inner.name);
+}
+
+function deep() {
+  const d: Deep = { mid: { inner: { v: 1, name: "a" } } };
+  const keepMid = d.mid;
+  const keepInner = d.mid.inner;
+  const g = (): number => {
+    d.mid = { inner: { v: 50, name: "m" } };
+    return 7;
+  };
+  d.mid.inner.v = g();
+  console.log(keepMid.inner.v, keepInner.v, d.mid.inner.v);
+}
+
+function notReplaced() {
+  const o: Outer = { inner: { v: 1, name: "a" } };
+  const keep = o.inner;
+  const g = (): number => {
+    o.inner.v = 5;
+    return o.inner.v + 1;
+  };
+  o.inner.v = g();
+  console.log(keep.v, o.inner.v, keep === o.inner);
+}
+
+function main() {
+  kept();
+  unkept();
+  compound();
+  deep();
+  notReplaced();
+}

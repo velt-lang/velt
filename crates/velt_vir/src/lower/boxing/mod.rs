@@ -44,10 +44,12 @@ pub(super) struct Boxing {
 }
 
 impl Boxing {
-    /// The counted types before any share is observed: the recursive object types.
+    /// The counted types before any share is observed: the recursive object types, and the
+    /// object types sema relies on being counted (`hir::Program::counted_objects`).
     pub(super) fn initial(hir: &hir::Program) -> Boxing {
         Boxing {
             recursive: recursive_objects(hir),
+            boxes: hir.counted_objects.iter().copied().collect(),
             ..Boxing::default()
         }
     }

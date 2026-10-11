@@ -1,0 +1,79 @@
+// check: no leaks
+import { serve } from "velt:http";
+import { channel, Channel } from "velt:channel";
+import {
+  WebSocket,
+  upgradeWebSocket,
+  connectWebSocket,
+  publish,
+  publishBytes,
+} from "velt:websocket";
+
+// Hands every accepted connection to `main`, which drives the server side itself.
+async function handle(req: Request, socks: Channel<WebSocket>): Promise<Response> {
+  const up = upgradeWebSocket(req);
+  await socks.send(up.socket);
+  return up.response;
+}
+
+async function next(c: WebSocket): Promise<string> {
+  const m = await c.receive();
+  if (m == null) {
+    return "closed";
+  }
+  return m.isBinary ? `${m.data}` : m.text;
+}
+
+async function main() {
+  const socks = channel<WebSocket>();
+  const server = await serve(
+    { port: 0 },
+    async (req: Request): Promise<Response> => await handle(req, socks),
+  );
+  const url = `ws://127.0.0.1:${server.port}/`;
+  const c1 = await connectWebSocket(url);
+  const s1 = (await socks.receive())!;
+  const c2 = await connectWebSocket(url);
+  const s2 = (await socks.receive())!;
+  const c3 = await connectWebSocket(url);
+  const s3 = (await socks.receive())!;
+
+  await s1.subscribe("room");
+  await s1.subscribe("room"); // a second subscribe is a no-op
+  await s2.subscribe("room");
+  await s3.subscribe("room");
+
+  console.log("to all:", publish("room", "hello"));
+  console.log(await next(c1), await next(c2), await next(c3));
+  console.log("to others:", s1.publish("room", "from s1"));
+  console.log(await next(c2), await next(c3));
+  console.log("bytes:", publishBytes("room", [1u8, 2u8]));
+  console.log(await next(c1), await next(c2), await next(c3));
+
+  s3.unsubscribe("room");
+  console.log("after unsubscribe:", publish("room", "two left"));
+  console.log(await next(c1), await next(c2));
+  console.log("unknown topic:", publish("nobody", "x"));
+
+  // Connections that subscribe and close leave the topic.
+  for (let i = 0; i < 20; i++) {
+    const c = await connectWebSocket(url);
+    const s = (await socks.receive())!;
+    await s.subscribe("room");
+    await c.close();
+    while ((await s.receive()) != null) {}
+    await s.close();
+  }
+  console.log("after 20 closed:", publish("room", "end"));
+  console.log(await next(c1), await next(c2));
+
+  for (const c of [c1, c2, c3]) {
+    await c.close();
+  }
+  for (const s of [s1, s2, s3]) {
+    while ((await s.receive()) != null) {}
+    await s.close();
+  }
+  await server.shutdown();
+  socks.close();
+}
