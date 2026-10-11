@@ -1,0 +1,21 @@
+// Generator methods in object literals (`*name()`, `async *name()`) are properties holding
+// generator functions, as in Node. Expected output from node.
+const bag = {
+  label: "bag",
+  items: function* (n: number): Generator<number> {
+    for (let i = 0; i < n; i++) {
+      yield i * 2;
+    }
+  },
+  ticks: async function* (): AsyncGenerator<string> {
+    yield "a";
+    yield "b";
+  },
+};
+
+async function main() {
+  console.log([...bag.items(3)], bag.label);
+  for await (const t of bag.ticks()) {
+    console.log(t);
+  }
+}

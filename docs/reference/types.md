@@ -826,7 +826,10 @@ console.log(b.v); // hi
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
   a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data); generator methods only as `*[Symbol.iterator]()`
+  (an object literal is plain data). A generator method `*name() { ... }` (`async *name()`) is
+  a property holding a [generator function](functions.md#generator-function-expressions), as
+  `name: function* () { ... }` is; a generator method with a symbol key only as
+  `*[Symbol.iterator]()`
   ([Iterable object literals](#iterable-object-literals)).
 - **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
