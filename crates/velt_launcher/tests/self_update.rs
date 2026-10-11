@@ -67,7 +67,17 @@ fn self_update_replaces_the_launcher_with_the_newest_one() {
         std::fs::read(&launcher).unwrap(),
         std::fs::read(fake_velt()).unwrap()
     );
-    assert!(hidden_in_bin(&m).is_empty(), "{:?}", hidden_in_bin(&m));
+    let hidden = hidden_in_bin(&m);
+    if cfg!(windows) {
+        // A running .exe can't be deleted there: this update moved itself aside, for the next
+        // launcher run to sweep (as `.velt.exe.old-1` was above).
+        assert!(
+            hidden.len() == 1 && hidden[0].starts_with(&format!(".velt{EXE}.old-")),
+            "{hidden:?}"
+        );
+    } else {
+        assert!(hidden.is_empty(), "{hidden:?}");
+    }
 }
 
 /// The first self-update installs the release the launcher comes from.
