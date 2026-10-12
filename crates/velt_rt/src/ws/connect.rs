@@ -11,8 +11,7 @@ use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use tokio_tungstenite::tungstenite::handshake::client::generate_key;
-use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use super::handshake::{accept_key, generate_key};
 
 fn invalid(message: &str) -> VeltErr {
     VeltErr::new(code::INVALID_INPUT, message)
@@ -122,7 +121,7 @@ fn check_response(head: &str, key: &str) -> Result<(), String> {
         return Err("no Connection: upgrade".into());
     }
     if get("sec-websocket-accept").first().copied()
-        != Some(derive_accept_key(key.as_bytes()).as_str())
+        != Some(accept_key(key.as_bytes()).as_str())
     {
         return Err("wrong Sec-WebSocket-Accept".into());
     }
@@ -199,7 +198,7 @@ mod tests {
         let key = "dGhlIHNhbXBsZSBub25jZQ==";
         format!(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: {}{extra}",
-            derive_accept_key(key.as_bytes())
+            accept_key(key.as_bytes())
         )
     }
 

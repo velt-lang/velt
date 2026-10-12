@@ -13,7 +13,7 @@ use hyper::{Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::io;
 use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use super::handshake::accept_key;
 
 /// `{ VeltWs* ws; VeltResp* response; }`: the connection and the `101` response the handler
 /// must return for the upgrade to happen.
@@ -64,7 +64,7 @@ fn switching_protocols(sec_key: &[u8]) -> RespObj {
     let h = r.headers_mut();
     h.insert(UPGRADE, HeaderValue::from_static("websocket"));
     h.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
-    if let Ok(v) = HeaderValue::from_str(&derive_accept_key(sec_key)) {
+    if let Ok(v) = HeaderValue::from_str(&accept_key(sec_key)) {
         h.insert(SEC_WEBSOCKET_ACCEPT, v);
     }
     r
