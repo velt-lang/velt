@@ -1,5 +1,6 @@
 //! Server side: accepting a WebSocket upgrade requested through the HTTP server.
 
+use super::handshake::accept_key;
 use super::{invalid, Conn, Writer, WsHandle, WsObj};
 use crate::http::body::RespBody;
 use crate::http::response::{RespHandle, RespObj};
@@ -13,7 +14,6 @@ use hyper::{Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::io;
 use tokio::net::TcpStream;
-use super::handshake::accept_key;
 
 /// `{ VeltWs* ws; VeltResp* response; }`: the connection and the `101` response the handler
 /// must return for the upgrade to happen.
