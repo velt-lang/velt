@@ -1,0 +1,162 @@
+// std/websocket/topics (std-internal): publish/subscribe. Not part of the public API.
+//
+// A publish encodes the frame once and appends the same bytes to every subscriber's queue (its
+// flusher sends it with whatever else is queued), so a message to many sockets costs one
+// encode and one queue append per socket. A subscriber with more than `PUBLISH_LIMIT` bytes
+// already queued is skipped for that message, so one slow reader cannot grow the server's
+// memory without bound (a direct `send` waits instead). Topics are process-wide (one registry,
+// std/global_slot); a connection leaves all of them when it is closed.
+//
+// Locks, always in this order: the registry, a topic, a connection's queue.
+
+import { SLOT_WS_TOPICS, processGlobal } from "velt:global_slot";
+import { TcpStream } from "velt:net";
+import { START } from "velt:websocket/queue";
+import { Tx, flush } from "velt:websocket/writer";
+
+class Sub {
+  /** The connection's stream handle. */
+  id: u64;
+  tx: Tx;
+
+  constructor(id: u64, tx: Tx) {
+    this.id = id;
+    this.tx = tx;
+  }
+}
+
+class Topic {
+  subs: Sub[] = [];
+
+  // Adds the connection (again is a no-op).
+  join(id: u64, tx: Tx) {
+    for (let i = 0; i < this.subs.length; i++) {
+      if (this.subs[i].id == id) {
+        return;
+      }
+    }
+    this.subs.push(new Sub(id, tx));
+  }
+
+  // Removes the connection; whether the topic is empty now.
+  leave(id: u64): bool {
+    for (let i = 0; i < this.subs.length; i++) {
+      if (this.subs[i].id == id) {
+        __intrinsic_array_remove(this.subs, i);
+        break;
+      }
+    }
+    return this.subs.length == 0;
+  }
+}
+
+type TopicRef = shared<Mutex<Topic>>;
+type Registry = Mutex<Map<string, TopicRef>>;
+
+function registry(): shared<Registry> {
+  return processGlobal<Registry>(
+    SLOT_WS_TOPICS,
+    () => shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())),
+  );
+}
+
+/** Subscribes connection `id` (queue `tx`) to `topic`; false if its handle was released. */
+export function subscribe(id: u64, tx: Tx, topic: string): bool {
+  const open = tx.with((q) => {
+    if (q.released) {
+      return false;
+    }
+    if (!q.topics.includes(topic)) {
+      q.topics.push(topic);
+    }
+    return true;
+  });
+  if (!open) {
+    return false;
+  }
+  // The registry stays locked while joining: a `leave` that empties the topic removes it under
+  // the same lock, so it cannot remove the list this connection is joining.
+  registry().with((all) => {
+    const found = all.get(topic);
+    if (found != null) {
+      found.with((t) => t.join(id, tx.clone()));
+      return;
+    }
+    const made = shared(new Mutex<Topic>(new Topic()));
+    made.with((t) => t.join(id, tx.clone()));
+    all.set(topic, made);
+  });
+  // Closed meanwhile: `close()` may have left the topics before this joined.
+  if (tx.with((q) => q.released)) {
+    leave(id, topic);
+    return false;
+  }
+  return true;
+}
+
+/** Removes connection `id` from `topic`; an emptied topic goes away. */
+export function leave(id: u64, topic: string) {
+  const all = registry();
+  const t = all.with((m) => m.get(topic));
+  if (t == null) {
+    return;
+  }
+  if (!t.with((s) => s.leave(id))) {
+    return;
+  }
+  // Someone may have subscribed in between: only remove the topic if it is still empty.
+  all.with((m) => {
+    const now = m.get(topic);
+    if (now != null && now.with((s) => s.subs.length == 0)) {
+      m.delete(topic);
+    }
+  });
+}
+
+/** `leave`, also taking `topic` off the connection's own list. */
+export function unsubscribe(id: u64, tx: Tx, topic: string) {
+  tx.with((q) => {
+    const at = q.topics.indexOf(topic);
+    if (at >= 0) {
+      __intrinsic_array_remove(q.topics, at as usize);
+    }
+  });
+  leave(id, topic);
+}
+
+/**
+ * Queues `frame` (a whole unmasked frame whose payload starts at `payloadAt`) for every
+ * subscriber of `topic` except connection `except` (0: none); the number of connections.
+ */
+export function publish(topic: string, frame: u8[], payloadAt: i64, except: u64): i64 {
+  const t = registry().with((m) => m.get(topic));
+  if (t == null) {
+    return 0;
+  }
+  // The idle connections it was queued for: their flushers are started outside the locks.
+  const ids: u64[] = [];
+  const queues: Tx[] = [];
+  const sent = t.with((s) => {
+    let n: i64 = 0;
+    for (let i = 0; i < s.subs.length; i++) {
+      const sub = s.subs[i];
+      if (sub.id == except) {
+        continue;
+      }
+      const r = sub.tx.with((q) => q.appendFrame(frame, payloadAt));
+      if (r < 0) {
+        continue;
+      }
+      n++;
+      if ((r & START) != 0) {
+        ids.push(sub.id);
+        queues.push(sub.tx.clone());
+      }
+    }
+    return n;
+  });
+  for (let i = 0; i < ids.length; i++) {
+    spawn(flush(TcpStream { handle: ids[i] }, queues[i].clone()));
+  }
+  return sent;
+}
