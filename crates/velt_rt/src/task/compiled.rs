@@ -221,10 +221,12 @@ macro_rules! with_state_store {
         } else if size <= 256 {
             type $S = $crate::task::compiled::Inline<256>;
             $body
-        } else if size <= 512 {
+        } else if size <= 384 {
             // A task per connection is often just past 256 bytes (a session that receives,
-            // sends and closes): it need not take the 1024 its neighbours do.
-            type $S = $crate::task::compiled::Inline<512>;
+            // sends and closes), and need not take the 1024 its neighbours do. 384, not 512:
+            // with the task's header the cell then fills an allocator bin instead of spilling
+            // into the next (measured: 3.77 KB per idle WebSocket against 4.08 KB).
+            type $S = $crate::task::compiled::Inline<384>;
             $body
         } else {
             type $S = $crate::task::compiled::Inline<1024>;

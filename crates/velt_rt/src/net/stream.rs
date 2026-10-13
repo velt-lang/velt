@@ -42,12 +42,15 @@ pub(crate) enum Ready {
         prefix: Mutex<Vec<u8>>,
         has_prefix: AtomicBool,
     },
-    /// Any other transport, split.
-    Split {
-        r: AsyncMutex<ReadHalf<Box<dyn Transport>>>,
-        w: AsyncMutex<WriteHalf<Box<dyn Transport>>>,
-        peer: Option<SocketAddr>,
-    },
+    /// Any other transport, split (boxed: a raw socket's stream object stays small).
+    Split(Box<Split>),
+}
+
+/// The two halves of a transport that is not a raw socket.
+pub(crate) struct Split {
+    r: AsyncMutex<ReadHalf<Box<dyn Transport>>>,
+    w: AsyncMutex<WriteHalf<Box<dyn Transport>>>,
+    peer: Option<SocketAddr>,
 }
 
 impl Ready {
@@ -61,11 +64,11 @@ impl Ready {
 
     pub(crate) fn other(io: Box<dyn Transport>, peer: Option<SocketAddr>) -> Ready {
         let (r, w) = tokio::io::split(io);
-        Ready::Split {
+        Ready::Split(Box::new(Split {
             r: AsyncMutex::new(r),
             w: AsyncMutex::new(w),
             peer,
-        }
+        }))
     }
 }
 
@@ -215,9 +218,9 @@ impl StreamObj {
                 }
                 read_chunk(stream, max).await
             }
-            Ready::Split { r, .. } => {
+            Ready::Split(split) => {
                 self.until_abort(async {
-                    let mut r = r.lock().await;
+                    let mut r = split.r.lock().await;
                     let mut buf = buffer(max);
                     r.read_buf(&mut buf).await?;
                     Ok(buf)
@@ -246,9 +249,9 @@ impl StreamObj {
     async fn write_lazy(&self, lazy: &Lazy, data: &[u8]) -> io::Result<()> {
         match self.until_abort(self.set_up(lazy)).await? {
             Ready::Tcp { stream, .. } => self.write_tcp(stream, data).await,
-            Ready::Split { w, .. } => {
+            Ready::Split(split) => {
                 self.until_abort(async {
-                    let mut w = w.lock().await;
+                    let mut w = split.w.lock().await;
                     w.write_all(data).await?;
                     w.flush().await
                 })
@@ -289,7 +292,7 @@ impl StreamObj {
         }
         match &self.io {
             Io::Lazy(l) => match l.ready.get() {
-                Some(Ok(Ready::Split { peer, .. })) => *peer,
+                Some(Ok(Ready::Split(split))) => split.peer,
                 _ => None,
             },
             Io::Tcp(_) => None,
@@ -310,8 +313,8 @@ impl StreamObj {
                     Ok(Ready::Tcp { stream, .. }) => {
                         let _ = shutdown_socket(stream, std::net::Shutdown::Write);
                     }
-                    Ok(Ready::Split { w, .. }) => {
-                        let _ = w.lock().await.shutdown().await;
+                    Ok(Ready::Split(split)) => {
+                        let _ = split.w.lock().await.shutdown().await;
                     }
                     Err(_) => {}
                 }

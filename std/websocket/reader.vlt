@@ -72,7 +72,7 @@ export class Reader {
   /** A fragmented message so far: its opcode (-1: none), its payload, and how much of a text
    * payload is known to be valid UTF-8 (checked fragment by fragment, so bad text fails early). */
   partOp: i64 = -1;
-  part: ByteBuf = new ByteBuf();
+  part: ByteBuf | null = null;
   checked: i64 = 0;
   /** The peer's close frame was seen, or the stream ended: every later `next` is `CLOSED`. */
   done: bool = false;
@@ -182,7 +182,7 @@ export class Reader {
       if (this.partOp < 0) {
         return this.fail(1002, "continuation without a message");
       }
-      if ((this.part.data.length as i64) + f.len > MAX_MESSAGE) {
+      if ((this.part?.data.length ?? 0) as i64 + f.len > MAX_MESSAGE) {
         return this.fail(1009, TOO_LONG);
       }
     } else {
@@ -192,26 +192,30 @@ export class Reader {
       this.partOp = f.op;
       this.checked = 0;
     }
-    this.part.append(this.buf.data.slice(f.start, f.end));
+    // The buffer for the fragments exists only while a fragmented message is arriving.
+    const part = this.part ?? new ByteBuf();
+    part.append(this.buf.data.slice(f.start, f.end));
     this.releaseIfDrained();
-    const size = this.part.data.length as i64;
+    const size = part.data.length as i64;
     if (this.partOp == OP_TEXT) {
       // Invalid UTF-8 fails at the fragment that has it (§8.1); a character split across
       // fragments is merely incomplete until the last one.
-      const valid = utf8Prefix(this.part.data, this.checked, size);
+      const valid = utf8Prefix(part.data, this.checked, size);
       if (valid < 0 || (f.fin && this.checked + valid != size)) {
-        this.part.take();
+        this.part = null;
         this.partOp = -1;
         return this.fail(1007, "invalid UTF-8 in a text message");
       }
       this.checked += valid;
     }
     if (!f.fin) {
+      this.part = part;
       return null;
     }
     const op = this.partOp;
     this.partOp = -1;
-    const all = this.part.take();
+    this.part = null;
+    const all = part.take();
     if (op == OP_BINARY) {
       return new Step(BINARY, "", all);
     }
@@ -268,7 +272,7 @@ export class Reader {
   release() {
     this.released = true;
     this.buf.take();
-    this.part.take();
+    this.part = null;
     this.pos = 0;
     this.endRead();
     const ch = this.turn;
