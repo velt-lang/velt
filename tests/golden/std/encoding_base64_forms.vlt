@@ -1,3 +1,4 @@
+// check: no leaks
 // Base64 at every length around the group and table boundaries, in both alphabets, and what
 // decoding rejects: characters outside the alphabet (at each position of a group, in short and
 // long texts, ASCII or not), misplaced padding and impossible lengths.
@@ -27,8 +28,8 @@ function tryDecode(label: string, text: string, url: bool) {
 }
 
 function main() {
-  // Round trips: 0 to 7 bytes, and lengths on both sides of the table threshold (256 digits).
-  const sizes: usize[] = [0, 1, 2, 3, 4, 5, 6, 7, 189, 190, 191, 192, 193, 194, 1000];
+  // Round trips: 0 to 7 bytes, and lengths on both sides of the table threshold (24 digits).
+  const sizes: usize[] = [0, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17, 18, 19, 189, 190, 191, 192, 1000];
   for (const n of sizes) {
     const data = bytes(n);
     const std = base64Encode(data);
@@ -93,6 +94,17 @@ function main() {
   tryDecode("latin", "QUJDé", false);
   tryDecode("latin first", "éUJD", false);
   tryDecode("emoji", "QUJD😀QUJD", false);
+
+  // Just under the table threshold, and at it.
+  const under = base64Encode(bytes(15));
+  const at = base64Encode(bytes(18));
+  tryDecode("under", under, false);
+  tryDecode("under bad", `${under.slice(0, 10)}*${under.slice(11)}`, false);
+  tryDecode("under latin", `${under.slice(0, 19)}é`, false);
+  tryDecode("threshold", at, false);
+  tryDecode("threshold bad", `${at.slice(0, 23)}*`, false);
+  tryDecode("threshold latin", `é${at.slice(1)}`, false);
+  tryDecode("threshold url", base64UrlEncode(bytes(18)), true);
 
   // The same in a text long enough for the table.
   const long = base64Encode(bytes(600));

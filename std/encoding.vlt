@@ -106,8 +106,9 @@ function encode64(data: u8[], alphabet: string, pad: bool): string {
 }
 
 // Texts of at least this many digits (without their padding) are decoded through a table
-// (`valueTable`).
-const TABLE_FROM: i64 = 256;
+// (`valueTable`): a digit costs about half through it of what computing it costs, and from here
+// on that pays for building the table (in instructions, the two paths meet at 24 digits).
+const TABLE_FROM: i64 = 24;
 
 // Throws on characters outside the alphabet (`url`: the URL-safe one), on `=` anywhere but the
 // (at most two) final positions, and on a length that cannot come from whole bytes. Leftover
@@ -186,17 +187,29 @@ function put3(out: u8[], o: usize, t: i64) {
   out[o + 2] = (t & 0xff) as u8;
 }
 
-// `value64` of every byte value.
+// The value of every byte as a digit, -1 for the others: what `value64` computes, laid out
+// with one pass of -1 and a store per digit. Signed, so that one sign test finds a byte that is
+// not a digit among four.
 function valueTable(url: bool): i8[] {
   const table: i8[] = __intrinsic_array_with_capacity(256);
-  for (let c: i64 = 0; c < 256; c++) {
-    table.push(value64(c, url) as i8);
+  __intrinsic_array_set_len(table, 256);
+  for (let c: usize = 0; c < 256; c++) {
+    table[c] = -1;
   }
+  for (let k: usize = 0; k < 26; k++) {
+    table[65 + k] = k as i8;
+    table[97 + k] = (26 + k) as i8;
+  }
+  for (let k: usize = 0; k < 10; k++) {
+    table[48 + k] = (52 + k) as i8;
+  }
+  table[url ? 45 : 43] = 62;
+  table[url ? 95 : 47] = 63;
   return table;
 }
 
 // The value of Base64 digit `c` (a character code), or -1 if it is not one. Computed, so a
-// short decode builds no table: letters and digits are ranges, and the two alphabets differ
+// decode of a few digits builds no table: letters and digits are ranges, and the two alphabets differ
 // only in the characters for 62 and 63.
 function value64(c: i64, url: bool): i64 {
   if (c >= 97) {

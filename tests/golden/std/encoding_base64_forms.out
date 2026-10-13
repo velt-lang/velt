@@ -6,12 +6,15 @@
 5 8 7 +5IpwFc= -5IpwFc true true
 6 8 8 +5IpwFfu -5IpwFfu true true
 7 12 10 +5IpwFfuhQ== IpwFfuhQ true true
+15 20 20 +5IpwFfuhRyz SuF4D6Y9 true true
+16 24 22 +5IpwFfuhRyz F4D6Y91A true true
+17 24 23 +5IpwFfuhRyz 4D6Y91Gs true true
+18 24 24 +5IpwFfuhRyz D6Y91GsC true true
+19 28 26 +5IpwFfuhRyz Y91GsCmQ true true
 189 252 252 +5IpwFfuhRyz 7IMasUjf true true
 190 256 254 +5IpwFfuhRyz MasUjfdg true true
 191 256 255 +5IpwFfuhRyz asUjfdg0 true true
 192 256 256 +5IpwFfuhRyz sUjfdg2k true true
-193 260 258 +5IpwFfuhRyz jfdg2kOw true true
-194 260 259 +5IpwFfuhRyz fdg2kO9I true true
 1000 1336 1334 +5IpwFfuhRyz ngdw6lPA true true
 no pad 1 1 41
 no pad 2 2 4142
@@ -49,6 +52,13 @@ del Invalid base64 character at offset 3
 latin Invalid base64 character at offset 4
 latin first Invalid base64 character at offset 0
 emoji Invalid base64 character at offset 4
+under 15 fb9229c057ee
+under bad Invalid base64 character at offset 10
+under latin Invalid base64 character at offset 19
+threshold 18 fb9229c057ee
+threshold bad Invalid base64 character at offset 23
+threshold latin Invalid base64 character at offset 0
+threshold url 18 fb9229c057ee
 long 600 fb9229c057ee
 long bad middle Invalid base64 character at offset 401
 long bad first Invalid base64 character at offset 0
