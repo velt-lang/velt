@@ -65,11 +65,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             continue;
         }
         let (tn, shown) = (cx.display(*ty), cx.shown_name(name));
-        // `o.b`, or `o[KEY]` for a symbol key.
-        let place = match shown.starts_with('[') {
-            true => format!("o{shown}"),
-            false => format!("o.{shown}"),
-        };
+        let place = place_of(&shown);
         cx.error(
             Diagnostic::error(
                 format!("cannot tell an absent `{shown}` from one holding `undefined`: this tests the optional field `{shown}` of `{tn}` with `in`, and the program stores a value that may be `undefined` in a field `{shown}`"),
@@ -79,6 +75,22 @@ pub(crate) fn check(cx: &mut Ctx) {
             .with_note(format!("Node finds a key whose value is `undefined`; Velt keeps an optional field `{shown}?: T` as its value or nothing, so the test would answer `false` (#930)"))
             .with_note(format!("store the value only when there is one (`if (v != null) {place} = v`), or test the value instead of the key (`{place} != null`)")),
         );
+    }
+}
+
+/// How the advice writes field `shown` of an object `o`: `o.b`, `o[KEY]` for a symbol key, and
+/// `o["a b"]` for a name that is not an identifier.
+fn place_of(shown: &str) -> String {
+    let ident = shown
+        .chars()
+        .enumerate()
+        .all(|(i, c)| c == '_' || c == '$' || c.is_alphabetic() || (i > 0 && c.is_numeric()));
+    if shown.starts_with('[') {
+        format!("o{shown}")
+    } else if ident && !shown.is_empty() {
+        format!("o.{shown}")
+    } else {
+        format!("o[{shown:?}]")
     }
 }
 
@@ -208,5 +220,20 @@ impl<'a, 'm> Walk<'a, 'm> {
     fn nullable(&self, t: TyId) -> bool {
         self.cx.ty.opt_payload(t).is_some()
             || matches!(self.cx.ty.kind(t), TyKind::Param(_) | TyKind::Error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::place_of;
+
+    #[test]
+    fn the_advice_writes_a_place_that_is_valid_code() {
+        assert_eq!(place_of("b"), "o.b");
+        assert_eq!(place_of("$x_1"), "o.$x_1");
+        assert_eq!(place_of("[CELL]"), "o[CELL]");
+        assert_eq!(place_of("a b"), "o[\"a b\"]");
+        assert_eq!(place_of("a-b"), "o[\"a-b\"]");
+        assert_eq!(place_of("1st"), "o[\"1st\"]");
     }
 }

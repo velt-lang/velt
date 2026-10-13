@@ -6,7 +6,7 @@
 mod common;
 
 use common::hir_walk::{adt, func};
-use common::programs::{err_src, ok_src};
+use common::programs::{err_src, load_src, ok_src};
 use velt_sema::hir::{Def, FieldDef, Program, TyId, TyKind};
 
 /// The types of `f`'s parameters in `src` (which declares `function f(…)`).
@@ -173,4 +173,25 @@ fn substitution_goes_through_the_canonicalizing_ctx_methods() {
 "
         )
     );
+}
+
+/// The advice of the `in` error for an optional field names the field as code that compiles:
+/// `o["a b"]` for a key that is not an identifier.
+#[test]
+fn the_undefined_store_advice_writes_a_quoted_key_as_an_index() {
+    let l = load_src(
+        "type B = { kind: string; \"a b\"?: string };
+         function mk(v?: string): B { return { kind: \"k\", \"a b\": v }; }
+         function set(o: B, v?: string) { o[\"a b\"] = v; }
+         function main() { const o = mk(); set(o); console.log(\"a b\" in o); }",
+    );
+    let (p, d) = l.check();
+    assert!(p.is_none(), "expected an error");
+    let notes: Vec<String> = d.iter().flat_map(|d| d.notes.clone()).collect();
+    let notes = notes.join(
+        "
+",
+    );
+    assert!(notes.contains("`if (v != null) o[\"a b\"] = v`"), "{notes}");
+    assert!(notes.contains("`o[\"a b\"] != null`"), "{notes}");
 }
