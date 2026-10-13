@@ -1,7 +1,8 @@
 # Velt documentation
 
-Velt is TypeScript without the parts inherited from JavaScript that cause bugs, compiled to
-native code with Rust-level performance.
+Velt compiles your TypeScript to a native executable: Rust-class speed, every core, and no
+runtime to install. It reads `.ts` and `.tsx` files as they are, and adds what a compiler makes
+possible: typed errors, integer types, `extend` and parallel tasks.
 
 | | |
 |---|---|

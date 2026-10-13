@@ -512,7 +512,8 @@ fn release_index_sh_writes_what_the_launcher_reads() {
     let yanks = tmp.path().join("yanks.json");
     std::fs::write(
         &yanks,
-        r#"{"0.1.10": "miscompiles \"closures\"; use 0.1.11"}"#,
+        r#"{"0.1.10": "miscompiles \"closures\"; use 0.1.11",
+            "0.1.9": {"advisory": "TLS certificates are not checked", "security": true}}"#,
     )
     .unwrap();
     let revoked = tmp.path().join("revoked.json");
@@ -532,6 +533,19 @@ fn release_index_sh_writes_what_the_launcher_reads() {
     assert_eq!(index.revoked_keys, [vec![0x11u8; 32]]);
     // The newest stable release that is not yanked: 0.1.10 is newer than 0.1.9 but yanked.
     assert_eq!(index.launcher.unwrap().to_string(), "0.1.9");
+    let advised = index
+        .releases
+        .iter()
+        .find(|r| r.version.to_string() == "0.1.9")
+        .unwrap();
+    assert_eq!(
+        (
+            advised.advisory.as_deref(),
+            advised.security,
+            advised.yanked.as_deref()
+        ),
+        (Some("TLS certificates are not checked"), true, None)
+    );
     let listed: Vec<(String, Option<String>)> = index
         .releases
         .iter()
@@ -549,6 +563,29 @@ fn release_index_sh_writes_what_the_launcher_reads() {
             ("0.2.0-rc.1".to_string(), None),
         ]
     );
+    // A typo in the yanks file fails the script (and so the workflow) instead of publishing an
+    // index every launcher refuses, or one that drops a version as if it were yanked.
+    for (bad, says) in [
+        (r#"{"0.1.9": {"security": "yes"}}"#, "`security` is \"yes\""),
+        (r#"{"0.1.9": {"yanked": true}}"#, "`yanked` is true"),
+        (r#"{"0.1.9": {"yanked": false}}"#, "`yanked` is false"),
+        (r#"{"0.1.9": {"advisory": 1}}"#, "`advisory` is 1"),
+        (r#"{"0.1.9": {"advisroy": "x"}}"#, "unknown fields advisroy"),
+        (r#"{"0.1.9": 3}"#, "is not a string"),
+        ("[]", "not an object"),
+    ] {
+        std::fs::write(&yanks, bad).unwrap();
+        let out = Command::new("sh")
+            .arg(repo().join("scripts/release-index.sh"))
+            .arg(&releases)
+            .arg(&yanks)
+            .arg(&revoked)
+            .arg("1700000000")
+            .output()
+            .unwrap();
+        let all = text(&out);
+        assert!(!out.status.success() && all.contains(says), "{bad}: {all}");
+    }
 }
 
 /// The keys get-velt.sh checks releases with are the ones velt is built with

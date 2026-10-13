@@ -3,7 +3,8 @@
 `import { listen, connect } from "velt:net"`. TCP. `TcpListener` and `TcpStream` are
 structs around a handle, like file descriptors. Release each handle with `close()`.
 
-- `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port.
+- `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port. The listen
+  backlog is the OS maximum (a burst of connects waits to be accepted).
   `connect(addr): Promise<TcpStream>`.
 - `TcpListener { port: number }`: `accept(): Promise<TcpStream>` (TCP_NODELAY on), `close()`.
 - `TcpStream`:

@@ -211,9 +211,10 @@ pub(crate) struct Ctx<'m> {
     pub rechecks: Vec<crate::body::recheck::Frame>,
     /// Closures created by body checks, in order (`body::recheck`).
     pub closure_defs: Vec<DefId>,
-    /// The modules of the JS API: the prelude's, and those its globals re-export
-    /// (`body::expr::numbers::is_js_api`).
-    pub js_api_modules: std::cell::OnceCell<HashSet<usize>>,
+    /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
+    /// (`None`: all of it), and each module the prelude's globals re-export from, with the
+    /// names re-exported from it (`Some`).
+    pub js_api_modules: std::cell::OnceCell<HashMap<usize, Option<HashSet<String>>>>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
     pub literal_types: HashMap<DefId, HashMap<Span, TyId>>,
@@ -328,32 +329,6 @@ impl<'m> Ctx<'m> {
         self.defs[id.0 as usize] = None;
         self.info[id.0 as usize] = info;
         self.def_spans[id.0 as usize] = span;
-    }
-
-    /// Is module `m` part of the JS API the standard library provides: a prelude module, or
-    /// one whose items the prelude's globals re-export (`velt:fetch` and its submodules such as
-    /// `std/fetch/response`, `velt:url`)?
-    pub(crate) fn is_js_api_module(&self, m: usize) -> bool {
-        let modules = self.modules;
-        self.js_api_modules
-            .get_or_init(|| {
-                let std_path =
-                    |i: usize, f: &dyn Fn(&str) -> bool| modules[i].is_std && f(&modules[i].path);
-                let globals: Vec<&String> = modules
-                    .iter()
-                    .filter(|g| g.is_std && g.path.starts_with("std/prelude/global/"))
-                    .flat_map(|g| g.imports.iter().map(|(_, p)| p))
-                    .collect();
-                (0..modules.len())
-                    .filter(|&i| {
-                        std_path(i, &|p| p.starts_with("std/prelude/"))
-                            || globals.iter().any(|g| {
-                                std_path(i, &|p| p == g.as_str() || p.starts_with(&format!("{g}/")))
-                            })
-                    })
-                    .collect()
-            })
-            .contains(&m)
     }
 
     pub fn alloc_def(&mut self, span: Span, info: DefInfo<'m>) -> DefId {

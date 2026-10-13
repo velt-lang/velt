@@ -1,0 +1,7 @@
+async function f(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  await spawn(f(), { worker: 0, color: 1 });
+}

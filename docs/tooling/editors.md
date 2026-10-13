@@ -1,7 +1,8 @@
 # Editors and the language server
 
 `velt lsp` is a Language Server Protocol server on stdin/stdout. It works in any editor with an
-LSP client; the repository ships a Visual Studio Code extension in `editors/vscode`.
+LSP client; the repository ships a Visual Studio Code extension in `editors/vscode`, published on the
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=andtii.velt) as `andtii.velt`.
 
 ## Features
 
@@ -133,15 +134,9 @@ VS Code extension does): they run the extension's `velt.runFile`, `velt.debugFil
 `velt.runTest` and `velt.debugTest` commands, so other editors don't get them.
 
 1. Build or install `velt` and put it on `PATH`, or set `velt.serverPath` to the executable.
-2. Build and install the extension (Node.js 18 or newer):
-
-   ```sh
-   cd editors/vscode
-   npm install
-   npx tsc -p .
-   npx @vscode/vsce package --allow-missing-repository --skip-license   # → velt-0.1.0.vsix
-   code --install-extension velt-0.1.0.vsix
-   ```
+2. Install the extension from the Marketplace: search for *Velt* in the Extensions view, or run
+   `code --install-extension andtii.velt`. To build it from source instead, see
+   `editors/vscode/README.md`.
 
 | Setting | Default | Meaning |
 |---|---|---|

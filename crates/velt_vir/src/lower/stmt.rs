@@ -29,8 +29,8 @@ impl FnLower<'_, '_> {
             hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::Spawn),
                 args,
-            } if args.len() == 1 => {
-                self.spawn(&args[0], e.ty, true, false);
+            } if matches!(args.len(), 1 | 2) => {
+                self.spawn(&args[0], args.get(1), e.ty, true, false);
             }
             _ => {
                 self.expr(e);

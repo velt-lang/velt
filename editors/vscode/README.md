@@ -1,6 +1,6 @@
 # Velt for Visual Studio Code
 
-Language support for Velt (`.vlt` files; language reference: `docs/reference/` in the repository):
+Language support for Velt (`.vlt` files; see the [language reference](https://github.com/velt-lang/velt/tree/main/docs/reference)):
 
 - Syntax highlighting (keywords, types, strings, template literals with `${}` substitutions,
   numbers with type suffixes such as `10u8` / `1.5f32`, comments).
@@ -17,9 +17,8 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
   - completion (locals, module items, imports, prelude items, keywords; members after `.`);
   - find references, rename, document highlight (reads and writes of the name under the cursor);
   - workspace symbols (`Ctrl+T`: declarations in the open programs and the workspace folders);
-  - quick fixes (light bulb) for compiler errors: remove `mut`, `undefined` → `null`,
-    `"a" + n` → a template literal; and for a promise left floating as a statement: add `await`
-    or wrap it in `spawn(...)`;
+  - quick fixes (light bulb) for compiler errors, such as `"a" + xs` → a template literal, and
+    for a promise left floating as a statement: add `await` or wrap it in `spawn(...)`;
   - inlay hints: inferred types of `const` / `let` / `for ... of` bindings and parameter names at
     call sites (toggle with `editor.inlayHints.enabled`);
   - signature help while typing call arguments (functions, methods, constructors, function-typed
@@ -33,32 +32,16 @@ Language support for Velt (`.vlt` files; language reference: `docs/reference/` i
 
 ## Requirements
 
-The `velt` executable. Build it from the repository root:
+The Velt toolchain. Install it with one line (Linux x86_64 and arm64, macOS, Windows x64):
 
 ```sh
-cargo build --release -p veltc     # produces target/release/velt(.exe)
+curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh   # Linux, macOS
+irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex       # Windows (PowerShell)
 ```
 
-Put it on your `PATH`, or point the `velt.serverPath` setting at it, e.g.
-`"velt.serverPath": "C:/src/velt/target/release/velt.exe"`. The standard library is found like the
-CLI finds it (`VELT_STD`, or the `std/` directory of the checkout the executable was built in).
-
-## Install
-
-Requires Node.js 18+.
-
-```sh
-cd editors/vscode
-npm install
-npx tsc -p .                                                   # compile src/ → out/
-npx @vscode/vsce package --allow-missing-repository --skip-license   # → velt-0.1.0.vsix
-code --install-extension velt-0.1.0.vsix
-```
-
-(Or in VS Code: *Extensions* view → `...` → *Install from VSIX...*.)
-
-For development, open `editors/vscode` in VS Code and press F5 to launch an Extension Development
-Host with the extension loaded (run `npx tsc -watch -p .` alongside).
+The installer puts `velt` on your `PATH`; `velt doctor` checks the setup. If `velt` lives
+elsewhere, point the `velt.serverPath` setting at it. Other options:
+[Platforms and installation](https://github.com/velt-lang/velt/blob/main/docs/tooling/platforms.md).
 
 ## Debugging
 
@@ -74,7 +57,7 @@ needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes o
 ```
 
 `velt new` already adds it. On Windows use CodeLLDB or LLDB DAP; the C/C++ extension's Visual
-Studio debugger needs `"buildArgs": ["--backend", "llvm"]` (needs clang), whose build has a PDB. `templates/` has examples, including
+Studio debugger needs `"buildArgs": ["--backend", "llvm"]` (needs clang), whose build has a PDB. [`templates/`](https://github.com/velt-lang/velt/tree/main/editors/vscode/templates) has examples, including
 attaching to a program that `velt dev --exe` restarts on every change.
 
 ## Settings
@@ -89,6 +72,19 @@ Commands: **Velt: Restart Language Server** (e.g. after rebuilding `velt` or cha
 dependencies, which the server installs once per session), **Velt: Run File**, **Velt: Debug
 File** (also as buttons in the editor title) and **Velt: Generate launch.json**.
 
-## Tests
+## Development
 
-`npm test` compiles and runs the unit tests of the debug configuration logic (`src/test/`).
+The extension lives in [`editors/vscode`](https://github.com/velt-lang/velt/tree/main/editors/vscode)
+of the Velt repository. With Node.js 18+:
+
+```sh
+cd editors/vscode
+npm install
+npx tsc -p .                        # compile src/ → out/
+npx @vscode/vsce package            # → velt-<version>.vsix
+code --install-extension velt-<version>.vsix
+```
+
+Or open `editors/vscode` in VS Code and press F5 to launch an Extension Development Host (run
+`npx tsc -watch -p .` alongside). `npm test` runs the unit tests of the debug configuration logic
+(`src/test/`).

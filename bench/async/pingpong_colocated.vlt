@@ -1,0 +1,57 @@
+// #211 step 2: `pingpong_pinned.vlt` with placement. Each owner is pinned to a worker and each
+// caller to its owner's worker (`spawn(p, { worker })`), so no call wakes another thread. Using
+// the placement API selects the per-core scheduler. The printed total equals pingpong_pinned's.
+import { channel, Channel } from "velt:channel";
+import { workerCount } from "velt:task";
+
+type Call = { key: string; reply: (n: i64) => void };
+
+async function owner(inbox: Channel<Call>): Promise<void> {
+  const counts = new Map<string, i64>();
+  while (true) {
+    const c = await inbox.receive();
+    if (c == null) {
+      return;
+    }
+    const n = (counts.get(c.key) ?? 0) + 1;
+    counts.set(c.key, n);
+    c.reply(n);
+  }
+}
+
+async function caller(inbox: Channel<Call>, key: string, calls: i64): Promise<i64> {
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < calls; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    inbox.trySend({ key: key, reply: resolve });
+    sum += await promise;
+  }
+  return sum;
+}
+
+async function main() {
+  const owners = 4;
+  const workers = workerCount();
+  const inboxes: Channel<Call>[] = [];
+  const running: Promise<void>[] = [];
+  for (let i = 0; i < owners; i++) {
+    const inbox = channel<Call>();
+    inboxes.push(inbox);
+    running.push(spawn(owner(inbox), { worker: i % workers }));
+  }
+  const callers: Promise<i64>[] = [];
+  for (let c = 0; c < 64; c++) {
+    // Key k always belongs to owner k % 4 (16 keys).
+    const o = c % owners;
+    callers.push(spawn(caller(inboxes[o], `k${c % 16}`, 5000), { worker: o % workers }));
+  }
+  let total: i64 = 0;
+  for (const r of await Promise.all(callers)) {
+    total += r;
+  }
+  for (const inbox of inboxes) {
+    inbox.close();
+  }
+  await Promise.all(running);
+  console.log(total);
+}

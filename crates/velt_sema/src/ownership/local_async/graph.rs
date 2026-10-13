@@ -528,8 +528,10 @@ impl Walk<'_, '_> {
             }
             Intrinsic::Spawn | Intrinsic::SpawnHandled => {
                 let why = self.why(e.span, Boundary::Spawn);
-                for a in args {
-                    self.spawned(a, why);
+                // The promise; `spawn(p, { worker })`'s worker index is a plain value.
+                if let Some((p, rest)) = args.split_first() {
+                    self.spawned(p, why);
+                    rest.iter().for_each(|a| self.value(a, To::Drop));
                 }
                 return self.unknown(e, to);
             }

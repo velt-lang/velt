@@ -1,0 +1,2 @@
+spawn_worker_started.vlt:7:15
+a started promise stays on its task; pass the call: `spawn(f(), { worker })`
