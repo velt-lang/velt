@@ -32,11 +32,13 @@ extension loads, [Command line](#command-line) shows how) also shows a string as
 array as `len=N` with its elements, a union by its active member, and other options as `null` or
 their value; without them those are raw words. Variables of `async` functions, generators and
 inlined code are not shown yet. A variable is shown from the line declaring it to the end of its
-block; inside a closure, the variables it captures are shown too. On Windows the default build
-has line information but no variables yet; one linked by MSVC's `link.exe` (a toolchain without
-the bundled linker, or `VELT_LINKER=system`) has function symbols only, since `link.exe` would
-cut the DWARF sections' names. On macOS, executables are signed ad hoc without the hardened
-runtime, so LLDB can launch and attach to them.
+block; inside a closure, the variables it captures are shown too. Setting a number, boolean or
+other scalar from the debugger (`expr x = 100`, VS Code's *Set Value*) shows the new value, but
+the program keeps using the old one. On Windows the default build has line information but no
+variables yet; one linked by MSVC's `link.exe` (a toolchain without the bundled linker, or
+`VELT_LINKER=system`) has function symbols only, since `link.exe` would cut the DWARF sections'
+names. On macOS, executables are signed ad hoc without the hardened runtime, so LLDB can launch
+and attach to them.
 
 Panics print `panic: <message> at <file>:<line>:<col>` even without a debugger, and exit with
 code 101 (there is no unwinding, so `RUST_BACKTRACE` does not apply).
