@@ -6,7 +6,9 @@
 // Static members and `#private` names are not instance keys, a setter is (`"w"`, never
 // `"set w"`); a value whose class is known only at run time is tested for the subclasses and
 // implementing classes that declare the key; a number key on a record is its string, and a key
-// in a call argument or in a `for (;;)` head works. Expected output from node.
+// in a call argument or in a `for (;;)` head works. An enum-typed key is judged by its values: a
+// string enum's is a string, a numeric enum's is converted as a number is. Expected output from
+// node (the enum lines from tsc's JavaScript).
 interface Fish {
   swim(): string;
   name: string;
@@ -140,6 +142,17 @@ function fromTagged(t: Tagged): Note {
 
 type Size = { w: number; h: number };
 
+enum Color {
+  Red = "red",
+  Blue = "blue",
+}
+
+enum Num {
+  One = 1,
+  Two,
+  Seven = 7,
+}
+
 function main() {
   const f: Fish = new Salmon();
   const b: Bird = new Crow();
@@ -228,4 +241,16 @@ function main() {
   console.log(mixed in nums);
   mixed = 7;
   console.log(mixed in nums);
+  // An enum-typed key: a string enum's value, a numeric enum's value as its string.
+  const colors: Record<string, number> = { red: 1 };
+  let color: Color = Color.Red;
+  console.log(color in colors, Color.Blue in colors);
+  color = Color.Blue;
+  console.log(color in colors);
+  let num: Num = Num.One;
+  console.log(num in nums, Num.Two in nums);
+  num = Num.Seven;
+  console.log(num in nums);
+  const either: Color | Num = Num.One;
+  console.log(either in nums, either in colors);
 }

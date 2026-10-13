@@ -228,7 +228,8 @@ impl FnCx<'_, '_> {
     }
 
     /// What the type of a key known only at run time is assignable to: a union is judged by
-    /// its members (`"a" | "b"`, a `keyof` type, `string | number`).
+    /// its members (`"a" | "b"`, a `keyof` type, `string | number`), an enum by its values (a
+    /// string enum is a string, a numeric one a number).
     fn run_time_key(&mut self, t: TyId) -> KeyKind {
         let members = self.cx.union_members(t).unwrap_or_else(|| vec![t]);
         let mut kind = KeyKind::Str;
@@ -237,6 +238,8 @@ impl FnCx<'_, '_> {
                 "string" => KeyKind::Str,
                 "number" => KeyKind::Converted,
                 "symbol" => KeyKind::Symbol,
+                _ if self.is_string_enum(m) => KeyKind::Str,
+                _ if self.is_c_like_enum(m) => KeyKind::Converted,
                 _ if matches!(self.cx.ty.kind(m), TyKind::Param(_)) => KeyKind::Param,
                 _ => return KeyKind::Other,
             };
