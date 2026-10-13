@@ -54,24 +54,34 @@ pub(crate) fn check(cx: &mut Ctx) {
             }
         }
     }
-    stores.sort_by_key(|(_, s)| (s.file, s.lo));
+    // A literal's property may be found both while checking and by the walk: once each.
+    stores.sort_by_key(|(_, s)| (s.file, s.lo, s.hi));
+    stores.dedup_by(|a, b| a.0 == b.0 && (a.1.file, a.1.lo, a.1.hi) == (b.1.file, b.1.lo, b.1.hi));
     let mut reported = HashSet::new();
     for (name, ty, at) in &tests {
-        let Some((_, store)) = stores.iter().find(|(n, _)| n == name) else {
+        let mut of_name = stores.iter().filter(|(n, _)| n == name);
+        let Some((_, store)) = of_name.next() else {
             continue;
         };
+        let more = of_name.count();
         // Once per field: the first test stands for the others.
         if !reported.insert(name.as_str()) {
             continue;
         }
         let (tn, shown) = (cx.display(*ty), cx.shown_name(name));
         let place = place_of(&shown);
+        // Only the first store is labelled: say how many more there are.
+        let here = match more {
+            0 => "a value that may be `undefined` is stored here".to_string(),
+            1 => "a value that may be `undefined` is stored here, and in 1 other place".to_string(),
+            n => format!("a value that may be `undefined` is stored here, and in {n} other places"),
+        };
         cx.error(
             Diagnostic::error(
                 format!("cannot tell an absent `{shown}` from one holding `undefined`: this tests the optional field `{shown}` of `{tn}` with `in`, and the program stores a value that may be `undefined` in a field `{shown}`"),
                 *at,
             )
-            .with_label(*store, "a value that may be `undefined` is stored here")
+            .with_label(*store, here)
             .with_note(format!("Node finds a key whose value is `undefined`; Velt keeps an optional field `{shown}?: T` as its value or nothing, so the test would answer `false` (#930)"))
             .with_note(format!("store the value only when there is one (`if (v != null) {place} = v`), or test the value instead of the key (`{place} != null`)")),
         );

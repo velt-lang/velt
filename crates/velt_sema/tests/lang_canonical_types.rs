@@ -176,7 +176,7 @@ fn substitution_goes_through_the_canonicalizing_ctx_methods() {
 }
 
 /// The advice of the `in` error for an optional field names the field as code that compiles:
-/// `o["a b"]` for a key that is not an identifier.
+/// `o["a b"]` for a key that is not an identifier, and the label counts the other stores.
 #[test]
 fn the_undefined_store_advice_writes_a_quoted_key_as_an_index() {
     let l = load_src(
@@ -194,4 +194,6 @@ fn the_undefined_store_advice_writes_a_quoted_key_as_an_index() {
     );
     assert!(notes.contains("`if (v != null) o[\"a b\"] = v`"), "{notes}");
     assert!(notes.contains("`o[\"a b\"] != null`"), "{notes}");
+    let r = l.render(&d);
+    assert!(r.contains("is stored here, and in 1 other place"), "{r}");
 }
