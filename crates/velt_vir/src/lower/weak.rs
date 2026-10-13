@@ -35,18 +35,20 @@ const WEAK_CLASSES: [&str; 3] = [
 
 impl super::Cx<'_> {
     /// The prelude's `WeakMap`, `WeakSet` or `WeakRef` class (by name, for messages), if `t`
-    /// is one of them.
+    /// is one of them or a subclass of one (`class Cache extends WeakMap<K, V>`: the same
+    /// runtime handle, with fields of its own).
     pub(in crate::lower) fn weak_class(&self, t: TyId) -> Option<&'static str> {
         let TyKind::Adt(d, _) = self.types.kind(t) else {
             return None;
         };
-        match self.hir.def(*d) {
-            hir::Def::Adt(a) => WEAK_CLASSES
-                .iter()
-                .find(|n| a.name == **n)
-                .map(|n| n.rsplit("::").next().unwrap_or(n)),
-            _ => None,
+        if !self.is_class(t) {
+            return None;
         }
+        let root = &self.adt_def(self.class_root(*d)).name;
+        WEAK_CLASSES
+            .iter()
+            .find(|n| root == **n)
+            .map(|n| n.rsplit("::").next().unwrap_or(n))
     }
 }
 

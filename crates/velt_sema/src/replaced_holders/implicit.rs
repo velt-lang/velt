@@ -275,6 +275,11 @@ impl Implicit {
                     if let Some(v) = argr.get(1) {
                         out.add(v);
                     }
+                } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
+                    // A subclass of one: its base class, in terms of its own type parameters.
+                    if let Some(b) = cx.adt(d).and_then(|a| a.base) {
+                        self.reach_in(cx, b, Some(&argr), stack, out);
+                    }
                 }
                 self.weak_values(cx, t, Some(d), stack, out);
                 let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
@@ -371,26 +376,21 @@ impl Implicit {
     }
 }
 
-/// The key and value types of every `new WeakMap<K, V>()` in the program (8); a key `None` for
-/// one that mentions a type parameter.
+/// The key and value types of every `new WeakMap<K, V>()` in the program (8), also of a
+/// subclass (`new Cache()` with `class Cache extends WeakMap<K, V>`); a key `None` for one that
+/// mentions a type parameter.
 pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     struct Find<'a, 'm> {
         cx: &'a Ctx<'m>,
         map: DefId,
-        out: Vec<(Option<TyId>, TyId)>,
+        /// The class types made with `new` that are a weak map or extend one.
+        made: Vec<TyId>,
     }
     impl crate::visit::VisitMut for Find<'_, '_> {
         fn expr(&mut self, e: &mut Expr) {
-            if let E::New { def, type_args, .. } = &e.kind {
-                if *def == self.map {
-                    if let [k, v] = type_args.as_slice() {
-                        let mut ps = vec![];
-                        crate::types::collect_params(&self.cx.ty, *k, &mut ps);
-                        let k = ps.is_empty().then_some(*k);
-                        if !self.out.contains(&(k, *v)) {
-                            self.out.push((k, *v));
-                        }
-                    }
+            if let E::New { def, .. } = &e.kind {
+                if self.cx.class_extends(*def, self.map) && !self.made.contains(&e.ty) {
+                    self.made.push(e.ty);
                 }
             }
         }
@@ -398,7 +398,7 @@ pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     let Some(map) = cx.prelude_adt("WeakMap") else {
         return vec![];
     };
-    let mut out = vec![];
+    let mut made = vec![];
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut fd)) = cx.defs[i].take() else {
             continue;
@@ -406,11 +406,27 @@ pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
         let mut f = Find {
             cx,
             map,
-            out: std::mem::take(&mut out),
+            made: std::mem::take(&mut made),
         };
         crate::visit::block(&mut fd.body.block, &mut f);
-        out = f.out;
+        made = f.made;
         cx.defs[i] = Some(Def::Fn(fd));
+    }
+    let mut out = vec![];
+    for t in made {
+        let Some((root, _)) = cx.weak_root(t) else {
+            continue;
+        };
+        if let TyKind::Adt(_, args) = cx.ty.kind(root) {
+            if let [k, v] = *args.as_slice() {
+                let mut ps = vec![];
+                crate::types::collect_params(&cx.ty, k, &mut ps);
+                let k = ps.is_empty().then_some(k);
+                if !out.contains(&(k, v)) {
+                    out.push((k, v));
+                }
+            }
+        }
     }
     out
 }

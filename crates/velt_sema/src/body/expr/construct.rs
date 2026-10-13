@@ -87,9 +87,15 @@ impl FnCx<'_, '_> {
         };
         self.collect_iterable_args = self.takes_iterable(d);
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
-        if self.cx.is_weak_class(d) && !self.cx.scopes[self.module].is_std {
-            if let Some(&k) = ck.type_args.first() {
-                if !self.weak_key_type(k, &cname, span) {
+        if !self.cx.scopes[self.module].is_std {
+            // Also for a subclass, whose base class names the key type (`class Cache extends
+            // WeakMap<K, V>`).
+            if let Some((root, wname)) = self.cx.weak_root(ck.ret) {
+                let key = match self.cx.ty.kind(root) {
+                    TyKind::Adt(_, args) => args.first().copied(),
+                    _ => None,
+                };
+                if key.is_some_and(|k| !self.weak_key_type(k, wname, span)) {
                     return self.error_expr(span);
                 }
             }

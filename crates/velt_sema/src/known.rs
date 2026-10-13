@@ -157,11 +157,30 @@ impl Ctx<'_> {
         }
     }
 
-    /// Is `d` the prelude's `WeakMap`, `WeakSet` or `WeakRef` class?
+    /// Is `d` the prelude's `WeakMap`, `WeakSet` or `WeakRef` class, or a subclass of one
+    /// (`class Cache extends WeakMap<K, V>` is the same runtime handle with fields of its own)?
     pub fn is_weak_class(&self, d: DefId) -> bool {
         ["WeakMap", "WeakSet", "WeakRef"]
             .iter()
-            .any(|n| self.prelude_adt(n) == Some(d))
+            .filter_map(|n| self.prelude_adt(n))
+            .any(|w| self.class_extends(d, w))
+    }
+
+    /// The `WeakMap<K, V>`, `WeakSet<T>` or `WeakRef<T>` that the class type `t` is or extends
+    /// (the base class with `t`'s type arguments substituted), and that class's name.
+    pub fn weak_root(&mut self, t: TyId) -> Option<(TyId, &'static str)> {
+        let mut cur = t;
+        for _ in 0..64 {
+            let (d, _) = self.class_of(cur)?;
+            let own = ["WeakMap", "WeakSet", "WeakRef"]
+                .into_iter()
+                .find(|n| self.prelude_adt(n) == Some(d));
+            if let Some(name) = own {
+                return Some((cur, name));
+            }
+            cur = self.base_of(cur)?;
+        }
+        None
     }
 
     /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
