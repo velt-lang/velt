@@ -3,13 +3,20 @@
 //!
 //! hyper hands out an upgrade as an `OnUpgrade` taken from the request. The Velt handler only
 //! sees the request through accessors, so the runtime parks the `OnUpgrade` here under a key the request
-//! carries (`velt_rt_http_req_upgrade`); `velt_rt_ws_accept` claims it. Once the handler has
-//! produced its response, an unclaimed entry is dropped, so nothing outlives its request.
+//! carries (`velt_rt_http_req_upgrade`); `velt_rt_http_take_upgrade` claims it and hands the
+//! connection over as a std/net stream. Once the handler has produced its response, an unclaimed
+//! entry is dropped, so nothing outlives its request.
 
+use crate::net::stream::{Ready, StreamObj};
+use crate::net::tcp::{StreamHandle, STREAMS};
 use hyper::upgrade::OnUpgrade;
+use hyper_util::rt::TokioIo;
 use std::collections::HashMap;
+use std::io;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use tokio::net::TcpStream;
 
 fn pending() -> MutexGuard<'static, HashMap<u64, OnUpgrade>> {
     static PENDING: OnceLock<Mutex<HashMap<u64, OnUpgrade>>> = OnceLock::new();
@@ -37,4 +44,28 @@ pub fn release(key: u64) {
     if key != 0 {
         pending().remove(&key);
     }
+}
+
+/// The connection of the upgrade parked under `key`, as a stream: usable once the handler has
+/// returned its `101` response (the first operation waits for that; what is written before goes
+/// out right after the response). Over plain TCP it is the raw socket again, and the bytes the
+/// HTTP server read past the request are delivered by the first read; over TLS it is the
+/// upgraded connection. `None` if the upgrade was claimed already.
+pub fn take(key: u64, peer: SocketAddr) -> Option<StreamHandle> {
+    let on = claim(key)?;
+    Some(STREAMS.insert(StreamObj::lazy(Box::pin(async move {
+        let upgraded = on.await.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("the upgrade did not happen (was the 101 response returned?): {e}"),
+            )
+        })?;
+        type Plain = TokioIo<TcpStream>;
+        Ok(
+            match hyper_util::server::conn::auto::upgrade::downcast::<Plain>(upgraded) {
+                Ok(parts) => Ready::tcp(parts.io.into_inner(), parts.read_buf.to_vec()),
+                Err(upgraded) => Ready::other(Box::new(TokioIo::new(upgraded)), Some(peer)),
+            },
+        )
+    }))))
 }
