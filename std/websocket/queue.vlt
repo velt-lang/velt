@@ -9,6 +9,7 @@
 import { Channel, channel } from "velt:channel";
 import { ByteBuf, maskKey, setText } from "velt:websocket/bytes";
 import { OP_CLOSE, headSize, writeHead } from "velt:websocket/frame";
+import { Rx } from "velt:websocket/reader";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
 export const HIGH_WATER: i64 = 1048576;
@@ -47,9 +48,12 @@ export class SendQueue {
   drained: Channel<bool> | null = null;
   /** The topics this connection is subscribed to (std/websocket/topics). */
   topics: string[] = [];
+  /** The connection's receiving side: a `WebSocket` holds the queue, and finds it here. */
+  rx: Rx;
 
-  constructor(client: bool) {
+  constructor(client: bool, rx: Rx) {
     this.client = client;
+    this.rx = rx;
   }
 
   // Why nothing more can be queued, or -1.

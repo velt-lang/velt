@@ -1,0 +1,81 @@
+// std/websocket/receive (std-internal): receiving a message, the steps of a connection's
+// `Reader` (std/websocket/reader) driven by the task that asked: it reads from the stream when
+// the reader needs bytes, answers pings and the peer's close frame through the send queue, and
+// fails the connection on a protocol error. Not part of the public API.
+
+import { IoError } from "velt:io";
+import { TcpStream } from "velt:net";
+import { OP_CLOSE, OP_PONG, closePayload } from "velt:websocket/frame";
+import { BINARY, CLOSE, CLOSED, FAIL, PING, READ, Rx, Step, WAIT } from "velt:websocket/reader";
+import { Tx, closedHandle, settleQuietly } from "velt:websocket/writer";
+
+/** Bytes read at a time. */
+const READ_CHUNK: u64 = 16384;
+
+// Held by the task that reads from the stream: if it is dropped before it handed over what it
+// read, the next task may read.
+class ReadTurn {
+  rx: Rx | null;
+
+  constructor(rx: Rx) {
+    this.rx = rx;
+  }
+
+  done() {
+    this.rx = null;
+  }
+
+  [Symbol.dispose]() {
+    const rx = this.rx;
+    if (rx != null) {
+      rx.with((r) => r.abandon());
+    }
+  }
+}
+
+// Reads more bytes into the reader (the caller got `READ`).
+async function fill(stream: TcpStream, rx: Rx): Promise<void> {
+  const turn = new ReadTurn(rx.clone());
+  const chunk = await stream.read(READ_CHUNK);
+  turn.done();
+  rx.with((r) => r.feed(chunk));
+}
+
+/**
+ * The next text or binary message (`TEXT`, `BINARY`), or `CLOSED` once the peer has closed the
+ * connection. Pings are answered and the peer's close frame is replied to through `tx`; a
+ * protocol error fails the connection (a close frame with the matching code) and throws.
+ */
+export async function receive(stream: TcpStream, tx: Tx, rx: Rx): Promise<Step> {
+  let first = true;
+  while (true) {
+    const step = rx.with((r) => r.next(first));
+    first = false;
+    const kind = step.kind;
+    if (kind <= BINARY) {
+      return step;
+    }
+    if (kind == READ) {
+      await fill(stream, rx);
+    } else if (kind == WAIT) {
+      const turn = rx.with((r) => r.awaitTurn());
+      if (turn != null) {
+        await turn.receive();
+      }
+    } else if (kind == PING) {
+      // A pong for a connection that is closing is not needed.
+      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, step.data)));
+    } else if (kind == CLOSE) {
+      // Fails harmlessly if we closed first.
+      const reply = closePayload(step.code);
+      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
+      return new Step(CLOSED);
+    } else if (kind == FAIL) {
+      const reply = closePayload(step.code);
+      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
+      throw new IoError("EILSEQ", `WebSocket protocol error: ${step.text}`);
+    } else {
+      throw closedHandle();
+    }
+  }
+}

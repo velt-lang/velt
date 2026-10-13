@@ -5,6 +5,7 @@
 import { connect, listen } from "velt:net";
 import { OP_BINARY, OP_CLOSE, closePayload } from "velt:websocket/frame";
 import { SendQueue, CLOSED, FAILED, START, STATUS } from "velt:websocket/queue";
+import { Reader } from "velt:websocket/reader";
 import { finish, flush } from "velt:websocket/writer";
 
 async function main() {
@@ -15,7 +16,9 @@ async function main() {
   const silent = await peer;
 
   // 64 MB: far more than the socket buffers take.
-  const tx = shared(new Mutex<SendQueue>(new SendQueue(false)));
+  const tx = shared(
+    new Mutex<SendQueue>(new SendQueue(false, shared(new Mutex<Reader>(new Reader(true, []))))),
+  );
   const chunk = Buffer.alloc(1048576);
   let started = 0;
   for (let i = 0; i < 64; i++) {
