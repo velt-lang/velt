@@ -3,7 +3,14 @@
 // after the current one: no entry is visited twice. Output equals node's.
 
 function fresh(): Map<string, number> {
-  const m = new Map<string, number>([["a", 1], ["b", 2], ["c", 3], ["d", 4], ["e", 5], ["f", 6]]);
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+    ["d", 4],
+    ["e", 5],
+    ["f", 6],
+  ]);
   m.delete("e");
   m.set("g", 7);
   return m;
@@ -37,11 +44,13 @@ function forOf() {
 
 function forEach() {
   const m = fresh();
+  // A second name for the map: a callback must not modify the receiver of its own call by name.
+  const alias = m;
   let s = "";
   m.forEach((v, k) => {
     s += k + v;
     if (k == "c") {
-      m.set("h", 8);
+      alias.set("h", 8);
     }
   });
   console.log("forEach", s, m.size);
@@ -83,11 +92,12 @@ function nullable() {
   console.log("null for...of", s, m.size);
 
   m = freshNull();
+  const alias = m;
   s = "";
   m.forEach((v, k) => {
     s += k + (v === null ? "-" : `${v}`);
     if (k == "c") {
-      m.set("h", null);
+      alias.set("h", null);
     }
   });
   console.log("null forEach", s, m.size);
