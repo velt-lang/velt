@@ -22,6 +22,7 @@ impl<'h> Cx<'h> {
         Cx {
             hir,
             native_inits: vec![],
+            uses_placement: false,
             cell_checks: false,
             types,
             aggs: vec![AggLayout {
@@ -58,14 +59,16 @@ impl<'h> Cx<'h> {
         }
     }
 
-    /// Queue the user entry and `velt_main`. Everything else (callees, generic instances, glue,
-    /// thunks, vtables) is queued on demand by `func`, so unused functions are never lowered.
+    /// Queue the user entry (`velt_main` is queued once everything it reaches is lowered:
+    /// `lower_program`). Everything else (callees, generic instances, glue, thunks, vtables) is
+    /// queued on demand by `func`, so unused functions are never lowered.
     pub(super) fn seed_functions(&mut self) {
         // An async main is reached through its poll function (entry.rs), not its constructor.
-        if let Some(e) = self.hir.entry.filter(|&e| !self.is_async_fn(e)) {
-            self.func(Work::Fn(e, vec![]));
-        }
-        self.func(Work::Main);
+        match self.hir.entry {
+            Some(e) if self.is_async_fn(e) => self.func(Work::Poll(e, vec![])),
+            Some(e) => self.func(Work::Fn(e, vec![])),
+            None => return,
+        };
     }
 
     pub(super) fn finish(mut self) -> vir::Program {
@@ -127,6 +130,11 @@ impl<'h> Cx<'h> {
         ret: Ty,
         noreturn: bool,
     ) -> ExternId {
+        // Only pinning selects the per-core scheduler: `workerCount()` sizes pools of unpinned
+        // tasks, which run faster on the stealing one.
+        if symbol == "velt_rt_spawn_target" {
+            self.uses_placement = true;
+        }
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret {

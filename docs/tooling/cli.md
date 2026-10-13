@@ -203,6 +203,10 @@ Every template builds, passes `velt test` and is formatted. `velt init` writes t
 into the current directory; it never overwrites files without `--force`, always keeps an
 existing `README.md`, and names the package after the directory unless `--name` is given.
 
+Packages also get a `.gitattributes` line, `*.vlt linguist-language=TypeScript`, so GitHub
+highlights `.vlt` files: GitHub has no Velt language yet, and Velt is TypeScript syntax plus a
+few keywords and types. Like `.gitignore`, it is added to an existing file.
+
 Packages also get `.vscode/launch.json`, so F5 in VS Code builds and debugs the program, and
 `.vscode/extensions.json`, which recommends the Velt and CodeLLDB extensions
 ([Debugging](debugging.md#vs-code)); existing ones are kept. `velt init --editor vscode` adds
@@ -255,7 +259,8 @@ installers set it up ([Installing a release](platforms.md#installing-a-release))
    package's [`velt.lock.json`](manifest.md#veltlockjson) records when the field accepts it
    (installed first if it is missing), so every machine builds a commit with the same velt;
    otherwise the newest installed version the field accepts. `velt update` takes the newest
-   *installed* one (`velt toolchain install 0.2` fetches a newer patch first),
+   *published* one the field accepts, installing it first, or the newest installed one when
+   that is newer (without the network, the newest installed one),
    which then records itself in the lock;
 3. else the default (`velt toolchain default`), which is also what loose `.vlt` files outside a
    package use.
@@ -285,6 +290,7 @@ $ velt toolchain list
 | `install <version> [--default]` | install `0.1.3`, or the newest published version a requirement such as `0.1` accepts; the first one installed becomes the default |
 | `install --from <file> [--unverified] [--default]` | install a toolchain archive downloaded before (`velt-<version>-<triple>.tar.gz` for this machine), without the network: checked against its release's `SHA256SUMS` and `SHA256SUMS.sig` beside it, or, with `--unverified`, not checked. Without the network it checks only the revocations this root already stored: a key revoked after the root last read the index of releases is still trusted. Installing a version that is already installed keeps it, and says so |
 | `remove <toolchain> [--force]` | remove a version or a link. Debug executables link the runtime of the toolchain that built them, so the ones a removed version built stop running until rebuilt. The default needs `--force`. A version a running program has open (Windows) is reported in use and left whole |
+| `self-update` | replace the launcher (`~/.velt/bin/velt`) with the one of the newest release, installing that release first if needed; the launcher says when a newer one is out. The new launcher is run before it replaces the old one, so one that can't run on this machine is refused and `velt` keeps working. Run it as `velt`, not a copy of the launcher under another name |
 | `prune [--dry-run]` | remove every installed version but the default, the one this directory runs, those a link points into, and, for each `major.minor`, the one a pin like `"0.1"` runs (its newest release, or its newest pre-release when it has no release yet), saying how much space each frees; `--dry-run` only lists them. A version a lockfile still names is installed again when it is next used |
 | `default [<toolchain>]` | show or set the default |
 | `which` | the toolchain this directory runs, why, and its directory |
@@ -293,6 +299,13 @@ $ velt toolchain list
 
 The launcher runs `velt toolchain` itself, so it works the same whichever version a package
 pins. A toolchain's own `bin/velt`, started directly, says so instead.
+
+When the release that is about to run has a problem (it was yanked, or the index of releases
+carries an advisory for it, such as a security one), the launcher says so on stderr, at most
+once a day per version, with the newest release of the same minor that doesn't have it and how
+to move to it (`velt update` in a package pinned to the version, or `velt toolchain install
+<version>`). It reads the last index it fetched, so it needs no network. Text from the index is
+shown with control characters replaced and cut at 200 characters.
 
 ## `velt doctor`
 
@@ -365,7 +378,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_WASI_SYSROOT` | wasi-libc directory, for `wasm32-wasip1` |
 | `VELT_WASM_RUNNER` | program that runs `wasm32-wasip1` modules for `velt run` (default: wasmtime) |
 | `VELT_THREADS` | number of runtime worker threads (default: one per core) |
-| `VELT_SCHEDULER` | `stealing` (default: idle workers take tasks from busy ones) or `per-core` (experimental, #211: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
+| `VELT_SCHEDULER` | `stealing` (idle workers take tasks from busy ones; the default unless the program uses task placement) or `per-core` (#211; selected automatically for a program that pins a task with `spawn(p, { worker })`: each worker runs its own event loop, a task stays on the worker it started on, and a connection's socket stays on the worker that serves it). Per-core trade-offs today: a task never moves after its first poll, so a CPU-bound task delays everything on its worker; placement counts live tasks, not CPU; a socket stays on the worker that registered it; spawn bursts and cross-worker request/reply are much slower than with `stealing` |
 | `MACOSX_DEPLOYMENT_TARGET` | oldest macOS a program runs on (default and minimum: 11.0 on arm64, 10.12 on x86_64) |
 | `NO_COLOR` | disable colored output |
 | `CLICOLOR_FORCE` | force colored output |

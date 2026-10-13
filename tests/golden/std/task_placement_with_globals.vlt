@@ -1,0 +1,17 @@
+// `workerCount()` and `currentWorker()` stay `i64` in a program that also names a web global
+// re-exported from velt:task (`AbortController`) or velt:fetch (`Response`). Naming one loads
+// the global's module, and only the names that global re-exports are JS API (whose integer
+// results user code sees as `number`), not every function of velt:task.
+import { workerCount, currentWorker } from "velt:task";
+
+function reply(): Response {
+  return new Response("ok");
+}
+
+async function main() {
+  const controller = new AbortController();
+  const n: i64 = workerCount();
+  const w: i64 = currentWorker();
+  console.log(n > 0, w >= 0 && w < n, controller.signal.aborted);
+  console.log(await reply().text());
+}

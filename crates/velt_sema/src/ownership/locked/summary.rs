@@ -245,7 +245,7 @@ impl Walk<'_, '_, '_> {
         );
         if let Callee::Intrinsic(Intrinsic::Spawn) = callee {
             // `spawn` transfers what it is given: the spawned call keeps nothing.
-            self.spawned.extend(args.iter().map(|a| a.span));
+            self.spawned.extend(args.first().map(|a| a.span));
         }
         if skip {
             return;

@@ -449,12 +449,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data-encoding"
-version = "2.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1906,18 +1900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-tungstenite"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite",
-]
-
-[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2002,22 +1984,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tungstenite"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
-dependencies = [
- "bytes",
- "data-encoding",
- "http",
- "httparse",
- "log",
- "rand",
- "sha1",
- "thiserror",
-]
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2083,7 +2049,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "velt_codegen_cl"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -2099,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "velt_codegen_llvm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "object",
  "velt_codegen_cl",
@@ -2109,11 +2075,11 @@ dependencies = [
 
 [[package]]
 name = "velt_common"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "velt_doc"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "tempfile",
  "velt_common",
@@ -2122,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "velt_fmt"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -2130,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "velt_http"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "rustls",
  "tempfile",
@@ -2139,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "velt_launcher"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "flate2",
  "ring",
@@ -2153,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "velt_link"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cc",
  "cranelift-codegen",
@@ -2165,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "velt_lsp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "lsp-server",
  "lsp-types",
@@ -2201,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "velt_opt"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_codegen_cl",
  "velt_opt",
@@ -2210,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "velt_registry"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "getrandom 0.2.17",
  "semver",
@@ -2224,8 +2190,9 @@ dependencies = [
 
 [[package]]
 name = "velt_rt"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
+ "base64",
  "brotli-decompressor",
  "bytes",
  "cc",
@@ -2250,11 +2217,11 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
  "tower-service",
  "url",
  "velt_native",
@@ -2264,8 +2231,9 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_host"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
+ "base64",
  "brotli-decompressor",
  "bytes",
  "dashu-int",
@@ -2289,11 +2257,11 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
  "tower-service",
  "url",
  "velt_native",
@@ -2303,8 +2271,9 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_shared"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
+ "base64",
  "brotli-decompressor",
  "bytes",
  "dashu-int",
@@ -2328,11 +2297,11 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
+ "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite",
  "tower-service",
  "url",
  "velt_native",
@@ -2342,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "velt_rt_wasm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "dashu-int",
  "itoa",
@@ -2353,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "velt_sema"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -2361,14 +2330,14 @@ dependencies = [
 
 [[package]]
 name = "velt_syntax"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_common",
 ]
 
 [[package]]
 name = "velt_toolchain"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "flate2",
  "ring",
@@ -2384,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "velt_tscompat"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_common",
  "velt_sema",
@@ -2393,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "velt_vir"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "velt_codegen_cl",
  "velt_common",
@@ -2403,7 +2372,7 @@ dependencies = [
 
 [[package]]
 name = "veltc"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "flate2",
  "libc",
@@ -2441,7 +2410,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vpm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "object",
  "semver",
@@ -2810,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "yoke"

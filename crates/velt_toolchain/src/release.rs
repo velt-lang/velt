@@ -45,6 +45,7 @@
 //! without breaking it; a higher `format` is a change it must not misread, and is refused.
 
 mod index_trust;
+mod notices;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,7 @@ use crate::signature::{
 };
 pub use index_trust::MAX_INDEX_AHEAD;
 use index_trust::{apply_revocations, remember_index, unix_now};
+pub use notices::{cached_index, display_text, notice_for, DISPLAY_TEXT_MAX, INDEX_CACHE_FILE};
 
 /// Where releases are downloaded from unless `$VELT_INSTALL_BASE_URL` says otherwise (the
 /// installers read the same variable).
@@ -138,6 +140,10 @@ pub struct Published {
     pub version: Version,
     /// Why it was withdrawn: a requirement no longer selects it (an exact one still does).
     pub yanked: Option<String>,
+    /// A problem in this version (`advisory`), which the launcher tells users of it about.
+    pub advisory: Option<String>,
+    /// Whether the problem is a security one (`security: true`).
+    pub security: bool,
 }
 
 /// `<base>/releases/download/index/releases.json`.
@@ -208,7 +214,30 @@ pub fn parse_index(text: &str) -> Result<Index, String> {
                     )))
                 }
             };
-            Ok(Published { version, yanked })
+            let advisory = match entry.get("advisory") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(text)) => Some(text.clone()),
+                Some(other) => {
+                    return Err(bad(format!(
+                        "`advisory` of {version} is {other}, not a string"
+                    )))
+                }
+            };
+            let security = match entry.get("security") {
+                None | Some(serde_json::Value::Null) => false,
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(other) => {
+                    return Err(bad(format!(
+                        "`security` of {version} is {other}, not a boolean"
+                    )))
+                }
+            };
+            Ok(Published {
+                version,
+                yanked,
+                advisory,
+                security,
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     releases.sort_by(|a, b| a.version.cmp(&b.version));
@@ -246,6 +275,8 @@ fn fetch_index_trusting(root: &Root, url: &str, trust: &Trust) -> Result<Index, 
         eprintln!("velt: {note}");
     }
     remember_index(root, &index, url, &trust.series, unix_now())?;
+    // The newest verified index, for notices about the version that runs (no network then).
+    let _ = crate::layout::write_file(&root.dir().join(INDEX_CACHE_FILE), &text);
     Ok(index)
 }
 

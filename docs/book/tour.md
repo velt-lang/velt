@@ -1,7 +1,7 @@
 # A tour of Velt
 
 Velt reads like TypeScript and runs like Rust: it compiles to native code, has no garbage
-collector, and runs async code on a multi-core runtime. This tour shows the language in one
+collector, and runs your async code on every core of the machine. This tour shows the language in one
 sitting. Every example compiles; the full rules are in [the Reference](../reference/README.md).
 
 ## Values and types
@@ -150,8 +150,8 @@ console.log(total, squares, first + second, merged);
 
 There is no garbage collector. Numbers and strings are values you can copy freely. Other
 objects (arrays, class instances, maps) are references, as in JS, and are freed the moment
-their last reference goes; calls borrow them, so passing an object to a function costs
-nothing:
+their last reference goes. Passing an object to a function passes the same object, as in JS,
+and costs nothing:
 
 ```ts
 class User {
@@ -162,12 +162,12 @@ function log(u: User) { console.log(u.name); }
 function save(u: User) { console.log("saved", u.name); }
 
 const user = new User();
-log(user);            // calls borrow: `user` stays usable
+log(user);            // the same object: `user` stays usable
 save(user);
 ```
 
-There is no `mut`: the compiler infers which functions modify their arguments. Assigning an
-object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
+You never annotate memory: the compiler works out which functions modify their arguments and
+when each object can be freed. Assigning an object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
 [Memory without a garbage collector](memory.md) explains the model.
 
 ## Async and I/O

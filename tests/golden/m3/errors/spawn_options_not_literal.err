@@ -1,0 +1,2 @@
+spawn_options_not_literal.vlt:7:20
+`spawn`'s options must be an object literal
