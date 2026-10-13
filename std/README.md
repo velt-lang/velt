@@ -27,7 +27,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `net.vlt` | `std/net`: `listen`/`connect`, `listenTls`/`connectTls`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
 | `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `Server`, `ServeInfo`, `upgradeConnection`; handlers take and return the global `Request` and `Response` (streamed bodies: `http/stream.vlt`, internal). |
 | `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
-| `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`, topics. Written in Velt on std/net streams; internal: `websocket/frame.vlt` (framing), `reader.vlt` (the receiving side), `queue.vlt` and `writer.vlt` (the send queue and its flusher), `handshake.vlt`, `topics.vlt`, `bytes.vlt` (byte helpers). |
+| `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`, topics. Written in Velt on std/net streams; internal: `websocket/frame.vlt` (framing), `reader.vlt` and `receive.vlt` (the receiving side), `queue.vlt` and `writer.vlt` (the send queue and its flusher), `handshake.vlt`, `topics.vlt`, `bytes.vlt` (byte helpers). |
 | `global_slot.vlt` | std-internal: one object per process for a std feature (std/websocket's topics), kept in a runtime slot. |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |

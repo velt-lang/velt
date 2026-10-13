@@ -13,6 +13,10 @@
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
     by the next read.
   - `write(data: string)`, `writeBytes(data: u8[])`.
+  - `tryWrite(data: u8[]): i64`: writes what the socket takes right now, without waiting, and
+    returns the number of bytes written (0 when it takes nothing now, for a TLS stream, and
+    after an error, which the next `write` reports). When everything was written there is
+    nothing to await.
   - `shutdown()`: half-close.
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
     otherwise never finish; a `read` may see the end of the stream instead) and every later

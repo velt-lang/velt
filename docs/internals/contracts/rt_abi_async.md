@@ -385,6 +385,7 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
 | `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied |
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
+| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
 | `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail (a raw socket is shut down both ways); the handle stays open |
@@ -1039,13 +1040,15 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 `velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
 the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
-of the stream's handle and a `shared` value holding the connection's send queue and reader, so
+of the stream's handle and a `shared` value holding the connection's send queue and reader (one
+lock), so
 there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. The runtime contributes byte helpers
 (rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of the topics
 (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
 order, also before a server-side upgrade completes) and completes once it is queued; a flusher
-task started by whoever queues into an idle connection writes everything queued in one write,
-and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
+task started by whoever queues into an idle connection writes everything queued in one write
+(a reply by the connection's reading task, with no more input waiting, is written at once
+instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 
