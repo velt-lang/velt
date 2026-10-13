@@ -1,5 +1,6 @@
 // The feed API of the "$12 server challenge" (bench/feed/README.md) on std/http + std/sqlite,
-// written the way an application would be: typed rows, `Response.json`, one connection.
+// written the way an application would be: typed rows, `Response.json`, a connection for reads
+// and one for writes.
 // Env: SQLITE_PATH, JWT_SECRET, HOST (127.0.0.1), PORT (3000).
 
 import { hmacSha256, timingSafeEqual } from "velt:crypto";
@@ -183,7 +184,7 @@ function like(db: Database, user: User, id: i64): Response throws HttpError | Sq
   return Response.json(Liked { liked: true, already_liked: !added, post_id: id }, { status: added ? 201 : 200 });
 }
 
-async function route(req: Request, db: Database, secret: u8[], started: number): Promise<Response, HttpError | SqliteError> {
+async function route(req: Request, db: Database, writes: Database, secret: u8[], started: number): Promise<Response, HttpError | SqliteError> {
   const path = pathOf(req.url);
   const method = req.method;
   if (method == "GET") {
@@ -201,19 +202,24 @@ async function route(req: Request, db: Database, secret: u8[], started: number):
   }
   if (method == "POST") {
     if (path == "/posts") {
-      return await createPost(req, db, authenticate(req, secret));
+      return await createPost(req, writes, authenticate(req, secret));
     }
     if (path.startsWith("/posts/") && path.endsWith("/like")) {
       const user = authenticate(req, secret);
-      return like(db, user, postId(path.slice(7, -5)));
+      return like(writes, user, postId(path.slice(7, -5)));
     }
   }
   throw new HttpError(404, "not found");
 }
 
 async function main() {
-  const db = open(process.env.SQLITE_PATH ?? "feed.db", { fileMustExist: true, wal: true });
-  db.pragma("synchronous = NORMAL");
+  const path = process.env.SQLITE_PATH ?? "feed.db";
+  const writes = open(path, { fileMustExist: true, wal: true });
+  writes.pragma("synchronous = NORMAL");
+  // Reads have a connection of their own, which reads pages through a mapping instead of one
+  // pread per page (on the writing connection a mapping makes checkpoints slow).
+  const db = open(path, { fileMustExist: true, readonly: true });
+  db.pragma("mmap_size = 1073741824");
   const secret = utf8Encode(process.env.JWT_SECRET ?? "");
   const started = Date.now();
   const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -221,7 +227,7 @@ async function main() {
     req: Request,
   ): Promise<Response> => {
     try {
-      return await route(req, db, secret, started);
+      return await route(req, db, writes, secret, started);
     } catch (e) {
       if (e instanceof HttpError) {
         return fail(e.status, e.message);
