@@ -1,0 +1,175 @@
+// check: no leaks
+// std/websocket against a peer that speaks the protocol by hand (./_ws_raw): fragments are
+// joined and pings answered, a close frame is answered with the right code, and every protocol
+// violation fails the connection with its close code (RFC 6455 §5, §7.4, §8.1).
+import { serve } from "velt:http";
+import { channel, Channel } from "velt:channel";
+import { WebSocket, upgradeWebSocket } from "velt:websocket";
+import { utf8Decode, utf8Encode } from "velt:encoding";
+import { OP_BINARY, OP_CLOSE, OP_CONT, OP_PING, OP_PONG, OP_TEXT } from "velt:websocket/frame";
+import { RawClient, RawFrame, rawConnect } from "./_ws_raw";
+
+// Echoes until the connection ends, then reports how it ended.
+async function session(ws: WebSocket, ended: Channel<string>): Promise<void> {
+  let how = "closed";
+  try {
+    let m = await ws.receive();
+    while (m != null) {
+      if (m.isBinary) {
+        await ws.sendBytes(m.data);
+      } else {
+        await ws.send(m.text.toUpperCase());
+      }
+      m = await ws.receive();
+    }
+  } catch (e) {
+    // A failed connection stays failed: later receives see it closed.
+    const after = await ws.receive();
+    how = `${e.code} ${e.message}${after == null ? "" : " (then a message)"}`;
+  }
+  await ws.close();
+  await ended.send(how);
+}
+
+async function goodbye(ws: WebSocket, ended: Channel<string>): Promise<void> {
+  await ws.send("before the close");
+  await ws.close(1001, "é".repeat(100));
+  await ended.send("said goodbye");
+}
+
+function show(f: RawFrame | null): string {
+  if (f == null) {
+    return "end of stream";
+  }
+  if (f.op == OP_CLOSE) {
+    return `close ${RawClient.closeCode(f.payload)} "${RawClient.closeReason(f.payload)}"`;
+  }
+  const name =
+    f.op == OP_TEXT
+      ? "text"
+      : f.op == OP_BINARY ? "binary" : f.op == OP_PONG ? "pong" : `op ${f.op}`;
+  return f.op == OP_BINARY ? `binary ${f.payload}` : `${name} "${utf8Decode(f.payload)}"`;
+}
+
+async function main() {
+  const ended = channel<string>();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const up = upgradeWebSocket(req);
+    if (new URL(req.url).pathname == "/bye") {
+      spawn(goodbye(up.socket, ended));
+    } else {
+      spawn(session(up.socket, ended));
+    }
+    return up.response;
+  });
+  const port = server.port;
+
+  // A text message in three fragments, cut inside characters, with a ping in between; then a
+  // fragmented binary message and an unsolicited pong (ignored).
+  const a = await rawConnect(port, "/");
+  const text = utf8Encode("héllo wörld ✓");
+  await a.send(OP_TEXT, text.slice(0, 2), false);
+  await a.send(OP_PING, utf8Encode("p1"));
+  await a.send(OP_CONT, text.slice(2, 9), false);
+  await a.send(OP_PONG, utf8Encode("unasked"));
+  await a.send(OP_CONT, text.slice(9));
+  console.log(show(await a.next()));
+  console.log(show(await a.next()));
+  await a.send(OP_BINARY, [1u8, 2u8], false);
+  await a.send(OP_CONT, [], false);
+  await a.send(OP_CONT, [3u8]);
+  console.log(show(await a.next()));
+  await a.send(OP_CLOSE, []);
+  console.log(show(await a.next()), "|", show(await a.next()), "|", await ended.receive());
+  a.close();
+
+  // Close frames: the reply carries the peer's code if it is one that may be sent.
+  const closes: u8[][] = [
+    [0x03u8, 0xe8u8, 0x62u8, 0x79u8, 0x65u8], // 1000 "bye"
+    [0x0bu8, 0xb8u8], // 3000
+    [0x03u8, 0xedu8], // 1005: never on the wire
+    [0x03u8], // half a code
+    [0x03u8, 0xe8u8, 0xffu8], // a reason that is not UTF-8
+  ];
+  for (const payload of closes) {
+    const c = await rawConnect(port, "/");
+    await c.send(OP_CLOSE, payload);
+    console.log(show(await c.next()), "|", await ended.receive());
+    c.close();
+  }
+
+  // Protocol violations: the connection is failed with a close frame, and `receive` throws.
+  const b = await rawConnect(port, "/");
+  await b.send(OP_TEXT, utf8Encode("hi"), true, false);
+  console.log(show(await b.next()), "|", await ended.receive());
+  b.close();
+
+  // Invalid UTF-8 fails at the fragment that has it, before the message is complete.
+  const c = await rawConnect(port, "/");
+  await c.send(OP_TEXT, [0x61u8, 0xffu8], false);
+  console.log(show(await c.next()), "|", await ended.receive());
+  c.close();
+  // A character cut by the end of the message is invalid too.
+  const d = await rawConnect(port, "/");
+  await d.send(OP_TEXT, [0x61u8, 0xc3u8]);
+  console.log(show(await d.next()), "|", await ended.receive());
+  d.close();
+
+  const e = await rawConnect(port, "/");
+  await e.send(OP_CONT, utf8Encode("x"));
+  console.log(show(await e.next()), "|", await ended.receive());
+  e.close();
+
+  const f = await rawConnect(port, "/");
+  await f.send(OP_TEXT, utf8Encode("x"), false);
+  await f.send(OP_TEXT, utf8Encode("y"));
+  console.log(show(await f.next()), "|", await ended.receive());
+  f.close();
+
+  // A frame announcing more than the 64 MiB limit: refused from its header.
+  const g = await rawConnect(port, "/");
+  await g.conn.writeBytes([
+    0x82u8,
+    0xffu8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0x04u8,
+    0u8,
+    0u8,
+    0x01u8,
+    1u8,
+    2u8,
+    3u8,
+    4u8,
+  ]);
+  console.log(show(await g.next()), "|", await ended.receive());
+  g.close();
+
+  const h = await rawConnect(port, "/");
+  await h.conn.writeBytes([0xc1u8, 0x80u8, 1u8, 2u8, 3u8, 4u8]);
+  console.log(show(await h.next()), "|", await ended.receive());
+  h.close();
+
+  // The server closes first: what it queued goes out before the close frame, whose reason is
+  // cut to the 123 bytes there is room for, at a character boundary.
+  const i = await rawConnect(port, "/bye");
+  console.log(show(await i.next()));
+  const last = await i.next();
+  if (last != null) {
+    const reason = RawClient.closeReason(last.payload);
+    console.log(
+      "close",
+      RawClient.closeCode(last.payload),
+      reason.length,
+      reason == "é".repeat(61),
+    );
+  }
+  await i.send(OP_CLOSE, [0x03u8, 0xe9u8]);
+  console.log(await ended.receive(), "|", show(await i.next()));
+  i.close();
+
+  await server.shutdown();
+  ended.close();
+}

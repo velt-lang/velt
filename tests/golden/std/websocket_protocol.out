@@ -1,0 +1,19 @@
+pong "p1"
+text "HÉLLO WÖRLD ✓"
+binary 1,2,3
+close 1000 "" | end of stream | closed
+close 1000 "" | closed
+close 3000 "" | closed
+close 1002 "" | closed
+close 1002 "" | closed
+close 1007 "" | closed
+close 1002 "" | EILSEQ WebSocket protocol error: unmasked frame from a client
+close 1007 "" | EILSEQ WebSocket protocol error: invalid UTF-8 in a text message
+close 1007 "" | EILSEQ WebSocket protocol error: invalid UTF-8 in a text message
+close 1002 "" | EILSEQ WebSocket protocol error: continuation without a message
+close 1002 "" | EILSEQ WebSocket protocol error: new message inside a fragmented one
+close 1009 "" | EILSEQ WebSocket protocol error: message too long
+close 1002 "" | EILSEQ WebSocket protocol error: reserved bits set (no extension was negotiated)
+text "before the close"
+close 1001 61 true
+said goodbye | end of stream
