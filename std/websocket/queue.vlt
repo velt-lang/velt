@@ -135,21 +135,20 @@ export class SendQueue {
   }
 
   /**
-   * Everything queued, for the flusher to write; the tasks waiting for room are woken. Nothing
-   * queued: the flusher ends (empty result).
+   * Everything queued, for the flusher to write (the tasks waiting for room are woken). Empty:
+   * nothing is queued and the flusher ends. Null: the close frame was written, so the flusher
+   * shuts the socket down and stops the queue.
    */
-  take(): u8[] {
+  take(): u8[] | null {
     if (this.out.data.length == 0) {
+      if (this.closing) {
+        return null;
+      }
       this.flushing = false;
       return [];
     }
     this.wake();
     return this.out.take();
-  }
-
-  /** After a write: whether that was the close frame and all there is (the flusher stops). */
-  wroteLast(): bool {
-    return this.closing && this.out.data.length == 0;
   }
 
   /** The flusher stopped for good; what is queued will never go out. */
