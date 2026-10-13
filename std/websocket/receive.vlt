@@ -10,8 +10,6 @@ import { OP_CLOSE, OP_PONG, closePayload } from "velt:websocket/frame";
 import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt:websocket/reader";
 import { Tx, closedHandle, settleQuietly } from "velt:websocket/writer";
 
-declare function velt_rt_task_id(): u64;
-
 /** Bytes read at a time. */
 export const READ_CHUNK: u64 = 16384;
 
@@ -74,6 +72,5 @@ export async function other(stream: TcpStream, tx: Tx, step: Step): Promise<Step
   } else if (answer(stream, tx, step)) {
     return new Step(CLOSED);
   }
-  const task = velt_rt_task_id();
-  return tx.with((q) => q.next(task, false));
+  return tx.with((q) => q.next(false));
 }

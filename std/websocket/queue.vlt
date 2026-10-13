@@ -7,9 +7,9 @@
 // which writes everything queued in one write; an idle connection has no task and no buffer.
 
 import { Channel, channel } from "velt:channel";
-import { ByteBuf, maskKey, setText } from "velt:websocket/bytes";
+import { maskKey, setText } from "velt:websocket/bytes";
 import { OP_CLOSE, headSize, writeHead } from "velt:websocket/frame";
-import { Reader, Step } from "velt:websocket/reader";
+import { BINARY, Reader, Step, TEXT } from "velt:websocket/reader";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
 export const HIGH_WATER: i64 = 1048576;
@@ -31,14 +31,21 @@ export const STATUS: i64 = 7;
 /** The connection was idle: the caller starts its flusher. */
 export const START: i64 = 8;
 /**
- * The connection was idle and the frame was queued by the task that reads from it, which has
- * no more input waiting (a reply in a request/reply exchange): the caller writes the queue to
- * the socket itself (`writeDirect`), since there is nothing a flusher could batch it with.
+ * The connection was idle and its reading task has a message in hand with no more input
+ * waiting, so this is most likely its reply in a request/reply exchange: the caller writes the
+ * queue to the socket itself (`writeDirect`), since there is nothing a flusher could batch it
+ * with. (A frame another task sends in that moment is written at once too; only batching is
+ * lost.)
  */
 export const DIRECT: i64 = 16;
 
 export class SendQueue {
-  out: ByteBuf = new ByteBuf();
+  /**
+   * The encoded frames waiting to be written, and the room `out` has (kept here, not in a
+   * `ByteBuf` of its own: a send from another thread touches one object less).
+   */
+  out: u8[] = [];
+  cap: i64 = 0;
   /** A client masks what it sends. */
   client: bool;
   /** A close frame is queued: nothing may follow it, and the flusher shuts down after it. */
@@ -61,8 +68,11 @@ export class SendQueue {
    * as long as that takes.)
    */
   rx: Reader;
-  /** The task that last received on this connection (0: none yet). */
-  reader: u64 = 0;
+  /**
+   * The task that reads this connection has a message in hand and no more input waiting: what
+   * is sent now is most likely its reply (set and cleared by the reader's steps below).
+   */
+  replying: bool = false;
 
   constructor(client: bool, rx: Reader) {
     this.client = client;
@@ -80,29 +90,30 @@ export class SendQueue {
     return this.closing ? CLOSED : -1;
   }
 
-  // `first`: nothing was queued before this frame. `task`: the calling task.
-  private queued(first: bool, task: u64): i64 {
-    const r = (this.out.data.length as i64) > HIGH_WATER ? OVER : QUEUED;
+  // `first`: nothing was queued before this frame.
+  private queued(first: bool): i64 {
+    const r = (this.out.length as i64) > HIGH_WATER ? OVER : QUEUED;
     if (this.flushing) {
       return r;
     }
     this.flushing = true;
-    if (first && task != 0 && task == this.reader && this.rx.drained()) {
+    if (first && this.replying) {
       return r | DIRECT;
     }
     return r | START;
   }
 
-  /** The reader's next step, for a `receive` by task `task` (`first`: its first step). */
-  next(task: u64, first: bool): Step {
-    this.reader = task;
-    return this.rx.next(first);
+  /** The reader's next step (`first`: the first step of a `receive`). */
+  next(first: bool): Step {
+    const step = this.rx.next(first);
+    this.replying = (step.kind == TEXT || step.kind == BINARY) && this.rx.drained();
+    return step;
   }
 
   /** What the reading task read (nothing: the stream ended), and the reader's next step. */
   fed(chunk: u8[]): Step {
     this.rx.feed(chunk);
-    return this.rx.next(false);
+    return this.next(false);
   }
 
   /**
@@ -110,54 +121,85 @@ export class SendQueue {
    * meanwhile, or that was the close frame); else the connection is idle again.
    */
   directDone(): bool {
-    if (this.out.data.length == 0 && !this.closing) {
+    if (this.out.length == 0 && !this.closing) {
       this.flushing = false;
       return false;
     }
     return true;
   }
 
+  // Makes `out` `extra` bytes longer and returns where those bytes start.
+  private grow(extra: i64): i64 {
+    const at = this.out.length as i64;
+    const need = at + extra;
+    if (need > this.cap) {
+      let cap = this.cap * 2;
+      if (cap < need) {
+        cap = need;
+      }
+      if (cap < 256) {
+        cap = 256;
+      }
+      const next: u8[] = __intrinsic_array_with_capacity(cap as usize);
+      __intrinsic_array_set_len(next, at as usize);
+      if (at > 0) {
+        next.set(this.out, 0);
+      }
+      this.out = next;
+      this.cap = cap;
+    }
+    __intrinsic_array_set_len(this.out, need as usize);
+    return at;
+  }
+
+  private takeOut(): u8[] {
+    const out = this.out;
+    this.out = [];
+    this.cap = 0;
+    return out;
+  }
+
   // Room for a frame with `len` payload bytes, its header written; where the payload goes.
   private frame(op: i64, len: i64, mask: u32): i64 {
-    const at = this.out.grow(headSize(len, this.client) + len);
-    return writeHead(this.out.data, at, op, len, this.client, mask);
+    const at = this.grow(headSize(len, this.client) + len);
+    return writeHead(this.out, at, op, len, this.client, mask);
   }
 
   /** Queues a text frame. */
-  pushText(op: i64, text: string, task: u64 = 0): i64 {
+  pushText(op: i64, text: string): i64 {
     const no = this.refusal();
     if (no >= 0) {
       return no;
     }
-    const first = this.out.data.length == 0;
+    const first = this.out.length == 0;
     const len = Buffer.byteLength(text) as i64;
     const mask = this.client ? maskKey() : 0u32;
     const p = this.frame(op, len, mask);
-    setText(this.out.data, text, p);
+    setText(this.out, text, p);
     if (this.client) {
-      this.out.data.xorMask(mask, p, p + len);
+      this.out.xorMask(mask, p, p + len);
     }
-    return this.queued(first, task);
+    return this.queued(first);
   }
 
   /** Queues a frame carrying `payload`; a close frame is the last one. */
-  pushBytes(op: i64, payload: u8[], task: u64 = 0): i64 {
+  pushBytes(op: i64, payload: u8[]): i64 {
     const no = this.refusal();
     if (no >= 0) {
       return no;
     }
-    const first = this.out.data.length == 0;
+    const first = this.out.length == 0;
     const len = payload.length as i64;
     const mask = this.client ? maskKey() : 0u32;
     const p = this.frame(op, len, mask);
-    this.out.data.set(payload, p as usize);
+    this.out.set(payload, p as usize);
     if (this.client) {
-      this.out.data.xorMask(mask, p, p + len);
+      this.out.xorMask(mask, p, p + len);
     }
     if (op == OP_CLOSE) {
       this.closing = true;
     }
-    return this.queued(first, task);
+    return this.queued(first);
   }
 
   /**
@@ -166,15 +208,16 @@ export class SendQueue {
    * (with `START`), or -1. A client masks every frame with a key of its own.
    */
   appendFrame(frame: u8[], payloadAt: i64): i64 {
-    if (this.refusal() >= 0 || (this.out.data.length as i64) > PUBLISH_LIMIT) {
+    if (this.refusal() >= 0 || (this.out.length as i64) > PUBLISH_LIMIT) {
       return -1;
     }
     if (this.client) {
       const r = this.pushBytes((frame[0] as i64) & 0x0f, frame.slice(payloadAt));
       return r & ~OVER;
     }
-    this.out.append(frame);
-    return this.queued(false, 0) & ~OVER;
+    const at = this.grow(frame.length as i64);
+    this.out.set(frame, at as usize);
+    return this.queued(false) & ~OVER;
   }
 
   /**
@@ -183,7 +226,7 @@ export class SendQueue {
    * shuts the socket down and stops the queue.
    */
   take(): u8[] | null {
-    if (this.out.data.length == 0) {
+    if (this.out.length == 0) {
       if (this.closing) {
         return null;
       }
@@ -191,7 +234,7 @@ export class SendQueue {
       return [];
     }
     this.wake();
-    return this.out.take();
+    return this.takeOut();
   }
 
   /** The flusher stopped for good; what is queued will never go out. */
@@ -200,7 +243,7 @@ export class SendQueue {
       this.stopped = code;
     }
     this.flushing = false;
-    this.out.take();
+    this.takeOut();
     this.wake();
   }
 
