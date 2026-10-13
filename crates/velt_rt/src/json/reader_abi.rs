@@ -23,6 +23,10 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     flags: u32,
     max_depth: u32,
 ) -> *mut Reader {
+    // A driver's parked rows (`rows_bin.rs`): the reader owns them, not the marker string.
+    if let Some(rows) = super::rows_bin::take_pending((*src).as_bytes()) {
+        return Box::into_raw(Box::new(Reader::over_rows(rows, flags)));
+    }
     let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());
     let lone_free = (*src).is_well_formed();
     Box::into_raw(Box::new(Reader::with_source(
@@ -41,18 +45,27 @@ pub unsafe extern "C" fn velt_rt_json_reader_free(r: *mut Reader) {
 /// Kind of the next token (`TOKEN_*`: 0 EOF … 10 error); consumes nothing but whitespace.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_peek(r: *mut Reader) -> u32 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.peek();
+    }
     (*r).peek()
 }
 
 /// Consume `{`: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_expect_object_start(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.open(b'{');
+    }
     (*r).open(b'{')
 }
 
 /// Consume `[`: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_expect_array_start(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.open(b'[');
+    }
     (*r).open(b'[')
 }
 
@@ -61,6 +74,16 @@ pub unsafe extern "C" fn velt_rt_json_reader_expect_array_start(r: *mut Reader) 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_next_key(r: *mut Reader, out: *mut VeltStr) -> u8 {
     let r = &mut *r;
+    if let Some(rows) = r.rows.as_mut() {
+        return match rows.next_key() {
+            Ok(Some(key)) => {
+                out.write(key);
+                STEP_MORE
+            }
+            Ok(None) => STEP_END,
+            Err(()) => STEP_ERROR,
+        };
+    }
     match r.next_key() {
         Ok(Some(key)) => {
             out.write(r.borrowed_str(key));
@@ -74,6 +97,9 @@ pub unsafe extern "C" fn velt_rt_json_reader_next_key(r: *mut Reader, out: *mut 
 /// 1 = another element follows, 0 = end of array (`]` consumed), 2 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_array_next(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.array_next();
+    }
     (*r).array_next()
 }
 
@@ -81,6 +107,12 @@ pub unsafe extern "C" fn velt_rt_json_reader_array_next(r: *mut Reader) -> u8 {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_string(r: *mut Reader, out: *mut VeltStr) -> u8 {
     let r = &mut *r;
+    if let Some(rows) = r.rows.as_mut() {
+        return rows.string().map_or(0, |s| {
+            out.write(s);
+            1
+        });
+    }
     match r.string() {
         Some(tok) => {
             out.write(r.owned_str(tok));
@@ -93,7 +125,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_string(r: *mut Reader, out: *m
 /// Read a number: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_f64(r: *mut Reader, out: *mut f64) -> u8 {
-    (*r).f64().map_or(0, |v| {
+    let v = match (*r).rows.as_mut() {
+        Some(rows) => rows.f64(),
+        None => (*r).f64(),
+    };
+    v.map_or(0, |v| {
         out.write(v);
         1
     })
@@ -102,7 +138,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_f64(r: *mut Reader, out: *mut 
 /// Read an integral number that fits `i64` exactly (`3`, `3.0`, `3e2`): 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_i64(r: *mut Reader, out: *mut i64) -> u8 {
-    (*r).i64().map_or(0, |v| {
+    let v = match (*r).rows.as_mut() {
+        Some(rows) => rows.i64(),
+        None => (*r).i64(),
+    };
+    v.map_or(0, |v| {
         out.write(v);
         1
     })
@@ -111,7 +151,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_i64(r: *mut Reader, out: *mut 
 /// Read `true`/`false` into `*out` (0/1): 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_bool(r: *mut Reader, out: *mut u8) -> u8 {
-    (*r).bool().map_or(0, |v| {
+    let v = match (*r).rows.as_mut() {
+        Some(rows) => rows.bool(),
+        None => (*r).bool(),
+    };
+    v.map_or(0, |v| {
         out.write(v as u8);
         1
     })
@@ -120,12 +164,18 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_bool(r: *mut Reader, out: *mut
 /// Read `null`: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_read_null(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.null();
+    }
     (*r).null()
 }
 
 /// Skip one value of any kind: 1 = ok, 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_skip_value(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.skip();
+    }
     (*r).skip()
 }
 
@@ -134,18 +184,29 @@ pub unsafe extern "C" fn velt_rt_json_reader_skip_value(r: *mut Reader) -> u8 {
 /// 0 = error.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_skip_lookahead(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.skip();
+    }
     (*r).skip_lookahead()
 }
 
 /// The reader's position, for `reset` (looking ahead and coming back).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_mark(r: *const Reader) -> u64 {
+    // SAFETY: a reader belongs to the one decoder running on it, so nothing else refers to
+    // it; the rows reader keeps its marks in a list.
+    if let Some(rows) = (*r.cast_mut()).rows.as_mut() {
+        return rows.mark();
+    }
     (*r).mark()
 }
 
 /// Go back to a position from `mark` (of the same reader), clearing any error since.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_reset(r: *mut Reader, mark: u64) {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.reset(mark);
+    }
     (*r).reset(mark)
 }
 
@@ -156,7 +217,11 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_value(
     r: *mut Reader,
     out: *mut ValueHandle,
 ) -> u8 {
-    (*r).value().map_or(0, |v| {
+    let v = match (*r).rows.as_mut() {
+        Some(rows) => rows.value(),
+        None => (*r).value(),
+    };
+    v.map_or(0, |v| {
         out.write(Handle::from_arc(v));
         1
     })
@@ -166,12 +231,18 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_value(
 /// when the reader rejects unknown keys: then the message is `unknown field at <path>`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_skip_unknown(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.skip_unknown();
+    }
     (*r).skip_unknown()
 }
 
 /// After the top-level value: 1 if only whitespace remains, else 0 (error recorded).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_end(r: *mut Reader) -> u8 {
+    if let Some(rows) = (*r).rows.as_mut() {
+        return rows.end();
+    }
     (*r).end()
 }
 

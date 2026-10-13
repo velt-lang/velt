@@ -7,6 +7,7 @@
 //! an opening bracket.
 
 use super::error::{mismatch_message, syntax_message, unknown_message};
+use super::rows_reader::RowReader;
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
@@ -59,6 +60,9 @@ pub struct Reader {
     /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
     /// bracket (created on first use).
     skip_ends: Option<HashMap<usize, usize>>,
+    /// Set when the reader walks a driver's binary rows instead of text (`rows_reader.rs`):
+    /// every `velt_rt_json_reader_*` call then goes to it.
+    pub(crate) rows: Option<RowReader>,
     /// Bytes `skip_lookahead` walked (not jumped over): lets tests check that lookahead stays
     /// linear without timing it.
     #[cfg(test)]
@@ -99,9 +103,17 @@ impl Reader {
             },
             depth: 0,
             skip_ends: None,
+            rows: None,
             #[cfg(test)]
             lookahead_walked: 0,
         }
+    }
+
+    /// A reader over a driver's binary rows (`rows_bin.rs`), with `FLAG_*` options.
+    pub fn over_rows(rows: Vec<u8>, flags: u32) -> Reader {
+        let mut r = Reader::with_source(&[], true, flags, 0);
+        r.rows = Some(RowReader::new(rows, flags));
+        r
     }
 
     /// How many more levels a value at the current position may nest.
@@ -399,6 +411,9 @@ impl Reader {
 
     /// The `JsonError.message` for the current state (see error.rs for the formats).
     pub fn message(&self, expected: &str, path: &str) -> String {
+        if let Some(rows) = &self.rows {
+            return rows.message(expected, path);
+        }
         match self.error {
             Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
             Some(ReadError::Unknown) => unknown_message(path),

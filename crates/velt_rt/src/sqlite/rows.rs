@@ -1,5 +1,5 @@
-//! Reading an executing SQLite statement's rows into JSON text for std's `JSON.parse<T[]>`
-//! (the encoding is [`crate::db_json::rows`]).
+//! Reading an executing SQLite statement's rows for std's `JSON.parse<T[]>`, in the binary
+//! form the JSON reader walks directly ([`crate::json::rows_bin`]).
 //!
 //! SQLite has no boolean type, so booleans come back as 0/1. A column whose declared type is
 //! `BOOL` or `BOOLEAN` (a table column read directly, not an expression) is written as
@@ -7,24 +7,22 @@
 //! stays a number.
 
 use super::error::DbError;
-use crate::db_json::RowWriter;
+use crate::json::rows_bin::BinRows;
 use rusqlite::types::ValueRef;
 use rusqlite::Statement;
 
-/// Step `stmt` (already bound) and encode its rows: every row as a JSON array, or with
-/// `first_only` the first row's object (empty text if there is none; the statement is not
-/// stepped further).
+/// Step `stmt` (already bound) and encode its rows: every row, or with `first_only` the first
+/// row alone (nothing at all if there is none; the statement is not stepped further).
 pub fn read(stmt: &mut Statement<'_>, first_only: bool) -> Result<Vec<u8>, DbError> {
     let columns = stmt.columns();
     let bools: Vec<bool> = columns
         .iter()
         .map(|c| is_bool_type(c.decl_type()))
         .collect();
-    let mut w = RowWriter::new(columns.iter().map(|c| c.name()));
+    let mut w = BinRows::new(columns.iter().map(|c| c.name()), first_only);
     drop(columns);
     let mut rows = stmt.raw_query();
     while let Some(row) = rows.next()? {
-        w.begin_row();
         for (i, &is_bool) in bools.iter().enumerate() {
             match row.get_ref(i)? {
                 ValueRef::Null => w.null(),
@@ -37,14 +35,10 @@ pub fn read(stmt: &mut Statement<'_>, first_only: bool) -> Result<Vec<u8>, DbErr
         }
         w.end_row();
         if first_only {
-            return Ok(w.into_rows());
+            return Ok(w.finish());
         }
     }
-    Ok(if first_only {
-        w.into_rows()
-    } else {
-        w.into_array()
-    })
+    Ok(if first_only { Vec::new() } else { w.finish() })
 }
 
 fn is_bool_type(decl: Option<&str>) -> bool {
