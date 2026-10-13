@@ -1,5 +1,5 @@
 // A timer callback that is a function value whose closure owns a WeakRef: the timer's task
-// would run it on another thread, so handing it over panics (review-969e e05).
+// would run it on another thread, so handing it over panics.
 import { setTimeout } from "velt:timers";
 class V { n: number; constructor(n: number) { this.n = n; } }
 async function tick(r: WeakRef<V>): Promise<void> { const x = r.deref(); console.log(x === null ? -1 : x.n); }

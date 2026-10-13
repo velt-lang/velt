@@ -1,5 +1,5 @@
-// As weakref_transfer_spawn, with the function value in a field of an object passed to a task
-// (review-969e e02).
+// As weakref_transfer_spawn, with the function value in a field of an object passed to a
+// task.
 class V { n: number; constructor(n: number) { this.n = n; } }
 function mk(keep: V): () => number {
   const r = new WeakRef(keep);
