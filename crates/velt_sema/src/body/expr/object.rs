@@ -220,6 +220,30 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// [`Self::prop_value`] for a field of an object type. A value that may be null written
+    /// for a nullable field is remembered: Node finds the key of `{ b: undefined }`, which an
+    /// optional field without a presence flag cannot hold (`crate::absent_fields`).
+    pub(super) fn field_value(
+        &mut self,
+        name: &ast::Ident,
+        value: Option<&ast::Expr>,
+        exp: Option<TyId>,
+    ) -> hir::Expr {
+        let h = self.prop_value(name, value, exp);
+        let given = match &h.kind {
+            H::WrapSome(inner) => inner.ty,
+            _ => h.ty,
+        };
+        let nullable = matches!(h.kind, H::Lit(hir::Lit::Null))
+            || self.cx.ty.opt_payload(given).is_some()
+            || matches!(self.cx.ty.kind(given), TyKind::Param(_));
+        if nullable && exp.is_some_and(|e| self.cx.ty.opt_payload(e).is_some()) {
+            let store = (name.name.clone(), h.span);
+            self.cx.object_copies.null_literals.push(store);
+        }
+        h
+    }
+
     pub(crate) fn object_lit(
         &mut self,
         props: &[ast::ObjectProp],
@@ -559,7 +583,7 @@ impl FnCx<'_, '_> {
                 .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
                 .collect();
             let expected = self.cx.subst_known(fields[i].ty, &known);
-            let h = self.prop_value(pname, *value, Some(expected));
+            let h = self.field_value(pname, *value, Some(expected));
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);
         }

@@ -72,19 +72,33 @@ pub(crate) struct Copies {
     pub seen: Vec<(TyId, Span, Seen)>,
     /// The keys of `Seen::In` (only ever added to).
     pub in_keys: Vec<String>,
+    /// `"k" in x` tests of an optional field without a presence flag: the field, the type of
+    /// `x` and the test (`crate::absent_fields`).
+    pub in_optional: Vec<(String, TyId, Span)>,
+    /// The fields an object literal's property gives a value that may be null, by name
+    /// (`crate::absent_fields`).
+    pub null_literals: Vec<(String, Span)>,
 }
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 3] {
-        [self.copies.len(), self.writes.len(), self.seen.len()]
+    pub(crate) fn mark(&self) -> [usize; 5] {
+        [
+            self.copies.len(),
+            self.writes.len(),
+            self.seen.len(),
+            self.in_optional.len(),
+            self.null_literals.len(),
+        ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 3]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 5]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
+        self.in_optional.truncate(mark[3]);
+        self.null_literals.truncate(mark[4]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -111,6 +125,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         writes,
         seen,
         in_keys,
+        ..
     } = std::mem::take(&mut cx.object_copies);
     for c in &copies {
         if let Some(w) = assigned(cx, c, &writes) {

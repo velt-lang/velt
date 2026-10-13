@@ -115,6 +115,29 @@ function count(v: Record<string, number> | A): number {
   return 0;
 }
 
+// An optional field stays testable with `in` while every store into it has a value: left out,
+// a literal, a narrowed parameter, a default, or a spread of an object with the same optional field.
+type Note = { kind: string; note?: string };
+type Tagged = { note?: string; tag: string };
+
+function withNote(note?: string): Note {
+  const o: Note = { kind: "k" };
+  if (note) o.note = note;
+  return o;
+}
+
+function noteOr(note?: string): Note {
+  return { kind: "d", note: note ?? "none" };
+}
+
+function recopy(o: Note): Note {
+  return { ...o, kind: "c" };
+}
+
+function fromTagged(t: Tagged): Note {
+  return { ...t, kind: t.tag };
+}
+
 type Size = { w: number; h: number };
 
 function main() {
@@ -181,6 +204,13 @@ function main() {
   for (y = true ? "z" in o ? 1 : 2 : 3; y > 0; y = 0) {
     console.log("y", y);
   }
+  console.log("note" in withNote(), "note" in withNote("n"), "note" in noteOr());
+  console.log("note" in recopy(withNote()), "note" in recopy(withNote("n")));
+  const tagged: Tagged = { tag: "t" };
+  console.log("note" in fromTagged(tagged), "note" in fromTagged({ tag: "u", note: "v" }));
+  const held = id(withNote("i"));
+  held.note = "set";
+  console.log("note" in held, held.note);
   // A run-time key is judged by what its type is assignable to: a union of string literals
   // and a `keyof` type are strings, `string | number` is converted as a number is.
   let lit: "a" | "b" = "a";

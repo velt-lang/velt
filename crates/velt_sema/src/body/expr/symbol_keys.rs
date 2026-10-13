@@ -175,6 +175,11 @@ impl FnCx<'_, '_> {
                     self.cx.object_copies.observe(m, span, Seen::In(at));
                 }
             }
+            if *p == Presence::Optional(false) {
+                // Not-null stands for present: wrong once the field may hold `undefined`.
+                let test = (key.name().to_string(), m, span);
+                self.cx.object_copies.in_optional.push(test);
+            }
             let (pat, body) = match p {
                 Presence::No if held.is_empty() => continue,
                 Presence::Yes => {

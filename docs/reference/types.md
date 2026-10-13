@@ -1154,7 +1154,15 @@ So is a key Velt cannot answer while compiling: a member declared by a struct an
 may hold (structs carry no class to tell them apart), and a string key on a built-in or standard
 library value (an array, a `Map`). A value converted to a narrower object type by copying its
 fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
-tests it for a key the copy left out, since Node would find it on the original. A primitive
+tests it for a key the copy left out, since Node would find it on the original. An optional
+field (`b?: T`) is its value or nothing, while Node also finds a key that holds `undefined`
+(`"b" in { b: undefined }` is `true`). So a program that tests such a field with `in` and
+somewhere stores a value that may be `undefined` in a field of that name (`{ kind, b }` with an
+optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, a spread of a `b: T | null` field) is
+an error (``` cannot tell an absent `b` from one holding `undefined` ```): store the value only
+when there is one (`if (v != null) o.b = v`), or test the value (`o.b != null`). Leaving the
+field out, a value that cannot be null and a spread of an object with the same optional field
+are fine. A primitive
 right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
 possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
 symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under

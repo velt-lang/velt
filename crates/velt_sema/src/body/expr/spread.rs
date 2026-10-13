@@ -335,7 +335,7 @@ impl FnCx<'_, '_> {
                     self.cx
                         .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
-                    self.prop_value(&k, value, Some(expected))
+                    self.field_value(&k, value, Some(expected))
                 }
                 (Value::Prop(k, value), None) => {
                     self.cx
@@ -407,7 +407,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let (value, guard) = match part {
-            Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
+            Value::Prop(k, value) => (self.field_value(&k, value, Some(fty)), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
                 let guard = match src.place {
                     Some(p) if src.presence => {
@@ -467,13 +467,13 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         match v {
             Value::Read(h, _) => h,
-            Value::Prop(k, value) => self.prop_value(&k, value, expected),
+            Value::Prop(k, value) => self.field_value(&k, value, expected),
             Value::Over(h, src, prev) => {
                 let prev = match *prev {
                     // A property under an optional field is evaluated whether or not the field
                     // is present, as in JavaScript: into a temporary, after the spread sources.
                     Value::Prop(k, value) => {
-                        let p = self.prop_value(&k, value, expected);
+                        let p = self.field_value(&k, value, expected);
                         let mode = if self.cx.is_copy(p.ty) {
                             UseMode::Copy
                         } else {

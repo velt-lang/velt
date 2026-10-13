@@ -26,6 +26,7 @@
 
 pub mod hir;
 
+mod absent_fields;
 mod anon;
 mod assigned_fields;
 mod ast_walk;
@@ -268,6 +269,7 @@ fn error_count(cx: &ctx::Ctx) -> usize {
 fn analyze_bodies(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    absent_fields::check(cx);
     fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.

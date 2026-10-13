@@ -28,6 +28,10 @@ true false true true
 x true
 st true
 y 2
+false true true
+false true
+false true
+true set
 true
 false
 w true
