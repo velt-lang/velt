@@ -5,9 +5,9 @@ finds them unreachable, which costs memory headroom and pauses. Velt has **no ga
 collector**. Memory is freed at a known point, when its last reference goes away, so there are
 no collection pauses, no heap to tune, and cleanup code runs exactly when you expect.
 
-You don't manage memory by hand either: there is no `free`, no lifetime annotation, no `mut`,
-no borrow syntax. The compiler infers all of it, and the code you write behaves as it does in
-JavaScript.
+You don't manage memory by hand either. Memory management is automatic: you write no `free`
+and no annotations, the compiler works out when each object can be freed, and the code you write
+behaves as it does in JavaScript.
 
 ## Values: numbers and strings
 
@@ -60,8 +60,8 @@ function main() {
 }                                  // freed here, deterministically
 ```
 
-**Calls borrow.** Passing an object to a function lends it for the duration of the call, and the
-function sees the same object, so changes are visible to the caller:
+**Calls pass the same object.** Passing an object to a function costs nothing: the function sees
+the caller's object, so its changes are visible to the caller, as in JavaScript:
 
 ```ts
 class User {
@@ -78,7 +78,7 @@ function recordVisit(u: User) {
 }
 
 const user = new User();
-console.log(greet(user));          // `user` is lent, not given away
+console.log(greet(user));          // `user` stays usable
 recordVisit(user);
 recordVisit(user);
 console.log(user.visits);          // 2
@@ -94,7 +94,7 @@ and its enclosing function both change lives in a small shared cell, so both see
 
 ## Mutation is inferred
 
-There is no `mut` or `readonly` parameter syntax to write. The compiler infers which functions
+You don't mark which parameters a function changes. The compiler infers which functions
 modify their parameters and which methods modify `this`, across the whole program, and uses that
 to optimize. One rule follows from it: a call may not modify a value that another of its
 arguments can also reach.
