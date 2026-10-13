@@ -3,7 +3,8 @@
 //! has a null buffer and `cap == 0`; buffers come from `velt_rt_alloc` and grow by amortized
 //! doubling (the shared `ArrayGrow` helper, starting at 4). `cap == 0` with elements is a
 //! buffer the array does not own: a module constant table's read-only data (`table_read` in
-//! `expr.rs`), seen only by the code that reads an element or the length. Indexing is bounds-checked
+//! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
+//! bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
 
 mod builtins;
