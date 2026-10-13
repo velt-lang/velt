@@ -451,10 +451,12 @@ read or write of an opened file names no path (`EISDIR: illegal operation on a d
 read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
 denied).
 
-## 6. std/net (TCP)
+## 6. std/net (TCP, TLS over TCP)
 
 Handles (`VeltListener`, `VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time.
+alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket, a TLS stream
+(rustls, §14.8) or an HTTP connection handed over by an upgrade (`velt_rt_http_req_take_upgrade`,
+§14.8); every operation below works on all of them, and one task may read while another writes.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
@@ -469,7 +471,10 @@ alive, so `close` may be called at any time.
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
+| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail (a raw socket is shut down both ways); the handle stays open |
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
+| `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
+| `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |
 
 ## 7. std/http (hyper 1.x, HTTP/1.1 keep-alive + h2c)
 
@@ -1206,6 +1211,7 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 |---|---|---|
 | `velt_rt_http_serve_tls` | `(const VeltStr* addr, const VeltHandler* h, const VeltStr* cert_pem, const VeltStr* key_pem) -> VeltFut*` | as `velt_rt_http_serve`, over TLS; certificate chain + PKCS#8/PKCS#1/SEC1 key; bad PEM or mismatch ⇒ `EINVAL`; handshakes time out after 10 s |
 | `velt_rt_http_req_upgrade` | `(VeltReq r) -> u64` | key of the request's parked HTTP upgrade (0 = the request has no `Upgrade` header); an unclaimed upgrade is dropped when the handler's response is produced |
+| `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
 
 ### 14.9 WebSockets (`velt:websocket`)
 

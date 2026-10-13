@@ -183,6 +183,46 @@ async function main() {
 }
 ```
 
+## `upgradeConnection(req, protocol, headers?)`
+
+A handler can take over its connection for another protocol (an HTTP/1.1 `Upgrade`, RFC 9110
+§7.8): `isUpgradeRequest(req, protocol): bool` says whether the client asked for `protocol`, and
+`upgradeConnection(req: Request, protocol: string, headers?: HeadersInit): ConnectionUpgrade {
+stream: TcpStream; response: Response }` takes the connection. Return `response` (`101 Switching
+Protocols`, with `upgrade: protocol`, `connection: Upgrade` and `headers`) from the handler; from
+then on the connection is `stream`, a [`velt:net`](net.md) byte stream (over TLS if the server
+is), released with `close()`.
+
+```ts
+import { serve, isUpgradeRequest, upgradeConnection } from "velt:http";
+import { TcpStream } from "velt:net";
+
+async function session(conn: TcpStream): Promise<void> {
+  await conn.write("hello\n");
+  const line = await conn.readString();
+  await conn.write(line.toUpperCase());
+  conn.close();
+}
+
+async function main() {
+  const server = await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    if (!isUpgradeRequest(req, "shout")) {
+      return new Response("upgrade to shout", { status: 426 });
+    }
+    const up = upgradeConnection(req, "shout");
+    spawn(session(up.stream));
+    return up.response;
+  });
+}
+```
+
+The stream works once the response has been sent: its first read or write waits for that, so
+what the session writes before goes out right after the response, and fails with `IoError`
+`ECONNABORTED` if the handler returned something else. The client must wait for the `101`
+before it sends anything in the new protocol. `upgradeConnection` throws `IoError` `EINVAL` if
+`req` is not an upgrade request or its connection was taken already. Only HTTP/1.1 connections
+can be upgraded (HTTP/2 has no `Upgrade`). [`velt:websocket`](websocket.md) is built on this.
+
 ## `Server`
 
 `Server { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes idle

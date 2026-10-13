@@ -163,6 +163,14 @@ pub unsafe extern "C" fn velt_rt_http_req_upgrade(req: ReqHandle) -> u64 {
     obj(req).upgrade
 }
 
+/// Claims the request's upgrade (once) and returns its connection as a std/net stream handle
+/// (`upgrade::take`); 0 if the request asked for no upgrade or it was claimed already.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_http_req_take_upgrade(req: ReqHandle) -> u64 {
+    let r = obj(req);
+    super::upgrade::take(r.upgrade, r.conn.remote).map_or(0, |s| s.bits())
+}
+
 /// `req.method` (`GET`, `POST`...): the standard methods are static strings.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_method(req: ReqHandle, out: *mut VeltStr) {
