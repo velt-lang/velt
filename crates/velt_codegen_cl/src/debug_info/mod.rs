@@ -311,14 +311,17 @@ pub(crate) fn build_unit(
                 )
             });
             let mut open: Vec<(&vir::LocalDebug, UnitEntryId)> = vec![];
+            let mut budget = scope_range_budget(f);
             for v in vars {
                 while open.last().is_some_and(|(o, _)| !holds(o, &v.debug)) {
                     open.pop();
                 }
                 let parent = open.last().map_or(sub_id, |(_, e)| *e);
-                let parent = match scope_ranges(f, &v.debug) {
+                let ranges = scope_ranges(f, &v.debug).filter(|r| r.len() <= budget);
+                let parent = match ranges {
                     None => parent,
                     Some(ranges) => {
+                        budget -= ranges.len();
                         let ranges = ranges
                             .into_iter()
                             .map(|(begin, end)| Range::StartLength {
@@ -347,8 +350,9 @@ pub(crate) fn build_unit(
 
 /// The code ranges (offsets in `f`) where `var` is in scope: code located from its declaration
 /// line (a whole line in one block: debuggers make a breakpoint location per block a line's
-/// code is in) up to the end of its block. `None` when that is the whole function (params,
-/// variables of the function's own block declared at its start).
+/// code is in) up to the end of its block, with the code without a location that follows such
+/// code. `None` when that is the whole function (params, variables of the function's own block
+/// declared at its start).
 fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
     if var.param {
         return None;
@@ -362,12 +366,21 @@ fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u3
     };
     let mut ranges: Vec<(u32, u32)> = vec![];
     let mut whole = true;
+    // Whether the code before the row is in scope.
+    let mut before = false;
     for (k, (start, loc)) in f.rows.iter().enumerate() {
         let end = f.rows.get(k + 1).map_or(f.size, |r| r.0);
         if *start >= end {
             continue;
         }
-        if !inside(loc) {
+        // Code without a location (the few bytes between two located instructions) goes with
+        // the code before it. Left out, it would cut the scope of every variable declared
+        // above it in two: a function of n declarations in a row would need n² ranges.
+        before = match loc {
+            Some(_) => inside(loc),
+            None => before,
+        };
+        if !before {
             whole = false;
             continue;
         }
@@ -377,6 +390,14 @@ fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u3
         }
     }
     (!whole).then_some(ranges)
+}
+
+/// How many scope ranges the variables of `f` may have together: in proportion to its code, so
+/// the debug info of a function stays linear in its size. Scopes are a few ranges each unless
+/// the code is laid out far from source order; a variable whose ranges no longer fit is shown
+/// in the scope around it instead (from before its declaration, as params are).
+fn scope_range_budget(f: &FunctionLines) -> usize {
+    64 + 4 * f.rows.len()
 }
 
 /// A source position, ordered.
