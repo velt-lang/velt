@@ -7,7 +7,7 @@
 //! One task can read while another writes. The object behind a stream handle is in `stream.rs`:
 //! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
-use super::stream::{read_chunk, Io, Ready, StreamObj};
+use super::stream::{read_chunk, Ready, StreamObj};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -246,33 +246,26 @@ fn chunk_size(max: u64) -> u64 {
 pub unsafe extern "C" fn velt_rt_tcp_read(s: StreamHandle, max: u64) -> *mut VeltFut {
     let max = chunk_size(max);
     // A leaf per kind of stream: a raw socket's pending read stays as small as it was.
-    STREAMS.op::<VeltBytes>(s, |obj| match &obj.io {
-        Io::Tcp(_) => new_leaf(async move {
-            let Io::Tcp(stream) = &obj.io else {
-                unreachable!("ICE: a stream changed its kind");
-            };
-            IoResult::from_io(read_chunk(stream, max).await, VeltBytes::from_vec)
-        }),
-        Io::Lazy(_) => {
-            new_leaf(
-                async move { IoResult::from_io(read_any(&obj, max).await, VeltBytes::from_vec) },
-            )
+    STREAMS.op::<VeltBytes>(s, |obj| {
+        if obj.plain().is_some() {
+            return new_leaf(async move {
+                let r = match obj.plain() {
+                    Some(stream) => read_chunk(stream, max).await,
+                    None => read_any(&obj, max).await,
+                };
+                IoResult::from_io(r, VeltBytes::from_vec)
+            });
         }
+        new_leaf(async move { IoResult::from_io(read_any(&obj, max).await, VeltBytes::from_vec) })
     })
 }
 
 async fn read_any(obj: &StreamObj, max: u64) -> io::Result<Vec<u8>> {
-    match &obj.io {
-        Io::Tcp(stream) => read_chunk(stream, max).await,
-        Io::Lazy(lazy) => obj.read_lazy(lazy, max).await,
-    }
+    obj.read(max).await
 }
 
 async fn write_any(obj: &StreamObj, data: &[u8]) -> io::Result<()> {
-    match &obj.io {
-        Io::Tcp(stream) => obj.write_tcp(stream, data).await,
-        Io::Lazy(lazy) => obj.write_lazy(lazy, data).await,
-    }
+    obj.write(data).await
 }
 
 async fn read_text(obj: &StreamObj, max: u64) -> io::Result<String> {
@@ -319,8 +312,28 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
 }
 
 fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
-    let data = data.to_vec();
     STREAMS.op::<()>(s, |obj| {
+        // A raw socket usually takes everything at once: written here, from the caller's
+        // buffer, there is nothing to copy and nothing to wait for.
+        let mut rest = data;
+        if let Some(stream) = obj.plain() {
+            while !rest.is_empty() {
+                match stream.try_write(rest) {
+                    Ok(n) => rest = &rest[n..],
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => {
+                        return new_leaf(std::future::ready(IoResult::<()>::from_io(
+                            Err(e),
+                            |()| (),
+                        )))
+                    }
+                }
+            }
+            if rest.is_empty() {
+                return new_leaf(std::future::ready(IoResult::ok(())));
+            }
+        }
+        let data = rest.to_vec();
         new_leaf(async move { IoResult::from_io(write_any(&obj, &data).await, |()| ()) })
     })
 }
