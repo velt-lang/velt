@@ -7,7 +7,16 @@
 // like RFC 3986 §5.2 with WHATWG's special-scheme rules (`\` is a separator, empty hosts are
 // invalid, default ports are dropped). Parsers return null where the URL is invalid.
 
-import { FRAGMENT, QUERY, SPECIAL_QUERY, PATH, USERINFO, C0, encodeSet } from "velt:url/encode";
+import {
+  FRAGMENT,
+  QUERY,
+  SPECIAL_QUERY,
+  PATH,
+  USERINFO,
+  C0,
+  encodeSet,
+  inSetCode,
+} from "velt:url/encode";
 import { parseHost } from "velt:url/host";
 
 /**
@@ -35,6 +44,10 @@ const SLASH: i64 = 47;
 const BACKSLASH: i64 = 92;
 const QUESTION: i64 = 63;
 const HASH: i64 = 35;
+const COLON: i64 = 58;
+const AT: i64 = 64;
+const OPEN_BRACKET: i64 = 91;
+const CLOSE_BRACKET: i64 = 93;
 
 /** Whether `scheme` is one of WHATWG's special schemes. */
 export function isSpecial(scheme: string): bool {
@@ -65,11 +78,11 @@ export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | nul
     return base == null ? null : parseRelative(s, base);
   }
   const scheme = s.slice(0, colon).toLowerCase();
-  const rest = s.slice(colon + 1);
-  if (base != null && isSpecial(scheme) && base.scheme == scheme && !rest.startsWith("//")) {
-    return parseRelative(rest, base);
+  const twoSlashes = s.charCodeAt(colon + 1) == SLASH && s.charCodeAt(colon + 2) == SLASH;
+  if (base != null && isSpecial(scheme) && base.scheme == scheme && !twoSlashes) {
+    return parseRelative(s.slice(colon + 1), base);
   }
-  return parseAbsolute(scheme, rest);
+  return parseAbsolute(scheme, s, colon + 1);
 }
 
 // Strips leading/trailing C0 controls and spaces, and removes tabs and newlines (WHATWG).
@@ -90,7 +103,15 @@ function cleanInput(input: string): string {
  * and every setter that runs it).
  */
 export function removeTabNewline(s: string): string {
-  if (s.indexOf("\t") < 0 && s.indexOf("\n") < 0 && s.indexOf("\r") < 0) {
+  let found = false;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == 9 || c == 10 || c == 13) {
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
     return s;
   }
   return s.replaceAll("\t", "").replaceAll("\n", "").replaceAll("\r", "");
@@ -139,33 +160,35 @@ function componentEnd(s: string, from: i64, special: bool, pathToo: bool): i64 {
   return s.length as i64;
 }
 
-function parseAbsolute(scheme: string, rest: string): UrlRecord | null {
+// Parses `s[from..]`, everything after the scheme's colon. The components are found by index
+// in `s`; only the ones kept are cut out of it.
+function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
   const special = isSpecial(scheme);
   const file = scheme == "file";
   const r = new UrlRecord();
   r.scheme = scheme;
-  if (!special && !rest.startsWith("/")) {
-    return parseOpaque(r, rest);
+  if (!special && s.charCodeAt(from) != SLASH) {
+    return parseOpaque(r, s.slice(from));
   }
-  let at: i64 = 0;
-  const twoSlashes = isSep(rest, 0, special) && isSep(rest, 1, special);
+  let at = from;
+  const twoSlashes = isSep(s, from, special) && isSep(s, from + 1, special);
   if (special && !file) {
-    while (isSep(rest, at, true)) {
+    while (isSep(s, at, true)) {
       at++;
     }
   } else if (twoSlashes) {
-    at = 2;
+    at = from + 2;
   }
-  if (at > 0 || (special && !file)) {
-    const end = componentEnd(rest, at, special, true);
-    if (!parseAuthority(r, rest.slice(at, end))) {
+  if (at > from || (special && !file)) {
+    const end = componentEnd(s, at, special, true);
+    if (!parseAuthority(r, s, at, end, special)) {
       return null;
     }
     at = end;
   } else if (file) {
     r.hasHost = true;
   }
-  applyTail(r, rest.slice(at), []);
+  applyTail(r, s, at, [], special);
   return r;
 }
 
@@ -174,19 +197,25 @@ function parseOpaque(r: UrlRecord, rest: string): UrlRecord {
   const end = componentEnd(rest, 0, false, false);
   r.opaque = true;
   r.path = encodeSet(rest.slice(0, end), C0);
-  applyQueryFragment(r, rest, end);
+  applyQueryFragment(r, rest, end, false);
   return r;
 }
 
-// Fills userinfo, host and port from `auth`; false if any of them is invalid.
-function parseAuthority(r: UrlRecord, auth: string): bool {
+// Fills userinfo, host and port from the authority `s[from..end]`; false if any of them is
+// invalid.
+function parseAuthority(r: UrlRecord, s: string, from: i64, end: i64, special: bool): bool {
   if (r.scheme == "file") {
-    return setFileHost(r, auth);
+    return setFileHost(r, s.slice(from, end));
   }
-  const special = isSpecial(r.scheme);
-  const at = auth.lastIndexOf("@");
+  // The last `@` ends the userinfo.
+  let at: i64 = -1;
+  for (let i = from; i < end; i++) {
+    if (s.charCodeAt(i) == AT) {
+      at = i;
+    }
+  }
   if (at >= 0) {
-    const info = auth.slice(0, at);
+    const info = s.slice(from, at);
     const colon = info.indexOf(":");
     if (colon >= 0) {
       r.username = encodeSet(info.slice(0, colon), USERINFO);
@@ -195,27 +224,35 @@ function parseAuthority(r: UrlRecord, auth: string): bool {
       r.username = encodeSet(info, USERINFO);
     }
   }
-  const hostPort = auth.slice(at + 1);
-  // An IPv6 literal's colons are not the port separator.
-  let colon = hostPort.indexOf(":", hostPort.startsWith("[") ? hostPort.indexOf("]") : 0);
-  if (colon < 0) {
-    colon = hostPort.length as i64;
+  const hostStart = at < 0 ? from : at + 1;
+  // An IPv6 literal's colons are not the port separator: the search starts at its `]`.
+  let colon = hostStart;
+  if (s.charCodeAt(hostStart) == OPEN_BRACKET) {
+    let close = hostStart;
+    while (close < end && s.charCodeAt(close) != CLOSE_BRACKET) {
+      close++;
+    }
+    if (close < end) {
+      colon = close;
+    }
   }
-  const hostText = hostPort.slice(0, colon);
-  if (hostText.length == 0) {
+  while (colon < end && s.charCodeAt(colon) != COLON) {
+    colon++;
+  }
+  if (colon == hostStart) {
     if (special && r.scheme != "file") {
       return false;
     }
     r.hasHost = true;
-    return at < 0 && colon == (hostPort.length as i64);
+    return at < 0 && colon == end;
   }
-  const host = parseHost(hostText, special);
+  const host = parseHost(s.slice(hostStart, colon), special);
   if (host == null) {
     return false;
   }
   r.hasHost = true;
   r.host = host;
-  return parsePort(r, hostPort.slice(colon + 1));
+  return parsePort(r, s, colon + 1, end);
 }
 
 /**
@@ -236,14 +273,15 @@ export function setFileHost(r: UrlRecord, text: string): bool {
   return true;
 }
 
-// Digits only, at most 65535; leading zeros and the scheme's default port are dropped.
-function parsePort(r: UrlRecord, text: string): bool {
-  if (text.length == 0) {
+// The port `s[from..end]` (empty: none): digits only, at most 65535; leading zeros and the
+// scheme's default port are dropped.
+function parsePort(r: UrlRecord, s: string, from: i64, end: i64): bool {
+  if (from >= end) {
     return true;
   }
   let v: i64 = 0;
-  for (let i: i64 = 0; i < (text.length as i64); i++) {
-    const c = text.charCodeAt(i);
+  for (let i = from; i < end; i++) {
+    const c = s.charCodeAt(i);
     if (c < 48 || c > 57) {
       return false;
     }
@@ -270,7 +308,7 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
   }
   const special = isSpecial(base.scheme);
   if (isSep(rest, 0, special) && isSep(rest, 1, special)) {
-    return parseAbsolute(base.scheme.clone(), rest);
+    return parseAbsolute(base.scheme.clone(), rest, 0);
   }
   const r = new UrlRecord();
   r.scheme = base.scheme.clone();
@@ -282,7 +320,7 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
   const end = componentEnd(rest, 0, special, false);
   if (end == 0) {
     r.path = base.path.clone();
-    applyQueryFragment(r, rest, 0);
+    applyQueryFragment(r, rest, 0, special);
     if (!r.hasQuery) {
       r.hasQuery = base.hasQuery;
       r.query = base.query.clone();
@@ -290,26 +328,25 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
     return r;
   }
   if (isSep(rest, 0, special)) {
-    applyTail(r, rest, []);
+    applyTail(r, rest, 0, [], special);
     return r;
   }
   const segs = base.path.length > 0 ? base.path.slice(1).split("/") : [];
   segs.pop();
-  applyTail(r, rest, segs);
+  applyTail(r, rest, 0, segs, special);
   return r;
 }
 
-// Sets path, query and fragment from `tail` (everything after the authority); a relative path
-// continues from `segs`.
-function applyTail(r: UrlRecord, tail: string, segs: string[]) {
-  const special = isSpecial(r.scheme);
-  const end = componentEnd(tail, 0, special, false);
-  r.path = parsePath(tail.slice(0, end), segs, special);
-  applyQueryFragment(r, tail, end);
+// Sets path, query and fragment from `s[from..]` (everything after the authority); a relative
+// path continues from `segs`. `special`: whether `r.scheme` is special.
+function applyTail(r: UrlRecord, s: string, from: i64, segs: string[], special: bool) {
+  const end = componentEnd(s, from, special, false);
+  r.path = parsePath(s.slice(from, end), segs, special);
+  applyQueryFragment(r, s, end, special);
 }
 
 // Sets query and fragment from `s[from..]`, which is empty or starts with `?` or `#`.
-function applyQueryFragment(r: UrlRecord, s: string, from: i64) {
+function applyQueryFragment(r: UrlRecord, s: string, from: i64, special: bool) {
   let hash = s.indexOf("#", from);
   if (hash < 0) {
     hash = s.length as i64;
@@ -318,9 +355,8 @@ function applyQueryFragment(r: UrlRecord, s: string, from: i64) {
     r.fragment = encodeSet(s.slice(hash + 1), FRAGMENT);
   }
   if (from < hash && s.charCodeAt(from) == QUESTION) {
-    const set = isSpecial(r.scheme) ? SPECIAL_QUERY : QUERY;
     r.hasQuery = true;
-    r.query = encodeSet(s.slice(from + 1, hash), set);
+    r.query = encodeSet(s.slice(from + 1, hash), special ? SPECIAL_QUERY : QUERY);
   }
 }
 
@@ -329,6 +365,9 @@ export function parsePath(p: string, segs: string[], special: bool): string {
   const len = p.length as i64;
   if (len == 0 && segs.length == 0) {
     return special ? "/" : "";
+  }
+  if (segs.length == 0 && isSerializedPath(p)) {
+    return p;
   }
   let i: i64 = isSep(p, 0, special) ? 1 : 0;
   while (true) {
@@ -358,10 +397,39 @@ export function parsePath(p: string, segs: string[], special: bool): string {
   return segs.length == 0 ? "" : `/${segs.join("/")}`;
 }
 
+// Whether `parsePath` would give back `p` unchanged, found in one pass without building the
+// segments: `p` starts with `/`, has nothing to escape and no `\`, and no segment starts with
+// `.` or `%` (every spelling of a dot segment does).
+function isSerializedPath(p: string): bool {
+  if (p.charCodeAt(0) != SLASH) {
+    return false;
+  }
+  let segmentStart = true;
+  for (let i: i64 = 1; i < (p.length as i64); i++) {
+    const c = p.charCodeAt(i);
+    if (c == SLASH) {
+      segmentStart = true;
+      continue;
+    }
+    if (c >= 0x80 || c == BACKSLASH || inSetCode(c, PATH)) {
+      return false;
+    }
+    if (segmentStart && (c == 46 || c == 37)) {
+      return false;
+    }
+    segmentStart = false;
+  }
+  return true;
+}
+
 // 1 for a `.` segment, 2 for `..` (also spelled with `%2e`), else 0.
 function dotSegment(p: string, from: i64, to: i64): i64 {
   const n = to - from;
   if (n == 0 || n > 6) {
+    return 0;
+  }
+  const first = p.charCodeAt(from);
+  if (first != 46 && first != 37) {
     return 0;
   }
   const seg = p.slice(from, to).toLowerCase();
@@ -373,18 +441,27 @@ function dotSegment(p: string, from: i64, to: i64): i64 {
 
 /** The serialized URL (WHATWG "URL serializer"). */
 export function serialize(r: UrlRecord): string {
+  // Appended in place: one buffer that grows, not a new string per component.
   let out = `${r.scheme}:`;
   if (r.hasHost) {
-    out = `${out}//${userinfo(r)}${r.host}${r.port.length > 0 ? ":" : ""}${r.port}`;
+    out += "//";
+    out += userinfo(r);
+    out += r.host;
+    if (r.port.length > 0) {
+      out += ":";
+      out += r.port;
+    }
   } else if (!r.opaque && r.path.startsWith("//")) {
-    out = `${out}/.`;
+    out += "/.";
   }
-  out = `${out}${r.path}`;
+  out += r.path;
   if (r.hasQuery) {
-    out = `${out}?${r.query}`;
+    out += "?";
+    out += r.query;
   }
   if (r.hasFragment) {
-    out = `${out}#${r.fragment}`;
+    out += "#";
+    out += r.fragment;
   }
   return out;
 }

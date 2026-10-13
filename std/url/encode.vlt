@@ -133,7 +133,11 @@ function invalidSubpartLength(b: u8[], i: usize): usize {
 
 /** Whether byte `b` is escaped by percent-encode set `set`. */
 export function inSet(b: u8, set: i64): bool {
-  const c = b as i64;
+  return inSetCode(b as i64, set);
+}
+
+/** `inSet` for a byte value held as an `i64` (what `charCodeAt` gives for ASCII text). */
+export function inSetCode(c: i64, set: i64): bool {
   if (isAlnum(c)) {
     return false;
   }
@@ -197,14 +201,21 @@ function uriReserved(c: i64): bool {
 
 /** `s` percent-encoded with WHATWG set `set`; `FORM` also turns spaces into `+`. */
 export function encodeSet(s: string, set: i64): string {
-  const b = bytesOf(s);
-  let first: usize = 0;
-  while (first < b.length && !inSet(b[first], set)) {
-    first++;
+  // The usual case, ASCII text with nothing to escape, is found without copying the bytes out:
+  // below 0x80 a code unit is its byte.
+  const n = s.length as i64;
+  let plain: i64 = 0;
+  while (plain < n) {
+    const c = s.charCodeAt(plain);
+    if (c >= 0x80 || inSetCode(c, set)) {
+      break;
+    }
+    plain++;
   }
-  if (first == b.length) {
+  if (plain == n) {
     return s.clone();
   }
+  const b = bytesOf(s);
   const out: u8[] = __intrinsic_array_with_capacity(b.length + 16);
   for (let i: usize = 0; i < b.length; i++) {
     if (!inSet(b[i], set)) {
