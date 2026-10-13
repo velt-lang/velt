@@ -30,6 +30,23 @@ const MAYBE_LONE: u8 = 1;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
+const ONES: u64 = 0x0101_0101_0101_0101;
+
+/// Whether the eight bytes of `word` are all ASCII that is written as is: no control
+/// character, `"` or `\\`. A word with a byte from 0x80 up is never plain, so text that is
+/// not ASCII goes a byte at a time (after one such word the byte loop runs to the next escape).
+///
+/// Per byte, the high bit of each term says: below 0x20 (the subtraction borrows), equal to
+/// `"`, equal to `\\` (zero minus one), or not ASCII. A borrow reaches a byte only from a
+/// lower byte that already set its own bit, so an all-ASCII word is judged exactly.
+#[inline]
+fn plain_ascii(word: u64) -> bool {
+    let control = word.wrapping_sub(ONES * 0x20);
+    let quote = (word ^ (ONES * b'"' as u64)).wrapping_sub(ONES);
+    let backslash = (word ^ (ONES * b'\\' as u64)).wrapping_sub(ONES);
+    (control | quote | backslash | word) & (ONES * 0x80) == 0
+}
+
 /// Append `s` (canonical WTF-8) as a quoted, escaped JSON string literal.
 #[inline]
 pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
@@ -45,6 +62,10 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
     let mut lone = 0;
     let mut i = 0;
     loop {
+        // Eight bytes at a time while they are plain ASCII.
+        while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
+            i += 8;
+        }
         while i < s.len() && ESCAPE[s[i] as usize] == 0 {
             i += 1;
         }
@@ -108,6 +129,34 @@ mod tests {
             r#""\u0000\u0001\u000b\u001f""#
         );
         assert_eq!(esc("\u{7f}é😀\u{2028}"), "\"\u{7f}é😀\u{2028}\"");
+        // Long runs go eight bytes at a time; an escape at any offset is still found.
+        for at in 0..24 {
+            let mut text = "abcdefghijklmnopqrstuvwxyz".repeat(2);
+            text.insert(at, '"');
+            assert_eq!(esc(&text), format!("\"{}\"", text.replace('"', "\\\"")));
+            text.replace_range(at..at + 1, "\u{1f}");
+            assert_eq!(
+                esc(&text),
+                format!("\"{}\"", text.replace('\u{1f}', "\\u001f"))
+            );
+            text.replace_range(at..at + 1, "\\");
+            assert_eq!(esc(&text), format!("\"{}\"", text.replace('\\', "\\\\")));
+            text.replace_range(at..at + 1, "é\u{7f}");
+            assert_eq!(esc(&text), format!("\"{text}\""));
+        }
+        // Every byte value in every position of a word is judged as the table says.
+        for b in 0..=255u8 {
+            for at in 0..8 {
+                let mut word = *b"abcdefgh";
+                word[at] = b;
+                let plain = b < 0x80 && ESCAPE[b as usize] == 0;
+                assert_eq!(
+                    plain_ascii(u64::from_le_bytes(word)),
+                    plain,
+                    "{b:#x} at {at}"
+                );
+            }
+        }
         // Hangul (an `ED` lead byte that is no surrogate) is copied.
         assert_eq!(esc("\u{D55C}\u{D7FF}"), "\"\u{D55C}\u{D7FF}\"");
     }
