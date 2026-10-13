@@ -427,6 +427,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias
+        | I::HoldsNull
+        | I::NullAs
         | I::Truthy
         | I::FnCapturesNothing
         | I::Sqrt

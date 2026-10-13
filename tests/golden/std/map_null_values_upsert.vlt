@@ -1,0 +1,71 @@
+// Velt's own `Map` methods with null values (#1005): `upsert`, `update` and `getOrInsert` see
+// an entry holding null as present, `deepEqual` and `clone` keep it, and the callback of an
+// `upsert` that deletes its own key still stores the null it returns.
+
+function main() {
+  const m = new Map<string, number | null>();
+  m.set("a", null);
+  m.upsert("a", 1, (v) => (v === null ? 10 : v + 1));
+  m.upsert("b", null, (v) => v);
+  m.upsert("b", 5, (v) => (v === null ? 20 : v));
+  console.log(m);
+
+  m.set("c", null);
+  let seen = "";
+  const present = m.update("c", (v) => {
+    seen = `${v}`;
+  });
+  console.log(present, seen);
+  console.log(m.update("zz", (v) => {}));
+  console.log(m.getOrInsert("c", () => 7), m.getOrInsert("d", () => null), m.size);
+
+  // The callback deletes its key through another reference: the result is appended again.
+  const alias = m;
+  m.upsert("a", 0, (v) => {
+    alias.delete("a");
+    return null;
+  });
+  console.log([...m.keys()], m.get("a"), m.has("a"));
+
+  const copy = m.clone();
+  console.log(deepEqual(copy, m), copy);
+  copy.set("c", 0);
+  console.log(deepEqual(copy, m));
+  const other = new Map<string, number | null>([["x", null]]);
+  const same = new Map<string, number | null>([["y", null]]);
+  console.log(
+    deepEqual(other, same),
+    deepEqual(other, new Map<string, number | null>([["x", null]])),
+  );
+
+  // Tombstones: the bulk readers find the live entries holding null; equal maps stay equal and
+  // hash alike (a map as a map key).
+  const t = new Map<string, number | null>();
+  for (let i = 0; i < 20; i++) {
+    t.set(`k${i}`, i % 3 == 0 ? null : i);
+  }
+  for (let i = 0; i < 20; i += 4) {
+    t.delete(`k${i}`);
+  }
+  const fresh = new Map<string, number | null>(t.entries());
+  console.log(deepEqual(t, fresh), t.keys(), t.values());
+  const outer = new Map<Map<string, number | null>, string>();
+  outer.set(t, "t");
+  console.log(outer.get(fresh));
+  fresh.set("k1", null);
+  console.log(deepEqual(t, fresh));
+
+  // A content key changed after insertion, then enough deletes to compact: the entry keeps its
+  // place (a compaction reads the index, it does not hash the key again).
+  const byList = new Map<number[], number | null>();
+  const k1 = [1];
+  byList.set(k1, null);
+  k1.push(9);
+  for (let i = 0; i < 30; i++) {
+    byList.set([100 + i], i % 2 == 0 ? null : i);
+  }
+  for (let i = 0; i < 30; i++) {
+    byList.delete([100 + i]);
+  }
+  console.log(byList.size, byList.entries(), byList.has([1, 9]));
+}
