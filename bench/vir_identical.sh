@@ -2,7 +2,12 @@
 # Do two compilers emit the same VIR for the programs under bench/? Prints each program whose
 # VIR differs and a summary (programs the base compiler cannot build are counted apart).
 #
-#   bench/vir_identical.sh <base velt> <head velt> <base std dir> <head std dir>
+#   bench/vir_identical.sh <base velt> <head velt> <base std dir> <head std dir> [<dir> <program>...]
+#
+# With <dir> and programs (paths relative to it), those are compared instead, for example the
+# goldens that never write `undefined`:
+#   (cd tests/golden && grep -L undefined m*/*.vlt lang/*.vlt std/*.vlt) |
+#     xargs bench/vir_identical.sh <base velt> <head velt> <base std> <head std> tests/golden
 #
 # The VIR holds the paths of std files (in panic locations, " at <std>/prelude/array.vlt:127:22",
 # and in their lengths), so each compiler reads its std from a copy at one and the same path
@@ -12,10 +17,16 @@ base=$1
 head=$2
 base_std=$(cd "$3" && pwd)
 head_std=$(cd "$4" && pwd)
-cd "$(dirname "$0")"
+if [ $# -gt 4 ]; then
+  cd "$5"
+  shift 5
+  programs=("$@")
+else
+  cd "$(dirname "$0")"
+  programs=(*.vlt */*.vlt)
+fi
 tmp=$(mktemp -d)
 mkdir -p "$tmp/base" "$tmp/head"
-programs=(*.vlt */*.vlt)
 
 # Emit the VIR of every program with compiler $1 and std $2 into directory $3.
 emit_all() {
