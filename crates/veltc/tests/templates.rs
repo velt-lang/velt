@@ -86,6 +86,7 @@ fn check_template(template: &str, has_main: bool) {
     for file in [
         "package.vlt",
         ".gitignore",
+        ".gitattributes",
         "README.md",
         ".vscode/launch.json",
         ".vscode/extensions.json",
@@ -185,6 +186,7 @@ fn init_refuses_to_overwrite_unless_forced() {
     std::fs::write(dir.join("src/main.vlt"), "// mine\n").unwrap();
     std::fs::write(dir.join("README.md"), "my readme\n").unwrap();
     std::fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(dir.join(".gitattributes"), "* text=auto\n").unwrap();
 
     let err = s.fail("My Tool", &["init", "--template", "cli"]);
     assert!(
@@ -203,10 +205,15 @@ fn init_refuses_to_overwrite_unless_forced() {
     assert!(std::fs::read_to_string(dir.join("src/main.vlt"))
         .unwrap()
         .contains("execute(args())"));
-    // --force overwrites sources; the README is kept and the .gitignore gets `target/` appended.
+    // --force overwrites sources; the README is kept, the .gitignore gets `target/` appended and
+    // the .gitattributes the line that makes GitHub highlight `.vlt` files.
     assert_eq!(
         std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
         "*.log\ntarget/\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".gitattributes")).unwrap(),
+        "* text=auto\n*.vlt linguist-language=TypeScript\n"
     );
     assert_eq!(
         std::fs::read_to_string(dir.join("README.md")).unwrap(),

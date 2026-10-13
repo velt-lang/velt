@@ -1,10 +1,15 @@
 //! Project templates for `velt new` / `velt init`, embedded in the binary. The sources live in
-//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.vlt`
-//! and `.gitignore`, which are generated); `{{name}}` in a file stands for the package name.
+//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.vlt`,
+//! `.gitignore` and `.gitattributes`, which are generated); `{{name}}` in a file stands for the
+//! package name.
 //! `tests/templates.rs` builds, tests and format-checks every template. Every template also gets
 //! the editor files of [`Editor::files`] (`.vscode/`), which `velt init --editor` adds alone.
 
 use vpm::scaffold::{IfExists, ScaffoldFile, GITIGNORE};
+
+/// `.gitattributes`: GitHub has no Velt language yet, so it highlights `.vlt` files as
+/// TypeScript (Velt is TypeScript syntax plus a few keywords and types).
+pub const GITATTRIBUTES: &str = "*.vlt linguist-language=TypeScript\n";
 
 /// A project template.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -169,8 +174,9 @@ impl Template {
         }
     }
 
-    /// The files of package `name` made from this template: `package.vlt`, `.gitignore` (merged
-    /// into an existing one), `README.md` and the VS Code files (existing ones are kept) and the
+    /// The files of package `name` made from this template: `package.vlt`, `.gitignore` and
+    /// `.gitattributes` (merged into existing ones), `README.md` and the VS Code files (existing
+    /// ones are kept) and the
     /// sources.
     pub fn files(self, name: &str) -> Vec<ScaffoldFile> {
         let mut files = vec![
@@ -187,6 +193,10 @@ impl Template {
             ScaffoldFile {
                 if_exists: IfExists::AppendLines,
                 ..ScaffoldFile::new(".gitignore", GITIGNORE.to_string())
+            },
+            ScaffoldFile {
+                if_exists: IfExists::AppendLines,
+                ..ScaffoldFile::new(".gitattributes", GITATTRIBUTES.to_string())
             },
         ];
         for (path, text) in self.embedded() {
@@ -237,6 +247,9 @@ mod tests {
             let readme = files.iter().find(|f| f.path == "README.md").unwrap();
             assert!(readme.contents.starts_with("# demo-pkg\n"), "{t:?}");
             assert!(paths.contains(&".vscode/launch.json"), "{t:?}: {paths:?}");
+            let attributes = files.iter().find(|f| f.path == ".gitattributes").unwrap();
+            assert_eq!(attributes.contents, GITATTRIBUTES, "{t:?}");
+            assert_eq!(attributes.if_exists, IfExists::AppendLines, "{t:?}");
         }
     }
 

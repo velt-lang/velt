@@ -203,6 +203,10 @@ Every template builds, passes `velt test` and is formatted. `velt init` writes t
 into the current directory; it never overwrites files without `--force`, always keeps an
 existing `README.md`, and names the package after the directory unless `--name` is given.
 
+Packages also get a `.gitattributes` line, `*.vlt linguist-language=TypeScript`, so GitHub
+highlights `.vlt` files: GitHub has no Velt language yet, and Velt is TypeScript syntax plus a
+few keywords and types. Like `.gitignore`, it is added to an existing file.
+
 Packages also get `.vscode/launch.json`, so F5 in VS Code builds and debugs the program, and
 `.vscode/extensions.json`, which recommends the Velt and CodeLLDB extensions
 ([Debugging](debugging.md#vs-code)); existing ones are kept. `velt init --editor vscode` adds
