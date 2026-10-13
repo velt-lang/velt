@@ -41,6 +41,11 @@ function quietShutdown(stream: TcpStream) {
 export async function flush(stream: TcpStream, tx: Tx): Promise<void> {
   while (true) {
     const batch = tx.with((q) => q.take());
+    if (batch == null) {
+      quietShutdown(stream);
+      tx.with((q) => q.stop("EPIPE"));
+      return;
+    }
     if (batch.length == 0) {
       return;
     }
@@ -49,11 +54,6 @@ export async function flush(stream: TcpStream, tx: Tx): Promise<void> {
     } catch (e) {
       quietShutdown(stream);
       tx.with((q) => q.stop(e.code));
-      return;
-    }
-    if (tx.with((q) => q.wroteLast())) {
-      quietShutdown(stream);
-      tx.with((q) => q.stop("EPIPE"));
       return;
     }
   }
