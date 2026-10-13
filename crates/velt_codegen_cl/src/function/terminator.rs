@@ -160,8 +160,8 @@ impl<M: Module> Translator<'_, '_, M> {
     }
 
     /// The runtime math functions that are exactly one Cranelift instruction
-    /// (rt_abi_async.md §9, `Math.clz32`, JS's int32 multiply) or a short sequence (the
-    /// rounding functions, `rounding.rs`) are emitted inline instead of called.
+    /// (rt_abi_async.md §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence
+    /// (the rounding functions, `rounding.rs`) are emitted inline instead of called.
     fn inline_math(
         &mut self,
         callee: &Callee,
@@ -175,6 +175,9 @@ impl<M: Module> Translator<'_, '_, M> {
         let symbol = self.program.externs.get(id.0 as usize)?.symbol.as_str();
         if symbol == "velt_rt_math_clz32" && params == [Ty::I32] && ret == Ty::I32 {
             return Some(self.builder.ins().clz(args[0]));
+        }
+        if symbol == "velt_rt_math_umulh" && params == [Ty::U64, Ty::U64] && ret == Ty::U64 {
+            return Some(self.builder.ins().umulhi(args[0], args[1]));
         }
         if symbol == "velt_rt_math_mul_int32" && params == [Ty::I32, Ty::I32] && ret == Ty::I32 {
             // The exact product, rounded through a double like JS's multiply (|p| < 2^62).

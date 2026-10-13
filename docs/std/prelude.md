@@ -80,7 +80,7 @@ surrogate pair its character),
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
-  128-bit product of two `u64`s.
+  128-bit product of two `u64`s, one multiply instruction as well.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
