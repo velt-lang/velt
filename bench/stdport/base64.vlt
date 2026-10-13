@@ -1,0 +1,24 @@
+// Base64: a 1 MiB buffer encoded and decoded 30 times, then a 32-byte value encoded and decoded
+// 500k times. `velt:encoding` is Velt code; the Rust port uses the `base64` crate.
+import { base64Decode, base64Encode } from "velt:encoding";
+
+function main() {
+  const data = Buffer.alloc(1048576);
+  for (let i: usize = 0; i < data.length; i++) {
+    data[i] = (i * 31 + 7) as u8;
+  }
+  let total: i64 = 0;
+  for (let round: usize = 0; round < 30; round++) {
+    const text = base64Encode(data);
+    const back = base64Decode(text);
+    total += (text.length + back.length) as i64 + (back[round] as i64);
+  }
+  const small = Buffer.alloc(32);
+  for (let round: usize = 0; round < 500000; round++) {
+    small[round % 32] = round as u8;
+    const text = base64Encode(small);
+    const back = base64Decode(text);
+    total += (text.length + back.length) as i64 + (back[round % 32] as i64);
+  }
+  console.log(total);
+}

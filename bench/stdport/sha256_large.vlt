@@ -1,0 +1,19 @@
+// SHA-256 of a 1 MiB buffer, 40 times, each digest fed back into the buffer. `velt:crypto` is
+// Velt code; the Rust port uses the `sha2` crate.
+import { sha256 } from "velt:crypto";
+import { hexEncode } from "velt:encoding";
+
+function main() {
+  const data = Buffer.alloc(1048576);
+  for (let i: usize = 0; i < data.length; i++) {
+    data[i] = (i * 31 + 7) as u8;
+  }
+  let digest: u8[] = [];
+  for (let round = 0; round < 40; round++) {
+    digest = sha256(data);
+    for (let i: usize = 0; i < 32; i++) {
+      data[i] = digest[i];
+    }
+  }
+  console.log(hexEncode(digest));
+}
