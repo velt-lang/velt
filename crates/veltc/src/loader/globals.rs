@@ -4,14 +4,17 @@
 //! sit on top of large parts of std (the HTTP client, the URL parser, cancellation), which a
 //! program that never names them should not pay for in compile time.
 //!
-//! A global module consists only of re-exports (`export { fetch, Response } from "velt:fetch";`);
-//! the names it re-exports are its triggers. A non-std module whose source contains one of them
+//! A global module consists of re-exports (`export { fetch, Response } from "velt:fetch";`),
+//! whose names are its triggers, or of `extend` blocks for built-in types that have no item
+//! to re-export (the SIMD types: `extend u8x16 { … }`), whose type names are. A non-std module whose source contains one of them
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
 //! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
 //! as `import { Response } from "./api"` does, or a declaration), which hides the global.
 //! A regular expression literal (`/a+/`, which the parser reads as `new RegExp(…)`) counts as
-//! naming `RegExp`. std modules import what they use, so they never trigger one.
+//! naming `RegExp`. std modules import what they use, so they never trigger one; a global
+//! module that is loaded brings the other globals it mentions with it (the SIMD types convert
+//! to each other).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,6 +27,8 @@ use velt_syntax::visit::{self, Visit};
 pub(super) struct Global {
     pub file: PathBuf,
     pub names: Vec<String>,
+    /// Its source, for the globals it mentions itself.
+    pub src: String,
 }
 
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
@@ -41,9 +46,23 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
         .into_iter()
         .filter_map(|file| {
             let src = std::fs::read_to_string(&file).ok()?;
-            let names = reexported_names(&src);
-            Some(Global { file, names })
+            let mut names = extended_names(&src);
+            // Only a file with `export` items is parsed: this runs for every compilation.
+            if src.contains("export") {
+                names.extend(reexported_names(&src));
+            }
+            Some(Global { file, names, src })
         })
+        .collect()
+}
+
+/// The types a global module's `extend <name> {` blocks extend (read from the line starts:
+/// these files are large, and parsing them here would cost every compilation).
+fn extended_names(src: &str) -> Vec<String> {
+    src.lines()
+        .filter_map(|line| line.strip_prefix("extend ")?.strip_suffix(" {"))
+        .filter(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .map(str::to_string)
         .collect()
 }
 
@@ -181,6 +200,13 @@ mod tests {
         let src = "// globals\nexport { fetch, Response as R } from \"velt:fetch\";\n\
                    export { URL } from \"velt:url\";\n";
         assert_eq!(reexported_names(src), ["fetch", "R", "URL"]);
+    }
+
+    #[test]
+    fn extended_types_are_names_too() {
+        let src = "declare function f(v: u8x16): u8x16;\n\nextend u8x16 {\n  not(): u8x16 {\n    \
+                   return f(this);\n  }\n}\n\nextend Array<u8> {\n}\n";
+        assert_eq!(extended_names(src), ["u8x16"]);
     }
 
     #[test]

@@ -647,6 +647,7 @@ impl FnLower<'_, '_> {
             // `[s].join()`, `String([s])`: JS's `Array.prototype.join` converts each element
             // with `ToString`, which throws for a symbol (sema rejects the direct conversions).
             TyKind::Symbol => self.panic_msg(SYMBOL_TO_STRING),
+            TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
             TyKind::Option(e) => {
                 let (some_bb, done) = (self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);

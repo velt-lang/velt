@@ -7,6 +7,7 @@
 | `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable text, indexed in UTF-16 code units (stored as UTF-8), a value ([Strings](#strings)) |
 | `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
+| `u8x16`, `i32x4`, `f32x4`, `f64x2`, …; `mask8x16`, … | 128-bit SIMD vectors and the masks comparing them gives ([SIMD vectors](#simd-vectors)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
@@ -326,6 +327,58 @@ until the program ends. **Planned**: a symbol brand added with `Object.definePro
 …)` as an optional symbol-keyed field of `o`'s type
 ([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
 for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+
+## SIMD vectors
+
+A SIMD vector holds several numbers of one type, its *lanes*, and an operation on it works on
+all of them with one CPU instruction: a `u8x16` is sixteen `u8`, an `f32x4` four `f32`. The
+types are `i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`, each 128 bits, which
+every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU flag, in debug
+and release builds. A WebAssembly program that uses vectors needs an engine with WebAssembly
+SIMD (every current browser and runtime); other programs are built without it, as before. Like the integer widths, they are Velt's own:
+code shared with TypeScript does not name them.
+
+A vector is a value like a number: it is copied when assigned or passed, lives in a register,
+and can be a field, an array element, `T | null` or a `Map` value. Its operations are methods
+([`simd`](../std/simd.md)), not operators, and it has no `==`, truthiness, printed or JSON form:
+comparing two vectors with `eq`, `lt`, … gives a *mask* (`mask8x16` for a `u8x16`), one lane
+per lane, set or not, which `any()`, `all()`, `first()`, `count()` and `bitmask()` turn into a
+`boolean` or a number and `select` into a choice between two vectors.
+
+```ts
+// The position of the first `b` in `d`, sixteen bytes at a time.
+function indexOf(d: u8[], b: u8): i64 {
+  const needle = u8x16.splat(b);
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    const found = u8x16.load(d, i).eq(needle);
+    if (found.any()) {
+      return (i + found.first()) as i64;
+    }
+    i += 16;
+  }
+  while (i < d.length) {
+    if (d[i] == b) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function main() {
+  const text: u8[] = Buffer.alloc(100);
+  text[70] = 33;
+  console.log(indexOf(text, 33)); // 70
+}
+```
+
+`load` and `store` panic with a RangeError unless the whole vector is inside the array, and
+`lane(i)` unless `i` is a lane. `fits(xs, i)` is the test they make: in a loop that runs while
+it holds, as above, nothing is left for them to check.
+A loop over plain numbers is often compiled to the same instructions without any of this
+(summing an array, adding two arrays); vectors are for the loops it cannot do that for, such as
+one that stops early, or a sum of floats, whose order it must keep.
 
 ## Equality and comparison
 

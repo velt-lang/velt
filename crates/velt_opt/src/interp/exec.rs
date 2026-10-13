@@ -13,7 +13,8 @@ const FUNC_TOKENS: u64 = 0xF000_0000_0000;
 const EXTERN_TOKENS: u64 = 0xE000_0000_0000;
 const TOKEN_STRIDE: u64 = 16;
 
-/// A computed value: raw scalar bits, or the bytes of an aggregate.
+/// A computed value: raw scalar bits, or the bytes of an aggregate or of a `V128` (which the
+/// interpreter only moves: it has no SIMD operations, and a call passing one traps).
 enum Val {
     Scalar(u64),
     Bytes(Vec<u8>),
@@ -130,7 +131,7 @@ impl<H: Host> Interp<'_, H> {
 
     fn read(&self, addr: u64, ty: Ty) -> Result<Val, Trap> {
         match ty {
-            Ty::Agg(_) => {
+            Ty::Agg(_) | Ty::V128 => {
                 let (size, _) = self.size_align(ty)?;
                 Ok(Val::Bytes(self.mem.read(addr, u64::from(size))?.to_vec()))
             }
@@ -142,7 +143,7 @@ impl<H: Host> Interp<'_, H> {
     fn write(&mut self, addr: u64, ty: Ty, val: Val) -> Result<(), Trap> {
         match (ty, val) {
             (Ty::Unit, _) => Ok(()),
-            (Ty::Agg(_), Val::Bytes(b)) => self.mem.write(addr, &b),
+            (Ty::Agg(_) | Ty::V128, Val::Bytes(b)) => self.mem.write(addr, &b),
             (_, Val::Scalar(bits)) => self.mem.write_scalar(addr, ty, bits),
             _ => Err(Trap::Invalid(format!(
                 "value/place kind mismatch for {ty:?}"
@@ -156,6 +157,7 @@ impl<H: Host> Interp<'_, H> {
                 let (addr, ty) = self.place(frame, p)?;
                 Ok((self.read(addr, ty)?, ty))
             }
+            Operand::Const(Const::Int(0), Ty::V128) => Ok((Val::Bytes(vec![0; 16]), Ty::V128)),
             Operand::Const(c, ty) => Ok((Val::Scalar(self.constant(c, *ty)?), *ty)),
         }
     }

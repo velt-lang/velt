@@ -190,6 +190,7 @@ impl Cx<'_> {
             TyKind::Float(FloatTy::F32) => "f32".into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Array(e) => {

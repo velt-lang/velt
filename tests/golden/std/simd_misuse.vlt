@@ -1,0 +1,19 @@
+// SIMD values have methods, not operators, and no printed or JSON form: each error says what
+// to write.
+function main() {
+  const a = u8x16.splat(1);
+  const b = u8x16.splat(2);
+  if (a == b) {
+    console.log("same");
+  }
+  if (a.eq(b)) {
+    console.log("set");
+  }
+  console.log(a);
+  const sum = a + b;
+  const made = u8x16.nope(1);
+  const added = u8x16.add(a, b);
+  const signed: i8x16 = a;
+  const product = a.mul(b);
+  const text = JSON.stringify(a);
+}

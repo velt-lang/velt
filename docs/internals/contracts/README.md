@@ -71,6 +71,13 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
 
+## SIMD (additive VIR and HIR extension)
+- `vir::Ty::V128`: a 128-bit vector, a scalar (registers, signatures) of 16 bytes aligned to 8
+  (`Ty::scalar_align`). Only moved, loaded and stored; its one constant is `Const::Int(0)`;
+  `Rvalue::Unary`, `Binary` and `Cast` on it are rejected by `verify`. Operations are calls of
+  `velt_simd_*` externs, which backends emit inline (`velt_vir::simd`, rt_abi.md "SIMD").
+- `hir::TyKind::Simd(SimdTy)`: the vector and mask types; Copy, no drop, not equatable.
+
 ## Parameter attributes (additive VIR extension)
 - `vir::Function::param_attrs: Vec<ParamAttrs>` — empty (no information) or one entry per param
   (checked by `verify`); `ParamAttrs { noalias, readonly, nonnull, dereferenceable: u64 }`, only

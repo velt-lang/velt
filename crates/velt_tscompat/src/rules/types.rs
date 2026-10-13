@@ -51,6 +51,15 @@ fn named(t: &ast::TypeExpr, path: &[ast::Ident], args: &[ast::TypeExpr], cx: &mu
                 "write `number`",
             ],
         ),
+        (simd, []) if velt_sema::hir::SimdTy::named(simd).is_some() => cx.error(
+            "velt-number-type",
+            t.span,
+            format!("`{simd}` is not a TypeScript type"),
+            &[
+                "TypeScript has no SIMD types; Velt's are 128-bit vectors of numbers",
+                "keep the code that uses them out of the files shared with TypeScript",
+            ],
+        ),
         _ => {}
     }
 }

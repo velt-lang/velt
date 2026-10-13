@@ -39,6 +39,7 @@ impl Cx<'_> {
             TyKind::Bool => "bool".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "error".into(),

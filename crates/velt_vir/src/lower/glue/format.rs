@@ -121,6 +121,7 @@ impl FnLower<'_, '_> {
             | TyKind::Bool
             | TyKind::Str
             | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Literal(_)
@@ -156,6 +157,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
             }
             TyKind::Unit => self.push_text(buf, "undefined"),
+            TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
             TyKind::Never => {}
             TyKind::Literal(l) => self.push_literal(buf, &l, true),
             TyKind::Adt(d, _)

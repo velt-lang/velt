@@ -275,7 +275,7 @@ impl Types {
             "symbol" | "unique symbol" => TyKind::Symbol,
             "void" => TyKind::Unit,
             "never" => TyKind::Never,
-            _ => return None,
+            _ => TyKind::Simd(crate::hir::SimdTy::named(name)?),
         };
         Some(self.intern(k))
     }

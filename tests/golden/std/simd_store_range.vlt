@@ -1,0 +1,10 @@
+// `store` does not grow the array, and a position near the largest integer does not wrap
+// around to the start.
+function main() {
+  const out: f32[] = [0, 0, 0, 0, 0];
+  f32x4.splat(2).store(out, 1);
+  console.log(out[0], out[4]);
+  const far: usize = 18446744073709551614;
+  f32x4.splat(3).store(out, far);
+  console.log("not reached");
+}

@@ -67,6 +67,7 @@ mod rt;
 mod same;
 mod sequence;
 mod share;
+mod simd;
 mod srcloc;
 mod stabilize;
 mod stmt;

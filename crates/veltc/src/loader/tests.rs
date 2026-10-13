@@ -92,6 +92,51 @@ fn missing_module_reports_tried_paths_at_the_specifier() {
     assert!(l.modules[0].imports.is_empty());
 }
 
+/// A global module of `extend` blocks loads when a module names a type it extends, and brings
+/// the globals it mentions itself (the mask a comparison returns, which the program never
+/// names).
+#[test]
+fn globals_of_extensions_load_with_the_globals_they_mention() {
+    let t = Tree::new();
+    let std = t.path("std");
+    t.write(
+        "std/prelude/core.vlt",
+        "export function id(): i64 { return 0; }\n",
+    );
+    t.write(
+        "std/prelude/global/vectors.vlt",
+        "extend u8x16 {\n  same(o: u8x16): mask8x16 {\n    return o.eq(this);\n  }\n}\n",
+    );
+    t.write(
+        "std/prelude/global/masks.vlt",
+        "extend mask8x16 {\n  none(): bool {\n    return false;\n  }\n}\n",
+    );
+    t.write(
+        "std/prelude/global/words.vlt",
+        "extend i32x4 {\n  twice(): i32x4 {\n    return this;\n  }\n}\n",
+    );
+    let opts = || LoadOptions {
+        std_root: Some(std.clone()),
+        ..Default::default()
+    };
+    let plain = t.write("p/plain.vlt", "// u8x16s\nfunction main() {}\n");
+    let (l, _, _) = load(&plain, opts());
+    assert_eq!(paths(&l), ["std/prelude/core", "main"]);
+
+    let root = t.write(
+        "p/main.vlt",
+        "function f(v: u8x16) {}\nfunction main() {}\n",
+    );
+    let (l, _, _) = load(&root, opts());
+    let want = [
+        "std/prelude/core",
+        "main",
+        "std/prelude/global/vectors",
+        "std/prelude/global/masks",
+    ];
+    assert_eq!(paths(&l), want);
+}
+
 #[test]
 fn globals_load_when_a_user_module_names_them() {
     let t = Tree::new();

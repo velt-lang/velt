@@ -209,6 +209,9 @@ impl FnCx<'_, '_> {
                 if let Some(note) = self.in_place_note(a, &h) {
                     d = d.with_note(note);
                 }
+                if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
+                    d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
+                }
                 self.cx.error(d);
             }
             out.push(h);

@@ -133,6 +133,7 @@ pub const ARRAY_AGG_NAME: &str = "T[]";
 
 mod lower;
 pub mod mangle;
+pub mod simd;
 mod verify;
 
 #[cfg(test)]

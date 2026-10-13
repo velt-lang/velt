@@ -601,6 +601,7 @@ impl<'m> Ctx<'m> {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
@@ -661,6 +662,7 @@ impl<'m> Ctx<'m> {
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "_".into(),

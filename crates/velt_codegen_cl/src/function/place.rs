@@ -112,6 +112,8 @@ impl<M: Module> Translator<'_, '_, M> {
             self.builder.ins().f32const(0.0)
         } else if t == types::F64 {
             self.builder.ins().f64const(0.0)
+        } else if t.is_vector() {
+            self.zero_vector()
         } else {
             self.builder.ins().iconst(t, 0)
         }

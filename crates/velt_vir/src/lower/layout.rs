@@ -68,7 +68,7 @@ impl Cx<'_> {
             Ty::Unit => (0, 1),
             s => {
                 let n = s.scalar_size().unwrap_or_else(|| ice("scalar size"));
-                (n, n)
+                (n, n.min(8))
             }
         }
     }

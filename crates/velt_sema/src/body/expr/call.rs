@@ -404,8 +404,55 @@ impl FnCx<'_, '_> {
             None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
                 Some(self.promise_settled(&prop.name, type_args, args, exp, span))
             }
-            None => self.namespace_builtin(id, prop, args, exp, span),
+            None => match self.simd_static_call(id, prop, type_args, args, exp, span) {
+                Some(call) => Some(call),
+                None => self.namespace_builtin(id, prop, args, exp, span),
+            },
         }
+    }
+
+    /// `u8x16.splat(x)`: a static method that an `extend` block of the SIMD type named `id`
+    /// declares. The SIMD types are the primitives with constructors of their own, and they
+    /// are not items, so `static_call` does not see them.
+    fn simd_static_call(
+        &mut self,
+        id: &ast::Ident,
+        prop: &ast::Ident,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let simd = hir::SimdTy::named(&id.name)?;
+        if let Some(first) = type_args.first() {
+            let message = format!("`{}.{}` takes no type arguments", id.name, prop.name);
+            self.cx.err(message, first.span);
+        }
+        let target = self.cx.ty.intern(TyKind::Simd(simd));
+        let found = self.cx.extensions.iter().find_map(|x| {
+            let m = x.methods.get(prop.name.as_str())?;
+            (x.target == target).then_some(*m)
+        });
+        let Some(m) = found.filter(|m| m.is_static) else {
+            let what = match found {
+                Some(_) => "an instance method",
+                None => "not a static method",
+            };
+            self.cx
+                .err(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
+            self.check_args_loose(args);
+            return Some(self.error_expr(span));
+        };
+        self.cx
+            .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
+        let c = self.fn_callable(m.def, format!("`{}.{}`", id.name, prop.name), span);
+        let slots = vec![None; c.slot_names.len()];
+        let ck = self.check_call(&c, slots, args, exp, span);
+        let kind = H::Call {
+            callee: Callee::Def(m.def, ck.type_args),
+            args: ck.args,
+        };
+        Some(self.mk(kind, ck.ret, span))
     }
 
     fn static_call(

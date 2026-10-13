@@ -211,6 +211,7 @@ impl Loader<'_, '_> {
                     .any(|n| !own.contains(n.as_str()) && globals::names_global(src, ast, n))
             });
         self.globals = rest;
+        let wanted = self.with_mentioned_globals(wanted);
         let Some(std) = self.opts.std_root.clone() else {
             return;
         };
@@ -219,6 +220,21 @@ impl Loader<'_, '_> {
                 queue.push_back(new);
             }
         }
+    }
+
+    /// `wanted` and the globals not loaded yet that they mention, and those mention.
+    fn with_mentioned_globals(&mut self, mut wanted: Vec<globals::Global>) -> Vec<globals::Global> {
+        let mut next = 0;
+        while next < wanted.len() {
+            let src = &wanted[next].src;
+            let (more, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.globals)
+                .into_iter()
+                .partition(|g| g.names.iter().any(|n| globals::mentions(src, n)));
+            self.globals = rest;
+            wanted.extend(more);
+            next += 1;
+        }
+        wanted
     }
 
     /// Parse and register a module (`key`: its [`file_key`]); returns its index.

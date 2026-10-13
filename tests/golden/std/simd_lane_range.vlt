@@ -1,0 +1,8 @@
+// A lane index is checked: four lanes are 0 to 3.
+function main() {
+  const v = i32x4.splat(5).withLane(3, 9);
+  let last: usize = 3;
+  console.log(v.lane(last));
+  last++;
+  console.log(v.lane(last));
+}

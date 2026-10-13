@@ -1,0 +1,320 @@
+// Byte and float kernels, each as a plain loop and with SIMD vectors (`u8x16`, `f32x4`):
+// what the compiler vectorizes on its own and what explicit SIMD buys. `kernels.rs` is the same
+// program in Rust. Prints `<kernel> <ms> <checksum>` per kernel; the checksums are what
+// `run.sh` compares.
+const N: usize = 16384;
+const REPS: i64 = 100000;
+
+function sumBytes(d: u8[]): u64 {
+  let s: u64 = 0;
+  for (let i: usize = 0; i < d.length; i++) {
+    s += d[i] as u64;
+  }
+  return s;
+}
+
+function countLoop(d: u8[], b: u8): u64 {
+  let c: u64 = 0;
+  for (let i: usize = 0; i < d.length; i++) {
+    if (d[i] == b) {
+      c++;
+    }
+  }
+  return c;
+}
+
+function countSimd(d: u8[], b: u8): u64 {
+  const needle = u8x16.splat(b);
+  let c: u64 = 0;
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    c += u8x16.load(d, i).eq(needle).count() as u64;
+    i += 16;
+  }
+  while (i < d.length) {
+    if (d[i] == b) {
+      c++;
+    }
+    i++;
+  }
+  return c;
+}
+
+function findLoop(d: u8[], b: u8): i64 {
+  for (let i: usize = 0; i < d.length; i++) {
+    if (d[i] == b) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+function findSimd(d: u8[], b: u8): i64 {
+  const needle = u8x16.splat(b);
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    const m = u8x16.load(d, i).eq(needle);
+    if (m.any()) {
+      return (i + m.first()) as i64;
+    }
+    i += 16;
+  }
+  while (i < d.length) {
+    if (d[i] == b) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function asciiLoop(d: u8[]): bool {
+  let acc: u8 = 0;
+  for (let i: usize = 0; i < d.length; i++) {
+    acc = acc | d[i];
+  }
+  return acc < 128;
+}
+
+function asciiSimd(d: u8[]): bool {
+  let a = u8x16.splat(0);
+  let b = u8x16.splat(0);
+  let c = u8x16.splat(0);
+  let e = u8x16.splat(0);
+  let i: usize = 0;
+  while (u8x16.fits(d, i + 48)) {
+    a = a.or(u8x16.load(d, i));
+    b = b.or(u8x16.load(d, i + 16));
+    c = c.or(u8x16.load(d, i + 32));
+    e = e.or(u8x16.load(d, i + 48));
+    i += 64;
+  }
+  let rest: u8 = 0;
+  while (i < d.length) {
+    rest = rest | d[i];
+    i++;
+  }
+  return !a.or(b).or(c.or(e)).ge(u8x16.splat(128)).any() && rest < 128;
+}
+
+function xorLoop(d: u8[], key: u8[]) {
+  for (let i: usize = 0; i < d.length; i++) {
+    d[i] = d[i] ^ key[i & 3];
+  }
+}
+
+function xorSimd(d: u8[], key: u8[]) {
+  const repeated: u8[] = [];
+  for (let j: usize = 0; j < 16; j++) {
+    repeated.push(key[j & 3]);
+  }
+  const k = u8x16.load(repeated);
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    u8x16.load(d, i).xor(k).store(d, i);
+    i += 16;
+  }
+  while (i < d.length) {
+    d[i] = d[i] ^ key[i & 3];
+    i++;
+  }
+}
+
+function lowerLoop(d: u8[]) {
+  for (let i: usize = 0; i < d.length; i++) {
+    const c = d[i];
+    if (c >= 65 && c <= 90) {
+      d[i] = c + 32;
+    }
+  }
+}
+
+function lowerSimd(d: u8[]) {
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    const v = u8x16.load(d, i);
+    const upper = v.ge(u8x16.splat(65)).and(v.le(u8x16.splat(90)));
+    u8x16.select(upper, v.add(u8x16.splat(32)), v).store(d, i);
+    i += 16;
+  }
+  while (i < d.length) {
+    const c = d[i];
+    if (c >= 65 && c <= 90) {
+      d[i] = c + 32;
+    }
+    i++;
+  }
+}
+
+function dotLoop(a: f32[], b: f32[]): f32 {
+  let s: f32 = 0;
+  for (let i: usize = 0; i < a.length; i++) {
+    s += a[i] * b[i];
+  }
+  return s;
+}
+
+function dotSimd(a: f32[], b: f32[]): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let s2 = f32x4.splat(0);
+  let s3 = f32x4.splat(0);
+  let i: usize = 0;
+  while (f32x4.fits(a, i + 12) && f32x4.fits(b, i + 12)) {
+    s0 = s0.add(f32x4.load(a, i).mul(f32x4.load(b, i)));
+    s1 = s1.add(f32x4.load(a, i + 4).mul(f32x4.load(b, i + 4)));
+    s2 = s2.add(f32x4.load(a, i + 8).mul(f32x4.load(b, i + 8)));
+    s3 = s3.add(f32x4.load(a, i + 12).mul(f32x4.load(b, i + 12)));
+    i += 16;
+  }
+  let s = s0.add(s1).add(s2.add(s3)).sum();
+  while (i < a.length) {
+    s += a[i] * b[i];
+    i++;
+  }
+  return s;
+}
+
+// Mixed-case letters with `!` as the last byte: the same start for every kernel.
+function text(): u8[] {
+  const d: u8[] = Buffer.alloc(N);
+  for (let i: usize = 0; i < N; i++) {
+    const first: usize = i % 3 == 0 ? 65 : 97;
+    d[i] = (first + (i * 7) % 26) as u8;
+  }
+  d[N - 1] = 33;
+  return d;
+}
+
+function floats(k: usize): f32[] {
+  const a: f32[] = [];
+  for (let i: usize = 0; i < 4096; i++) {
+    a.push((i % k) as f32);
+  }
+  return a;
+}
+
+function report(name: string, t0: number, check: u64) {
+  console.log(name, Math.round(performance.now() - t0), check);
+}
+
+// Each repetition changes one byte first, so no call is the same as the last.
+function touch(d: u8[], r: i64) {
+  d[(r as usize) % (N - 1)] = (97 + r % 26) as u8;
+}
+
+function main() {
+  const key: u8[] = [0x12, 0x34, 0x56, 0x78];
+  const fb = floats(5);
+
+  let d = text();
+  let t0 = performance.now();
+  let acc: u64 = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += sumBytes(d);
+  }
+  report("sum_loop", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += countLoop(d, 101);
+  }
+  report("count_loop", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += countSimd(d, 101);
+  }
+  report("count_simd", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += findLoop(d, 33) as u64;
+  }
+  report("find_loop", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += findSimd(d, 33) as u64;
+  }
+  report("find_simd", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += asciiLoop(d) ? 1 : 0;
+  }
+  report("ascii_loop", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  acc = 0;
+  for (let r = 0; r < REPS; r++) {
+    touch(d, r);
+    acc += asciiSimd(d) ? 1 : 0;
+  }
+  report("ascii_simd", t0, acc);
+
+  d = text();
+  t0 = performance.now();
+  for (let r = 0; r < REPS + 1; r++) {
+    xorLoop(d, key);
+  }
+  report("xor_loop", t0, sumBytes(d));
+
+  d = text();
+  t0 = performance.now();
+  for (let r = 0; r < REPS + 1; r++) {
+    xorSimd(d, key);
+  }
+  report("xor_simd", t0, sumBytes(d));
+
+  d = text();
+  t0 = performance.now();
+  for (let r = 0; r < REPS; r++) {
+    d[(r as usize) % (N - 1)] = (65 + r % 26) as u8;
+    lowerLoop(d);
+  }
+  report("lower_loop", t0, sumBytes(d));
+
+  d = text();
+  t0 = performance.now();
+  for (let r = 0; r < REPS; r++) {
+    d[(r as usize) % (N - 1)] = (65 + r % 26) as u8;
+    lowerSimd(d);
+  }
+  report("lower_simd", t0, sumBytes(d));
+
+  let fa = floats(7);
+  t0 = performance.now();
+  let fs: f32 = 0;
+  for (let r = 0; r < REPS * 4; r++) {
+    fa[(r as usize) % 4096] = (r % 3) as f32;
+    fs += dotLoop(fa, fb);
+  }
+  report("dot_loop", t0, fs as u64);
+
+  fa = floats(7);
+  t0 = performance.now();
+  fs = 0;
+  for (let r = 0; r < REPS * 4; r++) {
+    fa[(r as usize) % 4096] = (r % 3) as f32;
+    fs += dotSimd(fa, fb);
+  }
+  report("dot_simd", t0, fs as u64);
+}

@@ -316,6 +316,21 @@ first half of its 8-byte slot. Functions (`std/symbol.vlt`; `string` parameters 
 - `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
   (`console.log`, `String(s)`).
 
+## SIMD [additive]
+
+A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
+8-byte aligned in memory (loads and stores are unaligned), passed and returned by value between
+Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes, as in an array.
+A mask lane is all ones or all zeros.
+
+The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
+`velt_simd_mask8x16_any`) declared by `std/prelude/global/simd_*.vlt`. **No runtime defines
+them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
+verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
+inline. They never cross the C ABI, so no target's vector calling convention is involved.
+`load` and `store` take the array (a pointer to its header) and an element index, and do not
+check it: the prelude's methods do.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

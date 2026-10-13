@@ -1,0 +1,13 @@
+error: cannot apply binary operator `==` to type `u8x16`
+note: SIMD values are compared lane by lane with a method, which gives a mask: `a.eq(b).all()` or `a.eq(b).any()`
+error: an expression of type `mask8x16` cannot be tested for truthiness
+note: test a mask with `.any()` or `.all()`: `a.eq(b).all()`
+error: cannot print a value of type `u8x16`
+note: print its lanes (`v.lane(0)`), or a mask's `bitmask()`
+error: cannot apply binary operator `+` to type `u8x16`
+note: SIMD values have methods instead of operators: `a.add(b)`
+error: `u8x16.nope` is not a static method
+error: `u8x16.add` is an instance method
+note: expected i8x16, found u8x16
+error: no method named `mul` found for type `u8x16`
+error: cannot convert to or from JSON: `u8x16` has no JSON form
