@@ -97,6 +97,90 @@ function generics() {
   const o = outer<number | undefined>([undefined], 5);
 }
 
+// Generic code sorting an array of its type parameter: an `undefined` element would reach the
+// comparator (a `(T | undefined)[]` sorted where its type is written is supported).
+function sortedBy<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  const out = xs.slice();
+  out.sort(cmp);
+  return out;
+}
+
+function copySorted<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  return xs.toSorted(cmp);
+}
+
+function sorts() {
+  const a = sortedBy<number | undefined>([3, undefined, 1], (a, b) => (a ?? 0) - (b ?? 0));
+  const b = copySorted<number | undefined>([3, undefined, 1], (a, b) => (a ?? 0) - (b ?? 0));
+  const c = sortedBy<number | null>([3, null, 1], (a, b) => (a ?? 0) - (b ?? 0));
+}
+
+// A `toJSON()` whose result may be `undefined`: Node leaves such a field out, writes `null`
+// for such an array element and returns `undefined` for the value itself.
+class Hidden {
+  toJSON(): string | undefined {
+    return undefined;
+  }
+}
+
+class Base {
+  n = 1;
+}
+
+class Derived extends Base {
+  toJSON(): number | undefined {
+    return undefined;
+  }
+}
+
+function toJson(b: Base) {
+  const field = JSON.stringify({ a: new Hidden(), b: 1 });
+  const nested = JSON.stringify({ x: { y: new Hidden() } });
+  const element = JSON.stringify([new Hidden()]);
+  const top = JSON.stringify(new Hidden());
+  const subclass = JSON.stringify({ b });
+}
+
+// A destructuring default for an optional class field declared `T | null`: a class does not
+// keep an unset field apart from one set to `null` (an object type's `a?: T | null` does).
+class Opt {
+  b?: number | null;
+}
+
+function classDefault(k: Opt) {
+  const { b = 6 } = k;
+}
+
+// `undefined` given for an optional parameter, a parameter with a default or an optional
+// field (TypeScript accepts each).
+function withValue(x: number = 5): number {
+  return x;
+}
+
+function optional(a?: number): number {
+  return a ?? -1;
+}
+
+function optionals(u: number | undefined) {
+  const a = withValue(undefined);
+  const b = optional(undefined);
+  const c = optional(void 0);
+  const d = optional(u);
+  const o: { a?: number; b: string } = { a: undefined, b: "x" };
+  const p: { a?: number; b: string } = { a: u, b: "x" };
+}
+
+// A generic alias applied so that its type holds both nothings.
+type Nullable<T> = T | null;
+type Maybe<T> = T | undefined;
+type OrText<T> = T | string | null;
+
+function aliases(a: Nullable<number | undefined>, b: Maybe<number | null>) {
+  const c: OrText<number | undefined> = "s";
+  const ok: Nullable<number> = null;
+  const fine: Maybe<string> = undefined;
+}
+
 function main() {
   console.log(withDefault());
 }

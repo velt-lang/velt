@@ -21,3 +21,20 @@ undefined_unsupported.vlt:68:46: error: a default on a parameter whose type allo
 undefined_unsupported.vlt:95:13: error: `string | null` as a type argument of `firstOne` is not supported yet
 undefined_unsupported.vlt:96:13: error: `f64 | null` as a type argument of `Slot` is not supported yet
 undefined_unsupported.vlt:97:13: error: `f64 | undefined` as a type argument of `outer` is not supported yet
+undefined_unsupported.vlt:113:13: error: `f64 | undefined` as a type argument of `sortedBy` is not supported yet (#930)
+undefined_unsupported.vlt:114:13: error: `f64 | undefined` as a type argument of `copySorted` is not supported yet (#930)
+undefined_unsupported.vlt:137:17: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:138:18: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:139:19: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:140:15: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:141:20: error: `JSON.stringify` of a value whose `toJSON()` may return `undefined` (Node leaves such a field out, and returns `undefined` for the value itself) is not supported yet
+undefined_unsupported.vlt:151:15: error: a default for `b`, an optional class field declared `T | null`, is not supported yet (#930)
+undefined_unsupported.vlt:165:23: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:166:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:167:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:168:22: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:169:45: error: `undefined` as the value of an optional field is not supported yet (#930)
+undefined_unsupported.vlt:170:45: error: `undefined` as the value of an optional field is not supported yet (#930)
+undefined_unsupported.vlt:178:21: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
+undefined_unsupported.vlt:178:54: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
+undefined_unsupported.vlt:179:12: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
