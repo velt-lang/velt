@@ -115,6 +115,8 @@ function count(v: Record<string, number> | A): number {
   return 0;
 }
 
+type Size = { w: number; h: number };
+
 function main() {
   const f: Fish = new Salmon();
   const b: Bird = new Crow();
@@ -179,4 +181,21 @@ function main() {
   for (y = true ? "z" in o ? 1 : 2 : 3; y > 0; y = 0) {
     console.log("y", y);
   }
+  // A run-time key is judged by what its type is assignable to: a union of string literals
+  // and a `keyof` type are strings, `string | number` is converted as a number is.
+  let lit: "a" | "b" = "a";
+  console.log(lit in counts);
+  lit = "b";
+  console.log(lit in counts);
+  const sides: (keyof Size)[] = ["w", "h"];
+  const sizes: Record<string, number> = { w: 3 };
+  for (const side of sides) {
+    console.log(side, side in sizes);
+  }
+  let mixed: string | number = 1;
+  console.log(mixed in nums);
+  mixed = "2.5";
+  console.log(mixed in nums);
+  mixed = 7;
+  console.log(mixed in nums);
 }

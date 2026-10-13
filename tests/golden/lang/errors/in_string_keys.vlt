@@ -2,7 +2,8 @@
 // run time on an object with fixed fields, a built-in value, and a key a narrower object type
 // left out of its copy (`const p: P = full`) are errors. A primitive right operand (TS2322,
 // TS18047 for a nullable one) and a left operand that is not a string, number or symbol (TS2322,
-// also on a record) are errors at the positions tsc reports, once each.
+// also on a record) are errors at the positions tsc reports, once each. A key whose type is a
+// union of string literals or `string | number` is a key known only at run time, not a TS2322.
 type P = { x: number };
 
 function hasY(p: P): boolean {
@@ -23,4 +24,9 @@ function main() {
   const r: Record<string, number> = { a: 1 };
   console.log("a" in o in r);
   console.log(true in r);
+  let lit: "a" | "b" = "a";
+  console.log(lit in o);
+  lit = "b";
+  const mixed: string | number = 1;
+  console.log(mixed in o);
 }

@@ -49,6 +49,21 @@ impl InKey {
     }
 }
 
+/// What a key known only at run time may be, from its type (later ones win in a union).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum KeyKind {
+    /// A string (`string`, string literals).
+    Str,
+    /// A number, or a string or a number: tested as `String(k)`.
+    Converted,
+    /// A symbol, or it may be one.
+    Symbol,
+    /// A type parameter, or it may be one.
+    Param,
+    /// Neither a string, a number nor a symbol (TypeScript's TS2322).
+    Other,
+}
+
 impl FnCx<'_, '_> {
     /// The key the left operand of `in` names, if known while compiling: a symbol key or a
     /// string literal (parenthesized or not).
@@ -212,9 +227,27 @@ impl FnCx<'_, '_> {
             .collect()
     }
 
+    /// What the type of a key known only at run time is assignable to: a union is judged by
+    /// its members (`"a" | "b"`, a `keyof` type, `string | number`).
+    fn run_time_key(&mut self, t: TyId) -> KeyKind {
+        let members = self.cx.union_members(t).unwrap_or_else(|| vec![t]);
+        let mut kind = KeyKind::Str;
+        for m in members {
+            let k = match self.cx.typeof_tag(m) {
+                "string" => KeyKind::Str,
+                "number" => KeyKind::Converted,
+                "symbol" => KeyKind::Symbol,
+                _ if matches!(self.cx.ty.kind(m), TyKind::Param(_)) => KeyKind::Param,
+                _ => return KeyKind::Other,
+            };
+            kind = kind.max(k);
+        }
+        kind
+    }
+
     /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
-    /// `__recordIn(k, o)` (std/prelude/record.vlt; a number key as `String(k)`, as JavaScript
-    /// converts it); elsewhere an error.
+    /// `__recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
+    /// as JavaScript converts it); elsewhere an error.
     pub(crate) fn dynamic_key_in(
         &mut self,
         lhs: &ast::Expr,
@@ -223,22 +256,26 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let key_ty = self.trial_expr(lhs).ty;
         let target = self.trial_expr(rhs).ty;
-        let tag = self.cx.typeof_tag(key_ty);
+        let kind = self.run_time_key(key_ty);
         let open = self
             .record_args(target)
             .is_some_and(|(k, _)| k == self.cx.ty.str_);
-        if !open || !matches!(tag, "string" | "number") {
+        if !open || !matches!(kind, KeyKind::Str | KeyKind::Converted) {
             let k = self.expr(lhs, None, Want::Borrow);
             self.expr(rhs, None, Want::Borrow);
             if !self.cx.ty.is_bottom(k.ty) && !self.cx.ty.is_bottom(target) {
-                let msg = match tag {
-                    "string" | "number" | "symbol" => format!(
-                        "`in` with a key known only at run time is not supported on `{}`",
-                        self.cx.display(target)
-                    ),
-                    _ => format!(
+                let msg = match kind {
+                    KeyKind::Other => format!(
                         "the left operand of `in` must be a string, a number or a symbol, found `{}` (TypeScript's TS2322)",
                         self.cx.display(k.ty)
+                    ),
+                    KeyKind::Param if open => format!(
+                        "`in` with a key whose type is the type parameter `{}` is not supported; give the key the type `string`",
+                        self.cx.display(k.ty)
+                    ),
+                    _ => format!(
+                        "`in` with a key known only at run time is not supported on `{}`",
+                        self.cx.display(target)
                     ),
                 };
                 self.cx.error(
@@ -249,8 +286,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let syn = Synth::new(span, self.f.locals.len());
-        let key = match tag {
-            "number" => syn.call(syn.name("String"), vec![lhs.clone()]),
+        let key = match kind {
+            KeyKind::Converted => syn.call(syn.name("String"), vec![lhs.clone()]),
             _ => lhs.clone(),
         };
         let test = syn.call(syn.name("__recordIn"), vec![key, rhs.clone()]);

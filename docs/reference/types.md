@@ -1143,9 +1143,10 @@ interface declares included. The members every object inherits from `Object.prot
 (`"toString"`, `"constructor"`, `"hasOwnProperty"`, …) are there on every object, as in Node. A
 `Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
 then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
-`"1"`). A closed record (`Record<"x" | "y", V>`) has exactly its keys. On a union, `in` answers
-for the member the value holds, and in a condition it narrows the union
-([union types](#union-types)).
+`"1"`). Such a key may have any type that is a string or a number: `string`, a union of string
+literals (`"a" | "b"`, a `keyof` type) or `string | number`. A closed record
+(`Record<"x" | "y", V>`) has exactly its keys. On a union, `in` answers for the member the value
+holds, and in a condition it narrows the union ([union types](#union-types)).
 
 A key known only at run time on anything but a `Record<string, V>` is an error (``` `in` with a
 key known only at run time is not supported on `T` ```): there is no table of names to look in.
