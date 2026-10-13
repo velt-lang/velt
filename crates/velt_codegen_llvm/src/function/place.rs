@@ -7,6 +7,9 @@ use super::{Emitter, Loc, Val};
 use crate::types::{aggregate, offset_align, size_align};
 use crate::CodegenResult;
 
+/// `[0, 2^63)` for a load of an array's length.
+const LENGTH_RANGE: &str = ", !range !{i64 0, i64 -9223372036854775808}";
+
 impl Emitter<'_> {
     pub(super) fn place(&mut self, p: &Place) -> CodegenResult<Loc> {
         let index = p.local.0 as usize;
@@ -21,6 +24,7 @@ impl Emitter<'_> {
                 base_align: size_align(self.program, ty)?.1,
                 ty,
                 root: Some(p.local.0),
+                length: false,
             },
         };
         for proj in &p.proj {
@@ -39,6 +43,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: Ty::Agg(id),
                     root,
+                    ..
                 },
             ) => {
                 let (field_ty, field_offset) = self.field(id, *n)?;
@@ -48,6 +53,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: field_ty,
                     root,
+                    length: *n == 1 && self.array == Some(id),
                 }
             }
             (Proj::Deref(pointee), l) if l.ty() == Ty::Ptr => {
@@ -63,6 +69,7 @@ impl Emitter<'_> {
                     base_align: align,
                     ty: *pointee,
                     root: None,
+                    length: false,
                 }
             }
             (
@@ -82,6 +89,7 @@ impl Emitter<'_> {
                     base_align,
                     ty: Ty::Agg(*id),
                     root,
+                    length: false,
                 }
             }
             (proj, l) => bail!(
@@ -131,7 +139,15 @@ impl Emitter<'_> {
             scalar => {
                 let (ptr, align) = self.address(&loc)?;
                 let t = self.memory_type(scalar);
-                let v = self.inst(format!("load {t}, ptr {ptr}, align {align}"));
+                // No array has 2^63 elements, which LLVM cannot see from the load. With the
+                // range it proves that `i + 16 <= xs.length` keeps `i + 16` from wrapping:
+                // what removing a range check inside such a loop, and counting the loop's
+                // iterations, both need.
+                let range = match &loc {
+                    Loc::Mem { length: true, .. } => LENGTH_RANGE,
+                    _ => "",
+                };
+                let v = self.inst(format!("load {t}, ptr {ptr}, align {align}{range}"));
                 Val::Scalar(self.narrow_after_load(v, scalar))
             }
         })

@@ -336,6 +336,35 @@ fn param_attributes_become_llvm_attributes() {
     assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
 }
 
+/// A load of an array's length says that it is below 2^63; loads of the array's other
+/// fields, and of fields of other aggregates, say nothing.
+#[test]
+fn length_loads_carry_their_range() {
+    let mut pb = ProgramBuilder::new();
+    let fields = [(Ptr, 0), (U64, 8), (U64, 16)];
+    let other = pb.agg("pair", 24, 8, &fields);
+    let array = pb.agg(velt_vir::ARRAY_AGG_NAME, 24, 8, &fields);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let b = fb.block();
+    let (xs, pair) = (fb.local(Agg(array)), fb.local(Agg(other)));
+    let (len, cap, second) = (fb.local(U64), fb.local(U64), fb.local(U64));
+    let empty = || vec![int(0, Ptr), int(0, U64), int(0, U64)];
+    fb.assign(b, xs, Rvalue::Aggregate(array, empty()));
+    fb.assign(b, pair, Rvalue::Aggregate(other, empty()));
+    fb.assign(b, len, Rvalue::Use(copy_place(field(xs, 1))));
+    fb.assign(b, cap, Rvalue::Use(copy_place(field(xs, 2))));
+    fb.assign(b, second, Rvalue::Use(copy_place(field(pair, 1))));
+    fb.ret(b, int(0, I32));
+    pb.add(fb.finish());
+    let ir = emit_ir(&pb.finish(), "aarch64-apple-darwin").expect("emit_ir");
+    let ranged: Vec<&str> = ir.lines().filter(|l| l.contains("!range")).collect();
+    assert_eq!(ranged.len(), 1, "{ir}");
+    assert!(
+        ranged[0].contains("load i64") && ranged[0].contains("!{i64 0, i64 -9223372036854775808}"),
+        "{ir}"
+    );
+}
+
 mod placement;
 mod units;
 mod wasm;

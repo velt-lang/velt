@@ -36,6 +36,9 @@ enum Loc {
         /// The local whose alloca this is, when no pointer was dereferenced on the way (two
         /// places with different roots cannot overlap).
         root: Option<u32>,
+        /// An array's length (field 1 of the arrays' aggregate): below 2^63, which a load of
+        /// it says (`!range`).
+        length: bool,
     },
     Unit,
 }
@@ -76,6 +79,8 @@ struct Emitter<'a> {
     wide_pointer_slots: bool,
     /// `Math.floor` & co. round through a conversion to `i64` (`Target::rounds_by_conversion`).
     rounds_by_conversion: bool,
+    /// The arrays' aggregate (`velt_vir::ARRAY_AGG_NAME`), if the program has arrays.
+    array: Option<vir::AggId>,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
@@ -105,6 +110,11 @@ pub(crate) fn emit_function(
         dbg_suffix: String::new(),
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
+        array: program
+            .aggs
+            .iter()
+            .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
+            .map(|i| vir::AggId(i as u32)),
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;
