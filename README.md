@@ -105,6 +105,9 @@ Next, read [Getting started](docs/book/getting-started.md) and
   other editor can use the language server, `velt lsp`.
 - **Everything else in one tool.** `velt` also runs tests (`velt test`, with **▶ Run test** in
   the editor), formats code (`velt fmt`), manages packages with a lockfile, and cross-compiles.
+- **The whole Rust ecosystem.** When a package needs native code, such as a database driver, a
+  codec or a C library, it can include a Rust crate and call it directly
+  ([Rust inside a package](#rust-inside-a-package)).
 
 ## Beyond TypeScript
 
@@ -167,6 +170,53 @@ async function main() {
 
 For the full list, and the few places where Velt deliberately differs from TypeScript, read
 [Velt for TypeScript developers](docs/book/ts-developers.md).
+
+## Rust inside a package
+
+Any Velt package can include a Rust crate, so every crate on crates.io is within reach. Mark the
+Rust functions with `#[export]`:
+
+```rust
+use velt_native::{export, Error};
+
+velt_native::package!(greet);
+
+#[export]
+fn velt_greet__hello(name: &str) -> String {
+    format!("hello, {name}!")
+}
+
+#[export(blocking)] // runs on the runtime's blocking pool; Velt sees an async function
+fn velt_greet__checksum(data: Vec<u8>) -> Result<u64, Error> {
+    Ok(data.iter().map(|&b| b as u64).sum())
+}
+```
+
+Then declare them in the package's Velt code and wrap them in the API you want:
+
+```ts ignore
+import { IoResult } from "velt:io";
+
+declare function velt_greet__hello(name: string): string;
+declare async function velt_greet__checksum(data: u8[]): Promise<IoResult<u64>>;
+
+export function hello(name: string): string {
+  return velt_greet__hello(name);
+}
+```
+
+- **Checked at compile time.** `velt` compares every `declare` with what the library actually
+  exports. A wrong name or type is a compile error, not a crash at run time.
+- **No Rust needed by your users.** `velt native build` and `velt publish` ship a prebuilt
+  library for each platform. `velt add greet` downloads the right one and verifies its checksum
+  against the lockfile.
+- **It works everywhere a Velt program does:** `velt run`, `velt build --release` (still one
+  self-contained executable) and `velt dev`, where your Velt edits keep hot-swapping.
+- Native objects, such as a database connection, stay on the Rust side behind a handle. Wrap
+  them in a class with `[Symbol.dispose]()`, so `using` closes them.
+
+The full walkthrough is [Packages with native code](docs/book/native-packages.md), and
+`packages/sqlite` is a complete example.
 
 ## Performance
 
