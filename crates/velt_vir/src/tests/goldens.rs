@@ -461,9 +461,11 @@ fn#1 export velt_main() -> i32 {
 fn snapshot_greet() {
     let v = super::lower_ok(&strings());
     let dump = v.to_string();
-    let start = dump.find("fn#2 internal").unwrap();
+    // Found by its symbol: function ids follow the lowering queue (`velt_main` is built last).
+    let at = dump.find("internal _V5greet(").unwrap();
+    let start = at;
     let end = start + dump[start..].find("\n}\n").unwrap() + 3;
-    let expected = r#"fn#2 internal _V5greet(ptr, ptr) -> unit {
+    let expected = r#"internal _V5greet(ptr, ptr) -> unit {
   param _0: ptr [nonnull dereferenceable(24)] // name
   param _1: ptr [noalias nonnull dereferenceable(24)] // ret.out
   let _2: u64

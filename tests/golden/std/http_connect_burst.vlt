@@ -1,0 +1,42 @@
+// check: no leaks
+// A burst of connects at once is queued, not refused (#1019): requests start together, each on
+// its own connection, and all are answered. 256 on Linux and Windows (Windows caps an explicit
+// backlog at 200); 100 on macOS, whose kernel caps every listen queue at kern.ipc.somaxconn
+// (128 by default) and resets a queued connection when it overflows.
+import { serve } from "velt:http";
+import { connect } from "velt:net";
+import { IoError } from "velt:io";
+import { platform } from "velt:os";
+
+async function ask(port: number, i: i64): Promise<bool> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(`GET /${i} HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n`);
+  let reply = "";
+  let chunk = await c.readString();
+  while (chunk != "") {
+    reply += chunk;
+    chunk = await c.readString();
+  }
+  c.close();
+  return reply.endsWith(`hello ${i}`);
+}
+
+async function main() {
+  const server = await serve(
+    { port: 0 },
+    async (req: Request): Promise<Response> => new Response(`hello ${new URL(req.url).pathname.slice(1)}`),
+  );
+  const n = platform() == "darwin" ? 100 : 256;
+  const asks: Promise<bool, IoError>[] = [];
+  for (let i = 0; i < n; i++) {
+    asks.push(spawn(ask(server.port, i)));
+  }
+  let ok = 0;
+  for (const r of await Promise.all(asks)) {
+    if (r) {
+      ok++;
+    }
+  }
+  console.log("all answered:", ok == n);
+  await server.shutdown();
+}

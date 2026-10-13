@@ -1,0 +1,7 @@
+workers > 0: true
+pinned on their worker: true
+moves after sleep, yieldNow and channel round trips: 0
+shorthand: true
+calls: 100
+cond: true
+empty options: true

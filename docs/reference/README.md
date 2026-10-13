@@ -4,16 +4,14 @@ This is the precise description of the Velt language: what the compiler accepts,
 rejects, and what the compiled program does. For a guided introduction, read
 [the Book](../book/README.md); for imported modules, the [standard library](../std/README.md).
 
-Velt is **TypeScript without the parts inherited from JavaScript that cause bugs**, compiled to
-native code with Rust-level performance and no garbage collector. Three rules shape every
-decision:
+Velt is **TypeScript compiled to native code**, with Rust-class performance, a multi-core runtime
+and no garbage collector. Three rules shape every decision:
 
-- adopt TypeScript's best parts, never JavaScript's bug sources (implicit coercions,
-  floating promises, …);
-- one way of doing things;
-- valid TypeScript runs as it does in Node, but TypeScript is the starting point, not the
-  limit: Velt is a native backend language and adds its own opt-in features wherever they make
-  programs faster (integer types, `shared`, `extend`).
+- valid TypeScript runs as it does in Node;
+- where JavaScript's behavior is a trap (comparing `1 == "1"`, a forgotten `await`), the
+  compiler stops and says what to write instead;
+- TypeScript is the starting point, not the limit: Velt adds its own opt-in features wherever
+  they make programs faster or safer (integer types, typed errors, `shared`, `extend`).
 
 ## Conventions
 

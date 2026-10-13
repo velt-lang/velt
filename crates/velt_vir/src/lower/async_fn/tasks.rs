@@ -66,8 +66,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     ) -> Operand {
         use Intrinsic as I;
         match (i, args) {
-            (I::Spawn, [p]) => self.spawn(p, ty, false, false),
-            (I::SpawnHandled, [p]) => self.spawn(p, ty, false, true),
+            (I::Spawn, [p]) => self.spawn(p, None, ty, false, false),
+            (I::Spawn, [p, worker]) => self.spawn(p, Some(worker), ty, false, false),
+            (I::SpawnHandled, [p]) => self.spawn(p, None, ty, false, true),
             (I::Sleep, [ms]) => {
                 let v = self.expr(ms);
                 let from = self.vty(ms.ty);

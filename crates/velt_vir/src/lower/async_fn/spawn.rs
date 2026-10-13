@@ -18,16 +18,19 @@ impl FnLower<'_, '_> {
     /// state (`velt_rt_spawn`); any other promise is a heap future (`velt_rt_spawn_fut`).
     /// `detached`: the join handle is dropped at once (a `spawn(...)` statement), so the task's
     /// error is reported as uncaught. `handled`: the caller handles the task's error itself
-    /// (`Intrinsic::SpawnHandled`), so a dropped handle drops it quietly.
+    /// (`Intrinsic::SpawnHandled`), so a dropped handle drops it quietly. `worker`:
+    /// `spawn(p, { worker })` pins the task to that worker (#211): evaluated after the task's
+    /// arguments, right before the runtime spawns it (`velt_rt_spawn_target`).
     pub(in crate::lower) fn spawn(
         &mut self,
         p: &hir::Expr,
+        worker: Option<&hir::Expr>,
         ty: TyId,
         detached: bool,
         handled: bool,
     ) -> Operand {
         if let hir::ExprKind::If { cond, then, els } = &p.kind {
-            return self.spawn_if(cond, [then, els], ty, detached, handled);
+            return self.spawn_if(cond, [then, els], worker, ty, detached, handled);
         }
         let pty = self.sub(ty);
         let slot = self.cx.promise_slot(pty);
@@ -94,8 +97,10 @@ impl FnLower<'_, '_> {
             // promises it started (which may still use the result's objects) are on its thread.
             if !detached && self.cx.holds_counted(slot) {
                 args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));
+                self.pin(worker);
                 return self.rt_value(Rt::SpawnTransfer, args, ty);
             }
+            self.pin(worker);
             return self.rt_value(Rt::Spawn, args, ty);
         }
         let fut = match self.kind(p.ty) {
@@ -123,7 +128,20 @@ impl FnLower<'_, '_> {
         if !self.dead() {
             self.transfer_result(fut.clone(), pty);
         }
+        self.pin(worker);
         self.rt_value(Rt::SpawnFut, vec![fut, rsize, result_drop], ty)
+    }
+
+    /// `spawn(p, { worker })`: the next spawn on this thread pins its task to `worker` (the
+    /// runtime checks the range).
+    fn pin(&mut self, worker: Option<&hir::Expr>) {
+        let Some(w) = worker else {
+            return;
+        };
+        let v = self.expr(w);
+        let from = self.vty(w.ty);
+        let v = self.cast_to(v, from, Ty::I64);
+        self.call_rt(Rt::SpawnTarget, vec![v], None);
     }
 
     /// `spawn(c ? a : b)`: spawn the branch `c` picks (see module docs).
@@ -131,6 +149,7 @@ impl FnLower<'_, '_> {
         &mut self,
         cond: &hir::Expr,
         branches: [&hir::Expr; 2],
+        worker: Option<&hir::Expr>,
         ty: TyId,
         detached: bool,
         handled: bool,
@@ -143,7 +162,7 @@ impl FnLower<'_, '_> {
         for (bb, branch) in [then_bb, else_bb].into_iter().zip(branches) {
             self.switch_to(bb);
             self.push_scope(ScopeKind::Temps);
-            let handle = self.spawn(spawned(branch), ty, detached, handled);
+            let handle = self.spawn(spawned(branch), worker, ty, detached, handled);
             if let Operand::Copy(p) = &handle {
                 self.take_temp(p);
             }

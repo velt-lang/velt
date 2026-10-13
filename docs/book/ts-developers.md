@@ -1,21 +1,27 @@
 # Velt for TypeScript developers
 
-If you write TypeScript, you already write most of Velt: classes, interfaces, generics, unions
-and narrowing, discriminated unions, closures, `async`/`await`, template literals,
-destructuring, spread, optional chaining, `??`, ES modules, `throw`/`try`/`catch`, `using`.
-This page lists **every place where Velt differs**, and why.
+If you write TypeScript, you already write Velt: classes, interfaces, generics, unions and
+narrowing, discriminated unions, closures, `async`/`await`, template literals, destructuring,
+spread, optional chaining, `??`, ES modules, `throw`/`try`/`catch`, `using`. Velt reads `.ts`
+and `.tsx` files directly (`velt run app.ts`), and they import `.vlt` files and the other way
+round, so an existing project can move over one file at a time.
+
+What you get in return is a native executable: no interpreter or JIT, no garbage collector, and
+your code running on every core instead of one event loop. This page lists **every place where
+Velt differs** from TypeScript, and why.
 
 The differences come from three rules:
 
-1. **Keep TypeScript's syntax and meaning wherever native speed allows it.** When Velt runs
-   your code, it should do what TypeScript would.
-2. **Drop the JavaScript behavior that causes bugs**, even when it means ported code must
-   change. The compiler then says exactly what to write instead, and editors offer it as a
-   quick fix.
+1. **Valid TypeScript runs as it does in Node.** When Velt runs your code, it does what
+   TypeScript would. Velt's TypeScript support grows with every release, and the list below
+   shrinks with it.
+2. **Where JavaScript's behavior is a trap, the compiler stops.** Comparing `1 == "1"` or
+   forgetting an `await` is a compile error, not a silent bug. The message says exactly what to
+   write instead, and editors offer it as a quick fix.
 3. **Add what makes native code faster.** Velt compiles to machine code, not to JavaScript, so
-   it isn't limited to what TypeScript can express. Integer types, `shared` state across threads
-   and `extend` are opt-ins to reach for when you want more speed; code without them still runs
-   as TypeScript would.
+   it isn't limited to what TypeScript can express. Integer types, typed errors, `shared` state
+   across threads and `extend` are there when you want them. Code without them still runs as
+   TypeScript would.
 
 ## Programs are compiled
 
@@ -274,8 +280,8 @@ surprise ([Error handling](errors.md)).
 ## Memory
 
 There is no garbage collector, so no GC pauses and no heap tuning: memory is freed as soon as
-its last reference goes away, and `[Symbol.dispose]()` runs at that moment. You never write
-lifetimes, borrows or `mut`; the compiler infers them. Objects are shared references exactly
+its last reference goes away, and `[Symbol.dispose]()` runs at that moment. Memory is managed
+automatically: you write no annotations, and the compiler works out when each object is freed. Objects are shared references exactly
 like in JS (`const b = a; b.push(1)` changes `a`), and `.clone()` is an explicit deep copy.
 Values with a single owner cost nothing extra; only types the program actually shares get a
 reference count. Reference cycles are not freed (**planned**: `weak` references)

@@ -26,7 +26,7 @@ use crate::panic::ThrowLoc;
 use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::task::{Context, Poll};
 use tokio::runtime::{Handle, Runtime};
@@ -120,18 +120,87 @@ struct Worker {
 /// `Some` in per-core mode (decided on first use).
 static PER_CORE: OnceLock<Option<Vec<Worker>>> = OnceLock::new();
 
+/// The scheduler the program asked for before the runtime started ([`velt_rt_set_scheduler`]):
+/// `SCHED_PER_CORE` when it uses the placement API, else `SCHED_DEFAULT`.
+static REQUESTED: AtomicU32 = AtomicU32::new(SCHED_DEFAULT);
+const SCHED_DEFAULT: u32 = 0;
+const SCHED_PER_CORE: u32 = 1;
+
 thread_local! {
     /// This thread's worker index in per-core mode (`usize::MAX`: not a worker thread).
     static WORKER: Cell<usize> = const { Cell::new(usize::MAX) };
+    /// The worker the next [`spawn`] from this thread pins its task to
+    /// ([`velt_rt_spawn_target`]); taken by that spawn.
+    static SPAWN_TARGET: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
+/// `VELT_SCHEDULER` wins (`per-core` or `stealing`, for measurement); otherwise the scheduler the
+/// program requested.
 fn per_core() -> Option<&'static [Worker]> {
     PER_CORE
         .get_or_init(|| {
-            let sched = std::env::var(SCHEDULER_ENV).unwrap_or_default();
-            (sched.trim() == "per-core").then(start_workers)
+            let per_core = match std::env::var(SCHEDULER_ENV).as_deref().map(str::trim) {
+                Ok("per-core") => true,
+                Ok("stealing") => false,
+                _ => REQUESTED.load(Ordering::Relaxed) == SCHED_PER_CORE,
+            };
+            per_core.then(start_workers)
         })
         .as_deref()
+}
+
+/// `velt_rt_set_scheduler(1)`: run on the per-core scheduler (`velt_main` calls it first, before
+/// anything starts the runtime, when the program uses the placement API: `spawn(…, { worker })`,
+/// `workerCount()`, `currentWorker()`). `0` keeps the default. `VELT_SCHEDULER` overrides both.
+#[no_mangle]
+pub extern "C" fn velt_rt_set_scheduler(kind: u32) {
+    REQUESTED.store(kind, Ordering::Relaxed);
+}
+
+/// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.
+#[no_mangle]
+pub extern "C" fn velt_rt_worker_count() -> u64 {
+    match per_core() {
+        Some(ws) => ws.len() as u64,
+        None => worker_count() as u64,
+    }
+}
+
+/// `currentWorker()`: the per-core worker running this task. With the stealing scheduler, an
+/// index for this worker thread, which a task may leave at any `await`.
+#[no_mangle]
+pub extern "C" fn velt_rt_current_worker() -> u64 {
+    if let Some(i) = current_worker() {
+        return i as u64;
+    }
+    if per_core().is_some() {
+        return 0;
+    }
+    thread_local! {
+        static INDEX: Cell<usize> = const { Cell::new(usize::MAX) };
+    }
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    INDEX.with(|c| {
+        if c.get() == usize::MAX {
+            c.set(NEXT.fetch_add(1, Ordering::Relaxed) % worker_count().max(1));
+        }
+        c.get() as u64
+    })
+}
+
+/// `spawn(p, { worker })`: the next task this thread spawns is pinned to `worker` (compiled code
+/// calls this right before the spawn). Out of range is a panic. With the stealing scheduler the
+/// task is spawned as usual (tasks there may run on any worker).
+#[no_mangle]
+pub extern "C" fn velt_rt_spawn_target(worker: i64) {
+    let n = velt_rt_worker_count();
+    if worker < 0 || worker as u64 >= n {
+        let s = if n == 1 { "" } else { "s" };
+        crate::panic::fatal(&format!(
+            "spawn: worker {worker} is out of range (the runtime has {n} worker{s})"
+        ));
+    }
+    SPAWN_TARGET.with(|t| t.set(Some(worker as usize)));
 }
 
 /// Whether the per-core scheduler is in use.
@@ -237,10 +306,12 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
+    let pinned = SPAWN_TARGET.with(Cell::take);
     match per_core() {
         None => runtime().spawn(fut),
         Some(workers) => {
-            let w = &workers[place(workers)];
+            // A pinned task starts on its worker and stays there (never taken by another).
+            let w = &workers[pinned.unwrap_or_else(|| place(workers))];
             w.load.fetch_add(1, Ordering::Relaxed);
             w.handle.spawn(Counted { fut, load: &w.load })
         }

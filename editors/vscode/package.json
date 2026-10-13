@@ -2,9 +2,21 @@
   "name": "velt",
   "displayName": "Velt",
   "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`), and F5 debugging.",
-  "version": "0.1.0",
-  "publisher": "velt-lang",
+  "version": "0.1.1",
+  "publisher": "andtii",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#16161e",
+    "theme": "dark"
+  },
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velt-lang/velt",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/velt-lang/velt/tree/main/editors/vscode",
+  "bugs": "https://github.com/velt-lang/velt/issues",
   "private": true,
   "engines": {
     "vscode": "^1.82.0"
@@ -43,7 +55,11 @@
         "extensions": [
           ".vlt"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/file-icon.png",
+          "dark": "./images/file-icon.png"
+        }
       }
     ],
     "grammars": [
