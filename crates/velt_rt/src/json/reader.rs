@@ -62,9 +62,9 @@ pub struct Reader {
     skip_ends: Option<HashMap<usize, usize>>,
     /// Set when the reader walks a driver's binary rows instead of text (`rows_reader.rs`).
     /// `error` is then set for good, so every method here fails at once and the
-    /// `velt_rt_json_reader_*` call, seeing the failure, asks the rows reader instead: reading
-    /// text pays nothing for this.
-    pub(crate) rows: Option<RowReader>,
+    /// failure branch, which a text reader takes too when it has failed, asks the rows reader
+    /// ([`Self::rows_or`]): reading text pays nothing for this.
+    pub(crate) rows: Option<Box<RowReader>>,
     /// Bytes `skip_lookahead` walked (not jumped over): lets tests check that lookahead stays
     /// linear without timing it.
     #[cfg(test)]
@@ -114,9 +114,19 @@ impl Reader {
     /// A reader over a driver's binary rows (`rows_bin.rs`), with `FLAG_*` options.
     pub fn over_rows(rows: Vec<u8>, flags: u32) -> Reader {
         let mut r = Reader::with_source(&[], true, flags, 0);
-        r.rows = Some(RowReader::new(rows, flags));
+        r.rows = Some(Box::new(RowReader::new(rows, flags)));
         r.error = Some(ReadError::Mismatch);
         r
+    }
+
+    /// On a failure branch: what the rows reader answers, or `failed` for a text reader.
+    #[cold]
+    #[inline(never)]
+    fn rows_or<R>(&mut self, failed: R, f: impl FnOnce(&mut RowReader) -> R) -> R {
+        match &mut self.rows {
+            Some(rows) => f(rows),
+            None => failed,
+        }
     }
 
     /// How many more levels a value at the current position may nest.
@@ -161,7 +171,7 @@ impl Reader {
     /// Token kind of the next value (see `TOKEN_*`).
     pub fn peek(&mut self) -> u32 {
         if self.error.is_some() {
-            return TOKEN_ERROR;
+            return self.rows_or(TOKEN_ERROR, RowReader::peek);
         }
         match self.sc.peek_non_ws() {
             None => TOKEN_EOF,
@@ -181,7 +191,7 @@ impl Reader {
     /// Consume `{` or `[`.
     pub fn open(&mut self, bracket: u8) -> u8 {
         if self.value_start(|b| b == bracket).is_none() {
-            return 0;
+            return self.rows_or(0, |rows| rows.open(bracket));
         }
         if self.depth >= self.max_depth {
             let e = self.sc.error(TOO_DEEP);
@@ -252,7 +262,7 @@ impl Reader {
     /// `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`.
     pub fn array_next(&mut self) -> u8 {
         if self.error.is_some() {
-            return STEP_ERROR;
+            return self.rows_or(STEP_ERROR, RowReader::array_next);
         }
         let step = self.step(b']', "expected ',' or ']'");
         self.step_or_fail(step)
@@ -308,7 +318,7 @@ impl Reader {
     /// `null`.
     pub fn null(&mut self) -> u8 {
         if self.value_start(|b| b == b'n').is_none() {
-            return 0;
+            return self.rows_or(0, RowReader::null);
         }
         let r = self.sc.literal(b"null");
         self.syntax(r)
@@ -317,7 +327,7 @@ impl Reader {
     /// Skip one complete value of any kind (validating it).
     pub fn skip(&mut self) -> u8 {
         if self.value_start(|_| true).is_none() {
-            return 0;
+            return self.rows_or(0, RowReader::skip);
         }
         let limit = self.depth_left();
         let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
@@ -330,7 +340,7 @@ impl Reader {
     /// rescan every subtree once per enclosing level: quadratic in the depth).
     pub fn skip_lookahead(&mut self) -> u8 {
         let Some(first) = self.value_start(|_| true) else {
-            return 0;
+            return self.rows_or(0, RowReader::skip);
         };
         let limit = self.depth_left();
         #[cfg(test)]
@@ -367,7 +377,8 @@ impl Reader {
     /// are rejected).
     pub fn skip_unknown(&mut self) -> u8 {
         if self.reject_unknown {
-            return self.fail(ReadError::Unknown);
+            let failed = self.fail(ReadError::Unknown);
+            return self.rows_or(failed, RowReader::skip_unknown);
         }
         self.skip()
     }
@@ -403,7 +414,7 @@ impl Reader {
     /// Only whitespace may follow the top-level value.
     pub fn end(&mut self) -> u8 {
         if self.error.is_some() {
-            return 0;
+            return self.rows_or(0, RowReader::end);
         }
         if self.sc.peek_non_ws().is_some() {
             let e = self.sc.error("unexpected trailing characters");

@@ -30,30 +30,6 @@ const MAYBE_LONE: u8 = 1;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-/// Strings of at least this many bytes are scanned eight bytes at a time.
-const WORDS_FROM: usize = 24;
-
-const ONES: u64 = 0x0101_0101_0101_0101;
-const HIGHS: u64 = 0x8080_8080_8080_8080;
-
-/// Whether some byte of `word` is zero.
-#[inline]
-fn has_zero(word: u64) -> bool {
-    word.wrapping_sub(ONES) & !word & HIGHS != 0
-}
-
-/// Whether some byte of `word` has a nonzero [`ESCAPE`] entry: a control character, `"`, `\`
-/// or the lead byte `ED` (which may start a lone surrogate).
-#[inline]
-fn needs_look(word: u64) -> bool {
-    // A byte below 0x20: subtracting 0x20 borrows into its high bit, which was clear.
-    let control = word.wrapping_sub(ONES * 0x20) & !word & HIGHS != 0;
-    control
-        || has_zero(word ^ (ONES * b'"' as u64))
-        || has_zero(word ^ (ONES * b'\\' as u64))
-        || has_zero(word ^ (ONES * 0xED))
-}
-
 /// Append `s` (canonical WTF-8) as a quoted, escaped JSON string literal.
 #[inline]
 pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
@@ -68,17 +44,7 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
     let mut run_start = 0;
     let mut lone = 0;
     let mut i = 0;
-    // Worth it only for longer text: a short string is done before a word pays for itself.
-    let by_words = s.len() >= WORDS_FROM;
     loop {
-        // Eight bytes at a time while none of them needs a look.
-        while by_words && i + 8 <= s.len() {
-            let word = u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
-            if needs_look(word) {
-                break;
-            }
-            i += 8;
-        }
         while i < s.len() && ESCAPE[s[i] as usize] == 0 {
             i += 1;
         }
@@ -142,21 +108,6 @@ mod tests {
             r#""\u0000\u0001\u000b\u001f""#
         );
         assert_eq!(esc("\u{7f}é😀\u{2028}"), "\"\u{7f}é😀\u{2028}\"");
-        // Long runs go eight bytes at a time; an escape at any offset is still found.
-        for at in 0..24 {
-            let mut text = "abcdefghijklmnopqrstuvwxyz".repeat(2);
-            text.insert(at, '"');
-            assert_eq!(esc(&text), format!("\"{}\"", text.replace('"', "\\\"")));
-            text.replace_range(at..at + 1, "\u{1f}");
-            assert_eq!(
-                esc(&text),
-                format!("\"{}\"", text.replace('\u{1f}', "\\u001f"))
-            );
-            text.replace_range(at..at + 1, "\\");
-            assert_eq!(esc(&text), format!("\"{}\"", text.replace('\\', "\\\\")));
-            text.replace_range(at..at + 1, "é\u{7f}");
-            assert_eq!(esc(&text), format!("\"{text}\""));
-        }
         // Hangul (an `ED` lead byte that is no surrogate) is copied.
         assert_eq!(esc("\u{D55C}\u{D7FF}"), "\"\u{D55C}\u{D7FF}\"");
     }
