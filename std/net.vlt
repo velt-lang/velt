@@ -104,8 +104,8 @@ export struct TcpStream {
 
   /**
    * Fails the operations in flight on this stream (a `write` to a peer that stopped reading
-   * would otherwise never finish) and every later one; nothing more is sent or received. The
-   * handle stays open until `close()`.
+   * would otherwise never finish; a `read` may see the end of the stream instead) and every
+   * later one; nothing more is sent or received. The handle stays open until `close()`.
    */
   abort() {
     velt_rt_tcp_abort(this.handle);

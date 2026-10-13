@@ -69,21 +69,21 @@ impl Ready {
     }
 }
 
-pub(crate) struct Lazy {
+struct Lazy {
     /// The setup future until it has completed; polled in place, so an operation that is dropped
     /// while it waits for the setup does not lose it.
     start: AsyncMutex<Option<Start>>,
     ready: OnceLock<Result<Ready, (io::ErrorKind, String)>>,
 }
 
-pub(crate) enum Io {
+enum Io {
     Tcp(TcpStream),
     Lazy(Lazy),
 }
 
 /// A stream plus the undecoded tail of a UTF-8 sequence split across `readString`s.
 pub struct StreamObj {
-    pub(crate) io: Io,
+    io: Io,
     pub(crate) utf8: Mutex<Utf8Decoder>,
     aborted: AtomicBool,
     abort: Notify,
@@ -177,8 +177,24 @@ impl StreamObj {
         }
     }
 
+    /// Reads what is available (at least 1 byte, at most `max`; empty only at end of stream).
+    pub(crate) async fn read(&self, max: u64) -> io::Result<Vec<u8>> {
+        match &self.io {
+            Io::Tcp(stream) => read_chunk(stream, max).await,
+            Io::Lazy(lazy) => self.read_lazy(lazy, max).await,
+        }
+    }
+
+    /// Writes all of `data`.
+    pub(crate) async fn write(&self, data: &[u8]) -> io::Result<()> {
+        match &self.io {
+            Io::Tcp(stream) => self.write_tcp(stream, data).await,
+            Io::Lazy(lazy) => self.write_lazy(lazy, data).await,
+        }
+    }
+
     /// `read` on a lazy stream.
-    pub(crate) async fn read_lazy(&self, lazy: &Lazy, max: u64) -> io::Result<Vec<u8>> {
+    async fn read_lazy(&self, lazy: &Lazy, max: u64) -> io::Result<Vec<u8>> {
         match self.until_abort(self.set_up(lazy)).await? {
             Ready::Tcp {
                 stream,
@@ -212,7 +228,7 @@ impl StreamObj {
     }
 
     /// Writes all of `data` to a raw socket.
-    pub(crate) async fn write_tcp(&self, stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
+    async fn write_tcp(&self, stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
         while !data.is_empty() {
             match stream.try_write(data) {
                 Ok(n) => data = &data[n..],
@@ -227,7 +243,7 @@ impl StreamObj {
     }
 
     /// `write` on a lazy stream.
-    pub(crate) async fn write_lazy(&self, lazy: &Lazy, data: &[u8]) -> io::Result<()> {
+    async fn write_lazy(&self, lazy: &Lazy, data: &[u8]) -> io::Result<()> {
         match self.until_abort(self.set_up(lazy)).await? {
             Ready::Tcp { stream, .. } => self.write_tcp(stream, data).await,
             Ready::Split { w, .. } => {
@@ -238,6 +254,21 @@ impl StreamObj {
                 })
                 .await
             }
+        }
+    }
+
+    /// The raw socket when operations can go straight to it: a plain TCP stream, or a lazy one
+    /// that turned out to be a raw socket, once the bytes read ahead of it are delivered. (A
+    /// stream that was aborted has its socket shut down: a read sees the end of the stream.)
+    pub(crate) fn plain(&self) -> Option<&TcpStream> {
+        match &self.io {
+            Io::Tcp(s) => Some(s),
+            Io::Lazy(l) => match l.ready.get() {
+                Some(Ok(Ready::Tcp {
+                    stream, has_prefix, ..
+                })) if !has_prefix.load(Ordering::Acquire) => Some(stream),
+                _ => None,
+            },
         }
     }
 

@@ -15,7 +15,8 @@
   - `write(data: string)`, `writeBytes(data: u8[])`.
   - `shutdown()`: half-close.
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
-    otherwise never finish) and every later one. The handle stays open until `close()`.
+    otherwise never finish; a `read` may see the end of the stream instead) and every later
+    one. The handle stays open until `close()`.
   - `peerAddr(): string`, `close()`.
 - `connectTls(addr, opts?: TlsConnectOptions { serverName?; ca?; alpn?: string[] }):
   Promise<TcpStream>`: a TLS connection (rustls), resolved once the handshake is done. The
