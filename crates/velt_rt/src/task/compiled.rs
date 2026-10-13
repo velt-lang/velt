@@ -221,6 +221,11 @@ macro_rules! with_state_store {
         } else if size <= 256 {
             type $S = $crate::task::compiled::Inline<256>;
             $body
+        } else if size <= 512 {
+            // A task per connection is often just past 256 bytes (a session that receives,
+            // sends and closes): it need not take the 1024 its neighbours do.
+            type $S = $crate::task::compiled::Inline<512>;
+            $body
         } else {
             type $S = $crate::task::compiled::Inline<1024>;
             $body

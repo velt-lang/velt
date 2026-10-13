@@ -4,6 +4,7 @@
 import { IoError } from "velt:io";
 import { TcpStream } from "velt:net";
 import { timeout } from "velt:task";
+import { OP_CLOSE } from "velt:websocket/frame";
 import {
   SendQueue,
   HIGH_WATER,
@@ -146,4 +147,24 @@ export async function finish(stream: TcpStream, tx: Tx, flushMs: i64): Promise<v
     stream.abort();
     await untilStopped(tx);
   }
+}
+
+/**
+ * The rest of `close()` once the close frame `payload` is known: queues it, waits (bounded) for
+ * the flusher to write it and stop, and releases the queue. Returns the topics the connection
+ * was subscribed to (to leave), or null if the handle was released already.
+ */
+export async function closeDown(
+  stream: TcpStream,
+  tx: Tx,
+  payload: u8[],
+): Promise<string[] | null> {
+  const r = tx.with((q) => q.pushBytes(OP_CLOSE, payload));
+  if ((r & STATUS) == RELEASED) {
+    return null;
+  }
+  settleQuietly(stream, tx, r);
+  // Also when the close frame was queued earlier (the reply to the peer's): it goes out first.
+  await finish(stream, tx, CLOSE_FLUSH_MS);
+  return tx.with((q) => q.release());
 }
