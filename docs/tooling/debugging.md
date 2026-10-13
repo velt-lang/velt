@@ -10,7 +10,7 @@ builds and debugs with nothing to configure ([VS Code](#vs-code)).
 | Build | Line info (`.vlt` file:line) | Variables | Use it for |
 |---|---|---|---|
 | `velt build` (Cranelift, the debug default) | yes; on Windows when the bundled linker links it (the default of a released toolchain), else function symbols only | as line info | stepping, breakpoints, backtraces, inspecting values |
-| `velt run`, `velt test` | as `velt build` | no (a few percent faster without) | running and testing |
+| `velt run`, `velt test` | as `velt build` | no (values stay in registers, which is faster) | running and testing |
 | `velt build --backend llvm` | yes, unoptimized | no | stepping, breakpoints, backtraces |
 | `velt build --release -g` | yes, optimized (LLVM when clang is installed) | no | profiling, crash addresses |
 | `velt dev --exe` | as `velt build` | as `velt build` | attaching to a running version |
