@@ -98,7 +98,10 @@ that leaves more than 1 MiB queued for the connection completes only once the wr
 up, so a slow peer slows its sender down instead of filling memory. A connection that broke is reported by the next `send` or `receive`
 (`IoError`). `close` returns once everything sent before it is written; a peer that stops reading gets 30
 seconds to take what is queued after `close`, then the connection is shut down. An idle
-connection keeps no read buffer, no write buffer and no task of its own.
+connection keeps no read buffer, no write buffer and no task of its own (about 3.3 KB of
+memory per open connection in total). A reply (a `send` by the task that just received a message on
+the connection, with no more input waiting) is written at once: there is nothing to batch it
+with.
 
 On the server side the socket works once the handler has returned the `101`: a `send` before
 that is queued and goes out right after the response, in order, and a `receive` waits for it.

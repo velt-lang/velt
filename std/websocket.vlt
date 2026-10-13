@@ -1,7 +1,7 @@
 // std/websocket: WebSocket connections (RFC 6455), accepted by a std/http server or opened as a
 // client (`ws://`, `wss://`). Written in Velt on std/net streams: framing in
-// std/websocket/frame, the receiving side in std/websocket/reader, the sending side in
-// std/websocket/queue and writer, the handshake in std/websocket/handshake, topics in
+// std/websocket/frame, the receiving side in std/websocket/reader and receive, the sending side
+// in std/websocket/queue and writer, the handshake in std/websocket/handshake, topics in
 // std/websocket/topics.
 //
 // Server: inside a `serve` handler, `upgradeWebSocket(req)` claims the connection and gives
@@ -35,11 +35,11 @@ import {
   writeHead,
 } from "velt:websocket/frame";
 import { acceptKey, open } from "velt:websocket/handshake";
-import { DIRECT, QUEUED, SendQueue } from "velt:websocket/queue";
+import { DIRECT, QUEUED, START, SendQueue } from "velt:websocket/queue";
 import { BINARY, CLOSED, READ, Reader, Step } from "velt:websocket/reader";
 import { READ_CHUNK, ReadTurn, other } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
-import { Tx, closeDown, closedHandle, settle, writeDirect } from "velt:websocket/writer";
+import { Tx, closeDown, closedHandle, flush, settle, writeDirect } from "velt:websocket/writer";
 
 declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
 
@@ -55,6 +55,38 @@ export class WsMessage {
     this.text = text;
     this.data = data;
   }
+}
+
+// Queueing a frame, in plain functions: `send` and `receive` keep only what they await (a task
+// per connection holds their state, so its size is memory per connection), and the queue is
+// used as it is in the handle, so a send that only queues touches no reference count.
+function pushText(ws: WebSocket, text: string): i64 {
+  if (ws.tx == null) {
+    throw closedHandle();
+  }
+  return ws.tx!.with((q) => q.pushText(OP_TEXT, text));
+}
+
+function pushBytes(ws: WebSocket, data: u8[]): i64 {
+  if (ws.tx == null) {
+    throw closedHandle();
+  }
+  return ws.tx!.with((q) => q.pushBytes(OP_BINARY, data));
+}
+
+// Starts what sends a frame queued with status `r` (not `QUEUED`); false if the caller has to
+// wait or the frame was refused (`settle` then).
+function begun(ws: WebSocket, r: i64): bool {
+  if (r == DIRECT) {
+    // Most likely a reply from the task that reads this connection: written here.
+    writeDirect(TcpStream { handle: ws.handle }, ws.tx!);
+    return true;
+  }
+  if (r == START) {
+    spawn(flush(TcpStream { handle: ws.handle }, ws.tx!.clone()));
+    return true;
+  }
+  return false;
 }
 
 // The connection's queue (plain functions like this one keep temporaries out of `receive`'s
@@ -133,52 +165,23 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     return tx;
   }
 
-  // Queues a text frame and starts what sends it; the wait, if the caller has one (the queue
-  // is past its high-water mark). `send` and `receive` do their work in such plain functions
-  // and keep only what they await: a task per connection holds their state, so its size is
-  // memory per connection.
-  private queueText(text: string): Promise<void, IoError> | null {
-    const tx = this.sending();
-    const r = tx.with((q) => q.pushText(OP_TEXT, text));
-    if (r == QUEUED) {
-      return null;
-    }
-    if (r == DIRECT) {
-      // A reply from the task that reads this connection: written here, no task needed.
-      writeDirect(this.stream(), tx);
-      return null;
-    }
-    return settle(this.stream(), tx, r);
-  }
-
-  private queueBytes(data: u8[]): Promise<void, IoError> | null {
-    const tx = this.sending();
-    const r = tx.with((q) => q.pushBytes(OP_BINARY, data));
-    if (r == QUEUED) {
-      return null;
-    }
-    if (r == DIRECT) {
-      writeDirect(this.stream(), tx);
-      return null;
-    }
-    return settle(this.stream(), tx, r);
-  }
-
   /**
    * Sends a text message: returns once it is queued (everything queued goes out in one write),
    * waiting while more than 1 MiB is queued for this connection.
    */
   async send(text: string): Promise<void> {
-    const waiting = this.queueText(text);
-    if (waiting != null) {
+    const r = pushText(this, text);
+    if (r != QUEUED && !begun(this, r)) {
+      const waiting = settle(this.stream(), queueOf(this), r);
       await waiting;
     }
   }
 
   /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
-    const waiting = this.queueBytes(data);
-    if (waiting != null) {
+    const r = pushBytes(this, data);
+    if (r != QUEUED && !begun(this, r)) {
+      const waiting = settle(this.stream(), queueOf(this), r);
       await waiting;
     }
   }
