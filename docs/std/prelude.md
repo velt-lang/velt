@@ -229,7 +229,11 @@ Differences from JavaScript:
   wherever it crosses threads. A function value that is not written as a closure literal where
   it crosses (one a factory returned, or held in a field) does not show what it captured: if it
   captured a weak collection, the program panics when it is handed to another thread
-  ("a `WeakRef` cannot go to another thread"), before the other thread can use it.
+  ("a `WeakRef` cannot go to another thread"), before the other thread can use it. A promise
+  settled with such a function value (`resolve(f)` in `new Promise<() => number>(...)`, or
+  through `Promise.withResolvers`) panics too, also when the same task awaits it (Node runs
+  it). A class that extends a weak collection (`class Cache extends WeakMap<K, V>`) is one, and
+  follows the same rules.
 - **Not module constants.** `const cache = new WeakMap<K, V>()` at the top of a module is an
   error, as for any module constant made by a call with effects: make it in `main` (or a
   class) and pass it on.

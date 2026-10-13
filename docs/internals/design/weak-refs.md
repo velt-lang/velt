@@ -177,7 +177,13 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   them as having something to transfer so the glue is reached. Values holding no weak class get
   the same transfer glue as before (`bench/vir_diff.sh`: the benchmarks' VIR is unchanged). So
   the panic happens before anything crosses: no race
-  (`tests/golden/std/weakref_transfer_{spawn,field,timer,channel}.vlt`). A function value made
+  (`tests/golden/std/weakref_transfer_{spawn,field,timer,channel}.vlt`). The transfer goes by the
+  object's own class, not the written one: a class in a hierarchy with a vtable may be any
+  subclass, so `holds_counted` takes it as having something to transfer, like an interface
+  value, and the glue dispatches through the vtable to the subclass's fields
+  (`weakref_transfer_base_{class,result}.vlt`). A class that extends a weak collection
+  (`class Cache extends WeakMap<K, V>`) is one in every check: sema's `Ctx::is_weak_class` and
+  lowering's `Cx::weak_class` go by the root class (`weak_subclass*.vlt`). A function value made
   shared between threads (`shared(...)`, a `Mutex`'s value, an HTTP handler) panics in the
   many-threads check the same way. `async main` keeps its maps across `await`s and spawned tasks
   use maps of their own at once (`weakmap_async.vlt`).
