@@ -1,0 +1,96 @@
+// check: no leaks
+// Topics beyond the basics (websocket_topics): a client-side connection can subscribe too, and
+// gets every published frame masked with a key of its own (the server would fail the connection
+// otherwise); a subscription that races an unsubscribe emptying the topic is kept; a closed
+// connection has left its topics.
+import { serve } from "velt:http";
+import { channel, Channel } from "velt:channel";
+import { WebSocket, upgradeWebSocket, connectWebSocket, publish } from "velt:websocket";
+
+async function handle(req: Request, socks: Channel<WebSocket>): Promise<Response> {
+  const up = upgradeWebSocket(req);
+  await socks.send(up.socket);
+  return up.response;
+}
+
+// Subscribes and unsubscribes in a loop; a publish while subscribed must reach the connection.
+async function churn(ws: WebSocket, rounds: i64, check: bool): Promise<i64> {
+  let missed: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    await ws.subscribe("race");
+    if (check && publish("race", "x") < 1) {
+      missed++;
+    }
+    ws.unsubscribe("race");
+    if (i % 64 == 0) {
+      await yieldNow();
+    }
+  }
+  return missed;
+}
+
+// Receives until the connection ends; how many messages came.
+async function drain(ws: WebSocket): Promise<i64> {
+  let n: i64 = 0;
+  while ((await ws.receive()) != null) {
+    n++;
+  }
+  return n;
+}
+
+async function main() {
+  const socks = channel<WebSocket>();
+  const server = await serve(
+    { port: 0 },
+    async (req: Request): Promise<Response> => await handle(req, socks),
+  );
+  const url = `ws://127.0.0.1:${server.port}/`;
+
+  // The client side of a connection subscribes: a publish goes out from it, masked.
+  const c1 = await connectWebSocket(url);
+  const s1 = (await socks.receive())!;
+  await c1.subscribe("up");
+  console.log("to the client side:", publish("up", "from a publish"));
+  console.log((await s1.receive())?.text ?? "none");
+  console.log("except itself:", c1.publish("up", "nobody"));
+  console.log("bytes:", c1.publishBytes("up", [7u8]), publish("up", "again"));
+  console.log((await s1.receive())?.text ?? "none");
+  c1.unsubscribe("up");
+  console.log("after unsubscribe:", publish("up", "gone"));
+
+  // Two server-side connections churn on one topic from two tasks.
+  const c2 = await connectWebSocket(url);
+  const s2 = (await socks.receive())!;
+  const c3 = await connectWebSocket(url);
+  const s3 = (await socks.receive())!;
+  const counted = spawn(drain(c2));
+  const other = spawn(drain(c3));
+  const a = spawn(churn(s2, 2000, true));
+  const b = spawn(churn(s3, 2000, false));
+  console.log("missed while subscribed:", await a, await b);
+  console.log("left over:", publish("race", "y"));
+
+  // Closing a subscribed connection takes it out of its topics.
+  await s2.subscribe("race");
+  await s3.subscribe("race");
+  await s3.subscribe("other");
+  console.log("both:", publish("race", "z"));
+  await s3.close();
+  console.log("after one closed:", publish("race", "z"), publish("other", "z"));
+  try {
+    await s3.subscribe("race");
+  } catch (e) {
+    console.log("subscribe on a closed handle:", e.code);
+  }
+  await s2.close();
+  console.log("after both closed:", publish("race", "z"));
+  console.log("received something:", (await counted) > 0, (await other) >= 0);
+
+  await c1.close();
+  while ((await s1.receive()) != null) {}
+  await s1.close();
+  await c2.close();
+  await c3.close();
+  await server.shutdown();
+  socks.close();
+}
