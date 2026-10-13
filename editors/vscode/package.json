@@ -3,7 +3,12 @@
   "displayName": "Velt",
   "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`), and F5 debugging.",
   "version": "0.1.0",
-  "publisher": "velt-lang",
+  "publisher": "andtii",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#16161e",
+    "theme": "dark"
+  },
   "license": "MIT OR Apache-2.0",
   "private": true,
   "engines": {
@@ -43,7 +48,11 @@
         "extensions": [
           ".vlt"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/file-icon.png",
+          "dark": "./images/file-icon.png"
+        }
       }
     ],
     "grammars": [
