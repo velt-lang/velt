@@ -1,0 +1,9 @@
+peer is the server: true
+part 0;part 1;part 2; 100028 |100021
+named|5
+untrusted: true
+wrong name: true
+EINVAL true
+server saw: [ true, true ]
+read failed: the stream was aborted
+write failed: the stream was aborted
