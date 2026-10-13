@@ -1,51 +1,40 @@
-// std/websocket/receive (std-internal): receiving a message, the steps of a connection's
-// `Reader` (std/websocket/reader) driven by the task that asked: it reads from the stream when
-// the reader needs bytes, answers pings and the peer's close frame through the send queue, and
-// fails the connection on a protocol error. Not part of the public API.
+// std/websocket/receive (std-internal): what receiving a message needs besides the steps of a
+// connection's `Reader` (std/websocket/reader), which `WebSocket.receive` drives itself: the
+// turn of the task that reads from the stream, and the steps that are neither a message nor a
+// read (waiting for another task's read, answering a ping or the peer's close frame, failing
+// the connection on a protocol error). Not part of the public API.
 
 import { IoError } from "velt:io";
 import { TcpStream } from "velt:net";
 import { OP_CLOSE, OP_PONG, closePayload } from "velt:websocket/frame";
-import { BINARY, CLOSE, CLOSED, FAIL, PING, READ, Rx, Step, WAIT } from "velt:websocket/reader";
+import { CLOSE, CLOSED, FAIL, PING, Step, WAIT } from "velt:websocket/reader";
 import { Tx, closedHandle, settleQuietly } from "velt:websocket/writer";
 
+declare function velt_rt_task_id(): u64;
+
 /** Bytes read at a time. */
-const READ_CHUNK: u64 = 16384;
+export const READ_CHUNK: u64 = 16384;
 
-// Held by the task that reads from the stream: if it is dropped before it handed over what it
-// read, the next task may read.
-class ReadTurn {
-  rx: Rx | null;
+/**
+ * Held by the task that reads from the stream (its step was `READ`): if it is dropped before
+ * it handed over what it read, or its read fails, the next task may read.
+ */
+export class ReadTurn {
+  tx: Tx | null;
 
-  constructor(rx: Rx) {
-    this.rx = rx;
+  constructor(tx: Tx) {
+    this.tx = tx;
   }
 
   done() {
-    this.rx = null;
+    this.tx = null;
   }
 
   [Symbol.dispose]() {
-    const rx = this.rx;
-    if (rx != null) {
-      rx.with((r) => r.abandon());
+    const tx = this.tx;
+    if (tx != null) {
+      tx.with((q) => q.rx.abandon());
     }
-  }
-}
-
-// Reads more bytes into the reader (the caller got `READ`).
-async function fill(stream: TcpStream, rx: Rx): Promise<void> {
-  const turn = new ReadTurn(rx.clone());
-  const chunk = await stream.read(READ_CHUNK);
-  turn.done();
-  rx.with((r) => r.feed(chunk));
-}
-
-// Waits until the task that is reading from the stream is done.
-async function turn(rx: Rx): Promise<void> {
-  const reading = rx.with((r) => r.awaitTurn());
-  if (reading != null) {
-    await reading.receive();
   }
 }
 
@@ -72,26 +61,19 @@ function answer(stream: TcpStream, tx: Tx, step: Step): bool {
 }
 
 /**
- * The next text or binary message (`TEXT`, `BINARY`), or `CLOSED` once the peer has closed the
- * connection, given `first`, what the reader's `next` said when the caller looked (callers
- * return a message that is already there themselves, so this runs only when there is something
- * to wait for or to answer). Pings are answered and the peer's close frame is replied to
- * through `tx`; a protocol error fails the connection (a close frame with the matching code)
- * and throws. What is rare is kept out of this function's own state: one is allocated per
- * waiting `receive`, so its size is memory per idle connection.
+ * Handles `step`, which is neither a message nor `READ`, and returns the reader's next step
+ * (`CLOSED` after the peer's close frame). Rare, so it is a function of its own: its state is
+ * allocated when it runs instead of being part of every `receive`.
  */
-export async function receive(stream: TcpStream, tx: Tx, rx: Rx, first: Step): Promise<Step> {
-  let step = first;
-  while (step.kind > BINARY) {
-    if (step.kind == READ) {
-      await fill(stream, rx);
-    } else if (step.kind == WAIT) {
-      const waiting = turn(rx);
-      await waiting;
-    } else if (answer(stream, tx, step)) {
-      return new Step(CLOSED);
+export async function other(stream: TcpStream, tx: Tx, step: Step): Promise<Step> {
+  if (step.kind == WAIT) {
+    const reading = tx.with((q) => q.rx.awaitTurn());
+    if (reading != null) {
+      await reading.receive();
     }
-    step = rx.with((r) => r.next(false));
+  } else if (answer(stream, tx, step)) {
+    return new Step(CLOSED);
   }
-  return step;
+  const task = velt_rt_task_id();
+  return tx.with((q) => q.next(task, false));
 }

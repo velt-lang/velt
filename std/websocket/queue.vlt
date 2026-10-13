@@ -9,7 +9,7 @@
 import { Channel, channel } from "velt:channel";
 import { ByteBuf, maskKey, setText } from "velt:websocket/bytes";
 import { OP_CLOSE, headSize, writeHead } from "velt:websocket/frame";
-import { Rx } from "velt:websocket/reader";
+import { Reader, Step } from "velt:websocket/reader";
 
 /** Queued bytes past which a `send` completes only once the flusher has caught up. */
 export const HIGH_WATER: i64 = 1048576;
@@ -54,12 +54,17 @@ export class SendQueue {
   drained: Channel<bool> | null = null;
   /** The topics this connection is subscribed to (std/websocket/topics). */
   topics: string[] = [];
-  /** The connection's receiving side: a `WebSocket` holds the queue, and finds it here. */
-  rx: Rx;
+  /**
+   * The connection's receiving side, under the same lock as the queue: a message costs fewer
+   * lock round trips, and a `WebSocket` is one shared value. (A frame is unmasked and copied
+   * out under the lock, so a very large incoming message holds up sends to its connection for
+   * as long as that takes.)
+   */
+  rx: Reader;
   /** The task that last received on this connection (0: none yet). */
   reader: u64 = 0;
 
-  constructor(client: bool, rx: Rx) {
+  constructor(client: bool, rx: Reader) {
     this.client = client;
     this.rx = rx;
   }
@@ -82,16 +87,22 @@ export class SendQueue {
       return r;
     }
     this.flushing = true;
-    if (first && task != 0 && task == this.reader && this.rx.with((x) => x.drained())) {
+    if (first && task != 0 && task == this.reader && this.rx.drained()) {
       return r | DIRECT;
     }
     return r | START;
   }
 
-  /** The receiving side, for a `receive` by task `task`. */
-  receiving(task: u64): Rx {
+  /** The reader's next step, for a `receive` by task `task` (`first`: its first step). */
+  next(task: u64, first: bool): Step {
     this.reader = task;
-    return this.rx;
+    return this.rx.next(first);
+  }
+
+  /** What the reading task read (nothing: the stream ended), and the reader's next step. */
+  fed(chunk: u8[]): Step {
+    this.rx.feed(chunk);
+    return this.rx.next(false);
   }
 
   /**
@@ -221,6 +232,7 @@ export class SendQueue {
       while (ch.tryReceive() != null) {}
       this.drained = null;
     }
+    this.rx.release();
     const topics = this.topics;
     this.topics = [];
     return topics;

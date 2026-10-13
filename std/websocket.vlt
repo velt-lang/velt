@@ -20,7 +20,7 @@
 // has closed); pings are answered automatically. Only HTTP/1.1 upgrades are supported (HTTP/2
 // clients fall back to HTTP/1.1 for WebSockets).
 
-import { IoError } from "velt:io";
+import { IoError, IoResult, ioError } from "velt:io";
 import { isUpgradeRequest, upgradeConnection } from "velt:http";
 import { Request } from "velt:fetch/request";
 import { Response } from "velt:fetch/response";
@@ -36,12 +36,13 @@ import {
 } from "velt:websocket/frame";
 import { acceptKey, open } from "velt:websocket/handshake";
 import { DIRECT, QUEUED, SendQueue } from "velt:websocket/queue";
-import { BINARY, CLOSED, Reader } from "velt:websocket/reader";
-import { receive } from "velt:websocket/receive";
+import { BINARY, CLOSED, READ, Reader, Step } from "velt:websocket/reader";
+import { READ_CHUNK, ReadTurn, other } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
 import { Tx, closeDown, closedHandle, settle, writeDirect } from "velt:websocket/writer";
 
 declare function velt_rt_task_id(): u64;
+declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
 
 /** One received message: text, or binary data. */
 export class WsMessage {
@@ -55,6 +56,43 @@ export class WsMessage {
     this.text = text;
     this.data = data;
   }
+}
+
+// The connection's queue (plain functions like this one keep temporaries out of `receive`'s
+// state).
+function queueOf(ws: WebSocket): Tx {
+  const tx = ws.tx;
+  if (tx == null) {
+    throw closedHandle();
+  }
+  return tx;
+}
+
+function readTurn(tx: Tx): ReadTurn {
+  return new ReadTurn(tx.clone());
+}
+
+// The reader's first step for a `receive` by the calling task.
+function firstStep(tx: Tx): Step {
+  const task = velt_rt_task_id();
+  return tx.with((q) => q.next(task, true));
+}
+
+// What the reading task read, handed to the reader; its next step. A failed read is thrown.
+function fedStep(tx: Tx, r: IoResult<u8[]>, turn: ReadTurn): Step {
+  if (r.code != 0) {
+    throw ioError(r.code, r.message);
+  }
+  turn.done();
+  const chunk = r.value;
+  return tx.with((q) => q.fed(chunk));
+}
+
+function message(step: Step): WsMessage | null {
+  if (step.kind == CLOSED) {
+    return null;
+  }
+  return new WsMessage(step.kind == BINARY, step.text, step.data);
 }
 
 // A whole unmasked frame, for `publish`.
@@ -97,52 +135,75 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     return tx;
   }
 
+  // Queues a text frame and starts what sends it; the wait, if the caller has one (the queue
+  // is past its high-water mark). `send` and `receive` do their work in such plain functions
+  // and keep only what they await: a task per connection holds their state, so its size is
+  // memory per connection.
+  private queueText(text: string): Promise<void, IoError> | null {
+    const tx = this.sending();
+    const task = velt_rt_task_id();
+    const r = tx.with((q) => q.pushText(OP_TEXT, text, task));
+    if (r == QUEUED) {
+      return null;
+    }
+    if (r == DIRECT) {
+      // A reply from the task that reads this connection: written here, no task needed.
+      writeDirect(this.stream(), tx);
+      return null;
+    }
+    return settle(this.stream(), tx, r);
+  }
+
+  private queueBytes(data: u8[]): Promise<void, IoError> | null {
+    const tx = this.sending();
+    const task = velt_rt_task_id();
+    const r = tx.with((q) => q.pushBytes(OP_BINARY, data, task));
+    if (r == QUEUED) {
+      return null;
+    }
+    if (r == DIRECT) {
+      writeDirect(this.stream(), tx);
+      return null;
+    }
+    return settle(this.stream(), tx, r);
+  }
+
   /**
    * Sends a text message: returns once it is queued (everything queued goes out in one write),
    * waiting while more than 1 MiB is queued for this connection.
    */
   async send(text: string): Promise<void> {
-    const tx = this.sending();
-    const task = velt_rt_task_id();
-    const r = tx.with((q) => q.pushText(OP_TEXT, text, task));
-    if (r == DIRECT) {
-      // A reply from the task that reads this connection: written here, no task needed.
-      writeDirect(this.stream(), tx);
-    } else if (r != QUEUED) {
-      // A promise of its own (here and below): what is rare, or waits, stays out of the state
-      // of every task that calls this, so a task per connection stays small.
-      const settled = settle(this.stream(), tx, r);
-      await settled;
+    const waiting = this.queueText(text);
+    if (waiting != null) {
+      await waiting;
     }
   }
 
   /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
-    const tx = this.sending();
-    const task = velt_rt_task_id();
-    const r = tx.with((q) => q.pushBytes(OP_BINARY, data, task));
-    if (r == DIRECT) {
-      writeDirect(this.stream(), tx);
-    } else if (r != QUEUED) {
-      const settled = settle(this.stream(), tx, r);
-      await settled;
+    const waiting = this.queueBytes(data);
+    if (waiting != null) {
+      await waiting;
     }
   }
 
   /** The next message, or null once the peer has closed the connection. */
   async receive(): Promise<WsMessage | null> {
-    const tx = this.sending();
-    const task = velt_rt_task_id();
-    const rx = tx.with((q) => q.receiving(task));
-    let step = rx.with((r) => r.next(true));
-    if (step.kind > BINARY) {
-      const waited = receive(this.stream(), tx, rx, step);
-      step = await waited;
+    const tx = queueOf(this);
+    let step = firstStep(tx);
+    // The read is the only thing awaited in place: a task that waits here is what an idle
+    // connection costs.
+    while (step.kind > BINARY) {
+      if (step.kind == READ) {
+        const turn = readTurn(tx);
+        const r = await velt_rt_tcp_read(this.handle, READ_CHUNK);
+        step = fedStep(tx, r, turn);
+      } else {
+        const handled = other(this.stream(), tx, step);
+        step = await handled;
+      }
     }
-    if (step.kind == CLOSED) {
-      return null;
-    }
-    return new WsMessage(step.kind == BINARY, step.text, step.data);
+    return message(step);
   }
 
   /**
@@ -186,20 +247,12 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
    * Leaving the loop early leaves the connection open.
    */
   async *[Symbol.asyncIterator](): AsyncIterator<WsMessage, IoError> {
-    const stream = this.stream();
-    const tx = this.sending();
-    const task = velt_rt_task_id();
-    const rx = tx.with((q) => q.receiving(task));
     while (true) {
-      let step = rx.with((r) => r.next(true));
-      if (step.kind > BINARY) {
-        const waited = receive(stream, tx, rx, step);
-        step = await waited;
-      }
-      if (step.kind == CLOSED) {
+      const m = await this.receive();
+      if (m == null) {
         return;
       }
-      yield new WsMessage(step.kind == BINARY, step.text, step.data);
+      yield m;
     }
   }
 
@@ -230,7 +283,6 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     for (const topic of topics) {
       leave(this.handle, topic);
     }
-    tx.with((q) => q.rx).with((reader) => reader.release());
     stream.close();
   }
 }
@@ -265,11 +317,7 @@ export function isWebSocketRequest(req: Request): bool {
 function connection(stream: TcpStream, client: bool, prefix: u8[]): WebSocket {
   return WebSocket {
     handle: stream.handle,
-    tx: shared(
-      new Mutex<SendQueue>(
-        new SendQueue(client, shared(new Mutex<Reader>(new Reader(!client, prefix)))),
-      ),
-    ),
+    tx: shared(new Mutex<SendQueue>(new SendQueue(client, new Reader(!client, prefix)))),
   };
 }
 
