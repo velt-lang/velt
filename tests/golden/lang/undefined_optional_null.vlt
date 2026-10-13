@@ -1,0 +1,72 @@
+// More of `undefined` (issue #930): a destructuring default leaves a present `null` of an
+// optional field (`a?: T | null`) alone and applies when the field is absent, `void` and
+// `typeof` start a branch of `? :`, and `return undefined;` in a `void` function is `return;`.
+// Output from Node.
+type O = { b?: string | null; c?: string | null; d?: string; e: string | null };
+
+function fields({ b = "B", c = "C", d = "D", e = "E" }: O) {
+  console.log(b, c, d, e);
+}
+
+function pick(c: boolean, v: number | undefined): number | undefined {
+  return c ? void 0 : v;
+}
+
+function kind(c: boolean | string): string {
+  return c ? typeof c : "n";
+}
+
+function matches(s: string, c: boolean): boolean {
+  return c ? /a+/.test(s) : false;
+}
+
+class Count {
+  n = 0;
+}
+
+function bump(s: Count): void {
+  s.n++;
+  return undefined;
+}
+
+function bumpUnless(s: Count, c: boolean): void {
+  if (c) return undefined;
+  s.n += 10;
+}
+
+async function bumpLater(s: Count): Promise<void> {
+  s.n += 100;
+  return undefined;
+}
+
+async function main() {
+  const o: { b?: number | null; c?: number | null } = { b: null };
+  const { b = 6, c = 7 } = o;
+  console.log(b, c);
+  fields({ b: null, e: null });
+  fields({ c: "c", d: "d", e: "e" });
+  // Written after the literal: present, and still `null`.
+  const p: O = { e: null };
+  p.b = null;
+  const { b: b2 = "x", c: c2 = "y" } = p;
+  console.log(b2, c2);
+  // Nested, and a default that is not evaluated when the field is present.
+  const n: { in: { b?: number | null } } = { in: { b: null } };
+  const {
+    in: { b: b3 = 1 },
+  } = n;
+  console.log(b3);
+  let count = 0;
+  const q: { b?: number | null } = { b: null };
+  const { b: b4 = ++count } = q;
+  console.log(b4, count);
+  console.log(pick(true, 1), pick(false, 1));
+  console.log(kind(true), kind(""), kind("s"));
+  console.log(matches("caat", true), matches("caat", false));
+  const s = new Count();
+  bump(s);
+  bumpUnless(s, true);
+  bumpUnless(s, false);
+  await bumpLater(s);
+  console.log(s.n);
+}
