@@ -14,6 +14,7 @@ import {
   RELEASED,
   STATUS,
   START,
+  DIRECT,
 } from "velt:websocket/queue";
 
 export type Tx = shared<Mutex<SendQueue>>;
@@ -39,24 +40,59 @@ function quietShutdown(stream: TcpStream) {
  * for the upgrade. After the close frame, or a failed write, the socket is shut down and the
  * queue is stopped.
  */
-export async function flush(stream: TcpStream, tx: Tx): Promise<void> {
+export async function flush(stream: TcpStream, tx: Tx, rest: u8[] = []): Promise<void> {
+  // `rest`: what `writeDirect` could not write at once goes out first.
+  let batch: u8[] | null = rest;
   while (true) {
-    const batch = tx.with((q) => q.take());
     if (batch == null) {
       quietShutdown(stream);
       tx.with((q) => q.stop("EPIPE"));
       return;
     }
-    if (batch.length == 0) {
+    const size = batch.length as i64;
+    // Usually the socket takes the batch at once, and there is nothing to wait for.
+    const wrote = size == 0 ? 0 : stream.tryWrite(batch);
+    if (wrote < size) {
+      try {
+        await stream.writeBytes(wrote == 0 ? batch : batch.slice(wrote));
+      } catch (e) {
+        quietShutdown(stream);
+        tx.with((q) => q.stop(e.code));
+        return;
+      }
+    }
+    batch = tx.with((q) => q.take());
+    if (batch != null && batch.length == 0) {
       return;
     }
-    try {
-      await stream.writeBytes(batch);
-    } catch (e) {
-      quietShutdown(stream);
-      tx.with((q) => q.stop(e.code));
-      return;
-    }
+  }
+}
+
+/**
+ * Writes the queue to the socket from the calling task (`DIRECT`: a reply by the connection's
+ * own reading task, with nothing to batch it with). No task is started unless the socket does
+ * not take everything at once, or more was queued meanwhile.
+ */
+export function writeDirect(stream: TcpStream, tx: Tx) {
+  const batch = tx.with((q) => q.take());
+  if (batch == null || batch.length == 0) {
+    spawn(flush(stream, tx.clone()));
+    return;
+  }
+  const wrote = stream.tryWrite(batch);
+  if (wrote < (batch.length as i64)) {
+    spawn(flush(stream, tx.clone(), wrote == 0 ? batch : batch.slice(wrote)));
+  } else if (tx.with((q) => q.directDone())) {
+    spawn(flush(stream, tx.clone()));
+  }
+}
+
+/** Starts what a queued frame's status `r` asks for: a flusher (`START`) or a direct write. */
+export function start(stream: TcpStream, tx: Tx, r: i64) {
+  if ((r & DIRECT) != 0) {
+    writeDirect(stream, tx);
+  } else if ((r & START) != 0) {
+    spawn(flush(stream, tx.clone()));
   }
 }
 
@@ -105,9 +141,7 @@ async function room(tx: Tx): Promise<void> {
  * idle, waits for room past the high-water mark, throws if the frame was not queued.
  */
 export async function settle(stream: TcpStream, tx: Tx, r: i64): Promise<void> {
-  if ((r & START) != 0) {
-    spawn(flush(stream, tx.clone()));
-  }
+  start(stream, tx, r);
   const status = r & STATUS;
   if (status == OVER) {
     await room(tx);
@@ -118,8 +152,8 @@ export async function settle(stream: TcpStream, tx: Tx, r: i64): Promise<void> {
 
 /** `settle` for frames the connection sends by itself (pongs, close replies): never throws. */
 export function settleQuietly(stream: TcpStream, tx: Tx, r: i64) {
-  if ((r & START) != 0) {
-    spawn(flush(stream, tx.clone()));
+  if (r >= 0) {
+    start(stream, tx, r);
   }
 }
 

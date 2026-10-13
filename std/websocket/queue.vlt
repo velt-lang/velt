@@ -30,6 +30,12 @@ export const RELEASED: i64 = 4;
 export const STATUS: i64 = 7;
 /** The connection was idle: the caller starts its flusher. */
 export const START: i64 = 8;
+/**
+ * The connection was idle and the frame was queued by the task that reads from it, which has
+ * no more input waiting (a reply in a request/reply exchange): the caller writes the queue to
+ * the socket itself (`writeDirect`), since there is nothing a flusher could batch it with.
+ */
+export const DIRECT: i64 = 16;
 
 export class SendQueue {
   out: ByteBuf = new ByteBuf();
@@ -50,6 +56,8 @@ export class SendQueue {
   topics: string[] = [];
   /** The connection's receiving side: a `WebSocket` holds the queue, and finds it here. */
   rx: Rx;
+  /** The task that last received on this connection (0: none yet). */
+  reader: u64 = 0;
 
   constructor(client: bool, rx: Rx) {
     this.client = client;
@@ -67,13 +75,35 @@ export class SendQueue {
     return this.closing ? CLOSED : -1;
   }
 
-  private queued(): i64 {
+  // `first`: nothing was queued before this frame. `task`: the calling task.
+  private queued(first: bool, task: u64): i64 {
     const r = (this.out.data.length as i64) > HIGH_WATER ? OVER : QUEUED;
     if (this.flushing) {
       return r;
     }
     this.flushing = true;
+    if (first && task != 0 && task == this.reader && this.rx.with((x) => x.drained())) {
+      return r | DIRECT;
+    }
     return r | START;
+  }
+
+  /** The receiving side, for a `receive` by task `task`. */
+  receiving(task: u64): Rx {
+    this.reader = task;
+    return this.rx;
+  }
+
+  /**
+   * After the caller wrote a `DIRECT` batch: whether a flusher must be started (more was queued
+   * meanwhile, or that was the close frame); else the connection is idle again.
+   */
+  directDone(): bool {
+    if (this.out.data.length == 0 && !this.closing) {
+      this.flushing = false;
+      return false;
+    }
+    return true;
   }
 
   // Room for a frame with `len` payload bytes, its header written; where the payload goes.
@@ -83,11 +113,12 @@ export class SendQueue {
   }
 
   /** Queues a text frame. */
-  pushText(op: i64, text: string): i64 {
+  pushText(op: i64, text: string, task: u64 = 0): i64 {
     const no = this.refusal();
     if (no >= 0) {
       return no;
     }
+    const first = this.out.data.length == 0;
     const len = Buffer.byteLength(text) as i64;
     const mask = this.client ? maskKey() : 0u32;
     const p = this.frame(op, len, mask);
@@ -95,15 +126,16 @@ export class SendQueue {
     if (this.client) {
       this.out.data.xorMask(mask, p, p + len);
     }
-    return this.queued();
+    return this.queued(first, task);
   }
 
   /** Queues a frame carrying `payload`; a close frame is the last one. */
-  pushBytes(op: i64, payload: u8[]): i64 {
+  pushBytes(op: i64, payload: u8[], task: u64 = 0): i64 {
     const no = this.refusal();
     if (no >= 0) {
       return no;
     }
+    const first = this.out.data.length == 0;
     const len = payload.length as i64;
     const mask = this.client ? maskKey() : 0u32;
     const p = this.frame(op, len, mask);
@@ -114,7 +146,7 @@ export class SendQueue {
     if (op == OP_CLOSE) {
       this.closing = true;
     }
-    return this.queued();
+    return this.queued(first, task);
   }
 
   /**
@@ -131,7 +163,7 @@ export class SendQueue {
       return r & ~OVER;
     }
     this.out.append(frame);
-    return this.queued() & ~OVER;
+    return this.queued(false, 0) & ~OVER;
   }
 
   /**

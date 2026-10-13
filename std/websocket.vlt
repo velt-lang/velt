@@ -35,11 +35,13 @@ import {
   writeHead,
 } from "velt:websocket/frame";
 import { acceptKey, open } from "velt:websocket/handshake";
-import { QUEUED, SendQueue } from "velt:websocket/queue";
+import { DIRECT, QUEUED, SendQueue } from "velt:websocket/queue";
 import { BINARY, CLOSED, Reader } from "velt:websocket/reader";
 import { receive } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
-import { Tx, closeDown, closedHandle, settle } from "velt:websocket/writer";
+import { Tx, closeDown, closedHandle, settle, writeDirect } from "velt:websocket/writer";
+
+declare function velt_rt_task_id(): u64;
 
 /** One received message: text, or binary data. */
 export class WsMessage {
@@ -101,8 +103,12 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
    */
   async send(text: string): Promise<void> {
     const tx = this.sending();
-    const r = tx.with((q) => q.pushText(OP_TEXT, text));
-    if (r != QUEUED) {
+    const task = velt_rt_task_id();
+    const r = tx.with((q) => q.pushText(OP_TEXT, text, task));
+    if (r == DIRECT) {
+      // A reply from the task that reads this connection: written here, no task needed.
+      writeDirect(this.stream(), tx);
+    } else if (r != QUEUED) {
       // A promise of its own (here and below): what is rare, or waits, stays out of the state
       // of every task that calls this, so a task per connection stays small.
       const settled = settle(this.stream(), tx, r);
@@ -113,8 +119,11 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   /** Sends a binary message, queued like `send`. */
   async sendBytes(data: u8[]): Promise<void> {
     const tx = this.sending();
-    const r = tx.with((q) => q.pushBytes(OP_BINARY, data));
-    if (r != QUEUED) {
+    const task = velt_rt_task_id();
+    const r = tx.with((q) => q.pushBytes(OP_BINARY, data, task));
+    if (r == DIRECT) {
+      writeDirect(this.stream(), tx);
+    } else if (r != QUEUED) {
       const settled = settle(this.stream(), tx, r);
       await settled;
     }
@@ -123,7 +132,8 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   /** The next message, or null once the peer has closed the connection. */
   async receive(): Promise<WsMessage | null> {
     const tx = this.sending();
-    const rx = tx.with((q) => q.rx);
+    const task = velt_rt_task_id();
+    const rx = tx.with((q) => q.receiving(task));
     let step = rx.with((r) => r.next(true));
     if (step.kind > BINARY) {
       const waited = receive(this.stream(), tx, rx, step);
@@ -178,7 +188,8 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   async *[Symbol.asyncIterator](): AsyncIterator<WsMessage, IoError> {
     const stream = this.stream();
     const tx = this.sending();
-    const rx = tx.with((q) => q.rx);
+    const task = velt_rt_task_id();
+    const rx = tx.with((q) => q.receiving(task));
     while (true) {
       let step = rx.with((r) => r.next(true));
       if (step.kind > BINARY) {

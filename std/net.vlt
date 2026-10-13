@@ -15,7 +15,7 @@
 //   in flight, so `close()` may be called at any time.
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
-import { writeBytesTo } from "velt:net_bytes";
+import { tryWriteTo, writeBytesTo } from "velt:net_bytes";
 
 declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 declare function velt_rt_tcp_listener_port(l: u64): u32;
@@ -90,6 +90,16 @@ export struct TcpStream {
 
   async writeBytes(data: u8[]): Promise<void> {
     checkIo(await writeBytesTo(this.handle, data));
+  }
+
+  /**
+   * Writes what the socket takes of `data` right now, without waiting, and returns the number
+   * of bytes written (0 when it takes nothing now, for a TLS stream, and after an error, which
+   * the next `write` reports). For protocols that send small messages: when everything was
+   * written there is nothing to await.
+   */
+  tryWrite(data: u8[]): i64 {
+    return tryWriteTo(this.handle, data);
   }
 
   /** Half-close: the peer reads end of stream; this side can still read. */
