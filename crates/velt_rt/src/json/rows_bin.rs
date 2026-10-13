@@ -5,8 +5,10 @@
 //!
 //! Layout: a header `single: u8, columns: u16, (name_len: u16, name bytes)*`, then the rows,
 //! each one cell per column. A cell is a tag byte and its payload: [`NULL`], [`FALSE`],
-//! [`TRUE`], [`INT`] + `i64`, [`FLOAT`] + `f64`, [`TEXT`] + `u32` length + UTF-8, [`BLOB`] +
-//! `u32` length + bytes (integers little-endian). To the decoder this reads as the JSON
+//! [`TRUE`], [`INT`] + `i64`, [`FLOAT`] + `f64`, [`TEXT`] or [`ASCII`] + `u32` length + UTF-8,
+//! [`BLOB`] + `u32` length + bytes (integers little-endian). Text that is all ASCII says so
+//! (the `ASCII` tag, [`ASCII_NAME`] in a name's length), because the writer looks at every
+//! byte anyway and the reader then need not: such a string's UTF-16 length is its byte length. To the decoder this reads as the JSON
 //! `db_json::rows` writes: `[{"col":value,...},...]`, or with `single` the one row's object.
 //!
 //! Hand-off: std still gets a string from the driver and passes it to `JSON.parse`. A string
@@ -27,6 +29,10 @@ pub const INT: u8 = 3;
 pub const FLOAT: u8 = 4;
 pub const TEXT: u8 = 5;
 pub const BLOB: u8 = 6;
+/// [`TEXT`] that is all ASCII.
+pub const ASCII: u8 = 7;
+/// Set in a column name's length when the name is all ASCII.
+pub const ASCII_NAME: u16 = 0x8000;
 
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
@@ -69,12 +75,14 @@ impl BinRows {
         let mut count: u16 = 0;
         for name in columns {
             // A longer name is cut (at a character boundary); SQLite's limit is far below.
-            let mut len = name.len().min(u16::MAX as usize);
+            let mut len = name.len().min((ASCII_NAME - 1) as usize);
             while !name.is_char_boundary(len) {
                 len -= 1;
             }
-            buf.extend_from_slice(&(len as u16).to_le_bytes());
-            buf.extend_from_slice(&name.as_bytes()[..len]);
+            let name = &name.as_bytes()[..len];
+            let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
+            buf.extend_from_slice(&(len as u16 | ascii).to_le_bytes());
+            buf.extend_from_slice(name);
             count += 1;
         }
         buf[1..3].copy_from_slice(&count.to_le_bytes());
@@ -115,6 +123,9 @@ impl BinRows {
 
     /// A string; bytes that are not valid UTF-8 become U+FFFD.
     pub fn text(&mut self, v: &[u8]) {
+        if v.is_ascii() {
+            return self.sized(ASCII, v);
+        }
         match std::str::from_utf8(v) {
             Ok(_) => self.sized(TEXT, v),
             Err(_) => self.sized(TEXT, String::from_utf8_lossy(v).as_bytes()),
@@ -149,7 +160,8 @@ pub enum BinCell {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Text(usize, usize),
+    /// The range and whether the text is all ASCII.
+    Text(usize, usize, bool),
     Blob(usize, usize),
 }
 
@@ -173,17 +185,17 @@ pub fn cell_at(buf: &[u8], pos: usize) -> Option<(BinCell, usize)> {
                 at + 8,
             )
         }
-        tag @ (TEXT | BLOB) => {
+        tag @ (TEXT | ASCII | BLOB) => {
             let b = buf.get(at..at + 4)?;
             let start = at + 4;
             let end = start.checked_add(u32::from_le_bytes(b.try_into().ok()?) as usize)?;
             if end > buf.len() {
                 return None;
             }
-            if tag == TEXT {
-                (BinCell::Text(start, end), end)
-            } else {
+            if tag == BLOB {
                 (BinCell::Blob(start, end), end)
+            } else {
+                (BinCell::Text(start, end, tag == ASCII), end)
             }
         }
         _ => return None,
@@ -200,8 +212,8 @@ pub fn header_end(buf: &[u8]) -> Option<(bool, usize, usize)> {
     let count = u16::from_le_bytes(buf.get(1..3)?.try_into().ok()?) as usize;
     let mut pos = NAMES;
     for _ in 0..count {
-        let len = u16::from_le_bytes(buf.get(pos..pos + 2)?.try_into().ok()?) as usize;
-        pos += 2 + len;
+        let len = u16::from_le_bytes(buf.get(pos..pos + 2)?.try_into().ok()?);
+        pos += 2 + (len & !ASCII_NAME) as usize;
         if pos > buf.len() {
             return None;
         }
@@ -209,12 +221,14 @@ pub fn header_end(buf: &[u8]) -> Option<(bool, usize, usize)> {
     Some((single, count, pos))
 }
 
-/// The range of the column name whose length prefix is at `pos`, in a buffer whose header
-/// [`header_end`] accepted; the next name's prefix is at the range's end.
+/// The range of the column name whose length prefix is at `pos`, and whether the name is all
+/// ASCII, in a buffer whose header [`header_end`] accepted; the next name's prefix is at the
+/// range's end.
 #[inline]
-pub fn name_at(buf: &[u8], pos: usize) -> (usize, usize) {
-    let len = u16::from_le_bytes([buf[pos], buf[pos + 1]]) as usize;
-    (pos + 2, pos + 2 + len)
+pub fn name_at(buf: &[u8], pos: usize) -> (usize, usize, bool) {
+    let len = u16::from_le_bytes([buf[pos], buf[pos + 1]]);
+    let end = pos + 2 + (len & !ASCII_NAME) as usize;
+    (pos + 2, end, len & ASCII_NAME != 0)
 }
 
 /// Append one cell as a JSON value: a float in its shortest form that reads back the same, a
@@ -228,7 +242,7 @@ pub fn push_cell_json(out: &mut Vec<u8>, buf: &[u8], cell: BinCell) {
             crate::fmt::push_i64(out, v as i64)
         }
         BinCell::Float(v) => crate::fmt::push_f64(out, v),
-        BinCell::Text(start, end) => push_json_string(out, &buf[start..end]),
+        BinCell::Text(start, end, _) => push_json_string(out, &buf[start..end]),
         BinCell::Blob(start, end) => {
             out.push(b'[');
             for (i, &b) in buf[start..end].iter().enumerate() {
@@ -251,7 +265,7 @@ pub fn push_row_json(out: &mut Vec<u8>, buf: &[u8], mut pos: usize) -> Option<us
         if i > 0 {
             out.push(b',');
         }
-        let (start, end) = name_at(buf, name);
+        let (start, end, _) = name_at(buf, name);
         name = end;
         push_json_string(out, &buf[start..end]);
         out.push(b':');

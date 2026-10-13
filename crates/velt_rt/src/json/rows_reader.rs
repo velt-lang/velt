@@ -5,7 +5,9 @@
 //!
 //! Like the text reader, the first failure is sticky until `reset`. The only failures are a
 //! value of another kind than the decoder asked for and a rejected unknown key: the rows are
-//! well-formed by construction (a damaged buffer reads as a mismatch, never out of bounds).
+//! well-formed by construction: only `rows_bin::BinRows` makes them, in this process. A buffer
+//! cut short reads as a mismatch, never out of bounds; what the writer says about its text
+//! (UTF-8, all ASCII) is trusted.
 
 use super::error::{mismatch_message, unknown_message};
 use super::reader::{
@@ -226,11 +228,11 @@ impl RowReader {
             return Ok(None);
         }
         // In bounds: `header_end` walked every name.
-        let (start, end) = bin::name_at(&self.buf, self.c.name);
+        let (start, end, ascii) = bin::name_at(&self.buf, self.c.name);
         self.c.name = end;
         self.c.at = At::Val;
         let name = &self.buf[start..end];
-        Ok(Some(if name.is_ascii() {
+        Ok(Some(if ascii {
             // SAFETY: ASCII is canonical WTF-8 with one unit per byte; the buffer is not
             // changed or freed before the reader, which outlives the keys it hands out.
             unsafe { VeltStr::borrowed_text(name.as_ptr(), name.len(), name.len()) }
@@ -241,11 +243,14 @@ impl RowReader {
 
     pub fn string(&mut self) -> Option<VeltStr> {
         match self.val()? {
-            (BinCell::Text(start, end), next) => {
+            (BinCell::Text(start, end, ascii), next) => {
                 // SAFETY: the writer stored valid UTF-8 (`BinRows::text`).
                 let text = unsafe { std::str::from_utf8_unchecked(&self.buf[start..end]) };
                 let s = if text.is_empty() {
                     VeltStr::empty()
+                } else if ascii {
+                    // SAFETY: the writer found only ASCII, one UTF-16 unit per byte.
+                    unsafe { VeltStr::from_text_counted(text, text.len()) }
                 } else {
                     VeltStr::from_text(text)
                 };
