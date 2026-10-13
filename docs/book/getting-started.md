@@ -137,7 +137,7 @@ client), `--template lib` (a library to publish).
 
 ## Editor setup
 
-Install the VS Code extension from `editors/vscode` for highlighting, diagnostics as you type,
+Install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt) for VS Code (`code --install-extension andtii.velt`) for highlighting, diagnostics as you type,
 go-to-definition, completion and quick fixes, or point any LSP client at `velt lsp`
 ([Editors](../tooling/editors.md)). With a debugger extension such as CodeLLDB installed too,
 F5 builds the package and stops on breakpoints (on Linux and macOS; on Windows see

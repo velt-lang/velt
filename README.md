@@ -97,7 +97,7 @@ velt test                   # run tests/*.test.vlt
 velt build --release        # an optimized native binary in target/velt/
 ```
 
-Install the VS Code extension from [`editors/vscode`](editors/vscode) for diagnostics,
+Install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt) for VS Code (`code --install-extension andtii.velt`) for diagnostics,
 completion, go-to-definition and quick fixes; any LSP client works with `velt lsp`.
 
 ## Documentation
