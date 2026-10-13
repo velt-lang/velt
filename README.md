@@ -38,6 +38,21 @@ That is a complete HTTP server, and every core answers requests. On the TechEmpo
 below, this kind of server handles **7× as many JSON requests as Node and 1.2× as many as Rust's
 axum**, in tens of megabytes of memory.
 
+**Small and fast to start.** A minimal "Hello, World!" web server, built with
+`velt build --release`:
+
+| | Velt | Node |
+|---|---:|---:|
+| memory, idle | **8 MB** | 39 MB |
+| memory under load, 220k req/s vs Node's 130k | **19–21 MB** | 129 MB |
+| start a program and exit | **3 ms** on Linux, 33 ms on Windows | 69 ms on Windows |
+| what you deploy | **one 6 MB executable** | Node plus `node_modules` |
+
+Idle memory and the Windows start times were measured with velt 0.2.1 and Node 22.22 on an
+Intel i9 laptop running Windows 11. The memory under load is from
+[bench/http](bench/http/RESULTS.md), measured on an Apple M4 with Node 24, and the Linux start time is from
+[bench/RESULTS.md](bench/RESULTS.md).
+
 ## Get started
 
 Install Velt with one command. It works on Linux (x86_64 and arm64), macOS and Windows:
@@ -89,7 +104,8 @@ Next, read [Getting started](docs/book/getting-started.md) and
   compile errors**, so parallel code is as safe to write as single-threaded code.
 - **Memory you don't think about.** Objects are references, as in JavaScript. Memory is freed
   the moment the last reference to it goes, so there are no GC pauses and `using` cleanup runs at
-  a known point. A Velt web server runs in tens of megabytes where Node needs hundreds.
+  a known point. An idle Velt web server takes about 8 MB and stays around 20 MB under load,
+  where Node needs well over 100 MB.
 - **One file to ship.** `velt build --release` writes a native executable. There is nothing to
   install on the server, no `node_modules`, and startup takes milliseconds. You can cross-compile
   for Linux, macOS, Windows or WebAssembly from any of them.
