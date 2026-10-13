@@ -41,44 +41,57 @@ async function fill(stream: TcpStream, rx: Rx): Promise<void> {
   rx.with((r) => r.feed(chunk));
 }
 
+// Waits until the task that is reading from the stream is done.
+async function turn(rx: Rx): Promise<void> {
+  const reading = rx.with((r) => r.awaitTurn());
+  if (reading != null) {
+    await reading.receive();
+  }
+}
+
+// What a step that is neither a message nor a wait asks for: a ping is answered, the peer's
+// close frame is replied to (the connection is then closed: true), a protocol error fails the
+// connection with its close code and throws.
+function answer(stream: TcpStream, tx: Tx, step: Step): bool {
+  if (step.kind == PING) {
+    // A pong for a connection that is closing is not needed.
+    const payload = step.data;
+    settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, payload)));
+    return false;
+  }
+  if (step.kind != CLOSE && step.kind != FAIL) {
+    throw closedHandle();
+  }
+  // Fails harmlessly if we closed first.
+  const reply = closePayload(step.code);
+  settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
+  if (step.kind == FAIL) {
+    throw new IoError("EILSEQ", `WebSocket protocol error: ${step.text}`);
+  }
+  return true;
+}
+
 /**
  * The next text or binary message (`TEXT`, `BINARY`), or `CLOSED` once the peer has closed the
  * connection, given `first`, what the reader's `next` said when the caller looked (callers
  * return a message that is already there themselves, so this runs only when there is something
  * to wait for or to answer). Pings are answered and the peer's close frame is replied to
  * through `tx`; a protocol error fails the connection (a close frame with the matching code)
- * and throws.
+ * and throws. What is rare is kept out of this function's own state: one is allocated per
+ * waiting `receive`, so its size is memory per idle connection.
  */
 export async function receive(stream: TcpStream, tx: Tx, rx: Rx, first: Step): Promise<Step> {
   let step = first;
-  while (true) {
-    const kind = step.kind;
-    if (kind <= BINARY) {
-      return step;
-    }
-    if (kind == READ) {
+  while (step.kind > BINARY) {
+    if (step.kind == READ) {
       await fill(stream, rx);
-    } else if (kind == WAIT) {
-      const turn = rx.with((r) => r.awaitTurn());
-      if (turn != null) {
-        await turn.receive();
-      }
-    } else if (kind == PING) {
-      // A pong for a connection that is closing is not needed.
-      const payload = step.data;
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, payload)));
-    } else if (kind == CLOSE) {
-      // Fails harmlessly if we closed first.
-      const reply = closePayload(step.code);
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
+    } else if (step.kind == WAIT) {
+      const waiting = turn(rx);
+      await waiting;
+    } else if (answer(stream, tx, step)) {
       return new Step(CLOSED);
-    } else if (kind == FAIL) {
-      const reply = closePayload(step.code);
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
-      throw new IoError("EILSEQ", `WebSocket protocol error: ${step.text}`);
-    } else {
-      throw closedHandle();
     }
     step = rx.with((r) => r.next(false));
   }
+  return step;
 }
