@@ -3,7 +3,7 @@
   "displayName": "Velt",
   "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`), and F5 debugging.",
   "version": "0.1.0",
-  "publisher": "velt-lang",
+  "publisher": "andtii",
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#16161e",

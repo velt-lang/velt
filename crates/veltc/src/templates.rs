@@ -47,7 +47,7 @@ const VSCODE_LAUNCH: &str = r#"{
 /// `.vscode/extensions.json`: the Velt extension, and CodeLLDB (the debugger it prefers; it
 /// bundles LLDB, so nothing else needs installing).
 const VSCODE_EXTENSIONS: &str = r#"{
-  "recommendations": ["velt-lang.velt", "vadimcn.vscode-lldb"]
+  "recommendations": ["andtii.velt", "vadimcn.vscode-lldb"]
 }
 "#;
 
@@ -252,7 +252,7 @@ mod tests {
             if f.path.ends_with("launch.json") {
                 assert_eq!(json["configurations"][0]["type"], "velt");
             } else {
-                assert_eq!(json["recommendations"][0], "velt-lang.velt");
+                assert_eq!(json["recommendations"][0], "andtii.velt");
             }
         }
     }
