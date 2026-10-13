@@ -329,8 +329,10 @@ for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823))
 
 ## Equality and comparison
 
-- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
-  operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
+- `==` and `===` (and `!=` and `!==`) differ only against `null` and `undefined`, as in
+  JavaScript: `x == null` and `x == undefined` match either nothing, `===` only the one written
+  ([Null and undefined](#null-and-undefined)). Everywhere else they are the same operator: there
+  is no coercion, and the operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
   compared with an `i32` needs a cast). An interface value compares with a value of a class or
   struct that implements it, and a base class value with a subclass value.
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
@@ -392,7 +394,10 @@ and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "un
 narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
 holding `undefined` and writes an array element as `null`. A destructuring default applies where
 the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
-array), never to a `null`. `null` where `T | undefined` is expected, and `undefined` where
+array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
+the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
+and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
+those elements last. `return undefined;` in a `void` function is `return;`. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
@@ -406,7 +411,24 @@ other than `undefined` on a parameter whose type allows `undefined` (JavaScript 
 a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
 of it, directly or through what it calls (a `T | undefined` for `Map.set`,
 `Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
-a `T | undefined`). Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
+a `T | undefined`), which includes a generic alias applied that way (`type Nullable<T> = T | null`
+as `Nullable<number | undefined>`). Also not supported yet, although TypeScript accepts them:
+
+- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
+  parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
+  leave the argument out;
+- `undefined` as the value of an optional field (`{ a: undefined }` for `a?: number`): leave the
+  field out;
+- a type argument that allows `undefined` for generic code that sorts an array of its type
+  parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
+  reach the comparator;
+- `JSON.stringify` of a value holding a class whose `toJSON()` may return `undefined` (its
+  own or a subclass's);
+- a destructuring default for an optional **class** field declared `T | null`
+  (`class C { b?: number | null }`, `const { b = 6 } = c`): a class does not keep an unset field
+  apart from one set to `null`.
+
+Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
 standard library still use `null` for now:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
@@ -1026,7 +1048,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is absent (optional) or `undefined`, and
   `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
-  a field or element holding `null` keeps it. Defaults in `for...of` patterns and parameter patterns
+  a field or element declared `T | null` keeps its `null`, and so does an optional field of an
+  object type declared `a?: T | null` when it is present (for a class field declared that way a
+  default is [not supported yet](#null-and-undefined)). Defaults in `for...of` patterns and parameter patterns
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:

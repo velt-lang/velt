@@ -113,12 +113,12 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `+` `-` | |
 | `<<` `>>` `>>>` | |
 | `<` `<=` `>` `>=` `as` `instanceof` `in` | `in` only as `#x in o` (a brand check) |
-| `==` `!=` `===` `!==` | `==` is `===` ([Types](types.md#equality-and-comparison)) |
+| `==` `!=` `===` `!==` | no coercion; `==` differs from `===` only against `null` / `undefined` ([Types](types.md#equality-and-comparison)) |
 | `&` | |
 | `^` | |
 | `\|` | |
 | `&&` | returns an operand, as in JS ([truthiness](variables.md#conditions-truthiness)) |
-| `\|\|` `??` | `\|\|` returns an operand; `??` replaces only `null` |
+| `\|\|` `??` | `\|\|` returns an operand; `??` replaces only `null` and `undefined` |
 | `?:` | |
 | `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |

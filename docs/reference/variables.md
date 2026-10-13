@@ -44,13 +44,13 @@
 Conditions (`if`, `while`, `do … while`, `for`, `?:`) and the operands of `!`, `&&` and `||`
 test values of any type as JavaScript does.
 
-- Falsy are `false`, `null`, `0` and `-0` (of `number` and of every integer type: `0` of `i64`,
+- Falsy are `false`, `null`, `undefined`, `0` and `-0` (of `number` and of every integer type: `0` of `i64`,
   `u8`, …), `NaN` and `""`. Everything else is truthy: `" "`, `"0"` and `"false"`, `Infinity`,
   and every object, array and function (also an empty array).
-- A nullable is truthy when it is not `null` and its payload is truthy, and the test narrows it
-  like `x !== null` does: `if (!user) return;` leaves `user` non-null below, and
+- A nullable (`T | null` or `T | undefined`) is truthy when it is neither `null` nor `undefined`
+  and its payload is truthy, and the test narrows it like `x != null` does: `if (!user) return;` leaves `user` non-null below, and
   `if (user && user.manager)` narrows both. `if (name)` on a `string | null` makes `name` a
-  `string` (which may still be `""` in the `else` branch). `??` still replaces only `null`: for
+  `string` (which may still be `""` in the `else` branch). `??` still replaces only `null` and `undefined`: for
   `n: number | null` holding `0`, `n ?? 5` is `0` and `n || 5` is `5`.
 - An enum value is falsy when its member's value is `0` or `""`. A union is tested by the
   member it holds.

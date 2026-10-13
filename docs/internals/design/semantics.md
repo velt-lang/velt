@@ -177,7 +177,7 @@ of doing things, even when ported code must change (with a precise error and a f
   parameters (`a?: T`) are still `T | null` until phase 2. JSON's "absent vs explicit null" is
   visible only through `JsonValue` (`has(key)` vs `isNull()`).
 - **Truthiness** (implemented, #758). Conditions and `!`, `||`, `&&` test values of any type
-  with JavaScript's rules (`0`, `-0`, `NaN`, `""` and `null` are falsy; objects always truthy),
+  with JavaScript's rules (`0`, `-0`, `NaN`, `""`, `null` and `undefined` are falsy; objects always truthy),
   and `||` / `&&` return an operand typed like TypeScript (`n || 5` is a `number`). Valid
   TypeScript depends on it everywhere, so compatibility wins over the stricter rule Velt had
   before. Each test compiles to one comparison (`body/expr/truthiness.rs`).
