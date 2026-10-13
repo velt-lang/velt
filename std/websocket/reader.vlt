@@ -9,8 +9,6 @@
 // it is used: an idle connection holds none.
 
 import { Channel, channel } from "velt:channel";
-import { IoError } from "velt:io";
-import { TcpStream } from "velt:net";
 import { ByteBuf, textOf, utf8Prefix } from "velt:websocket/bytes";
 import {
   Frame,
@@ -27,13 +25,9 @@ import {
   parse,
   validCloseCode,
 } from "velt:websocket/frame";
-import { Tx, closedHandle, settleQuietly } from "velt:websocket/writer";
 
 /** Largest message accepted (64 MiB, as most servers). */
 export const MAX_MESSAGE: i64 = 67108864;
-/** Bytes read at a time. */
-const READ_CHUNK: u64 = 16384;
-
 // What `Reader.next` found.
 /** The peer closed the connection (or the stream ended): no more messages. */
 export const CLOSED: i64 = 0;
@@ -42,17 +36,17 @@ export const TEXT: i64 = 1;
 /** A binary message, in `data`. */
 export const BINARY: i64 = 2;
 /** More bytes are needed, and the caller is the one to read them (then `feed`). */
-const READ: i64 = 3;
+export const READ: i64 = 3;
 /** More bytes are needed, and another task is reading them (`awaitTurn`). */
-const WAIT: i64 = 4;
+export const WAIT: i64 = 4;
 /** A ping, to answer with `data`. */
-const PING: i64 = 5;
+export const PING: i64 = 5;
 /** The peer's close frame, to answer with `code`. */
-const CLOSE: i64 = 6;
+export const CLOSE: i64 = 6;
 /** A protocol error `text`: the connection is failed with close code `code`. */
-const FAIL: i64 = 7;
+export const FAIL: i64 = 7;
 /** The handle was released. */
-const RELEASED: i64 = 8;
+export const RELEASED: i64 = 8;
 
 /** One step of receiving: a message, or what to do before there is one. */
 export class Step {
@@ -287,71 +281,3 @@ export class Reader {
 }
 
 export type Rx = shared<Mutex<Reader>>;
-
-// Held by the task that reads from the stream: if it is dropped before it handed over what it
-// read, the next task may read.
-class ReadTurn {
-  rx: Rx | null;
-
-  constructor(rx: Rx) {
-    this.rx = rx;
-  }
-
-  done() {
-    this.rx = null;
-  }
-
-  [Symbol.dispose]() {
-    const rx = this.rx;
-    if (rx != null) {
-      rx.with((r) => r.abandon());
-    }
-  }
-}
-
-// Reads more bytes into the reader (the caller got `READ`).
-async function fill(stream: TcpStream, rx: Rx): Promise<void> {
-  const turn = new ReadTurn(rx.clone());
-  const chunk = await stream.read(READ_CHUNK);
-  turn.done();
-  rx.with((r) => r.feed(chunk));
-}
-
-/**
- * The next text or binary message (`TEXT`, `BINARY`), or `CLOSED` once the peer has closed the
- * connection. Pings are answered and the peer's close frame is replied to through `tx`; a
- * protocol error fails the connection (a close frame with the matching code) and throws.
- */
-export async function receive(stream: TcpStream, tx: Tx, rx: Rx): Promise<Step> {
-  let first = true;
-  while (true) {
-    const step = rx.with((r) => r.next(first));
-    first = false;
-    const kind = step.kind;
-    if (kind <= BINARY) {
-      return step;
-    }
-    if (kind == READ) {
-      await fill(stream, rx);
-    } else if (kind == WAIT) {
-      const turn = rx.with((r) => r.awaitTurn());
-      if (turn != null) {
-        await turn.receive();
-      }
-    } else if (kind == PING) {
-      // A pong for a connection that is closing is not needed.
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, step.data)));
-    } else if (kind == CLOSE) {
-      // Fails harmlessly if we closed first.
-      const reply = closePayload(step.code);
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
-      return new Step(CLOSED);
-    } else if (kind == FAIL) {
-      const reply = closePayload(step.code);
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_CLOSE, reply)));
-      throw new IoError("EILSEQ", `WebSocket protocol error: ${step.text}`);
-    } else {
-      throw closedHandle();
-    }
-  }
-}
