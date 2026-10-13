@@ -210,6 +210,16 @@ impl Mark {
         );
         keep_ranges(&mut copies.seen, start[2], &ranges(|l| l.object_copies[2]));
         keep_ranges(
+            &mut copies.in_optional,
+            start[3],
+            &ranges(|l| l.object_copies[3]),
+        );
+        keep_ranges(
+            &mut copies.null_literals,
+            start[4],
+            &ranges(|l| l.object_copies[4]),
+        );
+        keep_ranges(
             &mut cx.jsx_adapters,
             m.jsx_adapters,
             &ranges(|l| l.jsx_adapters),
