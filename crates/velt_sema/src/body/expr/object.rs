@@ -559,6 +559,11 @@ impl FnCx<'_, '_> {
                 .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
                 .collect();
             let expected = self.cx.subst_known(fields[i].ty, &known);
+            if fields[i].optional {
+                let at = value.map_or(pname.span, |v| v.span);
+                let slot = crate::body::OptionalSlot::Field;
+                self.optional_slots.push((at, slot));
+            }
             let h = self.prop_value(pname, *value, Some(expected));
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);

@@ -443,6 +443,13 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
+            // `return undefined;` in a `void` function is `return;`, as in TypeScript.
+            Some(e)
+                if ret == self.cx.ty.unit
+                    && crate::body::narrow::nothing_word(e) == Some("undefined") =>
+            {
+                Self::push(out, S::Return(None), span);
+            }
             // `return value;` in an arrow whose `void` result comes from its expected type.
             Some(e) if self.f.discards_value => {
                 let h = self.expr_stmt(e);

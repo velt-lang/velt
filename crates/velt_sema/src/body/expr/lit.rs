@@ -164,6 +164,7 @@ impl FnCx<'_, '_> {
     /// `undefined` takes its `T | undefined` type from context (issue #930). In HIR it is the
     /// nothing of that option type, `Lit::Null` (hir_encodings.md "Undefined").
     fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
         match exp {
             Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
             Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
@@ -209,8 +210,35 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
+    /// An `undefined` (a literal, or a value that may be one) at `span`, given for an optional
+    /// parameter, a parameter with a default or an optional field: TypeScript accepts it, and
+    /// this phase of #930 cannot pass it on (`true`: reported). Such a parameter or field is
+    /// still a `T | null` whose `null` stands for "left out".
+    pub(crate) fn optional_slot_error(&mut self, span: Span) -> bool {
+        let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
+            return false;
+        };
+        let (what, note) = match slot {
+            crate::body::OptionalSlot::Param => (
+                "`undefined` passed for an optional parameter or one with a default",
+                "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
+            ),
+            crate::body::OptionalSlot::Field => (
+                "`undefined` as the value of an optional field",
+                "JavaScript keeps a field holding `undefined` apart from a field left out; leave the field out instead",
+            ),
+        };
+        self.cx.error(
+            Diagnostic::error(format!("{what} is not supported yet (#930)"), span).with_note(note),
+        );
+        true
+    }
+
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        if what == "undefined" && self.optional_slot_error(span) {
+            return self.error_expr(span);
+        }
         let tn = self.cx.display(t);
         let core = self.cx.ty.opt_payload(t).unwrap_or(t);
         let core = self.cx.display(core);

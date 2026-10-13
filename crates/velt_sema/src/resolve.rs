@@ -177,7 +177,10 @@ impl Ctx<'_> {
         for p in parts {
             let n = match p.kind {
                 ast::TypeExprKind::Null => Nothing::Null,
-                ast::TypeExprKind::Undefined => Nothing::Undefined,
+                ast::TypeExprKind::Undefined => {
+                    self.writes_undefined |= !self.scopes[env.module].is_std;
+                    Nothing::Undefined
+                }
                 _ => {
                     members.push(self.resolve_type(p, env));
                     continue;
@@ -438,7 +441,48 @@ impl Ctx<'_> {
                 .entry(body)
                 .or_insert_with(|| decl.name.name.clone());
         }
+        if self.mixes_nothings(body, &args) {
+            self.err(
+                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                t.span,
+            );
+            return self.ty.error;
+        }
         self.subst(body, &args)
+    }
+
+    /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
+    /// `P | undefined` of a parameter whose argument in `args` allows the other nothing? The
+    /// substitution would make an option of an option, which keeps the inner one only.
+    fn mixes_nothings(&self, body: TyId, args: &[TyId]) -> bool {
+        if !args.iter().any(|a| self.ty.nothing_of(*a).is_some()) {
+            return false;
+        }
+        let mut stack = vec![body];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let k = self.ty.kind(t);
+            if let TyKind::Option(p, n) = k {
+                // The parameter itself, or as a member of a union (`T | string | null`).
+                let members = match self.union_def(*p) {
+                    Some((_, members)) => members,
+                    None => vec![*p],
+                };
+                for m in members {
+                    if let TyKind::Param(i) = self.ty.kind(m) {
+                        let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
+                        if arg.is_some_and(|m| !m.within(*n)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            stack.extend(crate::types::children(k));
+        }
+        false
     }
 
     /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`

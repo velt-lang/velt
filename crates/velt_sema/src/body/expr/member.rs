@@ -115,8 +115,10 @@ impl FnCx<'_, '_> {
         }
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
+            // `null` for a `T | null`, `undefined` for a `T | undefined`.
+            let what = self.cx.ty.nothing_of(obj.ty).map_or("null", |n| n.word());
             self.cx.error(
-                Diagnostic::error(format!("value of type `{tn}` may be null"), obj.span)
+                Diagnostic::error(format!("value of type `{tn}` may be {what}"), obj.span)
                     .with_note(format!("use `?.{}` or check `!= null` first", prop.name)),
             );
             return None;

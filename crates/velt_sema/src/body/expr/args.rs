@@ -125,6 +125,12 @@ impl FnCx<'_, '_> {
             let e = self.cx.ty.without_error_types(e);
             self.cx.match_context(c.ret, e, &mut context);
         }
+        for (a, p) in args.iter().zip(&c.params) {
+            if p.default.is_some() {
+                let slot = crate::body::OptionalSlot::Param;
+                self.optional_slots.push((a.span, slot));
+            }
+        }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {
             self.prefer_context(c, &mut slots, &context, &checked, e);

@@ -82,7 +82,8 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(operand, None, Want::Borrow);
-        // The nothing arm is a "undefined" for `T | undefined`, an "object" for `T | null`.
+        // The nothing arm answers `"undefined"` for a `T | undefined` and `"object"` for a
+        // `T | null`.
         let nothing = self.cx.ty.nothing_of(s.ty);
         if tag == "undefined" && nothing == Some(crate::hir::Nothing::Null) {
             // As for `=== undefined` (`null_compare`): its `null` may be JavaScript's `undefined`.

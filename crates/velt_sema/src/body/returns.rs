@@ -162,6 +162,7 @@ impl FnCx<'_, '_> {
             return None;
         };
         if let Some(n) = nothing_of_lit(e) {
+            self.cx.writes_undefined |= n.has_undefined() && !self.cx.scopes[self.module].is_std;
             self.f.returns.nulls.push(e.span);
             let r = &mut self.f.returns;
             r.nothing = Some(r.nothing.map_or(n, |m| m.join(n)));

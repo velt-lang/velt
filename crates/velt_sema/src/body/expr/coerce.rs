@@ -233,6 +233,10 @@ impl FnCx<'_, '_> {
         if self.shared_widening_error(expected, found) {
             return;
         }
+        let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span) {
+            return;
+        }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
         if let (Some(have), Some(want)) = (

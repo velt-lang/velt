@@ -79,6 +79,11 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// The program (not std) writes `undefined`, as a type or a value. The checks that only
+    /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
+    /// skipped otherwise; the type table alone cannot tell, since the prelude declares
+    /// `Array<T | undefined>.sort`.
+    pub writes_undefined: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
     /// now: a utility type in a field type shapes the type it reads first, whatever the
     /// declaration order.
@@ -254,6 +259,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],
             laid_out: HashSet::new(),

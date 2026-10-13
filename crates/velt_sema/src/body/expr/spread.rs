@@ -335,6 +335,11 @@ impl FnCx<'_, '_> {
                     self.cx
                         .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
+                    if fields[i].optional {
+                        let at = value.map_or(k.span, |v| v.span);
+                        let slot = crate::body::OptionalSlot::Field;
+                        self.optional_slots.push((at, slot));
+                    }
                     self.prop_value(&k, value, Some(expected))
                 }
                 (Value::Prop(k, value), None) => {
