@@ -93,6 +93,7 @@ hello/
   tests/greet.test.vlt  tests: every exported `test_*` function
   README.md
   .gitignore            ignores target/, where builds go
+  .gitattributes        makes GitHub highlight .vlt files (as TypeScript)
 ```
 
 ```ts ignore
