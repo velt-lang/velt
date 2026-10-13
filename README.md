@@ -94,6 +94,13 @@ Next, read [Getting started](docs/book/getting-started.md) and
   before it can drop an error. Every error message says what to write instead.
 - **A fast edit loop.** `velt dev` swaps changed functions into the running program in about
   60 ms, keeping its memory, open connections and running tasks.
+- **Editor and debugger included.** The [Velt extension for VS Code](https://marketplace.visualstudio.com/items?itemName=andtii.velt)
+  gives you errors as you type, completion, go to definition, rename, inlay hints and quick
+  fixes. F5 debugging needs no setup: breakpoints, stepping, and variables shown as Velt values.
+  It works in LLDB, GDB and Visual Studio too, because Velt writes standard debug info. Any
+  other editor can use the language server, `velt lsp`.
+- **Everything else in one tool.** `velt` also runs tests (`velt test`, with **▶ Run test** in
+  the editor), formats code (`velt fmt`), manages packages with a lockfile, and cross-compiles.
 
 ## Beyond TypeScript
 
