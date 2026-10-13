@@ -1,0 +1,14 @@
+// Integer to string: 5M `i64` values of every width and both signs through a template literal
+// (the runtime's `itoa`). The Rust port formats into an `itoa::Buffer`, which doesn't allocate
+// either (a Velt string of up to 23 bytes is stored inline).
+function main() {
+  let x: i64 = 1;
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 5000000; i++) {
+    x = x * 6364136223846793005 + 1442695040888963407;
+    const v = x >> (i % 60);
+    const s = `${v}`;
+    total += s.length as i64;
+  }
+  console.log(total);
+}

@@ -1,0 +1,13 @@
+// `toFixed`: 1M values with 2 and with 6 decimals. The Rust port writes `{:.2}` and `{:.6}` into
+// one reused `String`. No value is a rounding tie, where JavaScript rounds up and Rust to even.
+function main() {
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 1000000; i++) {
+    const x = ((2 * i + 1) as f64) / 14.0;
+    const a = x.toFixed(2);
+    const b = (x / 1024.0).toFixed(6);
+    total += (a.length + b.length) as i64;
+    total += (a.charCodeAt(a.length - 1) + b.charCodeAt(b.length - 1)) as i64;
+  }
+  console.log(total);
+}

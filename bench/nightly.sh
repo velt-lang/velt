@@ -45,7 +45,7 @@ fi
 # The benchmarks: CPU-bound programs whose work does not depend on timing (bench/async/timers
 # sleeps, the HTTP and database benchmarks need servers and load generators).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
-  "$ROOT"/bench/strings_utf16/*.vlt)
+  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt)
 # NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
 for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
   BENCHES+=("$ROOT/bench/$dir"/*.vlt)

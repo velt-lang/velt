@@ -1,0 +1,34 @@
+// URL parsing and serialization: `new URL` over 1000 distinct ASCII URLs (default ports, dot
+// segments, upper-case schemes and hosts, percent-encoding, credentials, an IPv4 host), 300
+// times, reading `href`, `hostname`, `pathname` and `search`. The Rust port uses the `url` crate,
+// which is what `fetch` parses with today.
+import { URL } from "velt:url";
+
+function main() {
+  const shapes = [
+    "https://example.com/",
+    "http://example.com:8080/a/b/c?x=1&y=2#frag",
+    "https://user:pw@sub.example.co.uk/path/to/file.html",
+    "HTTP://EXAMPLE.COM/A%20B/../c/./d?q=a b",
+    "https://example.com/a/b/../../c",
+    "http://127.0.0.1:3000/api/v1/items?limit=10",
+    "https://example.com:443/default-port",
+    "ws://chat.example.com/socket?room=42",
+    "https://api.example.com/v2/users/12345/posts?sort=desc&page=3&per_page=50",
+    "https://cdn.example.com/assets/app.3f9c2a.js",
+  ];
+  const urls: string[] = [];
+  for (let k = 0; k < 100; k++) {
+    for (const shape of shapes) {
+      urls.push(`${shape}${k}`);
+    }
+  }
+  let total: i64 = 0;
+  for (let round = 0; round < 300; round++) {
+    for (const text of urls) {
+      const u = new URL(text);
+      total += (u.href.length + u.hostname.length + u.pathname.length + u.search.length) as i64;
+    }
+  }
+  console.log(total);
+}
