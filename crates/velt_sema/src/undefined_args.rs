@@ -14,7 +14,15 @@
 //! to a callee that keeps `U | null` of it keeps it too (to a fixpoint over the call graph),
 //! as do closures (they share their function's type parameters), a generic type's methods (for
 //! a value of the type) and the generic types a definition uses. Programs that never write
-//! `undefined` have no `T | undefined` type, so this pass returns at once for them.
+//! `undefined` (`Ctx::writes_undefined`) have no `T | undefined` type of their own, so this pass
+//! returns at once for them.
+//!
+//! The same walk finds generic code that sorts an array of its type parameter (`xs.sort(cmp)`
+//! in a `function f<T>(xs: T[], …)`): JavaScript never passes an `undefined` element to the
+//! comparator and puts those elements last, which the prelude does for an array whose element
+//! type is written with `undefined` (`extend<T> Array<T | undefined>`, std/prelude/sort.vlt),
+//! but generic code is bound to the plain `Array<T>.sort`. Such an instantiation at a type
+//! that allows `undefined` is reported too.
 
 use std::collections::{HashMap, HashSet};
 
@@ -29,6 +37,9 @@ use crate::visit;
 type Mask = u8;
 const NULL: Mask = 1;
 const UNDEFINED: Mask = 2;
+/// The definition passes elements of this type to a comparator of `Array<T>.sort` /
+/// `toSorted`, `undefined` ones included.
+const SORTS: Mask = 4;
 
 fn bits(n: Nothing) -> Mask {
     match n {
@@ -47,6 +58,9 @@ struct Edge {
 }
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
+    if !cx.writes_undefined {
+        return;
+    }
     let n = cx.ty.table.len() as u32;
     let any = (0..n).any(|i| matches!(cx.ty.kind(TyId(i)), TyKind::Option(_, Nothing::Undefined)));
     if !any {
@@ -69,7 +83,14 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
                 _ => continue,
             },
         };
-        masks.insert(d, direct_mask(cx, &own));
+        let mut direct = direct_mask(cx, &own);
+        if is_plain_sort(cx, d) {
+            if direct.is_empty() {
+                direct.push(0);
+            }
+            direct[0] |= SORTS;
+        }
+        masks.insert(d, direct);
         for (callee, targs, closure) in body {
             if closure {
                 edges.push(Edge {
@@ -149,8 +170,10 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         let Some(m) = masks.get(&d) else { continue };
         let bad = targs.iter().enumerate().find_map(|(i, t)| {
             let have = cx.ty.nothing_of(*t)?;
-            let kept = m.get(i).copied().unwrap_or(0) & !bits(have);
-            (kept != 0).then_some((*t, have, kept))
+            let m = m.get(i).copied().unwrap_or(0);
+            let kept = m & (NULL | UNDEFINED) & !bits(have);
+            let sorts = if have.has_undefined() { m & SORTS } else { 0 };
+            (kept | sorts != 0).then_some((*t, have, kept | sorts))
         });
         let Some((t, _, kept)) = bad else { continue };
         if !reported.insert(span) {
@@ -158,6 +181,21 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
         }
         let tn = cx.display(t);
         let name = def_name(cx, d);
+        if kept & (NULL | UNDEFINED) == 0 {
+            cx.error(
+                Diagnostic::error(
+                    format!("`{tn}` as a type argument of `{name}` is not supported yet (#930)"),
+                    span,
+                )
+                .with_note(format!(
+                    "`{name}` sorts an array of that type parameter with a comparator; JavaScript never passes an `undefined` element to it and puts those elements last, which generic code does not do yet"
+                ))
+                .with_note(
+                    "sort where the element type is written with `undefined`: `xs.sort(cmp)` on a `(T | undefined)[]`",
+                ),
+            );
+            continue;
+        }
         let other = if kept & NULL != 0 {
             "null"
         } else {
@@ -173,6 +211,20 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
             )),
         );
     }
+}
+
+/// Is `d` the prelude's `Array<T>.sort(cmp)` or `toSorted(cmp)` for any element type (not the
+/// one for `Array<T | undefined>`, which keeps `undefined` away from the comparator)?
+fn is_plain_sort(cx: &Ctx, d: DefId) -> bool {
+    let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) else {
+        return false;
+    };
+    let on_param_array = f.self_ty.is_some_and(|t| match cx.ty.kind(t) {
+        TyKind::Array(e) => matches!(cx.ty.kind(*e), TyKind::Param(0)),
+        _ => false,
+    });
+    let name = f.name.rsplit(['.', ':']).next().unwrap_or("");
+    on_param_array && f.generics == 1 && matches!(name, "sort" | "toSorted")
 }
 
 /// What function `f` uses: the types it keeps directly (signature, locals, expressions, type
