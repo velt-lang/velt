@@ -34,7 +34,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {
         let f = self.cx.fn_info(d);
         !self.cx.scopes[self.module].is_std
-            && self.cx.is_js_api_module(f.module)
+            && self.cx.is_js_api_fn(f.module, &f.name)
             && f.name.rsplit(['.', ':']).next() != Some("compareTo")
     }
 

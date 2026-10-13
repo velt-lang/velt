@@ -1,0 +1,10 @@
+// A worker index outside 0..workerCount() is a panic at the spawn, naming the valid range.
+import { workerCount } from "velt:task";
+
+async function f(): Promise<void> {}
+
+async function main() {
+  console.log("before");
+  await spawn(f(), { worker: workerCount() + 3 });
+  console.log("never printed");
+}

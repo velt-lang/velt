@@ -1,0 +1,19 @@
+// SHA-256 of a 48-byte message, 500k times, each digest fed back into the message: the cost of
+// one call (set-up, padding, the result) rather than of the block function.
+import { sha256 } from "velt:crypto";
+import { hexEncode } from "velt:encoding";
+
+function main() {
+  const message = Buffer.alloc(48);
+  for (let i: usize = 0; i < message.length; i++) {
+    message[i] = (i * 31 + 7) as u8;
+  }
+  let digest: u8[] = [];
+  for (let round = 0; round < 500000; round++) {
+    digest = sha256(message);
+    for (let i: usize = 0; i < 32; i++) {
+      message[i] = digest[i];
+    }
+  }
+  console.log(hexEncode(digest));
+}

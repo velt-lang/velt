@@ -25,7 +25,7 @@ velt playground [--port <n>] [--host <addr>]   # browser playground (default 127
 velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
 velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
 velt doctor                            # checks toolchain setup + smoke test
-velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
+velt toolchain list [--available] | install <v> [--default] | remove <t> [--force] | self-update | prune [--dry-run] | default [<t>] | which | link <name> <prefix> | unlink <name> | --version   # the launcher's (#948)
 velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
@@ -259,16 +259,42 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `lib/targets/<triple>/kit.stamp` whose name is `[a-z0-9_.-]+` not starting with `-` or `.`,
   the host's excluded), after `velt: adding the target packs velt <old> had to velt <new>: …` on
   stderr; the packs that fail are named in a warning with `velt +<new> target add …`, and the
-  install succeeds. `velt toolchain` (`velt_launcher::commands`): `list` prints a
+  install succeeds. Before running a release version, the launcher prints `velt: <notice>` on stderr when the
+  index it last fetched (`<root>/index-cache.json`, written by every verified fetch;
+  `velt_toolchain::release::notice_for`) marks that version yanked or gives it an `advisory`
+  (`security: true`: "has a security problem", also when it is yanked, the advisory after the
+  yank reason), naming the newest release of the same minor with neither and `` (`velt update`
+  in a package pinned to it, or `velt toolchain install <v>`) ``; at most once a day per version
+  (`<root>/notices/<version>`). Yank reasons and advisories are printed through
+  `velt_toolchain::release::display_text` (here and in `list --available`): control characters
+  and bidi overrides (U+202A–202E, U+2066–2069) become `?`, line breaks and tabs a space, cut at
+  200 characters with `…`. For `update` in a pinned package (the package's `velt` field, not
+  `+<req>` or `$VELT_TOOLCHAIN`) it first takes the newest published version the requirement
+  accepts from the index, installing it, unless an installed version it accepts is as new or
+  newer (an unreachable index: a note, then as usual). `velt toolchain` (`velt_launcher::commands`): `list` prints a
   line per installed version (newest first) then per link (`<name> -> <prefix>`), each after two
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
   Reading the index refuses one whose `generated` is older than `<root>/index-seen`, and prints
-  `velt: a newer velt launcher (<v>) is available; …` on stderr when its `launcher` is newer than
-  the running launcher. `install <spec>`: a full version is exact,
+  `velt: a newer velt launcher (<v>) is available (this one is <own>): run \`velt toolchain self-update\`` on stderr when its `launcher` is newer than
+  the running launcher. `install --from <file> [--unverified] [--default]`
+  (`velt_toolchain::release::install_toolchain_from_file`): `<file>` must be named
+  `velt-<semver>-<host>.tar.gz`; unless `--unverified` (a warning on stderr), `SHA256SUMS` and
+  `SHA256SUMS.sig` beside it are checked with the root's trusted keys and the archive against
+  `SHA256SUMS` (refused unless UTF-8); the archive's top directory must be `velt-<v>-<host>`; then
+  as `install`. When `<v>` is installed already it is kept and the file is not read (stdout
+  `velt <v> is already installed; kept it …`). `install <spec>`: a full version is exact,
   anything else a requirement resolved against the index; the first installed toolchain (no
   `<root>/default`) or `--default` becomes the default. `remove` refuses the default without
-  `--force`. `prune` removes every installed version but the default, the version the cwd
+  `--force`. `self-update`: the index's `launcher` when newer than the running launcher (else
+  `the velt launcher is up to date (<v>)`), its toolchain installed first when missing (as
+  `install`), and that prefix's `bin/velt-launcher` copied to `<root>/bin/.velt-new-<pid>`, run
+  there as `toolchain --version` (it must print `velt-launcher <new>`, else the copy is deleted and
+  the error says `the launcher of velt <new> (<path>) does not work here: …; kept the current
+  one`), and renamed over `<root>/bin/velt` (on Windows the running `velt.exe` is first renamed to
+  `.velt.exe.old-<pid>`); prints `updated the velt launcher: <old> → <new>`. It refuses unless the
+  running launcher is `<root>/bin/velt` itself (canonical paths). Every launcher run deletes
+  `<root>/bin/.velt*.old-*`, and `.velt-new-*` older than an hour. `prune` removes every installed version but the default, the version the cwd
   selects (`select` then `installed`), those whose directory is a link's prefix or contains it
   (`Root::linked_versions`), and per `major.minor` its newest release (its newest pre-release
   when it has none; `velt_toolchain::layout::prunable`), printing `removed velt <v> (<n> MB)` per

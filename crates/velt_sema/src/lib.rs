@@ -47,6 +47,7 @@ mod index_signatures;
 mod infer;
 mod instantiation_cycles;
 mod intersections;
+mod js_api;
 mod json;
 mod known;
 mod literals;

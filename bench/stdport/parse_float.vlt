@@ -1,0 +1,17 @@
+// String to `f64`: `parseFloat` over 200k decimal strings of 2 to 17 significant digits, 10
+// times. The Rust port uses `str::parse::<f64>`, which is what the runtime calls.
+function main() {
+  const texts: string[] = [];
+  for (let i: i64 = 0; i < 100000; i++) {
+    const x = ((2 * i + 1) as f64) / 14.0;
+    texts.push(`${x}`);
+    texts.push(`${x / 1024.0}`);
+  }
+  let sum = 0.0;
+  for (let round = 0; round < 10; round++) {
+    for (const t of texts) {
+      sum += parseFloat(t);
+    }
+  }
+  console.log(sum as i64);
+}

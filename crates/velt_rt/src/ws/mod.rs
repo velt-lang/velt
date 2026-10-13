@@ -25,6 +25,7 @@
 mod accept;
 mod connect;
 mod frame;
+mod handshake;
 mod topics;
 mod writer;
 
@@ -56,7 +57,7 @@ const HIGH_WATER: usize = 1 << 20;
 const CLOSE_FLUSH: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(test)]
 const CLOSE_FLUSH: std::time::Duration = std::time::Duration::from_millis(300);
-/// Largest message accepted (tungstenite's default).
+/// Largest message accepted (64 MiB, as in tungstenite and most servers).
 const MAX_MESSAGE: usize = 64 << 20;
 /// Bytes read at a time.
 const READ_CHUNK: usize = 16 * 1024;

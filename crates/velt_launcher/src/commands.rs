@@ -19,8 +19,12 @@ Commands:
   install <version> [--default]
                                install a release: `0.1.3`, or the newest match of `0.1`; the
                                first one installed becomes the default
+  install --from <file> [--unverified] [--default]
+                               install a downloaded velt-<version>-<triple>.tar.gz, checked
+                               against the SHA256SUMS and SHA256SUMS.sig beside it
   remove <toolchain> [--force] remove a version (debug executables it built stop running) or a
                                link; --force removes the default too
+  self-update                  replace this launcher with the newest release's
   prune [--dry-run]            remove every version but the default and the newest of each
                                major.minor; --dry-run lists them
   default [<toolchain>]        show or set the toolchain used outside pinned packages
@@ -63,9 +67,10 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
         .collect();
     let known_flags: &[&str] = match command {
         "list" => &["--available"],
-        "install" => &["--default"],
+        "install" => &["--default", "--from", "--unverified"],
         "remove" => &["--force"],
         "prune" => &["--dry-run"],
+        "self-update" => &[],
         _ => &[],
     };
     if let Some(bad) = rest
@@ -93,12 +98,37 @@ pub fn run(ctx: &Context, args: &[OsString]) -> Result<(), String> {
             list(ctx, flag("--available"))
         }
         "install" => {
+            // `--from <file>` takes a value, which the generic parsing counts as positional.
+            if let Some(at) = rest.iter().position(|a| *a == "--from") {
+                let file = rest.get(at + 1).filter(|f| !f.starts_with('-')).ok_or(
+                    "usage: velt toolchain install --from <file> [--unverified] [--default]",
+                )?;
+                if positional.len() != 1 {
+                    return Err(
+                        "usage: velt toolchain install --from <file> [--unverified] [--default]"
+                            .into(),
+                    );
+                }
+                return install_from(
+                    ctx,
+                    Path::new(file),
+                    flag("--unverified"),
+                    flag("--default"),
+                );
+            }
+            if flag("--unverified") {
+                return Err("--unverified goes with --from <file>".into());
+            }
             arity(1, "install <version> [--default]")?;
             install(ctx, positional[0], flag("--default"))
         }
         "remove" => {
             arity(1, "remove <toolchain> [--force]")?;
             remove(ctx, positional[0], flag("--force"))
+        }
+        "self-update" => {
+            arity(0, "self-update")?;
+            self_update(ctx)
         }
         "prune" => {
             arity(0, "prune [--dry-run]")?;
@@ -152,7 +182,10 @@ fn list(ctx: &Context, available: bool) -> Result<(), String> {
                 state.push_str("  (installed)");
             }
             if let Some(why) = &release.yanked {
-                state.push_str(&format!("  (yanked: {why})"));
+                state.push_str(&format!(
+                    "  (yanked: {})",
+                    velt_toolchain::release::display_text(why)
+                ));
             }
             println!("{v}{state}");
         }
@@ -222,6 +255,34 @@ fn install(ctx: &Context, spec: &str, make_default: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// `install --from <file>`: a toolchain archive downloaded before (no network needed).
+fn install_from(
+    ctx: &Context,
+    file: &Path,
+    unverified: bool,
+    make_default: bool,
+) -> Result<(), String> {
+    let (version, installed) = select::install_from(ctx, file, unverified)?;
+    if installed {
+        println!(
+            "installed velt {version} from {} into {}",
+            file.display(),
+            ctx.root.version_dir(&version).display()
+        );
+    } else {
+        println!(
+            "velt {version} is already installed; kept it (did not install {})",
+            file.display()
+        );
+    }
+    let toolchain = Toolchain::Version(version.clone());
+    if make_default || ctx.root.default()?.is_none() {
+        ctx.root.set_default(&toolchain)?;
+        println!("velt {version} is the default");
+    }
+    Ok(())
+}
+
 fn remove(ctx: &Context, text: &str, force: bool) -> Result<(), String> {
     let toolchain = Toolchain::parse(text)?;
     let root = &ctx.root;
@@ -237,6 +298,129 @@ fn remove(ctx: &Context, text: &str, force: bool) -> Result<(), String> {
             println!("removed velt {v}; debug executables it built no longer run (rebuild them)")
         }
         Toolchain::Linked(name) => println!("unlinked {name}"),
+    }
+    Ok(())
+}
+
+/// Replace this launcher with the newest one the signed index names: the `bin/velt-launcher` of
+/// that velt's toolchain, installed first when it isn't (checked as every install is).
+fn self_update(ctx: &Context) -> Result<(), String> {
+    let dest = launcher_path(&ctx.root);
+    // Only the launcher at `<root>/bin/velt` replaces it: one copied elsewhere in `bin` would
+    // overwrite a `velt` it isn't.
+    let exe = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| format!("cannot find the launcher's own path: {e}"))?;
+    if std::fs::canonicalize(&dest).ok().as_ref() != Some(&exe) {
+        return Err(format!(
+            "this launcher ({}) is not {}, so it can't update it; run that one",
+            exe.display(),
+            dest.display()
+        ));
+    }
+    let own = Version::parse(env!("CARGO_PKG_VERSION")).expect("ICE: the crate version");
+    let index = velt_toolchain::release::fetch_index(&ctx.root, &ctx.base)?;
+    let Some(newest) = index.newer_launcher(&own).cloned() else {
+        println!("the velt launcher is up to date ({own})");
+        return Ok(());
+    };
+    let toolchain = Toolchain::Version(newest.clone());
+    let prefix = if ctx.root.is_installed(&toolchain) {
+        ctx.root.version_dir(&newest)
+    } else {
+        eprintln!("installing velt {newest}, which brings the launcher...");
+        select::install(ctx, &newest)?
+    };
+    let launcher = prefix
+        .join("bin")
+        .join(format!("velt-launcher{}", std::env::consts::EXE_SUFFIX));
+    if !launcher.is_file() {
+        return Err(format!(
+            "velt {newest} has no launcher ({}); run the installer again",
+            launcher.display()
+        ));
+    }
+    replace_launcher(&ctx.root, &launcher, &newest)?;
+    println!("updated the velt launcher: {own} → {newest}");
+    Ok(())
+}
+
+/// `<root>/bin/velt`.
+fn launcher_path(root: &velt_toolchain::Root) -> std::path::PathBuf {
+    root.dir()
+        .join("bin")
+        .join(format!("velt{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// Put `new` (the launcher of velt `version`) in place of `<root>/bin/velt`: copied beside it
+/// (`.velt-new-<pid>`), run there to check it is a working launcher of that version, then renamed
+/// over it, so `velt` is never half written nor replaced by a program that can't run here (another
+/// libc or architecture). A running `velt.exe` can't be replaced on Windows, but can be renamed:
+/// it is moved aside first (`.velt.exe.old-*`, deleted by a later run, `crate::sweep`).
+fn replace_launcher(
+    root: &velt_toolchain::Root,
+    new: &Path,
+    version: &Version,
+) -> Result<(), String> {
+    let bin = root.dir().join("bin");
+    let exe = std::env::consts::EXE_SUFFIX;
+    let dest = launcher_path(root);
+    let staged = bin.join(format!(".velt-new-{}{exe}", std::process::id()));
+    let result = stage_launcher(new, &staged, version).and_then(|()| {
+        let aside = bin.join(format!(".velt{exe}.old-{}", std::process::id()));
+        let moved_aside = cfg!(windows) && dest.exists() && std::fs::rename(&dest, &aside).is_ok();
+        std::fs::rename(&staged, &dest).map_err(|e| {
+            if moved_aside {
+                let _ = std::fs::rename(&aside, &dest);
+            }
+            format!("cannot replace {}: {e}", dest.display())
+        })
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    result
+}
+
+/// Copy `new` to `staged`, executable, and check that it runs and is velt-launcher `version`.
+fn stage_launcher(new: &Path, staged: &Path, version: &Version) -> Result<(), String> {
+    std::fs::copy(new, staged).map_err(|e| format!("cannot copy {}: {e}", new.display()))?;
+    // Fresh, whatever the copy kept: `crate::sweep` deletes only stale staged launchers, and this
+    // one runs (and sweeps) before it is renamed.
+    std::fs::File::options()
+        .write(true)
+        .open(staged)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
+        .map_err(|e| format!("cannot write {}: {e}", staged.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("cannot make {} executable: {e}", staged.display()))?;
+    }
+    let refuse = |why: String| {
+        format!(
+            "the launcher of velt {version} ({}) {why}; kept the current one",
+            new.display()
+        )
+    };
+    let out = std::process::Command::new(staged)
+        .args(["toolchain", "--version"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| refuse(format!("does not run here: {e}")))?;
+    let said = String::from_utf8_lossy(&out.stdout);
+    let expected = format!("velt-launcher {version}");
+    if !out.status.success() || said.trim() != expected {
+        return Err(refuse(format!(
+            "does not work here: `toolchain --version` {} `{}`, not `{expected}`",
+            if out.status.success() {
+                "printed".to_string()
+            } else {
+                format!("failed ({}) and printed", out.status)
+            },
+            said.trim()
+        )));
     }
     Ok(())
 }

@@ -1,0 +1,8 @@
+async function f(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const opts = { worker: 0 };
+  await spawn(f(), opts);
+}

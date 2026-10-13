@@ -2,7 +2,7 @@
 
 `import { AbortError, TimeoutError, timeout, taskScope } from "velt:task"`. Cancellation with
 TypeScript's `AbortController` / `AbortSignal` (global, as in Node; this module exports them
-too), timeouts, and task scopes (structured concurrency). [`fetch`](fetch.md) takes a signal.
+too), timeouts, task scopes (structured concurrency) and task placement. [`fetch`](fetch.md) takes a signal.
 
 Cancellation is cooperative. `abort()` marks the signal and wakes the tasks waiting for it;
 code that takes a signal checks it with `throwIfAborted()`, or races its work against
@@ -117,5 +117,77 @@ async function main() {
     },
   );
   console.log(total); // 80
+}
+```
+
+## Task placement
+
+`workerCount()` and `currentWorker()`, with `spawn(p, { worker })` (a built-in), place tasks on
+workers: the threads that run tasks, fixed for the process (`VELT_THREADS`, else the number of
+cores; 1 on WebAssembly). A sharded program (one task per worker owning a slice of the data,
+Seastar or Orleans style) pins each shard to a worker and its callers next to it, so a call
+never wakes another thread.
+
+- `workerCount(): i64`: how many workers there are.
+- `currentWorker(): i64`: the worker running this task (`0` to `workerCount() - 1`); `0`
+  outside a task (a synchronous `main`).
+- `spawn(p, { worker: i })`: starts `p` on worker `i`, where it stays (`SpawnOptions` is
+  `{ worker?: i64 }`; `{}` pins nothing). `p` must be a call or a task body: a promise that
+  already started stays on its task (`a started promise stays on its task; pass the call`).
+  The options must be an object literal (a variable holding them is an error); `worker` may
+  be given once. An index out of range is a panic:
+  `spawn: worker 7 is out of range (the runtime has 4 workers)`.
+- A program that pins a task (`spawn(p, { worker })`) runs on the per-core scheduler: every
+  worker runs its own event loop, and a task stays on the worker it started on (an unpinned one
+  starts on the spawning worker unless that worker is clearly busier than another). Every other
+  program keeps the default work-stealing scheduler, unchanged, including one that only calls
+  `workerCount()` to size a pool of unpinned tasks (which the stealing scheduler runs faster)
+  or `currentWorker()`. `VELT_SCHEDULER=stealing` or
+  `per-core` overrides the choice (for measuring); with `stealing`, `{ worker }` is checked but
+  the task may run on any worker, and `currentWorker()` can change at any `await`.
+- A pinned task can't borrow an idle core: CPU-bound code in it delays everything else on its
+  worker. `scope.spawn` takes no placement yet.
+
+```ts
+import { channel, Channel } from "velt:channel";
+import { workerCount, currentWorker } from "velt:task";
+
+type Call = { key: string; reply: (n: i64) => void };
+
+async function shard(inbox: Channel<Call>): Promise<void> {
+  const counts = new Map<string, i64>();
+  while (true) {
+    const c = await inbox.receive();
+    if (c == null) {
+      return;
+    }
+    const n = (counts.get(c.key) ?? 0) + 1;
+    counts.set(c.key, n);
+    c.reply(n);
+  }
+}
+
+async function caller(inbox: Channel<Call>): Promise<i64> {
+  let n = 0;
+  for (let i = 0; i < 1000; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    inbox.trySend({ key: "a", reply: resolve });
+    n = await promise;
+  }
+  return n;
+}
+
+async function main() {
+  const inboxes: Channel<Call>[] = [];
+  for (let i = 0; i < workerCount(); i++) {
+    inboxes.push(channel<Call>());
+    spawn(shard(inboxes[i]), { worker: i });
+  }
+  // Next to shard 0: no call wakes another thread.
+  const n = await spawn(caller(inboxes[0]), { worker: 0 });
+  console.log(`${n} calls, main on worker ${currentWorker()}`);
+  for (const c of inboxes) {
+    c.close();
+  }
 }
 ```

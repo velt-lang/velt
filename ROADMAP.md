@@ -12,7 +12,7 @@ deprecated, and the compiler explains how to update code.
 | **Packages and a modular std** | A public package registry; the database drivers (`sqlite`, `postgres`, `redis`) move to versioned packages; module-scoped `extend` and retroactive `implements`. |
 | **Platform** | Unwind information for JIT code on macOS and Linux, hot swap verified on every platform, Windows arm64, a released toolchain with installers. |
 | **Performance** | Compile-time scaling of lowering and the optimizer, closure environments, `noalias` from the exclusivity rule, a batched PostgreSQL query API. |
-| **Tooling** | A published VS Code extension, debugger support for JIT code, a warm front end in `velt dev`, `new Promise(...)`, the logical assignment operators. |
+| **Tooling** | Debugger support for JIT code, a warm front end in `velt dev`, `new Promise(...)`, the logical assignment operators. |
 | **Semantics stage 3** | `weak` references and a compile-time warning for reference cycles, still without a collector. ([design](docs/internals/design/semantics.md#reference-cycles--without-a-collector)) |
 
 Proposals for language changes start as issues; see

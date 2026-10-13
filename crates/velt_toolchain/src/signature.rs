@@ -9,8 +9,8 @@
 //! if the signing key is lost or leaks, releases are signed with the backup and the launchers
 //! that carry it (those from the release after 0.2.0 on; 0.2.0's knows only the signing key)
 //! keep checking them; the next release then names a new backup (CONTRIBUTING.md "Replacing the
-//! signing key", which also says what this can't do: a leaked key can't be revoked from
-//! launchers that trust it). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
+//! signing key", which also says how a leaked key is revoked through the index of releases and
+//! what that can't reach). `$VELT_INSTALL_PUBLIC_KEY` (hex, several separated by commas)
 //! replaces them, for releases of another build (a fork's, a test's): whoever can set your
 //! environment can already run programs as you, so it opens nothing new.
 
@@ -75,20 +75,105 @@ fn parse_keys(list: &str, from: &str) -> Result<Vec<Vec<u8>>, String> {
 
 /// Check `signature` (64 bytes, or their hex) of `data`: it must be by one of `keys`.
 pub fn verify(data: &[u8], signature: &[u8], keys: &[Vec<u8>]) -> Result<(), String> {
+    verify_by(data, signature, keys).map(drop)
+}
+
+/// [`verify`], saying which of `keys` signed (its index).
+pub fn verify_by(data: &[u8], signature: &[u8], keys: &[Vec<u8>]) -> Result<usize, String> {
     let text = std::str::from_utf8(signature).ok().map(str::trim);
     let signature = match text.and_then(decode_hex) {
         Some(bytes) => bytes,
         None => signature.to_vec(),
     };
-    if keys.iter().any(|key| {
-        UnparsedPublicKey::new(&ED25519, key)
-            .verify(data, &signature)
-            .is_ok()
-    }) {
-        Ok(())
+    keys.iter()
+        .position(|key| {
+            UnparsedPublicKey::new(&ED25519, key)
+                .verify(data, &signature)
+                .is_ok()
+        })
+        .ok_or_else(|| "the signature does not match the release key".to_string())
+}
+
+/// The keys a root trusts, and the freshness series of the index they sign.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trust {
+    /// Every key named, in order: the signing key, then the backup (for the built-in keys).
+    pub all: Vec<Vec<u8>>,
+    /// Those not revoked ([`REVOKED_KEYS_FILE`]): what signatures are checked with.
+    pub keys: Vec<Vec<u8>>,
+    /// The name the newest index seen is kept under in `<root>/index-seen/`: `official` for the
+    /// built-in keys, whichever of them signs (so it survives a rotation), else the first key in
+    /// hex (another build's releases).
+    pub series: String,
+}
+
+/// The file in the root listing revoked release keys (hex, one per line). It only grows: an
+/// index that names a key as revoked adds it ([`crate::release`]), and none removes one.
+pub const REVOKED_KEYS_FILE: &str = "revoked-keys";
+/// The series of the built-in keys.
+pub const OFFICIAL_SERIES: &str = "official";
+/// Where 0.2.0 kept the official series: under its signing key, in hex. Fixed, so a launcher
+/// built after that key is rotated out still takes over the time 0.2.0 kept.
+pub const LEGACY_SERIES: &str = "95704338078ff393e38d91fa0b35407bef91f2c6a23e01786cd60151006105cb";
+
+/// What `root` trusts: [`public_keys`] without the keys revoked there. `root` is `None` when
+/// there is no root to read (a toolchain run from a checkout).
+pub fn trust(root: Option<&crate::Root>) -> Result<Trust, String> {
+    let overridden = std::env::var(ENV_PUBLIC_KEY)
+        .ok()
+        .is_some_and(|k| !k.trim().is_empty());
+    let all = public_keys()?;
+    let series = if overridden {
+        hex_of(&all[0])
     } else {
-        Err("the signature does not match the release key".to_string())
+        OFFICIAL_SERIES.to_string()
+    };
+    trust_from(all, series, root)
+}
+
+/// [`trust`] in `all`, the keys a caller chose (a test's).
+pub fn trust_from(
+    all: Vec<Vec<u8>>,
+    series: String,
+    root: Option<&crate::Root>,
+) -> Result<Trust, String> {
+    let revoked = root.map(revoked_keys).unwrap_or_default();
+    let keys: Vec<Vec<u8>> = all
+        .iter()
+        .filter(|k| !revoked.contains(k))
+        .cloned()
+        .collect();
+    if keys.is_empty() {
+        return Err(
+            "every release key this velt trusts has been revoked: install the velt launcher \
+             again (get-velt), which brings the current keys"
+                .into(),
+        );
     }
+    Ok(Trust { all, keys, series })
+}
+
+/// The keys revoked in `root` ([`REVOKED_KEYS_FILE`]).
+pub fn revoked_keys(root: &crate::Root) -> Vec<Vec<u8>> {
+    std::fs::read_to_string(root.dir().join(REVOKED_KEYS_FILE))
+        .map(|text| text.lines().filter_map(|l| decode_hex(l.trim())).collect())
+        .unwrap_or_default()
+}
+
+/// Add `key` to the revoked keys of `root` (once).
+pub fn record_revoked(root: &crate::Root, key: &[u8]) -> Result<(), String> {
+    let mut revoked = revoked_keys(root);
+    if revoked.iter().any(|k| k == key) {
+        return Ok(());
+    }
+    revoked.push(key.to_vec());
+    let text: String = revoked.iter().map(|k| format!("{}\n", hex_of(k))).collect();
+    crate::layout::write_file(&root.dir().join(REVOKED_KEYS_FILE), &text)
+}
+
+/// `bytes` in lowercase hex.
+pub fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The `SHA256SUMS` of the release at `release_url`, checked against its signature with `keys`
@@ -100,20 +185,28 @@ pub fn signed_sums(release_url: &str, keys: &[Vec<u8>]) -> Result<Option<String>
 /// The text at `url`, checked against its signature at `<url>.sig` with `keys`; `None` when
 /// `url` does not exist.
 pub fn signed_text(url: &str, keys: &[Vec<u8>]) -> Result<Option<String>, String> {
+    signed_text_by(url, keys).map(|t| t.map(|(text, _)| text))
+}
+
+/// [`signed_text`], with which of `keys` signed it.
+pub fn signed_text_by(url: &str, keys: &[Vec<u8>]) -> Result<Option<(String, usize)>, String> {
     let Some(data) = download(url, MAX_SMALL_FILE)? else {
         return Ok(None);
     };
     let signature = download(&format!("{url}{SIG_SUFFIX}"), MAX_SMALL_FILE)?.ok_or_else(|| {
         format!("{url} has no signature ({url}{SIG_SUFFIX}), so it cannot be checked; refusing it")
     })?;
-    verify(&data, &signature, keys).map_err(|e| format!("{url}: {e}; refusing it"))?;
+    let signer =
+        verify_by(&data, &signature, keys).map_err(|e| format!("{url}: {e}; refusing it"))?;
     String::from_utf8(data)
-        .map(Some)
+        .map(|text| Some((text, signer)))
         .map_err(|_| format!("{url} is not text"))
 }
 
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
+/// `text`'s bytes, two hex digits each; `None` unless it is only hex digits (`from_str_radix`
+/// alone would take a sign: `+f`).
+pub(crate) fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..text.len())
@@ -198,6 +291,10 @@ pub(crate) mod tests {
         assert_eq!(decode_hex("0"), None);
         assert_eq!(decode_hex("zz"), None);
         assert_eq!(decode_hex("é0"), None);
+        assert_eq!(decode_hex("+f+f"), None);
+        assert_eq!(decode_hex("-f"), None);
+        assert_eq!(decode_hex("0x"), None);
+        assert!(parse_keys(&format!("+f{}", "f".repeat(62)), "x").is_err());
     }
 
     #[test]

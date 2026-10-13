@@ -300,10 +300,7 @@ fn read_variables(file: &object::File, symbol: &str) -> Vec<Var> {
 #[test]
 fn objects_describe_variables() {
     let program = fib_with_variables();
-    for (triple, fmt, _) in TARGETS {
-        if fmt == BinaryFormat::Coff {
-            continue;
-        }
+    for (triple, _, _) in TARGETS {
         let opts = CodegenOptions {
             target: triple.into(),
             optimize: false,
@@ -338,21 +335,101 @@ fn objects_describe_variables() {
     }
 }
 
-/// Where objects get no DWARF variables (COFF), describing them changes no code: their locals
-/// keep their registers.
+/// A compiled function of `n` variables declared one per line from line 10 on, each in scope to
+/// the function's end, with `rows` as its line rows: (code offset, line, 0 for none).
+fn declarations(n: u32, rows: &[(u32, u32)], size: u32) -> crate::debug_info::FunctionLines {
+    let loc = |line| SrcLoc {
+        file: 0,
+        line,
+        col: 1,
+    };
+    crate::debug_info::FunctionLines {
+        id: cranelift_module::FuncId::from_u32(0),
+        symbol: "_V4main".into(),
+        name: "main".into(),
+        external: false,
+        size,
+        decl: Some(loc(1)),
+        rows: (rows.iter())
+            .map(|&(offset, line)| (offset, (line > 0).then(|| loc(line))))
+            .collect(),
+        body: 4,
+        vars: (0..n)
+            .map(|k| crate::debug_info::Variable {
+                name: format!("v{k}"),
+                debug: vir::LocalDebug {
+                    decl: loc(10 + k),
+                    end: None,
+                    ty: vir::DebugTyId(0),
+                    by_ref: false,
+                    param: false,
+                },
+                ty: Ty::I64,
+                fp_offset: -8 * (i64::from(k) + 1),
+            })
+            .collect(),
+    }
+}
+
+/// The size of `.debug_ranges` (DWARF 4: 16 bytes per range and per list end) of the unit
+/// describing `function`.
+fn ranges_size(function: crate::debug_info::FunctionLines) -> usize {
+    use gimli::write::{Address, EndianVec, Sections};
+    let program = fib_with_variables();
+    let mut unit = crate::debug_info::build_unit(
+        &program,
+        &[function],
+        |_| Address::Constant(0x1000),
+        Some(gimli::X86_64::RBP),
+    );
+    let mut sections = Sections::new(EndianVec::new(gimli::LittleEndian));
+    unit.write(&mut sections).unwrap();
+    sections.debug_ranges.slice().len()
+}
+
+/// Declarations in a row, as the compiler lays them out: per line, located code, a few bytes
+/// without a location, located code. Each variable's scope is one range, from its line to the
+/// function's last line, so the ranges grow with the function (regression: the bytes without a
+/// location cut every scope around them, n² ranges in all, and a debug build of a `main` of
+/// 16000 declarations ran out of memory).
 #[test]
-fn coff_code_ignores_variable_descriptions() {
-    let opts = CodegenOptions {
-        target: "x86_64-pc-windows-msvc".into(),
-        optimize: false,
+fn scopes_of_declarations_in_a_row_are_one_range_each() {
+    for n in [10u32, 1000] {
+        let mut rows = vec![(0, 1)];
+        for k in 0..n {
+            rows.extend([
+                (4 + 20 * k, 10 + k),
+                (12 + 20 * k, 0),
+                (15 + 20 * k, 10 + k),
+            ]);
+        }
+        // The epilogue, on the function's line.
+        rows.push((4 + 20 * n, 1));
+        let size = ranges_size(declarations(n, &rows, 8 + 20 * n));
+        // The unit's list (the function) and a list of one range per variable.
+        assert_eq!(size, 32 * (n as usize + 1), "{n} declarations");
+    }
+}
+
+/// Code laid out far from source order (here every line's code is followed by code of the
+/// function's first line) cuts each scope into as many ranges as lines follow it. Small
+/// functions describe them all; a large one stays within ranges in proportion to its code,
+/// and the variables that no longer fit are shown in the scope around them.
+#[test]
+fn scope_ranges_stay_in_proportion_to_the_code() {
+    let size_of = |n: u32| {
+        let mut rows = vec![(0, 1)];
+        for k in 0..n {
+            rows.extend([(4 + 20 * k, 10 + k), (14 + 20 * k, 1)]);
+        }
+        ranges_size(declarations(n, &rows, 4 + 20 * n))
     };
-    let text = |program: &Program| {
-        let bytes = emit_object(program, &opts).unwrap();
-        let file = object::File::parse(&*bytes).unwrap();
-        let text = file.section_by_name(".text").expect(".text");
-        text.data().unwrap().to_vec()
-    };
-    assert_eq!(text(&located_fib()), text(&fib_with_variables()));
+    // Variable k: the code of lines k.. (n - k ranges) and the list's end.
+    let all = |n: usize| 32 + 16 * (n * (n + 1) / 2 + n);
+    assert_eq!(size_of(8), all(8));
+    let (small, large) = (size_of(1000), size_of(2000));
+    assert!(small < all(1000) / 10, "{small}");
+    assert!(large < small * 5 / 2, "{small} bytes, then {large}");
 }
 
 #[test]

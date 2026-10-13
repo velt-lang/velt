@@ -1,5 +1,6 @@
 //! Places: resolving locals + projections to registers or memory, and reading/writing them.
 
+use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags};
 use cranelift_module::Module;
 use velt_vir::vir::{AggId, Place, Proj, Ty};
@@ -129,11 +130,17 @@ impl<M: Module> Translator<'_, '_, M> {
             (Loc::Var(v, ty), Val::Scalar(x)) => {
                 self.check_scalar_type(x, ty)?;
                 self.builder.def_var(v, x);
+                if let Some(&slot) = self.shadows.by_var.get(&v.index()) {
+                    self.builder.ins().stack_store(x, slot, 0);
+                }
             }
             (Loc::Value(local, ty), Val::Scalar(x)) => {
                 self.check_scalar_type(x, ty)?;
                 if self.values[local as usize].replace(x).is_some() {
                     self.demote.push(local);
+                }
+                if let Some(&slot) = self.shadows.by_local.get(&local) {
+                    self.builder.ins().stack_store(x, slot, 0);
                 }
             }
             (Loc::Mem(base, offset, Ty::Agg(id)), Val::Agg(src)) => {

@@ -2,278 +2,14 @@
 //! different versions run different toolchains, missing versions are downloaded and checked,
 //! and `velt toolchain` manages them.
 
+#[path = "support/releases.rs"]
+mod releases;
 mod support;
 
-use std::collections::HashMap;
-use std::net::TcpListener;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::{Arc, Mutex};
+use std::process::Command;
 
+use releases::*;
 use support::fake_velt;
-use velt_http::{Response, Server};
-
-const EXE: &str = std::env::consts::EXE_SUFFIX;
-
-fn host() -> String {
-    velt_toolchain::release::host_triple()
-}
-
-/// `velt-<v>-<host>.tar.gz` holding the fake toolchain.
-fn archive(version: &str) -> Vec<u8> {
-    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-    let mut tar = tar::Builder::new(gz);
-    let top = format!("velt-{version}-{}", host());
-    let mut add = |path: String, bytes: &[u8], mode: u32| {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(mode);
-        tar.append_data(&mut header, path, bytes).unwrap();
-    };
-    add(
-        format!("{top}/bin/velt{EXE}"),
-        &std::fs::read(fake_velt()).unwrap(),
-        0o755,
-    );
-    add(format!("{top}/std/VERSION"), version.as_bytes(), 0o644);
-    tar.into_inner().unwrap().finish().unwrap()
-}
-
-/// Releases served over loopback HTTP, laid out like GitHub's, signed with a key of their own.
-struct Releases {
-    server: Option<Server>,
-    /// The public key, hex (`$VELT_INSTALL_PUBLIC_KEY`).
-    key: String,
-    signer: ring::signature::Ed25519KeyPair,
-    /// The index's `generated` time, increased with each new index.
-    generated: std::sync::atomic::AtomicU64,
-    files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-    requests: Arc<Mutex<Vec<String>>>,
-}
-
-impl Releases {
-    fn new(versions: &[&str]) -> Releases {
-        let files: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::default();
-        let requests: Arc<Mutex<Vec<String>>> = Arc::default();
-        use ring::signature::KeyPair;
-        let pkcs8 =
-            ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new())
-                .unwrap();
-        let signer = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
-        let key: String = signer
-            .public_key()
-            .as_ref()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let mut map = files.lock().unwrap();
-        for v in versions {
-            let name = format!("velt-{v}-{}.tar.gz", host());
-            let bytes = archive(v);
-            let sums = format!("{}  {name}\n", velt_toolchain::install::sha256_hex(&bytes));
-            map.insert(format!("/releases/download/v{v}/{name}"), bytes);
-            map.insert(
-                format!("/releases/download/v{v}/SHA256SUMS.sig"),
-                signer.sign(sums.as_bytes()).as_ref().to_vec(),
-            );
-            map.insert(
-                format!("/releases/download/v{v}/SHA256SUMS"),
-                sums.into_bytes(),
-            );
-        }
-        drop(map);
-        let (f, r) = (files.clone(), requests.clone());
-        let handler = Arc::new(move |req: velt_http::Request| {
-            r.lock().unwrap().push(req.path.clone());
-            match f.lock().unwrap().get(&req.path) {
-                Some(bytes) => Response::bytes(200, "application/octet-stream", bytes.clone()),
-                None => Response::text(404, "not found"),
-            }
-        });
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server = Server::start(listener, handler, 1 << 20).unwrap();
-        let releases = Releases {
-            server: Some(server),
-            key,
-            signer,
-            generated: std::sync::atomic::AtomicU64::new(1_000),
-            files,
-            requests,
-        };
-        let listed: Vec<(&str, Option<&str>)> = versions.iter().map(|v| (*v, None)).collect();
-        releases.index(&listed);
-        releases
-    }
-
-    /// Publish the signed index of releases: (version, why it was yanked).
-    fn index(&self, releases: &[(&str, Option<&str>)]) {
-        self.index_with(releases, None, None);
-    }
-
-    /// [`Releases::index`] naming the newest launcher, and written at `generated` (default:
-    /// later than the last one).
-    fn index_with(
-        &self,
-        releases: &[(&str, Option<&str>)],
-        launcher: Option<&str>,
-        generated: Option<u64>,
-    ) {
-        use std::sync::atomic::Ordering;
-        let generated =
-            generated.unwrap_or_else(|| self.generated.fetch_add(1, Ordering::Relaxed) + 1);
-        let launcher = launcher.map_or(String::new(), |l| format!("\"launcher\": \"{l}\", "));
-        let entries: Vec<String> = releases
-            .iter()
-            .map(|(v, yanked)| match yanked {
-                Some(why) => format!("{{\"version\": \"{v}\", \"yanked\": \"{why}\"}}"),
-                None => format!("{{\"version\": \"{v}\"}}"),
-            })
-            .collect();
-        let index = format!(
-            "{{\"format\": 1, \"generated\": {generated}, {launcher}\"releases\": [{}]}}",
-            entries.join(", ")
-        );
-        let path = "/releases/download/index/releases.json";
-        let mut files = self.files.lock().unwrap();
-        files.insert(
-            format!("{path}.sig"),
-            self.signer.sign(index.as_bytes()).as_ref().to_vec(),
-        );
-        files.insert(path.into(), index.into_bytes());
-    }
-
-    fn url(&self) -> String {
-        format!("http://{}", self.server.as_ref().unwrap().addr())
-    }
-
-    fn downloads(&self) -> usize {
-        self.requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|p| p.ends_with(".tar.gz"))
-            .count()
-    }
-}
-
-impl Drop for Releases {
-    fn drop(&mut self) {
-        if let Some(server) = self.server.take() {
-            server.stop();
-        }
-    }
-}
-
-/// A root with the launcher in `bin/`, and a work directory.
-struct Machine {
-    _tmp: tempfile::TempDir,
-    root: PathBuf,
-    work: PathBuf,
-    base: String,
-    key: String,
-}
-
-impl Machine {
-    fn new(releases: &Releases) -> Machine {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("root");
-        std::fs::create_dir_all(root.join("bin")).unwrap();
-        std::fs::copy(
-            env!("CARGO_BIN_EXE_velt-launcher"),
-            root.join(format!("bin/velt{EXE}")),
-        )
-        .unwrap();
-        let work = tmp.path().join("work");
-        std::fs::create_dir_all(&work).unwrap();
-        Machine {
-            root,
-            work,
-            base: releases.url(),
-            key: releases.key.clone(),
-            _tmp: tmp,
-        }
-    }
-
-    /// A package `name` in the work directory pinned to `velt` (no field when `None`).
-    fn package(&self, name: &str, velt: Option<&str>) -> PathBuf {
-        let dir = self.work.join(name);
-        std::fs::create_dir_all(dir.join("src")).unwrap();
-        let pin = velt.map_or(String::new(), |v| format!(", velt: \"{v}\""));
-        std::fs::write(
-            dir.join("package.vlt"),
-            format!(
-                "import type {{ Package }} from \"velt:package\";\n\nexport const pkg: Package = \
-                 {{ name: \"{name}\", version: \"0.1.0\"{pin} }};\n"
-            ),
-        )
-        .unwrap();
-        dir
-    }
-
-    fn command(&self, dir: &Path, args: &[&str]) -> Command {
-        let mut c = Command::new(self.root.join(format!("bin/velt{EXE}")));
-        c.args(args)
-            .current_dir(dir)
-            .env("VELT_INSTALL_BASE_URL", &self.base)
-            .env("VELT_INSTALL_PUBLIC_KEY", &self.key)
-            .env_remove("VELT_TOOLCHAIN")
-            .env_remove("VELT_TOOLCHAIN_AUTO_INSTALL");
-        c
-    }
-
-    fn run(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
-        let mut c = self.command(dir, args);
-        for (k, v) in env {
-            c.env(k, v);
-        }
-        c.output().unwrap()
-    }
-
-    fn ok(&self, dir: &Path, args: &[&str]) -> String {
-        self.ok_with(dir, args, &[])
-    }
-
-    fn ok_with(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
-        let out = self.run(dir, args, env);
-        let (stdout, stderr) = text(&out);
-        assert!(
-            out.status.success(),
-            "velt {args:?} failed:\n{stdout}\n{stderr}"
-        );
-        stdout
-    }
-
-    fn fail(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
-        let out = self.run(dir, args, env);
-        let (stdout, stderr) = text(&out);
-        assert!(!out.status.success(), "velt {args:?} succeeded:\n{stdout}");
-        stderr
-    }
-
-    fn toolchain(&self, version: &str) -> PathBuf {
-        self.root.join("toolchains").join(version)
-    }
-}
-
-fn text(out: &Output) -> (String, String) {
-    (
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
-
-/// The `prefix=` line the fake toolchain prints.
-fn prefix_of(stdout: &str) -> PathBuf {
-    let line = stdout
-        .lines()
-        .find_map(|l| l.strip_prefix("prefix="))
-        .unwrap_or_else(|| panic!("not run by a toolchain:\n{stdout}"));
-    PathBuf::from(line)
-}
-
-fn same(a: &Path, b: &Path) -> bool {
-    a.canonicalize().unwrap() == b.canonicalize().unwrap()
-}
 
 #[test]
 fn packages_pinned_to_different_versions_run_their_own_toolchains() {
@@ -816,4 +552,203 @@ fn the_locked_toolchain_runs_in_its_package() {
     lock("0.1.0");
     let stdout = m.ok(&pkg, &["+0.1.2", "build"]);
     assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+}
+
+/// `velt toolchain install --from <file>` installs a downloaded archive without the network:
+/// checked against the signed SHA256SUMS beside it, or unchecked with --unverified.
+#[test]
+fn install_from_a_downloaded_archive() {
+    let releases = Releases::new(&[]);
+    let m = Machine::new(&releases);
+    let offline = [("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")];
+    let dir = m.work.join("downloads");
+    std::fs::create_dir_all(&dir).unwrap();
+    let name = format!("velt-0.3.0-{}.tar.gz", host());
+    let file = dir.join(&name);
+    let bytes = archive("0.3.0");
+    std::fs::write(&file, &bytes).unwrap();
+    let sums = format!("{}  {name}\n", velt_toolchain::install::sha256_hex(&bytes));
+    std::fs::write(dir.join("SHA256SUMS"), &sums).unwrap();
+    std::fs::write(
+        dir.join("SHA256SUMS.sig"),
+        releases.signer.sign(sums.as_bytes()).as_ref(),
+    )
+    .unwrap();
+    let path = file.to_str().unwrap();
+
+    let out = m.ok_with(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(
+        out.contains("installed velt 0.3.0 from") && out.contains("is the default"),
+        "{out}"
+    );
+    assert!(m.toolchain("0.3.0").join("std/VERSION").is_file());
+
+    // Tampered: refused. No SHA256SUMS: refused unless --unverified.
+    std::fs::write(&file, archive("0.3.9")).unwrap();
+    m.ok(&m.work, &["toolchain", "remove", "0.3.0", "--force"]);
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("SHA-256"), "{err}");
+    // Signed, but not text: refused, not read lossily.
+    std::fs::write(&file, &bytes).unwrap();
+    let mut garbled = sums.clone().into_bytes();
+    garbled.extend_from_slice(b"\xff\xfe\n");
+    std::fs::write(dir.join("SHA256SUMS"), &garbled).unwrap();
+    std::fs::write(
+        dir.join("SHA256SUMS.sig"),
+        releases.signer.sign(&garbled).as_ref(),
+    )
+    .unwrap();
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("is not text"), "{err}");
+    std::fs::remove_file(dir.join("SHA256SUMS")).unwrap();
+    let err = m.fail(&m.work, &["toolchain", "install", "--from", path], &offline);
+    assert!(err.contains("pass --unverified"), "{err}");
+    // Unchecked, an archive still has to be what its name says (its top directory).
+    std::fs::write(&file, &bytes).unwrap();
+    let out = m.run(
+        &m.work,
+        &["toolchain", "install", "--from", path, "--unverified"],
+        &offline,
+    );
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("without checking it"), "{stderr}");
+    assert!(m.toolchain("0.3.0").join("std/VERSION").is_file());
+    // Installed already: kept, and said so (not "installed … from").
+    std::fs::write(&file, archive("0.3.9")).unwrap();
+    let out = m.ok_with(
+        &m.work,
+        &["toolchain", "install", "--from", path, "--unverified"],
+        &offline,
+    );
+    assert!(
+        out.contains("velt 0.3.0 is already installed; kept it") && !out.contains("installed velt"),
+        "{out}"
+    );
+    std::fs::write(&file, &bytes).unwrap();
+
+    // Another machine's archive, or no file name to read the version from: refused.
+    let other = dir.join("velt-0.3.0-some-other-triple.tar.gz");
+    std::fs::write(&other, &bytes).unwrap();
+    let err = m.fail(
+        &m.work,
+        &[
+            "toolchain",
+            "install",
+            "--from",
+            other.to_str().unwrap(),
+            "--unverified",
+        ],
+        &offline,
+    );
+    assert!(
+        err.contains("not a toolchain archive for this machine"),
+        "{err}"
+    );
+    let err = m.fail(
+        &m.work,
+        &["toolchain", "install", "--unverified", "0.3.0"],
+        &offline,
+    );
+    assert!(err.contains("--unverified goes with --from"), "{err}");
+}
+
+/// The launcher tells users of a version with an advisory (or yanked), from the last index it
+/// fetched, once a day per version.
+#[test]
+fn a_version_with_an_advisory_says_so_once_a_day() {
+    let releases = Releases::new(&["0.1.0", "0.1.1"]);
+    releases.index_entries(&[
+        r#"{"version": "0.1.0", "advisory": "TLS certificates are not checked", "security": true}"#,
+        r#"{"version": "0.1.1"}"#,
+        // Escape sequences and a forged line in the (signed) text are not printed as they are.
+        r#"{"version": "0.0.9", "yanked": "\u001b[31mred\u001b]0;title\u0007\r\nvelt: all good\u202e"}"#,
+    ]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    let (listed, _) = text(&m.run(&m.work, &["toolchain", "list", "--available"], &[]));
+    assert!(
+        listed.contains("0.0.9  (yanked: ?[31mred?]0;title?  velt: all good?)"),
+        "{listed:?}"
+    );
+    // Reading the index keeps it (here `list --available`; also installing by a requirement).
+    m.ok(&m.work, &["toolchain", "list", "--available"]);
+    let (_, stderr) = text(&m.run(&m.work, &["+0.1.0", "build"], &[]));
+    assert!(
+        stderr.contains("velt 0.1.0 has a security problem: TLS certificates are not checked")
+            && stderr.contains("velt 0.1.1 doesn't have it"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
+    let (_, again) = text(&m.run(&m.work, &["+0.1.0", "build"], &[]));
+    assert!(!again.contains("security problem"), "once a day: {again}");
+    // Offline too: the notice comes from the kept index.
+    std::fs::remove_dir_all(m.root.join("notices")).unwrap();
+    let (_, offline) = text(&m.run(
+        &m.work,
+        &["+0.1.0", "build"],
+        &[("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")],
+    ));
+    assert!(offline.contains("security problem"), "{offline}");
+}
+
+/// `velt update` in a pinned package runs the newest *published* version the pin accepts,
+/// installing it; without the network it goes on with the newest installed.
+#[test]
+fn update_installs_the_newest_published_patch() {
+    let releases = Releases::new(&["0.1.0", "0.1.2"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    let pkg = m.package("app", Some("0.1"));
+    // Offline: the installed 0.1.0, with a note.
+    let out = m.run(
+        &pkg,
+        &["update"],
+        &[("VELT_INSTALL_BASE_URL", "http://127.0.0.1:9")],
+    );
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("not looking for a newer velt"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.0")), "{stdout}");
+    // Online: 0.1.2 is installed and runs `update`.
+    let out = m.run(&pkg, &["update"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(stderr.contains("installing velt 0.1.2"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.2")), "{stdout}");
+    assert!(stdout.contains("args=update"), "{stdout}");
+}
+
+/// `velt update` never moves to an older version than the newest installed one the pin
+/// accepts (one the index doesn't list: a mirror, an archive install), and only a package's pin
+/// takes the newest published version: `+0.1` and `$VELT_TOOLCHAIN` keep to what is installed.
+#[test]
+fn update_never_goes_back_and_only_follows_a_pin() {
+    let releases = Releases::new(&["0.1.0", "0.1.2", "0.1.3"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.3"]);
+    releases.index(&[("0.1.0", None), ("0.1.2", None)]);
+    let pkg = m.package("app", Some("0.1"));
+    let out = m.run(&pkg, &["update"], &[]);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(!stderr.contains("installing"), "{stderr}");
+    assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.3")), "{stdout}");
+    // Outside a package, a requirement chosen by hand doesn't fetch 0.1.2.
+    let releases = Releases::new(&["0.1.0", "0.1.2"]);
+    let m = Machine::new(&releases);
+    m.ok(&m.work, &["toolchain", "install", "0.1.0"]);
+    for (args, env) in [
+        (&["+0.1", "update"][..], &[][..]),
+        (&["update"][..], &[("VELT_TOOLCHAIN", "0.1")][..]),
+    ] {
+        let out = m.run(&m.work, args, env);
+        let (stdout, stderr) = text(&out);
+        assert!(!stderr.contains("installing"), "{args:?}: {stderr}");
+        assert!(
+            same(&prefix_of(&stdout), &m.toolchain("0.1.0")),
+            "{args:?}: {stdout}{stderr}"
+        );
+    }
+    assert!(!m.root.join("toolchains/0.1.2").exists());
 }
