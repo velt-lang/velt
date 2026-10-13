@@ -1,0 +1,193 @@
+// std/websocket/queue (std-internal): the sending side of a connection. Not part of the public
+// API.
+//
+// A send encodes its frame into the connection's `SendQueue` at the call, under the queue's
+// lock, so frames go out in call order from any task, also before a server-side upgrade has
+// completed. Whoever queues into an idle connection starts its flusher (std/websocket/writer),
+// which writes everything queued in one write; an idle connection has no task and no buffer.
+
+import { Channel, channel } from "velt:channel";
+import { ByteBuf, maskKey, setText } from "velt:websocket/bytes";
+import { OP_CLOSE, headSize, writeHead } from "velt:websocket/frame";
+
+/** Queued bytes past which a `send` completes only once the flusher has caught up. */
+export const HIGH_WATER: i64 = 1048576;
+/** Queued bytes past which a subscriber misses published messages. */
+export const PUBLISH_LIMIT: i64 = 16777216;
+
+// What queueing a frame gives (`& STATUS`), plus `START` when the caller must start the flusher.
+/** Queued. */
+export const QUEUED: i64 = 0;
+/** Queued, and more than `HIGH_WATER` bytes are waiting. */
+export const OVER: i64 = 1;
+/** Not queued: a close frame is queued or was sent. */
+export const CLOSED: i64 = 2;
+/** Not queued: a write failed (`failure` has the error code). */
+export const FAILED: i64 = 3;
+/** Not queued: the handle was released. */
+export const RELEASED: i64 = 4;
+export const STATUS: i64 = 7;
+/** The connection was idle: the caller starts its flusher. */
+export const START: i64 = 8;
+
+export class SendQueue {
+  out: ByteBuf = new ByteBuf();
+  /** A client masks what it sends. */
+  client: bool;
+  /** A close frame is queued: nothing may follow it, and the flusher shuts down after it. */
+  closing: bool = false;
+  /** Why the flusher stopped for good ("": it has not): "EPIPE" after closing, else a failed write's code. */
+  stopped: string = "";
+  /** `close()` released the handle. */
+  released: bool = false;
+  /** A flusher is running (or about to). */
+  flushing: bool = false;
+  /** Tasks waiting on `drained`, which exists once one did. */
+  waiters: i64 = 0;
+  drained: Channel<bool> | null = null;
+  /** The topics this connection is subscribed to (std/websocket/topics). */
+  topics: string[] = [];
+
+  constructor(client: bool) {
+    this.client = client;
+  }
+
+  // Why nothing more can be queued, or -1.
+  private refusal(): i64 {
+    if (this.released) {
+      return RELEASED;
+    }
+    if (this.stopped != "") {
+      return this.stopped == "EPIPE" ? CLOSED : FAILED;
+    }
+    return this.closing ? CLOSED : -1;
+  }
+
+  private queued(): i64 {
+    const r = (this.out.data.length as i64) > HIGH_WATER ? OVER : QUEUED;
+    if (this.flushing) {
+      return r;
+    }
+    this.flushing = true;
+    return r | START;
+  }
+
+  // Room for a frame with `len` payload bytes, its header written; where the payload goes.
+  private frame(op: i64, len: i64, mask: u32): i64 {
+    const at = this.out.grow(headSize(len, this.client) + len);
+    return writeHead(this.out.data, at, op, len, this.client, mask);
+  }
+
+  /** Queues a text frame. */
+  pushText(op: i64, text: string): i64 {
+    const no = this.refusal();
+    if (no >= 0) {
+      return no;
+    }
+    const len = Buffer.byteLength(text) as i64;
+    const mask = this.client ? maskKey() : 0u32;
+    const p = this.frame(op, len, mask);
+    setText(this.out.data, text, p);
+    if (this.client) {
+      this.out.data.xorMask(mask, p, p + len);
+    }
+    return this.queued();
+  }
+
+  /** Queues a frame carrying `payload`; a close frame is the last one. */
+  pushBytes(op: i64, payload: u8[]): i64 {
+    const no = this.refusal();
+    if (no >= 0) {
+      return no;
+    }
+    const len = payload.length as i64;
+    const mask = this.client ? maskKey() : 0u32;
+    const p = this.frame(op, len, mask);
+    this.out.data.set(payload, p as usize);
+    if (this.client) {
+      this.out.data.xorMask(mask, p, p + len);
+    }
+    if (op == OP_CLOSE) {
+      this.closing = true;
+    }
+    return this.queued();
+  }
+
+  /**
+   * Queues a published frame (`frame`: whole and unmasked, its payload from `payloadAt`) unless
+   * the connection is closing, stopped or has more than `PUBLISH_LIMIT` bytes waiting: `QUEUED`
+   * (with `START`), or -1. A client masks every frame with a key of its own.
+   */
+  appendFrame(frame: u8[], payloadAt: i64): i64 {
+    if (this.refusal() >= 0 || (this.out.data.length as i64) > PUBLISH_LIMIT) {
+      return -1;
+    }
+    if (this.client) {
+      const r = this.pushBytes((frame[0] as i64) & 0x0f, frame.slice(payloadAt));
+      return r & ~OVER;
+    }
+    this.out.append(frame);
+    return this.queued() & ~OVER;
+  }
+
+  /**
+   * Everything queued, for the flusher to write; the tasks waiting for room are woken. Nothing
+   * queued: the flusher ends (empty result).
+   */
+  take(): u8[] {
+    if (this.out.data.length == 0) {
+      this.flushing = false;
+      return [];
+    }
+    this.wake();
+    return this.out.take();
+  }
+
+  /** After a write: whether that was the close frame and all there is (the flusher stops). */
+  wroteLast(): bool {
+    return this.closing && this.out.data.length == 0;
+  }
+
+  /** The flusher stopped for good; what is queued will never go out. */
+  stop(code: string) {
+    if (this.stopped == "") {
+      this.stopped = code;
+    }
+    this.flushing = false;
+    this.out.take();
+    this.wake();
+  }
+
+  /** The channel that gets a value when the flusher takes the queue or stops (wait on it once). */
+  wait(): Channel<bool> {
+    this.waiters++;
+    const ch = this.drained ?? channel<bool>();
+    this.drained = ch;
+    return ch;
+  }
+
+  private wake() {
+    const ch = this.drained;
+    if (ch != null) {
+      for (let i: i64 = 0; i < this.waiters; i++) {
+        ch.trySend(true);
+      }
+    }
+    this.waiters = 0;
+  }
+
+  /** `close()` is done with the connection: its topics, to leave. */
+  release(): string[] {
+    this.released = true;
+    this.wake();
+    const ch = this.drained;
+    if (ch != null) {
+      ch.close();
+      while (ch.tryReceive() != null) {}
+      this.drained = null;
+    }
+    const topics = this.topics;
+    this.topics = [];
+    return topics;
+  }
+}
