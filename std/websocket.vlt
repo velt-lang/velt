@@ -28,7 +28,6 @@ import { TcpStream } from "velt:net";
 import { setText } from "velt:websocket/bytes";
 import {
   OP_BINARY,
-  OP_CLOSE,
   OP_TEXT,
   closePayload,
   headSize,
@@ -36,18 +35,11 @@ import {
   writeHead,
 } from "velt:websocket/frame";
 import { acceptKey, open } from "velt:websocket/handshake";
-import { QUEUED, RELEASED, STATUS, SendQueue } from "velt:websocket/queue";
+import { QUEUED, SendQueue } from "velt:websocket/queue";
 import { BINARY, CLOSED, Reader } from "velt:websocket/reader";
 import { receive } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
-import {
-  CLOSE_FLUSH_MS,
-  Tx,
-  closedHandle,
-  finish,
-  settle,
-  settleQuietly,
-} from "velt:websocket/writer";
+import { Tx, closeDown, closedHandle, settle } from "velt:websocket/writer";
 
 /** One received message: text, or binary data. */
 export class WsMessage {
@@ -111,7 +103,10 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     const tx = this.sending();
     const r = tx.with((q) => q.pushText(OP_TEXT, text));
     if (r != QUEUED) {
-      await settle(this.stream(), tx, r);
+      // A promise of its own (here and below): what is rare, or waits, stays out of the state
+      // of every task that calls this, so a task per connection stays small.
+      const settled = settle(this.stream(), tx, r);
+      await settled;
     }
   }
 
@@ -120,14 +115,20 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     const tx = this.sending();
     const r = tx.with((q) => q.pushBytes(OP_BINARY, data));
     if (r != QUEUED) {
-      await settle(this.stream(), tx, r);
+      const settled = settle(this.stream(), tx, r);
+      await settled;
     }
   }
 
   /** The next message, or null once the peer has closed the connection. */
   async receive(): Promise<WsMessage | null> {
     const tx = this.sending();
-    const step = await receive(this.stream(), tx, tx.with((q) => q.rx));
+    const rx = tx.with((q) => q.rx);
+    let step = rx.with((r) => r.next(true));
+    if (step.kind > BINARY) {
+      const waited = receive(this.stream(), tx, rx, step);
+      step = await waited;
+    }
     if (step.kind == CLOSED) {
       return null;
     }
@@ -179,7 +180,11 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     const tx = this.sending();
     const rx = tx.with((q) => q.rx);
     while (true) {
-      const step = await receive(stream, tx, rx);
+      let step = rx.with((r) => r.next(true));
+      if (step.kind > BINARY) {
+        const waited = receive(stream, tx, rx, step);
+        step = await waited;
+      }
       if (step.kind == CLOSED) {
         return;
       }
@@ -205,20 +210,16 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
     if (tx == null) {
       return;
     }
-    const rx = tx.with((q) => q.rx);
     const stream = this.stream();
-    const payload = closePayload(code, reason);
-    const r = tx.with((q) => q.pushBytes(OP_CLOSE, payload));
-    if ((r & STATUS) == RELEASED) {
+    const closing = closeDown(stream, tx, closePayload(code, reason));
+    const topics = await closing;
+    if (topics == null) {
       return;
     }
-    settleQuietly(stream, tx, r);
-    // Also when the close frame was queued earlier (the reply to the peer's): it goes out first.
-    await finish(stream, tx, CLOSE_FLUSH_MS);
-    for (const topic of tx.with((q) => q.release())) {
+    for (const topic of topics) {
       leave(this.handle, topic);
     }
-    rx.with((reader) => reader.release());
+    tx.with((q) => q.rx).with((reader) => reader.release());
     stream.close();
   }
 }

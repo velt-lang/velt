@@ -43,14 +43,15 @@ async function fill(stream: TcpStream, rx: Rx): Promise<void> {
 
 /**
  * The next text or binary message (`TEXT`, `BINARY`), or `CLOSED` once the peer has closed the
- * connection. Pings are answered and the peer's close frame is replied to through `tx`; a
- * protocol error fails the connection (a close frame with the matching code) and throws.
+ * connection, given `first`, what the reader's `next` said when the caller looked (callers
+ * return a message that is already there themselves, so this runs only when there is something
+ * to wait for or to answer). Pings are answered and the peer's close frame is replied to
+ * through `tx`; a protocol error fails the connection (a close frame with the matching code)
+ * and throws.
  */
-export async function receive(stream: TcpStream, tx: Tx, rx: Rx): Promise<Step> {
-  let first = true;
+export async function receive(stream: TcpStream, tx: Tx, rx: Rx, first: Step): Promise<Step> {
+  let step = first;
   while (true) {
-    const step = rx.with((r) => r.next(first));
-    first = false;
     const kind = step.kind;
     if (kind <= BINARY) {
       return step;
@@ -64,7 +65,8 @@ export async function receive(stream: TcpStream, tx: Tx, rx: Rx): Promise<Step> 
       }
     } else if (kind == PING) {
       // A pong for a connection that is closing is not needed.
-      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, step.data)));
+      const payload = step.data;
+      settleQuietly(stream, tx, tx.with((q) => q.pushBytes(OP_PONG, payload)));
     } else if (kind == CLOSE) {
       // Fails harmlessly if we closed first.
       const reply = closePayload(step.code);
@@ -77,5 +79,6 @@ export async function receive(stream: TcpStream, tx: Tx, rx: Rx): Promise<Step> 
     } else {
       throw closedHandle();
     }
+    step = rx.with((r) => r.next(false));
   }
 }
