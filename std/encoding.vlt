@@ -105,13 +105,14 @@ function encode64(data: u8[], alphabet: string, pad: bool): string {
   return validToString(out);
 }
 
-// Texts of at least this many characters are decoded through a table (`decode64`).
+// Texts of at least this many digits (without their padding) are decoded through a table
+// (`valueTable`).
 const TABLE_FROM: i64 = 256;
 
 // Throws on characters outside the alphabet (`url`: the URL-safe one), on `=` anywhere but the
 // (at most two) final positions, and on a length that cannot come from whole bytes. Leftover
-// bits are ignored. The text is read where it stands: a character that is not ASCII is not a
-// digit, and everything before the first of those is one byte per character.
+// bits are ignored. A short text is read where it stands, a long one from a copy of its bytes;
+// they agree up to the first character that is not ASCII, which is not a digit either way.
 function decode64(s: string, url: bool): u8[] {
   let n = s.length as i64;
   let pads: i64 = 0;
@@ -195,8 +196,8 @@ function valueTable(url: bool): i8[] {
 }
 
 // The value of Base64 digit `c` (a character code), or -1 if it is not one. Computed, so a
-// decode builds no table: letters and digits are ranges, and the two alphabets differ only in
-// the characters for 62 and 63.
+// short decode builds no table: letters and digits are ranges, and the two alphabets differ
+// only in the characters for 62 and 63.
 function value64(c: i64, url: bool): i64 {
   if (c >= 97) {
     return c <= 122 ? c - 71 : -1;
