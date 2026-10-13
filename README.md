@@ -2,6 +2,10 @@
 
 **Your TypeScript, compiled to a native executable. Rust-class speed, every core, no runtime.**
 
+[Install](#get-started) · [VS Code extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt)
+(with F5 debugging) · [Getting started](docs/book/getting-started.md) · [Tour](docs/book/tour.md) ·
+[Docs](docs/README.md)
+
 Velt compiles TypeScript ahead of time to machine code through LLVM. It is not a JavaScript
 engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage collector and no
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
