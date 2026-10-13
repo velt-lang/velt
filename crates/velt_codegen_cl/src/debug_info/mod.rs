@@ -6,9 +6,10 @@
 //! ranges carry which location, and [`FunctionLines`] keeps them as rows. [`build_unit`] turns
 //! the functions into one DWARF 4 compile unit: a `DW_TAG_subprogram` per function (name,
 //! linkage name, code range, declaration line) and a line program. Debug builds also describe
-//! source variables (`vir::LocalDecl::debug`): each lives in a stack slot keyed by its local
-//! (function/mod.rs), found in the compiled frame and located relative to the frame pointer,
-//! which Cranelift always keeps; `types` builds their DWARF types.
+//! source variables (`vir::LocalDecl::debug`): each has a stack slot keyed by its local
+//! (function/mod.rs; its storage, or for a scalar a shadow that every write updates), found in
+//! the compiled frame and located relative to the frame pointer, which Cranelift always keeps;
+//! `types` builds their DWARF types.
 //!
 //! - `object`: the sections of ELF, Mach-O and COFF objects, with relocations against the
 //!   function symbols;
