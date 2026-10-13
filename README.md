@@ -1,104 +1,201 @@
 # Velt
 
-**Velt: a modern TypeScript without the funky stuff inherited from JavaScript — compiled to
-native code with Rust-level performance.**
+**Your TypeScript, compiled to a native executable. Rust-class speed, every core, no runtime.**
+
+Velt compiles TypeScript ahead of time to machine code through LLVM. It is not a JavaScript
+engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage collector and no
+single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
+// server.ts: run it with `velt run server.ts`
 import { serve } from "velt:http";
 
-class NotFound extends Error {}
-
-function findUser(id: string): string throws NotFound {
-  if (id != "42") throw new NotFound(`no user ${id}`);
-  return "ada";
+interface User {
+  id: string;
+  name: string;
 }
 
 async function main() {
-  const hits = shared(0);                          // a counter shared by all request handlers
+  const users = new Map<string, User>();
+  users.set("42", { id: "42", name: "Ada" });
+
   await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
-    hits.add(1);
     const id = new URL(req.url).searchParams.get("id") ?? "";
-    try {
-      return Response.json({ user: findUser(id), hits: hits.get() });
-    } catch (e) {                                  // e: NotFound, never `unknown`
-      return Response.json({ error: e.message }, { status: 404 });
+    const user = users.get(id);
+    if (user === null) {
+      return Response.json({ error: `no user ${id}` }, { status: 404 });
     }
+    return Response.json(user);
   });
 }
 ```
 
-That is a complete, multi-threaded HTTP server. It compiles to a native executable with no
-garbage collector and no runtime to install.
+That is a complete HTTP server, and every core answers requests. On the TechEmpower-style suite
+below, this kind of server handles **7× as many JSON requests as Node and 1.2× as many as Rust's
+axum**, in tens of megabytes of memory.
 
-## Why Velt
+## Get started
 
-- **It's TypeScript.** Classes, interfaces, generics, unions and narrowing, discriminated unions,
-  closures, `async`/`await`, generators and `for await`, ES modules, template literals,
-  destructuring, `using`. If you write TypeScript, you can read Velt today.
-- **It's as fast as Rust.** Native code through LLVM, monomorphized generics, no boxing, no GC.
-  On an Intel i9 laptop (best of 10, [bench/RESULTS.md](bench/RESULTS.md)): recursive `fib(35)`
-  takes 32 ms in Velt and in Rust `-O`, 147 ms in Node; n-body 162 ms (Rust 179, Node 1826);
-  a hash-map workload 182 ms (Rust 287 with std's `HashMap`, Node 479).
-- **It serves like Rust.** On the TechEmpower-style suite ([bench/web/RESULTS.md](bench/web/RESULTS.md),
-  Linux arm64, 10 cores shared with the load generator and PostgreSQL), Velt answers 741k JSON
-  requests/s (Rust axum 619k, Go 327k, Node 100k) and is within 0.94–1.07× of Rust on every
-  database test, at 25–54 MB of memory (Node: 173–278 MB).
-- **No garbage collector, no pauses.** Objects are references, as in JavaScript, and memory is
-  freed deterministically when the last reference goes; cleanup (`[Symbol.dispose]`, `using`)
-  runs at a known point. The compiler infers ownership and mutation: no lifetimes, no borrow
-  syntax, no `mut`, and no reference count for values with a single owner.
-- **Errors are typed.** `catch (e)` knows exactly what the `try` block can throw. Errors compile
-  to plain return values: no unwinding, no exception tables.
-- **Async on every core.** Promises start eagerly and behave like JavaScript's, a directly
-  awaited call costs nothing, `spawn` runs work on other cores, and data races are compile
-  errors.
-- **It drops JavaScript's bug sources**: no `undefined` (only `null`), no implicit
-  `"5" + 1`, no loose equality, no mutable globals, and a forgotten
-  `await` is a compile error. Every such error tells you what to write instead
-  ([Velt for TypeScript developers](docs/book/ts-developers.md)).
-- **A fast edit loop.** `velt dev` hot-swaps changed functions into the running program, keeping
-  its state and open connections.
-
-## Install
-
-Install a released toolchain (Linux x86_64 and arm64, macOS, Windows x64):
+Install Velt with one command. It works on Linux (x86_64 and arm64), macOS and Windows:
 
 ```sh
 curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh   # Linux, macOS
 irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex       # Windows (PowerShell)
-velt doctor                       # checks the toolchain, builds and runs a hello world
 ```
 
-The toolchain brings its own linker: no Visual Studio Build Tools, Xcode or C compiler needed.
-LLVM/clang 16 or newer is optional, for optimized release builds. Options, other platforms and
-manual installation: [Platforms and installation](docs/tooling/platforms.md).
-
-To build from source instead, you need Rust (stable) and a system linker (the Visual Studio Build
-Tools on Windows, `build-essential` on Linux, the Xcode command line tools on macOS):
+That is all you need. The toolchain brings its own linker, so you don't need Visual Studio,
+Xcode or a C compiler, and `velt toolchain self-update` keeps it current. Then create a project and run it:
 
 ```sh
-git clone https://github.com/velt-lang/velt
-cd velt
-cargo build --release -p veltc -p velt_rt
-./target/release/velt doctor      # checks the toolchain, builds and runs a hello world
-```
-
-Then put `target/release` on your `PATH`, or build an installable toolchain directory with
-`scripts/package.sh` / `scripts/package.ps1` ([Platforms and installation](docs/tooling/platforms.md)).
-
-## Quick start
-
-```sh
-velt new hello              # also: --template api | cli | websocket | lib
+velt new hello              # or: --template api | cli | websocket | lib
 cd hello
 velt run                    # build and run src/main.vlt
-velt dev                    # run, then hot-swap your changes on every save
-velt test                   # run tests/*.test.vlt
-velt build --release        # an optimized native binary in target/velt/
+velt dev                    # run it, and hot-swap your changes on every save
+velt test                   # run the tests
+velt build --release        # an optimized native executable in target/velt/
 ```
 
-Install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt) for VS Code (`code --install-extension andtii.velt`) for diagnostics,
-completion, go-to-definition and quick fixes; any LSP client works with `velt lsp`.
+You can also run TypeScript you already have: `velt run app.ts`.
+
+In VS Code, install the [Velt extension](https://marketplace.visualstudio.com/items?itemName=andtii.velt)
+(`code --install-extension andtii.velt`). It gives you diagnostics as you type, completion, go to
+definition, quick fixes and F5 debugging. Other editors can use the language server, `velt lsp`.
+
+Next, read [Getting started](docs/book/getting-started.md) and
+[the tour](docs/book/tour.md). Other platforms, options and building from source are covered in
+[Platforms and installation](docs/tooling/platforms.md).
+
+## Why Velt
+
+- **Start from the TypeScript you have.** Velt reads `.ts` and `.tsx` files directly. That
+  covers classes, interfaces, generics, unions and narrowing, closures, `async`/`await`,
+  generators, destructuring, enums, ES modules, template literals and TSX. `velt run app.ts`
+  compiles and runs your code. `.ts` and `.vlt` files import each other freely, so you can move a
+  project over one file at a time.
+- **Then go further than TypeScript can.** Typed errors, real integer types, methods on any type,
+  and parallel tasks: the things a compiler makes possible. See
+  [Beyond TypeScript](#beyond-typescript).
+- **Native speed.** Generics compile to specialized code. `number` becomes a machine integer
+  wherever that provably gives the same result. There is no boxing and no GC. Typical
+  TypeScript-style code runs **several times faster than Node**, and on tight loops Velt matches
+  Rust ([numbers below](#performance)).
+- **Every core, not one.** Node runs your code on one thread and needs a cluster of processes to
+  use the rest. A Velt program runs on a multi-threaded scheduler from the start: request
+  handlers spread over all cores, and `spawn` puts any work on another core. **Data races are
+  compile errors**, so parallel code is as safe to write as single-threaded code.
+- **Memory you don't think about.** Objects are references, as in JavaScript. Memory is freed
+  the moment the last reference to it goes, so there are no GC pauses and `using` cleanup runs at
+  a known point. A Velt web server runs in tens of megabytes where Node needs hundreds.
+- **One file to ship.** `velt build --release` writes a native executable. There is nothing to
+  install on the server, no `node_modules`, and startup takes milliseconds. You can cross-compile
+  for Linux, macOS, Windows or WebAssembly from any of them.
+- **Fixes JavaScript's classic traps.** `1 == "1"` is a compile error, not `true`. Adding a
+  string to an object doesn't silently give `"[object Object]"`. A forgotten `await` is caught
+  before it can drop an error. Every error message says what to write instead.
+- **A fast edit loop.** `velt dev` swaps changed functions into the running program in about
+  60 ms, keeping its memory, open connections and running tasks.
+
+## Beyond TypeScript
+
+TypeScript compiles to JavaScript, so it can't have these features. Velt can:
+
+```ts
+class NotFound extends Error {}
+
+// Errors are part of the type: callers see exactly what can go wrong.
+function findUser(id: string): string throws NotFound {
+  if (id !== "42") {
+    throw new NotFound(`no user ${id}`);
+  }
+  return "Ada";
+}
+
+// Real integer types: u32 arithmetic wraps as it does in C or Rust.
+function fnv1a(text: string): u32 {
+  let hash: u32 = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash ^ (text.charCodeAt(i) as u32)) * 16777619;
+  }
+  return hash;
+}
+
+function sumOfSquares(from: i64, to: i64): i64 {
+  let total = 0;
+  for (let i = from; i < to; i++) {
+    total += i * i % 7;
+  }
+  return total;
+}
+
+async function main() {
+  try {
+    console.log(findUser("7"));
+  } catch (e) {                     // e: NotFound, never `unknown`
+    console.log(e.message);
+  }
+  console.log(fnv1a("velt"));
+
+  // Four tasks on four cores; Promise.all collects the results.
+  const parts: Promise<i64>[] = [];
+  for (let c = 0; c < 4; c++) {
+    parts.push(spawn(async () => sumOfSquares(c * 1000000, (c + 1) * 1000000)));
+  }
+  console.log((await Promise.all(parts)).reduce((a, b) => a + b, 0));
+}
+```
+
+- **Typed errors.** `catch (e)` knows exactly what its `try` block can throw. Errors compile to
+  plain return values: no unwinding, no exception tables, and no cost when nothing is thrown.
+- **Integer and float types.** `i8` to `i64`, `u8` to `u64` and `f32` alongside `number`, with
+  literal suffixes such as `255u8` and `1.5f32`.
+- **`extend`** adds methods to any type, including `string`, numbers and arrays, at no run-time
+  cost.
+- **Tasks and shared state.** `spawn`, typed channels, `shared(x)` with atomic counters, `Mutex`,
+  and `taskScope` for structured concurrency.
+- **Typed JSON.** `JSON.parse<User>(text)` checks the shape and builds the object in one pass.
+
+For the full list, and the few places where Velt deliberately differs from TypeScript, read
+[Velt for TypeScript developers](docs/book/ts-developers.md).
+
+## Performance
+
+Velt is benchmarked against Rust and Node on every change. A pull request that makes a benchmark
+more than 3% slower needs an explicit OK. Here is a selection; the full tables, methods and
+machines are in [bench/](bench/RESULTS.md).
+
+**Web serving**: a TechEmpower-style suite on Linux arm64 with 10 cores
+([bench/web](bench/web/RESULTS.md)).
+
+| test | Velt | Rust (axum) | Go | Bun | Node | Node cluster |
+|---|---:|---:|---:|---:|---:|---:|
+| JSON, req/s | **741k** | 619k | 327k | 248k | 100k | 474k |
+| plaintext, pipelined, req/s | **3.31M** | 1.24M | 621k | 76k | 161k | 679k |
+| single query, req/s | **141k** | 133k | 119k | 42k | 39k | 106k |
+| fortunes (HTML), req/s | 115k | **118k** | 89k | 33k | 23k | 90k |
+| peak memory | 25–54 MB | 29–45 MB | 35–53 MB | 34–104 MB | 173–278 MB | 0.8–1.7 GB |
+
+Velt is within 0.94–1.07× of Rust on every database test and handles 4–13× as many requests as
+Node.
+
+**Compute**: best of 10 runs on an Intel i9 laptop ([bench/RESULTS.md](bench/RESULTS.md)).
+
+| benchmark | Velt | Rust `-O` | Node |
+|---|---:|---:|---:|
+| `fib(35)`, recursive calls | 32 ms | 32 ms | 147 ms |
+| n-body, floating point | 162 ms | 179 ms | 1826 ms |
+| hash map workload | 182 ms | 287 ms | 479 ms |
+| class-heavy code | 201 ms | 293 ms | 521 ms |
+
+**Async**, on the same i9 laptop ([bench/async](bench/async)):
+
+- 10 million awaits take 55 ms. Rust's tokio takes 52 ms and Node 508 ms.
+- A million spawned tasks take 614 ms. Tokio takes 703 ms and Node 1618 ms, and Velt uses half
+  of Node's memory.
+
+Velt is young, and not everything runs at Rust's speed yet. Code written the way TypeScript
+usually is, with closures and lots of small objects and strings, takes up to about 4× as long as
+Rust, though it stays well ahead of Node. The remaining gaps are tracked in
+[bench/FINDINGS.md](bench/FINDINGS.md).
 
 ## Documentation
 
@@ -119,10 +216,8 @@ Windows (x86_64), Linux (x86_64, arm64) and macOS (arm64, x86_64): the language 
 standard library, packages with a lockfile, the formatter, the language server, debug info,
 `velt dev` with hot swap, and WebAssembly (WASI and browser, without networking).
 
-What is coming next, from [the roadmap](ROADMAP.md): JavaScript's shared-reference semantics for
-objects (no more moves), the rest of TSX (`children` props, faster templates), `JSON.parse` into unions, the database
-drivers as packages, and more platform and tooling work. Planned features are marked
-**Planned** in the docs and never shown as working.
+What is coming next is in [the roadmap](ROADMAP.md). Planned features are marked **Planned** in the
+docs and never shown as working.
 
 ## Contributing
 
