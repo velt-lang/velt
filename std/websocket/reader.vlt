@@ -2,7 +2,8 @@
 // public API.
 //
 // The connection's `Reader` holds the bytes read and not yet parsed, and a fragmented message
-// so far. It is only touched in short steps under its lock: `next` takes a whole message out of
+// so far. It lives in the connection's `SendQueue` (std/websocket/queue), under the same lock,
+// and is only touched in short steps under it: `next` takes a whole message out of
 // the buffer, or says that more bytes are needed; the task that asked reads them from the
 // stream with the lock released and hands them over with `feed`. So nothing of the state lives
 // in a task, one task at a time reads the socket, and the buffer is dropped once every byte in
@@ -288,5 +289,3 @@ export class Reader {
     }
   }
 }
-
-export type Rx = shared<Mutex<Reader>>;

@@ -233,6 +233,11 @@ impl StreamObj {
     /// Writes all of `data` to a raw socket.
     async fn write_tcp(&self, stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
         while !data.is_empty() {
+            // Not what the socket says after `abort` shut it down (a broken pipe, as if the
+            // peer had closed): the stream was aborted.
+            if self.aborted.load(Ordering::Acquire) {
+                return Err(aborted_error());
+            }
             match stream.try_write(data) {
                 Ok(n) => data = &data[n..],
                 // Only a write that has to wait watches for `abort`.
@@ -264,6 +269,9 @@ impl StreamObj {
     /// that turned out to be a raw socket, once the bytes read ahead of it are delivered. (A
     /// stream that was aborted has its socket shut down: a read sees the end of the stream.)
     pub(crate) fn plain(&self) -> Option<&TcpStream> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return None;
+        }
         match &self.io {
             Io::Tcp(s) => Some(s),
             Io::Lazy(l) => match l.ready.get() {
