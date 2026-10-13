@@ -12,4 +12,12 @@ function main() {
     Math.umulh(18446744073709551615, 18446744073709551615),
     Math.umulh(4294967296, 4294967296),
   );
+  // Operands the compiler can't fold, so the multiply itself runs (inline on both backends).
+  let a: u64 = 11400714819323198485;
+  let acc: u64 = 0;
+  for (let i: u64 = 0; i < 5; i++) {
+    a = a * 6364136223846793005 + 1442695040888963407;
+    acc = acc ^ Math.umulh(a, a + i);
+  }
+  console.log(acc);
 }
