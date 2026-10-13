@@ -1,0 +1,13 @@
+{
+  "outdir": "/ab/reports",
+  "servers": [
+    {"agent": "velt-codec", "url": "ws://host.docker.internal:9301"},
+    {"agent": "velt-tungstenite", "url": "ws://host.docker.internal:9302"},
+    {"agent": "velt-raw", "url": "ws://host.docker.internal:9303"},
+    {"agent": "bun", "url": "ws://host.docker.internal:9304"},
+    {"agent": "node-ws", "url": "ws://host.docker.internal:9305"}
+  ],
+  "cases": ["*"],
+  "exclude-cases": ["12.*", "13.*"],
+  "exclude-agent-cases": {}
+}

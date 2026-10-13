@@ -1,0 +1,15 @@
+{
+  "name": "chatbench-node",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "chatbench server: Node (node:http + ws + better-sqlite3)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "ws": "^8.22.0"
+  }
+}

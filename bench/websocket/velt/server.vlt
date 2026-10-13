@@ -1,0 +1,105 @@
+// The Velt server (bench/websocket/README.md): std/http + std/websocket.
+//   /echo   sends every message back to its sender
+//   /bcast  sends every message to every connection on /bcast (a chat room)
+// Usage: server [port]; env PORT, HOST (127.0.0.1).
+
+import { serve } from "velt:http";
+import { args } from "velt:process";
+import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+
+// The next message, or null once the client has gone (closed, or the connection broke).
+async function receive(ws: WebSocket): Promise<WsMessage | null> {
+  try {
+    return await ws.receive();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function sendQuietly(ws: WebSocket, text: string) {
+  try {
+    await ws.send(text);
+  } catch (e) {
+    return;
+  }
+}
+
+async function closeQuietly(ws: WebSocket) {
+  try {
+    await ws.close();
+  } catch (e) {
+    return;
+  }
+}
+
+async function echo(ws: WebSocket) {
+  let m = await receive(ws);
+  while (m != null) {
+    try {
+      if (m.isBinary) {
+        await ws.sendBytes(m.data);
+      } else {
+        await ws.send(m.text);
+      }
+    } catch (e) {
+      break;
+    }
+    m = await receive(ws);
+  }
+  await closeQuietly(ws);
+}
+
+function members(room: shared<Mutex<Map<i64, WebSocket>>>): WebSocket[] {
+  return room.with((r) => {
+    const out: WebSocket[] = [];
+    for (const s of r.values()) {
+      out.push(s);
+    }
+    return out;
+  });
+}
+
+async function bcast(ws: WebSocket, id: i64, room: shared<Mutex<Map<i64, WebSocket>>>) {
+  room.with((r) => {
+    r.set(id, ws);
+  });
+  let m = await receive(ws);
+  while (m != null) {
+    // Sends are queued (they return at once), so a plain loop is the cheapest way to fan out.
+    for (const s of members(room)) {
+      await sendQuietly(s, m.text);
+    }
+    m = await receive(ws);
+  }
+  room.with((r) => {
+    r.delete(id);
+  });
+  await closeQuietly(ws);
+}
+
+function portArg(): number {
+  const argv = args();
+  const raw = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
+  return parseInt(raw, 10);
+}
+
+async function main() {
+  const room = shared(new Mutex<Map<i64, WebSocket>>(new Map<i64, WebSocket>()));
+  const ids = shared(0);
+  const server = await serve({ port: portArg(), host: process.env.HOST ?? "127.0.0.1" }, async (
+    req: Request,
+  ): Promise<Response> => {
+    if (!isWebSocketRequest(req)) {
+      return new Response("websocket bench server: /echo or /bcast\n");
+    }
+    const path = new URL(req.url).pathname;
+    const up = upgradeWebSocket(req);
+    if (path == "/bcast") {
+      spawn(bcast(up.socket, ids.add(1), room));
+    } else {
+      spawn(echo(up.socket));
+    }
+    return up.response;
+  });
+  console.log(`listening on ws://127.0.0.1:${server.port}`);
+}
