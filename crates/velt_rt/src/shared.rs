@@ -5,9 +5,9 @@
 //! All operate on memory owned by generated code (a refcount word, an `i64` cell, an 8-byte lock
 //! word inside the shared object), so none of them allocates.
 
-use lock_api::{RawMutex as _, RawRwLock as _, RawRwLockRecursive as _};
-use parking_lot::{RawMutex, RawRwLock};
-use std::sync::atomic::{fence, AtomicI64, AtomicU64, Ordering};
+use lock_api::{RawRwLock as _, RawRwLockRecursive as _};
+use parking_lot::RawRwLock;
+use std::sync::atomic::{fence, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
 /// Refcounts above this abort (a leak of `isize::MAX` clones is a bug, as in `Arc`).
 const MAX_REFCOUNT: u64 = isize::MAX as u64;
@@ -55,20 +55,123 @@ pub unsafe extern "C" fn velt_rt_atomic_store_i64(p: *mut i64, v: i64) {
 /// Size of the lock word generated code reserves inside a `Mutex<T>` object (align 8).
 pub const MUTEX_SIZE: usize = 8;
 
-const _: () = assert!(std::mem::size_of::<RawMutex>() <= MUTEX_SIZE);
-const _: () = assert!(std::mem::align_of::<RawMutex>() <= 8);
+/// The lock of a `Mutex<T>`: one byte, as `parking_lot`'s (a locked bit, and a bit saying that
+/// threads are parked on it), with a different way of waiting. `with` bodies never await and
+/// are short, so a thread that finds the lock taken spins briefly without leaving the CPU and
+/// then parks. `parking_lot` yields the thread between the two, up to seven times: each a
+/// system call, and under contention (many tasks sending to the same WebSocket connections
+/// from several threads) that was most of what the waiting threads did.
+struct Lock(AtomicU8);
+
+const LOCKED: u8 = 1;
+const PARKED: u8 = 2;
+/// Rounds of spinning (1, 2, 4… pauses, 16 at most) before parking.
+const SPINS: u32 = 10;
+
+const _: () = assert!(std::mem::size_of::<Lock>() <= MUTEX_SIZE);
+
+impl Lock {
+    #[inline]
+    fn lock(&self) {
+        let free = self
+            .0
+            .compare_exchange_weak(0, LOCKED, Ordering::Acquire, Ordering::Relaxed);
+        if free.is_err() {
+            self.lock_slow();
+        }
+    }
+
+    #[cold]
+    fn lock_slow(&self) {
+        let mut spins = 0;
+        let mut state = self.0.load(Ordering::Relaxed);
+        loop {
+            if state & LOCKED == 0 {
+                let taken = state | LOCKED;
+                match self.0.compare_exchange_weak(
+                    state,
+                    taken,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return,
+                    Err(now) => state = now,
+                }
+                continue;
+            }
+            if state & PARKED == 0 {
+                if spins < SPINS {
+                    for _ in 0..1u32 << spins.min(4) {
+                        std::hint::spin_loop();
+                    }
+                    spins += 1;
+                    state = self.0.load(Ordering::Relaxed);
+                    continue;
+                }
+                let parked = state | PARKED;
+                if let Err(now) = self.0.compare_exchange_weak(
+                    state,
+                    parked,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    state = now;
+                    continue;
+                }
+            }
+            let key = self as *const Lock as usize;
+            // SAFETY: the key is this lock's address; the closures neither panic nor park.
+            unsafe {
+                parking_lot_core::park(
+                    key,
+                    || self.0.load(Ordering::Relaxed) == LOCKED | PARKED,
+                    || {},
+                    |_, _| {},
+                    parking_lot_core::DEFAULT_PARK_TOKEN,
+                    None,
+                );
+            }
+            spins = 0;
+            state = self.0.load(Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    fn unlock(&self) {
+        let alone = self
+            .0
+            .compare_exchange(LOCKED, 0, Ordering::Release, Ordering::Relaxed);
+        if alone.is_err() {
+            self.unlock_slow();
+        }
+    }
+
+    #[cold]
+    fn unlock_slow(&self) {
+        let key = self as *const Lock as usize;
+        // SAFETY: as in `lock_slow`. The callback runs with the queue of this key locked, so
+        // the parked bit it leaves matches whether threads are still parked.
+        unsafe {
+            parking_lot_core::unpark_one(key, |result| {
+                let state = if result.have_more_threads { PARKED } else { 0 };
+                self.0.store(state, Ordering::Release);
+                parking_lot_core::DEFAULT_UNPARK_TOKEN
+            });
+        }
+    }
+}
 
 /// Initialize the 8-byte lock word at `p` (unlocked). No destroy call is needed.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
-    (p as *mut RawMutex).write(RawMutex::INIT);
+    p.write(0);
 }
 
 /// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
 /// stays held meanwhile: a `with` callback never takes it (task/local/module_state.rs).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
-    (*(p as *const RawMutex)).lock();
+    (*(p as *const Lock)).lock();
     crate::task::local::mutex_locked();
 }
 
@@ -85,7 +188,7 @@ pub unsafe extern "C" fn velt_rt_mutex_lock_checked(p: *mut u64) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
     crate::task::local::mutex_unlocked();
-    (*(p as *const RawMutex)).unlock();
+    (*(p as *const Lock)).unlock();
 }
 
 /// The words generated code reserves at the start of an `RwLock<T>` (`lock`, padding, then
