@@ -249,7 +249,7 @@ CPU-bound task delays every task on its worker; placement counts live tasks, not
 stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
 much slower than stealing (no batch steal-before-start yet, #997).
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
-64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
+64/256/512/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)
