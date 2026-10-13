@@ -40,9 +40,17 @@ function quietShutdown(stream: TcpStream) {
  * for the upgrade. After the close frame, or a failed write, the socket is shut down and the
  * queue is stopped.
  */
-export async function flush(stream: TcpStream, tx: Tx, rest: u8[] = []): Promise<void> {
-  // `rest`: what `writeDirect` could not write at once goes out first.
-  let batch: u8[] | null = rest;
+export async function flush(stream: TcpStream, tx: Tx): Promise<void> {
+  await drain(stream, tx, tx.with((q) => q.take()));
+}
+
+/** `flush` after `rest`, what `writeDirect` could not write at once. */
+export async function flushRest(stream: TcpStream, tx: Tx, rest: u8[]): Promise<void> {
+  await drain(stream, tx, rest);
+}
+
+async function drain(stream: TcpStream, tx: Tx, first: u8[] | null): Promise<void> {
+  let batch = first;
   while (true) {
     if (batch == null) {
       quietShutdown(stream);
@@ -50,8 +58,11 @@ export async function flush(stream: TcpStream, tx: Tx, rest: u8[] = []): Promise
       return;
     }
     const size = batch.length as i64;
+    if (size == 0) {
+      return;
+    }
     // Usually the socket takes the batch at once, and there is nothing to wait for.
-    const wrote = size == 0 ? 0 : stream.tryWrite(batch);
+    const wrote = stream.tryWrite(batch);
     if (wrote < size) {
       try {
         await stream.writeBytes(wrote == 0 ? batch : batch.slice(wrote));
@@ -62,9 +73,6 @@ export async function flush(stream: TcpStream, tx: Tx, rest: u8[] = []): Promise
       }
     }
     batch = tx.with((q) => q.take());
-    if (batch != null && batch.length == 0) {
-      return;
-    }
   }
 }
 
@@ -81,7 +89,7 @@ export function writeDirect(stream: TcpStream, tx: Tx) {
   }
   const wrote = stream.tryWrite(batch);
   if (wrote < (batch.length as i64)) {
-    spawn(flush(stream, tx.clone(), wrote == 0 ? batch : batch.slice(wrote)));
+    spawn(flushRest(stream, tx.clone(), wrote == 0 ? batch : batch.slice(wrote)));
   } else if (tx.with((q) => q.directDone())) {
     spawn(flush(stream, tx.clone()));
   }
@@ -121,7 +129,7 @@ async function room(tx: Tx): Promise<void> {
       if (q.stopped != "") {
         return q.stopped == "EPIPE" ? CLOSED : FAILED;
       }
-      return (q.out.data.length as i64) > HIGH_WATER ? OVER : 0;
+      return (q.out.length as i64) > HIGH_WATER ? OVER : 0;
     });
     if (status == 0) {
       return;
@@ -129,7 +137,7 @@ async function room(tx: Tx): Promise<void> {
     if (status != OVER) {
       throw refused(tx, status);
     }
-    const drained = tx.with((q) => (q.out.data.length as i64) > HIGH_WATER ? q.wait() : null);
+    const drained = tx.with((q) => (q.out.length as i64) > HIGH_WATER ? q.wait() : null);
     if (drained != null) {
       await drained.receive();
     }

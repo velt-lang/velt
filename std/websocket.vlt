@@ -41,7 +41,6 @@ import { READ_CHUNK, ReadTurn, other } from "velt:websocket/receive";
 import { leave, publish as publishFrame, subscribe, unsubscribe } from "velt:websocket/topics";
 import { Tx, closeDown, closedHandle, settle, writeDirect } from "velt:websocket/writer";
 
-declare function velt_rt_task_id(): u64;
 declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
 
 /** One received message: text, or binary data. */
@@ -72,10 +71,9 @@ function readTurn(tx: Tx): ReadTurn {
   return new ReadTurn(tx.clone());
 }
 
-// The reader's first step for a `receive` by the calling task.
+// The reader's first step for a `receive`.
 function firstStep(tx: Tx): Step {
-  const task = velt_rt_task_id();
-  return tx.with((q) => q.next(task, true));
+  return tx.with((q) => q.next(true));
 }
 
 // What the reading task read, handed to the reader; its next step. A failed read is thrown.
@@ -141,8 +139,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   // memory per connection.
   private queueText(text: string): Promise<void, IoError> | null {
     const tx = this.sending();
-    const task = velt_rt_task_id();
-    const r = tx.with((q) => q.pushText(OP_TEXT, text, task));
+    const r = tx.with((q) => q.pushText(OP_TEXT, text));
     if (r == QUEUED) {
       return null;
     }
@@ -156,8 +153,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
 
   private queueBytes(data: u8[]): Promise<void, IoError> | null {
     const tx = this.sending();
-    const task = velt_rt_task_id();
-    const r = tx.with((q) => q.pushBytes(OP_BINARY, data, task));
+    const r = tx.with((q) => q.pushBytes(OP_BINARY, data));
     if (r == QUEUED) {
       return null;
     }
