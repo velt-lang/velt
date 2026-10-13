@@ -80,7 +80,7 @@ surrogate pair its character),
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
   32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
   32 bits of their operands like JS. `umulh(a, b)` (not in JS) is the high 64 bits of the
-  128-bit product of two `u64`s.
+  128-bit product of two `u64`s, one multiply instruction as well.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -156,7 +156,7 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `new Map(entries: [K, V][])`, `new Map(iterable)`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS; a repeated key keeps its first position and its last value. Any iterable of `[K, V]` pairs (a generator, another map) works too |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`) |
+| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS, and `null` for a missing key (JS: `undefined`, so `console.log(m.get(k))` prints `null` where Node prints `undefined`). Where the value type includes `null` (`Map<string, number \| null>`), an entry holding `null` also reads `null`: use `has` to tell it from a missing key |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |

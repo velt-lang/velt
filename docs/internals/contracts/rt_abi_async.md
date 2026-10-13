@@ -138,7 +138,7 @@ each polled until done, done-flags in the state): no allocation.
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
 The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program that pins a task, or
-`VELT_SCHEDULER=per-core`) makes every worker a `current_thread` runtime with
+`VELT_SCHEDULER=per-core`) makes every worker a one-worker multi-thread runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
 (`task/runtime.rs`). A connection's socket and its tasks stay on one worker: `accept()`

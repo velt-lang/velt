@@ -1,0 +1,24 @@
+// 64-bit limb arithmetic, what a BigInt or a float formatter in Velt is built on: a 64-limb
+// number times a word, 2M times, with `Math.umulh` for the high half of each product. The Rust
+// port widens to `u128`.
+function main() {
+  const limbs: u64[] = [];
+  let x: u64 = 11400714819323198485;
+  for (let i = 0; i < 64; i++) {
+    x = x * 6364136223846793005 + 1442695040888963407;
+    limbs.push(x);
+  }
+  let acc: u64 = 0;
+  for (let round: u64 = 1; round <= 2000000; round++) {
+    const k = x + round;
+    let carry: u64 = 0;
+    for (let i: usize = 0; i < limbs.length; i++) {
+      const lo = limbs[i] * k;
+      const sum = lo + carry;
+      carry = Math.umulh(limbs[i], k) + (sum < lo ? 1 : 0);
+      acc = acc ^ sum;
+    }
+    acc = acc ^ carry;
+  }
+  console.log(acc);
+}

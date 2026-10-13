@@ -3,9 +3,9 @@
 //! - the `velt_rt_math_*` primitives whose semantics are exactly an LLVM intrinsic are emitted
 //!   as that intrinsic (one instruction instead of an opaque call that clobbers memory);
 //!   `Math.round`, and on x86-64 `Math.floor`/`ceil`/`trunc`, are inline code (`rounding.rs`);
-//! - JS's ToInt32 and `Math.clz32` are emitted through small `alwaysinline` helpers defined in
-//!   the module (`inline_helper`): a guarded conversion with the runtime call only on a cold
-//!   path, and one `ctlz`;
+//! - JS's ToInt32, `Math.clz32` and `Math.umulh` are emitted through small `alwaysinline`
+//!   helpers defined in the module (`inline_helper`): a guarded conversion with the runtime call
+//!   only on a cold path, one `ctlz`, and the high half of a 128-bit multiply;
 //! - pure or read-only functions get `memory(none)` / `memory(read)`, so values stay in
 //!   registers across them and loop-invariant code moves past them;
 //! - the allocator functions carry LLVM allocator attributes (`Allocator`), like rustc's
@@ -100,6 +100,17 @@ define internal i32 @velt.clz32(i32 %x) alwaysinline nounwind {
   ret i32 %r
 }";
 
+/// `Math.umulh` (`velt_rt_math_umulh`): the high 64 bits of the unsigned 128-bit product, which
+/// is one multiply instruction on x86-64 and AArch64.
+const UMULH: &str = "define internal i64 @velt.umulh(i64 %a, i64 %b) alwaysinline nounwind {
+  %x = zext i64 %a to i128
+  %y = zext i64 %b to i128
+  %p = mul nuw i128 %x, %y
+  %h = lshr i128 %p, 64
+  %r = trunc i128 %h to i64
+  ret i64 %r
+}";
+
 /// A runtime function the backend calls through a helper defined in the module instead: the
 /// helper's name and its definition (with what it declares), for the signature
 /// `(params) -> ret`.
@@ -119,6 +130,7 @@ pub(crate) fn inline_helper(symbol: &str) -> Option<InlineHelper> {
             Ty::I32,
         ),
         "velt_rt_math_clz32" => ("@velt.clz32", &[CLZ32], &[Ty::I32], Ty::I32),
+        "velt_rt_math_umulh" => ("@velt.umulh", &[UMULH], &[Ty::U64, Ty::U64], Ty::U64),
         _ => return None,
     })
 }
@@ -154,6 +166,7 @@ pub(crate) fn effects(symbol: &str) -> Effects {
         | "velt_rt_pow_i64"
         | "velt_rt_math_to_int32"
         | "velt_rt_math_clz32"
+        | "velt_rt_math_umulh"
         | "velt_rt_math_mul_int32"
         | "velt_rt_math_add_int32" => Effects::None,
         "velt_rt_str_cmp"

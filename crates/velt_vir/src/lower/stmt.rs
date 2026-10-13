@@ -201,6 +201,16 @@ impl FnLower<'_, '_> {
     }
 
     fn if_stmt(&mut self, cond: &hir::Expr, then: &hir::Block, els: Option<&hir::Block>) {
+        // A condition known per instantiation (`__intrinsic_holds_null`, expr.rs `const_cond`):
+        // only the branch it takes is lowered.
+        if let Some(c) = self.const_cond(cond) {
+            match (c, els) {
+                (true, _) => self.block(then),
+                (false, Some(els)) => self.block(els),
+                (false, None) => {}
+            }
+            return;
+        }
         self.push_scope(ScopeKind::Temps);
         let c = self.expr(cond);
         self.pop_scope();
