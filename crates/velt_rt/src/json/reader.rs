@@ -60,8 +60,10 @@ pub struct Reader {
     /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
     /// bracket (created on first use).
     skip_ends: Option<HashMap<usize, usize>>,
-    /// Set when the reader walks a driver's binary rows instead of text (`rows_reader.rs`):
-    /// every `velt_rt_json_reader_*` call then goes to it.
+    /// Set when the reader walks a driver's binary rows instead of text (`rows_reader.rs`).
+    /// `error` is then set for good, so every method here fails at once and the
+    /// `velt_rt_json_reader_*` call, seeing the failure, asks the rows reader instead: reading
+    /// text pays nothing for this.
     pub(crate) rows: Option<RowReader>,
     /// Bytes `skip_lookahead` walked (not jumped over): lets tests check that lookahead stays
     /// linear without timing it.
@@ -113,6 +115,7 @@ impl Reader {
     pub fn over_rows(rows: Vec<u8>, flags: u32) -> Reader {
         let mut r = Reader::with_source(&[], true, flags, 0);
         r.rows = Some(RowReader::new(rows, flags));
+        r.error = Some(ReadError::Mismatch);
         r
     }
 

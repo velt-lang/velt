@@ -30,6 +30,9 @@ const MAYBE_LONE: u8 = 1;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
+/// Strings of at least this many bytes are scanned eight bytes at a time.
+const WORDS_FROM: usize = 24;
+
 const ONES: u64 = 0x0101_0101_0101_0101;
 const HIGHS: u64 = 0x8080_8080_8080_8080;
 
@@ -65,10 +68,13 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
     let mut run_start = 0;
     let mut lone = 0;
     let mut i = 0;
+    // Worth it only for longer text: a short string is done before a word pays for itself.
+    let by_words = s.len() >= WORDS_FROM;
     loop {
         // Eight bytes at a time while none of them needs a look.
-        while let Some(word) = s.get(i..i + 8) {
-            if needs_look(u64::from_le_bytes(word.try_into().unwrap())) {
+        while by_words && i + 8 <= s.len() {
+            let word = u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
+            if needs_look(word) {
                 break;
             }
             i += 8;
