@@ -2192,7 +2192,6 @@ dependencies = [
 name = "velt_rt"
 version = "0.2.2"
 dependencies = [
- "base64",
  "brotli-decompressor",
  "bytes",
  "cc",
@@ -2218,7 +2217,6 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
- "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",
@@ -2275,7 +2273,6 @@ dependencies = [
 name = "velt_rt_shared"
 version = "0.2.2"
 dependencies = [
- "base64",
  "brotli-decompressor",
  "bytes",
  "dashu-int",
@@ -2300,7 +2297,6 @@ dependencies = [
  "rusqlite",
  "rustls",
  "ryu",
- "sha1",
  "socket2",
  "tokio",
  "tokio-postgres",

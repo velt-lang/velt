@@ -288,11 +288,11 @@ declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
 `VeltResp`, `VeltFetchResp`, `VeltRegex`, `VeltChild`, `VeltUdp`, `VeltFileReader`,
-`VeltFileWriter`, `VeltWs`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
+`VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
-  `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
+  `VeltChild`, `VeltFileReader`, `VeltFileWriter`) are keys into runtime handle tables
   (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
@@ -1038,37 +1038,14 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 
 `velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
 (§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
-the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). The runtime contributes
-byte helpers (rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of its
-topics (§2.2). The runtime codec described below is no longer used by std.
-
-`VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
-RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
-at the call (call order is wire order, also before a server-side upgrade completes) and
-completes once it is queued; a writer task per connection sends everything queued in one
-write, and a send waits while more than 1 MiB is queued (backpressure). A write that fails is
-reported by the next send. The read buffer exists only while bytes are waiting to be parsed.
-Pings are answered automatically. No callbacks are stored.
-
-```c
-typedef struct { VeltWs ws; VeltResp response; } VeltWsAccept;                    // 16 bytes
-typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } VeltWsMessage; // 56
-// kind: 0 = closed (no more messages), 1 = text (in `text`), 2 = binary (in `data`)
-```
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_ws_accept` | `(u64 upgrade_key, const VeltStr* sec_websocket_key, IoResult<VeltWsAccept>* out)` | claims the parked upgrade (§14.8) and builds the `101` response (handshake headers) the handler must return; the connection's first operation waits for the upgrade; `EINVAL` if not an upgrade request |
-| `velt_rt_ws_connect` | `(const VeltStr* url, const VeltStr* ca_pem) -> VeltFut*` | `IoResult<VeltWs>`; `ws://` / `wss://` (TLS as §14.8, extra CAs in `ca_pem`); HTTP/1.1 handshake |
-| `velt_rt_ws_send_text` | `(VeltWs ws, const VeltStr* text) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_send_binary` | `(VeltWs ws, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` once the frame is queued; copied |
-| `velt_rt_ws_receive` | `(VeltWs ws) -> VeltFut*` | `IoResult<VeltWsMessage>` |
-| `velt_rt_ws_close` | `(VeltWs ws, u32 code, const VeltStr* reason) -> VeltFut*` | `IoResult<()>` once the close frame (after everything queued before it) is written, or the peer stopped reading for 30 s; closing a closed connection succeeds; `EINVAL` (nothing sent) for a code outside 1000–1003, 1007–1014, 3000–4999 |
-| `velt_rt_ws_free` | `(VeltWs ws)` | releases the handle |
-| `velt_rt_ws_subscribe` | `(VeltWs ws, const VeltStr* topic) -> VeltFut*` | `IoResult<()>` once the connection is open; subscribing twice is a no-op |
-| `velt_rt_ws_unsubscribe` | `(VeltWs ws, const VeltStr* topic)` | leaves the topic (nothing if not subscribed or not open yet) |
-| `velt_rt_ws_publish` | `(const VeltStr* topic, const VeltStr* text, VeltWs except) -> u64` | text frame encoded once, queued for every subscriber but `except` (0: none) with at most 16 MiB queued; returns how many |
-| `velt_rt_ws_publish_binary` | `(const VeltStr* topic, const VeltBytes* data, VeltWs except) -> u64` | the same, binary |
+the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). A `WebSocket` is a struct
+of the stream's handle and a `shared` value holding the connection's send queue and reader, so
+there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. The runtime contributes byte helpers
+(rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of the topics
+(§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+order, also before a server-side upgrade completes) and completes once it is queued; a flusher
+task started by whoever queues into an idle connection writes everything queued in one write,
+and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
 ### 14.10 HTML escaping (`velt:html`; stream std-2, additive)
 

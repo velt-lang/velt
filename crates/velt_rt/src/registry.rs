@@ -1,5 +1,5 @@
 //! Handle tables for the runtime objects `std` exposes: TCP listeners and streams, UDP sockets,
-//! child processes, file readers and writers, WebSockets, HTTP servers, requests and responses
+//! child processes, file readers and writers, HTTP servers, requests and responses
 //! (rt_abi_async.md §3.2).
 //!
 //! Velt code copies those structs freely, so after `close()` through one copy another copy (in

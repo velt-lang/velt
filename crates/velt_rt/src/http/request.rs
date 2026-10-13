@@ -157,7 +157,8 @@ impl ReqObj {
     }
 }
 
-/// The key std/websocket passes to `velt_rt_ws_accept`; 0 if the request asked for no upgrade.
+/// The key of the request's parked upgrade (`upgrade.rs`; it stays the same once the upgrade is
+/// claimed), 0 if the request asked for no upgrade.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_req_upgrade(req: ReqHandle) -> u64 {
     obj(req).upgrade

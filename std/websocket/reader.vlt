@@ -89,6 +89,11 @@ export class Reader {
     }
   }
 
+  /** Whether every byte read so far is used (no further message is waiting in the buffer). */
+  drained(): bool {
+    return this.pos >= (this.buf.data.length as i64);
+  }
+
   // Drops the buffer once every byte in it is used.
   private releaseIfDrained() {
     if (this.pos == (this.buf.data.length as i64)) {

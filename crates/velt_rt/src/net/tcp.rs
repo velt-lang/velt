@@ -338,6 +338,25 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     })
 }
 
+/// `tryWrite(data)`: writes what a raw socket takes right now, without waiting, and returns the
+/// number of bytes written. 0 when nothing can be written now, also for a closed handle, a
+/// stream that is not a raw socket (TLS) or not set up yet, and after an error (the next
+/// `write` reports it).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
+    let Some(obj) = STREAMS.get(s) else { return 0 };
+    let Some(stream) = obj.plain() else { return 0 };
+    let data = (*data).as_bytes();
+    let mut done = 0;
+    while done < data.len() {
+        match stream.try_write(&data[done..]) {
+            Ok(n) => done += n,
+            Err(_) => break,
+        }
+    }
+    done as u64
+}
+
 /// Shut down the write half (the peer reads end of stream). `out` receives the status.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr) {
