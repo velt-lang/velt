@@ -31,6 +31,11 @@ pub(crate) type PurityMemo = HashMap<DefId, Option<Result<(), Impure>>>;
 /// Check the initializer of module constant `name` (type `ty`): constant expressions, and calls
 /// of pure named functions with constant arguments.
 pub(crate) fn check_init(cx: &mut Ctx, name: &str, init: &Expr, ty: TyId) {
+    // A table: an array literal as the whole initializer (not inside a struct, a tuple, …).
+    if let H::ArrayLit(xs) = &init.kind {
+        table_ok(cx, name, init, xs);
+        return;
+    }
     if !init_ok(cx, name, init) || !has_call(init) {
         return;
     }
@@ -138,6 +143,67 @@ fn init_ok(cx: &mut Ctx, name: &str, e: &Expr) -> bool {
             );
             false
         }
+    }
+}
+
+/// An array literal as a module constant is a table: numbers or booleans that are known when
+/// compiling, so that reading an element, the length or iterating reads data stored once
+/// (lowering emits it; `velt_vir` `table_read`). Reports what in it is not allowed; false when
+/// something was reported.
+fn table_ok(cx: &mut Ctx, name: &str, e: &Expr, xs: &[Expr]) -> bool {
+    let scalar = match cx.ty.kind(e.ty) {
+        TyKind::Array(x) => matches!(
+            cx.ty.kind(*x),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+        ),
+        _ => false,
+    };
+    if !scalar {
+        cx.error(
+            Diagnostic::error(
+                format!(
+                    "module constant `{name}` is an array of `{}`: only arrays of numbers or booleans can be module constants",
+                    match cx.ty.kind(e.ty) {
+                        TyKind::Array(x) => cx.display(*x),
+                        _ => cx.display(e.ty),
+                    }
+                ),
+                e.span,
+            )
+            .with_note("its elements are stored once as read-only data; other elements would be new objects at each use")
+            .with_note(fix_note(name)),
+        );
+        return false;
+    }
+    if let Some(bad) = xs.iter().find(|x| !table_elem(cx, x, 0)) {
+        cx.error(
+            Diagnostic::error(
+                format!("an element of module constant `{name}` is not a literal"),
+                bad.span,
+            )
+            .with_note("each element is a number or boolean literal (also negated or with `as`), or a module constant that is one")
+            .with_note(fix_note(name)),
+        );
+        return false;
+    }
+    true
+}
+
+/// Is `e` an element a table can hold: a number or boolean literal, negated or cast, or a
+/// module constant that is one? Lowering folds exactly these (`velt_vir` `table_const`).
+fn table_elem(cx: &Ctx, e: &Expr, depth: u32) -> bool {
+    match &e.kind {
+        H::Lit(hir::Lit::Int(_) | hir::Lit::Float(_) | hir::Lit::Bool(_)) => true,
+        H::Unary {
+            op: hir::UnOp::Neg,
+            expr,
+        } => matches!(expr.kind, H::Lit(hir::Lit::Int(_) | hir::Lit::Float(_))),
+        H::Cast(inner) => table_elem(cx, inner, depth),
+        H::Global(d) if depth < 16 => cx
+            .global(*d)
+            .and_then(|g| g.init.as_ref())
+            .is_some_and(|init| table_elem(cx, init, depth + 1)),
+        _ => false,
     }
 }
 
@@ -521,7 +587,10 @@ pub(crate) fn check_identity(cx: &mut Ctx, operands: [&Expr; 2]) {
                 x.span,
             )
             .with_note("module constants are not stored: each use of one computes a new value")
-            .with_note(format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it")),
+            .with_note(match cx.global(d).is_some_and(|g| matches!(cx.ty.kind(g.ty), TyKind::Array(_))) {
+                true => format!("compare the elements, or copy it once (`const c = {name}.slice();`) and compare that copy"),
+                false => format!("copy it into a local first (`const c = {name};`) and compare that, or compare a field that identifies it"),
+            }),
         );
         return;
     }

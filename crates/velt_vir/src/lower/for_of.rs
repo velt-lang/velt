@@ -39,7 +39,10 @@ impl FnLower<'_, '_> {
             let avt = self.cx.ty(aty);
             Place::local(self.copy_to_temp(v, avt))
         } else {
-            let v = self.expr(iter);
+            let v = match self.table_read(iter) {
+                Some(table) => table,
+                None => self.expr(iter),
+            };
             self.place_of(v, aty)
         };
         let len = self.rvalue_temp(

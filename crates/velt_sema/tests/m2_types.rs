@@ -510,8 +510,21 @@ fn imports_exports_and_intrinsics() {
         r.contains("`f` cannot initialize module constant `X`"),
         "{r}"
     );
-    let r = err_src("const X: i64[] = [1]; function main() {}");
+    // An array of number or boolean literals is a table (read-only data).
+    ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
+    let r = err_src("const X: string[] = [\"a\"]; function main() {}");
+    assert!(r.contains("only arrays of numbers or booleans"), "{r}");
+    // Only as the whole initializer: an array inside a struct constant is not a table.
+    let r = err_src(
+        "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
+    );
     assert!(r.contains("constant expressions or pure calls"), "{r}");
+    let r = err_src("const X: i64[] = [1 + 1]; function main() {}");
+    assert!(r.contains("is not a literal"), "{r}");
+    let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
+    assert!(r.contains("module-level constant `X`"), "{r}");
+    let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
+    assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
 }
 
 #[test]

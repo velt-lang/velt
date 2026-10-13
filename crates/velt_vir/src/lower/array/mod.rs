@@ -1,7 +1,9 @@
 //! Arrays `T[]` = `{ data: ptr, len: u64, cap: u64 }` with elements at `data + i * size(T)`
 //! (aggregate sizes are multiples of their alignment, so size is the stride). An empty array
 //! has a null buffer and `cap == 0`; buffers come from `velt_rt_alloc` and grow by amortized
-//! doubling (the shared `ArrayGrow` helper, starting at 4). Indexing is bounds-checked
+//! doubling (the shared `ArrayGrow` helper, starting at 4). `cap == 0` with elements is a
+//! buffer the array does not own: a module constant table's read-only data (`table_read` in
+//! `expr.rs`), seen only by the code that reads an element or the length. Indexing is bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
 
 mod builtins;

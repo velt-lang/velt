@@ -208,11 +208,33 @@ pub(super) fn call_reads(cx: &Ctx, e: &Expr, out: &mut Vec<DefId>) {
 /// A function's modes, `this` first.
 pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
     let f = cx.fn_info(d);
-    f.this
+    let mut modes: Vec<PassMode> = f
+        .this
         .iter()
         .map(|t| t.mode)
         .chain(f.params.iter().map(|p| p.mode))
-        .collect()
+        .collect();
+    if f.kind == crate::defs::FnKind::Extern {
+        if let Some(m) = extern_written_param(&f.name).and_then(|i| modes.get_mut(i)) {
+            *m = PassMode::BorrowMut;
+        }
+    }
+    modes
+}
+
+/// The parameter a runtime function writes through, for the ones that fill an array they are
+/// given. An extern's signature says nothing about it (its parameters are borrows), so without
+/// this the std method that calls it would look like a reader: `K.fill(0)` on a module constant
+/// would be accepted, and a table is read-only data.
+fn extern_written_param(symbol: &str) -> Option<usize> {
+    Some(match symbol {
+        "velt_rt_bytes_set"
+        | "velt_rt_bytes_copy_within"
+        | "velt_rt_bytes_fill"
+        | "velt_rt_bytes_xor_mask" => 0,
+        "velt_rt_regex_exec" => 3,
+        _ => return None,
+    })
 }
 
 fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {

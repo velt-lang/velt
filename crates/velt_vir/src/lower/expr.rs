@@ -176,7 +176,8 @@ impl FnLower<'_, '_> {
         Operand::Copy(p)
     }
 
-    /// Module-level constant: its (constant) initializer is re-evaluated at each use.
+    /// Module-level constant: its (constant) initializer is re-evaluated at each use. (An
+    /// element, the length or an iteration of a table reads stored data instead, `table_read`.)
     fn global(&mut self, d: hir::DefId) -> Operand {
         let hir::Def::Global(g) = self.cx.hir.def(d) else {
             ice("global reference to a non-global")
@@ -191,6 +192,118 @@ impl FnLower<'_, '_> {
         let t = self.copy_to_temp(v, vt);
         self.own_temp(t, g.ty);
         Operand::Copy(Place::local(t))
+    }
+
+    /// `e` when it is a table (a module constant that is an array literal of number or boolean
+    /// constants), for a use that only reads it where it stands: an element, the length, an
+    /// iteration. Its elements are read-only data emitted once, and the value is the header
+    /// `{ data, len, cap: 0 }` over them (`cap == 0`: the buffer is not owned, so nothing frees
+    /// it).
+    ///
+    /// Only those three uses get it. Anywhere else (an argument, a receiver, a value that is
+    /// kept) the constant is evaluated like any other, to a new array, because what receives it
+    /// may write to it in ways sema does not see (through a function value, say) and read-only
+    /// data must never be reachable from there.
+    ///
+    /// `None`, for the initializer to be evaluated, also when the array is empty (nothing to
+    /// store), when an element is not one `table_const` folds, or when the program shares
+    /// arrays of this type: those are counted heap boxes, and a count can't live in read-only
+    /// data.
+    pub(super) fn table_read(&mut self, e: &hir::Expr) -> Option<Operand> {
+        let hir::ExprKind::Global(d) = e.kind else {
+            return None;
+        };
+        let hir::Def::Global(g) = self.cx.hir.def(d) else {
+            return None;
+        };
+        self.static_table(g)
+    }
+
+    fn static_table(&mut self, g: &hir::GlobalDef) -> Option<Operand> {
+        let hir::ExprKind::ArrayLit(es) = &g.init.kind else {
+            return None;
+        };
+        if es.is_empty() || self.cx.boxed(g.ty) {
+            return None;
+        }
+        let elem = self.elem_ty(g.ty);
+        let et = self.cx.ty(elem);
+        let size = et.scalar_size().filter(|_| et != Ty::Ptr)? as usize;
+        let mut bytes = Vec::with_capacity(es.len() * size);
+        for e in es {
+            match self.table_const(e, et, 0)? {
+                Const::Int(v) => bytes.extend_from_slice(&v.to_le_bytes()[..size]),
+                Const::Float(v) if et == Ty::F32 => {
+                    bytes.extend_from_slice(&(v as f32).to_le_bytes())
+                }
+                Const::Float(v) => bytes.extend_from_slice(&v.to_le_bytes()),
+                Const::Bool(b) => bytes.push(b as u8),
+                _ => return None,
+            }
+        }
+        let data = self.cx.static_bytes(bytes, size as u32);
+        let a = self.cx.array_agg();
+        let t = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(t),
+            Rvalue::Aggregate(
+                a,
+                vec![
+                    Operand::Const(Const::Static(data), Ty::Ptr),
+                    cint(es.len() as i128, Ty::U64),
+                    cint(0, Ty::U64),
+                ],
+            ),
+        );
+        Some(Operand::Copy(Place::local(t)))
+    }
+
+    /// The value of table element `e` as a constant of type `to`: a number or boolean literal,
+    /// negated or cast (with `as` semantics), or a module constant that is one. `None` for
+    /// anything else (sema's `table_elem` accepts exactly what this folds).
+    fn table_const(&mut self, e: &hir::Expr, to: Ty, depth: u32) -> Option<Const> {
+        let at = self.vty(e.ty);
+        let v = match &e.kind {
+            hir::ExprKind::Lit(hir::Lit::Int(n)) if at.is_float() => Const::Float(*n as f64),
+            hir::ExprKind::Lit(hir::Lit::Int(n)) if at.is_int() => {
+                Const::Int(super::operand::wrap_int(*n as i128, at))
+            }
+            hir::ExprKind::Lit(hir::Lit::Float(f)) if at.is_float() => Const::Float(*f),
+            hir::ExprKind::Lit(hir::Lit::Bool(b)) => Const::Bool(*b),
+            hir::ExprKind::Unary {
+                op: hir::UnOp::Neg,
+                expr,
+            } => match self.table_const(expr, at, depth)? {
+                Const::Int(v) => Const::Int(super::operand::wrap_int(-v, at)),
+                Const::Float(v) => Const::Float(-v),
+                _ => return None,
+            },
+            hir::ExprKind::Cast(inner) => {
+                let from = self.vty(inner.ty);
+                self.table_const(inner, from, depth)?
+            }
+            hir::ExprKind::Global(d) if depth < 16 => {
+                let hir::Def::Global(g) = self.cx.hir.def(*d) else {
+                    return None;
+                };
+                let from = self.vty(g.ty);
+                self.table_const(&g.init, from, depth + 1)?
+            }
+            _ => return None,
+        };
+        // To the type asked for, as a cast does it.
+        Some(match v {
+            Const::Int(v) if to.is_int() => Const::Int(super::operand::wrap_int(v, to)),
+            // Through `f64`, as `cast_to` folds it: the `f32` is rounded from that.
+            Const::Int(v) if to == Ty::F32 => Const::Float(v as f64 as f32 as f64),
+            Const::Int(v) if to.is_float() => Const::Float(v as f64),
+            Const::Bool(b) if to.is_int() => Const::Int(b as i128),
+            Const::Float(v) if to == Ty::F32 => Const::Float(v as f32 as f64),
+            Const::Float(_) if to.is_float() => v,
+            Const::Float(v) if to.is_int() => Const::Int(float_to_int(v, to)),
+            Const::Bool(_) if to == Ty::Bool => v,
+            _ => return None,
+        })
     }
 
     fn unary(&mut self, op: hir::UnOp, inner: &hir::Expr, ty: TyId) -> Operand {
@@ -375,5 +488,21 @@ impl FnLower<'_, '_> {
         if !matches!(v, Operand::Const(Const::Unit, _)) {
             self.assign(p, Rvalue::Use(v));
         }
+    }
+}
+
+/// `v as to` for an integer type `to`: toward zero, saturating at the type's range, NaN is 0
+/// (Rust's `as`, which is the language's).
+fn float_to_int(v: f64, to: Ty) -> i128 {
+    let bits = to.scalar_size().unwrap_or(8) * 8;
+    let (lo, hi) = if to.is_signed() {
+        (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+    } else {
+        (0, (1i128 << bits) - 1)
+    };
+    if v.is_nan() {
+        0
+    } else {
+        (v as i128).clamp(lo, hi)
     }
 }

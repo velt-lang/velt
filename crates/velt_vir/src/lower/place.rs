@@ -133,7 +133,10 @@ impl FnLower<'_, '_> {
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
         let bty = self.sub(base.ty);
-        let v = self.expr(base);
+        let v = match self.table_read(base) {
+            Some(table) => table,
+            None => self.expr(base),
+        };
         let arr = self.place_of(v, bty);
         let arr = self.content(&arr, bty);
         let i = self.expr(index);
