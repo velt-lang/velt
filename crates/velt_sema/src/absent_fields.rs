@@ -25,9 +25,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{
-    AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, TyId, TyKind, UseMode,
-};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, TyId, TyKind, UseMode};
 use crate::visit;
 
 /// Report the `in` tests of optional fields that a stored `undefined` would answer wrongly.
@@ -67,6 +65,11 @@ pub(crate) fn check(cx: &mut Ctx) {
             continue;
         }
         let (tn, shown) = (cx.display(*ty), cx.shown_name(name));
+        // `o.b`, or `o[KEY]` for a symbol key.
+        let place = match shown.starts_with('[') {
+            true => format!("o{shown}"),
+            false => format!("o.{shown}"),
+        };
         cx.error(
             Diagnostic::error(
                 format!("cannot tell an absent `{shown}` from one holding `undefined`: this tests the optional field `{shown}` of `{tn}` with `in`, and the program stores a value that may be `undefined` in a field `{shown}`"),
@@ -74,7 +77,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             )
             .with_label(*store, "a value that may be `undefined` is stored here")
             .with_note(format!("Node finds a key whose value is `undefined`; Velt keeps an optional field `{shown}?: T` as its value or nothing, so the test would answer `false` (#930)"))
-            .with_note(format!("store the value only when there is one (`if (v != null) o.{shown} = v`), or test the value instead of the key (`o.{shown} != null`)")),
+            .with_note(format!("store the value only when there is one (`if (v != null) {place} = v`), or test the value instead of the key (`{place} != null`)")),
         );
     }
 }
@@ -119,10 +122,7 @@ impl<'a, 'm> Walk<'a, 'm> {
     fn watched_field(&self, d: DefId, index: u32) -> Option<&'a str> {
         let a = self.cx.adt(d)?;
         let f = a.fields.get(index as usize)?;
-        if !f.optional
-            || a.kind == AdtKind::Class
-            || crate::anon::has_presence(&self.cx.ty, a.kind, f)
-        {
+        if !crate::anon::absent_is_null(&self.cx.ty, a.kind, f) {
             return None;
         }
         self.names.get(f.name.as_str()).map(String::as_str)

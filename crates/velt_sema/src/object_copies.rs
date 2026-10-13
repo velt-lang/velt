@@ -75,8 +75,8 @@ pub(crate) struct Copies {
     /// `"k" in x` tests of an optional field without a presence flag: the field, the type of
     /// `x` and the test (`crate::absent_fields`).
     pub in_optional: Vec<(String, TyId, Span)>,
-    /// The fields an object literal's property gives a value that may be null, by name
-    /// (`crate::absent_fields`).
+    /// The optional fields without a presence flag an object literal's property gives a value
+    /// that may be null, by name (`crate::absent_fields`).
     pub null_literals: Vec<(String, Span)>,
 }
 

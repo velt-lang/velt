@@ -272,7 +272,7 @@ impl FnCx<'_, '_> {
                 posts.push((i as u32, v));
                 self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], rt, span)
             } else {
-                self.spread_value(v, None, span, lets)
+                self.spread_value(v, None, false, span, lets)
             };
             let (declared, optional) = match self.cx.ty.opt_payload(h.ty) {
                 _ if absent && presence => (h.ty, true),
@@ -328,14 +328,16 @@ impl FnCx<'_, '_> {
                 }
                 (v @ (Value::Read(..) | Value::Over(..)), Some(i)) => {
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
-                    self.spread_value(v, Some(expected), span, lets)
+                    let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
+                    self.spread_value(v, Some(expected), watched, span, lets)
                 }
                 (Value::Prop(k, value), Some(i)) => {
                     self.check_private(fields[i].private_to, &k.name, k.span);
                     self.cx
                         .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
-                    self.field_value(&k, value, Some(expected))
+                    let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
+                    self.field_value(&k, value, Some(expected), watched)
                 }
                 (Value::Prop(k, value), None) => {
                     self.cx
@@ -407,7 +409,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let (value, guard) = match part {
-            Value::Prop(k, value) => (self.field_value(&k, value, Some(fty)), None),
+            Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
                 let guard = match src.place {
                     Some(p) if src.presence => {
@@ -457,23 +459,25 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The HIR value of a spread field (`expected`: the target field's type, if known).
+    /// The HIR value of a spread field (`expected`: the target field's type, if known;
+    /// `watched`: as for [`Self::field_value`]).
     fn spread_value(
         &mut self,
         v: Value,
         expected: Option<TyId>,
+        watched: bool,
         span: Span,
         lets: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
         match v {
             Value::Read(h, _) => h,
-            Value::Prop(k, value) => self.field_value(&k, value, expected),
+            Value::Prop(k, value) => self.field_value(&k, value, expected, watched),
             Value::Over(h, src, prev) => {
                 let prev = match *prev {
                     // A property under an optional field is evaluated whether or not the field
                     // is present, as in JavaScript: into a temporary, after the spread sources.
                     Value::Prop(k, value) => {
-                        let p = self.field_value(&k, value, expected);
+                        let p = self.field_value(&k, value, expected, watched);
                         let mode = if self.cx.is_copy(p.ty) {
                             UseMode::Copy
                         } else {
@@ -483,7 +487,7 @@ impl FnCx<'_, '_> {
                         set_place_mode(&mut t, mode);
                         t
                     }
-                    prev => self.spread_value(prev, expected, span, lets),
+                    prev => self.spread_value(prev, expected, watched, span, lets),
                 };
                 if self.cx.ty.opt_payload(h.ty).is_none() {
                     return h;

@@ -221,15 +221,20 @@ impl FnCx<'_, '_> {
     }
 
     /// [`Self::prop_value`] for a field of an object type. A value that may be null written
-    /// for a nullable field is remembered: Node finds the key of `{ b: undefined }`, which an
-    /// optional field without a presence flag cannot hold (`crate::absent_fields`).
+    /// for an optional field without a presence flag (`watched`, `anon::absent_is_null`) is
+    /// remembered: Node finds the key of `{ b: undefined }`, which such a field cannot hold
+    /// (`crate::absent_fields`).
     pub(super) fn field_value(
         &mut self,
         name: &ast::Ident,
         value: Option<&ast::Expr>,
         exp: Option<TyId>,
+        watched: bool,
     ) -> hir::Expr {
         let h = self.prop_value(name, value, exp);
+        if !watched {
+            return h;
+        }
         let given = match &h.kind {
             H::WrapSome(inner) => inner.ty,
             _ => h.ty,
@@ -237,7 +242,7 @@ impl FnCx<'_, '_> {
         let nullable = matches!(h.kind, H::Lit(hir::Lit::Null))
             || self.cx.ty.opt_payload(given).is_some()
             || matches!(self.cx.ty.kind(given), TyKind::Param(_));
-        if nullable && exp.is_some_and(|e| self.cx.ty.opt_payload(e).is_some()) {
+        if nullable {
             let store = (name.name.clone(), h.span);
             self.cx.object_copies.null_literals.push(store);
         }
@@ -583,7 +588,9 @@ impl FnCx<'_, '_> {
                 .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
                 .collect();
             let expected = self.cx.subst_known(fields[i].ty, &known);
-            let h = self.field_value(pname, *value, Some(expected));
+            let kind = self.cx.adt(d).map_or(AdtKind::Struct, |a| a.kind);
+            let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
+            let h = self.field_value(pname, *value, Some(expected), watched);
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);
         }
