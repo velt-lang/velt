@@ -6,9 +6,10 @@
 //! ranges carry which location, and [`FunctionLines`] keeps them as rows. [`build_unit`] turns
 //! the functions into one DWARF 4 compile unit: a `DW_TAG_subprogram` per function (name,
 //! linkage name, code range, declaration line) and a line program. Debug builds also describe
-//! source variables (`vir::LocalDecl::debug`): each lives in a stack slot keyed by its local
-//! (function/mod.rs), found in the compiled frame and located relative to the frame pointer,
-//! which Cranelift always keeps; `types` builds their DWARF types.
+//! source variables (`vir::LocalDecl::debug`): each has a stack slot keyed by its local
+//! (function/mod.rs; its storage, or for a scalar a shadow that every write updates), found in
+//! the compiled frame and located relative to the frame pointer, which Cranelift always keeps;
+//! `types` builds their DWARF types.
 //!
 //! - `object`: the sections of ELF, Mach-O and COFF objects, with relocations against the
 //!   function symbols;
@@ -155,12 +156,12 @@ pub(crate) const ENCODING: Encoding = Encoding {
     address_size: 8,
 };
 
-/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF and Mach-O,
-/// `object::add_debug_info`) and its frame pointer has a DWARF number ([`frame_register`]).
-/// Only then do described locals need stack slots.
+/// Whether code for `triple` gets DWARF variables: its objects carry DWARF (ELF, Mach-O and
+/// COFF, `object::add_debug_info`) and its frame pointer has a DWARF number
+/// ([`frame_register`]). Only then do described locals need shadow slots.
 pub(crate) fn describes_variables(triple: &target_lexicon::Triple) -> bool {
     use target_lexicon::{Architecture as A, BinaryFormat as F};
-    matches!(triple.binary_format, F::Elf | F::Macho)
+    matches!(triple.binary_format, F::Elf | F::Macho | F::Coff)
         && matches!(triple.architecture, A::X86_64 | A::Aarch64(_))
 }
 
