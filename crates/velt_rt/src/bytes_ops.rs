@@ -6,6 +6,8 @@
 //! written in place and never reallocated, so its length and capacity stay as they are.
 
 use crate::bytes::VeltBytes;
+use crate::result::{invalid_utf8, IoResult, VeltErr};
+use crate::str::VeltStr;
 
 /// The array's bytes, writable.
 ///
@@ -142,6 +144,71 @@ pub unsafe extern "C" fn velt_rt_bytes_concat(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_utf8_valid(b: *const VeltBytes) -> u8 {
     std::str::from_utf8((*b).as_bytes()).is_ok() as u8
+}
+
+/// The bytes of `b` in `[start, end)` (relative indices).
+unsafe fn range<'a>(b: *const VeltBytes, start: i64, end: i64) -> &'a [u8] {
+    let s = (*b).as_bytes();
+    let (start, end) = (relative(start, s.len()), relative(end, s.len()));
+    &s[start..end.max(start)]
+}
+
+/// Copies the UTF-8 bytes of `s` into `dst` starting at `offset` (a lone surrogate as U+FFFD,
+/// the 3 bytes `velt_rt_str_byte_length` counts for it); 0 (nothing copied) when it does not fit.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_set_str(
+    dst: *const VeltBytes,
+    s: *const VeltStr,
+    offset: u64,
+) -> u8 {
+    let d = &*dst;
+    let text = (*s).text_lossy();
+    let src = text.as_bytes();
+    let fits = offset
+        .checked_add(src.len() as u64)
+        .is_some_and(|end| end <= d.len);
+    if !fits {
+        return 0;
+    }
+    if !src.is_empty() {
+        std::ptr::copy_nonoverlapping(src.as_ptr(), d.ptr.add(offset as usize), src.len());
+    }
+    1
+}
+
+/// The bytes in `[start, end)` (relative indices) as a new string, validating UTF-8
+/// (`INVALID_DATA` on failure): `velt_rt_bytes_to_str` of a slice, without making the slice.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_range_to_str(
+    b: *const VeltBytes,
+    start: i64,
+    end: i64,
+    out: *mut IoResult<VeltStr>,
+) {
+    let bytes = range(b, start, end);
+    let r = match std::str::from_utf8(bytes) {
+        Ok(s) => IoResult::ok(VeltStr::from_bytes(s.as_bytes())),
+        Err(_) => IoResult::err(VeltErr::from_io(&invalid_utf8("byte buffer"))),
+    };
+    r.write_to(out);
+}
+
+/// How far `[start, end)` (relative indices) is well-formed UTF-8, as an offset from `start`:
+/// the whole length when all of it is, less when it ends inside a character (the rest may be
+/// completed by more bytes), and -1 when it holds a sequence no continuation can make valid.
+/// For text that arrives in pieces (a WebSocket message's fragments).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_utf8_prefix(
+    b: *const VeltBytes,
+    start: i64,
+    end: i64,
+) -> i64 {
+    let bytes = range(b, start, end);
+    match std::str::from_utf8(bytes) {
+        Ok(_) => bytes.len() as i64,
+        Err(e) if e.error_len().is_none() => e.valid_up_to() as i64,
+        Err(_) => -1,
+    }
 }
 
 /// XORs `[start, end)` (relative indices) with the four bytes of `mask` (most significant first),
