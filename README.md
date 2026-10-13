@@ -105,9 +105,11 @@ Next, read [Getting started](docs/book/getting-started.md) and
   other editor can use the language server, `velt lsp`.
 - **Everything else in one tool.** `velt` also runs tests (`velt test`, with **▶ Run test** in
   the editor), formats code (`velt fmt`), manages packages with a lockfile, and cross-compiles.
-- **The whole Rust ecosystem.** When a package needs native code, such as a database driver, a
-  codec or a C library, it can include a Rust crate and call it directly
-  ([Rust inside a package](#rust-inside-a-package)).
+- **Any Rust crate, a few lines away.** Velt's own ecosystem is growing, and until a library
+  exists in Velt, you can wrap the Rust crate that already does it: image processing,
+  compression, a database driver. A package includes the crate and exports functions with
+  `#[export]`, and its users never need Rust
+  ([how it works](#any-rust-crate-a-few-lines-away)).
 
 ## Beyond TypeScript
 
@@ -171,52 +173,76 @@ async function main() {
 For the full list, and the few places where Velt deliberately differs from TypeScript, read
 [Velt for TypeScript developers](docs/book/ts-developers.md).
 
-## Rust inside a package
+## Any Rust crate, a few lines away
 
-Any Velt package can include a Rust crate, so every crate on crates.io is within reach. Mark the
-Rust functions with `#[export]`:
+Velt's goal is an ecosystem written in Velt itself, because Velt code is what the compiler
+optimizes best, and the standard library is moving that way: the Redis client and the CSV parser,
+for example, are already Velt code. A young language can't have a library for everything yet,
+though, so until one exists in Velt you don't have to wait: **any Velt package can include a Rust crate**,
+which puts all of crates.io within reach. Need image processing, compression, PDF generation or
+ML inference today? Wrap the crate that already does it, typically in a few dozen lines, and
+replace it with a Velt version whenever one arrives; your users' code doesn't change. The SQLite driver in
+[`packages/sqlite`](packages/sqlite) is a complete example: 160 lines of Rust around `rusqlite`,
+and 110 lines of Velt.
+
+Here is zstd compression as a package, end to end. Add the crate to the package's
+`native/Cargo.toml`, next to `velt_native`:
+
+```toml
+[dependencies]
+velt_native = { git = "https://github.com/velt-lang/velt" }   # until it is on crates.io
+zstd = "0.13"
+```
+
+Export what you need from Rust. A `blocking` function runs on the runtime's thread pool for
+blocking work, and Velt sees it as an `async` function:
 
 ```rust
 use velt_native::{export, Error};
 
-velt_native::package!(greet);
+velt_native::package!(zstd);
 
-#[export]
-fn velt_greet__hello(name: &str) -> String {
-    format!("hello, {name}!")
-}
-
-#[export(blocking)] // runs on the runtime's blocking pool; Velt sees an async function
-fn velt_greet__checksum(data: Vec<u8>) -> Result<u64, Error> {
-    Ok(data.iter().map(|&b| b as u64).sum())
+#[export(blocking)]
+fn velt_zstd__compress(data: Vec<u8>, level: i32) -> Result<Vec<u8>, Error> {
+    zstd::encode_all(&data[..], level).map_err(|e| Error::other(format!("{e}")))
 }
 ```
 
-Then declare them in the package's Velt code and wrap them in the API you want:
+Declare it in the package's Velt code and give it the API you want, with a typed error:
 
 ```ts ignore
 import { IoResult } from "velt:io";
 
-declare function velt_greet__hello(name: string): string;
-declare async function velt_greet__checksum(data: u8[]): Promise<IoResult<u64>>;
+declare async function velt_zstd__compress(data: u8[], level: i32): Promise<IoResult<u8[]>>;
 
-export function hello(name: string): string {
-  return velt_greet__hello(name);
+export class ZstdError extends Error {}
+
+export async function compress(data: u8[], level: i32 = 3): Promise<u8[], ZstdError> {
+  const r = await velt_zstd__compress(data, level);
+  if (r.code != 0) {
+    throw new ZstdError(r.message);
+  }
+  return r.value;
 }
 ```
 
-- **Checked at compile time.** `velt` compares every `declare` with what the library actually
-  exports. A wrong name or type is a compile error, not a crash at run time.
-- **No Rust needed by your users.** `velt native build` and `velt publish` ship a prebuilt
-  library for each platform. `velt add greet` downloads the right one and verifies its checksum
-  against the lockfile.
-- **It works everywhere a Velt program does:** `velt run`, `velt build --release` (still one
-  self-contained executable) and `velt dev`, where your Velt edits keep hot-swapping.
-- Native objects, such as a database connection, stay on the Rust side behind a handle. Wrap
-  them in a class with `[Symbol.dispose]()`, so `using` closes them.
+Programs then use it like any other package: `velt add zstd`, then
+`const packed = await compress(bytes);`.
 
-The full walkthrough is [Packages with native code](docs/book/native-packages.md), and
-`packages/sqlite` is a complete example.
+- **Checked at compile time.** `velt` compares every `declare` with what the library actually
+  exports, so a wrong name or type is a compile error, not a crash at run time.
+- **Your users never need Rust.** `velt native build` and `velt publish` ship a prebuilt library
+  for each platform. `velt add` downloads the right one and verifies its checksum against the
+  lockfile.
+- **It works everywhere a Velt program does.** `velt run`, `velt build --release` (still one
+  self-contained executable) and `velt dev` all work as usual, and your Velt edits keep
+  hot-swapping.
+- **Resources clean up after themselves.** Native objects, such as a database connection, stay
+  on the Rust side behind a handle. Wrap them in a class with `[Symbol.dispose]()`, and `using`
+  closes them at a known point.
+
+The full walkthrough, including strings, errors, handles and publishing for several platforms,
+is [Packages with native code](docs/book/native-packages.md).
 
 ## Performance
 
