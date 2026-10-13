@@ -311,13 +311,14 @@ pub(crate) fn build_unit(
                 )
             });
             let mut open: Vec<(&vir::LocalDebug, UnitEntryId)> = vec![];
+            let code = ScopeCode::new(f);
             let mut budget = scope_range_budget(f);
             for v in vars {
                 while open.last().is_some_and(|(o, _)| !holds(o, &v.debug)) {
                     open.pop();
                 }
                 let parent = open.last().map_or(sub_id, |(_, e)| *e);
-                let ranges = scope_ranges(f, &v.debug).filter(|r| r.len() <= budget);
+                let ranges = scope_ranges(&code, &v.debug).filter(|r| r.len() <= budget);
                 let parent = match ranges {
                     None => parent,
                     Some(ranges) => {
@@ -348,47 +349,104 @@ pub(crate) fn build_unit(
     dwarf
 }
 
-/// The code ranges (offsets in `f`) where `var` is in scope: code located from its declaration
-/// line (a whole line in one block: debuggers make a breakpoint location per block a line's
-/// code is in) up to the end of its block, with the code without a location that follows such
-/// code. `None` when that is the whole function (params, variables of the function's own block
-/// declared at its start).
-fn scope_ranges(f: &FunctionLines, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
+/// The located code of a function, prepared for [`scope_ranges`].
+struct ScopeCode {
+    /// The code from the first located instruction to the function's end, cut where the source
+    /// position changes. Code without a location (the few bytes between two located
+    /// instructions) goes with the code before it: on its own it would cut the scope of every
+    /// variable declared above it in two, and a function of n declarations in a row would need
+    /// n² ranges.
+    pieces: Vec<Piece>,
+    /// Where the stretches of `pieces` start (and the end of the last): in a stretch, (file,
+    /// line) never goes back, so the pieces of a range of lines are found by bisection.
+    /// Statements in a row are one stretch; a loop's header after its body starts another.
+    stretches: Vec<usize>,
+    /// The function's size.
+    size: u32,
+}
+
+struct Piece {
+    start: u32,
+    /// (file, line).
+    at: (u32, u32),
+    col: u32,
+}
+
+impl ScopeCode {
+    fn new(f: &FunctionLines) -> ScopeCode {
+        let mut pieces: Vec<Piece> = vec![];
+        let mut stretches = vec![0];
+        for (k, &(start, loc)) in f.rows.iter().enumerate() {
+            let end = f.rows.get(k + 1).map_or(f.size, |r| r.0);
+            let Some(loc) = loc.filter(|_| start < end) else {
+                continue;
+            };
+            let at = (loc.file, loc.line);
+            match pieces.last() {
+                Some(last) if last.at == at && last.col == loc.col => continue,
+                Some(last) if at < last.at => stretches.push(pieces.len()),
+                _ => {}
+            }
+            let col = loc.col;
+            pieces.push(Piece { start, at, col });
+        }
+        stretches.push(pieces.len());
+        ScopeCode {
+            pieces,
+            stretches,
+            size: f.size,
+        }
+    }
+
+    /// Where piece `i` ends.
+    fn end(&self, i: usize) -> u32 {
+        self.pieces.get(i + 1).map_or(self.size, |p| p.start)
+    }
+}
+
+/// The code ranges (offsets in the function) where `var` is in scope: code located from its
+/// declaration line (a whole line in one block: debuggers make a breakpoint location per block
+/// a line's code is in) up to the end of its block. `None` when that is the whole function
+/// (params, variables of the function's own block declared at its start). The work is per
+/// stretch of `code`, not per row: a function of n declarations in a row has n variables and
+/// some 10 n rows.
+fn scope_ranges(code: &ScopeCode, var: &vir::LocalDebug) -> Option<Vec<(u32, u32)>> {
     if var.param {
         return None;
     }
-    let inside = |l: &Option<SrcLoc>| {
-        l.is_some_and(|l| {
-            l.file == var.decl.file
-                && l.line >= var.decl.line
-                && var.end.is_none_or(|e| at(l) < at(e))
-        })
-    };
+    let file = var.decl.file;
     let mut ranges: Vec<(u32, u32)> = vec![];
-    let mut whole = true;
-    // Whether the code before the row is in scope.
-    let mut before = false;
-    for (k, (start, loc)) in f.rows.iter().enumerate() {
-        let end = f.rows.get(k + 1).map_or(f.size, |r| r.0);
-        if *start >= end {
-            continue;
+    // The pieces `from..to` are in scope.
+    let mut add = |from: usize, to: usize| {
+        if from >= to {
+            return;
         }
-        // Code without a location (the few bytes between two located instructions) goes with
-        // the code before it. Left out, it would cut the scope of every variable declared
-        // above it in two: a function of n declarations in a row would need n² ranges.
-        before = match loc {
-            Some(_) => inside(loc),
-            None => before,
-        };
-        if !before {
-            whole = false;
-            continue;
-        }
+        let (start, end) = (code.pieces[from].start, code.end(to - 1));
         match ranges.last_mut() {
-            Some(last) if last.1 == *start => last.1 = end,
-            _ => ranges.push((*start, end)),
+            Some(last) if last.1 == start => last.1 = end,
+            _ => ranges.push((start, end)),
+        }
+    };
+    for stretch in code.stretches.windows(2) {
+        let (first, pieces) = (stretch[0], &code.pieces[stretch[0]..stretch[1]]);
+        let before = |at: (u32, u32)| first + pieces.partition_point(|p| p.at < at);
+        let from = before((file, var.decl.line));
+        match var.end {
+            None => add(from, first + pieces.partition_point(|p| p.at.0 <= file)),
+            Some(end) => {
+                // The lines before the block's last, then the code of that line before its end.
+                let last_line = before((file, end.line));
+                add(from, last_line);
+                let after = first + pieces.partition_point(|p| p.at <= (file, end.line));
+                for i in last_line.max(from)..after {
+                    if code.pieces[i].col < end.col {
+                        add(i, i + 1);
+                    }
+                }
+            }
         }
     }
+    let whole = (ranges.is_empty() && code.size == 0) || ranges == [(0, code.size)];
     (!whole).then_some(ranges)
 }
 
