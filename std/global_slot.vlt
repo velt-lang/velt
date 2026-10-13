@@ -1,0 +1,26 @@
+// std/global_slot (std-internal): one object per process for std features that need it.
+//
+// A module has no mutable globals, so the runtime keeps a slot per feature (rt_abi_async.md
+// §2.2): a channel holding at most one item, the feature's `shared<T>`. `processGlobal` takes
+// it out and puts a reference back under the slot's lock, making the object on first use.
+// Slots are assigned here. Not part of the public API.
+
+import { Channel } from "velt:channel";
+
+declare function velt_rt_global_lock(slot: u32);
+declare function velt_rt_global_unlock(slot: u32);
+declare function velt_rt_global_chan(slot: u32): u64;
+
+/** std/websocket's topics. */
+export const SLOT_WS_TOPICS: u32 = 0;
+
+/** The process's one `shared<T>` of `slot`, made with `make` the first time. */
+export function processGlobal<T>(slot: u32, make: () => shared<T>): shared<T> {
+  velt_rt_global_lock(slot);
+  const ch: Channel<shared<T>> = Channel { handle: velt_rt_global_chan(slot) };
+  const found = ch.tryReceive();
+  const value = found == null ? make() : found;
+  ch.trySend(value.clone());
+  velt_rt_global_unlock(slot);
+  return value;
+}

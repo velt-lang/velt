@@ -29,6 +29,7 @@ pub mod fmt;
 pub mod fnv;
 pub mod freed;
 pub mod fs;
+pub mod global;
 pub mod handle;
 pub mod hash;
 pub mod hazard;
