@@ -66,8 +66,8 @@ what Velt can't do on its own:
 
 | Module | Runtime use |
 |---|---|
-| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP, and an HTTP server and client on hyper; HTTPS and HTTP/2 through rustls |
-| `velt:websocket` | tokio-tungstenite connections and server upgrades |
+| `velt:fs`, `velt:fs_stream`, `velt:net`, `velt:http`, `velt:fetch` | file system, TCP and TLS streams, and an HTTP server and client on hyper; TLS, HTTPS and HTTP/2 through rustls |
+| `velt:websocket` | none of its own: the protocol is written in Velt on `velt:net` streams and `velt:http` upgrades (the runtime only masks bytes, checks UTF-8 and draws masking keys) |
 | `velt:process`, `velt:stdin`, `velt:os` | arguments, environment, working directory, standard input, platform facts |
 | `velt:regex` | Rust's `regex` engine |
 | `velt:channel`, `velt:task` | channel queues, abort signals and task groups |
