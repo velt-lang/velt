@@ -398,8 +398,9 @@ export function parsePath(p: string, segs: string[], special: bool): string {
 }
 
 // Whether `parsePath` would give back `p` unchanged, found in one pass without building the
-// segments: `p` starts with `/`, has nothing to escape and no `\`, and no segment starts with
-// `.` or `%` (every spelling of a dot segment does).
+// segments: `p` starts with `/`, has nothing to escape and no `\` (a separator only in special
+// URLs; the others just take the long way), and no segment starts with `.` or `%` (every
+// spelling of a dot segment does).
 function isSerializedPath(p: string): bool {
   if (p.charCodeAt(0) != SLASH) {
     return false;

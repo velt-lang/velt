@@ -1,7 +1,8 @@
 // std/url/encode (std-internal): percent-encoding and UTF-8 helpers shared by std/url.
 //
 // Works on the UTF-8 bytes of a string: an encoder copies them into a `u8[]` once, escapes what
-// its set asks for, and turns the bytes back into a string once. The copy writes a lone
+// its set asks for, and turns the bytes back into a string once (`encodeSet` first looks whether
+// there is anything to escape, and returns ASCII text that has nothing as it is). The copy writes a lone
 // surrogate as U+FFFD (what `URL` and `URLSearchParams` encode, `%EF%BF%BD`, as WHATWG says);
 // `encodeURI`/`encodeURIComponent` refuse one instead, and decoding never makes one (surrogate
 // bytes such as `%ED%A0%BD` are invalid UTF-8). Decoders and `encodeUri` return null where the
