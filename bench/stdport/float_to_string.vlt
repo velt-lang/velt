@@ -1,0 +1,13 @@
+// `f64` to string: the shortest digits that read back as the same value (the runtime's `ryu`
+// plus JavaScript's layout), 2M values at two magnitudes. The values are never whole and stay
+// between 1e-5 and 1e16, where `ryu` and JavaScript print the same text.
+function main() {
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 1000000; i++) {
+    const x = ((2 * i + 1) as f64) / 14.0;
+    const a = `${x}`;
+    const b = `${x / 1024.0}`;
+    total += (a.length + b.length) as i64;
+  }
+  console.log(total);
+}

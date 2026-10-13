@@ -22,12 +22,17 @@ Four steps, each its own pull request:
    and its layout in terms of the aggregates lowering already made (field names over VIR field
    indexes, variant views of tagged types). Optimizations may store a `number` local as an
    integer, so backends take a scalar local's encoding from its VIR type. Only debug builds made
-   for debugging ask for it (`velt build`, `velt dev --exe`; the next step keeps described
-   variables in memory, which slows hot loops by about a quarter, so `velt run` and `velt test`
-   don't), and release code is unchanged; dead-code elimination keeps described locals, and
-   `numrep` moves a description to the narrowed local.
-2. **Cranelift emits them.** Described locals live in stack slots (`StackSlotKey` finds them
-   after compilation); each becomes a `DW_TAG_variable` / `DW_TAG_formal_parameter` with a
+   for debugging ask for it (`velt build`, `velt dev --exe`; the next step stores each assignment
+   of a described variable to a stack slot, +7–15% instructions on benchmarks, so `velt run` and
+   `velt test` don't), and release code is unchanged; dead-code elimination keeps described
+   locals, and `numrep` moves a description to the narrowed local.
+2. **Cranelift emits them.** A described scalar stays in a register for its reads, and each
+   assignment also stores it to a shadow stack slot; aggregates live in stack slots anyway
+   (`StackSlotKey` finds the slots after compilation). Cranelift's own value locations
+   (`set_val_label`) were tried and dropped: at this optimization level they lose most values
+   between uses, so a debugger showed `w`, `h` and loop counters as unavailable. A value set from
+   the debugger (`expr x = 100`) goes to the slot, which the program does not read back: it keeps
+   using the old value. Each becomes a `DW_TAG_variable` / `DW_TAG_formal_parameter` with a
    frame-base location (plus `DW_OP_deref` when held by reference) and a DWARF type built from
    its debug type: base types, structures with named members, pointers to class objects,
    enumerations.
@@ -41,7 +46,12 @@ Four steps, each its own pull request:
    source ranges nest like the blocks, so Cranelift puts each variable in a
    `DW_TAG_lexical_block` inside the one of the innermost variable whose range holds its own,
    covering the code located in its range. Not-yet-declared variables and those of a finished
-   loop are hidden.
+   loop are hidden. Code without a location (a few bytes between located instructions) goes
+   with the code before it: left out, it would cut every scope around it, and a function of n
+   declarations in a row would need n² ranges (a `main` of 16000 took tens of gigabytes to
+   build). For code laid out far from source order, a function's scopes get at most a number of
+   ranges in proportion to its code; a variable that no longer fits is shown in the scope around
+   it, from before its declaration.
 
 Locals of async functions, generators and inlined code are not described yet (phase 4: their
 values live in state machines or the caller's frame).

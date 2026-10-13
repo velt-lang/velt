@@ -17,11 +17,14 @@ mod no_window;
 mod runtime_support;
 mod work_dir;
 
+// Not `canonicalize()`: on Windows that yields a verbatim `\\?\C:\…` path, which LLDB rejects
+// in `command script import` (`invalid pathname`), so the formatter tests skipped there.
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
+        .ancestors()
+        .nth(2)
         .expect("repo root")
+        .to_path_buf()
 }
 
 fn template(name: &str) -> Value {
@@ -100,13 +103,8 @@ fn lldb_runs() -> bool {
     runs
 }
 
-/// Build `source` as `app.vlt` with `args` in a fresh work dir; the dir and the executable.
-fn build(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, PathBuf) {
-    let (work, exe, _) = build_reporting(work_name, source, args);
-    (work, exe)
-}
-
-/// [`build`], also returning whether the build reports line information (`velt build --json`'s
+/// Build `source` as `app.vlt` with `args` in a fresh work dir: the dir, the executable, and
+/// whether the build reports line information (`velt build --json`'s
 /// `debugInfo`: false on Windows for a Cranelift build that MSVC's `link.exe` links).
 fn build_reporting(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, PathBuf, bool) {
     let root = root();
@@ -129,6 +127,21 @@ fn build_reporting(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, Pa
         "target/velt/app"
     });
     (work, exe, built["debugInfo"] != false)
+}
+
+/// [`build_reporting`] for a test that debugs the program: `None` (the test skips) for a Windows build
+/// without line information (MSVC's `link.exe` links it), which never happens elsewhere.
+fn build_debuggable(work_name: &str, source: &str, args: &[&str]) -> Option<(PathBuf, PathBuf)> {
+    let (work, exe, line_info) = build_reporting(work_name, source, args);
+    if line_info {
+        return Some((work, exe));
+    }
+    if !cfg!(windows) {
+        panic!("a debug build without line information");
+    }
+    eprintln!("note: Windows builds keep DWARF only with the bundled linker; skipping");
+    let _ = std::fs::remove_dir_all(&work);
+    None
 }
 
 /// LLDB in batch mode running `commands` on `exe`; its output.
@@ -215,14 +228,12 @@ function main() {
 /// runs under LLDB, which needs permission to debug on some systems).
 #[test]
 fn lldb_shows_locals_in_the_default_build() {
-    if cfg!(windows) {
-        eprintln!("note: Windows builds carry no DWARF yet; skipping");
-        return;
-    }
     if !lldb_runs() {
         return;
     }
-    let (work, exe) = build("golden-work-debugger-locals", LOCALS, &[]);
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-locals", LOCALS, &[]) else {
+        return;
+    };
     let out = lldb(
         &exe,
         &[
@@ -325,15 +336,13 @@ function main() {
 /// the active member of a union, options as `null` or their value.
 #[test]
 fn lldb_formats_velt_values() {
-    if cfg!(windows) {
-        eprintln!("note: Windows builds carry no DWARF yet; skipping");
-        return;
-    }
     if !lldb_runs() {
         return;
     }
     let script = root().join("editors/lldb/velt_lldb.py");
-    let (work, exe) = build("golden-work-debugger-values", VALUES, &[]);
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-values", VALUES, &[]) else {
+        return;
+    };
     let import = format!("command script import {}", script.display());
     let out = lldb(
         &exe,
@@ -403,19 +412,21 @@ function main() {
 /// them was part of the body, so they were garbage there).
 #[test]
 fn lldb_shows_params_at_function_entry() {
-    if cfg!(windows) {
-        eprintln!("note: Windows builds carry no DWARF variables; skipping");
-        return;
-    }
     if !lldb_runs() {
         return;
     }
-    let (work, exe) = build("golden-work-debugger-entry", ENTRY, &[]);
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-entry", ENTRY, &[]) else {
+        return;
+    };
     let out = lldb(
         &exe,
         &[
             "breakpoint set -n _V4area",
-            "breakpoint set -s app -r closure",
+            if cfg!(windows) {
+                "breakpoint set -s app.exe -r closure"
+            } else {
+                "breakpoint set -s app -r closure"
+            },
             "run",
             "frame variable",
             "continue",
@@ -455,14 +466,12 @@ const SCOPES: &str = "function main() {
 /// declared (`after`, the loop's), and not after its loop.
 #[test]
 fn lldb_shows_variables_in_their_scope() {
-    if cfg!(windows) {
-        eprintln!("note: Windows builds carry no DWARF yet; skipping");
-        return;
-    }
     if !lldb_runs() {
         return;
     }
-    let (work, exe) = build("golden-work-debugger-scopes", SCOPES, &[]);
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-scopes", SCOPES, &[]) else {
+        return;
+    };
     let out = lldb(
         &exe,
         &[
@@ -524,15 +533,13 @@ const CLOSURE: &str = r#"function main() {
 /// before any of them is used (regression: a capture was in scope only from its first use).
 #[test]
 fn lldb_shows_closure_captures() {
-    if cfg!(windows) {
-        eprintln!("note: not checked on Windows yet; skipping");
-        return;
-    }
     if !lldb_runs() {
         return;
     }
     let script = root().join("editors/lldb/velt_lldb.py");
-    let (work, exe) = build("golden-work-debugger-closure", CLOSURE, &[]);
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-closure", CLOSURE, &[]) else {
+        return;
+    };
     let import = format!("command script import {}", script.display());
     let out = lldb(
         &exe,

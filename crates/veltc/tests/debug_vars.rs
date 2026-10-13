@@ -482,6 +482,86 @@ fn dwarf_of_handlers_and_cases_verifies() {
     }
 }
 
+/// `bench/compile/stress.sh`'s program: `n` classes with a subclass each, all used from one
+/// `main` of `n` declarations in a row.
+fn long_main(n: usize) -> String {
+    let mut src = String::from(
+        "function count<T>(xs: T[]): i64 {
+  return xs.length as i64;
+}
+",
+    );
+    for i in 0..n {
+        src += &format!(
+            "class C{i} {{
+  id: i64;
+  constructor(id: i64) {{
+    this.id = id;
+  }}
+               area(): i64 {{
+    return this.id;
+  }}
+}}
+             class S{i} extends C{i} {{
+  constructor(id: i64) {{
+    super(id);
+  }}
+               override area(): i64 {{
+    return this.id + 1;
+  }}
+}}
+"
+        );
+    }
+    src += "function main() {
+  let t = 0;
+";
+    for i in 0..n {
+        src += &format!(
+            "  const b{i}: C{i} = new S{i}({i});
+  t += b{i}.area() + count([b{i}]);
+"
+        );
+    }
+    src + "  console.log(t);
+}
+"
+}
+
+/// The object of a debug build grows with the program: twice the declarations in one function
+/// make an object about twice as large (regression: every variable's scope was cut into a range
+/// per later statement, so the ranges and their relocations grew with the square, and the
+/// nightly build of a `main` of 16000 declarations ran out of memory). Sizes, not times.
+#[test]
+fn debug_info_of_a_long_function_grows_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let size = |n: usize| {
+        let object = dir.path().join(format!("long_main_{n}.o"));
+        let opts = BuildOptions {
+            input: dir.path().join(format!("long_main_{n}.vlt")),
+            root_source: Some(long_main(n)),
+            output: Some(object.clone()),
+            emit: veltc::cli::Emit::Obj,
+            debug_vars: true,
+            ..BuildOptions::default()
+        };
+        let mut sess = Session::new();
+        driver::build(&mut sess, &opts).unwrap_or_else(|e| {
+            panic!(
+                "{n}: {e:?}
+{}",
+                sess.render_diagnostics()
+            )
+        });
+        std::fs::metadata(&object).unwrap().len()
+    };
+    let (small, large) = (size(150), size(300));
+    assert!(
+        large < small * 5 / 2,
+        "150 declarations: {small} bytes, 300: {large} bytes"
+    );
+}
+
 /// A Windows executable that MSVC's `link.exe` links has no line information, so it describes
 /// no variables either (regression: they named the files the driver had dropped, an ICE in
 /// every debug `velt build` on such a machine). Here the bundled linker has no Windows kit.
