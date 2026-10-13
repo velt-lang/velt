@@ -761,6 +761,12 @@ export class Map<K, V> {
           __intrinsic_array_swap(this.entryValues, w, r);
         }
         if (shifted) {
+          // The first breakpoint is at position 0: the entries before this one kept their
+          // positions, and with them offset 0.
+          if (w > 0 && this.seqPos.length == 0) {
+            this.seqPos.push(0);
+            this.seqOff.push(0);
+          }
           this.seqPos.push(w);
           this.seqOff.push(r + off - w);
           shifted = false;
