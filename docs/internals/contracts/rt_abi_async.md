@@ -296,6 +296,19 @@ it.
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
 
+**Process-wide slots (`std/global_slot.vlt`).** A module has no mutable globals; a std feature
+that needs one object per process (std/websocket's topics) keeps a `shared<T>` in a runtime
+slot. A slot is an unbounded channel holding at most one item, since a channel is what can own
+a typed Velt value: std locks the slot, takes the item out (making it the first time), puts a
+reference back and unlocks. The item is dropped with the channel's leftovers when the program
+ends. No suspension point may lie between lock and unlock.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them) |
+| `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
+| `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
+
 ### 2.3 Abort signals (`velt:task`)
 
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
@@ -1085,6 +1098,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
+| `velt_rt_random_mask` | `() -> u32` | a WebSocket masking key (RFC 6455 §5.3): OS CSPRNG, from a per-thread buffer of 64 keys |
 | `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
@@ -1214,6 +1228,12 @@ HTTP/1.1 server connections now support upgrades (`serve_connection_with_upgrade
 | `velt_rt_http_req_take_upgrade` | `(VeltReq r) -> u64` | claims the request's parked upgrade (once) and returns its connection as a `VeltStream` (§6), 0 if there is none or it was claimed. The handler must return a `101` response; the stream's first operation waits until it is sent (what is written before goes out after it) and fails with `ECONNABORTED` if the upgrade does not happen. Over plain TCP the stream is the raw socket |
 
 ### 14.9 WebSockets (`velt:websocket`)
+
+`velt:websocket` is written in Velt (`std/websocket.vlt`, `std/websocket/`) on std/net streams
+(§6): a client connects with `velt_rt_tcp_connect` / `velt_rt_tcp_connect_tls`, a server takes
+the upgraded connection with `velt_rt_http_req_take_upgrade` (§14.8). The runtime contributes
+byte helpers (rt_abi.md "Byte arrays"), `velt_rt_random_mask` and the process-wide slot of its
+topics (§2.2). The runtime codec described below is no longer used by std.
 
 `VeltWs` is an `Arc`; one task may wait in `receive` while others send. The runtime has its own
 RFC 6455 codec (`crates/velt_rt/src/ws/`): a send encodes the frame into the connection's queue
