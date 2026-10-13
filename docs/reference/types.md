@@ -1144,7 +1144,8 @@ interface declares included. The members every object inherits from `Object.prot
 `Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
 then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
 `"1"`). Such a key may have any type that is a string or a number: `string`, a union of string
-literals (`"a" | "b"`, a `keyof` type) or `string | number`. A closed record
+literals (`"a" | "b"`, a `keyof` type), `string | number`, or an enum (a string enum's key is its
+value, a numeric enum's its value as a string). A closed record
 (`Record<"x" | "y", V>`) has exactly its keys. On a union, `in` answers for the member the value
 holds, and in a condition it narrows the union ([union types](#union-types)).
 
@@ -1159,7 +1160,8 @@ field (`b?: T`) is its value or nothing, while Node also finds a key that holds 
 (`"b" in { b: undefined }` is `true`). So a program that tests such a field with `in` and
 somewhere stores a value that may be `undefined` in a field of that name (`{ kind, b }` with an
 optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, a spread of a `b: T | null` field) is
-an error (``` cannot tell an absent `b` from one holding `undefined` ```): store the value only
+an error (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the
+first such store and says how many others there are): store the value only
 when there is one (`if (v != null) o.b = v`), or test the value (`o.b != null`). Leaving the
 field out, a value that cannot be null and a spread of an object with the same optional field
 are fine. A primitive
