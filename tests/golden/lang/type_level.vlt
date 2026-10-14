@@ -1,0 +1,113 @@
+// Conditional types with `infer`, mapped types and template literal types (#934), evaluated
+// where their type arguments are known, as TypeScript evaluates them. The second half is the
+// typing of sigx's components (`component-types.ts`) at a known props type. Checked with tsc
+// --strict; the output is Node's.
+type IsString<T> = T extends string ? "yes" : "no";
+const a: IsString<string> = "yes";
+const b: IsString<number> = "no";
+const c: IsString<"x" | 1> = "no";
+
+type Box<T> = { value: T };
+type Unbox<T> = T extends Box<infer V> ? V : never;
+const d: Unbox<Box<number>> = 42;
+
+type Props = { name: string; age?: number; readonly id: string };
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+const g: Getters<{ name: string; size: number }> = { getName: () => "ann", getSize: () => 3 };
+
+type OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
+const k: OptionalKeys<Props> = "age";
+
+type Req<T> = { [K in keyof T]-?: T[K] };
+const r: Req<Props> = { name: "a", age: 3, id: "x" };
+
+type Ev = "click" | "focus";
+type Handlers = { [K in Ev as `on${Capitalize<K>}`]: (n: number) => void };
+const h: Handlers = { onClick: (n: number) => console.log("click", n), onFocus: (n: number) => console.log("focus", n) };
+h.onClick(1);
+
+type Cap<S extends string> = S extends `${infer F}${infer R}` ? `${Uppercase<F>}${R}` : S;
+const cap: Cap<"hello"> = "Hello";
+
+type NN = NonNullable<string | null>;
+const nn: NN = "s";
+type Ex = Exclude<"a" | "b" | "c", "a">;
+const ex: Ex = "b";
+type Xt = Extract<"a" | "b" | 1, string>;
+const xt: Xt = "a";
+type Model<K extends string> = K extends "model" ? "model" : `model:${K}`;
+const m1: Model<"model"> = "model";
+const m2: Model<"value"> = "model:value";
+type Strip<T> = { [K in keyof T as K extends `model:${string}` ? never : K]: T[K] };
+const s: Strip<{ "model:x": number; y: string }> = { y: "kept" };
+type Tup = [Box<number>] extends [never] ? "never" : "some";
+const tup: Tup = "some";
+console.log(a, b, c, d, g.getName(), g.getSize(), k, r.name, r.age, cap, nn, ex, xt, m1, m2, s.y, tup);
+
+type EventDefinition<T> = { __eventDetail: T };
+type ModelBinding<_T> = [string, string];
+
+type ExtractModelBindings<T> = T extends { __modelBindings?: infer M } ? NonNullable<M> : {};
+type ModelPropName<K extends string> = K extends "model" ? "model" : `model:${K}`;
+type ExternalModelProps<T> = {
+  [K in keyof ExtractModelBindings<T> as K extends string ? ModelPropName<K> : never]?:
+    | ModelBinding<ExtractModelBindings<T>[K]>
+    | (() => ExtractModelBindings<T>[K]);
+};
+
+type EventNames<TEvents> = {
+  [K in keyof TEvents]: TEvents[K] extends EventDefinition<any> | undefined ? K : never
+}[keyof TEvents] & string;
+
+type Capitalize2<S extends string> = S extends `${infer First}${infer Rest}`
+  ? `${Uppercase<First>}${Rest}`
+  : S;
+type EventHandlers<TEvents> = {
+  [K in keyof TEvents as TEvents[K] extends EventDefinition<any> | undefined
+    ? `on${Capitalize2<string & K>}`
+    : never]?: (detail: TEvents[K] extends EventDefinition<infer D> | undefined ? D : never) => void;
+};
+
+type _OptionalKeys<T> = { [K in keyof T]: undefined extends T[K] ? K : never }[keyof T];
+type _DefaultsFor<TProps> = {
+  [K in keyof TProps as undefined extends TProps[K] ? K : never]-?: NonNullable<TProps[K]>;
+};
+type PropsWithDefaults<TProps, D> = {
+  readonly [K in keyof TProps]-?: K extends keyof D ? NonNullable<TProps[K]> : TProps[K];
+};
+type StripInternalMarkers<T> = {
+  [K in keyof T as K extends "__exposed" | "__slots" | "__modelBindings" ? never
+    : K extends `model:${string}` ? never
+    : K extends `update:${string}` ? never
+    : K]: T[K];
+};
+type Prop<TName extends string, TType, Required extends boolean = false> = Required extends false
+  ? { [K in TName]?: TType }
+  : { [K in TName]: TType };
+
+type Combined = {
+  label?: string;
+  count: number;
+  "update:value"?: EventDefinition<number>;
+  change?: EventDefinition<string>;
+  __modelBindings?: { value: number };
+};
+
+const names: EventNames<Combined>[] = ["update:value", "change"];
+const handlers: EventHandlers<Combined> = {
+  onChange: (d: string) => console.log("change", d),
+};
+const models: ExternalModelProps<Combined> = { "model:value": () => 7 };
+const optional: _OptionalKeys<{ a?: number; b: string; c?: boolean }>[] = ["a", "c"];
+const defaults: _DefaultsFor<{ a?: number; b: string }> = { a: 1 };
+const withDefaults: PropsWithDefaults<{ a?: number; b?: string }, { a: number }> = { a: 2, b: "x" };
+const stripped: StripInternalMarkers<Combined> = { label: "l", count: 1, change: { __eventDetail: "c" } };
+const p1: Prop<"size", number> = {};
+const p2: Prop<"size", number, true> = { size: 3 };
+const cap2: Capitalize2<"click"> = "Click";
+
+const onChange = handlers.onChange;
+if (onChange) onChange("now");
+const getter = models["model:value"];
+console.log(names, optional, defaults.a, withDefaults.a, withDefaults.b, stripped.label, stripped.count, p1.size ?? "none", p2.size, cap2);
+if (getter && typeof getter === "function") console.log(getter());

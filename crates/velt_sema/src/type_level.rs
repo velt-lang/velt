@@ -62,12 +62,11 @@ impl Ctx<'_> {
             return Some(t);
         }
         if !self.checking_unused_aliases {
-            let shown = self.display(t);
+            // At the use of the alias whose body has the form, where the type parameter is.
+            let span = self.alias_site.unwrap_or(span);
+            let msg = format!("{what} over a type parameter is not supported yet");
             self.error(
-                Diagnostic::error(
-                    format!("{what} over `{shown}`, which is not known here, is not supported yet"),
-                    span,
-                )
+                Diagnostic::error(msg, span)
                 .with_note("Velt evaluates conditional, mapped and template literal types where their type arguments are known; in generic code they would need deferred evaluation (#934)"),
             );
         }
@@ -525,7 +524,7 @@ impl Ctx<'_> {
             let Some(parts) = self.literal_strings(h) else {
                 let shown = self.display(h);
                 self.err(
-                    format!("a template literal type with a `{shown}` hole (a pattern, not a union of strings) is supported only after `extends` in a conditional type"),
+                    format!("a template literal type with a `{shown}` hole is not supported yet outside the `extends` clause of a conditional type (#934)"),
                     hole.span,
                 );
                 return self.ty.error;
@@ -921,6 +920,8 @@ impl Ctx<'_> {
                 prims.push(t);
                 continue;
             }
+            // `null` and `undefined` meet no primitive: `("a" | undefined) & string` is `"a"`.
+            let t = self.ty.opt_payload(t).unwrap_or(t);
             let members = self.union_members(t).unwrap_or_else(|| vec![t]);
             if lits.is_some() || !members.iter().all(|m| self.lit_value(*m).is_some()) {
                 return None;

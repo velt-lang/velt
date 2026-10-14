@@ -79,6 +79,9 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// While an alias is expanded: the outermost use of an alias, as written, where a
+    /// type-level form that can't be evaluated is reported (`crate::type_level`).
+    pub alias_site: Option<velt_common::Span>,
     /// The program (not std) writes `undefined`, as a type or a value. The checks that only
     /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
     /// skipped otherwise; the type table alone cannot tell, since the prelude declares
@@ -259,6 +262,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            alias_site: None,
             writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],
