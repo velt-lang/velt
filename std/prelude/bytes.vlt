@@ -1,5 +1,6 @@
-// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`), backed by memchr,
-// memmove and memset in the runtime instead of byte-at-a-time loops.
+// Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searching and XOR
+// masking sixteen bytes at a time with SIMD vectors, here in Velt so that they are compiled
+// into their caller; copying and filling by memmove and memset in the runtime.
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
@@ -9,14 +10,158 @@
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
-declare function velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
 declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
 declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
-declare function velt_rt_bytes_xor_mask(b: u8[], mask: u32, start: i64, end: i64);
+// The SIMD operations used below (std/prelude/global/simd_*.vlt is the API; declared again
+// here so that this file does not load it). `load` and `store` do not check their range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_with_lane(v: u64x2, index: u64, x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
+declare function velt_simd_u32x4_splat(x: u32): u32x4;
+declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+
+// Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
+// and the result is clamped to `0..=n`.
+function relative(i: i64, n: usize): usize {
+  if (i < 0) {
+    const fromEnd = (n as i64) + i;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return (i as usize) < n ? i as usize : n;
+}
+
+// The position of the first set lane of `m`, a mask of the 16 bytes at `at`.
+function hit(at: usize, m: mask8x16): i64 {
+  return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
+}
+
+// XORs `d[start..stop]` with the four bytes of `mask` (most significant first), repeating from
+// `start`. Sixteen bytes per step; the last bytes are done by a vector ending at `stop`, which
+// overlaps bytes already masked: it masks only its lanes past them, with the mask's bytes
+// rotated to where that vector starts.
+function xorMaskRange(d: u8[], mask: u32, start: usize, stop: usize) {
+  let i = start;
+  if (stop >= 16 && stop - 16 >= start) {
+    // The four mask bytes as one lane (the array's order is the lane's low byte first).
+    const lane = (mask >> 24) | ((mask >> 8) & 0xff00) | ((mask << 8) & 0xff0000) | (mask << 24);
+    const key = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(lane));
+    while (i + 64 <= stop) {
+      const v0 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, i as u64), key);
+      const v1 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 16) as u64), key);
+      const v2 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 32) as u64), key);
+      const v3 = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, (i + 48) as u64), key);
+      velt_simd_u8x16_store(v0, d, i as u64);
+      velt_simd_u8x16_store(v1, d, (i + 16) as u64);
+      velt_simd_u8x16_store(v2, d, (i + 32) as u64);
+      velt_simd_u8x16_store(v3, d, (i + 48) as u64);
+      i += 64;
+    }
+    while (i + 16 <= stop) {
+      const masked = velt_simd_u8x16_xor(velt_simd_u8x16_load(d, i as u64), key);
+      velt_simd_u8x16_store(masked, d, i as u64);
+      i += 16;
+    }
+    if (i < stop) {
+      const at = stop - 16;
+      const turn = (((at - start) & 3) * 8) as u32;
+      const turned = turn == 0 ? lane : (lane >> turn) | (lane << (32 - turn));
+      const tailKey = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(turned));
+      const low = velt_simd_u64x2_with_lane(
+        velt_simd_u64x2_splat(0x0f0e0d0c0b0a0908),
+        0,
+        0x0706050403020100,
+      );
+      const index = velt_simd_u64x2_as_u8x16(low);
+      const rest = velt_simd_u8x16_ge(index, velt_simd_u8x16_splat((i - at) as u8));
+      const old = velt_simd_u8x16_load(d, at as u64);
+      const masked = velt_simd_u8x16_select(rest, velt_simd_u8x16_xor(old, tailKey), old);
+      velt_simd_u8x16_store(masked, d, at as u64);
+    }
+    return;
+  }
+  let shift: u32 = 24;
+  while (i < stop) {
+    d[i] = d[i] ^ ((mask >> shift) as u8);
+    shift = (shift + 24) & 31;
+    i++;
+  }
+}
+
+// First position at or after `start` holding `byte`, or -1. One vector first (most searches
+// end within a few bytes), then four per step with one test for all of them; the last bytes
+// are covered by a vector ending at the array's end, which may overlap bytes already seen
+// (none of them matched, so its first match is past them).
+function indexOfByte(d: u8[], byte: u8, start: usize): i64 {
+  const n = d.length;
+  const needle = velt_simd_u8x16_splat(byte);
+  let i = start;
+  if (n - i >= 16) {
+    const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+    if (velt_simd_mask8x16_any(m)) {
+      return hit(i, m);
+    }
+    i += 16;
+    while (i + 64 <= n) {
+      const m0 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      const m1 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 16) as u64), needle);
+      const m2 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 32) as u64), needle);
+      const m3 = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (i + 48) as u64), needle);
+      const any = velt_simd_mask8x16_or(
+        velt_simd_mask8x16_or(m0, m1),
+        velt_simd_mask8x16_or(m2, m3),
+      );
+      if (velt_simd_mask8x16_any(any)) {
+        if (velt_simd_mask8x16_any(m0)) {
+          return hit(i, m0);
+        }
+        if (velt_simd_mask8x16_any(m1)) {
+          return hit(i + 16, m1);
+        }
+        if (velt_simd_mask8x16_any(m2)) {
+          return hit(i + 32, m2);
+        }
+        return hit(i + 48, m3);
+      }
+      i += 64;
+    }
+    while (i + 16 <= n) {
+      const m = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, i as u64), needle);
+      if (velt_simd_mask8x16_any(m)) {
+        return hit(i, m);
+      }
+      i += 16;
+    }
+    if (i < n) {
+      const last = velt_simd_u8x16_eq(velt_simd_u8x16_load(d, (n - 16) as u64), needle);
+      if (velt_simd_mask8x16_any(last)) {
+        return hit(n - 16, last);
+      }
+    }
+    return -1;
+  }
+  while (i < n) {
+    if (d[i] == byte) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
 declare function velt_rt_str_byte_length(s: string): u64;
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
@@ -63,9 +208,9 @@ export class Buffer {
 }
 
 extend Array<u8> {
-  /** Position of the first `byte` at or after `from`, or -1 (memchr). */
+  /** Position of the first `byte` at or after `from`, or -1. */
   indexOf(byte: u8, from: i64 = 0): i64 {
-    return velt_rt_bytes_index_of(this, byte, from);
+    return indexOfByte(this, byte, relative(from, this.length));
   }
 
   /** Position of the last `byte` at or before `from`, or -1. */
@@ -74,12 +219,11 @@ extend Array<u8> {
   }
 
   /**
-   * Determines whether an array includes a certain byte, returning true or false as appropriate
-   * (memchr).
+   * Determines whether an array includes a certain byte, returning true or false as appropriate.
    * @param byte - The byte to search for.
    */
   includes(byte: u8): bool {
-    return velt_rt_bytes_index_of(this, byte, 0) >= 0;
+    return indexOfByte(this, byte, 0) >= 0;
   }
 
   /**
@@ -112,7 +256,7 @@ extend Array<u8> {
    * repeating from `start`: WebSocket masking (RFC 6455 §5.3). Applying it twice restores them.
    */
   xorMask(mask: u32, start: i64 = 0, end: i64 = 9223372036854775807) {
-    velt_rt_bytes_xor_mask(this, mask, start, end);
+    xorMaskRange(this, mask, relative(start, this.length), relative(end, this.length));
   }
 
   /** Sets the bytes in [start, end) to `byte` (memset). */

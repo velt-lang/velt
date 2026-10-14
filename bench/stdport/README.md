@@ -49,3 +49,20 @@ Reading it:
 - `url_parse` has no IPv6 or non-ASCII host: `velt:url` has no IDNA yet, so those wait for it.
 - Decompression (`flate2`, `brotli-decompressor`) has no row: Velt code can reach it only
   through `fetch`.
+
+## Ported
+
+Instructions executed (cachegrind, Linux arm64, `VELT_THREADS=1`), the row built on the runtime
+helper it replaced, then on the Velt code, and the Rust program:
+
+| benchmark | was | runtime helper | Velt | Rust | Velt / Rust |
+|---|---|---:|---:|---:|---:|
+| bytes_search | `memchr` | 1,328 M | 1,035 M | 1,135 M | 0.91 |
+| bytes_xor_mask | a loop over 8-byte words | 4,259 M | 3,092 M | 3,861 M | 0.80 |
+| utf8_valid | `str::from_utf8` | 3,463 M | 3,315 M | 3,356 M | 0.99 |
+
+All three are SIMD code in Velt (`u8x16`, docs/std/simd.md), compiled into their caller. What
+they have in common: the first vector is tested on its own (most searches and most frames are
+short), long inputs take four vectors per step, and the last bytes are covered by one vector
+that ends at the array's end instead of a byte loop. `utf8_valid` only skips ASCII with
+vectors; the rest is the scalar scanner `utf8Decode` uses.

@@ -1,0 +1,92 @@
+// `utf8Valid` around the 16- and 64-byte steps of its ASCII fast path: for every length up to
+// 150, a two-byte character, a lone continuation byte, and a lead byte cut off by the end, at
+// every position.
+import { utf8Valid } from "velt:encoding";
+
+// Well-formed and ill-formed sequences (Unicode Table 3-7) after 70 ASCII bytes, so the scan
+// reaches them through the vector steps, and again followed by ASCII.
+function sequences(): number {
+  const good: u8[][] = [
+    [0xc2, 0x80],
+    [0xdf, 0xbf],
+    [0xe0, 0xa0, 0x80],
+    [0xed, 0x9f, 0xbf],
+    [0xee, 0x80, 0x80],
+    [0xef, 0xbf, 0xbf],
+    [0xf0, 0x90, 0x80, 0x80],
+    [0xf4, 0x8f, 0xbf, 0xbf],
+  ];
+  const bad: u8[][] = [
+    [0xc0, 0x80],
+    [0xc1, 0xbf],
+    [0xe0, 0x9f, 0x80],
+    [0xed, 0xa0, 0x80],
+    [0xf0, 0x8f, 0x80, 0x80],
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xf5, 0x80, 0x80, 0x80],
+    [0xff],
+    [0xe2, 0x82],
+    [0xf0, 0x9f, 0x98],
+  ];
+  let checks = 0;
+  for (const tail of [0, 1, 20, 70]) {
+    for (const [list, want] of [
+      [good, true],
+      [bad, false],
+    ] as [u8[][], bool][]) {
+      for (const seq of list) {
+        const d: u8[] = Buffer.alloc(70 + seq.length + tail);
+        for (let i = 0; i < d.length; i++) {
+          d[i] = 0x41;
+        }
+        for (let k = 0; k < seq.length; k++) {
+          d[70 + k] = seq[k];
+        }
+        if (utf8Valid(d) != want) {
+          console.log("FAIL sequence", seq.join(","), tail, want);
+        }
+        checks++;
+      }
+    }
+  }
+  return checks;
+}
+
+function main() {
+  let checks = 0;
+  for (let n = 0; n <= 150; n++) {
+    const d: u8[] = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) {
+      d[i] = (97 + i % 26) as u8;
+    }
+    if (!utf8Valid(d)) {
+      console.log("FAIL ascii", n);
+    }
+    checks++;
+    for (let at = 0; at < n; at++) {
+      const kept = d[at];
+      d[at] = 0x80;
+      if (utf8Valid(d)) {
+        console.log("FAIL lone continuation", n, at);
+      }
+      d[at] = 0xc3;
+      // A lead byte before an ASCII letter, or as the last byte.
+      if (utf8Valid(d)) {
+        console.log("FAIL lead without continuation", n, at);
+      }
+      checks += 2;
+      if (at + 1 < n) {
+        const next = d[at + 1];
+        d[at + 1] = 0xa9;
+        if (!utf8Valid(d)) {
+          console.log("FAIL two-byte character", n, at);
+        }
+        d[at + 1] = next;
+        checks++;
+      }
+      d[at] = kept;
+    }
+  }
+  console.log("checks", checks);
+  console.log("sequences", sequences());
+}
