@@ -1,0 +1,5 @@
+readonly_array_writes.vlt:4:6: error: property 'push' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+readonly_array_writes.vlt:5:3: error: index signature in type 'readonly f64[]' only permits reading (TypeScript's TS2542)
+readonly_array_writes.vlt:6:6: error: property 'sort' does not exist on type 'readonly f64[]' (TypeScript's TS2339)
+readonly_array_writes.vlt:9:4: error: property 'pop' does not exist on type 'readonly string[]' (TypeScript's TS2339)
+readonly_array_writes.vlt:10:41: error: property 'reverse' does not exist on type 'readonly string[]' (TypeScript's TS2339)

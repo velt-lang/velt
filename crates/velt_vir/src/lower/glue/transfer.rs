@@ -66,7 +66,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     }
                 }
             }
-            TyKind::Option(e) => self.transfer_option(place, ty, e),
+            TyKind::Option(e, _) => self.transfer_option(place, ty, e),
             TyKind::Array(e) => self.transfer_elems(place, e),
             TyKind::Promise(..) => self.transfer_promise(place, ty),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.transfer_closure(place),

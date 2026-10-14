@@ -107,7 +107,7 @@ impl Cx<'_> {
                     fields,
                 }
             }
-            TyKind::Option(inner) => DebugKind::Option {
+            TyKind::Option(inner, _) => DebugKind::Option {
                 repr: self.ty(t),
                 inner: self.debug_ty(inner),
             },
@@ -195,7 +195,7 @@ impl Cx<'_> {
             TyKind::Never => "never".into(),
             TyKind::Array(e) => {
                 let elem = self.debug_name(e);
-                let grouped = matches!(self.kind(e), TyKind::Option(_)) || self.is_union(e);
+                let grouped = matches!(self.kind(e), TyKind::Option(..)) || self.is_union(e);
                 match grouped {
                     true => format!("({elem})[]"),
                     false => format!("{elem}[]"),
@@ -203,7 +203,7 @@ impl Cx<'_> {
             }
             TyKind::Map(k, v) => self.debug_name_args("Map".into(), &[k, v]),
             TyKind::Tuple(es) => format!("[{}]", self.debug_names(&es, ", ")),
-            TyKind::Option(x) => format!("{} | null", self.debug_name(x)),
+            TyKind::Option(x, n) => format!("{}{}", self.debug_name(x), n.suffix()),
             TyKind::Result(a, b) => self.debug_name_args("Result".into(), &[a, b]),
             TyKind::Promise(x, _) => self.debug_name_args("Promise".into(), &[x]),
             TyKind::Shared(x) => self.debug_name_args("shared".into(), &[x]),

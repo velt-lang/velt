@@ -103,38 +103,6 @@ fn removes_mut_and_links_the_diagnostic() {
 }
 
 #[test]
-fn replaces_undefined_with_null() {
-    let text = "function main() {\n  let u: string | null = undefined;\n  console.log(u);\n}\n";
-    let (mut client, doc, diags) = open("fix_undefined.vlt", text);
-    let offered = actions(&mut client, &doc, text, "undefined", &diags);
-    let fixed = apply(
-        text,
-        find(&offered, "Replace `undefined` with `null`"),
-        &doc,
-    );
-    assert!(fixed.contains("= null;"), "{fixed}");
-    assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
-    client.shutdown();
-}
-
-#[test]
-fn replaces_void_zero_and_an_undefined_type_with_null() {
-    let text = "function main() {\n  let u: string | undefined = void 0;\n  console.log(u);\n}\n";
-    let (mut client, doc, diags) = open("fix_void.vlt", text);
-    let offered = actions(&mut client, &doc, text, "void 0", &diags);
-    let fixed = apply(text, find(&offered, "Replace `void 0` with `null`"), &doc);
-    let offered = actions(&mut client, &doc, text, "undefined", &diags);
-    let fixed = apply(
-        &fixed,
-        find(&offered, "Replace `undefined` with `null`"),
-        &doc,
-    );
-    assert!(fixed.contains("string | null = null;"), "{fixed}");
-    assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
-    client.shutdown();
-}
-
-#[test]
 fn makes_a_promise_returning_override_async() {
     let text = "class Jammed {}
 

@@ -68,13 +68,13 @@ impl Ctx<'_> {
                 None => false,
             },
             (TyKind::Array(p), TyKind::Array(a))
-            | (TyKind::Option(p), TyKind::Option(a))
+            | (TyKind::Option(p, _), TyKind::Option(a, _))
             | (TyKind::Shared(p), TyKind::Shared(a)) => self.match_ty(p, a, slots),
             (TyKind::Promise(p, pe), TyKind::Promise(a, ae)) => {
                 let x = self.match_ty(p, a, slots);
                 self.match_error(pe, ae, slots) && x
             }
-            (TyKind::Option(p), _) => self.match_ty(p, actual, slots),
+            (TyKind::Option(p, _), _) => self.match_ty(p, actual, slots),
             (TyKind::Result(p1, p2), TyKind::Result(a1, a2))
             | (TyKind::Map(p1, p2), TyKind::Map(a1, a2)) => {
                 let x = self.match_ty(p1, a1, slots);

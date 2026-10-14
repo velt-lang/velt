@@ -102,14 +102,19 @@ impl<'a> Printer<'a> {
                 throws,
                 body,
                 is_async,
-            } => self.arrow(
-                type_params,
-                params,
-                (ret.as_ref(), throws.as_ref()),
-                body,
-                *is_async,
-                None,
-            ),
+            } => {
+                // A function expression (`function name(x) { … }`), which the parser gives as
+                // an arrow whose span starts at `function` (or `async function`).
+                let head = self.fn_expr_head(e.span);
+                self.arrow(
+                    type_params,
+                    params,
+                    (ret.as_ref(), throws.as_ref()),
+                    body,
+                    *is_async,
+                    head,
+                )
+            }
             ExprKind::Function(f) => self.fn_decl(f, "function "),
             ExprKind::Array(elems) => self.array(elems, e.span.hi),
             ExprKind::Object(props) => self.object(props, e.span.hi),
@@ -145,6 +150,7 @@ impl<'a> Printer<'a> {
             UnaryOp::BitNot => ("~", None),
             UnaryOp::TypeOf => ("typeof ", None),
             UnaryOp::Delete => ("delete ", None),
+            UnaryOp::Void => ("void ", None),
         };
         // `- -x` must not become the decrement `--x`.
         let space = if sign.is_some() && leading_sign(inner) == sign {
@@ -227,6 +233,27 @@ fn leading_sign(mut e: &Expr) -> Option<char> {
 }
 
 impl Printer<'_> {
+    /// For an arrow written as a function expression (its source at `span` starts with
+    /// `function` or `async function`): `function name` or `function ` (anonymous), which goes
+    /// before its type parameters and parameters.
+    fn fn_expr_head(&self, span: velt_common::Span) -> Option<Doc> {
+        let src = slice(self.src, span);
+        let rest = src.strip_prefix("async").map_or(src, str::trim_start);
+        let rest = rest.strip_prefix("function")?;
+        if !rest.starts_with(|c: char| c.is_whitespace() || c == '(' || c == '<') {
+            return None;
+        }
+        let rest = rest.trim_start();
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        Some(match name.is_empty() {
+            true => text("function "),
+            false => text(format!("function {name}")),
+        })
+    }
+
     /// Is `callee` the `__satisfies` of a `satisfies` operator (its span starts at the
     /// operand, not at a written `__satisfies`)?
     fn is_satisfies(&self, callee: &Expr) -> bool {
@@ -254,6 +281,8 @@ pub(super) fn binary_op(op: BinaryOp) -> &'static str {
         Pow => "**",
         Eq => "==",
         NotEq => "!=",
+        StrictEq => "===",
+        StrictNotEq => "!==",
         Lt => "<",
         LtEq => "<=",
         Gt => ">",

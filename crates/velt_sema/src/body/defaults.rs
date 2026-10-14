@@ -52,7 +52,37 @@ fn check_default(
     fcx.owner = owner;
     let h = fcx.expr_coerce(e, ty, Want::Move);
     cx.display_params = saved;
+    undefined_default(cx, e, ty);
     h
+}
+
+/// A default of a parameter whose type allows `undefined`: JavaScript applies it to a passed
+/// `undefined` too, which calls do not do yet; only a default of `undefined` itself (the same
+/// either way) is accepted (issue #930).
+fn undefined_default(cx: &mut Ctx, e: &ast::Expr, ty: TyId) {
+    if !cx.ty.nothing_of(ty).is_some_and(|n| n.has_undefined()) || is_undefined(e) {
+        return;
+    }
+    let tn = cx.display(ty);
+    cx.error(
+        velt_common::Diagnostic::error(
+            format!("a default on a parameter whose type allows `undefined` (`{tn}`) is not supported yet (#930)"),
+            e.span,
+        )
+        .with_note("JavaScript applies it to a passed `undefined` too; test inside the function instead (`x ?? default`)"),
+    );
+}
+
+fn is_undefined(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Undefined) => true,
+        ast::ExprKind::Paren(inner) => is_undefined(inner),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Void,
+            expr,
+        } => matches!(expr.kind, ast::ExprKind::Lit(_)),
+        _ => false,
+    }
 }
 
 /// Defaults of an arrow's parameters (`(x: T = e) => …`), checked like a function's: in the

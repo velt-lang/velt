@@ -79,6 +79,11 @@ pub(crate) struct Ctx<'m> {
     /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
     /// one of the alias's own type parameters is fine there (it is resolved at each use).
     pub checking_unused_aliases: bool,
+    /// The program (not std) writes `undefined`, as a type or a value. The checks that only
+    /// such a program needs (`undefined_args`, a `toJSON()` that may return `undefined`) are
+    /// skipped otherwise; the type table alone cannot tell, since the prelude declares
+    /// `Array<T | undefined>.sort`.
+    pub writes_undefined: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
     /// now: a utility type in a field type shapes the type it reads first, whatever the
     /// declaration order.
@@ -254,6 +259,7 @@ impl<'m> Ctx<'m> {
             bodies_ok: false,
             sigq: Default::default(),
             checking_unused_aliases: false,
+            writes_undefined: false,
             shaped: HashSet::new(),
             shaping: vec![],
             laid_out: HashSet::new(),
@@ -579,7 +585,7 @@ impl<'m> Ctx<'m> {
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
             TyKind::Promise(..) => return true,
-            TyKind::Array(e) | TyKind::Option(e) => vec![e],
+            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
             TyKind::Tuple(ts) => ts,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
@@ -619,7 +625,7 @@ impl<'m> Ctx<'m> {
             | TyKind::Never
             | TyKind::Error => true,
             TyKind::Tuple(ts) => ts.iter().all(|t| self.is_copy_depth(*t, depth + 1)),
-            TyKind::Option(t) => self.is_copy_depth(t, depth + 1),
+            TyKind::Option(t, _) => self.is_copy_depth(t, depth + 1),
             TyKind::Result(a, b) => {
                 self.is_copy_depth(a, depth + 1) && self.is_copy_depth(b, depth + 1)
             }
@@ -680,7 +686,7 @@ impl<'m> Ctx<'m> {
             TyKind::Error => "_".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.ty.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => {
+                TyKind::Option(..) | TyKind::FnPtr { .. } => {
                     format!("({})[]", self.display_in(*e, names))
                 }
                 _ if self.union_def(*e).is_some() => format!("({})[]", self.display_in(*e, names)),
@@ -692,7 +698,7 @@ impl<'m> Ctx<'m> {
                 self.display_in(*v, names)
             ),
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
-            TyKind::Option(t) => format!("{} | null", self.display_in(*t, names)),
+            TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),

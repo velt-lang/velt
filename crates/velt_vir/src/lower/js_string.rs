@@ -18,7 +18,7 @@ impl FnLower<'_, '_> {
     /// Append JS's `String(x)` of the object (or `null`) at `place` (of type `ty`) to the
     /// builder at `buf`; false (nothing written) if `ty` is not an object written that way.
     pub(super) fn push_js_object(&mut self, buf: &Operand, place: &Place, ty: TyId) -> bool {
-        if let TyKind::Option(e) = self.cx.kind(ty) {
+        if let TyKind::Option(e, n) = self.cx.kind(ty) {
             if !self.js_object(e) {
                 return false;
             }
@@ -26,7 +26,7 @@ impl FnLower<'_, '_> {
             let some = self.option_is_some(place, ty);
             self.branch(some, some_bb, none_bb);
             self.switch_to(none_bb);
-            self.push_text(buf, "null");
+            self.push_text(buf, n.word());
             self.goto(done);
             self.switch_to(some_bb);
             let payload = self.some_payload(place, ty);

@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Option(_) => true,
+            | TyKind::Option(..) => true,
             _ => false,
         };
         let tn = self.cx.display(k);

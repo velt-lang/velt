@@ -1,12 +1,9 @@
-//! Fixes recognized by a diagnostic's message and notes alone: `mut` removal, `undefined` (and
-//! `void 0`) → `null`, and `async` for a method whose promise must carry its errors.
+//! Fixes recognized by a diagnostic's message and notes alone: `mut` removal, and `async` for a
+//! method whose promise must carry its errors.
 
 use velt_common::{Diagnostic, Span};
 
 use crate::analysis::Analysis;
-
-/// Note of the parser's `undefined` / `void expr` diagnostics.
-const USE_NULL_NOTE: &str = "use `null`";
 
 /// Message of the parser's `mut` diagnostic.
 const MUT_MESSAGE: &str = "`mut` is not needed: mutation is inferred";
@@ -21,7 +18,6 @@ pub fn for_diagnostic(
     d: &Diagnostic,
     span: Span,
 ) -> Option<(String, Vec<(Span, String)>)> {
-    let text = analysis.snippet(span);
     if d.message == MUT_MESSAGE {
         return Some((
             "Remove `mut`".into(),
@@ -31,10 +27,6 @@ pub fn for_diagnostic(
     if d.message.contains(MUST_BE_ASYNC) {
         let at = Span::new(span.file, span.lo, span.lo);
         return Some(("Add `async`".into(), vec![(at, "async ".into())]));
-    }
-    if d.notes.iter().any(|n| n == USE_NULL_NOTE) {
-        let title = format!("Replace `{text}` with `null`");
-        return Some((title, vec![(span, "null".into())]));
     }
     None
 }

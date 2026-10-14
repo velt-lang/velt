@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use crate::anon::ShapeField;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{TyId, TyKind};
+use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
@@ -23,6 +23,9 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// In a class's instance method (its signature and body): the class type, which the
+    /// polymorphic `this` type resolves to (`m(): this`).
+    pub this_ty: Option<TyId>,
 }
 
 impl TyEnv {
@@ -31,6 +34,7 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            this_ty: None,
         }
     }
 }
@@ -88,6 +92,13 @@ impl Ctx<'_> {
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
+                self.ty.error
+            }
+            ast::TypeExprKind::Undefined => {
+                self.err(
+                    "`undefined` alone as a type is not supported yet; write `T | undefined`",
+                    t.span,
+                );
                 self.ty.error
             }
         }
@@ -165,15 +176,23 @@ impl Ctx<'_> {
 
     /// `A | B | null` (canonicalized by `crate::unions`).
     fn resolve_union(&mut self, t: &ast::TypeExpr, parts: &[ast::TypeExpr], env: &TyEnv) -> TyId {
-        let mut nullable = false;
+        let mut nothing: Option<Nothing> = None;
         let mut members = vec![];
         for p in parts {
-            match p.kind {
-                ast::TypeExprKind::Null => nullable = true,
-                _ => members.push(self.resolve_type(p, env)),
-            }
+            let n = match p.kind {
+                ast::TypeExprKind::Null => Nothing::Null,
+                ast::TypeExprKind::Undefined => {
+                    self.writes_undefined |= !self.scopes[env.module].is_std;
+                    Nothing::Undefined
+                }
+                _ => {
+                    members.push(self.resolve_type(p, env));
+                    continue;
+                }
+            };
+            nothing = Some(nothing.map_or(n, |m| m.join(n)));
         }
-        self.union_of(&members, nullable, t.span)
+        self.union_with(&members, nothing, t.span)
     }
 
     fn resolve_named(
@@ -195,6 +214,9 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if name == "this" {
+            return self.resolve_this_type(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -247,6 +269,34 @@ impl Ctx<'_> {
                     format!("cannot find type `{name}` in this scope"),
                     name,
                     t.span,
+                );
+                self.ty.error
+            }
+        }
+    }
+
+    /// The polymorphic `this` type: the class of the instance method it is written in. A call
+    /// of a method returning `this` gives the receiver's own (sub)class type
+    /// (`body::expr::this_type`).
+    fn resolve_this_type(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
+        if !args.is_empty() {
+            self.err("type `this` does not take type arguments", t.span);
+            return self.ty.error;
+        }
+        match env.this_ty {
+            Some(ty) => ty,
+            None => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "a 'this' type is available only in a non-static member of a class or interface",
+                        t.span,
+                    )
+                    .with_note("TypeScript's TS2526; in an interface, Velt doesn't support it yet: write the interface's name"),
                 );
                 self.ty.error
             }
@@ -457,7 +507,48 @@ impl Ctx<'_> {
                 .entry(body)
                 .or_insert_with(|| decl.name.name.clone());
         }
+        if self.mixes_nothings(body, &args) {
+            self.err(
+                "a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet",
+                t.span,
+            );
+            return self.ty.error;
+        }
         self.subst(body, &args)
+    }
+
+    /// Does `body` (an alias's type, in terms of its parameters) hold a `P | null` or
+    /// `P | undefined` of a parameter whose argument in `args` allows the other nothing? The
+    /// substitution would make an option of an option, which keeps the inner one only.
+    fn mixes_nothings(&self, body: TyId, args: &[TyId]) -> bool {
+        if !args.iter().any(|a| self.ty.nothing_of(*a).is_some()) {
+            return false;
+        }
+        let mut stack = vec![body];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let k = self.ty.kind(t);
+            if let TyKind::Option(p, n) = k {
+                // The parameter itself, or as a member of a union (`T | string | null`).
+                let members = match self.union_def(*p) {
+                    Some((_, members)) => members,
+                    None => vec![*p],
+                };
+                for m in members {
+                    if let TyKind::Param(i) = self.ty.kind(m) {
+                        let arg = args.get(*i as usize).and_then(|a| self.ty.nothing_of(*a));
+                        if arg.is_some_and(|m| !m.within(*n)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            stack.extend(crate::types::children(k));
+        }
+        false
     }
 
     /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`

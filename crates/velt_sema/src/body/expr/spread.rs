@@ -336,6 +336,13 @@ impl FnCx<'_, '_> {
                     self.cx
                         .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
+                    if fields[i].optional {
+                        let slot = crate::body::OptionalSlot::Field;
+                        match value {
+                            Some(v) => self.optional_slot(v, slot),
+                            None => self.optional_slots.push((k.span, slot)),
+                        }
+                    }
                     let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
                     self.field_value(&k, value, Some(expected), watched)
                 }

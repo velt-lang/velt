@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
             // `V` from the type arguments: where it includes null, the slot type `V | null` is
             // `V` itself, not an option of it.
             (TyKind::Array(k), TyKind::Array(slot)) => match (self.cx.kind(slot), &args[..]) {
-                (TyKind::Option(_), [_, v]) => Some((k, *v)),
+                (TyKind::Option(..), [_, v]) => Some((k, *v)),
                 _ => None,
             },
             _ => None,

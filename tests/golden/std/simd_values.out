@@ -6,3 +6,4 @@ map 2 8
 closure 7 14
 await 42 8
 generator 12
+undefined false true 6 undefined

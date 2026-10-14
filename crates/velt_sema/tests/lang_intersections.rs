@@ -16,7 +16,7 @@ fn show(p: &Program, t: TyId) -> String {
         TyKind::Float(_) => "f64".into(),
         TyKind::Int(_) => "int".into(),
         TyKind::Bool => "boolean".into(),
-        TyKind::Option(x) => format!("{} | null", show(p, *x)),
+        TyKind::Option(x, _) => format!("{} | null", show(p, *x)),
         TyKind::Literal(v) => format!("{v:?}"),
         TyKind::Adt(d, _) => match p.def(*d) {
             Def::Adt(a) => {

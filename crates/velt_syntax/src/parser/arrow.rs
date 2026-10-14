@@ -134,7 +134,8 @@ impl<'a> Parser<'a> {
         (matches!(
             first,
             Tok::RParen | Tok::DotDotDot | Tok::LBracket | Tok::LBrace
-        ) || Self::is_ident_like(first))
+        ) || Self::is_ident_like(first)
+            || first == Tok::Kw(Kw::This))
             && matches!(
                 self.after_matching_paren(off),
                 Some(Tok::FatArrow | Tok::Colon)
@@ -144,6 +145,12 @@ impl<'a> Parser<'a> {
     /// `( params ) [: Ret [throws E]] =>`
     fn parse_arrow_head(&mut self) -> PResult<ArrowHead> {
         let params = self.parse_arrow_params()?;
+        if let Some((span, _)) = self.this_param.take() {
+            self.param_error(
+                "an arrow function cannot have a 'this' parameter (TypeScript's TS2730)",
+                span,
+            );
+        }
         let (ret, throws) = if self.eat(Tok::Colon) {
             (Some(self.parse_ret_type()?), self.parse_throws_clause()?)
         } else {
@@ -158,6 +165,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_arrow_params(&mut self) -> PResult<Vec<ArrowParam>> {
         self.expect(Tok::LParen)?;
         let mut params: Vec<ArrowParam> = Vec::new();
+        self.parse_this_param()?;
         while !self.at(Tok::RParen) {
             let lo = self.cur_lo();
             let p = self.parse_arrow_param(params.len())?;

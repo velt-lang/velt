@@ -274,7 +274,7 @@ fn copies_promise(cx: &mut Ctx, t: TyId, deep: bool, stack: &mut Vec<TyId>) -> b
             stack.pop();
             return true;
         }
-        TyKind::Option(e) => vec![e],
+        TyKind::Option(e, _) => vec![e],
         TyKind::Tuple(ts) => ts,
         TyKind::Array(e) if deep => vec![e],
         TyKind::Adt(d, args) => {

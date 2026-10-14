@@ -28,7 +28,15 @@ impl FnCx<'_, '_> {
         let span = e.span;
         let s = self.expr(object, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
+            // The rest is still checked (its own errors), on the link's object bound as an
+            // error value: the synthetic name must not be reported as unknown.
+            let l = self.new_local(&name, s.ty, false, s.span, crate::body::LocalKind::Bind);
+            self.push_scope();
+            if let Some(scope) = self.f.scopes.last_mut() {
+                scope.names.insert(name, l);
+            }
             self.expr(&rest, None, want);
+            self.pop_scope();
             return Some(self.error_expr(span));
         }
         let payload = self.cx.ty.opt_payload(s.ty);

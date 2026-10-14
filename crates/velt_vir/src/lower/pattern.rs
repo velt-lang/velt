@@ -463,7 +463,7 @@ impl FnLower<'_, '_> {
         if self.sub(p.ty) == ty {
             return (place.clone(), ty);
         }
-        let TyKind::Option(inner) = self.cx.kind(ty) else {
+        let TyKind::Option(inner, _) = self.cx.kind(ty) else {
             ice("Some pattern")
         };
         (self.some_payload(place, ty), inner)

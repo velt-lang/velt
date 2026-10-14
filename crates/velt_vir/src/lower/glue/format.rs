@@ -61,13 +61,13 @@ impl FnLower<'_, '_> {
                 self.push_str(buf, a);
             }
             TyKind::Literal(l) => self.push_literal(buf, &l, false),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -234,13 +234,13 @@ impl FnLower<'_, '_> {
                 self.format_object(buf, name, place, ty, p, depth);
             }
             TyKind::Tuple(tys) => self.format_tuple(buf, place, ty, &tys, depth),
-            TyKind::Option(e) => {
+            TyKind::Option(e, n) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);

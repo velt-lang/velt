@@ -1,0 +1,1 @@
+TypeError: the assertion function `assertDog` returned for a value that is not `Dog`

@@ -6,7 +6,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::type_tests::LitEq;
-use crate::body::narrow::{is_null, typeof_compare};
+use crate::body::narrow::{is_null, nothing_word, typeof_compare};
 use crate::body::{FnCx, Want};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, TyKind};
 
@@ -32,7 +32,17 @@ pub(crate) fn is_comparison(op: ast::BinaryOp) -> bool {
     use ast::BinaryOp as B;
     matches!(
         op,
-        B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq | B::And | B::Or | B::Nullish
+        B::Eq
+            | B::NotEq
+            | B::StrictEq
+            | B::StrictNotEq
+            | B::Lt
+            | B::LtEq
+            | B::Gt
+            | B::GtEq
+            | B::And
+            | B::Or
+            | B::Nullish
     )
 }
 
@@ -47,6 +57,8 @@ pub(crate) fn op_str(op: ast::BinaryOp) -> &'static str {
         B::Pow => "**",
         B::Eq => "==",
         B::NotEq => "!=",
+        B::StrictEq => "===",
+        B::StrictNotEq => "!==",
         B::Lt => "<",
         B::LtEq => "<=",
         B::Gt => ">",
@@ -73,8 +85,8 @@ pub(crate) fn hir_binop(op: ast::BinaryOp) -> Option<BinOp> {
         B::Div => BinOp::Div,
         B::Rem => BinOp::Rem,
         B::Pow => BinOp::Pow,
-        B::Eq => BinOp::Eq,
-        B::NotEq => BinOp::NotEq,
+        B::Eq | B::StrictEq => BinOp::Eq,
+        B::NotEq | B::StrictNotEq => BinOp::NotEq,
         B::Lt => BinOp::Lt,
         B::LtEq => BinOp::LtEq,
         B::Gt => BinOp::Gt,
@@ -112,6 +124,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if op == ast::UnaryOp::Void {
+            return self.void_expr(operand, exp, span);
+        }
         let exp = self.hint(exp);
         // A union expected (`string | i64`): its one number member.
         let exp = exp.map(|t| {
@@ -122,6 +137,7 @@ impl FnCx<'_, '_> {
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
+            ast::UnaryOp::Void => unreachable!("ICE: `void` handled above"),
             ast::UnaryOp::Neg => {
                 let int_exp = num_exp.is_some_and(|t| self.cx.ty.is_int(t));
                 let inner = match &operand.kind {
@@ -226,6 +242,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
+        // `===` is `==` except against `null` / `undefined` (`null_compare`).
+        let strict = op.is_strict();
+        let op = op.loose();
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
             B::In => {
@@ -238,8 +257,11 @@ impl FnCx<'_, '_> {
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
-                let other = if is_null(rhs) { lhs } else { rhs };
-                return self.null_compare(other, op == B::Eq, span);
+                let (other, word) = match nothing_word(rhs) {
+                    Some(w) => (lhs, w),
+                    None => (rhs, nothing_word(lhs).unwrap_or("null")),
+                };
+                return self.null_compare(other, word, strict, op == B::Eq, span);
             }
             B::Eq | B::NotEq => {
                 if let Some((x, tag)) = typeof_compare(lhs, rhs) {
@@ -509,7 +531,7 @@ impl FnCx<'_, '_> {
             B::Add => ty.is_numeric(t) || t == ty.str_,
             B::Sub | B::Mul | B::Div | B::Rem | B::Pow => ty.is_numeric(t),
             B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr => ty.is_int(t),
-            B::Eq | B::NotEq => self.equatable(t),
+            B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq => self.equatable(t),
             B::Lt | B::LtEq | B::Gt | B::GtEq => ty.is_numeric(t) || t == ty.str_,
             B::And | B::Or | B::Nullish | B::In => false,
         };
@@ -543,8 +565,8 @@ fn simd_method_note(op: ast::BinaryOp) -> String {
         B::BitXor => ("xor", false),
         B::Shl => ("shl", false),
         B::Shr | B::UShr => ("shr", false),
-        B::Eq => ("eq", true),
-        B::NotEq => ("ne", true),
+        B::Eq | B::StrictEq => ("eq", true),
+        B::NotEq | B::StrictNotEq => ("ne", true),
         B::Lt => ("lt", true),
         B::LtEq => ("le", true),
         B::Gt => ("gt", true),

@@ -225,6 +225,9 @@ impl<'a> Parser<'a> {
         is_ternary
     }
 
+    /// Can `t` be the first token of an expression? Every token `parse_unary_inner` and
+    /// `parse_primary` accept (a contextual word such as `undefined`, `delete` or `super` is a
+    /// `Tok::Ident`); keep the three in step.
     fn can_start_expr(t: Tok) -> bool {
         match t {
             Tok::Ident
@@ -232,6 +235,8 @@ impl<'a> Parser<'a> {
             | Tok::Float(_)
             | Tok::Str(_)
             | Tok::Template(..)
+            | Tok::Regex(_)
+            | Tok::PrivateName
             | Tok::Lt
             | Tok::JsxLt
             | Tok::LParen
@@ -252,9 +257,12 @@ impl<'a> Parser<'a> {
                             | Kw::Null
                             | Kw::This
                             | Kw::New
+                            | Kw::Function
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
+                            | Kw::Typeof
+                            | Kw::Void
                     )
             }
             _ => false,

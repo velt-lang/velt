@@ -347,8 +347,8 @@ in TypeScript. `ReturnType`/`Parameters` belong with #209.
 | `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` (same object) | in storage positions an error suggesting `{ ...x }`; parameters: #672 | different layouts; a conversion makes a new object |
 | `{ a: F \| null }` assignable to `{ a?: F \| null }` | error suggesting `{ ...x }` (decision 7) | the second has a presence flag |
 | `x[k] = v` with a union `K` stores any member | panics when the member doesn't match | it would store a value of the wrong type |
-| a patch `{ name: undefined }` removes `name` | not expressible; `null` is absent only for `a?: F` without `null` | Velt has no `undefined` |
-| an optional class field without an initializer is an own key holding `undefined`, so spreading the instance clears the target's field | it is absent and isn't copied | Velt has no `undefined` |
+| a patch `{ name: undefined }` removes `name` | an error (`undefined` for an optional field is not supported yet); `null` is absent only for `a?: F` without `null` | an optional field still holds `null` for absent (#930 phase 2) |
+| an optional class field without an initializer is an own key holding `undefined`, so spreading the instance clears the target's field | it is absent and isn't copied | an optional field still holds `null` for absent (#930 phase 2) |
 
 ## Cost
 

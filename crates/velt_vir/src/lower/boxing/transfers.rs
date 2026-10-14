@@ -66,7 +66,7 @@ impl Cx<'_> {
                 }
                 // A `shared<T>` is not copied; a promise's result is transferred on its own.
                 TyKind::Shared(_) | TyKind::Promise(..) => {}
-                TyKind::Array(e) | TyKind::Option(e) => work.push(e),
+                TyKind::Array(e) | TyKind::Option(e, _) => work.push(e),
                 TyKind::Adt(d, _) if self.is_class(t) => {
                     work.extend(self.adt_field_tys(t));
                     if self.has_header(d) {

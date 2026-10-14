@@ -107,7 +107,7 @@ impl FnCx<'_, '_> {
             TyKind::Int(_) => Test::Int,
             TyKind::Float(_) => Test::Float,
             TyKind::Str => Test::Str,
-            TyKind::Option(p) => Test::Option(*p),
+            TyKind::Option(p, _) => Test::Option(*p),
             TyKind::Adt(d, _) => {
                 let d = *d;
                 match self.cx.enum_info(d) {

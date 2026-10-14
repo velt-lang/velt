@@ -1,0 +1,202 @@
+// What phase 1 of `undefined` (issue #930) reports: type errors as in TypeScript (TS2322), and
+// "not supported yet" for what later phases add (`T | null | undefined`, JSON of a value that
+// may be `undefined`, a `T | undefined` type argument where the generic keeps a `T | null`).
+type Both = string | null | undefined;
+
+function nullIntoUndefined(): string | undefined {
+  return null;
+}
+
+function undefinedIntoNull(): string | null {
+  return undefined;
+}
+
+function noType() {
+  const x = undefined;
+  console.log(x);
+}
+
+function alone(x: undefined) {}
+
+function json(a: string | undefined) {
+  console.log(JSON.stringify(a));
+  const parsed = JSON.parse<{ a: number | undefined }>("{}");
+}
+
+function mapOfUndefined() {
+  const m = new Map<string, number | undefined>();
+  m.set("k", undefined);
+}
+
+type Node = { next: Node | null };
+
+function chain(n: Node | undefined) {
+  const next = n?.next;
+}
+
+// `=== undefined` on a `T | null`: its `null` may be JavaScript's `undefined` (`Map.get`).
+function strictOnNull(b: number | null, m: Map<string, number>) {
+  console.log(b === undefined, m.get("k") !== undefined, typeof b === "undefined");
+}
+
+function caseNull(x: number | undefined): string {
+  switch (x) {
+    case null:
+      return "null";
+  }
+  return "v";
+}
+
+// TS2322 between the two nothings, also through a generic.
+function id<T>(x: T): T {
+  return x;
+}
+
+function swap(u: number | undefined, n: number | null) {
+  const a: number | null = u;
+  const b: number | undefined = n;
+  const c: number | null = id(u);
+}
+
+// `as` keeps the value in TypeScript; this phase cannot hold it.
+function casts(u: number | undefined, n: string | null) {
+  const a = u as number | null;
+  const s = n as string | undefined;
+}
+
+// A default that JavaScript applies to a passed `undefined` too.
+function withDefault(x: number | undefined = 5): number | undefined {
+  return x;
+}
+
+// Generic code keeping the other nothing of a type argument, directly or through calls.
+function firstOne<T>(xs: T[]): T | undefined {
+  return xs.length > 0 ? xs[0] : undefined;
+}
+
+class Slot<T> {
+  v: T | undefined = undefined;
+}
+
+function firstOr<T>(xs: T[], d: T): T {
+  let r: T | null = null;
+  for (const x of xs) {
+    r = x;
+    break;
+  }
+  return r === null ? d : r;
+}
+
+function outer<T>(xs: T[], d: T): T {
+  return firstOr(xs, d);
+}
+
+function generics() {
+  const r = firstOne([] as (string | null)[]);
+  const s = new Slot<number | null>();
+  const o = outer<number | undefined>([undefined], 5);
+}
+
+// Generic code sorting an array of its type parameter: an `undefined` element would reach the
+// comparator (a `(T | undefined)[]` sorted where its type is written is supported).
+function sortedBy<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  const out = xs.slice();
+  out.sort(cmp);
+  return out;
+}
+
+function copySorted<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  return xs.toSorted(cmp);
+}
+
+function sorts() {
+  const a = sortedBy<number | undefined>([3, undefined, 1], (a, b) => (a ?? 0) - (b ?? 0));
+  const b = copySorted<number | undefined>([3, undefined, 1], (a, b) => (a ?? 0) - (b ?? 0));
+  const c = sortedBy<number | null>([3, null, 1], (a, b) => (a ?? 0) - (b ?? 0));
+}
+
+// A `toJSON()` whose result may be `undefined`: Node leaves such a field out, writes `null`
+// for such an array element and returns `undefined` for the value itself.
+class Hidden {
+  toJSON(): string | undefined {
+    return undefined;
+  }
+}
+
+class Base {
+  n = 1;
+}
+
+class Derived extends Base {
+  toJSON(): number | undefined {
+    return undefined;
+  }
+}
+
+function toJson(b: Base) {
+  const field = JSON.stringify({ a: new Hidden(), b: 1 });
+  const nested = JSON.stringify({ x: { y: new Hidden() } });
+  const element = JSON.stringify([new Hidden()]);
+  const top = JSON.stringify(new Hidden());
+  const subclass = JSON.stringify({ b });
+}
+
+// A destructuring default for an optional class field declared `T | null`: a class does not
+// keep an unset field apart from one set to `null` (an object type's `a?: T | null` does).
+class Opt {
+  b?: number | null;
+}
+
+function classDefault(k: Opt) {
+  const { b = 6 } = k;
+}
+
+// `undefined` given for an optional parameter, a parameter with a default or an optional
+// field (TypeScript accepts each).
+function withValue(x: number = 5): number {
+  return x;
+}
+
+function optional(a?: number): number {
+  return a ?? -1;
+}
+
+function optionals(u: number | undefined) {
+  const a = withValue(undefined);
+  const b = optional(undefined);
+  const c = optional(void 0);
+  const d = optional(u);
+  const o: { a?: number; b: string } = { a: undefined, b: "x" };
+  const p: { a?: number; b: string } = { a: u, b: "x" };
+}
+
+// A generic alias applied so that its type holds both nothings.
+type Nullable<T> = T | null;
+type Maybe<T> = T | undefined;
+type OrText<T> = T | string | null;
+
+function aliases(a: Nullable<number | undefined>, b: Maybe<number | null>) {
+  const c: OrText<number | undefined> = "s";
+  const ok: Nullable<number> = null;
+  const fine: Maybe<string> = undefined;
+}
+
+function main() {
+  console.log(withDefault());
+}
+
+// A branch of a conditional giving `undefined` for an optional parameter or field.
+function prodError(code: number, detail?: string): string {
+  return `${code}:${detail ?? "-"}`;
+}
+
+function conditionals(name: string, c: boolean) {
+  const a = prodError(1, name ? `"${name}"` : undefined);
+  const b = prodError(2, c ? undefined : "d");
+  const o: { a?: number; b: string } = { a: c ? 1 : undefined, b: "x" };
+}
+
+// A `T | null` the standard library gives where Node gives `undefined` (phase 3).
+function lookup(m: Map<string, number>, k: string): number | undefined {
+  return m.get(k);
+}

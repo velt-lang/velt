@@ -71,7 +71,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.clone_option(s, d, ty, e),
+            TyKind::Option(e, _) => self.clone_option(s, d, ty, e),
             TyKind::Array(e) => self.clone_array(s, d, e),
             TyKind::Shared(_) => {
                 self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));

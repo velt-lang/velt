@@ -41,6 +41,10 @@ async function later(v: i32x4): Promise<i32x4> {
   return v.add(v);
 }
 
+function maybe(flag: boolean): i32x4 | undefined {
+  return flag ? i32x4.splat(6) : undefined;
+}
+
 async function main() {
   const acc = new Accumulator();
   acc.add(i32x4.splat(3));
@@ -91,4 +95,15 @@ async function main() {
     last = v;
   }
   console.log("generator", last.sum());
+
+  const some = maybe(true);
+  const none = maybe(false);
+  const both: (i32x4 | undefined)[] = [some, none];
+  console.log(
+    "undefined",
+    some === undefined,
+    none === undefined,
+    both[0]?.lane(1),
+    both[1]?.lane(1),
+  );
 }
