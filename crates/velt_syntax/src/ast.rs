@@ -343,6 +343,17 @@ pub enum TypeExprKind {
     Query(Vec<Ident>),
     /// `keyof T`: the union of `T`'s keys.
     KeyOf(Box<TypeExpr>),
+    /// `C extends E ? T : F`: a conditional type (issue #934). `E` may hold `infer X`.
+    Conditional(Box<ConditionalType>),
+    /// `infer X` in the `extends` clause of a conditional type.
+    Infer(Ident),
+    /// `{ readonly [K in S as N]?: V }`: a mapped type (issue #934).
+    Mapped(Box<MappedType>),
+    /// `` `on${K}` ``: a template literal type; `quasis` has one more element than `types`.
+    TemplateLiteral {
+        quasis: Vec<String>,
+        types: Vec<TypeExpr>,
+    },
     /// `null` in type position.
     Null,
     /// `undefined` in type position (issue #930).
@@ -358,6 +369,36 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
+}
+
+/// `check extends extends_ ? then : else_`.
+#[derive(Clone, Debug)]
+pub struct ConditionalType {
+    pub check: TypeExpr,
+    pub extends: TypeExpr,
+    pub then: TypeExpr,
+    pub else_: TypeExpr,
+}
+
+/// `{ readonly [param in source as name]?: value }`, with `+`/`-` on either modifier.
+#[derive(Clone, Debug)]
+pub struct MappedType {
+    pub param: Ident,
+    pub source: TypeExpr,
+    /// `as N`: the key remapping clause.
+    pub name: Option<TypeExpr>,
+    pub readonly: MappedModifier,
+    pub optional: MappedModifier,
+    pub value: TypeExpr,
+}
+
+/// A mapped type's `readonly` or `?` modifier: absent, `readonly`/`+readonly`, `-readonly`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MappedModifier {
+    /// Not written: a homomorphic mapped type (`[K in keyof T]`) keeps `T`'s flags.
+    Keep,
+    Add,
+    Remove,
 }
 
 /// The key of an index signature, `[name: ty]` (the name is documentation only).

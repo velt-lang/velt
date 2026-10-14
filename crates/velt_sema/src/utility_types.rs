@@ -8,7 +8,7 @@ use velt_syntax::ast;
 
 use crate::anon::{shape_field, ShapeField};
 use crate::ctx::Ctx;
-use crate::hir::{DefId, LitValue, TyId, TyKind};
+use crate::hir::{DefId, LitValue, Nothing, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The operators, by name (a user type of the same name wins, as for every built-in).
@@ -85,6 +85,7 @@ impl Ctx<'_> {
         let t = self.resolve_type(object, env);
         let t = self.subst(t, &env.args);
         let k = self.resolve_type(key, env);
+        let k = self.subst(k, &env.args);
         if t == self.ty.error || k == self.ty.error {
             return self.ty.error;
         }
@@ -102,9 +103,14 @@ impl Ctx<'_> {
         let tys: Vec<TyId> = keys
             .iter()
             .filter_map(|k| fields.iter().find(|f| &f.name == k))
-            .map(|f| match f.optional {
-                true => self.ty.option(f.ty),
-                false => f.ty,
+            .map(|f| match (f.optional, env.ts_optional) {
+                (false, _) => f.ty,
+                (true, false) => self.ty.option(f.ty),
+                // In a conditional or mapped type, as TypeScript reads it: `F | undefined`.
+                (true, true) => match *self.ty.kind(f.ty) {
+                    TyKind::Option(p, n) => self.ty.option_of(p, n.join(Nothing::Undefined)),
+                    _ => self.ty.option_of(f.ty, Nothing::Undefined),
+                },
             })
             .collect();
         match tys.as_slice() {

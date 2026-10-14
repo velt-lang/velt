@@ -23,6 +23,14 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// Names a type binds, innermost last: a mapped type's key, what `infer X` found, the
+    /// member a distributive conditional type is at (`crate::type_level`).
+    pub locals: Vec<(String, TyId)>,
+    /// `infer X` names that found nothing (TypeScript's `unknown`).
+    pub unknowns: Vec<String>,
+    /// Inside a conditional or mapped type: `T[K]` of an optional field is `F | undefined`, as
+    /// TypeScript reads it.
+    pub ts_optional: bool,
 }
 
 impl TyEnv {
@@ -31,6 +39,9 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            locals: vec![],
+            unknowns: vec![],
+            ts_optional: false,
         }
     }
 }
@@ -86,6 +97,23 @@ impl Ctx<'_> {
             } => self.resolve_index_sig(fields, &key.ty, value, env),
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
+            ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
+            ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
+            ast::TypeExprKind::TemplateLiteral { quasis, types } => {
+                self.resolve_template(t, quasis, types, env)
+            }
+            ast::TypeExprKind::Infer(n) => {
+                match env.locals.iter().rev().find(|(l, _)| *l == n.name) {
+                    Some((_, b)) => *b,
+                    None => {
+                        self.err(
+                            "`infer` declarations are only permitted in the `extends` clause of a conditional type",
+                            t.span,
+                        );
+                        self.ty.error
+                    }
+                }
+            }
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
                 self.ty.error
@@ -210,6 +238,22 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if let Some((_, b)) = env.locals.iter().rev().find(|(l, _)| l == name) {
+            if !args.is_empty() {
+                self.err(
+                    format!("type parameter `{name}` does not take type arguments"),
+                    t.span,
+                );
+            }
+            return *b;
+        }
+        if env.unknowns.iter().any(|u| u == name) {
+            self.err(
+                format!("`{name}` is inferred as `unknown` here, which is not supported yet (#934)"),
+                t.span,
+            );
+            return self.ty.error;
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -283,6 +327,19 @@ impl Ctx<'_> {
             },
             None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
         };
+        // Inside an alias expanded at known arguments, an alias used with the parameters gets
+        // the arguments themselves, so a conditional or mapped type in it can be evaluated
+        // (`type A<T> = B<T>`; `crate::type_level`).
+        let args = match item {
+            Item::Alias(_) if !env.args.is_empty() => {
+                let known: Vec<TyId> = args.iter().map(|a| self.subst(*a, &env.args)).collect();
+                match known.iter().any(|a| self.has_type_params(*a)) {
+                    true => args,
+                    false => known,
+                }
+            }
+            _ => args,
+        };
         self.item_type_args(item, name, args, t)
     }
 
@@ -321,6 +378,8 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
+            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
+            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
             _ => return None,
         };
         let written = args;

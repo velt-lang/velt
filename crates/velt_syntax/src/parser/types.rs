@@ -4,13 +4,42 @@
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
-use crate::lexer::{Kw, Tok};
+use crate::lexer::{Kw, Tok, TplPart};
 use velt_common::Span;
 
 impl<'a> Parser<'a> {
     /// Full type including unions: `A | B | null` (a leading `|` is allowed), whose members may
     /// be intersections (`A & B | C` is `(A & B) | C`).
     pub(super) fn parse_type(&mut self) -> PResult<TypeExpr> {
+        self.guarded(|p| {
+            let lo = p.cur_lo();
+            let check = p.parse_union_type()?;
+            if !p.at_kw(Kw::Extends) {
+                return Ok(check);
+            }
+            // `C extends E ? T : F`. As in TypeScript, `E` is parsed without a conditional
+            // type of its own (`A extends B extends C ? …` needs parentheses), and the
+            // branches nest to the right.
+            p.bump(); // extends
+            let extends = p.parse_union_type()?;
+            p.expect(Tok::Question)?;
+            let then = p.parse_type()?;
+            p.expect(Tok::Colon)?;
+            let else_ = p.parse_type()?;
+            Ok(TypeExpr {
+                kind: TypeExprKind::Conditional(Box::new(ConditionalType {
+                    check,
+                    extends,
+                    then,
+                    else_,
+                })),
+                span: p.span_from(lo),
+            })
+        })
+    }
+
+    /// A union type (no conditional type at the top level).
+    fn parse_union_type(&mut self) -> PResult<TypeExpr> {
         self.guarded(|p| {
             let lo = p.cur_lo();
             p.eat(Tok::Pipe);
@@ -126,9 +155,9 @@ impl<'a> Parser<'a> {
             }
             let prim = p.parse_type_prim()?;
             let mut ty = p.parse_array_suffixes(lo, prim);
-            // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
-            // and the like keep their meaning).
-            while p.at(Tok::LBracket) && matches!(p.nth(1), Tok::Str(_)) {
+            // `T["k"]`, `T[K]`, `T[number]`: an indexed access. As in TypeScript, the `[` must
+            // be on the same line as the type (`x: T` and a statement starting with `[`).
+            while p.at(Tok::LBracket) && p.nth(1) != Tok::RBracket && !p.line_break_before() {
                 p.bump();
                 let key = p.parse_type()?;
                 p.expect(Tok::RBracket)?;
@@ -266,6 +295,15 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            Tok::Template(..) => self.parse_template_type(),
+            Tok::Ident if self.at_word("infer") && Self::is_ident_like(self.nth(1)) => {
+                self.bump(); // infer
+                let name = self.parse_ident()?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Infer(name),
+                    span: self.span_from(lo),
+                })
+            }
             _ if self.at_keyof() => {
                 self.bump(); // keyof
                 let inner = self.parse_type_no_union()?;
@@ -367,6 +405,9 @@ impl<'a> Parser<'a> {
     fn parse_object_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
+        if self.at_mapped_type() {
+            return self.parse_mapped_type(lo);
+        }
         let mut fields = Vec::new();
         let mut index: Option<IndexSignature> = None;
         while !self.at(Tok::RBrace) {
@@ -420,6 +461,109 @@ impl<'a> Parser<'a> {
             kind,
             span: self.span_from(lo),
         })
+    }
+
+    /// After `{`: `[K in`, optionally after `readonly`, `+readonly` or `-readonly`?
+    fn at_mapped_type(&mut self) -> bool {
+        let mut i = usize::from(matches!(self.peek(), Tok::Plus | Tok::Minus));
+        if self.nth(i) == Tok::Kw(Kw::Readonly) {
+            i += 1;
+        } else if i == 1 {
+            return false;
+        }
+        self.nth(i) == Tok::LBracket
+            && Self::is_name(self.nth(i + 1))
+            && self.nth(i + 2) == Tok::Kw(Kw::In)
+    }
+
+    /// `{ readonly [K in S as N]?: V }` after the `{` (from `lo`).
+    fn parse_mapped_type(&mut self, lo: u32) -> PResult<TypeExpr> {
+        let readonly = self.mapped_modifier(|p| p.at_kw(Kw::Readonly));
+        self.expect(Tok::LBracket)?;
+        let param = self.take_ident();
+        self.bump(); // in
+        let source = self.parse_type()?;
+        let name = match self.eat_kw(Kw::As) {
+            true => Some(self.parse_type()?),
+            false => None,
+        };
+        self.expect(Tok::RBracket)?;
+        let optional = self.mapped_modifier(|p| p.at(Tok::Question));
+        self.expect(Tok::Colon)?;
+        let value = self.parse_type()?;
+        if !self.eat(Tok::Semi) {
+            self.eat(Tok::Comma);
+        }
+        self.expect(Tok::RBrace)?;
+        Ok(TypeExpr {
+            kind: TypeExprKind::Mapped(Box::new(MappedType {
+                param,
+                source,
+                name,
+                readonly,
+                optional,
+                value,
+            })),
+            span: self.span_from(lo),
+        })
+    }
+
+    /// A mapped type's modifier: `+m`, `-m`, `m` or nothing, where `at` finds `m`.
+    fn mapped_modifier(&mut self, at: impl Fn(&mut Self) -> bool) -> MappedModifier {
+        let sign = match self.peek() {
+            Tok::Plus => MappedModifier::Add,
+            Tok::Minus => MappedModifier::Remove,
+            _ if at(self) => {
+                self.bump();
+                return MappedModifier::Add;
+            }
+            _ => return MappedModifier::Keep,
+        };
+        self.bump(); // + or -
+        if at(self) {
+            self.bump();
+        } else {
+            self.error_expected("`readonly` or `?`");
+        }
+        sign
+    }
+
+    /// `` `a${T}b` `` in a type: a template literal type.
+    fn parse_template_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        let Tok::Template(idx, part) = self.peek() else {
+            self.error_expected("template literal type");
+            return Err(Fail);
+        };
+        self.bump();
+        let mut quasis = vec![self.payload_text(idx)];
+        let mut types = Vec::new();
+        if part == TplPart::Head {
+            loop {
+                types.push(self.parse_type()?);
+                let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) =
+                    self.peek()
+                else {
+                    self.error_expected("`}`");
+                    return Err(Fail);
+                };
+                quasis.push(self.payload_text(idx));
+                self.bump();
+                if part == TplPart::Tail {
+                    break;
+                }
+            }
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::TemplateLiteral { quasis, types },
+            span: self.span_from(lo),
+        })
+    }
+
+    /// Is there a line break between the previous token and the cursor?
+    fn line_break_before(&mut self) -> bool {
+        let (from, to) = (self.prev_hi as usize, self.cur_lo() as usize);
+        self.src.get(from..to).is_some_and(|s| s.contains('\n'))
     }
 
     /// At `[name: K]` (an index signature, after any `readonly`)?

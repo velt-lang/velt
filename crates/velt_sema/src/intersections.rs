@@ -43,6 +43,9 @@ impl Ctx<'_> {
             }
             operands.push((ty, p.span));
         }
+        if let Some(t) = self.literal_meet(&operands, t.span) {
+            return t;
+        }
         // A primitive with object types is a branded type.
         let bases: Vec<usize> = (0..operands.len())
             .filter(|&i| self.brandable(operands[i].0))
