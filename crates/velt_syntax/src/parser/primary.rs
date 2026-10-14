@@ -15,6 +15,10 @@ impl<'a> Parser<'a> {
             self.bump();
             return Ok(self.mk_expr(ExprKind::Lit(lit), span));
         }
+        if let Some(lit) = self.define_at_cursor() {
+            self.bump();
+            return Ok(self.mk_expr(ExprKind::Lit(lit), span));
+        }
         let kind = match self.peek() {
             Tok::Template(..) => self.parse_template()?,
             Tok::Lt if self.jsx_starts_here() => {
@@ -86,6 +90,18 @@ impl<'a> Parser<'a> {
         };
         let span = self.span_from(lo);
         Ok(self.mk_expr(kind, span))
+    }
+
+    /// The build-time constant the identifier at the cursor stands for (`define` in
+    /// package.vlt, as Vite's `define`): every use of the name as a value, not a parameter of
+    /// an arrow (`__DEV__ => …`).
+    fn define_at_cursor(&mut self) -> Option<Lit> {
+        let defines = self.defines?;
+        let t = self.tok(self.pos);
+        if t.kind != Tok::Ident || self.nth(1) == Tok::FatArrow {
+            return None;
+        }
+        defines.get(self.text(t.lo, t.hi)).cloned()
     }
 
     /// Literal value of the current token (numbers, strings, `true`/`false`/`null`), if any.

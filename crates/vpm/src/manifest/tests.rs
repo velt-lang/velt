@@ -369,3 +369,41 @@ fn scoped_names_for_packages_and_path_dependencies() {
     // Scoped names are not registry names.
     assert!(!is_valid_package_name("@sigx/reactivity"));
 }
+
+#[test]
+fn define_values_are_literals() {
+    let text = r#"export const pkg: Package = {
+        name: "a",
+        version: "1.0.0",
+        define: { __DEV__: "false", __VERSION__: "\"1.0.1\"", LIMIT: "3", RATIO: "0.5", MODE: "'prod'" },
+    };"#;
+    let m = Manifest::parse(text).unwrap();
+    assert_eq!(m.define.len(), 5);
+    use velt_syntax::ast::Lit;
+    assert_eq!(define_literal("false").unwrap(), Lit::Bool(false));
+    assert_eq!(
+        define_literal("\"1.0.1\"").unwrap(),
+        Lit::Str("1.0.1".into())
+    );
+    assert_eq!(define_literal("'prod'").unwrap(), Lit::Str("prod".into()));
+    assert!(matches!(
+        define_literal("3").unwrap(),
+        Lit::Int { value: 3, .. }
+    ));
+    assert!(matches!(define_literal("0.5").unwrap(), Lit::Float { .. }));
+    for bad in ["1.0.1", "process.env.X", "", "-1", "\"open"] {
+        assert!(define_literal(bad).is_err(), "{bad}");
+    }
+    let bad = r#"export const pkg: Package = { name: "a", version: "1.0.0", define: { "a-b": "1", X: "1.0.1" } };"#;
+    let err = Manifest::parse(bad).unwrap_err();
+    assert!(
+        err.contains("define `a-b`: the name must be an identifier"),
+        "{err}"
+    );
+    assert!(
+        err.contains("define `X`: `1.0.1` is not a literal"),
+        "{err}"
+    );
+    // Written back and printed as JSON.
+    assert!(m.to_vlt().contains("define: {"), "{}", m.to_vlt());
+}

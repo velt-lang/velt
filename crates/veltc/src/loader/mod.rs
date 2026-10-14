@@ -29,6 +29,7 @@
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
 
+mod ambient;
 mod case;
 mod globals;
 mod jsx;
@@ -115,6 +116,7 @@ pub fn load_with_roots(
         dir_names: case::DirNames::default(),
         globals: vec![],
         npm: vpm::npm::NpmResolver::default(),
+        ambient: ambient::Ambients::new(opts.packages),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -138,6 +140,7 @@ pub fn load_with_roots(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    loader.check_ambients();
     Ok(Loaded {
         modules: loader.modules,
         root: root_index,
@@ -165,6 +168,8 @@ struct Loader<'a, 'o> {
     globals: Vec<globals::Global>,
     /// npm packages found so far ([`vpm::npm`]).
     npm: vpm::npm::NpmResolver,
+    /// Build-time constants and ambient declarations ([`ambient`]).
+    ambient: ambient::Ambients,
 }
 
 impl Loader<'_, '_> {
@@ -234,18 +239,33 @@ impl Loader<'_, '_> {
         origin: Origin,
     ) -> usize {
         let file = self.sm.add(path, src);
-        let src = &self.sm.get(file).src;
-        let (ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
-            velt_syntax::parse_ts_file(file, src)
+        let is_std = matches!(origin, Origin::Std(_));
+        let plain_ts = vpm::sources::is_plain_ts(path);
+        let ast = if is_std {
+            let src = &self.sm.get(file).src;
+            let (ast, parse_diags) = if plain_ts {
+                velt_syntax::parse_ts_file(file, src)
+            } else {
+                velt_syntax::parse_file(file, src)
+            };
+            self.diags.extend(parse_diags);
+            ast
         } else {
-            velt_syntax::parse_file(file, src)
+            self.ambient.read_declarations(self.sm, path);
+            let opts = velt_syntax::ParseOptions {
+                plain_ts,
+                defines: self.ambient.defines(),
+            };
+            let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
+            self.diags.extend(parsed.diags);
+            self.ambient.declared(parsed.ambient, file);
+            parsed.module
         };
-        self.diags.extend(parse_diags);
         let index = self.modules.len();
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
             path: canonical,
-            is_std: matches!(origin, Origin::Std(_)),
+            is_std,
             file,
             ast,
             imports: vec![],
@@ -286,6 +306,20 @@ impl Loader<'_, '_> {
                 self.error(format!("cannot read `{shown}`: {e}"), vec![], span);
             }
         }
+    }
+
+    /// Report the ambient constants that modules use but nothing gives a value
+    /// ([`ambient::Ambients::check`]).
+    fn check_ambients(&mut self) {
+        let (modules, sm) = (&self.modules, &*self.sm);
+        let mentioned = |name: &str| {
+            modules.iter().filter(|m| !m.is_std).any(|m| {
+                globals::mentions(&sm.get(m.file).src, name)
+                    && !globals::bound_names(&m.ast).contains(name)
+            })
+        };
+        let found = self.ambient.check(&mentioned);
+        self.diags.extend(found);
     }
 
     /// Whether a loaded module has module path `path`.

@@ -22,6 +22,11 @@ impl<'a> Parser<'a> {
                     self.error("unexpected `}`", span);
                     self.bump();
                 }
+                _ if self.at_ambient() => {
+                    if self.parse_ambient().is_err() {
+                        self.sync_item(start);
+                    }
+                }
                 _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {
                     Ok(item) => {

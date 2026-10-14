@@ -35,6 +35,55 @@ pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
 }
 
 /// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
+/// What [`parse_with`] reads besides the source.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParseOptions<'a> {
+    /// A plain `.ts` file (as [`parse_ts_file`]).
+    pub plain_ts: bool,
+    /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
+    /// expression of one of these names parses as the literal.
+    pub defines: Option<&'a std::collections::HashMap<String, ast::Lit>>,
+}
+
+/// An ambient variable declaration: `declare const NAME: T;`, or `var NAME: T;` in
+/// `declare global { … }`.
+#[derive(Clone, Debug)]
+pub struct Ambient {
+    pub name: ast::Ident,
+    /// The declared type (`None`: none written).
+    pub ty: Option<ast::TypeExpr>,
+    pub span: velt_common::Span,
+}
+
+/// [`parse_with`]'s result.
+pub struct Parsed {
+    pub module: ast::Module,
+    pub diags: Diagnostics,
+    /// The ambient variable declarations, in source order; they are not items of `module`.
+    pub ambient: Vec<Ambient>,
+}
+
+/// Parse a module as the compiler loads it: with `opts`, and with ambient declarations
+/// (`declare const`, `declare global`) returned in [`Parsed::ambient`] instead of being
+/// errors.
+pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
+    on_parser_thread(|| {
+        let mut parser = parser::Parser::new(file, src);
+        parser.plain_ts = opts.plain_ts;
+        parser.defines = opts.defines;
+        parser.ambient = Some(vec![]);
+        let module = parser.parse_module();
+        let ambient = parser.ambient.take().unwrap_or_default();
+        let (mut diags, _) = parser.finish();
+        diags.sort_by_key(|d| d.labels.first().map_or(0, |l| l.span.lo));
+        Parsed {
+            module,
+            diags,
+            ambient,
+        }
+    })
+}
+
 fn on_parser_thread<T: Send>(f: impl Fn() -> T + Sync) -> T {
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()

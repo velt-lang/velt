@@ -5,6 +5,7 @@
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
+mod ambient;
 mod arrow;
 mod expr;
 mod field_types;
@@ -30,7 +31,7 @@ mod type_decls;
 mod types;
 mod undefined;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::*;
 use crate::lexer::{Kw, Lexer, Payload, Tok, Token};
@@ -87,6 +88,11 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Ambient declarations read so far, when the caller asked for them (`ambient`).
+    pub(crate) ambient: Option<Vec<crate::Ambient>>,
+    /// Build-time constants: an identifier expression of one of these names is its literal
+    /// (`crate::ParseOptions::defines`).
+    pub(crate) defines: Option<&'a HashMap<String, Lit>>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -133,6 +139,8 @@ impl<'a> Parser<'a> {
             more_vars: Vec::new(),
             computed_keys: BTreeSet::new(),
             no_in: false,
+            ambient: None,
+            defines: None,
         }
     }
 

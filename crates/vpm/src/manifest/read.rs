@@ -279,6 +279,7 @@ impl Reader<'_> {
             paths: BTreeMap::new(),
             native: None,
             jsx: None,
+            define: BTreeMap::new(),
             ts_compat: vec![],
         };
         let Some(fields) = self.object(value, "the manifest") else {
@@ -329,6 +330,7 @@ impl Reader<'_> {
                 "dependencies" => manifest.dependencies = self.dependencies(v),
                 "paths" => manifest.paths = self.paths(v),
                 "jsx" => manifest.jsx = self.jsx(v),
+                "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 _ => self.unknown_key(key, schema::PACKAGE),
@@ -439,6 +441,26 @@ impl Reader<'_> {
                 self.error(format!("alias `{}`: {why}", key.name), key.span.to(v.span));
             }
             out.insert(key.name.clone(), target.to_string());
+        }
+        out
+    }
+
+    fn define(&mut self, value: &Value) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for (key, v) in self.object(value, "`define`").unwrap_or_default() {
+            if !super::is_define_name(&key.name) {
+                self.error(
+                    format!("define `{}`: the name must be an identifier", key.name),
+                    key.span,
+                );
+            }
+            let Some(text) = self.string(v, &key.name) else {
+                continue;
+            };
+            if let Err(why) = super::define_literal(text) {
+                self.error(format!("define `{}`: {why}", key.name), v.span);
+            }
+            out.insert(key.name.clone(), text.to_string());
         }
         out
     }

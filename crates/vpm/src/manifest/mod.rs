@@ -72,6 +72,11 @@ pub struct Manifest {
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
+    /// `define`: build-time constants, name → the source of a literal (`"false"`,
+    /// `"\"1.0.1\""`), as Vite's `define`: every use of the name as a value in the build's
+    /// modules is that literal ([`define_literal`]). Only the root package's apply.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub define: BTreeMap<String, String>,
     /// `tsCompat`: folders, relative to the package root, whose modules stay in the
     /// TypeScript/Velt common subset (`velt check --ts-compat` and the language server lint
     /// them; docs/internals/design/tsx.md). `/`-separated, inside the package, none inside
@@ -475,6 +480,64 @@ fn check_native_wasm(wasm: bool) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// The literal a `define` value stands for: `true`, `false`, `null`, a non-negative number, or
+/// a string literal in double or single quotes (`"\"1.0.1\""`, `"'prod'"`). Like Vite's
+/// `define`, the value is the source of an expression; only literals are supported.
+pub fn define_literal(text: &str) -> Result<velt_syntax::ast::Lit, String> {
+    use velt_syntax::ast::Lit;
+    let t = text.trim();
+    let bad = || {
+        format!(
+            "`{text}` is not a literal: write `true`, `false`, `null`, a number, or a quoted string such as `\"\\\"1.0\\\"\"`"
+        )
+    };
+    match t {
+        "true" => return Ok(Lit::Bool(true)),
+        "false" => return Ok(Lit::Bool(false)),
+        "null" => return Ok(Lit::Null),
+        _ => {}
+    }
+    if t.starts_with('"') {
+        return serde_json::from_str::<String>(t)
+            .map(Lit::Str)
+            .map_err(|_| bad());
+    }
+    if let Some(inner) = t.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        if inner.contains(['\'', '\\']) {
+            return Err(bad());
+        }
+        return Ok(Lit::Str(inner.to_string()));
+    }
+    if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(value) = t.parse::<u128>() {
+            return Ok(Lit::Int {
+                value,
+                suffix: None,
+            });
+        }
+    }
+    if t.starts_with(|c: char| c.is_ascii_digit()) {
+        if let Ok(value) = t.parse::<f64>() {
+            if value.is_finite() {
+                return Ok(Lit::Float {
+                    value,
+                    suffix: None,
+                });
+            }
+        }
+    }
+    Err(bad())
+}
+
+/// Whether `name` is an identifier a `define` can replace (`__DEV__`, `$x`).
+pub fn is_define_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 /// A scoped name's scope and name (`@sigx/reactivity` → (`sigx`, `reactivity`)), as npm writes
