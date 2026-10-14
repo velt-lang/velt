@@ -29,6 +29,8 @@ pub(super) struct Layouts {
     objs: HashMap<TyId, AggId>,
     /// Roots of the class hierarchies whose objects start with a vtable pointer (built once).
     headers: Option<HashSet<DefId>>,
+    /// The classes some class of the program extends (`Cx::has_subclasses`).
+    extended: Option<HashSet<DefId>>,
     /// Class id ranges for `instanceof` (class_test.rs, built once).
     pub(super) class_ids: Option<HashMap<DefId, (u64, u64)>>,
     boxes: HashMap<TyId, AggId>,
@@ -295,6 +297,28 @@ impl Cx<'_> {
             }
         }
         roots
+    }
+
+    /// Does some class of the program extend class `d`? A reference of such a class type may
+    /// hold an instance of any of them, so what it reaches is not in its own fields; a class
+    /// nothing extends holds exactly its own. The answer is over the whole program, like
+    /// [`has_header`](Self::has_header), which it implies.
+    pub(super) fn has_subclasses(&mut self, d: DefId) -> bool {
+        if self.lay.extended.is_none() {
+            self.lay.extended = Some(self.extended_classes());
+        }
+        self.lay.extended.as_ref().is_some_and(|e| e.contains(&d))
+    }
+
+    fn extended_classes(&self) -> HashSet<DefId> {
+        let mut extended = HashSet::new();
+        for def in &self.hir.defs {
+            let hir::Def::Adt(a) = def else { continue };
+            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| self.types.kind(b)) {
+                extended.insert(*b);
+            }
+        }
+        extended
     }
 
     pub(super) fn class_root(&self, mut d: DefId) -> DefId {
