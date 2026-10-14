@@ -111,7 +111,7 @@ function main() {
   console.log(data.href.length, data.pathname.slice(0, 30));
   // Either side of the length up to which a text is looked through for tabs in place.
   for (const n of [31, 32, 33, 48, 64, 65]) {
-    const mid = new URL(`https://example.com/${"p".repeat(n - 30)}\t?q=1\n#f\r`);
+    const mid = new URL(`https://example.com/${"p".repeat(n - 29)}\t?q=1\n#f\r`);
     console.log(n, mid.href.length, mid.pathname.length, mid.search, mid.hash);
     mid.search = `?${"k".repeat(n - 2)}\tv`;
     mid.hash = `#${"h".repeat(n - 2)}\nz`;

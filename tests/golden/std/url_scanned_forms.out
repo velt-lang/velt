@@ -82,5 +82,17 @@ mailto:é@example.com -> mailto:%C3%A9@example.com | : |  |  | %C3%A9@example.co
 1259 441 481 318
 /seg%20ment/seg%20ment/s ?k=v%20w&k=v%20w #f%20f%2
 416 text/plain,a bca bca bca bca b
+31 28 3 ?q=1 #f
+31 31 kv hz
+32 29 4 ?q=1 #f
+32 32 kv hz
+33 30 5 ?q=1 #f
+33 33 kv hz
+48 45 20 ?q=1 #f
+48 48 kv hz
+64 61 36 ?q=1 #f
+64 64 kv hz
+65 62 37 ?q=1 #f
+65 65 kv hz
 http://exämple.com/a -> invalid
 http://user@exämple.com:8080/a -> invalid
