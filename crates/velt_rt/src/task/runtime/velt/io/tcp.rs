@@ -94,6 +94,7 @@ impl TcpStream {
             // the length is advanced by what it reports written.
             let dst = unsafe { &mut *(spare as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
             let n = (&*s).read(dst)?;
+            super::moved(n);
             // SAFETY: `n` bytes were just written.
             unsafe { buf.set_len(buf.len() + n) };
             Ok(n)
@@ -101,7 +102,9 @@ impl TcpStream {
     }
 
     pub fn try_write(&self, data: &[u8]) -> io::Result<usize> {
-        self.0.try_io(WRITABLE, |s| (&*s).write(data))
+        self.0.try_io(WRITABLE, |s| {
+            (&*s).write(data).inspect(|&n| super::moved(n))
+        })
     }
 
     pub fn set_nodelay(&self, on: bool) -> io::Result<()> {
@@ -132,7 +135,7 @@ impl tokio::io::AsyncRead for TcpStream {
         let r = self.0.poll_io(cx, READABLE, |s| {
             // SAFETY: as in `try_read_buf`; `assume_init` + `advance` below cover what was read.
             let dst = unsafe { &mut *(buf.unfilled_mut() as *mut [_] as *mut [u8]) };
-            (&*s).read(dst)
+            (&*s).read(dst).inspect(|&n| super::moved(n))
         });
         match r {
             Poll::Ready(Ok(n)) => {
@@ -153,7 +156,9 @@ impl tokio::io::AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         data: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.0.poll_io(cx, WRITABLE, |s| (&*s).write(data))
+        self.0.poll_io(cx, WRITABLE, |s| {
+            (&*s).write(data).inspect(|&n| super::moved(n))
+        })
     }
 
     fn poll_write_vectored(
@@ -161,7 +166,9 @@ impl tokio::io::AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        self.0.poll_io(cx, WRITABLE, |s| (&*s).write_vectored(bufs))
+        self.0.poll_io(cx, WRITABLE, |s| {
+            (&*s).write_vectored(bufs).inspect(|&n| super::moved(n))
+        })
     }
 
     fn is_write_vectored(&self) -> bool {
