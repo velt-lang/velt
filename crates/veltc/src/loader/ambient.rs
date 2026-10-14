@@ -139,6 +139,21 @@ impl Ambients {
     }
 }
 
+/// Whether `module` uses `name` as a value (an identifier expression).
+pub(super) fn uses_value(module: &ast::Module, name: &str) -> bool {
+    struct Find<'n>(&'n str, bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Find<'_> {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Ident(id) = &e.kind {
+                self.1 |= id.name == self.0;
+            }
+        }
+    }
+    let mut find = Find(name, false);
+    velt_syntax::visit::walk_module(module, &mut find);
+    find.1
+}
+
 /// `boolean`, `string` or `number` when `ty` is one of them.
 fn primitive(ty: &ast::TypeExpr) -> Option<&'static str> {
     let ast::TypeExprKind::Named { path, args } = &ty.kind else {

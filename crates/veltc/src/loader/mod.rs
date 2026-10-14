@@ -14,7 +14,13 @@
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
 //! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
 //!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
-//!   [`PackageResolver`] (vpm's installed package graph).
+//!   [`PackageResolver`] (vpm's installed package graph);
+//! - any other bare specifier (`"@sigx/reactivity"`, `"sigx/internals"`) → the TypeScript source
+//!   of an npm package in `node_modules` or the workspace, as its `package.json` `exports` name
+//!   it ([`vpm::npm`]).
+//!
+//! Non-std modules parse with the root package's `define` constants, and ambient
+//! `declare const`s come from modules and their packages' `.d.ts` files ([`ambient`]).
 //!
 //! The names an import spells must match the files on disk in case, on every OS ([`case`]); a
 //! file module hiding a folder module of another extension gets a warning ([`pick`]).
@@ -316,6 +322,7 @@ impl Loader<'_, '_> {
             modules.iter().filter(|m| !m.is_std).any(|m| {
                 globals::mentions(&sm.get(m.file).src, name)
                     && !globals::bound_names(&m.ast).contains(name)
+                    && ambient::uses_value(&m.ast, name)
             })
         };
         let found = self.ambient.check(&mentioned);

@@ -684,3 +684,23 @@ fn npm_workspace_packages_load_from_their_sources() {
         ]
     );
 }
+
+#[test]
+fn ambient_constants_without_a_define_are_errors_only_when_used() {
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/src/env.d.ts",
+        "declare const __DEV__: boolean;\ndeclare module 'x' { }\n",
+    );
+    // Declared and named in a string, never used as a value: no error.
+    let root = t.write(
+        "lib/src/main.ts",
+        "declare global {\n  var __HOOK__: number;\n}\nconst KEY: string = \"__HOOK__\";\nfunction main(): void {\n  if (__DEV__) {\n    console.log(KEY);\n  }\n}\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`__DEV__` is declared here but has no value"]
+    );
+}
