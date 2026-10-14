@@ -1,6 +1,7 @@
 //! Node's `Map(2) { 'a' => 1, 'b' => 2 }` (empty: `Map(0) {}`) for the prelude `Map` class
 //! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
-//! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null).
+//! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null; where
+//! the value type includes null, `map_entry_live` asks the map's `__liveAt`).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
 //! stands for, in JavaScript's key order (array indices first: the entry positions its
 //! `__positions` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
@@ -37,7 +38,7 @@ enum Entries {
 impl FnLower<'_, '_> {
     /// `(K, V)` if `ty` is the prelude `Map<K, V>` class.
     pub(in crate::lower) fn prelude_map(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
-        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+        let TyKind::Adt(d, args) = self.cx.kind(ty) else {
             return None;
         };
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
@@ -50,12 +51,40 @@ impl FnLower<'_, '_> {
         }
         let tys = self.cx.adt_field_tys(ty);
         match (self.cx.kind(tys[1]), self.cx.kind(tys[2])) {
-            (TyKind::Array(k), TyKind::Array(slot)) => match self.cx.kind(slot) {
-                TyKind::Option(v, _) => Some((k, v)),
+            // `V` from the type arguments: where it includes null, the slot type `V | null` is
+            // `V` itself, not an option of it.
+            (TyKind::Array(k), TyKind::Array(slot)) => match (self.cx.kind(slot), &args[..]) {
+                (TyKind::Option(..), [_, v]) => Some((k, *v)),
                 _ => None,
             },
             _ => None,
         }
+    }
+
+    /// Whether entry position `i` of the prelude `Map` at `map` (of type `ty`, values of type
+    /// `vt`) is live, with the place of its value: `slot` is the entry's `entryValues` element
+    /// (of type `slot_t`). A null slot is a deleted entry unless `vt` includes null (the slot
+    /// type is then `vt` itself and the slot the value); then the map's `__liveAt` decides
+    /// (std/prelude/map.vlt).
+    pub(in crate::lower) fn map_entry_live(
+        &mut self,
+        map: &Place,
+        ty: TyId,
+        (i, slot, slot_t, vt): (Operand, &Place, TyId, TyId),
+    ) -> (Operand, Place) {
+        if slot_t != vt {
+            let live = self.option_is_some(slot, slot_t);
+            return (live, self.some_payload(slot, slot_t));
+        }
+        let TyKind::Adt(d, targs) = self.cx.kind(ty) else {
+            crate::lower::ice("Map of a non-ADT type")
+        };
+        let def = self.class_method(d, "__liveAt");
+        let f = self.cx.func_for(def, targs);
+        let live = self.temp(Ty::Bool);
+        let args = vec![Operand::Copy(map.clone()), i];
+        self.call(vir::Callee::Func(f), args, Some(Place::local(live)), false);
+        (Operand::Copy(Place::local(live)), slot.clone())
     }
 
     /// `(K, V)` if `ty` is the prelude `Record<K, V>` class (its `Map<K, V>` is field 0).
@@ -245,7 +274,7 @@ impl FnLower<'_, '_> {
         self.count_loop(k, Operand::Copy(Place::local(stop)), |lw, i| {
             let i = lw.order_pos(order, i);
             let slot = lw.elem_place(&values, i.clone(), slot_t);
-            let live = lw.option_is_some(&slot, slot_t);
+            let (live, vp) = lw.map_entry_live(obj, ty, (i.clone(), &slot, slot_t, vt));
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
@@ -283,7 +312,6 @@ impl FnLower<'_, '_> {
                 if entries == Entries::Map {
                     lw.push_text(buf, " => ");
                 }
-                let vp = lw.some_payload(&slot, slot_t);
                 lw.format_nested(buf, &vp, vt, child);
             }
             lw.goto(skip);

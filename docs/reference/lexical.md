@@ -112,7 +112,7 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `*` `/` `%` | |
 | `+` `-` | |
 | `<<` `>>` `>>>` | |
-| `<` `<=` `>` `>=` `as` `instanceof` `in` | `in` only as `#x in o` (a brand check) |
+| `<` `<=` `>` `>=` `as` `instanceof` `in` | `in`: [a key test](types.md#the-in-operator) (`"k" in o`), or a brand check (`#x in o`); `for (k in o)` is a `for...in` loop |
 | `==` `!=` `===` `!==` | no coercion; `==` differs from `===` only against `null` / `undefined` ([Types](types.md#equality-and-comparison)) |
 | `&` | |
 | `^` | |

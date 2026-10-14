@@ -106,6 +106,14 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
 
 - The prelude (`std/prelude/*.vlt`) is ordinary Velt code; methods in `extend` blocks are
   `Def::Fn`s whose `self_ty` is the extended (possibly builtin) type.
+- `Intrinsic::HoldsNull` (`__intrinsic_holds_null(probe)`, std only) is a constant per
+  instantiation: whether the probe's type is an option once substituted, so that a generic
+  `T | null` is `T` itself. `Intrinsic::NullAs` (`__intrinsic_null_as<T>()`, no arguments, type
+  `T`) is that `T`'s `null`; std calls it only where `HoldsNull` is true (lowering of any other `T`
+  is a run-time internal error). Lowering evaluates a condition built from `HoldsNull` with `!`,
+  `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
+  the operand that decides, so the code of an instantiation for which the test is false is the
+  code without it (std/prelude/map.vlt: a `Map` whose `V` excludes null keeps its VIR).
 
 ## M3/M4 encodings (lowering assumptions, confirmed at merge of ir-3)
 - An async fn's `FnDef::ret` is the body's return type `T` (the call's type is `Promise<T>`).

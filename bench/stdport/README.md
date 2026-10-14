@@ -39,6 +39,9 @@ this machine.
 | sha256_small | Velt (`velt:crypto`) | 125 | 20 | 6.28 |
 | base64 | Velt (`velt:encoding`) | 149 | 41 | 3.64 |
 
+`limb_mul` was added after this table (64-bit limb arithmetic on `Math.umulh`, against `u128`
+in Rust): 1,194M instructions against 888M on the same machine, 1.34.
+
 Reading it:
 
 - The four number rows call the same crates as the Rust column, so their gap is the cost of

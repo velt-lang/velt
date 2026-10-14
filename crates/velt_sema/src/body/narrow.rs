@@ -351,11 +351,12 @@ impl FnCx<'_, '_> {
             })
     }
 
-    /// Facts of `KEY in x` on a union local: the members that may have the member when true
-    /// (an optional one may), the members that may lack it when false.
+    /// Facts of `KEY in x` / `"k" in x` on a union local: the members that may have the member
+    /// when true (an optional one or a record's entry may), the members that may lack it when
+    /// false.
     fn key_in_facts(&mut self, lhs: &ast::Expr, rhs: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
         use crate::symbols::Presence;
-        let Some(key) = self.symbol_key_of(lhs) else {
+        let Some(key) = self.in_key_of(lhs) else {
             return (vec![], vec![]);
         };
         let Some((l, false, u)) = self.local_with_members(rhs) else {
@@ -366,8 +367,12 @@ impl FnCx<'_, '_> {
         };
         let (mut yes, mut no) = (vec![], vec![]);
         for (i, m) in members.into_iter().enumerate() {
-            let p = self.key_presence(m, &key);
-            if p != Some(Presence::No) {
+            // A value whose class is known only at run time may have it (`in_test`).
+            let (p, held) = match self.in_test(m, &key, lhs.span, false) {
+                Some((p, held)) => (Some(p), !held.is_empty()),
+                None => (None, false),
+            };
+            if p != Some(Presence::No) || held {
                 yes.push(i as u32);
             }
             if p != Some(Presence::Yes) {

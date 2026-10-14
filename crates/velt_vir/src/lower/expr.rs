@@ -217,6 +217,15 @@ impl FnLower<'_, '_> {
     }
 
     fn logical(&mut self, op: hir::LogicOp, lhs: &hir::Expr, rhs: &hir::Expr) -> Operand {
+        // A constant operand (`__intrinsic_holds_null`) decides here: no blocks, and the operand
+        // it skips is not lowered (std/prelude/map.vlt keeps one shape of code per `V`).
+        let and = op == hir::LogicOp::And;
+        match (self.const_cond(lhs), self.const_cond(rhs)) {
+            (Some(l), _) if l != and => return Operand::Const(vir::Const::Bool(l), Ty::Bool),
+            (Some(_), _) => return self.expr(rhs),
+            (None, Some(r)) if r == and => return self.expr(lhs),
+            _ => {}
+        }
         let l = self.expr(lhs);
         let res = self.temp(Ty::Bool);
         self.assign(Place::local(res), Rvalue::Use(l.clone()));
@@ -234,6 +243,33 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(Place::local(res))
+    }
+
+    /// The value of a condition known per instantiation without running it: built from
+    /// `__intrinsic_holds_null` with `!`, `&&` and `||` (std/prelude/map.vlt). Other constant
+    /// conditions are left to velt_opt, so their code keeps its shape.
+    pub(super) fn const_cond(&mut self, e: &hir::Expr) -> Option<bool> {
+        match &e.kind {
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsNull),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                Some(matches!(self.cx.kind(t), velt_sema::hir::TyKind::Option(..)))
+            }
+            hir::ExprKind::Unary {
+                op: hir::UnOp::Not,
+                expr,
+            } => self.const_cond(expr).map(|v| !v),
+            hir::ExprKind::Logical { op, lhs, rhs } => {
+                let and = *op == hir::LogicOp::And;
+                match self.const_cond(lhs)? {
+                    l if l != and => Some(l),
+                    _ => self.const_cond(rhs),
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Value-producing `if` (ternary): each branch stores its (owned) value into a join temp.

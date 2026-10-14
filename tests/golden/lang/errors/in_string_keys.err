@@ -1,0 +1,13 @@
+in_string_keys.vlt:27:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
+in_string_keys.vlt:28:22: error: the right operand of `in` must be an object, found `f64`
+in_string_keys.vlt:29:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
+in_string_keys.vlt:31:20: error: a value of type `{ x: f64; y: f64 }` converts to `P` by copying its fields, and this program tests a `P` for "y" with `in`: the copy lacks the original's other fields, which Node would find
+in_string_keys.vlt:21:10: here, or in the function this calls
+in_string_keys.vlt:32:15: error: cannot tell whether a `f64[]` has "length"
+in_string_keys.vlt:34:22: error: the right operand of `in` must be an object, found `{ a: f64 } | null`
+in_string_keys.vlt:36:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
+in_string_keys.vlt:37:15: error: the left operand of `in` must be a string, a number or a symbol, found `boolean` (TypeScript's TS2322)
+in_string_keys.vlt:39:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
+in_string_keys.vlt:42:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
+in_string_keys.vlt:44:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`
+in_string_keys.vlt:46:15: error: `in` with a key known only at run time is not supported on `{ a: f64 }`

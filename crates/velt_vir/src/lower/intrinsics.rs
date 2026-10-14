@@ -119,6 +119,21 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
             }
+            (I::HoldsNull, [a]) => {
+                let t = self.sub(a.ty);
+                let holds = matches!(self.cx.kind(t), hir::TyKind::Option(..));
+                Operand::Const(crate::vir::Const::Bool(holds), Ty::Bool)
+            }
+            (I::NullAs, []) => {
+                let t = self.sub(ty);
+                if matches!(self.cx.kind(t), hir::TyKind::Option(..)) {
+                    return self.none_value(t);
+                }
+                // Behind a `HoldsNull` test that is false here: never runs.
+                self.panic_msg("ICE: null as a type without null");
+                let vt = self.cx.ty(t);
+                self.zero_value(vt)
+            }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),
             (I::Share, [a]) => {

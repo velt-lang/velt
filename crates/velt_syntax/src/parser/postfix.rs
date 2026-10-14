@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
     /// `[ index ]`
     fn parse_index(&mut self) -> PResult<Expr> {
         self.bump(); // [
-        let index = self.parse_expr()?;
+        let index = self.allow_in(|p| p.parse_expr())?;
         self.expect(Tok::RBracket)?;
         Ok(index)
     }
@@ -205,7 +205,7 @@ impl<'a> Parser<'a> {
         let saved_flag = std::mem::replace(&mut self.hit_depth_limit, false);
         self.speculating += 1;
         self.bump();
-        let is_ternary = self.parse_assign().is_ok() && self.at(Tok::Colon);
+        let is_ternary = self.allow_in(|p| p.parse_assign()).is_ok() && self.at(Tok::Colon);
         let then_end = (self.pos, self.prev_hi);
         self.speculating -= 1;
         let too_deep = self.hit_depth_limit;
@@ -279,6 +279,10 @@ impl<'a> Parser<'a> {
 
     /// Comma-separated expressions / `...spread` up to (not including) `close`.
     pub(super) fn parse_elems(&mut self, close: Tok) -> PResult<Vec<Expr>> {
+        self.allow_in(|p| p.parse_elems_in(close))
+    }
+
+    fn parse_elems_in(&mut self, close: Tok) -> PResult<Vec<Expr>> {
         let mut out = Vec::new();
         while !self.at(close) {
             out.push(self.parse_elem()?);

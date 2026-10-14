@@ -254,3 +254,16 @@ fn for_in_needs_a_declared_name() {
     let errs = errors("async function f() { for await (const k in o) {} }");
     assert!(errs[0].contains("needs `of`"), "{errs:?}");
 }
+
+/// `"k" in o` is a relational operator anywhere, also in a `for (…;…;…)` condition and inside
+/// the places JavaScript's grammar allows it in the loop's head (parentheses, call arguments,
+/// template substitutions, array and object literals, index brackets, a conditional's
+/// consequent, function bodies); `for (k in o)` stays the loop's `in`.
+#[test]
+fn in_operator_with_string_keys() {
+    parse_ok(
+        r#"function f() { const t = "a" in o && !("b" in o); const u = "c" in o ? 1 : 2; for (let i = 0; "a" in o; i++) {} for (x = ("a" in o); ;) {} for (g = () => { return "a" in o; }; ;) {} for (x = id("a" in o); x; x = false) {} for (s = `${"a" in o}`; ;) {} for (y = true ? "a" in o ? 1 : 2 : 3; ;) {} for (z = ["a" in o, { b: "a" in o }][r["a" in o ? 0 : 1]]; ;) {} }"#,
+    );
+    let errs = errors("function f() { for (x.y in o) {} }");
+    assert!(errs[0].contains("require `const` or `let`"), "{errs:?}");
+}

@@ -54,7 +54,7 @@ export class Record<K, V> {
 
   /** A literal-key record holds every key (sema checks literals; JSON checks documents). */
   __at(key: K): V {
-    return this.entries.get(key).unwrap();
+    return this.entries.__at(key);
   }
 
   __set(key: K, value: V) {
@@ -228,4 +228,36 @@ export class Object {
   static entries<K, V>(r: Record<K, V>): [K, V][] {
     return r.__entries();
   }
+}
+
+/**
+ * `k in r` for a key known only at run time: whether `key` names a member every object inherits
+ * from `Object.prototype` (sema tests the record's own entries first).
+ */
+export function __objectPrototypeKey(key: string): bool {
+  switch (key) {
+    case "__defineGetter__":
+    case "__defineSetter__":
+    case "__lookupGetter__":
+    case "__lookupSetter__":
+    case "__proto__":
+    case "constructor":
+    case "hasOwnProperty":
+    case "isPrototypeOf":
+    case "propertyIsEnumerable":
+    case "toLocaleString":
+    case "toString":
+    case "valueOf":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
+ * `key`, or `key` names a member every object inherits from `Object.prototype`.
+ */
+export function __recordIn<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || __objectPrototypeKey(key);
 }

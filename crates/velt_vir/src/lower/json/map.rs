@@ -61,9 +61,9 @@ impl FnLower<'_, '_> {
         let len = self.order_len(order, len);
         self.count_loop(k, len, |lw, i| {
             let i = lw.order_pos(order, i);
-            // A deleted entry's value slot is null.
+            // A deleted entry's value slot is null (glue/format_map.rs `map_entry_live`).
             let slot = lw.elem_place(&values, i.clone(), slot_t);
-            let live = lw.option_is_some(&slot, slot_t);
+            let (live, vp) = lw.map_entry_live(place, ty, (i.clone(), &slot, slot_t, vt));
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
@@ -78,7 +78,6 @@ impl FnLower<'_, '_> {
             let kp = lw.elem_place(&keys, i, kt);
             lw.json_write(buf, &kp, kt);
             lw.push_text(buf, ":");
-            let vp = lw.some_payload(&slot, slot_t);
             lw.json_write_at(buf, &vp, vt, super::key::JsonKey::Str(&kp));
             lw.goto(skip);
             lw.switch_to(skip);

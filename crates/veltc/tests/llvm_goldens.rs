@@ -109,6 +109,7 @@ fn inline_helpers_with_llvm() {
     let failures: Vec<String> = [
         "lang/float_remainder",
         "lang/numbers_int32_ops",
+        "lang/number_globals",
         "lang/string_fast_paths",
         "lang/string_compare_literals",
         "lang/char_code_at",

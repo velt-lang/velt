@@ -5,9 +5,11 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::in_keys::InKey;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
-use crate::hir::{self, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::object_copies::Seen;
 use crate::symbols::Presence;
 
 /// The well-known symbols (std/symbol.vlt `SymbolConstructor`), which name members as
@@ -126,10 +128,11 @@ impl FnCx<'_, '_> {
         true
     }
 
-    /// `key in o` with a symbol key (a symbol constant or a well-known symbol): whether the
-    /// value has that member, known from its type (on a union, from the member it holds), and
-    /// for an optional member of an object type or interface (`[KEY]?: T`), whether it is
-    /// present (tested at run time).
+    /// `key in o` with a key known while compiling (a symbol constant, a well-known symbol or a
+    /// string literal): whether the value has that member, known from its type (on a union,
+    /// from the member it holds), and for an optional member of an object type or interface
+    /// (`[KEY]?: T`, `a?: T`) or a record's entry, whether it is present (tested at run time).
+    /// A key known only at run time is `in_keys.rs`'s.
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
         // `"a" in #tmp`, built by a destructuring default for an optional field with a presence
         // flag (`pattern_defaults.rs`); source code cannot write it (no node id).
@@ -139,17 +142,8 @@ impl FnCx<'_, '_> {
             let obj = self.expr(rhs, None, Want::Borrow);
             return self.present_test(obj, name, true, span);
         }
-        let Some(key) = self.symbol_key_of(lhs) else {
-            self.expr(lhs, None, Want::Borrow);
-            self.expr(rhs, None, Want::Borrow);
-            self.cx.error(
-                Diagnostic::error(
-                    "the left operand of `in` must be a symbol the compiler knows",
-                    lhs.span,
-                )
-                .with_note("Velt objects have fixed fields, so `in` tests a key known while compiling: a module constant initialized with `Symbol(\"...\")` or `Symbol.for(\"...\")`, a well-known symbol (`Symbol.iterator`), or a private name (`#x in o`)"),
-            );
-            return self.error_expr(span);
+        let Some(key) = self.in_key_of(lhs) else {
+            return self.dynamic_key_in(lhs, rhs, span);
         };
         let s = self.expr(rhs, None, Want::Borrow);
         if self.cx.ty.is_bottom(s.ty) {
@@ -174,35 +168,49 @@ impl FnCx<'_, '_> {
         let members = self.cx.union_members(sty).unwrap_or_else(|| vec![sty]);
         let mut found = Vec::with_capacity(members.len());
         for &m in &members {
-            match self.key_presence(m, &key) {
+            match self.in_test(m, &key, lhs.span, true) {
                 Some(p) => found.push(p),
-                None => {
-                    let (shown, tn) = (self.cx.shown_name(&key), self.cx.display(m));
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("cannot tell whether a `{tn}` has `{shown}`"),
-                            lhs.span,
-                        )
-                        .with_note("Velt knows the well-known symbols of built-in and standard library types only for `Symbol.iterator` and `Symbol.asyncIterator`"),
-                    );
-                    return self.error_expr(span);
-                }
+                None => return self.error_expr(span),
             }
         }
         let mut arms = vec![];
         let b = self.cx.ty.bool_;
-        for (v, (&m, p)) in members.iter().zip(&found).enumerate() {
+        for (v, (&m, (p, held))) in members.iter().zip(&found).enumerate() {
+            if *p == Presence::No {
+                if let InKey::Str(k) = &key {
+                    // A copy made for a narrower object type lacks the original's other fields.
+                    let at = self.cx.object_copies.in_key(k);
+                    self.cx.object_copies.observe(m, span, Seen::In(at));
+                }
+            }
+            if *p == Presence::Optional(false) {
+                // Not-null stands for present: wrong once the field may hold `undefined`.
+                let test = (key.name().to_string(), m, span);
+                self.cx.object_copies.in_optional.push(test);
+            }
             let (pat, body) = match p {
-                Presence::No => continue,
+                Presence::No if held.is_empty() => continue,
                 Presence::Yes => {
                     let wild = self.pat(P::Wildcard, m, span);
                     (wild, self.mk(H::Lit(hir::Lit::Bool(true)), b, span))
                 }
-                Presence::Optional(flag) => {
+                _ => {
                     let (l, mode) = self.option_binding(&s, m, "<in>", false);
                     let bind = self.pat(P::Binding(l, mode), m, span);
                     let obj = self.mk(H::Local(l, hir::UseMode::Borrow), m, span);
-                    (bind, self.present_test(obj, &key, *flag, span))
+                    let test = match p {
+                        Presence::Optional(flag) => self.present_test(obj, key.name(), *flag, span),
+                        Presence::Entry => {
+                            let lit = ast::Expr {
+                                id: ast::NodeId(u32::MAX),
+                                kind: ast::ExprKind::Lit(ast::Lit::Str(key.name().to_string())),
+                                span: lhs.span,
+                            };
+                            self.record_call(obj, "__has", &[lit], span)
+                        }
+                        _ => self.mk(H::Lit(hir::Lit::Bool(false)), b, span),
+                    };
+                    (bind, self.class_or(l, m, held, test, span))
                 }
             };
             let pat = match union {
@@ -232,6 +240,41 @@ impl FnCx<'_, '_> {
         }
         let kind = H::Match {
             scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, b, span)
+    }
+
+    /// `test`, or `true` when the value bound to `l` (type `t`) is an instance of one of the
+    /// classes `held` (`match (l) { InstanceOf(C) => true, ..., _ => test }`).
+    fn class_or(
+        &mut self,
+        l: hir::LocalId,
+        t: TyId,
+        held: &[DefId],
+        test: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        if held.is_empty() {
+            return test;
+        }
+        let b = self.cx.ty.bool_;
+        let mut arms: Vec<hir::Arm> = held
+            .iter()
+            .map(|&c| hir::Arm {
+                pat: self.pat(P::InstanceOf(c), t, span),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Bool(true)), b, span),
+            })
+            .collect();
+        arms.push(hir::Arm {
+            pat: self.pat(P::Wildcard, t, span),
+            guard: None,
+            body: test,
+        });
+        let obj = self.mk(H::Local(l, hir::UseMode::Borrow), t, span);
+        let kind = H::Match {
+            scrutinee: Box::new(obj),
             arms,
         };
         self.mk(kind, b, span)
