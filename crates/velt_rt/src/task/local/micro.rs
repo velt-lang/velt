@@ -126,3 +126,21 @@ impl Future for Microtask {
 pub extern "C" fn velt_rt_microtask() -> *mut VeltFut {
     leaf::new_leaf(Microtask { slot: None })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::task::{Context, Waker};
+
+    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, READY};
+
+    #[test]
+    fn a_microtask_outside_a_task_is_ready_at_once() {
+        let f = super::velt_rt_microtask();
+        let mut cx = Context::from_waker(Waker::noop());
+        // SAFETY: a live leaf, polled and dropped once.
+        unsafe {
+            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx)), READY);
+            velt_rt_fut_drop(f);
+        }
+    }
+}

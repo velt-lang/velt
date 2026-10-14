@@ -169,7 +169,11 @@ fn schedule(id: usize) {
 
 /// Wake `w` so that its task runs next (before the tasks already queued): how a finished
 /// promise resumes whoever awaits it, like a JS microtask. Other wakers are woken normally.
+/// While microtasks run, it goes first in their queue: velt_rt resumes the awaiter at once.
 pub fn wake_next(w: Waker) {
+    let Err(w) = micro_first(w) else {
+        return;
+    };
     if !std::ptr::eq(w.vtable(), &VTABLE) {
         w.wake();
         return;
@@ -181,6 +185,20 @@ pub fn wake_next(w: Waker) {
         }
         e.ready.push_front(id);
     });
+}
+
+/// Put `w` first in the microtask queue when it is not empty; gives it back otherwise.
+fn micro_first(w: Waker) -> Result<(), Waker> {
+    with_exec(|e| {
+        if e.micro.is_empty() {
+            return Err(w);
+        }
+        e.micro.push_front(Rc::new(MicroSlot {
+            fired: Cell::new(false),
+            waker: RefCell::new(Some(w)),
+        }));
+        Ok(())
+    })
 }
 
 /// `velt_rt_microtask`: ready once the queue reached it (at once outside `block_on`).
