@@ -52,7 +52,8 @@ cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 cp "$TARGET/release/libvelt_rt.a" "$WORK/rt-b.a"
 VELT="$TARGET/release/velt"
 
-# name|source|arguments: the string-heavy benchmarks, the ones a string runtime change can move.
+# name|source|arguments: the string-heavy benchmarks, the ones a string runtime change can move,
+# and SQLite rows into typed values.
 benches() {
   local b=$ROOT/bench f rel
   for f in "$b"/strings.vlt "$b"/sort.vlt "$b"/hashmap.vlt "$b"/strings_utf16/*.vlt "$b"/json/*.vlt; do
@@ -63,6 +64,8 @@ benches() {
     echo "typical/$n|$b/typical/$n.vlt|"
   done
   echo "typical/consume 1000000|$b/typical/consume.vlt|1000000"
+  echo "sqlite/rows feed|$b/sqlite/rows.vlt|feed 2000"
+  echo "sqlite/rows post|$b/sqlite/rows.vlt|post 2000"
 }
 
 # one "name|source|arguments": prints "name\tA\tB\tsame|DIFF".

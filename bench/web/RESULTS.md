@@ -15,6 +15,20 @@ ref=<branch>`): the fortunes test for `velt` and `velt-tsx` on a GitHub `ubuntu-
 the run and the raw `.jsonl`/`.md` as the `bench-web-arm64` artifact. Its req/s compare the
 servers within one run; they are not comparable with the tables below.
 
+## Azure D48ads_v5, pinned — 2026-10-10
+
+AMD EPYC 7763; each server pinned to 8 physical cores (`SERVER_CPUS`), Postgres to 4 cores with
+their SMT siblings, wrk to the rest (`CLIENT_CPUS`); 10 s runs, `DB_POOL=16`. Raw rows and table:
+`results/azure-d48ads_v5-pinned-20261010.*`. *velt-shards* there is the prototype of the per-core
+scheduler, run today as `SERVERS=velt-per-core` (`VELT_SCHEDULER=per-core`).
+
+- **JSON, 64 connections:** velt-shards 556k req/s, velt 345k, Rust/axum 346k, Node cluster 243k,
+  Go 229k, Bun 63k, Node 30k. The per-core scheduler is worth +61 % here (#717).
+- **Plaintext, pipelined:** velt 3.27–3.34M, Rust 737k, Go 399k.
+- **Database tests** are bound by the 16-connection pool's round trips (Postgres at 3.5–3.9 of its
+  8 vCPUs): single query velt 51k against Go and Rust 54k (about 5 % more latency per query in
+  the driver), fortunes 46k against 51k, queries×20 33k (Go 31k, Rust 15k).
+
 ## Fortunes in TSX (`velt-tsx`, #78)
 
 The `velt-tsx` server is `velt` with the fortunes page written in TSX (`velt-tsx/fortunes.tsx`,

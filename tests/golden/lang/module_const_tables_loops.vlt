@@ -1,0 +1,117 @@
+// Tables read across modules (by name and through a namespace), from many tasks at once, and in
+// loops left every way a loop can be left. A loop variable is a copy: changing it leaves the
+// table as it was.
+import { HALVES, PRIMES, primeAt } from "./_module_const_tables_lib";
+import * as lib from "./_module_const_tables_lib";
+
+const STEPS: i64[] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+function firstOver(limit: i64): i64 {
+  for (const s of STEPS) {
+    if (s > limit) {
+      return s;
+    }
+  }
+  return -1;
+}
+
+function failAt(limit: i64): i64 {
+  let seen: i64 = 0;
+  for (const s of STEPS) {
+    if (s == limit) {
+      throw new Error(`stopped at ${s} after ${seen}`);
+    }
+    seen += s;
+  }
+  return seen;
+}
+
+async function worker(id: i64): Promise<i64> {
+  let total: i64 = 0;
+  for (const s of STEPS) {
+    total += s * id;
+    await yieldNow();
+    total += PRIMES[(s % 6) as usize] as i64;
+  }
+  return total + (STEPS.length as i64);
+}
+
+async function main() {
+  // Another module's tables.
+  let named: i64 = 0;
+  for (const p of PRIMES) {
+    named += p as i64;
+  }
+  let spaced: i64 = 0;
+  for (const p of lib.PRIMES) {
+    spaced += p as i64;
+  }
+  console.log(
+    PRIMES.length,
+    lib.PRIMES.length,
+    PRIMES[5],
+    lib.PRIMES[0],
+    primeAt(3),
+    named,
+    spaced,
+  );
+  let halves = 0.0;
+  for (let i: usize = 0; i < lib.HALVES.length; i++) {
+    halves += HALVES[i] + lib.HALVES[i];
+  }
+  console.log(halves, HALVES.length);
+
+  // break, continue, a labelled exit, return and throw.
+  let broke: i64 = 0;
+  for (const s of STEPS) {
+    if (s == 4) {
+      break;
+    }
+    broke += s;
+  }
+  let skipped: i64 = 0;
+  for (const s of STEPS) {
+    if (s % 2 == 0) {
+      continue;
+    }
+    skipped += s;
+  }
+  let pairs: i64 = 0;
+  outer: for (const a of STEPS) {
+    for (const b of STEPS) {
+      if (b > a) {
+        continue outer;
+      }
+      if (a == 6) {
+        break outer;
+      }
+      pairs += 1;
+    }
+  }
+  console.log(broke, skipped, pairs, firstOver(5), firstOver(8));
+  try {
+    console.log(failAt(9), failAt(4));
+  } catch (e) {
+    console.log(e.message);
+  }
+
+  // The loop variable is a copy.
+  let bumped: i64 = 0;
+  for (let s of STEPS) {
+    s += 100;
+    bumped += s;
+  }
+  console.log(bumped, STEPS, STEPS[0], STEPS[7]);
+
+  // Many tasks reading the same tables across an await.
+  const tasks: Promise<i64>[] = [];
+  for (let id: i64 = 0; id < 300; id++) {
+    tasks.push(spawn(worker(id)));
+  }
+  const totals = await Promise.all(tasks);
+  let sum: i64 = 0;
+  for (const t of totals) {
+    sum += t;
+  }
+  console.log(totals.length, totals[0], totals[299], sum);
+}

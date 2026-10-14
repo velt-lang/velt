@@ -80,7 +80,15 @@ fn query(stmt: StmtHandle, params: &str, first_only: bool) -> Result<String, Str
     // SAFETY: as above.
     unsafe {
         velt_rt_sqlite_query(stmt, &s(params), first_only as u8, out.as_mut_ptr());
-        result(out.assume_init()).map(|v| take(v))
+        result(out.assume_init()).map(|v| {
+            // The rows are parked for the JSON reader; here, read them as the text they stand for.
+            match crate::json::rows_bin::take_pending(v.as_bytes()) {
+                Some(rows) => {
+                    String::from_utf8(crate::json::rows_bin::to_json(&rows).unwrap()).unwrap()
+                }
+                None => take(v),
+            }
+        })
     }
 }
 
@@ -159,7 +167,8 @@ fn values_round_trip_with_their_types() {
         sql_query(db, "SELECT * FROM v", "").unwrap(),
         concat!(
             r#"[{"i":9223372036854775807,"f":0.1,"t":"q\"\né","b":[0,255],"n":null,"ok":true},"#,
-            r#"{"i":-9007199254740993,"f":1e300,"t":"","b":[],"n":1,"ok":false}]"#
+            // The float as `rows_bin::to_json` writes it (JavaScript's form).
+            r#"{"i":-9007199254740993,"f":1e+300,"t":"","b":[],"n":1,"ok":false}]"#
         )
     );
     // Booleans only come back as `true`/`false` from a BOOLEAN column, not from expressions.
