@@ -14,11 +14,14 @@ compiler knows exactly what each function and each `try` block can throw.
   `this.name = "AppError"` in the constructor), and `String(e)`, `` `${e}` `` and `e.toString()`
   give `"<name>: <message>"` (only the name when the message is empty, only the message when the
   name is). `name` is `Error`'s: a subclass may declare it again (`name: string;`), give it an
-  initializer (`name = "AppError"`, which sets it right after `super(...)` like the class's other
-  initializers) or redefine it with a getter (`get name() { … }`), which `toString()` then
-  reads. A union of error classes (`AppError | TypeError`, a `catch` variable) and a nullable
-  error have `e.name` and `e.toString()` too, and are written the same way in templates, by
-  `String(e)` and by string concatenation (`null` for `null`). `console.log(e)` and `JSON.stringify(e)` leave it out. The standard error classes
+  initializer (`name = "AppError"`, which runs after `super(...)` in its place among the class's
+  other initializers; a subclass's runs after its base class's) or redefine it with a getter
+  (`get name() { … }`), which `toString()` then reads. A union of error classes
+  (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
+  `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
+  concatenation (`null` for `null`, `undefined` for `undefined`). Arrays of errors are written as
+  JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
+  `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
   `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
   `Error` with their own names; throw, catch, test (`instanceof`) and extend them like any
   error class:

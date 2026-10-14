@@ -169,13 +169,34 @@ fn field_defaults(
     }
     out.resize(start, None);
     out.extend(own);
-    // Inherited fields this class initializes itself (`AdtInfo::redefined`).
-    let a = cx.adt(d).expect("ICE: adt");
-    for (i, _) in &a.redefined {
-        out[*i] = a.fields[*i].default.clone();
-    }
     memo.insert(d, out.clone());
     out
+}
+
+/// `AdtDef::inherited_inits` of class `d`: its base classes' (with the base's type args), then
+/// its own (`AdtInfo::redefined`).
+fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (base, own) = (a.base, a.redefined.clone());
+    let (mut out, depth) = match base.and_then(|b| cx.class_of(b)) {
+        Some((bd, bargs)) => {
+            let (mut inits, depth) = inherited_inits(cx, bd);
+            for i in &mut inits {
+                crate::visit::map_expr_types(&mut i.init, &mut |t| cx.subst(t, &bargs));
+            }
+            (inits, depth + 1)
+        }
+        None => (vec![], 0),
+    };
+    out.extend(own.into_iter().filter_map(|r| {
+        Some(hir::FieldInit {
+            field: r.field as u32,
+            depth,
+            at: r.at as u32,
+            init: r.init?,
+        })
+    }));
+    (out, depth)
 }
 
 fn adt_def(
@@ -185,6 +206,7 @@ fn adt_def(
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
+    let inherited_inits = inherited_inits(cx, d).0;
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
     let private_fields = a
@@ -235,6 +257,7 @@ fn adt_def(
         opaque,
         assigned,
         base,
+        inherited_inits,
         ctor,
         dispose,
         to_string,

@@ -446,7 +446,13 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
                     .iter()
                     .position(|g| cx.plain_private(g.private_to, &g.name))
                     .expect("ICE: error class without `#name`");
-                redefined.push((i, f.name.clone()));
+                redefined.push(crate::defs::Redefined {
+                    field: i,
+                    at: all.len(),
+                    name: f.name.clone(),
+                    init: None,
+                    throws: vec![],
+                });
             } else if !f.has_default
                 && !matches!(cx.ty.kind(f.declared), TyKind::Str | TyKind::Literal(_))
             {

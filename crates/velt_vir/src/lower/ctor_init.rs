@@ -45,13 +45,26 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// How many fields the class declaring constructor `ctor` has (its own and inherited
-    /// ones): the initializers of those run inside `ctor`.
-    pub(super) fn ctor_fields(&mut self, ctor: DefId) -> usize {
+    /// The class declaring constructor `ctor`.
+    fn ctor_owner(&mut self, ctor: DefId) -> DefId {
         match self.cx.fn_def(ctor).self_ty.map(|t| self.cx.kind(t)) {
-            Some(TyKind::Adt(d, _)) => self.cx.adt_def(d).fields.len(),
+            Some(TyKind::Adt(d, _)) => d,
             _ => ice("constructor without a class `this`"),
         }
+    }
+
+    /// How many base classes class `d` has (`hir::FieldInit::depth`).
+    fn class_depth(&mut self, d: DefId) -> u32 {
+        let mut n = 0;
+        let mut base = self.cx.adt_def(d).base;
+        while let Some(b) = base {
+            let TyKind::Adt(bd, _) = self.cx.kind(b) else {
+                break;
+            };
+            n += 1;
+            base = self.cx.adt_def(bd).base;
+        }
+        n
     }
 
     /// On entry to the constructor of a class without a base class: every field initializer of
@@ -60,7 +73,7 @@ impl FnLower<'_, '_> {
         let Some(ty) = self.ctor_self else { return };
         if self.cx.bases_of(ty).is_empty() {
             let this = self.local_place(LocalId(0));
-            self.init_fields(&this, ty, 0, true);
+            self.init_fields(&this, ty, None, true);
         }
     }
 
@@ -86,7 +99,7 @@ impl FnLower<'_, '_> {
         };
         let this = self.local_place(LocalId(0));
         self.push_scope(ScopeKind::Temps);
-        self.init_fields(&this, ty, 0, true);
+        self.init_fields(&this, ty, None, true);
         self.pop_scope();
     }
 
@@ -97,118 +110,82 @@ impl FnLower<'_, '_> {
         if self.base_ctor(ty) != Some(def) || self.dead() {
             return;
         }
-        let from = self.ctor_fields(def);
         let this = self.local_place(LocalId(0));
-        self.init_redefined(&this, ty, def);
-        self.init_fields(&this, ty, from, false);
+        self.init_fields(&this, ty, Some(def), false);
     }
 
-    /// `init_redefined` after the constructor `new` calls for class `ty` (none: `init_fields`
-    /// runs every initializer).
-    fn new_redefined(&mut self, obj: &Place, ty: TyId) {
-        if let TyKind::Adt(d, _) = self.cx.kind(ty) {
-            if let Some(ctor) = self.cx.adt_def(d).ctor {
-                self.init_redefined(obj, ty, ctor);
-            }
-        }
-    }
-
-    /// The class declaring constructor `ctor`.
-    fn ctor_owner(&mut self, ctor: DefId) -> DefId {
-        match self.cx.fn_def(ctor).self_ty.map(|t| self.cx.kind(t)) {
-            Some(TyKind::Adt(d, _)) => d,
-            _ => ice("constructor without a class `this`"),
-        }
-    }
-
-    /// The initializers that classes below the one declaring constructor `ctor` give fields
-    /// they inherit from it or above (sema's `AdtInfo::redefined`: an error class's
-    /// `name = "AppError"`): a field of class `ty` (concrete) whose initializer is not the one
-    /// of that class's field, which the constructor ran. Stored like `init_fields` does.
-    fn init_redefined(&mut self, obj: &Place, ty: TyId, ctor: DefId) {
-        let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
-            ice("field initializers of a non-class type")
-        };
-        let owner = self.ctor_owner(ctor);
-        let ran: Vec<Option<velt_common::Span>> = self
-            .cx
-            .adt_def(owner)
-            .fields
-            .iter()
-            .map(|f| f.default.as_ref().map(|e| e.span))
-            .collect();
-        let adt = self.cx.adt_def(d);
-        let redefined: Vec<usize> = (0..ran.len())
-            .filter(|&i| {
-                let own = adt.fields[i].default.as_ref().map(|e| e.span);
-                own.is_some() && own != ran[i]
-            })
-            .collect();
-        if redefined.is_empty() {
-            return;
-        }
-        let ftys = self.cx.adt_field_tys(ty);
-        let saved = std::mem::replace(&mut self.targs, cargs);
-        for i in redefined {
-            let def = self.cx.adt_def(d).fields[i]
-                .default
-                .clone()
-                .unwrap_or_else(|| ice("redefined field without an initializer"));
-            let v = self.consume(&def);
-            let p = self.field_place(obj, ty, i as u32);
-            let fty = ftys[i];
-            if !self.cx.needs_drop(fty) {
-                self.store(p, v);
-            } else {
-                let vt = self.cx.ty(fty);
-                let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
-                self.store(p, v);
-                self.drop_glue(Place::local(old), fty);
-            }
-        }
-        self.targs = saved;
-    }
-
-    /// Store the initializer of every field of class `ty` (concrete) from index `from` on
-    /// into the object `obj` points to, evaluated in the class's type context.
+    /// Store the initializers of class `ty` (concrete) that do not run inside constructor
+    /// `ctor` (none: all of them) into the object `obj` points to, evaluated in the class's
+    /// type context: those of the fields the class declaring `ctor` doesn't have, and the
+    /// initializers classes below it give inherited fields (`hir::AdtDef::inherited_inits`),
+    /// each where it is declared.
     ///
     /// `fresh`: nothing has run on the object yet (its fields are still zeroed), so the values
     /// are plainly stored. Otherwise a base constructor ran first and may have assigned these
     /// fields (through an overridden method): each initializer then replaces the field like
-    /// `this.f = v` does, dropping the old value (a zeroed field drops as nothing).
-    pub(super) fn init_fields(&mut self, obj: &Place, ty: TyId, from: usize, fresh: bool) {
+    /// `this.f = v` does, dropping the old value (a zeroed field drops as nothing). An
+    /// inherited field's initializer always replaces it.
+    pub(super) fn init_fields(&mut self, obj: &Place, ty: TyId, ctor: Option<DefId>, fresh: bool) {
         let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
             ice("field initializers of a non-class type")
+        };
+        let (from, below) = match ctor {
+            Some(c) => {
+                let owner = self.ctor_owner(c);
+                let depth = self.class_depth(owner);
+                (self.cx.adt_def(owner).fields.len(), depth + 1)
+            }
+            None => (0, 0),
         };
         let adt = self.cx.adt_def(d);
         let ftys = self.cx.adt_field_tys(ty);
         let saved = std::mem::replace(&mut self.targs, cargs);
-        for (i, f) in adt.fields.iter().enumerate().skip(from) {
-            if let Some(def) = &f.default {
-                let v = self.consume(def);
-                let p = self.field_place(obj, ty, i as u32);
-                let fty = ftys[i];
-                if fresh || !self.cx.needs_drop(fty) {
-                    self.store(p, v);
-                } else {
-                    // Store first, then drop the old value: its `dispose` may reach the object.
-                    let vt = self.cx.ty(fty);
-                    let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
-                    self.store(p, v);
-                    self.drop_glue(Place::local(old), fty);
-                }
+        let mut inherited = adt
+            .inherited_inits
+            .iter()
+            .filter(|fi| fi.depth >= below)
+            .peekable();
+        for i in from..=adt.fields.len() {
+            while let Some(fi) = inherited.next_if(|fi| fi.at as usize <= i) {
+                let k = fi.field as usize;
+                self.init_field(obj, ty, k, &fi.init, ftys[k], false);
+            }
+            if let Some(def) = adt.fields.get(i).and_then(|f| f.default.as_ref()) {
+                self.init_field(obj, ty, i, def, ftys[i], fresh);
             }
         }
         self.targs = saved;
     }
 
-    /// The initializers `new` runs for class `ty` (concrete) from field `from` on: inline, or
-    /// through the out-of-line initializer when they are already being inlined here.
-    pub(super) fn new_inits(&mut self, obj: &Place, ty: TyId, from: usize) {
+    /// Store initializer `def` into field `i` of `obj` (`init_fields`).
+    fn init_field(
+        &mut self,
+        obj: &Place,
+        ty: TyId,
+        i: usize,
+        def: &hir::Expr,
+        fty: TyId,
+        fresh: bool,
+    ) {
+        let v = self.consume(def);
+        let p = self.field_place(obj, ty, i as u32);
+        if fresh || !self.cx.needs_drop(fty) {
+            self.store(p, v);
+        } else {
+            // Store first, then drop the old value: its `dispose` may reach the object.
+            let vt = self.cx.ty(fty);
+            let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
+            self.store(p, v);
+            self.drop_glue(Place::local(old), fty);
+        }
+    }
+
+    /// The initializers `new` runs for class `ty` (concrete) after its constructor `ctor`:
+    /// inline, or through the out-of-line initializer when they are already being inlined here.
+    pub(super) fn new_inits(&mut self, obj: &Place, ty: TyId, ctor: Option<DefId>) {
         if !self.init_stack.contains(&ty) {
             self.init_stack.push(ty);
-            self.new_redefined(obj, ty);
-            self.init_fields(obj, ty, from, false);
+            self.init_fields(obj, ty, ctor, false);
             self.init_stack.pop();
             return;
         }
@@ -235,12 +212,11 @@ impl FnLower<'_, '_> {
     /// for class `ty` after its constructor, throwing `err`.
     pub(super) fn build_init(cx: &mut Cx<'_>, ty: TyId, err: Option<TyId>) -> Function {
         let unit = cx.intern(TyKind::Unit);
-        let from = match cx.kind(ty) {
+        let ctor = match cx.kind(ty) {
             TyKind::Adt(d, _) => cx.adt_def(d).ctor,
             _ => ice("initializer of a non-class type"),
         };
         let mut lw = FnLower::bare(cx, vec![]);
-        let from = from.map_or(0, |c| lw.ctor_fields(c));
         let this = lw.new_local(Ty::Ptr, Some("this".into()));
         let mut params = vec![Ty::Ptr];
         lw.ret_ty = Some(unit);
@@ -252,8 +228,7 @@ impl FnLower<'_, '_> {
         }
         lw.init_stack.push(ty);
         lw.push_scope(ScopeKind::Block);
-        lw.new_redefined(&Place::local(this), ty);
-        lw.init_fields(&Place::local(this), ty, from, false);
+        lw.init_fields(&Place::local(this), ty, ctor, false);
         lw.emit_return(None);
         lw.pop_scope();
         let tag = err.map_or(String::new(), |e| format!("E{}_", e.0));

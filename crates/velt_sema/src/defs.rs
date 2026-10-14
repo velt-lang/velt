@@ -295,6 +295,21 @@ pub(crate) struct FieldInfo {
     pub private_to: Option<DefId>,
 }
 
+/// An initializer a class gives a field it inherits (`AdtInfo::redefined`).
+#[derive(Clone, Debug)]
+pub(crate) struct Redefined {
+    /// The field (an index into `AdtInfo::fields`).
+    pub field: usize,
+    /// It runs right before the initializer of field `at`, one of the class's own
+    /// (`fields.len()`: after the last).
+    pub at: usize,
+    /// The name the class declares it by.
+    pub name: String,
+    pub init: Option<hir::Expr>,
+    /// What evaluating `init` may throw (as `FieldInfo::default_throws`).
+    pub throws: Vec<ThrowSrc>,
+}
+
 pub(crate) struct AdtInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -305,10 +320,10 @@ pub(crate) struct AdtInfo<'m> {
     /// All fields; for classes the base class's fields come first.
     pub fields: Vec<FieldInfo>,
     pub own_fields_start: usize,
-    /// Inherited fields this class gives an initializer of its own, with the name it declares
-    /// them by: an error class's `name = "AppError"` (the prelude `Error`'s `#name`). It runs
-    /// with the class's own initializers, as the assignment `this.name = …` would.
-    pub redefined: Vec<(usize, String)>,
+    /// Inherited fields this class gives an initializer of its own: an error class's
+    /// `name = "AppError"` (the prelude `Error`'s `#name`). They run among the class's own
+    /// initializers, in declaration order (hir `AdtDef::inherited_inits`).
+    pub redefined: Vec<Redefined>,
     pub base: Option<TyId>,
     pub methods: HashMap<String, MethodRef>,
     /// Constructor: own, or inherited from the nearest base class that has one.

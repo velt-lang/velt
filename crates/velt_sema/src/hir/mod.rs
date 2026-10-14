@@ -363,6 +363,22 @@ pub struct FieldDef {
     pub presence: bool,
 }
 
+/// An initializer a class gives a field it inherits: an error class's `name = "AppError"`
+/// sets the prelude `Error`'s `#name` (`AdtDef::inherited_inits`).
+#[derive(Clone, Debug)]
+pub struct FieldInit {
+    /// The field it stores (an index into `AdtDef::fields`).
+    pub field: u32,
+    /// Depth of the class declaring it: 0 for a class without a base class, 1 for its
+    /// subclasses, and so on. It runs with that class's initializers.
+    pub depth: u32,
+    /// It runs right before the initializer of field `at`, one of the declaring class's own
+    /// fields (that class's field count: after the last), after any earlier one with the
+    /// same `at`.
+    pub at: u32,
+    pub init: Expr,
+}
+
 #[derive(Clone, Debug)]
 pub struct AdtDef {
     pub name: String,
@@ -386,6 +402,12 @@ pub struct AdtDef {
     pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
+    /// Classes: initializers this class and its base classes give fields they inherit, base
+    /// classes' first, each class's in declaration order (inherited ones with the base's type
+    /// arguments substituted, as `FieldDef::default`). The field's own `default` stays the
+    /// declaring class's; a constructor or `new` runs these where `at` says, as the
+    /// assignment `this.<field> = init` there would.
+    pub inherited_inits: Vec<FieldInit>,
     /// Classes: constructor `Def::Fn` (None: every field has a default).
     pub ctor: Option<DefId>,
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it
