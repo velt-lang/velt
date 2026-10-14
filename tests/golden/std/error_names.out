@@ -1,0 +1,18 @@
+AppError boom AppError: boom AppError: boom E1
+[ 'AppError: boom' ]
+Error Error: p
+true TypeError
+TypeError: a TypeError true
+RangeError: b RangeError true
+SyntaxError: c SyntaxError true
+ReferenceError: d ReferenceError true
+EvalError: e EvalError true
+URIError: f URIError true
+Error: g Error true
+Error Error true
+TypeError true true TypeError: bad age age
+Named: n true
+only message
+5
+range: -1 is negative RangeError: -1 is negative
+type: TypeError bad n

@@ -219,6 +219,7 @@ fn adt_info(m: usize, t: &ast::TypeDecl, kind: AdtKind, qual: String) -> DefInfo
         generics: generic_names(&t.generics),
         fields: vec![],
         own_fields_start: 0,
+        redefined: vec![],
         base: None,
         methods: HashMap::new(),
         ctor: None,

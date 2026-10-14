@@ -15,7 +15,13 @@ Maintainer-owned, like `hir/mod.rs` and `hir/intrinsic.rs`.
   a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
   class); `new` evaluates the rest (those of the classes below the one declaring the
   constructor, or all of them without one) after the constructor returns. Sema's throw sets
-  follow the same split.
+  follow the same split. `FieldDef::default` is always the declaring class's initializer;
+  `AdtDef::inherited_inits` (additive) lists the initializers classes give fields they
+  inherit (an error class's `name = "AppError"` sets the prelude `Error`'s `#name`), the base
+  classes' first, each with its field, the declaring class's depth (0: no base class) and the
+  own field `at` it runs before (that class's field count: after its last). They belong to
+  the split of the declaring class: whoever runs that class's initializers runs each of them
+  as `this.<field> = init` (dropping the old value) right before field `at`'s, in list order.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`

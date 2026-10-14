@@ -49,6 +49,7 @@ pub(super) fn declare(cx: &mut Ctx) {
             },
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: HashMap::new(),
             ctor: None,

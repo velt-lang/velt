@@ -10,6 +10,48 @@ compiler knows exactly what each function and each `try` block can throw.
 - `throw expr` throws a value of any type, usually a class extending the prelude `Error`, which
   has a `message` field. Calling a throwing function outside `try` makes the caller throw it
   too.
+- As in JavaScript, an error has a `name` (`"Error"` unless a subclass assigns its own:
+  `this.name = "AppError"` in the constructor), and `String(e)`, `` `${e}` `` and `e.toString()`
+  give `"<name>: <message>"` (only the name when the message is empty, only the message when the
+  name is). `name` is `Error`'s: a subclass may declare it again (`name: string;`), give it an
+  initializer (`name = "AppError"`, which runs after `super(...)` in its place among the class's
+  other initializers; a subclass's runs after its base class's) or redefine it with a getter
+  (`get name() { … }`), which `toString()` then reads. A union of error classes
+  (`AppError | TypeError`, a `catch` variable) and a nullable error have `e.name` and
+  `e.toString()` too, and are written the same way in templates, by `String(e)` and by string
+  concatenation (`null` for `null`, `undefined` for `undefined`). Arrays of errors are written as
+  JavaScript writes them (`` `${errors}` ``, `errors.join(", ")`: each element's `toString()`).
+  `console.log(e)` and `JSON.stringify(e)` leave the name out. The standard error classes
+  `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
+  `Error` with their own names; throw, catch, test (`instanceof`) and extend them like any
+  error class:
+
+  ```ts
+  class AppError extends Error {
+    code: string;
+    constructor(message: string, code: string) {
+      super(message);
+      this.name = "AppError";
+      this.code = code;
+    }
+  }
+
+  function check(n: number): number {
+    if (n < 0) {
+      throw new RangeError(`${n} is negative`);
+    }
+    if (n > 100) {
+      throw new AppError("too large", "E1");
+    }
+    return n;
+  }
+
+  try {
+    check(500);
+  } catch (e) {
+    console.log(String(e), e instanceof RangeError); // AppError: too large false
+  }
+  ```
 - A function's **error type** is the union of everything it can throw. It is inferred over the
   whole program (also through recursion), or written as a **`throws` clause** after the return
   type: `function load(id: string): User throws NotFound | Forbidden`.
@@ -72,9 +114,13 @@ nothing; `null` means success).
 
 ## Uncaught errors and panics
 
-- An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
-  exits with code 1. `<Class>` is the error's actual class (an `IoError` thrown through a
-  function declared `throws Error` prints `IoError`), and the location is where it was thrown;
+- An error escaping `main` prints `Uncaught <header> at file:line:col` to stderr and exits with
+  code 1. `<header>` is the first line of Node's report: `<name>: <message>` as `Error`'s
+  `toString()` writes it (`Uncaught AppError: boom`), with the error's actual class in front
+  when its `name` ends in `Error` but is not the class's name (`class E extends TypeError {}`
+  gives `E [TypeError]: boom`; `MyTypeError: boom` when the class's name contains the name).
+  The class is the dynamic one (an `IoError` thrown through a function declared `throws Error`
+  reports `IoError`), and the location is where it was thrown;
   for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
   that `main` awaited.

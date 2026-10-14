@@ -1,0 +1,58 @@
+// A union of error classes (and a nullable error) converts to text through `Error.toString`,
+// as in Node: templates, `String(e)` and string concatenation; `e.name` and `e.toString()`
+// work on the union, also on a `catch` variable holding one of several error classes.
+class AppError extends Error {
+  code: string;
+  constructor(m: string, code: string) {
+    super(m);
+    this.name = "AppError";
+    this.code = code;
+  }
+}
+
+class Quiet extends Error {}
+
+class Shown {
+  toString(): string {
+    return "shown";
+  }
+}
+
+function thrower(k: number) {
+  if (k == 0) {
+    throw new AppError("a", "E_APP");
+  }
+  if (k == 1) {
+    throw new TypeError("t");
+  }
+  throw new Quiet("q");
+}
+
+function show(e: AppError | TypeError): string {
+  return `${e}`;
+}
+
+function describe(e: AppError | TypeError | Quiet): string {
+  return e.name + " / " + e.toString() + " / " + String(e) + " / " + e.message;
+}
+
+function maybe(e: Error | null, u: AppError | RangeError | null, s: Shown | null): string {
+  return `${e} ${String(u)} ` + s;
+}
+
+console.log(show(new AppError("a", "E")));
+console.log(show(new TypeError("bad type")));
+console.log(describe(new Quiet("quiet")));
+console.log(describe(new AppError("x", "E")));
+console.log("e=" + new TypeError("t"), new AppError("y", "E") + "!");
+console.log(maybe(new Error("plain"), new RangeError("r"), new Shown()));
+console.log(maybe(null, null, null));
+console.log(maybe(new SyntaxError("s"), new AppError("z", "E"), null));
+
+for (const k of [0, 1, 2]) {
+  try {
+    thrower(k);
+  } catch (e) {
+    console.log(`${e}`, "|", e.name, "|", e.toString(), "|", String(e), "|", e.message);
+  }
+}
