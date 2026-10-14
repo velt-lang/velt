@@ -38,23 +38,22 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// A union type (no conditional type at the top level).
+    /// A union type (no conditional type at the top level). Unguarded: its callers are
+    /// `parse_type`, which counts the nesting depth once for both.
     fn parse_union_type(&mut self) -> PResult<TypeExpr> {
-        self.guarded(|p| {
-            let lo = p.cur_lo();
-            p.eat(Tok::Pipe);
-            let first = p.parse_intersection()?;
-            if !p.at(Tok::Pipe) {
-                return Ok(first);
-            }
-            let mut members = vec![first];
-            while p.eat(Tok::Pipe) {
-                members.push(p.parse_intersection()?);
-            }
-            Ok(TypeExpr {
-                kind: TypeExprKind::Union(members),
-                span: p.span_from(lo),
-            })
+        let lo = self.cur_lo();
+        self.eat(Tok::Pipe);
+        let first = self.parse_intersection()?;
+        if !self.at(Tok::Pipe) {
+            return Ok(first);
+        }
+        let mut members = vec![first];
+        while self.eat(Tok::Pipe) {
+            members.push(self.parse_intersection()?);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Union(members),
+            span: self.span_from(lo),
         })
     }
 
