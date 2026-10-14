@@ -65,9 +65,29 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
     }
     out.reserve(s.len() + 2);
     out.push(b'"');
+    push_from(out, s, 0)
+}
+
+/// [`push_json_string_counted`] for a string of [`LONG`] bytes or more: eight bytes at a time
+/// while they are plain ASCII, then a byte at a time to the end. Text that is not ASCII, or
+/// dense in escapes, stops the first word or one soon after and so costs one test more.
+#[inline(never)]
+fn push_long(out: &mut Vec<u8>, s: &[u8]) -> usize {
+    out.reserve(s.len() + 2);
+    out.push(b'"');
+    let mut i = 0;
+    while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
+        i += 8;
+    }
+    push_from(out, s, i)
+}
+
+/// The rest of [`push_json_string_counted`] once the opening quote is written and `s[..i]` is
+/// known to need no escape: a byte at a time, then the closing quote.
+#[inline(always)]
+fn push_from(out: &mut Vec<u8>, s: &[u8], mut i: usize) -> usize {
     let mut run_start = 0;
     let mut lone = 0;
-    let mut i = 0;
     loop {
         while i < s.len() && ESCAPE[s[i] as usize] == 0 {
             i += 1;
@@ -102,68 +122,6 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
         } else {
             out.push(b'\\');
             out.push(esc);
-        }
-    }
-    out.extend_from_slice(&s[run_start..]);
-    out.push(b'"');
-    lone
-}
-
-/// [`push_json_string_counted`] for a string of [`LONG`] bytes or more: eight bytes at a time
-/// while they are plain ASCII, then a byte at a time. The byte loop goes back to words only
-/// after an escape that ended a run of eight plain bytes or more, so text that is not ASCII
-/// (which stops every word) and strings dense in escapes test one word, not one per character.
-#[inline(never)]
-fn push_long(out: &mut Vec<u8>, s: &[u8]) -> usize {
-    out.reserve(s.len() + 2);
-    out.push(b'"');
-    let mut run_start = 0;
-    let mut lone = 0;
-    let mut i = 0;
-    'words: loop {
-        while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
-            i += 8;
-        }
-        loop {
-            while i < s.len() && ESCAPE[s[i] as usize] == 0 {
-                i += 1;
-            }
-            let Some(&byte) = s.get(i) else {
-                break 'words;
-            };
-            let esc = ESCAPE[byte as usize];
-            if esc == MAYBE_LONE {
-                if s.get(i + 1).is_some_and(|&b| b >= 0xA0) {
-                    out.extend_from_slice(&s[run_start..i]);
-                    let unit =
-                        0xD000 | ((s[i + 1] as usize & 0x3F) << 6) | (s[i + 2] as usize & 0x3F);
-                    out.extend_from_slice(b"\\u");
-                    for shift in [12, 8, 4, 0] {
-                        out.push(HEX[(unit >> shift) & 0xf]);
-                    }
-                    lone += 1;
-                    i += 3;
-                    run_start = i;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-            let long_run = i - run_start >= 8;
-            out.extend_from_slice(&s[run_start..i]);
-            i += 1;
-            run_start = i;
-            if esc == b'u' {
-                out.extend_from_slice(b"\\u00");
-                out.push(HEX[(byte >> 4) as usize]);
-                out.push(HEX[(byte & 0xf) as usize]);
-            } else {
-                out.push(b'\\');
-                out.push(esc);
-            }
-            if long_run {
-                continue 'words;
-            }
         }
     }
     out.extend_from_slice(&s[run_start..]);
