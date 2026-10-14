@@ -1,0 +1,101 @@
+// check: no leaks
+// The cache pattern of sigx's `rawToProxy` (and Vue's `reactiveMap`): a WeakMap from a raw
+// object to a wrapper that holds the raw object. JavaScript frees both once nothing else refers
+// to either; so does Velt, at once (the ephemeron rule, docs/internals/design/weak-refs.md):
+// `WeakRef`s to the raw objects show when they go.
+class Raw {
+  n: number;
+  child: Raw | null = null;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Reactive {
+  target: Raw;
+  reads: number = 0;
+  constructor(target: Raw) {
+    this.target = target;
+  }
+  get n(): number {
+    this.reads++;
+    return this.target.n;
+  }
+}
+
+class Store {
+  proxies: WeakMap<Raw, Reactive> = new WeakMap<Raw, Reactive>();
+  made: number = 0;
+
+  signal(raw: Raw): Reactive {
+    const hit = this.proxies.get(raw);
+    if (hit != null) {
+      return hit;
+    }
+    const p = new Reactive(raw);
+    this.made++;
+    this.proxies.set(raw, p);
+    return p;
+  }
+}
+
+function churn(store: Store, refs: WeakRef<Raw>[], i: number): number {
+  const raw = new Raw(i);
+  if (i % 3 == 0) {
+    raw.child = new Raw(i * 10);
+  }
+  const a = store.signal(raw);
+  const b = store.signal(raw);
+  let sum = a.n + b.n;
+  const child = raw.child;
+  if (child != null) {
+    sum += store.signal(child).n;
+    refs.push(new WeakRef(child));
+  }
+  refs.push(new WeakRef(raw));
+  return a === b ? sum : -1;
+}
+
+function alive(refs: WeakRef<Raw>[]): number {
+  let n = 0;
+  for (const r of refs) {
+    if (r.deref() != null) {
+      n++;
+    }
+  }
+  return n;
+}
+
+function main() {
+  const store = new Store();
+  const refs: WeakRef<Raw>[] = [];
+  let total = 0;
+  for (let i = 0; i < 300; i++) {
+    total += churn(store, refs, i);
+  }
+  console.log("total", total, "made", store.made, "refs", refs.length, "alive", alive(refs));
+
+  // The key alive outside keeps its proxy: the same one every time.
+  const kept = new Raw(1);
+  const first = store.signal(kept);
+  for (let i = 0; i < 10; i++) {
+    churn(store, refs, i);
+  }
+  console.log(store.signal(kept) === first, first.reads);
+
+  // Only the proxy alive outside: it keeps the raw object, and the entry stays.
+  const proxy = store.signal(new Raw(42));
+  const r = new WeakRef(proxy.target);
+  console.log(store.signal(proxy.target) === proxy, proxy.n, r.deref() != null);
+
+  // A cache inside the values (sigx's `nestedCache` in the handler): nested caches.
+  const outer = new WeakMap<Raw, WeakMap<Raw, Reactive>>();
+  const parent = new Raw(5);
+  const inner = new WeakMap<Raw, Reactive>();
+  const leaf = new Raw(6);
+  inner.set(leaf, new Reactive(leaf));
+  outer.set(parent, inner);
+  const found = outer.get(parent);
+  const hit = found != null ? found.get(leaf) : null;
+  console.log(hit != null ? hit.n : -1);
+}

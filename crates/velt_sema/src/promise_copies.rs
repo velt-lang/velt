@@ -34,15 +34,15 @@ type Copy = (TyId, bool);
 
 /// The facts of one function body.
 #[derive(Default)]
-struct Facts {
+pub(crate) struct Facts {
     copies: Vec<Copy>,
     /// Generic calls: callee, type arguments, span of the call.
-    calls: Vec<(DefId, Vec<TyId>, Span)>,
-    closures: Vec<DefId>,
+    pub(crate) calls: Vec<(DefId, Vec<TyId>, Span)>,
+    pub(crate) closures: Vec<DefId>,
     /// Class values whose methods are called dynamically (virtual calls, interface values).
-    dispatch: Vec<(TyId, Span)>,
+    pub(crate) dispatch: Vec<(TyId, Span)>,
     /// The methods those reach, with the class's type arguments.
-    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
+    pub(crate) dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
     /// Spans of `for...of` iterables (a call there is "iterating").
     loops: HashSet<Span>,
 }
@@ -220,7 +220,8 @@ fn is_empty_array(e: &Expr) -> bool {
     matches!(&e.kind, E::ArrayLit(xs) if xs.is_empty())
 }
 
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
+/// The facts of every function body, in definition order (also `crate::weak_threads`).
+pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
     let ctors: HashMap<DefId, DefId> = (0..cx.info.len())
         .filter_map(|i| match &cx.info[i] {
             DefInfo::Adt(a) => a.ctor.map(|c| (DefId(i as u32), c)),

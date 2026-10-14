@@ -1,0 +1,1 @@
+a function returned from `with` cannot capture the weak collection `r`

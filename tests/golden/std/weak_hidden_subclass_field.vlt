@@ -1,0 +1,11 @@
+// The locked value holds a base-class field; a subclass with a WeakRef is stored there.
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Base { peek(): number { return 0; } }
+class H extends Base { r: WeakRef<V>; constructor(r: WeakRef<V>) { super(); this.r = r; } override peek(): number { return 1; } }
+class Box { b: Base; constructor() { this.b = new Base(); } }
+async function main() {
+  const keep = new V(7);
+  const m = shared(new Mutex<Box>(new Box()));
+  m.with((v) => { v.b = new H(new WeakRef(keep)); });
+  console.log(keep.n);
+}
