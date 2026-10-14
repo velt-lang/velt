@@ -43,6 +43,13 @@ emit_all() {
   wait
 }
 
+# The glue that disposes of an unclaimed promise result is named after its type's index in the
+# compiler's type table (`_Gunclaimed_205`), which moves whenever the standard library declares
+# one more type: the same function under another name, so the index is left out of the comparison.
+names() {
+  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g' "$1"
+}
+
 emit_all "$base" "$base_std" "$tmp/base"
 emit_all "$head" "$head_std" "$tmp/head"
 same=0 differ=0 skipped=0
@@ -50,7 +57,7 @@ for f in "${programs[@]}"; do
   v=${f//\//_}.vir
   if [ ! -f "$tmp/base/$v" ]; then
     skipped=$((skipped + 1))
-  elif cmp -s "$tmp/base/$v" "$tmp/head/$v"; then
+  elif cmp -s <(names "$tmp/base/$v") <(names "$tmp/head/$v"); then
     same=$((same + 1))
   else
     differ=$((differ + 1))
