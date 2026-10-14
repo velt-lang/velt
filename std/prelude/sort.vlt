@@ -466,7 +466,8 @@ extend<T> Array<T | undefined> {
   sort(cmp: (x: T | undefined, y: T | undefined) => number) {
     stableSort(
       this,
-      (x, y) => (x === undefined ? (y === undefined ? 0.0 : 1.0) : y === undefined ? -1.0 : cmp(x, y)),
+      (x, y) =>
+        (x === undefined ? (y === undefined ? 0.0 : 1.0) : y === undefined ? -1.0 : cmp(x, y)),
       (c) => c < 0.0,
     );
   }
