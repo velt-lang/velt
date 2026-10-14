@@ -279,7 +279,7 @@ fn a_cut_workspace_walk_is_reported() {
         std::fs::create_dir_all(root.join(format!("a/{i}"))).unwrap();
     }
     write(root, "zzz/target/package.json", r#"{ "name": "target" }"#);
-    write(root, "zzz/target/src/index.ts", "");
+    write(root, "zzz/target/index.ts", "");
     let importer = root.join("app/main.ts");
     let mut npm = NpmResolver {
         max_dirs: Some(4),
