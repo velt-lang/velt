@@ -7,6 +7,7 @@
 
 mod arrow;
 mod augment;
+mod cast_types;
 mod expr;
 mod field_types;
 mod fn_exprs;

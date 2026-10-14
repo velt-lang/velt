@@ -998,7 +998,7 @@ console.log(b.v); // hi
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
   Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
-  `new(…)` there is never a method, which would be written `"new"(…)`) are not supported yet
+  `new(…)` in an object type is never a method, while in a class it is) are not supported yet
   and are reported.
 
 ```ts

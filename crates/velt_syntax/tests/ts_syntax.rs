@@ -266,9 +266,7 @@ fn numeric_property_names_and_call_signatures() {
     );
     let none: Vec<String> = vec![];
     assert_eq!(
-        errors(
-            "interface N { new: number; \"new\"(): void }\nclass C { new(): C { return this; } }"
-        ),
+        errors("interface N { new: number }\nclass C { new(): C { return this; } }"),
         none
     );
 }

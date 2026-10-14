@@ -1,37 +1,10 @@
 //! Members of interface and object types that need more than a field parser: call and
-//! construct signatures (reported), the end of a member (`;`, `,` or a line break), and the
-//! number literal members an `as` type rejects.
+//! construct signatures (reported) and the end of a member (`;`, `,` or a line break).
 
 use super::Parser;
-use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
-    /// A numeric literal type after `|` in an `as` type (`x as i32 | 1`): TypeScript reads a
-    /// union there, and Velt read a bitwise or before; rather than change such a program's
-    /// value silently, it is an error that shows both spellings.
-    pub(super) fn reject_cast_number_member(&mut self, member: &TypeExpr) {
-        let TypeExprKind::Literal(SignedLit {
-            lit: Lit::Int { .. } | Lit::Float { .. },
-            ..
-        }) = &member.kind
-        else {
-            return;
-        };
-        if self.speculating != 0 {
-            return;
-        }
-        self.diags.push(
-            velt_common::Diagnostic::error(
-                "a cast to a union with a number literal member is ambiguous",
-                member.span,
-            )
-            .with_note(
-                "write `(x as T) | n` for a bitwise or of the cast value, or `x as (T | n)` for a cast to the union type",
-            ),
-        );
-    }
-
     /// At a call signature (`(x: T): R`, `<T>(x: T): T`) or a construct signature
     /// (`new (x: T): R`) in an interface or object type: reported, as they are not supported
     /// yet, and skipped up to the member's end. True if there was one. (In TypeScript `new(…)`
