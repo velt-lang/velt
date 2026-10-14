@@ -103,8 +103,9 @@ fn query(stmt: &StmtObj, params: &[u8], first_only: bool) -> Result<Vec<u8>, DbE
     })
 }
 
-/// `stmt.all()` / `get()`: the rows as JSON text (`[{...},...]`), or with `first_only` the first
-/// row's object (`""` if there is none).
+/// `stmt.all()` / `get()`: the rows for `JSON.parse` (`[{...},...]`, or with `first_only` the
+/// first row's object), as the marker string of the parked binary rows (`json::rows_bin`); `""`
+/// if `first_only` found no row.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_sqlite_query(
     stmt: StmtHandle,
@@ -114,7 +115,8 @@ pub unsafe extern "C" fn velt_rt_sqlite_query(
 ) {
     let r = obj(stmt).and_then(|s| query(s, bytes(params), first_only != 0));
     out.write(match r {
-        Ok(json) => IoResult::ok(VeltStr::from_vec(json)),
+        Ok(rows) if rows.is_empty() => IoResult::ok(VeltStr::empty()),
+        Ok(rows) => IoResult::ok(crate::json::rows_bin::hand_off(rows)),
         Err(e) => IoResult::err(e.to_velt()),
     });
 }
