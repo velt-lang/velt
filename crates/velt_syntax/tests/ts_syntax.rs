@@ -257,6 +257,20 @@ fn numeric_property_names_and_call_signatures() {
         errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { <T>(x: T): T; z: string };"),
         vec![msg, msg]
     );
+    // `new(…)` in an interface or object type is a construct signature, as in TypeScript; in a
+    // class it is a method.
+    let ctor = "construct signatures in an interface or object type are not supported yet";
+    assert_eq!(
+        errors("interface P {\n  new (x: number): P\n  y: number\n}\ntype Q = { new <T>(): T; z: string };"),
+        vec![ctor, ctor]
+    );
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors(
+            "interface N { new: number; \"new\"(): void }\nclass C { new(): C { return this; } }"
+        ),
+        none
+    );
 }
 
 #[test]

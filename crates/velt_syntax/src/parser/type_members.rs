@@ -1,10 +1,10 @@
-//! Members of interface and object types that need more than a field parser: call signatures
-//! (reported), the end of a member (`;`, `,` or a line break), and the number literal members
-//! an `as` type rejects.
+//! Members of interface and object types that need more than a field parser: call and
+//! construct signatures (reported), the end of a member (`;`, `,` or a line break), and the
+//! number literal members an `as` type rejects.
 
 use super::Parser;
 use crate::ast::*;
-use crate::lexer::Tok;
+use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
     /// A numeric literal type after `|` in an `as` type (`x as i32 | 1`): TypeScript reads a
@@ -32,22 +32,34 @@ impl<'a> Parser<'a> {
         );
     }
 
-    /// At a call signature (`(x: T): R`, `<T>(x: T): T`) in an interface or object type:
-    /// reported, as they are not supported yet, and skipped up to the member's end. True if
-    /// there was one. (`new(x: T): R` is a method named `new` in Velt.)
+    /// At a call signature (`(x: T): R`, `<T>(x: T): T`) or a construct signature
+    /// (`new (x: T): R`) in an interface or object type: reported, as they are not supported
+    /// yet, and skipped up to the member's end. True if there was one. (In TypeScript `new(…)`
+    /// there is always a construct signature; a method named `new` is written `"new"(…)`. In a
+    /// class, `new()` is a method.)
     pub(super) fn skip_call_signature(&mut self) -> bool {
-        if !(self.at(Tok::LParen) || self.at(Tok::Lt)) {
+        let construct = self.at(Tok::Kw(Kw::New)) && matches!(self.nth(1), Tok::LParen | Tok::Lt);
+        if !(construct || self.at(Tok::LParen) || self.at(Tok::Lt)) {
             return false;
         }
         let span = self.cur_span();
         if self.speculating == 0 {
-            self.diags.push(
-                velt_common::Diagnostic::error(
+            let d = match construct {
+                true => velt_common::Diagnostic::error(
+                    "construct signatures in an interface or object type are not supported yet",
+                    span,
+                )
+                .with_note("pass a factory function instead (`create: (x: T) => C`), or the class's type itself"),
+                false => velt_common::Diagnostic::error(
                     "call signatures in an interface or object type are not supported yet",
                     span,
                 )
                 .with_note("for a callable value, write a function type: `type F = (x: T) => R`"),
-            );
+            };
+            self.diags.push(d);
+        }
+        if construct {
+            self.bump(); // new
         }
         // The signature, up to `;`, `,`, `}` or a line break after its parameters.
         let mut depth = 0u32;

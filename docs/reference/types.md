@@ -997,6 +997,9 @@ console.log(b.v); // hi
   `label?(p: string): string` an optional one (`((p: string) => string) | null` with the field
   left out as `null`; call it as `o.label?.(p)`). A generic method signature
   (`run<T>(f: () => T): T`) is supported in interfaces only, and not as an optional one.
+  Call signatures (`(x: T): R`) and construct signatures (`new (x: T): C`; as in TypeScript,
+  `new(…)` there is never a method, which would be written `"new"(…)`) are not supported yet
+  and are reported.
 
 ```ts
 type Handler = {
@@ -1182,7 +1185,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
   property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
   is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
-  `i = 3` has the key `"3.5"`); a symbol made at run time is an error. In generic code, where the key type is a type
+  `i = 3` has the key `"3.5"`); a symbol made at run time is an error, and so is a key of any
+  other type (`{ [true]: v }`, TypeScript's TS2464). In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
