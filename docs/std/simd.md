@@ -52,7 +52,8 @@ The methods keep the types they declare: a lane of a `u8x16` is a `u8`, `first()
 A position or lane index (`at` of `fits`, `load` and `store`, `i` of `lane` and `withLane`)
 given as a `number` is used as itself when it is a whole number from 0 up; any other number
 (negative, fractional, NaN, ±Infinity) is out of range: `fits` gives `false` and the others
-panic with their RangeError. A lane value or shift count given as a `number` is converted as
+panic with their RangeError. A negative literal written there (`v.lane(-1)`) is a compile
+error instead, since the parameter is a `usize`. A lane value or shift count given as a `number` is converted as
 the standard library converts every `number` it takes as an integer: truncated, clamped to the
 type's range, NaN as 0 (`u8x16.splat(300)` is 255 in every lane).
 

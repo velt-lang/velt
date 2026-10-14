@@ -459,8 +459,17 @@ impl FnCx<'_, '_> {
                 Some(_) => "an instance method",
                 None => "not a static method",
             };
-            self.cx
-                .err(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
+            let mut d =
+                Diagnostic::error(format!("`{}.{}` is {what}", id.name, prop.name), prop.span);
+            // No extension of the type at all: its API (`velt:simd`) is not loaded, which a std
+            // module that uses the built-in name without importing it gets.
+            if !self.cx.extensions.iter().any(|x| x.target == target) {
+                let name = simd.name();
+                d = d.with_note(format!(
+                    "the methods are loaded by importing the type: `import {{ {name} }} from \"velt:simd\";`"
+                ));
+            }
+            self.cx.error(d);
             self.check_args_loose(args);
             return Some(self.error_expr(span));
         };
