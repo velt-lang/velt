@@ -141,7 +141,7 @@ The per-core scheduler (#211; `velt_rt_set_scheduler(1)` for a program that pins
 `VELT_SCHEDULER=per-core`) makes every worker a `current_thread` runtime with
 its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
 starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
-(`task/runtime.rs`). A connection's socket and its tasks stay on one worker: `accept()`
+(`task/runtime/`). A connection's socket and its tasks stay on one worker: `accept()`
 registers the connection with the caller's worker, and `serve`'s accept loop spawns each
 connection where placement puts it (`runtime::spawn_with`), moving its socket to that worker's
 driver only when it is another worker. A listening socket has one registration (per-worker
@@ -151,6 +151,19 @@ multi-thread runtime. Per-core trade-offs today: a task never moves after its fi
 CPU-bound task delays every task on its worker; placement counts live tasks, not CPU; a socket
 stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
 much slower than stealing (no batch steal-before-start yet, #997).
+
+Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`,
+`block_on`, and its own `JoinHandle`/`AbortHandle`); nothing else in the runtime names a backend's
+types. `VELT_SCHEDULER=velt` (experimental, env only: `velt_rt_set_scheduler` kinds are
+unchanged) selects the runtime's own executor (`task/runtime/velt/`): worker threads with their
+own queue and `mio` poll; a task wakes on its home worker, a spawn stays on the spawning worker
+(from outside the workers: worker 0), and a worker that has run for longer than `VELT_BUSY_US`
+of CPU time since it last slept (default 5 ms) with tasks still waiting offers half of them to a
+sleeping worker, which takes them over; a connection's socket moves its registration to the
+worker its task reads on (Unix).
+TCP sockets (`net/sys.rs`), the HTTP server and timers are native; tokio types elsewhere
+(files, processes, Postgres, Redis, the HTTP client, UDP, DNS, `spawn_blocking`) run on a
+one-thread tokio runtime whose context every worker stays inside.
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
 64/256/448/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).

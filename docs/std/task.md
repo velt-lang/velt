@@ -145,6 +145,8 @@ never wakes another thread.
   or `currentWorker()`. `VELT_SCHEDULER=stealing` or
   `per-core` overrides the choice (for measuring); with `stealing`, `{ worker }` is checked but
   the task may run on any worker, and `currentWorker()` can change at any `await`.
+  `VELT_SCHEDULER=velt` selects the runtime's own executor, an experiment
+  ([`VELT_SCHEDULER`](../tooling/cli.md)); a pinned task stays on its worker there too.
 - A pinned task can't borrow an idle core: CPU-bound code in it delays everything else on its
   worker. `scope.spawn` takes no placement yet.
 

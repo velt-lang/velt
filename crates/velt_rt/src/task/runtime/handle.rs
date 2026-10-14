@@ -51,6 +51,7 @@ impl From<tokio::task::JoinError> for JoinError {
 /// A spawned task's output, once it finishes.
 pub enum JoinHandle<T> {
     Tokio(tokio::task::JoinHandle<T>),
+    Velt(super::velt::JoinHandle<T>),
 }
 
 impl<T> JoinHandle<T> {
@@ -58,6 +59,7 @@ impl<T> JoinHandle<T> {
     pub fn is_finished(&self) -> bool {
         match self {
             JoinHandle::Tokio(h) => h.is_finished(),
+            JoinHandle::Velt(h) => h.is_finished(),
         }
     }
 
@@ -70,6 +72,7 @@ impl<T> JoinHandle<T> {
     pub fn abort_handle(&self) -> AbortHandle {
         match self {
             JoinHandle::Tokio(h) => AbortHandle::Tokio(h.abort_handle()),
+            JoinHandle::Velt(h) => AbortHandle::Velt(h.abort_handle()),
         }
     }
 }
@@ -80,6 +83,7 @@ impl<T> Future for JoinHandle<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
             JoinHandle::Tokio(h) => Pin::new(h).poll(cx).map_err(JoinError::from),
+            JoinHandle::Velt(h) => Pin::new(h).poll(cx),
         }
     }
 }
@@ -88,12 +92,14 @@ impl<T> Future for JoinHandle<T> {
 /// [`JoinError::Cancelled`].
 pub enum AbortHandle {
     Tokio(tokio::task::AbortHandle),
+    Velt(super::velt::AbortHandle),
 }
 
 impl AbortHandle {
     pub fn abort(&self) {
         match self {
             AbortHandle::Tokio(h) => h.abort(),
+            AbortHandle::Velt(h) => h.abort(),
         }
     }
 }
