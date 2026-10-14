@@ -11,3 +11,5 @@ error: `u8x16.add` is an instance method
 note: expected i8x16, found u8x16
 error: no method named `mul` found for type `u8x16`
 error: cannot convert to or from JSON: `u8x16` has no JSON form
+error: cannot modify module-level constant `TABLE`
+note: this call may modify it, and a table is read-only data: use a copy, `TABLE.slice()`
