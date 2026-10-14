@@ -1,0 +1,10 @@
+// TypeScript's errors for writing to a read-only array: its mutating methods don't exist
+// (TS2339) and its index signature only permits reading (TS2542).
+function f(xs: readonly number[]): void {
+  xs.push(1);
+  xs[0] = 2;
+  xs.sort();
+}
+const ro: ReadonlyArray<string> = ["b"];
+ro.pop();
+const g = (ys: readonly string[]) => ys.reverse();

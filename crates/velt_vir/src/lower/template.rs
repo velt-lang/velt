@@ -603,13 +603,13 @@ impl FnLower<'_, '_> {
                     self.push_js_element(buf, &p, t);
                 }
             }
-            TyKind::Option(e) if self.writes_js_list(e) => {
+            TyKind::Option(e, n) if self.writes_js_list(e) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, none_bb);
                 self.switch_to(none_bb);
-                self.push_text(buf, "null");
+                self.push_text(buf, n.word());
                 self.goto(done);
                 self.switch_to(some_bb);
                 let payload = self.some_payload(place, ty);
@@ -647,7 +647,7 @@ impl FnLower<'_, '_> {
             // `[s].join()`, `String([s])`: JS's `Array.prototype.join` converts each element
             // with `ToString`, which throws for a symbol (sema rejects the direct conversions).
             TyKind::Symbol => self.panic_msg(SYMBOL_TO_STRING),
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let (some_bb, done) = (self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);
                 self.branch(some, some_bb, done);

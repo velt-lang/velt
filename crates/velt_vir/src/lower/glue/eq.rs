@@ -148,7 +148,7 @@ impl FnLower<'_, '_> {
     /// A `Map` or `Record` (or a nullable one): a pointer that still compares by content.
     fn dictionary_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.is_dictionary(e),
+            TyKind::Option(e, _) => self.is_dictionary(e),
             _ => self.is_dictionary(ty),
         }
     }
@@ -178,7 +178,7 @@ impl FnLower<'_, '_> {
     /// (or a nullable one), whose pointer is only its representation (semantics stage 2).
     fn boxed_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.cx.boxed(e),
+            TyKind::Option(e, _) => self.cx.boxed(e),
             _ => self.cx.boxed(ty),
         }
     }
@@ -298,7 +298,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => self.eq_option(&a, &b, ty, e, no),
+            TyKind::Option(e, _) => self.eq_option(&a, &b, ty, e, no),
             TyKind::Array(e) => {
                 let (ca, cb) = (self.content(&a, ty), self.content(&b, ty));
                 self.eq_array(&ca, &cb, e, no)
@@ -383,7 +383,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let some = self.option_is_some(&place, ty);
                 let s64 = self.cast_to(some.clone(), Ty::Bool, Ty::U64);
                 add(self, s64);

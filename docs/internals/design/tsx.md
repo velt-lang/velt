@@ -168,7 +168,6 @@ Accepted by `tsc`, but behaves differently:
 | `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
-| `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
 | `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
@@ -228,9 +227,8 @@ Notes on the rules as built, against the issue's first design:
 - `catch-unknown` treats `e` as narrowed inside an `if (e instanceof C)` branch, after
   `e instanceof C &&` and in the `?` branch of `e instanceof C ? … : …`; not yet after an early
   exit (`if (!(e instanceof C)) throw e;`).
-- `null-default` skips optional properties (`x?: T`): JavaScript leaves them `undefined`, so the
-  default applies in both. Its fix rewrites the declaration when the destructured value is a
-  variable or a field path, with one `const x = p.x ?? d` per such property.
+- `null-default` (a destructuring default on a `T | null` property, which Velt applied to `null`)
+  was retired with #930: Velt now applies a default only where JavaScript does.
 - Not built: `comparable`'s `<` on a `T extends Comparable<T>` (the bound's type is
   `velt-global`), `implicit-dispose` and `init-order`. Nor `JSON.stringify` of an optional field
   of an object type, which Velt writes as `null` and JavaScript leaves out.

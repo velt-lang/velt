@@ -12,7 +12,7 @@
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
@@ -70,6 +70,14 @@ impl FnCx<'_, '_> {
                 args: vec![h],
             };
             return Ok(self.mk(call, exp, span));
+        }
+        // `T | undefined` to `T | null` (or the reverse): TS2322, as in TypeScript; converting
+        // would turn one nothing into the other (issue #930).
+        if let (Some(found), Some(want)) = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(exp))
+        {
+            if !found.within(want) {
+                return Err(h);
+            }
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
             if self.cx.ty.opt_payload(h.ty).is_some()
@@ -132,7 +140,7 @@ impl FnCx<'_, '_> {
         let (a, b) = (self.cx.ty.kind(exp).clone(), self.cx.ty.kind(found).clone());
         match (a, b) {
             (TyKind::Error, _) => true,
-            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x), TyKind::Option(y)) => {
+            (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Option(x, _), TyKind::Option(y, _)) => {
                 self.loosely_equal(x, y)
             }
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {
@@ -221,12 +229,64 @@ impl FnCx<'_, '_> {
         ))
     }
 
+    /// Is `h` the result of a standard library function or method (`Map.get`, `find`)?
+    fn std_result(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self
+                .cx
+                .try_fn(*d)
+                .is_some_and(|fi| self.cx.scopes[fi.module].is_std),
+            H::Call {
+                callee: Callee::Intrinsic(_),
+                ..
+            } => true,
+            H::Block(b) => b.value.as_deref().is_some_and(|v| self.std_result(v)),
+            _ => false,
+        }
+    }
+
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
         if self.shared_widening_error(expected, found) {
             return;
         }
+        let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
+        if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span) {
+            return;
+        }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
+        if let (Some(have), Some(want)) = (
+            self.cx.ty.nothing_of(found.ty),
+            self.cx.ty.nothing_of(expected),
+        ) {
+            if !have.within(want) {
+                let (x, y) = (have.word(), want.word());
+                if want.has_undefined() && self.std_result(found) {
+                    // TypeScript accepts it: the library gives `undefined` there (phase 3).
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("a `{f}` from the standard library where a `{e}` is expected is not supported yet (#930)"),
+                            found.span,
+                        )
+                        .with_note("the standard library still gives `null` where Node gives `undefined`; convert it with `?? undefined`"),
+                    );
+                    return;
+                }
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),
+                        found.span,
+                    )
+                    .with_note(format!(
+                        "`{x}` is not `{y}`; convert it with `?? {y}`, or change the type"
+                    )),
+                );
+                return;
+            }
+        }
         let mut d = Diagnostic::error("mismatched types", found.span)
             .with_note(format!("expected {e}, found {f}"));
         if self.cx.ty.is_float(expected) && matches!(found.kind, H::Lit(hir::Lit::Int(_))) {

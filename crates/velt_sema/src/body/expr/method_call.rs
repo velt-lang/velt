@@ -76,6 +76,7 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
+        self.readonly_method_call(&recv, &prop.name, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             // `e.toString()` on an error union: `Error`'s method, dispatched to each class's.
             if self.is_error_union(recv.ty) {
@@ -130,6 +131,7 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 let ck = self.check_call(&c, slots, args, exp, span);
+                let this_recv = self.this_recv(&recv);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
@@ -138,7 +140,8 @@ impl FnCx<'_, '_> {
                     callee: Callee::Virtual { slot },
                     args: all,
                 };
-                self.mk(kind, ck.ret, span)
+                let call = self.mk(kind, ck.ret, span);
+                self.this_result(call, def, this_recv)
             }
             Resolved::Iface {
                 on_param,
@@ -195,6 +198,7 @@ impl FnCx<'_, '_> {
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
+        let this_recv = self.this_recv(&recv);
         let recv = self.receiver(
             recv,
             Some(recv_ty),
@@ -208,7 +212,8 @@ impl FnCx<'_, '_> {
             callee: Callee::Def(def, ck.type_args),
             args: all,
         };
-        self.mk(kind, ck.ret, span)
+        let call = self.mk(kind, ck.ret, span);
+        self.this_result(call, def, this_recv)
     }
 
     /// The receiver argument: upcast to the declaring type, then used per the `this` mode
@@ -290,9 +295,10 @@ impl FnCx<'_, '_> {
             d = d.with_note(
                 "promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error",
             );
-        } else if self.cx.ty.opt_payload(recv.ty).is_some() {
+        } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
-                "the value may be null: use `?.{}(...)` or check `!= null` first",
+                "the value may be {}: use `?.{}(...)` or check `!= null` first",
+                n.word(),
                 prop.name
             ));
         } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {

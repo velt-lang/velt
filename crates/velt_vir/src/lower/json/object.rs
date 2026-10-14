@@ -34,7 +34,7 @@ impl FnLower<'_, '_> {
             .map(|(f, t)| {
                 (
                     f.name.clone(),
-                    matches!(self.cx.kind(*t), TyKind::Option(_)),
+                    matches!(self.cx.kind(*t), TyKind::Option(..)),
                 )
             })
             .collect();

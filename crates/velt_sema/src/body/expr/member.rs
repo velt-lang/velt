@@ -115,8 +115,10 @@ impl FnCx<'_, '_> {
         }
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
+            // `null` for a `T | null`, `undefined` for a `T | undefined`.
+            let what = self.cx.ty.nothing_of(obj.ty).map_or("null", |n| n.word());
             self.cx.error(
-                Diagnostic::error(format!("value of type `{tn}` may be null"), obj.span)
+                Diagnostic::error(format!("value of type `{tn}` may be {what}"), obj.span)
                     .with_note(format!("use `?.{}` or check `!= null` first", prop.name)),
             );
             return None;
@@ -396,7 +398,7 @@ impl FnCx<'_, '_> {
         }
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Param(_) => true,
-            TyKind::Option(inner) | TyKind::Shared(inner) => self.has_fields(inner, name),
+            TyKind::Option(inner, _) | TyKind::Shared(inner) => self.has_fields(inner, name),
             _ => false,
         }
     }
@@ -628,6 +630,26 @@ impl FnCx<'_, '_> {
         match self.try_coerce(inner, target) {
             Ok(h) => h,
             Err(h) => {
+                let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));
+                if let (Some(from), Some(to)) = nothings {
+                    if !from.within(to) && !self.cx.ty.has_error(h.ty) {
+                        // TypeScript keeps the value (`undefined` stays `undefined`); the type
+                        // `T | null | undefined` that could hold it comes with phase 1b.
+                        let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
+                        self.cx.error(
+                            Diagnostic::error(
+                                format!("a cast from `{s}` to `{d}` is not supported yet (#930)"),
+                                span,
+                            )
+                            .with_note(format!(
+                                "the value would stay `{}`, which `{d}` cannot hold yet; convert it instead (`x ?? {}`)",
+                                from.word(),
+                                to.word()
+                            )),
+                        );
+                        return self.error_expr(span);
+                    }
+                }
                 if !self.cx.ty.has_error(h.ty) {
                     let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
                     let mut diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);

@@ -134,6 +134,14 @@ impl FnCx<'_, '_> {
     /// (`[KEY]?: T`, `a?: T`) or a record's entry, whether it is present (tested at run time).
     /// A key known only at run time is `in_keys.rs`'s.
     pub(crate) fn key_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        // `"a" in #tmp`, built by a destructuring default for an optional field with a presence
+        // flag (`pattern_defaults.rs`); source code cannot write it (no node id).
+        if let (ast::NodeId(u32::MAX), ast::ExprKind::Lit(ast::Lit::Str(name))) =
+            (lhs.id, &lhs.kind)
+        {
+            let obj = self.expr(rhs, None, Want::Borrow);
+            return self.present_test(obj, name, true, span);
+        }
         let Some(key) = self.in_key_of(lhs) else {
             return self.dynamic_key_in(lhs, rhs, span);
         };

@@ -62,7 +62,7 @@ impl FnCx<'_, '_> {
             TyKind::Tuple(tys) => tys
                 .into_iter()
                 .find_map(|e| self.js_list_blocker(e, depth + 1, true)),
-            TyKind::Option(e) | TyKind::Shared(e) => self.js_list_blocker(e, depth + 1, in_list),
+            TyKind::Option(e, _) | TyKind::Shared(e) => self.js_list_blocker(e, depth + 1, in_list),
             _ if !in_list => None,
             _ => {
                 if let Some(members) = self.cx.union_members(t) {

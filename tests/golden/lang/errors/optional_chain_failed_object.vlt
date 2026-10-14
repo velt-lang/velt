@@ -1,0 +1,13 @@
+// An optional chain on an object whose type is not supported yet (`T | null | undefined`, the
+// shape of `provides?.get(token) as T | undefined`) or unknown reports that type only, not the
+// local the chain binds its object to.
+
+function getProvided<T>(provides: Map<string, T> | null | undefined, token: string): T | undefined {
+  return provides?.get(token) as T | undefined;
+}
+
+function size(p: Missing | null): number {
+  return p?.get("a").size ?? 0;
+}
+
+console.log("loaded");

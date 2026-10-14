@@ -23,7 +23,7 @@ use crate::hir::{
 pub(crate) fn is_fn(cx: &Ctx, t: TyId) -> bool {
     match cx.ty.kind(t) {
         TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
-        TyKind::Option(inner) => matches!(cx.ty.kind(*inner), TyKind::FnPtr { .. }),
+        TyKind::Option(inner, _) => matches!(cx.ty.kind(*inner), TyKind::FnPtr { .. }),
         _ => false,
     }
 }

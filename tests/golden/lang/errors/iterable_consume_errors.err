@@ -3,8 +3,6 @@ what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and 
 iterable_consume_errors.vlt:24:24: error: cannot spread `i64` elements into an array of `string`
 iterable_consume_errors.vlt:25:24: error: `Array.from` takes an iterable or `{ length: n }`
 pass an array, a string, a `Map`, a generator or a value with a `[Symbol.iterator]()` method, or write `Array.from({ length: n }, (_, i) => ...)`
-iterable_consume_errors.vlt:26:17: error: function expressions are not supported
-TypeScript allows this (`function (x) { ... }` as a value); Velt doesn't because arrow functions do the same without their own `this`; write an arrow function: `(x: T): R => { ... }` (a generator is written `function* (...)`)
 iterable_consume_errors.vlt:29:30: error: a generator function expression cannot have type parameters
 TypeScript allows this; Velt doesn't because a function value has one type; write a generic `function*` declaration and call it
 iterable_consume_errors.vlt:32:27: error: a generator function expression cannot have a rest parameter
