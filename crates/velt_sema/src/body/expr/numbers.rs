@@ -16,6 +16,15 @@ use velt_common::Span;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, UseMode};
 
+/// Is `name` (`u8x16.lane`) a method of a SIMD type? Those are Velt's own API: a lane of a
+/// `u8x16` is a `u8`, not a number.
+pub(super) fn is_simd_method(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(owner, _)| {
+        let owner = owner.rsplit(':').next().unwrap_or(owner);
+        hir::SimdTy::named(owner).is_some()
+    })
+}
+
 impl FnCx<'_, '_> {
     /// Does every value of type `t` convert to a `number` exactly (`i8`..`i32`, `u8`..`u32`,
     /// `f32`)? Those convert implicitly.
@@ -30,12 +39,13 @@ impl FnCx<'_, '_> {
     /// Is function `d` part of the JavaScript API the standard library provides (the prelude's
     /// globals: `Array`, `String`, `Map`, `Date`, `Math`, `fetch`, `URL`, …), called from user
     /// code? Its integers are numbers there. Velt's own modules (`velt:sqlite`, `velt:hash`, …)
-    /// and its ordering protocol (`compareTo`) keep their declared integer types.
+    /// its ordering protocol (`compareTo`) and the SIMD types keep their declared integer types.
     pub(crate) fn is_js_api(&self, d: DefId) -> bool {
         let f = self.cx.fn_info(d);
         !self.cx.scopes[self.module].is_std
             && self.cx.is_js_api_fn(f.module, &f.name)
             && f.name.rsplit(['.', ':']).next() != Some("compareTo")
+            && !is_simd_method(&f.name)
     }
 
     /// An integer the standard library hands to user code: a length, or the result of a JS API
@@ -284,6 +294,32 @@ impl FnCx<'_, '_> {
             _ => {}
         }
         h
+    }
+
+    /// A `number` passed as a position or lane index of a SIMD method (`u8x16.load(d, i)`), as
+    /// a `usize` through the prelude's `__floatPosition`: a whole number from 0 up as itself,
+    /// anything else (negative, fractional, NaN, ±Infinity) as `usize`'s maximum, which no
+    /// array or vector has room at, so `fits` gives `false` and the others their `RangeError`.
+    pub(super) fn simd_position(&mut self, h: hir::Expr) -> hir::Expr {
+        let span = h.span;
+        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__floatPosition").copied() else {
+            let usize_ = self.cx.ty.usize;
+            return self.mk(H::Cast(Box::new(h)), usize_, span);
+        };
+        let f64_ = self.cx.ty.f64;
+        let arg = if h.ty == f64_ {
+            h
+        } else {
+            self.mk(H::Cast(Box::new(h)), f64_, span)
+        };
+        self.mk(
+            H::Call {
+                callee: hir::Callee::Def(d, vec![]),
+                args: vec![arg],
+            },
+            self.cx.ty.usize,
+            span,
+        )
     }
 
     /// A float index (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`) as a `usize`, through

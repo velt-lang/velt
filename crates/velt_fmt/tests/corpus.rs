@@ -25,6 +25,14 @@ fn corpus_is_idempotent_and_preserves_ast_and_comments() {
             );
             continue;
         }
+        if velt_syntax::first_this_param(&src).is_some() {
+            assert!(
+                format_source(&src).is_err(),
+                "{}: formatted a file with a `this` parameter",
+                path.display()
+            );
+            continue;
+        }
         formatted += 1;
         if let Err(msg) = check(&src) {
             failures.push(format!("{}: {msg}", path.display()));

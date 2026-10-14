@@ -51,7 +51,7 @@ scope everywhere without an import, and so are Node's web globals: [`fetch`](fet
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
 | Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
-| Language | [symbol](symbol.md) (global `Symbol`) |
+| Language | [symbol](symbol.md) (global `Symbol`) · [simd](simd.md) (`velt:simd`: the vector types and their methods) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |

@@ -7,6 +7,7 @@
 | `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable text, indexed in UTF-16 code units (stored as UTF-8), a value ([Strings](#strings)) |
 | `symbol`, `unique symbol` | unique values compared by identity, also naming members ([Symbols](#symbols)) |
+| `u8x16`, `i32x4`, `f32x4`, `f64x2`, …; `mask8x16`, … | 128-bit SIMD vectors and the masks comparing them gives ([SIMD vectors](#simd-vectors)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
 | `[A, B]` | tuple |
@@ -334,6 +335,62 @@ until the program ends. **Planned**: a symbol brand added with `Object.definePro
 …)` as an optional symbol-keyed field of `o`'s type
 ([#922](https://github.com/velt-lang/velt/issues/922)), and `PropertyKey` (`string | symbol`)
 for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823)).
+
+## SIMD vectors
+
+A SIMD vector holds several numbers of one type, its *lanes*, and an operation on it works on
+all of them with one CPU instruction: a `u8x16` is sixteen `u8`, an `f32x4` four `f32`. The
+types are `i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`, each 128 bits, which
+every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU flag, in debug
+and release builds. On WebAssembly they are `v128` values: WebAssembly SIMD is part of Velt's
+WebAssembly baseline, and a program that uses vectors needs an engine with it (every current
+browser and runtime). They are Velt's own, and not global: a module imports the ones it names
+from [`velt:simd`](../std/simd.md) (`import { u8x16 } from "velt:simd";`), so a module that
+does not is free to use these names for its own types, as TypeScript code may.
+
+A vector is a value like a number: it is copied when assigned or passed, lives in a register,
+and can be a field, an array element, `T | null` or a `Map` value. Its operations are methods
+([`simd`](../std/simd.md)), not operators, and it has no `==`, truthiness, printed or JSON form:
+comparing two vectors with `eq`, `lt`, … gives a *mask* (`mask8x16` for a `u8x16`), one lane
+per lane, set or not, which `any()`, `all()`, `first()`, `count()` and `bitmask()` turn into a
+`boolean` or a number and `select` into a choice between two vectors.
+
+```ts
+import { u8x16 } from "velt:simd";
+
+// The position of the first `b` in `d`, sixteen bytes at a time.
+function indexOf(d: u8[], b: u8): i64 {
+  const needle = u8x16.splat(b);
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    const found = u8x16.load(d, i).eq(needle);
+    if (found.any()) {
+      return (i + found.first()) as i64;
+    }
+    i += 16;
+  }
+  while (i < d.length) {
+    if (d[i] == b) {
+      return i as i64;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function main() {
+  const text: u8[] = Buffer.alloc(100);
+  text[70] = 33;
+  console.log(indexOf(text, 33)); // 70
+}
+```
+
+`load` and `store` panic with a RangeError unless the whole vector is inside the array, and
+`lane(i)` unless `i` is a lane. `fits(xs, i)` is the test they make: in a loop that runs while
+it holds, as above, nothing is left for them to check.
+A loop over plain numbers is often compiled to the same instructions without any of this
+(summing an array, adding two arrays); vectors are for the loops it cannot do that for, such as
+one that stops early, or a sum of floats, whose order it must keep.
 
 ## Equality and comparison
 
@@ -713,17 +770,36 @@ console.log(show("ab"), show(41)); // AB 42
 
 - TypeScript does not check that a predicate's body answers correctly. A call that narrows
   checks the value at run time against what its result says, as `typeof` or `instanceof` would,
-  and throws a `TypeError` when they disagree (``the type predicate `isString` returned false
-  for a value that is `string` ``), where Node would go on with a value that is not of the
-  type it was narrowed to. A predicate that answers correctly behaves as in Node.
+  and panics when they disagree (``the type predicate `isString` returned false for a value
+  that is `string` ``; exit code 101), where Node would go on with a value that is not of the
+  type it was narrowed to. Unlike a thrown error, this panic cannot be caught with
+  `try`/`catch`. A predicate that answers correctly behaves as in Node.
 - A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
   value of (`string`) when the call is true and leaves the variable as it is when false; a
   type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
-- `asserts x is T` and `asserts x` declare a function that returns nothing (it throws instead
-  of returning `false`); the narrowing after its call is not made yet.
+- `asserts x is T` and `asserts x` declare an assertion function, which returns nothing (it
+  throws instead of returning `false`). A call of it as a statement narrows the variable passed
+  as `x` for the rest of the block, as `if (!isT(x)) throw …;` would: to `T`, or for `asserts
+  x` to a truthy value (`string | null` to `string`). As for a predicate, the value is checked
+  after the call, and an assertion function that returns for a value that is not `T` makes the
+  call panic (``the assertion function `assertDog` returned for a value that is not `Dog` ``;
+  exit code 101, which `try`/`catch` cannot catch). The errors the function throws itself are
+  ordinary errors.
+
+```ts
+function assertIsString(v: string | number): asserts v is string {
+  if (typeof v !== "string") throw new Error("not a string");
+}
+
+function shout(v: string | number): string {
+  assertIsString(v);
+  return v.toUpperCase();
+}
+console.log(shout("hi")); // HI
+```
 
 ## Intersection types
 
@@ -1109,8 +1185,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
-  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. TypeScript's errors
-  for writing to them (`xs.push(x)`, `xs[0] = x`) are not reported yet.
+  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. A variable or
+  parameter declared with a read-only array type cannot be written through: a mutating method
+  (``property 'push' does not exist on type 'readonly number[]'``, TypeScript's TS2339, also
+  `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, `copyWithin`) and an element
+  assignment (`xs[0] = x`, TS2542) are errors; the elements' own fields may change
+  (`xs[0].n = 1`). The check follows the variable: a `readonly T[]` copied into a `T[]`
+  variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
   string]`. `Promise.all` over tuples of different types is not supported.

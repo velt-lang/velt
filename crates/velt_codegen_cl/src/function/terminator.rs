@@ -8,6 +8,7 @@ use cranelift_module::Module;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
 use super::rounding::Rounding;
+use super::simd::Inlined;
 use super::{Translator, Val};
 use crate::abi::{as_int, int_bits, make_signature};
 use crate::CodegenResult;
@@ -123,10 +124,14 @@ impl<M: Module> Translator<'_, '_, M> {
         };
         let result = match inline {
             Some(v) => Some(v),
-            None => {
-                let inst = self.emit_call(callee, &values)?;
-                self.builder.inst_results(inst).first().copied()
-            }
+            None => match self.inline_simd(callee, args, &values, &params, ret) {
+                Some(Inlined::Value(v)) => Some(v),
+                Some(Inlined::Unit) => None,
+                None => {
+                    let inst = self.emit_call(callee, &values)?;
+                    self.builder.inst_results(inst).first().copied()
+                }
+            },
         };
         if let (Some(dest), Some(result)) = (dest, result) {
             let loc = self.place(dest)?;
@@ -151,8 +156,9 @@ impl<M: Module> Translator<'_, '_, M> {
                 (f.params.clone(), f.ret)
             }
             Callee::Extern(id) => {
-                self.extern_id(*id)?;
-                let e = self.program.ext(*id);
+                let Some(e) = self.program.externs.get(id.0 as usize) else {
+                    bail!("unknown extern #{}", id.0)
+                };
                 (e.params.clone(), e.ret)
             }
             Callee::Ptr { params, ret, .. } => (params.clone(), *ret),

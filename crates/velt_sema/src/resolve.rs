@@ -23,6 +23,9 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// In a class's instance method (its signature and body): the class type, which the
+    /// polymorphic `this` type resolves to (`m(): this`).
+    pub this_ty: Option<TyId>,
 }
 
 impl TyEnv {
@@ -31,6 +34,7 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            this_ty: None,
         }
     }
 }
@@ -210,6 +214,9 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if name == "this" {
+            return self.resolve_this_type(t, args, env);
+        }
         if let Some(i) = env.params.iter().rposition(|p| p == name) {
             if !args.is_empty() {
                 self.err(
@@ -219,6 +226,10 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
+        // The SIMD type names (`u8x16`) are built in only for std: other modules import them
+        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        let simd_outside_std =
+            crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
         // program declares or imports shadows them, as TypeScript code may declare one (#1074).
         // A value of that name does not (a function `f64`). TypeScript's own (`number`,
@@ -227,7 +238,11 @@ impl Ctx<'_> {
             && self
                 .lookup_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
-        if let Some(p) = self.ty.primitive(name).filter(|_| !shadowed) {
+        if let Some(p) = self
+            .ty
+            .primitive(name)
+            .filter(|_| !simd_outside_std && !shadowed)
+        {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -250,7 +265,39 @@ impl Ctx<'_> {
                 args.iter().for_each(|a| {
                     self.resolve_type(a, env);
                 });
-                self.err(format!("cannot find type `{name}` in this scope"), t.span);
+                self.not_found(
+                    format!("cannot find type `{name}` in this scope"),
+                    name,
+                    t.span,
+                );
+                self.ty.error
+            }
+        }
+    }
+
+    /// The polymorphic `this` type: the class of the instance method it is written in. A call
+    /// of a method returning `this` gives the receiver's own (sub)class type
+    /// (`body::expr::this_type`).
+    fn resolve_this_type(
+        &mut self,
+        t: &ast::TypeExpr,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> TyId {
+        if !args.is_empty() {
+            self.err("type `this` does not take type arguments", t.span);
+            return self.ty.error;
+        }
+        match env.this_ty {
+            Some(ty) => ty,
+            None => {
+                self.error(
+                    velt_common::Diagnostic::error(
+                        "a 'this' type is available only in a non-static member of a class or interface",
+                        t.span,
+                    )
+                    .with_note("TypeScript's TS2526; in an interface, Velt doesn't support it yet: write the interface's name"),
+                );
                 self.ty.error
             }
         }

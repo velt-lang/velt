@@ -39,7 +39,9 @@ pub(crate) struct Built {
 pub(crate) struct Declarations {
     /// What calls and address constants of each function refer to.
     pub funcs: Vec<FuncId>,
-    pub externs: Vec<FuncId>,
+    /// `None` for a SIMD operation (`velt_vir::simd`): emitted inline, so not a symbol (an
+    /// import nothing defines must not reach the linker, even unreferenced).
+    pub externs: Vec<Option<FuncId>>,
     pub statics: Vec<DataId>,
     pub call_conv: CallConv,
 }
@@ -125,14 +127,18 @@ fn declare_all<M: Module>(
     };
     let mut externs = Vec::with_capacity(program.externs.len());
     for e in &program.externs {
-        externs.push(declare_function(
+        if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some() {
+            externs.push(None);
+            continue;
+        }
+        externs.push(Some(declare_function(
             module,
             call_conv,
             &e.symbol,
             &e.params,
             e.ret,
             Linkage::Import,
-        )?);
+        )?));
     }
     let mut statics = Vec::with_capacity(program.statics.len());
     for i in 0..program.statics.len() {
@@ -259,7 +265,7 @@ fn declare_function<M: Module>(
 /// Module ids that static relocations may refer to.
 struct RelocTargets<'a> {
     funcs: &'a [FuncId],
-    externs: &'a [FuncId],
+    externs: &'a [Option<FuncId>],
     statics: &'a [DataId],
 }
 
@@ -318,7 +324,12 @@ fn write_reloc<M: Module>(
             desc.write_function_addr(offset, func);
         }
         vir::Const::Extern(e) => {
-            let func = module.declare_func_in_data(lookup(targets.externs, e.0, "extern")?, desc);
+            let id = match targets.externs.get(e.0 as usize) {
+                Some(Some(id)) => *id,
+                Some(None) => bail!("the address of SIMD operation #{} is taken", e.0),
+                None => bail!("unknown extern #{}", e.0),
+            };
+            let func = module.declare_func_in_data(id, desc);
             desc.write_function_addr(offset, func);
         }
         vir::Const::Static(s) => {

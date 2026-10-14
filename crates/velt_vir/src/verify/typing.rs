@@ -56,7 +56,9 @@ impl FnCheck<'_> {
             }
         };
         let ok = match c {
-            Const::Int(_) => t.is_int() || t == Ty::Ptr || t == Ty::Bool,
+            Const::Int(i) => {
+                t.is_int() || t == Ty::Ptr || t == Ty::Bool || (t == Ty::V128 && *i == 0)
+            }
             Const::Float(_) => t.is_float(),
             Const::Bool(_) => t == Ty::Bool,
             Const::Unit => t == Ty::Unit,
@@ -120,6 +122,7 @@ impl FnCheck<'_> {
             _ if ta != tb => return Err(format!("{op:?} operand types differ: {ta:?} vs {tb:?}")),
             Add | Sub | Mul | Div | Rem => ta.is_int() || ta.is_float(),
             BitAnd | BitOr | BitXor => ta.is_int() || ta == Ty::Bool,
+            Eq | Ne | Lt | Le | Gt | Ge if ta == Ty::V128 => false,
             Eq | Ne | Lt | Le | Gt | Ge => return Ok(Ty::Bool),
         };
         ok.then_some(ta)

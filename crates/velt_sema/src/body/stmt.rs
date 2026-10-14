@@ -75,8 +75,13 @@ impl FnCx<'_, '_> {
         match &s.kind {
             A::Var(v) => self.var_decl(v, span, out),
             A::Expr(e) => {
+                // `assertIsT(x);` (`asserts v is T`) narrows `x` after it (`predicates.rs`).
+                let facts = self.assertion_facts(e);
                 let h = self.expr_stmt(e);
                 Self::push(out, S::Expr(h), span);
+                if let Some(p) = facts {
+                    self.assertion_checked(p, span, out);
+                }
             }
             A::Return(e) => self.return_stmt(e.as_ref(), span, out),
             A::If { cond, then, els } => self.if_stmt(cond, then, els.as_deref(), span, out),
@@ -379,6 +384,7 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        self.note_readonly_array(local, v.ty.as_ref());
         if v.kind == ast::VarKind::AwaitUsing {
             self.f.await_using.insert(local);
         }
@@ -470,6 +476,7 @@ impl FnCx<'_, '_> {
             }
             Some(e) => {
                 let h = self.returned(e, ret);
+                self.check_this_return(&h, ret, e.span);
                 Self::push(out, S::Return(Some(h)), span);
             }
         }

@@ -1,0 +1,8 @@
+i8x16 50 checks
+u8x16 46 checks
+i16x8 55 checks
+u16x8 53 checks
+i32x4 54 checks
+u32x4 52 checks
+i64x2 47 checks
+u64x2 46 checks

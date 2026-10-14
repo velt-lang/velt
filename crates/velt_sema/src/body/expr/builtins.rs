@@ -67,8 +67,8 @@ impl FnCx<'_, '_> {
                 if !self.unknown_namespace_member(name, id.span)
                     && !self.fn_expr_self_ref(name, id.span)
                 {
-                    self.cx
-                        .err(format!("cannot find `{name}` in this scope"), id.span);
+                    let msg = format!("cannot find `{name}` in this scope");
+                    self.cx.not_found(msg, name, id.span);
                 }
                 self.check_args_loose(args);
                 self.error_expr(span)
@@ -209,6 +209,9 @@ impl FnCx<'_, '_> {
                 if let Some(note) = self.in_place_note(a, &h) {
                     d = d.with_note(note);
                 }
+                if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
+                    d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
+                }
                 self.cx.error(d);
             }
             out.push(h);
@@ -255,6 +258,7 @@ impl FnCx<'_, '_> {
             slot_names: names,
             bounds: vec![vec![]; n],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],

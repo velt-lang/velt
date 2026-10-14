@@ -497,7 +497,7 @@ impl FnCx<'_, '_> {
     /// (#365): the object behind an interface value, and the function value itself (each
     /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(self.cx.ty.kind(t), TyKind::Unit)
+        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_))
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.
@@ -543,15 +543,50 @@ impl FnCx<'_, '_> {
         };
         if !ok {
             let tn = self.cx.display(t);
-            self.cx.err(
-                format!(
-                    "cannot apply binary operator `{}` to type `{tn}`",
-                    op_str(op)
-                ),
-                span,
+            let message = format!(
+                "cannot apply binary operator `{}` to type `{tn}`",
+                op_str(op)
             );
+            let mut d = Diagnostic::error(message, span);
+            if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
+                d = d.with_note(simd_method_note(op));
+            }
+            self.cx.error(d);
             return None;
         }
         Some(t)
+    }
+}
+
+/// What to write instead of operator `op` on SIMD values, which have methods only.
+fn simd_method_note(op: ast::BinaryOp) -> String {
+    use ast::BinaryOp as B;
+    let (method, comparison) = match op {
+        B::Add => ("add", false),
+        B::Sub => ("sub", false),
+        B::Mul => ("mul", false),
+        B::Div => ("div", false),
+        B::BitAnd => ("and", false),
+        B::BitOr => ("or", false),
+        B::BitXor => ("xor", false),
+        B::Shl => ("shl", false),
+        B::Shr | B::UShr => ("shr", false),
+        B::Eq | B::StrictEq => ("eq", true),
+        B::NotEq | B::StrictNotEq => ("ne", true),
+        B::Lt => ("lt", true),
+        B::LtEq => ("le", true),
+        B::Gt => ("gt", true),
+        B::GtEq => ("ge", true),
+        B::Rem | B::Pow | B::And | B::Or | B::Nullish | B::In => {
+            return "SIMD values have methods instead of operators, and none for this one".into()
+        }
+    };
+    if comparison {
+        format!(
+            "SIMD values are compared lane by lane with a method, which gives a mask: \
+             `a.{method}(b).all()` or `a.{method}(b).any()`"
+        )
+    } else {
+        format!("SIMD values have methods instead of operators: `a.{method}(b)`")
     }
 }

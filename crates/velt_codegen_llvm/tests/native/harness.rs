@@ -212,6 +212,8 @@ fn rust_type(ty: Ty) -> &'static str {
         Ty::Ptr => "*const u8",
         Ty::Unit => "()",
         Ty::Agg(_) => panic!("aggregate in a signature"),
+        // The harness calls through the C ABI, which SIMD values never cross.
+        Ty::V128 => panic!("a SIMD value in a signature of the native harness"),
     }
 }
 

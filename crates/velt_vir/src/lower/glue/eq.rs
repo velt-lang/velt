@@ -83,6 +83,10 @@ impl FnLower<'_, '_> {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
             }
+            TyKind::Simd(_) => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.simd_same_bits(x, y)
+            }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
@@ -128,6 +132,11 @@ impl FnLower<'_, '_> {
             _ if vt.is_float() => {
                 let x = self.key_float_bits(Operand::Copy(place.clone()), vt);
                 self.fx_combine(cint(0, Ty::U64), x)
+            }
+            TyKind::Simd(_) => {
+                let [low, high] = self.simd_halves(Operand::Copy(place.clone()));
+                let h = self.fx_combine(cint(0, Ty::U64), low);
+                self.fx_combine(h, high)
             }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let x = self.cast_to(Operand::Copy(place.clone()), vt, Ty::U64);

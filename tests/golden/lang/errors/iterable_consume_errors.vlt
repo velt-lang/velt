@@ -1,6 +1,6 @@
 // What #424's iterable consumers and syntax still reject, each with the fix: spreading or
-// collecting something that is not iterable, values of the wrong type, function expressions
-// that are not generators, generator expressions that change a variable an async closure also
+// collecting something that is not iterable, values of the wrong type, generic generator
+// expressions (a plain function expression is fine), generator expressions that change a variable an async closure also
 // captures or that name themselves, and object literals whose methods are not one iterator method.
 function* numbers(): Generator<i64> {
   yield 1;

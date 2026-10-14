@@ -124,7 +124,7 @@ impl FnCx<'_, '_> {
                 }
             }
             TyKind::Param(_) => Test::Generic,
-            TyKind::Unit | TyKind::Result(..) => Test::Rejected,
+            TyKind::Unit | TyKind::Result(..) | TyKind::Simd(_) => Test::Rejected,
             _ => Test::Object,
         }
     }
@@ -322,6 +322,7 @@ impl FnCx<'_, '_> {
         let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
         let note = match self.cx.ty.kind(t) {
             TyKind::Unit => "a `void` value is never a condition",
+            TyKind::Simd(_) => "test a mask with `.any()` or `.all()`: `a.eq(b).all()`",
             _ => "compare explicitly, e.g. with `===`",
         };
         let d = Diagnostic::error(

@@ -353,6 +353,7 @@ impl FnCx<'_, '_> {
             | TyKind::Closure(_)
             | TyKind::Dyn(..)
             | TyKind::Unit
+            | TyKind::Simd(_)
             | TyKind::Shared(_) => return false,
             // A promise prints its state and, once settled, its value (`void`: `undefined`).
             TyKind::Promise(v, e) => [v, e]
