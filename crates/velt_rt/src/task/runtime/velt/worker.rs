@@ -21,6 +21,15 @@ use std::time::{Duration, Instant};
 pub(super) const WAKE: mio::Token = mio::Token(usize::MAX);
 /// Tasks between non-blocking reactor polls while a worker is busy.
 const IO_INTERVAL: u32 = 61;
+/// Tasks between non-blocking reactor polls while at least [`BACKLOG`] tasks are queued. A long
+/// queue is usually one input's fan-out (a message published to 1000 connections, each with a
+/// write to make); reading the next input before writing on lets the writes carry both (one
+/// thread broadcasting: 7.6M deliveries/s at 1.0k instructions each, from 5.0M/s at 1.7k).
+/// With a short queue (echo) the extra polls would only cost system calls.
+const FANOUT_IO_INTERVAL: u32 = 4;
+/// Queued tasks from which a worker polls its reactor every [`FANOUT_IO_INTERVAL`] tasks.
+const BACKLOG: usize = 256;
+
 /// Tasks between checks whether to wake a helper.
 const HELP_INTERVAL: u32 = 16;
 
@@ -193,6 +202,7 @@ fn run(index: usize, mut poll: mio::Poll) {
     let mut events = mio::Events::with_capacity(256);
     let mut awake_since = thread_cpu();
     let mut tick: u32 = 0;
+    let mut since_io: u32 = 0;
     loop {
         take_inbox(me, &local);
         let next = local.queue.borrow_mut().pop_front();
@@ -204,7 +214,14 @@ fn run(index: usize, mut poll: mio::Poll) {
             if tick.is_multiple_of(HELP_INTERVAL) {
                 maybe_help(index, &local, awake_since);
             }
-            if tick.is_multiple_of(IO_INTERVAL) {
+            since_io += 1;
+            let every = if local.queue.borrow().len() >= BACKLOG {
+                FANOUT_IO_INTERVAL
+            } else {
+                IO_INTERVAL
+            };
+            if since_io >= every {
+                since_io = 0;
                 turn(&mut poll, &mut events, &local, Some(Duration::ZERO));
             }
             continue;
