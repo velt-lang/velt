@@ -51,6 +51,10 @@ reads `DATABASE_URL` (default
 number of database connections of the process (default **2 × cores** everywhere; `node-cluster`
 splits it between its workers, at least 2 each).
 
+**Many cores (Linux):** `SERVER_CPUS` pins each server to a CPU list and `CLIENT_CPUS` pins wrk
+(`taskset -c`), so the two never share a core; `SERVERS=velt-per-core` runs the Velt server under
+`VELT_SCHEDULER=per-core`. The pinned Azure run is in [RESULTS.md](RESULTS.md).
+
 ## What run.sh does
 
 1. Builds each server (Velt `velt build --release`, which uses LLVM when clang is found; Go

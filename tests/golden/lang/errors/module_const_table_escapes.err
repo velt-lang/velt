@@ -1,0 +1,20 @@
+module_const_table_escapes.vlt:26:14: error: cannot move out of module constant `K`
+module_const_table_escapes.vlt:26:18: error: cannot move out of module constant `L`
+module_const_table_escapes.vlt:65:13: error: cannot move out of module constant `K`
+module_const_table_escapes.vlt:66:17: error: cannot move out of module constant `T`
+module_const_table_escapes.vlt:67:13: error: cannot move out of module constant `Limits.STEPS`
+module_const_table_escapes.vlt:70:37: error: cannot move out of module constant `K`
+module_const_table_escapes.vlt:70:41: error: cannot move out of module constant `L`
+module_const_table_escapes.vlt:70:47: error: `??` needs a `T | null` value on the left, found `f64[]`
+module_const_table_escapes.vlt:70:52: error: cannot move out of module constant `L`
+module_const_table_escapes.vlt:19:7: error: cannot pass module constant `K` to a function value
+module_const_table_escapes.vlt:44:9: error: cannot modify module-level constant `K`
+module_const_table_escapes.vlt:53:17: error: cannot pass module constant `K` to a function value
+module_const_table_escapes.vlt:53:23: error: cannot pass module constant `K` to a function value
+module_const_table_escapes.vlt:53:34: error: cannot pass module constant `T` to a function value
+module_const_table_escapes.vlt:60:9: error: cannot pass module constant `K` to a function value
+module_const_table_escapes.vlt:62:29: error: cannot modify module-level constant `K`
+module_const_table_escapes.vlt:63:16: error: cannot modify module-level constant `K`
+module_const_table_escapes.vlt:70:59: error: cannot pass module constant `K` to a function value
+module_const_table_escapes.vlt:70:87: error: cannot move out of module constant `K`
+module_const_table_escapes.vlt:61:23: error: cannot pass module constant `K` to a function value

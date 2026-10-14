@@ -56,7 +56,8 @@ impl Cx<'_> {
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             // Its result reaches the awaiter on another task (`velt_rt_fut_transfer`, #160).
             TyKind::Promise(r, e) => vec![r, e],
-            TyKind::Adt(d, _) if self.is_class(t) && self.has_header(d) => return true,
+            // The object behind it may be of any subclass, with fields of its own.
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
@@ -78,7 +79,7 @@ impl Cx<'_> {
             TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
             TyKind::Shared(_) | TyKind::Promise(..) => return false,
             TyKind::Array(e) => vec![e],
-            TyKind::Adt(d, _) if self.is_class(t) && self.has_header(d) => return true,
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
@@ -100,7 +101,7 @@ impl Cx<'_> {
             TyKind::Shared(_) | TyKind::Promise(..) => return false,
             TyKind::Adt(..) if self.own_clone(t).is_some() => return true,
             TyKind::Array(e) => vec![e],
-            TyKind::Adt(d, _) if self.is_class(t) && self.has_header(d) => return true,
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };

@@ -1,0 +1,136 @@
+// check: no leaks
+// A subclass instance handed to a task through its base class is transferred by its runtime
+// class (#1057): the subclass's own fields (an array, a map, a function value, an object, a
+// nullable or union field, fields of a deeper subclass) are copied or moved with it, never
+// shared with the sender. The tasks change what they got; the sender's objects stay as they
+// were, and the sender keeps using them while the tasks run. No object of the hierarchy is
+// shared here, so references to them are not counted: the copy is decided by what the fields
+// hold, which the base class does not show.
+class Base {
+  go(): number {
+    return 0;
+  }
+  poke(): void {}
+}
+
+class Cell {
+  n: number = 0;
+}
+
+class D extends Base {
+  xs: number[];
+  constructor(xs: number[]) {
+    super();
+    this.xs = xs;
+  }
+  override go(): number {
+    return this.xs.length;
+  }
+  override poke(): void {
+    this.xs.push(99);
+  }
+}
+
+// Fields only a deeper subclass has, reached through the root of the hierarchy.
+class Mid extends D {
+  names: Map<string, Cell>;
+  constructor(xs: number[], names: Map<string, Cell>) {
+    super(xs);
+    this.names = names;
+  }
+  override go(): number {
+    return super.go() + this.names.size;
+  }
+}
+
+class Deep extends Mid {
+  f: () => number;
+  cell: Cell | null;
+  either: Cell | string;
+  constructor(xs: number[], names: Map<string, Cell>, c: Cell) {
+    super(xs, names);
+    this.f = () => c.n;
+    this.cell = c;
+    this.either = c;
+  }
+  override go(): number {
+    return super.go() + this.f();
+  }
+  override poke(): void {
+    super.poke();
+    this.names.set("added", new Cell());
+    const c = this.cell;
+    if (c != null) {
+      c.n += 100;
+    }
+    const e = this.either;
+    if (e instanceof Cell) {
+      e.n += 1000;
+    }
+  }
+}
+
+class Holder {
+  item: Base;
+  constructor(item: Base) {
+    this.item = item;
+  }
+}
+
+async function run(t: Base): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < 20000; i++) {
+    n += t.go();
+  }
+  t.poke();
+  return n + t.go();
+}
+
+async function runAll(ts: Base[]): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < ts.length; i++) {
+    ts[i].poke();
+    n += ts[i].go();
+  }
+  return n;
+}
+
+async function runMaybe(t: Base | null): Promise<number> {
+  if (t == null) {
+    return -1;
+  }
+  t.poke();
+  return t.go();
+}
+
+async function runHolder(h: Holder): Promise<number> {
+  h.item.poke();
+  return h.item.go();
+}
+
+function busy(xs: number[]): number {
+  let m = 0;
+  for (let i = 0; i < 20000; i++) {
+    const ys = xs;
+    m += ys.length;
+  }
+  return m;
+}
+
+async function main() {
+  const xs = [1, 2, 3, 4];
+  const names = new Map<string, Cell>();
+  names.set("a", new Cell());
+  const c = new Cell();
+  c.n = 5;
+
+  const p1 = spawn(run(new D(xs)));
+  const p2 = spawn(run(new Deep(xs, names, c)));
+  const p3 = spawn(runAll([new D(xs), new Mid(xs, names), new Deep(xs, names, c)]));
+  const p4 = spawn(runMaybe(new Deep(xs, names, c)));
+  const p5 = spawn(runHolder(new Holder(new Deep(xs, names, c))));
+
+  const busyN = busy(xs);
+  console.log(await p1, await p2, await p3, await p4, await p5);
+  console.log(busyN, xs.length, names.size, c.n);
+}

@@ -1,0 +1,14 @@
+// Reading a table out of bounds panics like reading a local array out of bounds
+// (`index out of bounds`, exit 101).
+const K: u32[] = [10, 20, 30];
+
+function at(i: usize): u32 {
+  return K[i];
+}
+
+function main() {
+  const local: u32[] = [10, 20, 30];
+  console.log(at(0), at(2), local[2], K.length);
+  console.log(at(3));
+  console.log("not reached");
+}
