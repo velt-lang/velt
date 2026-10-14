@@ -15,6 +15,10 @@ pub mod object;
 pub mod reader;
 #[path = "../../../velt_rt/src/json/reader_abi.rs"]
 pub mod reader_abi;
+#[path = "../../../velt_rt/src/json/rows_bin.rs"]
+pub mod rows_bin;
+#[path = "../../../velt_rt/src/json/rows_reader.rs"]
+pub mod rows_reader;
 #[path = "../../../velt_rt/src/json/scan.rs"]
 pub mod scan;
 #[path = "../../../velt_rt/src/json/text.rs"]

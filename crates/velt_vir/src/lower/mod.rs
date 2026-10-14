@@ -254,6 +254,9 @@ struct Cx<'h> {
     extern_map: HashMap<String, ExternId>,
     statics: Vec<StaticData>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
+    /// The stored elements of each module constant table read so far (`table_read`): the data
+    /// and the length, or `None` for a constant that is not one.
+    tables: HashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: HashMap<Work, FuncId>,

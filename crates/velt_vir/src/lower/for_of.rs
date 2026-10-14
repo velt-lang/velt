@@ -25,7 +25,13 @@ impl FnLower<'_, '_> {
         body: &hir::Block,
         consume: bool,
     ) {
-        if self.iterates_shared(iter) {
+        // A table is iterated where it is stored, whatever arrays of its type are in this
+        // program: its header is the inline value.
+        let table = match consume {
+            true => None,
+            false => self.table_read(iter),
+        };
+        if table.is_none() && self.iterates_shared(iter) {
             return self.for_of_shared(label, binding, iter, body, consume);
         }
         self.push_scope(ScopeKind::Temps);
@@ -39,8 +45,13 @@ impl FnLower<'_, '_> {
             let avt = self.cx.ty(aty);
             Place::local(self.copy_to_temp(v, avt))
         } else {
-            let v = self.expr(iter);
-            self.place_of(v, aty)
+            match table {
+                Some(table) => table,
+                None => {
+                    let v = self.expr(iter);
+                    self.place_of(v, aty)
+                }
+            }
         };
         let len = self.rvalue_temp(
             Ty::U64,

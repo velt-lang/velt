@@ -77,6 +77,20 @@ impl FnCx<'_, '_> {
         if is_place(e) {
             set_place_mode(e, m);
         }
+        // A module constant bound by reference (`const v = ns.K`, `Cls.K`, `K!`): one that is a
+        // table can't be taken over, like `const v = K`.
+        if let H::Global(d) = e.kind {
+            if crate::body::pure_init::is_table(self.cx, d) {
+                let name = self
+                    .cx
+                    .global(d)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                let msg = format!("cannot move out of module constant `{name}`");
+                let err = crate::body::pure_init::table_escapes(&name, msg, e.span);
+                self.cx.error(err);
+            }
+        }
     }
 
     /// Use place `e` mutably (receiver of a method or argument of an intrinsic known to modify it,

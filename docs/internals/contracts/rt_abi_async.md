@@ -669,7 +669,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` | `JSON.parse` options: flag 1 = `skip_unknown` fails; `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value` |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` | `JSON.parse` options: flag 1 = `skip_unknown` fails; `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. When `src` is the marker string a database driver returned for parked binary rows (`velt_rt_sqlite_query`), the reader walks those rows instead of text, and owns them. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most), and their keys borrow the reader's buffer rather than `src` |
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
@@ -1098,7 +1098,7 @@ typedef struct { int64_t changes; int64_t last_insert_rowid; } VeltSqliteRun;   
 | `velt_rt_sqlite_last_error` | `(VeltSqliteDb db, VeltErr* out)` | the most recent failure as a failed status (code 0 if none) |
 | `velt_rt_sqlite_prepare` | `(VeltSqliteDb db, const VeltStr* sql, IoResult<VeltSqliteStmt>* out)` | compiles exactly one statement into the cache |
 | `velt_rt_sqlite_run` | `(VeltSqliteStmt stmt, const VeltStr* params, IoResult<VeltSqliteRun>* out)` | steps to completion (rows discarded) |
-| `velt_rt_sqlite_query` | `(VeltSqliteStmt stmt, const VeltStr* params, u8 first_only, IoResult<VeltStr>* out)` | rows as a JSON array; `first_only` ⇒ the first row's object or `""` |
+| `velt_rt_sqlite_query` | `(VeltSqliteStmt stmt, const VeltStr* params, u8 first_only, IoResult<VeltStr>* out)` | the rows for `JSON.parse<T[]>`; `first_only` ⇒ the first row for `JSON.parse<T>`, or `""`. The string is a marker, not JSON text: the rows are parked in binary form (`json/rows_bin.rs`) for the reader the calling thread makes from that string next (`velt_rt_json_reader_new_with`), which reads them as the JSON `[{"col":value,...}]` (#33) |
 | `velt_rt_sqlite_note_error` | `(VeltSqliteStmt stmt, i32 code, const VeltStr* message)` | counts a failure std found (a row that does not decode) against the connection |
 | `velt_rt_sqlite_stmt_free` | `(VeltSqliteStmt stmt)` | releases the handle; null ⇒ no-op |
 | `velt_rt_sqlite_error_name` | `(i32 code, VeltStr* out)` | static name: known extended names (`SQLITE_CONSTRAINT_UNIQUE`, `SQLITE_BUSY_SNAPSHOT` …), else the primary one |
