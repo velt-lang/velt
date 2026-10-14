@@ -59,7 +59,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The module constant `import.meta` stands for (first mentioned at `span`):
-    /// `const import.meta = { url: "", filename: "", dirname: "" };`.
+    /// `const import.meta: { readonly url: string; … } = { url: "", filename: "", dirname: "" };`.
     pub(super) fn import_meta_item(&mut self, span: Span) -> Item {
         let props = IMPORT_META_FIELDS
             .iter()
@@ -73,6 +73,34 @@ impl<'a> Parser<'a> {
             })
             .collect();
         let init = self.mk_expr(ExprKind::Object(props), span);
+        // Its fields are read-only, also in a copy (`const m = import.meta; m.url = "x"` would
+        // otherwise write the copy, not `import.meta`).
+        let fields = IMPORT_META_FIELDS
+            .iter()
+            .map(|f| ObjectTypeField {
+                name: Ident {
+                    name: (*f).into(),
+                    span,
+                },
+                ty: TypeExpr {
+                    kind: TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: "string".into(),
+                            span,
+                        }],
+                        args: vec![],
+                    },
+                    span,
+                },
+                optional: false,
+                readonly: true,
+                span,
+            })
+            .collect();
+        let ty = TypeExpr {
+            kind: TypeExprKind::Object(fields),
+            span,
+        };
         let name = Ident {
             name: IMPORT_META.into(),
             span,
@@ -82,7 +110,7 @@ impl<'a> Parser<'a> {
             kind: ItemKind::Var(VarDecl {
                 kind: VarKind::Const,
                 pattern,
-                ty: None,
+                ty: Some(ty),
                 init: Some(init),
                 span,
             }),

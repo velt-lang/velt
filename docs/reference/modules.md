@@ -26,7 +26,8 @@
   `file:` URL, `import.meta.filename` the file's absolute path and `import.meta.dirname` its
   directory. They are fixed while compiling, so they name the source file, not the built
   program, wherever it runs. `import.meta` used as a value of its own (`const m = import.meta`,
-  `return import.meta`) is a copy of the object.
+  `return import.meta`) is a copy of the object. Its fields are read-only, also through a
+  copy (`m.url = "x"` is an error, as `import.meta.url = "x"` is).
 - A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with
   a static `import` instead.
 
