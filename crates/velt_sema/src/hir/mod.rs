@@ -29,12 +29,14 @@
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
 mod intrinsic;
+mod nothing;
 
 use std::collections::HashMap;
 
 use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
+pub use nothing::Nothing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -107,8 +109,8 @@ pub enum TyKind {
     Array(TyId),
     Map(TyId, TyId),
     Tuple(Vec<TyId>),
-    /// `T | null`
-    Option(TyId),
+    /// `T | null`, `T | undefined` or `T | null | undefined` (which nothings: `Nothing`).
+    Option(TyId, Nothing),
     /// Lowering-internal `Result<ret, E>` ABI of throwing functions (sema never produces it).
     Result(TyId, TyId),
     /// `Promise<T, E>`: resolves to `T` or rejects with `E` (`Never`: never rejects).
@@ -156,12 +158,10 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // `T | null | null` is `T | null`: an option of an option is the inner option (one
-        // `null`, as in JavaScript), however it was built (substituting `U | null` with a
-        // nullable `U`, for instance). Wrapping a value whose type is already that option is the
-        // identity (`ExprKind::WrapSome`, `UnwrapSome`).
-        if let TyKind::Option(inner) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(_)) {
+        // An option of an option is the inner option, with the inner one's nothing (`T | null |
+        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
+        if let TyKind::Option(inner, _) = kind {
+            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
                 return inner;
             }
         }

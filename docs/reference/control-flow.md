@@ -56,7 +56,7 @@ function main() {
 
 ### Iterables
 
-The prelude declares TypeScript's iteration protocol, without `undefined`:
+The prelude declares TypeScript's iteration protocol; a finished result has no `value`:
 
 ```ts
 type IteratorResult<T> = { value: T; done: false } | { done: true };
@@ -76,7 +76,7 @@ interface Iterable<T, E = never> {
 - `for (const x of src)` calls `src[Symbol.iterator]()` once, then `next()` until a result is
   `done`, binding each `value` (owned by the loop variable). `src` may be any type with that
   method, a class declaring `implements Iterable<T>` or not, or an `Iterable<T>` value.
-- A finished result has no `value` (Velt has no `undefined`); `if (r.done)` narrows `r` like
+- A finished result has no `value` (TypeScript's has `value: undefined`); `if (r.done)` narrows `r` like
   any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
   gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
 - `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).

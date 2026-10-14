@@ -82,7 +82,9 @@ impl<'a> Parser<'a> {
         );
         let more = |p: &mut Self| {
             p.at(Tok::Pipe)
-                && (p.nth(1) == Tok::Kw(Kw::Null) || strings && matches!(p.nth(1), Tok::Str(_)))
+                && (p.nth(1) == Tok::Kw(Kw::Null)
+                    || p.nth_word(1, "undefined")
+                    || strings && matches!(p.nth(1), Tok::Str(_)))
         };
         if more(self) {
             let mut members = vec![ty];
@@ -256,7 +258,13 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
-            Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Undefined,
+                    span,
+                })
+            }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
             // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
             // resolves to the class of the method.

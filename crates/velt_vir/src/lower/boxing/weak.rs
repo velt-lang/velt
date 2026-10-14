@@ -79,7 +79,7 @@ impl Cx<'_> {
             return;
         }
         match self.kind(t) {
-            TyKind::Option(e) | TyKind::Array(e) => self.refs_inline(b, e, out, seen),
+            TyKind::Option(e, _) | TyKind::Array(e) => self.refs_inline(b, e, out, seen),
             // An uncounted object is opaque: nothing is traced through it (a leak at worst).
             TyKind::Adt(..) if self.is_class(t) => {}
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {

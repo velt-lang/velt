@@ -182,6 +182,14 @@ impl FnCx<'_, '_> {
             {
                 self.expr_stmt(inner)
             }
+            // `void e;`: evaluates `e` and ignores its value (also a promise's).
+            ast::ExprKind::Unary {
+                op: ast::UnaryOp::Void,
+                expr,
+            } => {
+                self.stmt_yields(expr);
+                self.expr(expr, None, Want::Borrow)
+            }
             _ => {
                 self.stmt_yields(e);
                 let h = self.expr(e, None, Want::Borrow);
@@ -441,6 +449,20 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
+            // `return undefined;` in a `void` function is `return;`, as in TypeScript.
+            Some(e)
+                if ret == self.cx.ty.unit
+                    && crate::body::narrow::nothing_word(e) == Some("undefined") =>
+            {
+                Self::push(out, S::Return(None), span);
+            }
+            // `return void e;` (also an arrow body `(): void => void e`) in a `void` function
+            // is `e;` then `return;`, as in TypeScript.
+            Some(e) if ret == self.cx.ty.unit && void_op(e).is_some() => {
+                let h = self.expr_stmt(void_op(e).unwrap_or(e));
+                Self::push(out, S::Expr(h), span);
+                Self::push(out, S::Return(None), span);
+            }
             // `return value;` in an arrow whose `void` result comes from its expected type.
             Some(e) if self.f.discards_value => {
                 let h = self.expr_stmt(e);
@@ -487,6 +509,18 @@ fn is_empty_array(e: &ast::Expr) -> bool {
         ast::ExprKind::Array(xs) => xs.is_empty(),
         ast::ExprKind::Paren(inner) => is_empty_array(inner),
         _ => false,
+    }
+}
+
+/// `void e` (possibly parenthesized), without the parentheses.
+pub(crate) fn void_op(e: &ast::Expr) -> Option<&ast::Expr> {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => void_op(inner),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Void,
+            ..
+        } => Some(e),
+        _ => None,
     }
 }
 

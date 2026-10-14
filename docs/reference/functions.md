@@ -142,8 +142,8 @@ returns that method's type, and its `return`s are checked against it. Arrow func
 the same rules when no function type is expected; where one is, its result type applies.
 Generic arrow functions (`const id = <T>(x: T) => x`) follow them too.
 
-A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
-Velt doesn't have. Return `null` and give the function a `T | null` type instead.
+A `return;` next to `return value;` is not supported yet (TypeScript returns `undefined` there):
+write `return undefined;` and give the function a `T | undefined` type.
 
 A function may use itself (or other functions whose return types are being inferred) anywhere
 outside its `return` expressions, as in TypeScript: `count` below returns `i64`. Only when its

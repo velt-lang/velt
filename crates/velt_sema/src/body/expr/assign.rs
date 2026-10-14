@@ -5,10 +5,10 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::{hir_binop, untyped};
-use crate::body::narrow::is_null;
+use crate::body::narrow::{is_null, nothing_word};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, TyId, TyKind, UseMode};
+use crate::hir::{self, BinOp, ExprKind as H, Nothing, TyId, TyKind, UseMode};
 
 /// What an assignment writes to.
 enum AssignTarget {
@@ -664,8 +664,15 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(first.ty) {
             return exp;
         }
-        if is_null(second) && self.cx.ty.opt_payload(first.ty).is_none() {
-            return Some(self.cx.ty.option(first.ty));
+        if let Some(word) = nothing_word(second) {
+            let n = if word == "null" {
+                Nothing::Null
+            } else {
+                Nothing::Undefined
+            };
+            if self.cx.ty.opt_payload(first.ty).is_none() {
+                return Some(self.cx.ty.option_of(first.ty, n));
+            }
         }
         Some(first.ty)
     }

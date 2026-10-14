@@ -182,8 +182,10 @@ impl<'a> Parser<'a> {
             Tok::Pipe => (BitOr, PREC_BITOR, 1),
             Tok::Caret => (BitXor, PREC_BITXOR, 1),
             Tok::Amp => (BitAnd, PREC_BITAND, 1),
-            Tok::EqEq | Tok::EqEqEq => (Eq, PREC_EQ, 1),
-            Tok::BangEq | Tok::BangEqEq => (NotEq, PREC_EQ, 1),
+            Tok::EqEq => (Eq, PREC_EQ, 1),
+            Tok::EqEqEq => (StrictEq, PREC_EQ, 1),
+            Tok::BangEq => (NotEq, PREC_EQ, 1),
+            Tok::BangEqEq => (StrictNotEq, PREC_EQ, 1),
             Tok::Lt => (Lt, PREC_REL, 1),
             Tok::LtEq => (LtEq, PREC_REL, 1),
             Tok::Kw(Kw::In) if !self.no_in => (In, PREC_REL, 1),
@@ -316,7 +318,7 @@ impl<'a> Parser<'a> {
             {
                 self.delete_expr()?
             }
-            Tok::Kw(Kw::Void) => self.void_expr()?,
+            Tok::Kw(Kw::Void) => self.finish_prefix(UnaryOp::Void)?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
                 op: self.bump_update_op(),
                 prefix: true,

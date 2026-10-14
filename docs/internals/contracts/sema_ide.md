@@ -64,7 +64,7 @@ viewed, so recursive types are fine. `TypeView`, `NamedKind` and `LiteralKind` a
 pub enum TypeView {
     Int(hir::IntTy), Float(hir::FloatTy), Bool, Str, Literal(LiteralKind /* Str|Int|Float|Bool */),
     Void, Never,
-    Nullable(TypeRef),            // T | null
+    Nullable(TypeRef),            // T | null, and T | undefined (issue #930, phase 1)
     Array(TypeRef), Tuple(Vec<TypeRef>),
     Map(TypeRef, TypeRef),        // the prelude's Map
     Set(TypeRef),                 // velt:collections/set

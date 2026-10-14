@@ -15,7 +15,7 @@ use velt_syntax::ast;
 use crate::body::places::is_place;
 use crate::body::{FnCx, Want};
 use crate::ctx::{Ctx, Item};
-use crate::hir::{self, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, PatKind as P, TyId, TyKind};
 use crate::unions::TYPEOF_TAGS;
 
 /// Result of checking `a == b` where one side is a literal.
@@ -54,7 +54,11 @@ impl FnCx<'_, '_> {
         }
         let mut arms = vec![];
         for (pat, t) in self.member_patterns(sty, span) {
-            let tag = t.map_or("object", |t| self.cx.typeof_tag(t));
+            let none = match self.cx.ty.nothing_of(sty) {
+                Some(Nothing::Undefined) => "undefined",
+                _ => "object",
+            };
+            let tag = t.map_or(none, |t| self.cx.typeof_tag(t));
             let body = self.str_lit(tag, span);
             arms.push(hir::Arm {
                 pat,
@@ -78,12 +82,26 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.expr(operand, None, Want::Borrow);
-        if tag == "undefined" {
+        // The nothing arm answers `"undefined"` for a `T | undefined` and `"object"` for a
+        // `T | null`.
+        let nothing = self.cx.ty.nothing_of(s.ty);
+        if tag == "undefined" && nothing == Some(crate::hir::Nothing::Null) {
+            // As for `=== undefined` (`null_compare`): its `null` may be JavaScript's `undefined`.
+            let tn = self.cx.display(s.ty);
             self.cx.error(
-                Diagnostic::error("`typeof` never returns \"undefined\" in Velt", span)
-                    .with_note("`undefined` is not part of Velt: test for `null` (`x === null`)"),
+                Diagnostic::error(
+                    format!("`typeof` compared with \"undefined\" on a `{tn}` is not supported yet (#930)"),
+                    span,
+                )
+                .with_note("its `null` may be JavaScript's `undefined` (an absent optional field, `Map.get`, `find`), which later phases of #930 give their own value")
+                .with_note("to test for either, write `== null`"),
             );
             return self.error_expr(span);
+        }
+        if tag == "undefined" {
+            let undef = nothing.is_some_and(|n| n.has_undefined());
+            let test = self.type_test(s, &|_: &Ctx, _: TyId| false, undef, span);
+            return self.negated(test.expr, negate, span);
         }
         if !TYPEOF_TAGS.contains(&tag) {
             let tags: Vec<String> = TYPEOF_TAGS.iter().map(|t| format!("\"{t}\"")).collect();
@@ -94,7 +112,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.typeof_tag(t) == tag;
-        let test = self.type_test(s, &pred, tag == "object", span);
+        let null_is_object = tag == "object" && nothing.is_none_or(|n| n.has_null());
+        let test = self.type_test(s, &pred, null_is_object, span);
         if let Some(what) = test.never_msg {
             self.cx.err(
                 format!("this `typeof` test is always false: no member of {what} is a \"{tag}\""),
@@ -516,6 +535,7 @@ impl FnCx<'_, '_> {
             }
             ast::Lit::Float { .. } => (find(&|t| ty.is_float(t)), "float"),
             ast::Lit::Null => (vec![], "null"),
+            ast::Lit::Undefined => (vec![], "undefined"),
         };
         match found.as_slice() {
             [i] => Ok((*i as u32, members[*i])),

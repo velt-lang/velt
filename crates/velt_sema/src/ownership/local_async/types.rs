@@ -19,7 +19,7 @@ use super::graph::Why;
 pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
     match cx.ty.kind(t) {
         TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
-        TyKind::Option(x) => matches!(cx.ty.kind(*x), TyKind::FnPtr { .. } | TyKind::Closure(_)),
+        TyKind::Option(x, _) => matches!(cx.ty.kind(*x), TyKind::FnPtr { .. } | TyKind::Closure(_)),
         _ => false,
     }
 }

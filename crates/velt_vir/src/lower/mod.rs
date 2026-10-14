@@ -107,7 +107,10 @@ const MAX_BOXING_PASSES: usize = 8;
 /// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
 /// shares of types that were not counted yet (boxing/); the type table carries over, so type
 /// ids in the counted set stay valid.
-pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
+pub(crate) fn lower_program(
+    hir: &hir::Program,
+    opts: &LowerOptions,
+) -> (vir::Program, Vec<velt_common::Diagnostic>) {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     for _ in 0..MAX_BOXING_PASSES {
@@ -136,7 +139,8 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
-            return cx.finish();
+            let diags = cx.nothing_clash_diagnostics();
+            return (cx.finish(), diags);
         }
         types = cx.types;
         counted = next;
@@ -300,6 +304,12 @@ struct Cx<'h> {
     json_key_memo: Option<(bool, HashMap<TyId, bool>)>,
     /// One type per anonymous object shape (types.rs `canon`).
     anon: types::AnonShapes,
+    /// The function whose instance is being built (for `nothing_clashes`).
+    cur_def: Option<DefId>,
+    /// Functions whose instances made an option of an option with another nothing (`T | null`
+    /// at `T = U | undefined`, or the reverse; types.rs `intern`), which this phase cannot
+    /// represent (issue #930): reported, not lowered silently.
+    nothing_clashes: Vec<Option<DefId>>,
 }
 
 /// Static ownership state of a droppable local without a drop flag.

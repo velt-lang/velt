@@ -455,3 +455,27 @@ function siftDown<T>(xs: T[], base: usize, root: usize, n: usize, less: (x: T, y
     root = child;
   }
 }
+
+// ───────────────────────── elements that may be `undefined` ─────────────────────────
+
+extend<T> Array<T | undefined> {
+  /**
+   * Stable sort by `cmp`, as in JS: an `undefined` element is never passed to `cmp`, and all
+   * of them end up after the other elements.
+   */
+  sort(cmp: (x: T | undefined, y: T | undefined) => number) {
+    stableSort(
+      this,
+      (x, y) =>
+        (x === undefined ? (y === undefined ? 0.0 : 1.0) : y === undefined ? -1.0 : cmp(x, y)),
+      (c) => c < 0.0,
+    );
+  }
+
+  /** A copy sorted by `cmp` (ES2023), `undefined` elements last; the receiver is unchanged. */
+  toSorted(cmp: (x: T | undefined, y: T | undefined) => number): (T | undefined)[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
+}
