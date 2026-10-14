@@ -8,6 +8,7 @@
 //! entry is dropped, so nothing outlives its request.
 
 use crate::net::stream::{Ready, StreamObj};
+use crate::net::sys::TcpStream;
 use crate::net::tcp::{StreamHandle, STREAMS};
 use hyper::upgrade::OnUpgrade;
 use hyper_util::rt::TokioIo;
@@ -16,7 +17,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use tokio::net::TcpStream;
 
 fn pending() -> MutexGuard<'static, HashMap<u64, OnUpgrade>> {
     static PENDING: OnceLock<Mutex<HashMap<u64, OnUpgrade>>> = OnceLock::new();

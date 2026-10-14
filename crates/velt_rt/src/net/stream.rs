@@ -15,6 +15,7 @@
 //! would cost every read); `abort` shuts the socket down, which ends the read, and the read then
 //! reports the abort instead of the end of the stream.
 
+use super::sys::TcpStream;
 use super::utf8::Utf8Decoder;
 use std::future::Future;
 use std::io;
@@ -23,7 +24,6 @@ use std::pin::Pin;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 /// Any byte stream besides a raw TCP socket (TLS over TCP, an upgraded HTTP connection).
@@ -145,7 +145,7 @@ pub(crate) async fn read_chunk(stream: &TcpStream, max: u64) -> io::Result<Vec<u
 
 fn shutdown_socket(stream: &TcpStream, how: std::net::Shutdown) -> io::Result<()> {
     // tokio only offers shutdown through `AsyncWrite` (needs `&mut`); go to the socket directly.
-    socket2::SockRef::from(stream).shutdown(how)
+    stream.sock_ref().shutdown(how)
 }
 
 impl StreamObj {

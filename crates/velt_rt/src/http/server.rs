@@ -24,6 +24,7 @@ pub use super::handler::{InitFn, VeltHandler};
 use super::request::{Conn, ReqObj};
 use super::response::RespHandle;
 use super::upgrade;
+use crate::net::sys::TcpListener;
 use crate::net::tcp::text_arg;
 use crate::registry::{Key, Registry};
 use crate::result::{code, IoResult, VeltErr};
@@ -45,7 +46,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 

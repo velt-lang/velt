@@ -11,6 +11,9 @@
 //!   spawning worker unless that worker runs [`STEAL_MARGIN`] more tasks than the least loaded
 //!   one, which then gets it: an idle worker taking a task before its first poll (steal before
 //!   start), decided when the task is spawned.
+//! - `velt` (experimental): the runtime's own executor on `mio` ([`velt`]): work stays on the
+//!   worker that made it, and another worker is woken only for sustained backlog. Sockets, the
+//!   HTTP server and timers are its own; everything else runs on tokio through a bridge.
 //!
 //! The runtime starts lazily on first use and lives until the process exits (there is no
 //! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
@@ -21,10 +24,14 @@
 //! idle, so a server logging to a pipe shows its output promptly.
 
 mod handle;
+pub mod time;
 mod tokio_backend;
+mod velt;
 
 pub use handle::{AbortHandle, JoinError, JoinHandle};
 pub use tokio_backend::runtime;
+pub(crate) use velt::coop as velt_coop;
+pub(crate) use velt::io as velt_io;
 
 use super::compiled::{Borrowed, Compiled};
 use super::{PollFn, SendPtr};
@@ -135,7 +142,7 @@ pub fn worker_count() -> usize {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
-/// Environment variable selecting the scheduler: `per-core`, or `stealing` (the default).
+/// Environment variable selecting the scheduler: `per-core`, `velt`, or `stealing` (the default).
 pub const SCHEDULER_ENV: &str = "VELT_SCHEDULER";
 
 /// How many more running tasks the spawning worker may have than the least loaded one before an
@@ -147,6 +154,7 @@ pub const STEAL_MARGIN: usize = 2;
 enum Backend {
     Stealing,
     PerCore,
+    Velt,
 }
 
 static BACKEND: OnceLock<Backend> = OnceLock::new();
@@ -172,6 +180,7 @@ fn backend() -> Backend {
         || match std::env::var(SCHEDULER_ENV).as_deref().map(str::trim) {
             Ok("per-core") => Backend::PerCore,
             Ok("stealing") => Backend::Stealing,
+            Ok("velt") => Backend::Velt,
             _ if REQUESTED.load(Ordering::Relaxed) == SCHED_PER_CORE => Backend::PerCore,
             _ => Backend::Stealing,
         },
@@ -192,6 +201,7 @@ pub extern "C" fn velt_rt_worker_count() -> u64 {
     match backend() {
         Backend::PerCore => tokio_backend::workers().len() as u64,
         Backend::Stealing => worker_count() as u64,
+        Backend::Velt => velt::worker_count() as u64,
     }
 }
 
@@ -237,6 +247,16 @@ pub fn is_per_core() -> bool {
     backend() == Backend::PerCore
 }
 
+/// Whether the Velt backend is in use.
+pub fn is_velt() -> bool {
+    backend() == Backend::Velt
+}
+
+/// Marks this thread as worker `i` (a backend's worker thread calls it when it starts).
+pub(super) fn set_worker(i: usize) {
+    WORKER.with(|w| w.set(i));
+}
+
 /// The per-core worker this thread runs (`None` on other threads and with the stealing
 /// scheduler).
 pub fn current_worker() -> Option<usize> {
@@ -276,6 +296,7 @@ where
             let i = pinned.unwrap_or_else(|| tokio_backend::place(tokio_backend::workers()));
             tokio_backend::spawn_on(i, fut)
         }
+        Backend::Velt => JoinHandle::Velt(velt::spawn(fut, pinned)),
     }
 }
 
@@ -293,6 +314,7 @@ where
             let i = tokio_backend::place(tokio_backend::workers());
             tokio_backend::spawn_on(i, make(current_worker() != Some(i)))
         }
+        Backend::Velt => JoinHandle::Velt(velt::spawn(make(false), None)),
     }
 }
 
@@ -302,25 +324,36 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    JoinHandle::Tokio(tokio_backend::handle().spawn_blocking(f))
+    let h = match backend() {
+        Backend::Velt => velt::bridge(),
+        _ => tokio_backend::handle(),
+    };
+    JoinHandle::Tokio(h.spawn_blocking(f))
 }
 
 /// Makes the runtime's tokio context current on this thread while the guard lives, for code that
 /// creates tokio objects outside a task (a child process's pipes).
 pub fn enter() -> tokio::runtime::EnterGuard<'static> {
-    tokio_backend::handle().enter()
+    match backend() {
+        Backend::Velt => velt::bridge().enter(),
+        _ => tokio_backend::handle().enter(),
+    }
 }
 
 /// Runs `f` to completion on this thread, which must not be a worker (the main thread at exit,
 /// tests).
 pub fn block_on<F: Future>(f: F) -> F::Output {
-    runtime().block_on(f)
+    match backend() {
+        Backend::Velt => velt::block_on(f),
+        _ => runtime().block_on(f),
+    }
 }
 
 /// How many tasks are alive (spawned and not finished); 0 if the runtime never started.
 pub(crate) fn alive_tasks() -> usize {
     match BACKEND.get() {
         None => 0,
+        Some(Backend::Velt) => velt::alive_tasks(),
         Some(_) => tokio_backend::alive_tasks(),
     }
 }
