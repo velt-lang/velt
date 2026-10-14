@@ -147,7 +147,7 @@ impl<'a> Parser<'a> {
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
         sig.is_generator = star.is_some();
         self.check_accessor(&sig, &mods);
-        if self.at(Tok::Semi) {
+        if self.at(Tok::Semi) || (!self.at(Tok::LBrace) && self.line_break_before()) {
             return self.method_overload(sig, &mods);
         }
         let body = self.parse_block()?;
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// After a method signature ending in `;`: a TypeScript-form overload, attached to the
+    /// After a method signature ending in `;` or a line break: a TypeScript-form overload, attached to the
     /// method of the same name that follows (`FnDecl::overloads`).
     fn method_overload(&mut self, sig: FnSig, mods: &Modifiers) -> PResult<Member> {
         while self.eat(Tok::Semi) {}

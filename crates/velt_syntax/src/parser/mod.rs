@@ -270,6 +270,25 @@ impl<'a> Parser<'a> {
         self.expect(Tok::Semi)
     }
 
+    /// Is there a line break between the last consumed token and the cursor (in whitespace or
+    /// a comment)?
+    fn line_break_before(&mut self) -> bool {
+        let lo = self.cur_lo();
+        let gap = self.text(self.prev_hi.min(lo), lo);
+        gap.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    }
+
+    /// The end of a bodiless signature (an overload or a `declare function`): a `;`, or, by
+    /// TypeScript's automatic semicolon insertion, a line break, `}` or the end of the file
+    /// before anything but `{`. Consumes the `;` if there is one.
+    fn eat_signature_end(&mut self) -> bool {
+        if self.eat(Tok::Semi) {
+            return true;
+        }
+        !self.at(Tok::LBrace)
+            && (self.at(Tok::RBrace) || self.at(Tok::Eof) || self.line_break_before())
+    }
+
     /// The literal payload of a token.
     fn payload(&self, idx: u32) -> Option<&Payload> {
         self.lx.payloads.get(idx as usize)

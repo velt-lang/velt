@@ -40,7 +40,8 @@ The differences come from three rules:
   ([module constants from calls](../reference/variables.md#module-constants-initialized-by-a-call)).
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
   no `any`, no `unknown`. Dynamic JSON is a `JsonValue`.
-- Semicolons are required (no automatic semicolon insertion).
+- Semicolons are required (no automatic semicolon insertion, except after an overload
+  signature).
 
 ## Numbers
 

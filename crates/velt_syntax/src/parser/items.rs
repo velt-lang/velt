@@ -148,19 +148,21 @@ impl<'a> Parser<'a> {
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
-        self.expect_semi()?;
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
         Ok(sig)
     }
 
     /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
-    /// signature ending in `;` is a TypeScript-form overload: the declarations of the same name
-    /// that follow it, up to the one with a body, are parsed with it (`FnDecl::overloads`).
+    /// signature ending in `;` (or a line break: automatic semicolon insertion) is a
+    /// TypeScript-form overload: the declarations of the same name that follow it, up to the one
+    /// with a body, are parsed with it (`FnDecl::overloads`).
     fn parse_fn_decl(&mut self, lo: u32, is_async: bool) -> PResult<FnDecl> {
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
         let mut sigs: Vec<(FnSig, bool)> = vec![];
-        while self.at(Tok::Semi) {
-            self.bump(); // ;
+        while self.eat_signature_end() {
             self.signature_defaults(&sig);
             let (next_exported, next_async) = match self.at_function_after(&sig.name.name) {
                 Some(Ok(next)) => next,
