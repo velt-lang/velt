@@ -130,6 +130,11 @@ impl PackageGraph {
 
 /// The error for importing a package that is not declared in `dependencies`.
 pub fn not_a_dependency(name: &str) -> String {
+    if crate::manifest::split_scoped(name).is_some() {
+        return format!(
+            "package `{name}` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)"
+        );
+    }
     format!("package `{name}` is not a dependency (add it with `velt add {name}`)")
 }
 

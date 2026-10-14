@@ -375,7 +375,7 @@ fn path_aliases_resolve_like_relative_imports() {
     assert_eq!(paths(&l), ["main", "util/strings", "ui"]);
     assert_eq!(
         messages(&diags),
-        ["invalid package name `@other` in module specifier `@other/x`"]
+        ["package `@other/x` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)"]
     );
 }
 
@@ -626,4 +626,61 @@ fn unreadable_extra_roots_are_reported_in_their_file() {
     );
     let span = diags[0].labels[0].span;
     assert_eq!(sm.get(span.file).path, gone);
+}
+
+#[test]
+fn npm_workspace_packages_load_from_their_sources() {
+    let t = Tree::new();
+    t.write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+    t.write(
+        "packages/reactivity/package.json",
+        r#"{ "name": "@sigx/reactivity", "exports": {
+            ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+            "./internals": { "types": "./dist/internals.d.ts", "import": "./dist/internals.js" } } }"#,
+    );
+    t.write(
+        "packages/reactivity/src/index.ts",
+        "import { track } from \"./internals.js\";\nexport function signal(): void { track(); }\n",
+    );
+    t.write(
+        "packages/reactivity/src/internals.ts",
+        "export function track(): void {}\n",
+    );
+    t.write("packages/json/src/lib.vlt", "export function parse() {}\n");
+    t.write(
+        "packages/json/package.json",
+        r#"{ "name": "json", "main": "./dist/x.js" }"#,
+    );
+    let root = t.write(
+        "packages/app/src/main.ts",
+        "import { signal } from \"@sigx/reactivity\";\nimport { track } from \"@sigx/reactivity/internals\";\nimport { parse } from \"json\";\nimport { x } from \"@sigx/reactivity/nope\";\nimport { y } from \"@sigx/missing\";\nfunction main() {}\n",
+    );
+    // `json` is a Velt dependency of the importer: it wins over the workspace's npm package.
+    let resolver = MapResolver(BTreeMap::from([(
+        "json".to_string(),
+        t.path("packages/json"),
+    )]));
+    let (l, diags, _) = load(
+        &root,
+        LoadOptions {
+            packages: Some(&resolver),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        paths(&l),
+        [
+            "main",
+            "../../reactivity/src",
+            "../../reactivity/src/internals",
+            "json"
+        ]
+    );
+    assert_eq!(
+        messages(&diags),
+        [
+            "package `@sigx/reactivity` does not export `./nope` (`exports` in its package.json)",
+            "package `@sigx/missing` is not a dependency, and no npm package of that name was found (add it to `dependencies` with a `path`, or install it into `node_modules`)",
+        ]
+    );
 }

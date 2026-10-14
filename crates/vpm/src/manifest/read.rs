@@ -339,6 +339,12 @@ impl Reader<'_> {
                 self.error(format!("the manifest is missing `{key}`"), value.span);
             }
         }
+        if manifest.native.is_some() && super::split_scoped(&manifest.package.name).is_some() {
+            self.error(
+                "a package with a scoped name (`@scope/name`) cannot have `native` code yet",
+                value.span,
+            );
+        }
         manifest
     }
 

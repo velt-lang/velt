@@ -330,3 +330,42 @@ fn separators_are_single_and_inside_the_name() {
     }
     assert_eq!(normalized_name("my-pkg"), normalized_name("my_pkg"));
 }
+
+#[test]
+fn scoped_names_for_packages_and_path_dependencies() {
+    let text = r#"export const pkg: Package = {
+        name: "@sigx/server-renderer",
+        version: "1.0.1",
+        dependencies: { "@sigx/reactivity": { path: "../reactivity" }, sigx: { path: "../sigx" } },
+    };"#;
+    let m = Manifest::parse(text).unwrap();
+    assert_eq!(m.package.name, "@sigx/server-renderer");
+    assert!(m.dependencies.contains_key("@sigx/reactivity"));
+    for name in ["@sigx/reactivity", "@a1/b-c", "@0x/lib", "plain"] {
+        assert!(is_valid_dependency_name(name), "{name}");
+    }
+    for name in [
+        "@sigx",
+        "@/x",
+        "@Sigx/x",
+        "@sigx/x/y",
+        "@sigx/x--y",
+        "@con/x",
+        "@a/",
+    ] {
+        assert!(!is_valid_dependency_name(name), "{name}");
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(err.contains("invalid scoped package name"), "{err}");
+    }
+    // Scoped packages are not in registries: a path is required.
+    let registry = r#"export const pkg: Package = { name: "a", version: "1.0.0", dependencies: { "@sigx/x": "1" } };"#;
+    let err = Manifest::parse(registry).unwrap_err();
+    assert!(
+        err.contains("registries hold unscoped packages only"),
+        "{err}"
+    );
+    // Scoped names are not registry names.
+    assert!(!is_valid_package_name("@sigx/reactivity"));
+}

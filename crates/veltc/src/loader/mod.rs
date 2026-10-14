@@ -114,6 +114,7 @@ pub fn load_with_roots(
         extra_phase: false,
         dir_names: case::DirNames::default(),
         globals: vec![],
+        npm: vpm::npm::NpmResolver::default(),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -162,6 +163,8 @@ struct Loader<'a, 'o> {
     dir_names: case::DirNames,
     /// The globals loaded on demand ([`globals`]) not loaded yet.
     globals: Vec<globals::Global>,
+    /// npm packages found so far ([`vpm::npm`]).
+    npm: vpm::npm::NpmResolver,
 }
 
 impl Loader<'_, '_> {
@@ -385,13 +388,29 @@ impl Loader<'_, '_> {
         let (importer, from) = self.origins[index].clone();
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
-        let aliased = alias.is_some();
+        let mut aliased = alias.is_some();
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
-            None => match resolve_spec(spec, dir) {
-                Ok(m) => m,
-                Err(msg) => return self.error(msg, vec![], span),
-            },
+            None => {
+                let classified = resolve_spec(spec, dir);
+                match npm_module(
+                    &mut self.npm,
+                    self.opts.packages,
+                    &importer,
+                    spec,
+                    &classified,
+                ) {
+                    Some(Ok(file)) => {
+                        aliased = true;
+                        ModuleRef::Relative { file }
+                    }
+                    Some(Err((msg, notes))) => return self.error(msg, notes, span),
+                    None => match classified {
+                        Ok(m) => m,
+                        Err(msg) => return self.error(msg, vec![], span),
+                    },
+                }
+            }
         };
         let target = match locate::target(
             module,
@@ -498,6 +517,29 @@ impl Loader<'_, '_> {
         self.diags.push(d);
         None
     }
+}
+
+/// The npm package module bare specifier `spec` names ([`vpm::npm`]), unless the importing
+/// package has a Velt dependency of that name (which wins) or `spec` is not bare
+/// (`classified`: what [`resolve_spec`] made of it). `None`: no npm package of that name.
+fn npm_module(
+    npm: &mut vpm::npm::NpmResolver,
+    packages: Option<&dyn PackageResolver>,
+    importer: &Path,
+    spec: &str,
+    classified: &Result<ModuleRef, String>,
+) -> Option<Result<PathBuf, vpm::npm::NpmError>> {
+    let bare = match classified {
+        Ok(ModuleRef::Package { name, .. }) => {
+            packages.is_none_or(|p| p.dependency_root(importer, name).is_err())
+        }
+        Ok(_) => false,
+        Err(_) => spec != "std" && !spec.starts_with("std/") && !spec.starts_with("velt:"),
+    };
+    if !bare {
+        return None;
+    }
+    npm.resolve(importer, spec)
 }
 
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
