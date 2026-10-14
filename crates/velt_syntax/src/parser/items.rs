@@ -188,7 +188,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
         // Without a `this` parameter, `this` in a function declaration is sema's to report.
         if this_param.is_some() {
-            self.check_fn_this(this_param, &body);
+            self.check_fn_this(this_param, &body, false);
         }
         // TypeScript's TS2383, at each signature exported differently from the implementation.
         for (s, e) in &sigs {

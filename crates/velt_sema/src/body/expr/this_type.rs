@@ -66,11 +66,21 @@ impl FnCx<'_, '_> {
         }
         let found = self.cx.display(h.ty);
         let class = self.cx.display(ret);
+        let note = match self.cx.fn_info(d).inherits_this {
+            true => format!(
+                "TypeScript's TS2416: `{}` overrides a method returning `this` (the class of the object it is called on, which may be a subclass of `{class}`), so it must return `this` too",
+                self.cx.fn_info(d).name.rsplit('.').next().unwrap_or_default()
+            ),
+            false => format!(
+                "TypeScript's TS2322: `this` is the class of the object the method is called on, which may be a subclass of `{class}`; return `this`"
+            ),
+        };
         self.cx.error(
-            Diagnostic::error(format!("type `{found}` is not assignable to type `this`"), span)
-                .with_note(format!(
-                    "TypeScript's TS2322: `this` is the class of the object the method is called on, which may be a subclass of `{class}`; return `this`"
-                )),
+            Diagnostic::error(
+                format!("type `{found}` is not assignable to type `this`"),
+                span,
+            )
+            .with_note(note),
         );
     }
 }

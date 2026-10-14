@@ -6,10 +6,13 @@
 //! the same. Its span starts at `function` (or `async`), which tells `velt fmt` to print it as
 //! written. `this` in the body is TypeScript's TS2683 without a `this` parameter, and not
 //! supported yet with one; the expression's own name used inside its body (recursion) is not
-//! supported yet either. Generators stay `ExprKind::Function` (sema's `gen_closure`).
+//! supported yet either; so is `this` in one that is an object-literal property's value, where
+//! TypeScript types `this` as the literal. Generators stay `ExprKind::Function` (sema's
+//! `gen_closure`), with the same rules for `this`.
 //!
 //! A `this: T` parameter declares the type of `this` and is no parameter: it is parsed and
-//! dropped. With a `this` parameter, `this` in the body is not supported yet.
+//! dropped (`first_this_param` remembers where the first one is, for `velt fmt`). With a `this`
+//! parameter, `this` in the body is not supported yet.
 
 use super::{PResult, Parser};
 use crate::ast::*;
@@ -20,6 +23,7 @@ impl<'a> Parser<'a> {
     /// A function expression at `function` (after `async`, with `is_async`): `function[*]
     /// [name]<T>(params)[: R] { ... }`; the name may be left out (empty).
     pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
+        let in_object = std::mem::take(&mut self.fn_in_object);
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
         let name = match Self::is_ident_like(self.peek()) {
@@ -32,7 +36,9 @@ impl<'a> Parser<'a> {
         if is_generator {
             let mut sig = self.parse_sig_rest(lo, name, is_async)?;
             sig.is_generator = true;
+            let this_param = self.this_param.take();
             let body = self.parse_block()?;
+            self.check_fn_this(this_param, &body, in_object);
             return Ok(ExprKind::Function(Box::new(FnDecl {
                 sig,
                 body,
@@ -48,7 +54,7 @@ impl<'a> Parser<'a> {
             (None, None)
         };
         let body = self.parse_block()?;
-        self.check_fn_this(this_param, &body);
+        self.check_fn_this(this_param, &body, in_object);
         if !name.name.is_empty() {
             self.no_own_name(&name, &body);
         }
@@ -74,6 +80,10 @@ impl<'a> Parser<'a> {
         self.bump(); // :
         let ty = self.parse_type()?;
         let void = matches!(ty.kind, TypeExprKind::Void);
+        if self.first_this_param.is_none() {
+            let at = self.span_from(lo);
+            self.first_this_param = Some(at.lo..at.hi);
+        }
         self.this_param = Some((self.span_from(lo), void));
         if !self.at(Tok::RParen) {
             self.expect(Tok::Comma)?;
@@ -82,12 +92,23 @@ impl<'a> Parser<'a> {
     }
 
     /// `this` in the body of a function expression (or, with a `this` parameter `this_param`, a
-    /// function declaration).
-    pub(super) fn check_fn_this(&mut self, this_param: Option<(Span, bool)>, body: &Block) {
+    /// function declaration); `in_object`: the expression is the value of an object-literal
+    /// property (TypeScript types `this` as the literal there).
+    pub(super) fn check_fn_this(
+        &mut self,
+        this_param: Option<(Span, bool)>,
+        body: &Block,
+        in_object: bool,
+    ) {
         let Some(at) = own_this(body) else {
             return;
         };
         let d = match this_param {
+            None if in_object => Diagnostic::error(
+                "`this` in a function expression that is an object-literal property is not supported yet",
+                at,
+            )
+            .with_note("TypeScript allows this (`this` is the object the function is called on, typed as the literal); Velt doesn't yet because a function value has no receiver; use the object's variable, or declare a class"),
             None => Diagnostic::error(
                 "'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)",
                 at,

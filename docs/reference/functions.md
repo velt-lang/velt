@@ -549,11 +549,15 @@ async function main() {
   expected, as for an arrow.
 - Its `this` is the object it is called on in TS. Without a `this` parameter, `this` in the body
   is TS's error ``'this' implicitly has type 'any' because it does not have a type
-  annotation``, as under `--strict`; with one (`function (this: T, …)`) it is not supported
-  yet: take the object as an ordinary parameter, or write a class method.
+  annotation``, as under `--strict`, also in a generator (`function* () { … }`); with one
+  (`function (this: T, …)`) it is not supported yet: take the object as an ordinary parameter,
+  or write a class method. In a function expression that is the value of an object-literal
+  property (`{ v: 1, get: function () { return this.v; } }`), where TS types `this` as the
+  literal, `this` is not supported yet either.
 - A `this: T` parameter (first in a function's or method's parameter list) declares the type of
   `this` and is no parameter: callers don't pass it. `this: void` says the function doesn't
-  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet.
+  use `this`. An arrow cannot have one (TS2730). `velt fmt` does not keep it yet, so it leaves
+  a file with one as written and reports it.
 - The name of a named expression inside its own body (recursion) is not supported yet: declare
   the function with `function name(…) { … }`.
 

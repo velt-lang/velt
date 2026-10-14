@@ -62,3 +62,46 @@ class Loud extends Counter {
 }
 
 console.log(new Loud().inc().inc().n);
+
+// An override without a written result of a method returning `this` returns `this` too, also
+// further down the hierarchy and on a generic base.
+class Base {
+  tag(): this {
+    return this;
+  }
+}
+
+class Mid extends Base {
+  big = [1, 2, 3];
+  override tag() {
+    console.log("Mid.tag");
+    return this;
+  }
+}
+
+class Leaf extends Mid {
+  override tag() {
+    console.log("Leaf.tag");
+    return super.tag();
+  }
+}
+
+const mid: Mid = new Leaf();
+console.log(mid.tag().big.length);
+
+class Bag<T> {
+  items: T[] = [];
+  put(x: T): this {
+    this.items.push(x);
+    return this;
+  }
+}
+
+class Doubler extends Bag<number> {
+  override put(x: number) {
+    this.items.push(x * 2);
+    return this;
+  }
+}
+
+console.log(new Doubler().put(1).put(2).items.join(","));

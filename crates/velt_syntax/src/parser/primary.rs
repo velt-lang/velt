@@ -238,7 +238,7 @@ impl<'a> Parser<'a> {
             Tok::LBracket if self.at_symbol_key() => {
                 let key = self.parse_symbol_key()?;
                 self.expect(Tok::Colon)?;
-                return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+                return Ok(ObjectProp::KeyValue(key, self.parse_prop_value()?));
             }
             Tok::PrivateName => {
                 let span = self.cur_span();
@@ -251,13 +251,22 @@ impl<'a> Parser<'a> {
             }
         };
         if self.eat(Tok::Colon) {
-            return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+            return Ok(ObjectProp::KeyValue(key, self.parse_prop_value()?));
         }
         if !shorthand_ok {
             self.error_expected("`:`");
             return Err(Fail);
         }
         Ok(ObjectProp::Shorthand(key))
+    }
+
+    /// The value of an object-literal property, after `:`.
+    fn parse_prop_value(&mut self) -> PResult<Expr> {
+        self.fn_in_object = self.at_kw(Kw::Function)
+            || (self.at_kw(Kw::Async) && self.nth(1) == Tok::Kw(Kw::Function));
+        let value = self.parse_assign();
+        self.fn_in_object = false;
+        value
     }
 
     /// A method in an object literal: `[async] [*]name(...) { ... }`, where the name may be a

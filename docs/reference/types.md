@@ -634,9 +634,10 @@ console.log(show("ab"), show(41)); // AB 42
 
 - TypeScript does not check that a predicate's body answers correctly. A call that narrows
   checks the value at run time against what its result says, as `typeof` or `instanceof` would,
-  and throws a `TypeError` when they disagree (``the type predicate `isString` returned false
-  for a value that is `string` ``), where Node would go on with a value that is not of the
-  type it was narrowed to. A predicate that answers correctly behaves as in Node.
+  and panics when they disagree (``the type predicate `isString` returned false for a value
+  that is `string` ``; exit code 101), where Node would go on with a value that is not of the
+  type it was narrowed to. Unlike a thrown error, this panic cannot be caught with
+  `try`/`catch`. A predicate that answers correctly behaves as in Node.
 - A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
   value of (`string`) when the call is true and leaves the variable as it is when false; a
   type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
@@ -648,8 +649,9 @@ console.log(show("ab"), show(41)); // AB 42
   as `x` for the rest of the block, as `if (!isT(x)) throw …;` would: to `T`, or for `asserts
   x` to a truthy value (`string | null` to `string`). As for a predicate, the value is checked
   after the call, and an assertion function that returns for a value that is not `T` makes the
-  call throw a `TypeError` (``the assertion function `assertDog` returned for a value that is
-  not `Dog` ``).
+  call panic (``the assertion function `assertDog` returned for a value that is not `Dog` ``;
+  exit code 101, which `try`/`catch` cannot catch). The errors the function throws itself are
+  ordinary errors.
 
 ```ts
 function assertIsString(v: string | number): asserts v is string {

@@ -52,3 +52,14 @@ const nums = [3, 1, 2].map(function (n, i) {
   return n * 10 + i;
 });
 console.log(nums.join(" "));
+
+// A function expression right after `?` of a conditional.
+const pick = (neg: boolean) =>
+  neg
+    ? function (x: number) {
+        return -x;
+      }
+    : function (x: number) {
+        return x;
+      };
+console.log(pick(true)(4), pick(false)(4));

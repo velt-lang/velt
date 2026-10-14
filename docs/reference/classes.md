@@ -351,8 +351,10 @@ console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
 
 - `this` as a method's result type (the polymorphic `this` type) is the class of the object
   the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
-  keep the subclass's methods, as in TypeScript. An override may return `this` too
-  (`override register(name: string): this`).
+  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  (`override register(name: string): this`) or left out, when it returns `this` (or
+  `super.register(name)`). An override with another result type (`override register(name:
+  string): Registry`) is TypeScript's error TS2416.
 - Such a method returns `this` (or the result of another `this`-returning method called on
   `this`); returning another object of the class is TypeScript's error ``type `A` is not
   assignable to type `this` ``. The `this` type elsewhere in an instance method's signature or

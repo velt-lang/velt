@@ -91,6 +91,11 @@ pub(crate) struct Parser<'a> {
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
     /// and whether `T` is `void`.
     this_param: Option<(Span, bool)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (the AST does not keep them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -136,6 +141,8 @@ impl<'a> Parser<'a> {
             plain_ts: false,
             more_vars: Vec::new(),
             this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
         }

@@ -178,6 +178,33 @@ fn function_expressions_are_arrows() {
         errors("const f = function g(n: number): number { return g(n); };"),
         vec!["a function expression's own name (`g`) inside its body is not supported yet"]
     );
+    // A generator function expression's `this` is its own too.
+    assert_eq!(
+        errors("const g = function* () { yield this; };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // As an object-literal property, TypeScript types `this` as the literal.
+    for src in [
+        "const o = { v: 1, get: function () { return this.v; } };",
+        "const o = { v: 1, get: async function () { return this.v; } };",
+        "const o = { v: 1, [Symbol.iterator]: function* () { yield this.v; } };",
+    ] {
+        assert_eq!(
+            errors(src),
+            vec!["`this` in a function expression that is an object-literal property is not supported yet"],
+            "{src}"
+        );
+    }
+    // Only the property's own value: a function expression nested in it is not one.
+    assert_eq!(
+        errors("const o = { v: [1].map(function () { return this; }) };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // After `?` of a conditional.
+    parse_ok(
+        "const f = b ? function (x: number) { return x; } : function (x: number) { return -x; };",
+    );
+    parse_ok("const f = b ? async function () {} : function* () {};");
 }
 
 #[test]
@@ -190,6 +217,14 @@ fn this_parameters_and_the_this_type() {
     };
     assert_eq!(f.sig.params.len(), 1);
     assert_eq!(alias_ty(&m, 1), "fn(number) => void");
+    // The AST does not keep them: tools that print it back are told where the first one is.
+    let src = "const g = 1; function f(x: number) {} type F = (this: void) => void;";
+    let at = velt_syntax::first_this_param(src).expect("a `this` parameter");
+    assert_eq!(&src[at.start as usize..at.end as usize], "this: void");
+    assert_eq!(
+        velt_syntax::first_this_param("const t = this; f(this);"),
+        None
+    );
     assert_eq!(
         errors("function f(this: { n: number }) { return this.n; }"),
         vec!["`this` in a function with a `this` parameter is not supported yet"]

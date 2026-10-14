@@ -1,0 +1,4 @@
+this_override_errors.vlt:15:12: error: method `m` does not have the same signature as the base class method it overrides
+this_override_errors.vlt:25:12: error: method `m` does not have the same signature as the base class method it overrides
+this_override_errors.vlt:37:12: error: method `add` does not have the same signature as the base class method it overrides
+this_override_errors.vlt:21:12: error: type `A` is not assignable to type `this`

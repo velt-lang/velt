@@ -11,7 +11,7 @@ use velt_syntax::ast;
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
 use crate::ctx::Ctx;
-use crate::defs::MethodRef;
+use crate::defs::{MethodRef, RetSource};
 use crate::hir::{AdtKind, DefId, TyId};
 
 pub(super) fn check_classes(cx: &mut Ctx) {
@@ -336,6 +336,20 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         "method `{}` does not have the same signature as the base class method it overrides",
         name.name
     );
+    // A call through the base's type converts the result of a `this`-returning method to the
+    // receiver's class (`body::expr::this_type`), so its overrides must return `this` too.
+    if cx.fn_info(base.def()).returns_this() && !cx.fn_info(m.def).returns_this() {
+        if cx.fn_info(m.def).ret_source == RetSource::Body {
+            cx.fn_info_mut(m.def).inherits_this = true;
+        } else {
+            cx.error(
+                Diagnostic::error(message, name.span).with_note(
+                    "TypeScript's TS2416: the base class method returns `this`, the class of the object it is called on; declare the override's result as `this` and return `this`",
+                ),
+            );
+            return;
+        }
+    }
     let at = (name.span, message.clone());
     // `override m(): this`: the override returns its receiver, typed as the base method's
     // result, which a call converts to the receiver's class (`body::expr::this_type`).

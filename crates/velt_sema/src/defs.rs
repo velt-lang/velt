@@ -227,6 +227,9 @@ pub(crate) struct FnInfo<'m> {
     pub is_private: bool,
     /// `get name()`: read as a property (`x.name`), never called with `()`.
     pub is_getter: bool,
+    /// An override without a written result of a method returning `this`: it returns `this`
+    /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
+    pub inherits_this: bool,
     /// Closures: stored or returned (captures by move), as opposed to passed directly.
     pub escaping: bool,
     /// Closures: the function values passed as parameters are always heap closures, so the
@@ -252,8 +255,11 @@ impl FnInfo<'_> {
         }
     }
 
-    /// Is the written result the polymorphic `this` type (`m(): this`)?
+    /// Is the result the polymorphic `this` type (`m(): this`, or `inherits_this`)?
     pub fn returns_this(&self) -> bool {
+        if self.inherits_this {
+            return true;
+        }
         let Some(FnSource::Decl(d)) = self.source else {
             return false;
         };
