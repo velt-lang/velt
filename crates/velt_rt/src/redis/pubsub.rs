@@ -22,6 +22,7 @@ use crate::result::IoResult;
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use crate::task::leaf::new_leaf;
+use crate::task::runtime::AbortHandle;
 use crate::task::VeltFut;
 use futures_util::future::{select, Either};
 use std::borrow::Cow;
@@ -29,7 +30,6 @@ use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, Mutex, Notify};
-use tokio::task::AbortHandle;
 
 /// A received message (`channel` / `message`, plus `pattern` for pattern subscriptions).
 struct Message {

@@ -270,7 +270,7 @@ pub(super) unsafe fn poll_first(f: *mut VeltFut) -> bool {
         READY => Poll::Ready(()),
         _ => Poll::Pending,
     });
-    let mut first = std::pin::pin!(tokio::task::unconstrained(first));
+    let mut first = std::pin::pin!(crate::task::coop::unconstrained(first));
     first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
 }
 

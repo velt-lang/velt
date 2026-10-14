@@ -51,7 +51,7 @@ fn receive(h: Key<Chan>) -> impl Future<Output = Option<u64>> + Send {
 }
 
 fn run<F: Future<Output = ()> + Send + 'static>(f: F) {
-    crate::task::runtime::handle().block_on(async { tokio::spawn(f).await.expect("test task") });
+    crate::task::runtime::runtime().block_on(async { tokio::spawn(f).await.expect("test task") });
 }
 
 #[test]

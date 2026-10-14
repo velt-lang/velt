@@ -30,12 +30,13 @@ use crate::result::{code, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::task::compiled::{with_state_store, Compiled, OwnedStore};
 use crate::task::leaf::new_leaf;
+use crate::task::runtime::AbortHandle;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use hyper::body::Incoming;
 use hyper::upgrade::OnUpgrade;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
 use hyper_util::server::graceful::{GracefulShutdown, Watcher};
 use std::convert::Infallible;
@@ -46,7 +47,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use tokio::task::AbortHandle;
 use tokio_rustls::TlsAcceptor;
 
 /// How long a client may take to complete its TLS handshake.
@@ -290,6 +290,20 @@ async fn accept_connections<S: OwnedStore>(
     }
 }
 
+/// Runs hyper's background work (HTTP/2 streams) as runtime tasks.
+#[derive(Clone, Copy)]
+struct Spawner;
+
+impl<F> hyper::rt::Executor<F> for Spawner
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        drop(crate::task::runtime::spawn(fut));
+    }
+}
+
 /// Serves one connection (HTTP/1.1 with upgrades, or HTTP/2) until it closes.
 async fn serve_connection<S, I>(io: I, shared: Arc<Shared>, conn: Conn, watcher: Watcher)
 where
@@ -297,7 +311,7 @@ where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
     let svc = hyper::service::service_fn(move |req| handle::<S>(&shared, conn, req));
-    let mut builder = auto::Builder::new(TokioExecutor::new());
+    let mut builder = auto::Builder::new(Spawner);
     // pipeline_flush: responses to pipelined requests go out in one write instead of one
     // `writev` each (5× on TechEmpower's pipelined plaintext, bench/web/RESULTS.md).
     // half_close: a client that sends its requests and then shuts down its side still gets
