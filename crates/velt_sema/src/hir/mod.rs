@@ -30,6 +30,7 @@
 
 mod intrinsic;
 mod nothing;
+mod numeric;
 
 use std::collections::HashMap;
 
@@ -37,6 +38,7 @@ use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
+pub use numeric::{FloatTy, IntTy, SimdTy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -50,44 +52,6 @@ pub struct LocalId(pub u32);
 pub struct TyId(pub u32);
 
 // ───────────────────────────── Types (M1) ─────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum IntTy {
-    I8,
-    I16,
-    I32,
-    I64,
-    ISize,
-    U8,
-    U16,
-    U32,
-    U64,
-    USize,
-}
-
-impl IntTy {
-    pub fn is_signed(self) -> bool {
-        matches!(
-            self,
-            IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::ISize
-        )
-    }
-    /// Width in bits, assuming a 64-bit target for isize/usize.
-    pub fn bits(self) -> u32 {
-        match self {
-            IntTy::I8 | IntTy::U8 => 8,
-            IntTy::I16 | IntTy::U16 => 16,
-            IntTy::I32 | IntTy::U32 => 32,
-            IntTy::I64 | IntTy::U64 | IntTy::ISize | IntTy::USize => 64,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FloatTy {
-    F32,
-    F64,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TyKind {
@@ -134,6 +98,8 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// A SIMD vector or mask: Copy, 16 bytes.
+    Simd(SimdTy),
 }
 
 /// The value of a literal type.

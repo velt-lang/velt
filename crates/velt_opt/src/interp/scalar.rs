@@ -129,7 +129,7 @@ pub(super) fn binary(op: BinOp, ta: Ty, a: u64, tb: Ty, b: u64) -> Result<u64, T
             ta
         ),
         Ty::F64 => float_op!(op, f64, f64::from_bits(a), f64::from_bits(b), ta),
-        Ty::Unit | Ty::Agg(_) => Err(Trap::Invalid(format!("{op:?} on {ta:?}"))),
+        Ty::Unit | Ty::Agg(_) | Ty::V128 => Err(Trap::Invalid(format!("{op:?} on {ta:?}"))),
     }
 }
 

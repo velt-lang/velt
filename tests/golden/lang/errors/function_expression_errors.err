@@ -1,0 +1,4 @@
+function_expression_errors.vlt:5:10: error: 'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)
+function_expression_errors.vlt:8:10: error: `this` in a function with a `this` parameter is not supported yet
+function_expression_errors.vlt:11:27: error: a function expression's own name (`fact`) inside its body is not supported yet
+function_expression_errors.vlt:13:12: error: an arrow function cannot have a 'this' parameter (TypeScript's TS2730)

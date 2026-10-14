@@ -73,6 +73,7 @@ mod supers;
 mod symbol_keys;
 mod sync;
 pub(crate) mod tasks;
+mod this_type;
 mod truthiness;
 mod type_tests;
 mod union_coerce;

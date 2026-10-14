@@ -59,6 +59,7 @@ pub(crate) mod places;
 mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
+mod readonly_arrays;
 pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
@@ -203,6 +204,9 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: std::collections::HashSet<LocalId>,
+    /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
+    /// the body may not write to (`readonly_arrays.rs`).
+    pub readonly_arrays: std::collections::HashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: std::collections::HashMap<LocalId, DefId>,
@@ -279,6 +283,7 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
+            readonly_arrays: Default::default(),
             closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],
@@ -386,6 +391,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A list is being checked for a fold: lists inside it are not tried (each try may check
     /// its rows twice).
     pub jsx_list_trial: bool,
+    /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
+    /// result is `this` itself, which such a method may return.
+    pub this_calls: std::collections::HashSet<Span>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -422,6 +430,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_fold: None,
             jsx_list_folded: false,
             jsx_list_trial: false,
+            this_calls: Default::default(),
         }
     }
 

@@ -150,3 +150,92 @@ fn object_literal_methods_are_arrow_properties() {
         vec!["getters and setters in object literals are not supported yet"]
     );
 }
+
+#[test]
+fn function_expressions_are_arrows() {
+    let e = expr("x = async function name<T>(a: T, b) { return a; }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Arrow {
+        type_params,
+        params,
+        is_async,
+        body: ArrowBody::Block(_),
+        ..
+    } = &value.kind
+    else {
+        panic!("expected an arrow, got {:?}", value.kind)
+    };
+    assert_eq!((type_params.len(), params.len(), *is_async), (1, 2, true));
+    assert_eq!(
+        errors("const f = function () { return this; };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // `this` in a class declared inside the function is the class's.
+    assert!(errors("const f = function () { class C { m() { return this; } } };").is_empty());
+    assert_eq!(
+        errors("const f = function g(n: number): number { return g(n); };"),
+        vec!["a function expression's own name (`g`) inside its body is not supported yet"]
+    );
+    // A generator function expression's `this` is its own too.
+    assert_eq!(
+        errors("const g = function* () { yield this; };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // As an object-literal property, TypeScript types `this` as the literal.
+    for src in [
+        "const o = { v: 1, get: function () { return this.v; } };",
+        "const o = { v: 1, get: async function () { return this.v; } };",
+        "const o = { v: 1, g: function* () { yield this.v; } };",
+    ] {
+        assert_eq!(
+            errors(src),
+            vec!["`this` in a function expression that is an object-literal property is not supported yet"],
+            "{src}"
+        );
+    }
+    // Only the property's own value: a function expression nested in it is not one.
+    assert_eq!(
+        errors("const o = { v: [1].map(function () { return this; }) };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // After `?` of a conditional.
+    parse_ok(
+        "const f = b ? function (x: number) { return x; } : function (x: number) { return -x; };",
+    );
+    parse_ok("const f = b ? async function () {} : function* () {};");
+}
+
+#[test]
+fn this_parameters_and_the_this_type() {
+    let m = parse_ok(
+        "function f(this: void, x: number) {} type F = (this: Window, e: number) => void;",
+    );
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(f.sig.params.len(), 1);
+    assert_eq!(alias_ty(&m, 1), "fn(number) => void");
+    // The AST does not keep them: tools that print it back are told where the first one is.
+    let src = "const g = 1; function f(x: number) {} type F = (this: void) => void;";
+    let at = velt_syntax::first_this_param(src).expect("a `this` parameter");
+    assert_eq!(&src[at.start as usize..at.end as usize], "this: void");
+    assert_eq!(
+        velt_syntax::first_this_param("const t = this; f(this);"),
+        None
+    );
+    assert_eq!(
+        errors("function f(this: { n: number }) { return this.n; }"),
+        vec!["`this` in a function with a `this` parameter is not supported yet"]
+    );
+    assert_eq!(
+        errors("const f = (this: number) => 1;"),
+        vec!["an arrow function cannot have a 'this' parameter (TypeScript's TS2730)"]
+    );
+    let m = parse_ok("class C { m(): this { return this; } }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
+}

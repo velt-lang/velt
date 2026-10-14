@@ -253,7 +253,8 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         _ => Some(super::returns::ret_of(cx, def, cx.fn_info(def).name_span)),
     };
     let f = cx.fn_info(def).clone();
-    let env = TyEnv::new(f.module, &f.generics.names);
+    let mut env = TyEnv::new(f.module, &f.generics.names);
+    env.this_ty = f.this_type();
     // An async body returns the promise's payload, which is also the HIR `ret` (the signature,
     // `FnInfo::ret`, and the type of a call stay `Promise<T>`); `None` while it is inferred.
     let body_ret = declared.map(|r| if f.is_async { cx.ty.async_result(r) } else { r });
@@ -380,6 +381,10 @@ impl FnCx<'_, '_> {
         for p in &f.params {
             // `mutable` is set when the body assigns or modifies the param (`mark_mutated`).
             let l = self.new_local(&p.name, p.ty, false, p.span, LocalKind::Param);
+            if let Some(crate::defs::FnSource::Decl(d)) = f.source {
+                let written = d.sig.params.iter().find(|q| q.name.name == p.name);
+                self.note_readonly_array(l, written.map(|q| &q.ty));
+            }
             self.f.scopes[0].names.entry(p.name.clone()).or_insert(l);
             self.rec_local_decl(l);
             params.push(hir::Param {

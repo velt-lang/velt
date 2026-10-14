@@ -1,0 +1,3 @@
+this_type_errors.vlt:7:15: error: a 'this' type is available only in a non-static member of a class or interface
+this_type_errors.vlt:11:15: error: a 'this' type is available only in a non-static member of a class or interface
+this_type_errors.vlt:5:12: error: type `A` is not assignable to type `this`

@@ -257,10 +257,10 @@ impl<'a> Parser<'a> {
                             | Kw::Null
                             | Kw::This
                             | Kw::New
+                            | Kw::Function
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
-                            | Kw::Function
                             | Kw::Typeof
                             | Kw::Void
                     )

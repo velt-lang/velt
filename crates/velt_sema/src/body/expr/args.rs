@@ -27,6 +27,10 @@ pub(crate) struct Callable {
     /// A `std/` function called from user code: a float argument for a parameter it declares
     /// an integer converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
     pub js_numbers: bool,
+    /// A method of a SIMD type (`u8x16.load`): with `js_numbers`, a float for a parameter it
+    /// declares `usize` (a position or lane index) that is not a whole number from 0 up is out
+    /// of range there, not truncated (`numbers::simd_position`).
+    pub positions: bool,
     /// A function of the JS API (`numbers::is_js_api`): integers it passes to callbacks (an
     /// index) are numbers there.
     pub js_api: bool,
@@ -148,9 +152,13 @@ impl FnCx<'_, '_> {
             let declared_int = self.cx.ty.is_int(p.ty);
             // A neutral use for the literal-local pre-scan: the JS API takes numbers.
             let h = if c.js_numbers && declared_int && self.cx.ty.is_float(h.ty) {
-                // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
-                let span = h.span;
-                self.mk(H::Cast(Box::new(h)), target, span)
+                if c.positions && p.ty == self.cx.ty.usize {
+                    self.simd_position(h)
+                } else {
+                    // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
+                    let span = h.span;
+                    self.mk(H::Cast(Box::new(h)), target, span)
+                }
             } else {
                 h
             };
@@ -256,6 +264,7 @@ impl FnCx<'_, '_> {
             slot_names: c.slot_names.clone(),
             bounds: c.bounds.clone(),
             js_numbers: c.js_numbers,
+            positions: c.positions,
             js_api: c.js_api,
             rest: false,
             defaults: c.defaults.clone(),

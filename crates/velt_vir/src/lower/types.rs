@@ -357,6 +357,7 @@ impl<'h> Cx<'h> {
             TyKind::Str => Ty::Agg(STR_AGG),
             // The address of a symbol record (rt_abi.md "Symbols"), never null.
             TyKind::Symbol => Ty::Ptr,
+            TyKind::Simd(_) => Ty::V128,
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,
             _ if self.boxed(t) => Ty::Ptr,
@@ -535,6 +536,7 @@ impl<'h> Cx<'h> {
             TyKind::Str => "string".into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Int(_) | TyKind::Float(_) => "number".into(),
             // Spelled without intern indices: aggregate names must not change with unrelated
             // edits either (`velt dev` compares layouts across versions by name).

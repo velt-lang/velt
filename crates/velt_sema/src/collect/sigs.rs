@@ -138,7 +138,8 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     for g in &sig.generics {
         generics.push(&g.name.name);
     }
-    let env = TyEnv::new(module, &generics.names);
+    let mut env = TyEnv::new(module, &generics.names);
+    env.this_ty = cx.fn_info(d).this_type();
     let own_bounds = resolve_bounds(cx, &sig.generics, &env);
     generics.bounds.truncate(owner.len());
     generics.bounds.extend(own_bounds);
