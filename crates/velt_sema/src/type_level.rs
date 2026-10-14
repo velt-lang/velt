@@ -240,9 +240,7 @@ impl Ctx<'_> {
             if i >= INFER_BASE {
                 let slot = &mut slots[(i - INFER_BASE) as usize];
                 *slot = Some(match *slot {
-                    Some(prev) if prev != s => {
-                        self.union_with(&[prev, s], None, Span::default())
-                    }
+                    Some(prev) if prev != s => self.union_with(&[prev, s], None, Span::default()),
                     _ => s,
                 });
                 return true;
@@ -258,7 +256,9 @@ impl Ctx<'_> {
                 Nothing::Null => &[Nothing::Null],
                 Nothing::Undefined => &[Nothing::Undefined],
             };
-            return nothings.iter().all(|n| self.relate_nothing(*n, p) || self.binds_nothing(p))
+            return nothings
+                .iter()
+                .all(|n| self.relate_nothing(*n, p) || self.binds_nothing(p))
                 && self.relate(sp, p, slots);
         }
         if let Some(ms) = self.union_members(s) {
@@ -284,9 +284,8 @@ impl Ctx<'_> {
                 a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| self.relate(*x, *y, slots))
             }
             (TyKind::Tuple(a), TyKind::Array(b)) => a.iter().all(|x| self.relate(*x, b, slots)),
-            (TyKind::Promise(a, _), TyKind::Promise(b, _)) | (TyKind::Shared(a), TyKind::Shared(b)) => {
-                self.relate(a, b, slots)
-            }
+            (TyKind::Promise(a, _), TyKind::Promise(b, _))
+            | (TyKind::Shared(a), TyKind::Shared(b)) => self.relate(a, b, slots),
             (TyKind::Map(a1, a2), TyKind::Map(b1, b2)) => {
                 self.relate(a1, b1, slots) && self.relate(a2, b2, slots)
             }
@@ -314,8 +313,11 @@ impl Ctx<'_> {
                     })
                     && self.relate(sr, pr, slots)
             }
-            (_, TyKind::Adt(pd, _)) if self.is_structural_object(pd) => self.relate_fields(s, p, slots),
-            (TyKind::Adt(sd, sa), TyKind::Adt(pd, pa)) | (TyKind::Dyn(sd, sa), TyKind::Dyn(pd, pa))
+            (_, TyKind::Adt(pd, _)) if self.is_structural_object(pd) => {
+                self.relate_fields(s, p, slots)
+            }
+            (TyKind::Adt(sd, sa), TyKind::Adt(pd, pa))
+            | (TyKind::Dyn(sd, sa), TyKind::Dyn(pd, pa))
                 if sd == pd && sa.len() == pa.len() =>
             {
                 sa.iter().zip(&pa).all(|(x, y)| self.relate(*x, *y, slots))
@@ -449,7 +451,12 @@ impl Ctx<'_> {
                 }
             };
             let piece = &rest[..end];
-            pos += end + if i + 1 == types.len() { 0 } else { quasis[i + 1].len() };
+            pos += end
+                + if i + 1 == types.len() {
+                    0
+                } else {
+                    quasis[i + 1].len()
+                };
             if let ast::TypeExprKind::Infer(n) = &hole.kind {
                 let lit = self.lit_type(LitValue::Str(piece.to_string()));
                 out.push((n.name.clone(), lit));
@@ -537,7 +544,9 @@ impl Ctx<'_> {
             }
             if next.len() > MAX_TEMPLATE_MEMBERS {
                 self.err(
-                    format!("this template literal type has more than {MAX_TEMPLATE_MEMBERS} members"),
+                    format!(
+                        "this template literal type has more than {MAX_TEMPLATE_MEMBERS} members"
+                    ),
                     t.span,
                 );
                 return self.ty.error;
@@ -611,7 +620,9 @@ impl Ctx<'_> {
                         None => {
                             let shown = self.display(nt);
                             self.err(
-                                format!("a mapped type's key must be a literal type; found `{shown}`"),
+                                format!(
+                                    "a mapped type's key must be a literal type; found `{shown}`"
+                                ),
                                 n.span,
                             );
                             return self.ty.error;

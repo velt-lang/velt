@@ -541,8 +541,7 @@ impl<'a> Parser<'a> {
         if part == TplPart::Head {
             loop {
                 types.push(self.parse_type()?);
-                let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) =
-                    self.peek()
+                let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) = self.peek()
                 else {
                     self.error_expected("`}`");
                     return Err(Fail);

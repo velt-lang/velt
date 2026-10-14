@@ -10,7 +10,7 @@ use common::programs::{err_src, ok_src};
 use velt_sema::hir::{Def, LitValue, Nothing, Program, TyId, TyKind};
 
 /// `t` for assertions: primitives by name, nothings, literals, unions (sorted) and object types
-/// by fields (`?` and `readonly` shown).
+/// by fields (`?` shown; `readonly` is erased before HIR).
 fn show(p: &Program, t: TyId) -> String {
     match p.types.kind(t) {
         TyKind::Str => "string".into(),
@@ -35,23 +35,19 @@ fn show(p: &Program, t: TyId) -> String {
                     .fields
                     .iter()
                     .map(|f| {
-                        let ro = if f.readonly { "readonly " } else { "" };
                         let opt = if f.optional { "?" } else { "" };
                         let ty = match (f.optional, p.types.kind(f.ty)) {
                             (true, TyKind::Option(x, _)) => *x,
                             _ => f.ty,
                         };
-                        format!("{ro}{}{opt}: {}", f.name, show(p, ty))
+                        format!("{}{opt}: {}", f.name, show(p, ty))
                     })
                     .collect();
                 format!("{{ {} }}", fs.join("; "))
             }
             Def::Enum(e) if e.is_union => {
-                let mut ms: Vec<String> = e
-                    .variants
-                    .iter()
-                    .map(|v| show(p, v.payload[0]))
-                    .collect();
+                let mut ms: Vec<String> =
+                    e.variants.iter().map(|v| show(p, v.payload[0])).collect();
                 ms.sort();
                 ms.join(" | ")
             }
@@ -71,8 +67,14 @@ fn param(src: &str) -> String {
 #[test]
 fn conditional_types_distribute_over_a_naked_parameter() {
     let decls = "type IsStr<T> = T extends string ? \"y\" : \"n\";";
-    assert_eq!(param(&format!("{decls} function f(x: IsStr<string>) {{}}")), "\"y\"");
-    assert_eq!(param(&format!("{decls} function f(x: IsStr<number>) {{}}")), "\"n\"");
+    assert_eq!(
+        param(&format!("{decls} function f(x: IsStr<string>) {{}}")),
+        "\"y\""
+    );
+    assert_eq!(
+        param(&format!("{decls} function f(x: IsStr<number>) {{}}")),
+        "\"n\""
+    );
     assert_eq!(
         param(&format!("{decls} function f(x: IsStr<\"a\" | 1>) {{}}")),
         "\"n\" | \"y\""
@@ -87,7 +89,10 @@ fn conditional_types_distribute_over_a_naked_parameter() {
         param("function f(x: Exclude<\"a\" | \"b\" | \"c\", \"a\" | \"c\">) {}"),
         "\"b\""
     );
-    assert_eq!(param("function f(x: NonNullable<string | undefined>) {}"), "string");
+    assert_eq!(
+        param("function f(x: NonNullable<string | undefined>) {}"),
+        "string"
+    );
 }
 
 #[test]
@@ -114,8 +119,10 @@ fn infer_binds_through_objects_generics_and_templates() {
 fn homomorphic_mapped_types_keep_and_change_modifiers() {
     let user = "type User = { readonly id: string; name: string; age?: number };";
     assert_eq!(
-        param(&format!("{user} type M<T> = {{ [K in keyof T]: T[K] }}; function f(x: M<User>) {{}}")),
-        "{ readonly id: string; name: string; age?: number }"
+        param(&format!(
+            "{user} type M<T> = {{ [K in keyof T]: T[K] }}; function f(x: M<User>) {{}}"
+        )),
+        "{ id: string; name: string; age?: number }"
     );
     assert_eq!(
         param(&format!("{user} type M<T> = {{ -readonly [K in keyof T]-?: T[K] }}; function f(x: M<User>) {{}}")),
@@ -123,7 +130,8 @@ fn homomorphic_mapped_types_keep_and_change_modifiers() {
     );
     assert_eq!(
         param(&format!("{user} type K<T> = {{ [K in keyof T]: undefined extends T[K] ? K : never }}[keyof T]; function f(x: K<User>) {{}}")),
-        "\"age\""
+        // As in TypeScript: the optional field's `undefined` is a member too.
+        "\"age\" | undefined"
     );
     assert_eq!(
         param(&format!("{user} type G<T> = {{ [K in keyof T as K extends \"id\" ? never : `get${{Capitalize<string & K>}}`]: () => T[K] }}; function f(x: G<User>) {{}}")),
@@ -150,8 +158,12 @@ fn forms_over_type_parameters_are_errors() {
         e.contains("a conditional type over a type parameter is not supported yet"),
         "{e}"
     );
-    let e = err_src("class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }\nfunction main() {}");
-    assert!(e.contains("a mapped type over a type parameter is not supported yet"), "{e}");
+    let e =
+        err_src("class Box<T> { v: { [K in keyof T]: T[K] } | null = null; }\nfunction main() {}");
+    assert!(
+        e.contains("a mapped type over a type parameter is not supported yet"),
+        "{e}"
+    );
     // Declaring such an alias without using it is fine.
     ok_src("type IsStr<T> = T extends string ? 1 : 2;\ntype M<T> = { [K in keyof T]: T[K] };\nfunction main() {}");
     let e = err_src("type Bad = infer X;\nfunction main() {}");

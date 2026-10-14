@@ -249,7 +249,9 @@ impl Ctx<'_> {
         }
         if env.unknowns.iter().any(|u| u == name) {
             self.err(
-                format!("`{name}` is inferred as `unknown` here, which is not supported yet (#934)"),
+                format!(
+                    "`{name}` is inferred as `unknown` here, which is not supported yet (#934)"
+                ),
                 t.span,
             );
             return self.ty.error;

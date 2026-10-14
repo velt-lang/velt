@@ -103,15 +103,18 @@ impl Ctx<'_> {
         let tys: Vec<TyId> = keys
             .iter()
             .filter_map(|k| fields.iter().find(|f| &f.name == k))
-            .map(|f| match (f.optional, env.ts_optional) {
-                (false, _) => f.ty,
-                (true, false) => self.ty.option(f.ty),
-                // In a conditional or mapped type, as TypeScript reads it: `F | undefined`.
-                (true, true) => match *self.ty.kind(f.ty) {
-                    TyKind::Option(p, n) => self.ty.option_of(p, n.join(Nothing::Undefined)),
-                    _ => self.ty.option_of(f.ty, Nothing::Undefined),
+            // `{ [K in keyof T]: … }[keyof T]` reads the mapped type as TypeScript does too.
+            .map(
+                |f| match (f.optional, env.ts_optional || is_type_level(object)) {
+                    (false, _) => f.ty,
+                    (true, false) => self.ty.option(f.ty),
+                    // In a conditional or mapped type, as TypeScript reads it: `F | undefined`.
+                    (true, true) => match *self.ty.kind(f.ty) {
+                        TyKind::Option(p, n) => self.ty.option_of(p, n.join(Nothing::Undefined)),
+                        _ => self.ty.option_of(f.ty, Nothing::Undefined),
+                    },
                 },
-            })
+            )
             .collect();
         match tys.as_slice() {
             [one] => *one,
@@ -306,4 +309,12 @@ fn in_op(op: &str) -> String {
         true => format!("in `{op}`"),
         false => format!("in {op}"),
     }
+}
+
+/// A mapped or conditional type, written in place.
+fn is_type_level(t: &ast::TypeExpr) -> bool {
+    matches!(
+        t.kind,
+        ast::TypeExprKind::Mapped(_) | ast::TypeExprKind::Conditional(_)
+    )
 }

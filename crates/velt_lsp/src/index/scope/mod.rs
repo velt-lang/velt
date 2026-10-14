@@ -350,7 +350,9 @@ impl<'a> Walker<'a> {
                 m.name.iter().for_each(|t| self.ty(t));
                 self.ty(&m.value);
             }
-            ast::TypeExprKind::TemplateLiteral { types, .. } => types.iter().for_each(|t| self.ty(t)),
+            ast::TypeExprKind::TemplateLiteral { types, .. } => {
+                types.iter().for_each(|t| self.ty(t))
+            }
             ast::TypeExprKind::Infer(_) => {}
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_)

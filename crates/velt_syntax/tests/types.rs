@@ -263,7 +263,10 @@ fn infer_in_patterns() {
 
 #[test]
 fn mapped_types() {
-    assert_eq!(alias_ty("{ [K in keyof T]: T[K] }"), "{[K in keyof T]: T[K]}");
+    assert_eq!(
+        alias_ty("{ [K in keyof T]: T[K] }"),
+        "{[K in keyof T]: T[K]}"
+    );
     assert_eq!(
         alias_ty("{ readonly [K in keyof T]-?: T[K] }"),
         "{+readonly [K in keyof T]-?: T[K]}"
@@ -279,14 +282,8 @@ fn mapped_types() {
 #[test]
 fn template_literal_types() {
     assert_eq!(alias_ty("`plain`"), "`plain`");
-    assert_eq!(
-        alias_ty("`${infer F}${infer R}`"),
-        "`${infer F}${infer R}`"
-    );
-    assert_eq!(
-        alias_ty("`model:${string & K}`"),
-        "`model:${(string & K)}`"
-    );
+    assert_eq!(alias_ty("`${infer F}${infer R}`"), "`${infer F}${infer R}`");
+    assert_eq!(alias_ty("`model:${string & K}`"), "`model:${(string & K)}`");
 }
 
 #[test]
