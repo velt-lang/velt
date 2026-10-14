@@ -11,8 +11,9 @@
 // `u8[]` → BLOB. Rows are decoded with `JSON.parse<T[]>` (the runtime hands them to it in
 // binary form, not as JSON text): each column fills the field of the same name (rename with
 // `AS`). INTEGER decodes into integer fields exactly (all of i64) and into `f64` fields; REAL
-// into `f64`; TEXT into `string`; BLOB into `u8[]`; NULL into `T | null` fields. SQLite has no booleans: a column declared `BOOLEAN`
-// decodes into `bool`, any other 0/1 value (an expression) needs an integer field.
+// into `f64`; TEXT into `string`; BLOB into `u8[]`; NULL into `T | null` fields. SQLite has no
+// booleans: a column declared `BOOLEAN` decodes into `bool`, any other 0/1 value (an
+// expression) needs an integer field.
 //
 // `Database` is a Copy handle like std/net's sockets: pass and capture it freely and release it
 // with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). A
