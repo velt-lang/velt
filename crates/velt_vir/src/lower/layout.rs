@@ -275,7 +275,10 @@ impl Cx<'_> {
         }
     }
 
-    /// Does the class hierarchy of `d` need a vtable pointer in every object?
+    /// Does the class hierarchy of `d` need a vtable pointer in every object? It is decided per
+    /// hierarchy, so the leaves have one too; whether a class reference may hold a subclass
+    /// instance (what the transfer checks in transfer.rs ask) is
+    /// [`has_subclasses`](Self::has_subclasses).
     pub(super) fn has_header(&mut self, d: DefId) -> bool {
         let root = self.class_root(d);
         if self.lay.headers.is_none() {

@@ -1,0 +1,65 @@
+// SQLite rows into typed values: the two read queries of bench/feed (the feed API of the $12
+// server challenge) on an in-memory database of the same shape. `feed` reads 20 posts of about
+// 200 characters and writes them as JSON; `post` reads one post by primary key. Prints the bytes
+// written, so runs can be compared. Usage: rows [feed|post|both] [rounds]
+
+import { open } from "velt:sqlite";
+import { args } from "velt:process";
+
+const POST_COLUMNS =
+  "SELECT p.id, p.body, p.created_at, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id";
+const SELECT_FEED = `${POST_COLUMNS} ORDER BY p.created_at DESC, p.id DESC LIMIT 20`;
+const SELECT_POST = `${POST_COLUMNS} WHERE p.id = ?`;
+const POSTS: i64 = 2000;
+
+struct Post {
+  id: i64;
+  body: string;
+  created_at: string;
+  author: string;
+  like_count: i64;
+}
+
+struct Feed {
+  posts: Post[];
+}
+
+function main() {
+  const argv = args();
+  const which = argv.length > 0 ? argv[0] : "both";
+  const rounds = argv.length > 1 ? parseInt(argv[1], 10) as i64 : 2000;
+  const db = open(":memory:");
+  db.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL);
+    CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, body TEXT NOT NULL,
+      created_at TEXT NOT NULL);
+    CREATE INDEX posts_created ON posts (created_at DESC, id DESC);
+    CREATE TABLE likes (user_id INTEGER NOT NULL, post_id INTEGER NOT NULL,
+      PRIMARY KEY (user_id, post_id));
+    CREATE INDEX likes_post ON likes (post_id);
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100)
+      INSERT INTO users SELECT i, 'user_' || i FROM n;
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${POSTS})
+      INSERT INTO posts SELECT i, i % 100 + 1,
+        substr(replace(hex(zeroblob(40)), '00', 'post ' || i || ' says '), 1, 180 + i % 40),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 1700000000 + i * 60, 'unixepoch') FROM n;
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
+      INSERT OR IGNORE INTO likes SELECT i % 100 + 1, (i * 7) % ${POSTS} + 1 FROM n;
+  `);
+  let bytes: i64 = 0;
+  if (which != "post") {
+    for (let i: i64 = 0; i < rounds; i++) {
+      const posts: Post[] = db.prepare(SELECT_FEED).all();
+      bytes += JSON.stringify(Feed { posts: posts }).length as i64;
+    }
+  }
+  if (which != "feed") {
+    for (let i: i64 = 0; i < rounds * 10; i++) {
+      const post: Post | null = db.prepare(SELECT_POST).getWith([(i * 7919) % POSTS + 1]);
+      if (post != null) {
+        bytes += JSON.stringify(post).length as i64;
+      }
+    }
+  }
+  console.log(bytes);
+}

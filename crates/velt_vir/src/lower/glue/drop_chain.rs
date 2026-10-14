@@ -180,6 +180,15 @@ impl FnLower<'_, '_> {
         if !self.cx.counted(ty) {
             return;
         }
+        if self.cx.weak_capable(ty) {
+            // A weakly held node is never unique by its count word (weak-refs.md): the
+            // three-way release decides, and its last reference continues the loop.
+            let own = self.new_block();
+            self.release_as(p, true, |lw| lw.goto(own));
+            self.goto(shared);
+            self.switch_to(own);
+            return;
+        }
         let c = self.count_place(p);
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
         let last = self.rvalue_temp(

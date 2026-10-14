@@ -1,0 +1,43 @@
+// check: no leaks
+// Classes that extend WeakMap, WeakSet and WeakRef, with fields and methods of their own, used
+// on one task (also as their base class).
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Cache extends WeakMap<V, string> {
+  hits: number = 0;
+  lookup(k: V): string {
+    this.hits += 1;
+    return this.get(k) ?? "none";
+  }
+}
+class Seen extends WeakSet<V> {
+  count: number = 0;
+  mark(x: V): boolean {
+    if (this.has(x)) return false;
+    this.add(x);
+    this.count += 1;
+    return true;
+  }
+}
+class Tagged extends WeakRef<V> {
+  tag: string;
+  constructor(v: V, tag: string) { super(v); this.tag = tag; }
+  describe(): string { return this.tag + ":" + (this.deref()?.n ?? -1); }
+}
+function size(m: WeakMap<V, string>, ks: V[]): number {
+  let n = 0;
+  for (const k of ks) if (m.has(k)) n += 1;
+  return n;
+}
+async function main() {
+  const a = new V(1);
+  const b = new V(2);
+  const c = new Cache();
+  c.set(a, "one").set(b, "two");
+  console.log(c.lookup(a), c.lookup(b), c.lookup(new V(3)), c.hits);
+  console.log(size(c, [a, b, new V(4)]), c instanceof WeakMap, c.delete(a), c.has(a));
+  const s = new Seen();
+  console.log(s.mark(a), s.mark(a), s.mark(b), s.count, s.has(b));
+  const t = new Tagged(b, "b");
+  await Promise.resolve();
+  console.log(t.describe(), t.deref() === b, t instanceof WeakRef);
+}

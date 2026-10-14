@@ -510,8 +510,38 @@ fn imports_exports_and_intrinsics() {
         r.contains("`f` cannot initialize module constant `X`"),
         "{r}"
     );
-    let r = err_src("const X: i64[] = [1]; function main() {}");
+    // An array of number or boolean literals is a table (read-only data).
+    ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
+    let r = err_src("const X: string[] = [\"a\"]; function main() {}");
+    assert!(r.contains("only arrays of numbers or booleans"), "{r}");
+    // Only as the whole initializer: an array inside a struct constant is not a table.
+    let r = err_src(
+        "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
+    );
     assert!(r.contains("constant expressions or pure calls"), "{r}");
+    let r = err_src("const X: i64[] = [1 + 1]; function main() {}");
+    assert!(r.contains("is not a literal"), "{r}");
+    let r = err_src("const X: i64[] = [1]; function main() { X.push(2); }");
+    assert!(r.contains("module-level constant `X`"), "{r}");
+    let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
+    assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
+    // What the compiler can't follow could write to it: a function value, a binding through `!`.
+    let r = err_src(
+        "const X: u8[] = [1]; function main() { const f = (xs: u8[]) => xs.fill(0); f(X); }",
+    );
+    assert!(
+        r.contains("cannot pass module constant `X` to a function value"),
+        "{r}"
+    );
+    let r = err_src("const X: u8[] = [1]; function main() { const v = X!; v.push(2); }");
+    assert!(r.contains("cannot move out of module constant `X`"), "{r}");
+    let r = err_src(
+        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
+    );
+    assert!(
+        r.contains("cannot move out of module constant `C.X`"),
+        "{r}"
+    );
 }
 
 #[test]

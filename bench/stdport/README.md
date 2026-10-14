@@ -42,6 +42,11 @@ this machine.
 `limb_mul` was added after this table (64-bit limb arithmetic on `Math.umulh`, against `u128`
 in Rust): 1,194M instructions against 888M on the same machine, 1.34.
 
+`url_parse_wide` was added after it too: URLs with a character that is not ASCII, and long
+queries, paths and `data:` URLs, which `url_parse` has none of. 2,324M instructions against the
+`url` crate's 730M on the same machine, 3.18: in text that is not ASCII every `charCodeAt` first
+finds its position, and the parser reads the input that way.
+
 Reading it:
 
 - The four number rows call the same crates as the Rust column, so their gap is the cost of

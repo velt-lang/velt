@@ -1,0 +1,98 @@
+HtTpS://ExAmPlE.CoM/Path -> https://example.com/Path | : | example.com |  | /Path |  | 
+http://example.com -> http://example.com/ | : | example.com |  | / |  | 
+http://example.com./ -> http://example.com./ | : | example.com. |  | / |  | 
+http://1.2.3.4./ -> http://1.2.3.4/ | : | 1.2.3.4 |  | / |  | 
+http://0x7f.1/ -> http://127.0.0.1/ | : | 127.0.0.1 |  | / |  | 
+http://0x/ -> http://0.0.0.0/ | : | 0.0.0.0 |  | / |  | 
+http://example.0x1g/ -> http://example.0x1g/ | : | example.0x1g |  | / |  | 
+http://127.1/ -> http://127.0.0.1/ | : | 127.0.0.1 |  | / |  | 
+http://999.1.1.1/ -> invalid
+http://a.b.c.d.5/ -> invalid
+http://exa%6dple.com/ -> http://example.com/ | : | example.com |  | / |  | 
+http://exa mple.com/ -> invalid
+http://exa<mple.com/ -> invalid
+http://exa^mple.com/ -> invalid
+http://exa|mple.com/ -> invalid
+http://ex%25ample.com/ -> invalid
+http://user@example.com/ -> http://user@example.com/ | user: | example.com |  | / |  | 
+http://user:pw@example.com:8080/ -> http://user:pw@example.com:8080/ | user:pw | example.com | 8080 | / |  | 
+http://a@b@example.com/ -> http://a%40b@example.com/ | a%40b: | example.com |  | / |  | 
+http://a:b:c@example.com/ -> http://a:b%3Ac@example.com/ | a:b%3Ac | example.com |  | / |  | 
+http://us er:p@ss@example.com/ -> http://us%20er:p%40ss@example.com/ | us%20er:p%40ss | example.com |  | / |  | 
+http://@example.com/ -> http://example.com/ | : | example.com |  | / |  | 
+http://:@example.com/ -> http://example.com/ | : | example.com |  | / |  | 
+http://example.com:/ -> http://example.com/ | : | example.com |  | / |  | 
+http://example.com:80/ -> http://example.com/ | : | example.com |  | / |  | 
+http://example.com:080/ -> http://example.com/ | : | example.com |  | / |  | 
+http://example.com:65535/ -> http://example.com:65535/ | : | example.com | 65535 | / |  | 
+http://example.com:65536/ -> invalid
+http://example.com:8a/ -> invalid
+https://example.com:443/ -> https://example.com/ | : | example.com |  | / |  | 
+https://example.com:80/ -> https://example.com:80/ | : | example.com | 80 | / |  | 
+http://:80/ -> invalid
+http://user@/ -> invalid
+http://[::1]/ -> http://[::1]/ | : | [::1] |  | / |  | 
+http://[::1]:8080/x -> http://[::1]:8080/x | : | [::1] | 8080 | /x |  | 
+http://[2001:DB8::1]:443/ -> http://[2001:db8::1]:443/ | : | [2001:db8::1] | 443 | / |  | 
+http://[::1/ -> invalid
+http://[::1]x/ -> invalid
+http://u@[::1]:9/ -> http://u@[::1]:9/ | u: | [::1] | 9 | / |  | 
+http://example.com/a/b/c -> http://example.com/a/b/c | : | example.com |  | /a/b/c |  | 
+http://example.com/a/./b -> http://example.com/a/b | : | example.com |  | /a/b |  | 
+http://example.com/a/../b -> http://example.com/b | : | example.com |  | /b |  | 
+http://example.com/a/.b/..c/d. -> http://example.com/a/.b/..c/d. | : | example.com |  | /a/.b/..c/d. |  | 
+http://example.com/a/%2e/b -> http://example.com/a/b | : | example.com |  | /a/b |  | 
+http://example.com/a/%2E%2e/b -> http://example.com/b | : | example.com |  | /b |  | 
+http://example.com/a/%2fb/%zz -> http://example.com/a/%2fb/%zz | : | example.com |  | /a/%2fb/%zz |  | 
+http://example.com/a b/c -> http://example.com/a%20b/c | : | example.com |  | /a%20b/c |  | 
+http://example.com/a\b\c -> http://example.com/a/b/c | : | example.com |  | /a/b/c |  | 
+http://example.com//a//b/ -> http://example.com//a//b/ | : | example.com |  | //a//b/ |  | 
+http://example.com/a/b/ -> http://example.com/a/b/ | : | example.com |  | /a/b/ |  | 
+http://example.com/é/ü -> http://example.com/%C3%A9/%C3%BC | : | example.com |  | /%C3%A9/%C3%BC |  | 
+http://example.com/{a}/`b` -> http://example.com/%7Ba%7D/%60b%60 | : | example.com |  | /%7Ba%7D/%60b%60 |  | 
+http://example.com?q=1 -> http://example.com/?q=1 | : | example.com |  | / | ?q=1 | 
+http://example.com/?q=a b&r='x' -> http://example.com/?q=a%20b&r=%27x%27 | : | example.com |  | / | ?q=a%20b&r=%27x%27 | 
+http://example.com/#frag ment -> http://example.com/#frag%20ment | : | example.com |  | / |  | #frag%20ment
+http://example.com/?# -> http://example.com/?# | : | example.com |  | / |  | 
+http://example.com/p?q#f?g#h -> http://example.com/p?q#f?g#h | : | example.com |  | /p | ?q | #f?g#h
+  http://example.com/trim   -> http://example.com/trim | : | example.com |  | /trim |  | 
+http://exam	ple.com/a
+b -> http://example.com/ab | : | example.com |  | /ab |  | 
+ws://example.com:80/chat -> ws://example.com/chat | : | example.com |  | /chat |  | 
+wss://example.com:443/chat -> wss://example.com/chat | : | example.com |  | /chat |  | 
+ftp://example.com:21/file -> ftp://example.com/file | : | example.com |  | /file |  | 
+foo://Example.COM:80/a/../b?q='x' -> foo://Example.COM:80/b?q='x' | : | Example.COM | 80 | /b | ?q='x' | 
+foo://exa%6dple/ -> foo://exa%6dple/ | : | exa%6dple |  | / |  | 
+foo:/a/b -> foo:/a/b | : |  |  | /a/b |  | 
+mailto:User@Example.com?subject=a b -> mailto:User@Example.com?subject=a%20b | : |  |  | User@Example.com | ?subject=a%20b | 
+file:///etc/hosts -> file:///etc/hosts | : |  |  | /etc/hosts |  | 
+file://localhost/etc/hosts -> file:///etc/hosts | : |  |  | /etc/hosts |  | 
+http:example.com/a -> http://example.com/a | : | example.com |  | /a |  | 
+http:/example.com/a -> http://example.com/a | : | example.com |  | /a |  | 
+http:\\example.com\a -> http://example.com/a | : | example.com |  | /a |  | 
+https://example.com/café/menü -> https://example.com/caf%C3%A9/men%C3%BC | : | example.com |  | /caf%C3%A9/men%C3%BC |  | 
+https://example.com/search?q=café -> https://example.com/search?q=caf%C3%A9 | : | example.com |  | /search | ?q=caf%C3%A9 | 
+https://example.com/page#über -> https://example.com/page#%C3%BCber | : | example.com |  | /page |  | #%C3%BCber
+http://üser:pässword@example.com:8080/a -> http://%C3%BCser:p%C3%A4ssword@example.com:8080/a | %C3%BCser:p%C3%A4ssword | example.com | 8080 | /a |  | 
+HTTP://EXAMPLE.COM/É/../ü?x=é#É -> http://example.com/%C3%BC?x=%C3%A9#%C3%89 | : | example.com |  | /%C3%BC | ?x=%C3%A9 | #%C3%89
+foo://example.com/é?é#é -> foo://example.com/%C3%A9?%C3%A9#%C3%A9 | : | example.com |  | /%C3%A9 | ?%C3%A9 | #%C3%A9
+mailto:é@example.com -> mailto:%C3%A9@example.com | : |  |  | %C3%A9@example.com |  | 
+://example.com -> invalid
+1http://example.com -> invalid
+1259 441 481 318
+/seg%20ment/seg%20ment/s ?k=v%20w&k=v%20w #f%20f%2
+416 text/plain,a bca bca bca bca b
+31 28 3 ?q=1 #f
+31 31 kv hz
+32 29 4 ?q=1 #f
+32 32 kv hz
+33 30 5 ?q=1 #f
+33 33 kv hz
+48 45 20 ?q=1 #f
+48 48 kv hz
+64 61 36 ?q=1 #f
+64 64 kv hz
+65 62 37 ?q=1 #f
+65 65 kv hz
+http://exämple.com/a -> invalid
+http://user@exämple.com:8080/a -> invalid

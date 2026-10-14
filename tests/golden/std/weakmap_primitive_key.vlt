@@ -1,0 +1,5 @@
+// A WeakMap key must be an object, as in TypeScript (TS2344).
+function main() {
+  const m = new WeakMap<string, number>();
+  console.log(m.has("a"));
+}

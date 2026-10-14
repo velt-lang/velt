@@ -74,6 +74,7 @@ mod unions;
 mod utility_types;
 mod visit;
 mod void_fields;
+mod weak_threads;
 mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
@@ -304,9 +305,10 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     ownership::box_cells(cx, &moved.boxed, &moved.per_iteration);
     ownership::check_exclusive(cx);
     ownership::check_boundaries(cx);
-    ownership::check_locked(cx);
+    let weak = ownership::check_locked(cx);
     ownership::check_many_threads(cx);
     promise_copies::check(cx);
+    weak_threads::check(cx, weak);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

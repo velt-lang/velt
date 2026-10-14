@@ -40,8 +40,14 @@
 //!    already counted where it is passed or created (`Effects::callbacks`, `Effects::values`).
 //! 7. **Async bodies after a suspension**: only at an `await` (`Effects::anything`).
 //!
-//! Not yet in the language: releasing a weakly held object (`WeakMap`, `WeakRef`, #969) drops
-//! entries' values from the runtime; once that lands it needs an entry here (a drop, 3).
+//! 8. **Releasing a weakly held object** (velt_rt weak tables, docs/internals/design/weak-refs.md):
+//!    when a `WeakMap` key's last reference goes, the runtime removes its entries from every map
+//!    and drops their values (their `[Symbol.dispose]()`, 3); dropping a map (std's
+//!    `WeakMap[Symbol.dispose]`, an extern call) drops all its values. So a value of a key type
+//!    reaches what the values of the maps keyed by it reach, and a `WeakMap<K, V>` what a `V`
+//!    does. The maps are found by their `new WeakMap<K, V>()` ([`weak_entries`]); a key type that
+//!    is a type parameter makes every object type a possible key. `WeakSet` and `WeakRef` own
+//!    nothing they could drop.
 //!
 //! Lowering also calls std methods from glue (`Map` methods for equality and hashing of
 //! dictionaries, `Record.__positions` / `__decoded` / `set` for JSON): std code that runs no
@@ -90,13 +96,19 @@ pub(super) struct Implicit {
     captures: Vec<TyId>,
     /// Some closure captures a value whose type may reach a hook.
     captures_reach: bool,
+    /// The prelude's `WeakMap` class.
+    weak_map: Option<DefId>,
+    /// The key and value types of the program's weak maps (8): a key `None` is a type
+    /// parameter (any object may be a key).
+    weak_entries: Vec<(Option<TyId>, TyId)>,
     /// [`Reach`] of each type seen without type arguments known (types mentioning type
     /// parameters keep them as [`Reach::param`]).
     memo: RefCell<HashMap<TyId, std::rc::Rc<Reach>>>,
 }
 
 impl Implicit {
-    pub(super) fn new(cx: &Ctx) -> Implicit {
+    /// `weak_entries`: [`weak_entries`] of the program.
+    pub(super) fn new(cx: &Ctx, weak_entries: Vec<(Option<TyId>, TyId)>) -> Implicit {
         let mut own: HashMap<DefId, (Vec<DefId>, Vec<DefId>)> = HashMap::new();
         let mut bases: Vec<(DefId, DefId)> = Vec::new();
         for (i, info) in cx.info.iter().enumerate() {
@@ -166,11 +178,14 @@ impl Implicit {
         }
         captures.sort();
         captures.dedup();
+        let weak_map = cx.prelude_adt("WeakMap");
         let mut im = Implicit {
             hooks,
             family,
             generators,
             captures,
+            weak_map,
+            weak_entries,
             captures_reach: false,
             memo: RefCell::new(HashMap::new()),
         };
@@ -225,9 +240,12 @@ impl Implicit {
                 None => out.param = true,
             },
             TyKind::FnPtr { .. } | TyKind::Closure(_) => out.fns = true,
-            TyKind::Array(x) | TyKind::Option(x) | TyKind::Shared(x) => {
-                self.reach_in(cx, *x, env, stack, out)
+            TyKind::Array(x) => {
+                let x = *x;
+                self.weak_values(cx, t, None, stack, out);
+                self.reach_in(cx, x, env, stack, out)
             }
+            TyKind::Option(x) | TyKind::Shared(x) => self.reach_in(cx, *x, env, stack, out),
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                 let (a, b) = (*a, *b);
                 self.reach_in(cx, a, env, stack, out);
@@ -252,6 +270,18 @@ impl Implicit {
                     })
                     .collect();
                 stack.push(d);
+                // A weak map drops its values (8).
+                if Some(d) == self.weak_map {
+                    if let Some(v) = argr.get(1) {
+                        out.add(v);
+                    }
+                } else if self.weak_map.is_some_and(|w| cx.class_extends(d, w)) {
+                    // A subclass of one: its base class, in terms of its own type parameters.
+                    if let Some(b) = cx.adt(d).and_then(|a| a.base) {
+                        self.reach_in(cx, b, Some(&argr), stack, out);
+                    }
+                }
+                self.weak_values(cx, t, Some(d), stack, out);
                 let family = self.family.get(&d).cloned().unwrap_or_else(|| vec![d]);
                 for m in family {
                     if let Some(h) = self.hooks.get(&m) {
@@ -272,6 +302,30 @@ impl Implicit {
                 for imp in cx.impls.iter().filter(|x| x.iface == i) {
                     self.reach_in(cx, imp.ty, None, stack, out);
                 }
+            }
+        }
+    }
+
+    /// What releasing a value of type `t` (an object type `d`, or an array) as a weak map's key
+    /// drops: the values of the maps it may be a key of (8).
+    fn weak_values(
+        &self,
+        cx: &Ctx,
+        t: TyId,
+        d: Option<DefId>,
+        stack: &mut Vec<DefId>,
+        out: &mut Reach,
+    ) {
+        for &(k, v) in &self.weak_entries {
+            let key = match k {
+                None => true,
+                Some(k) => {
+                    k == t
+                        || matches!((cx.ty.kind(k), d), (TyKind::Adt(kd, _), Some(d)) if *kd == d)
+                }
+            };
+            if key {
+                self.reach_in(cx, v, None, stack, out);
             }
         }
     }
@@ -320,6 +374,61 @@ impl Implicit {
         r.fns = false;
         r
     }
+}
+
+/// The key and value types of every `new WeakMap<K, V>()` in the program (8), also of a
+/// subclass (`new Cache()` with `class Cache extends WeakMap<K, V>`); a key `None` for one that
+/// mentions a type parameter.
+pub(super) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
+    struct Find<'a, 'm> {
+        cx: &'a Ctx<'m>,
+        map: DefId,
+        /// The class types made with `new` that are a weak map or extend one.
+        made: Vec<TyId>,
+    }
+    impl crate::visit::VisitMut for Find<'_, '_> {
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::New { def, .. } = &e.kind {
+                if self.cx.class_extends(*def, self.map) && !self.made.contains(&e.ty) {
+                    self.made.push(e.ty);
+                }
+            }
+        }
+    }
+    let Some(map) = cx.prelude_adt("WeakMap") else {
+        return vec![];
+    };
+    let mut made = vec![];
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut fd)) = cx.defs[i].take() else {
+            continue;
+        };
+        let mut f = Find {
+            cx,
+            map,
+            made: std::mem::take(&mut made),
+        };
+        crate::visit::block(&mut fd.body.block, &mut f);
+        made = f.made;
+        cx.defs[i] = Some(Def::Fn(fd));
+    }
+    let mut out = vec![];
+    for t in made {
+        let Some((root, _)) = cx.weak_root(t) else {
+            continue;
+        };
+        if let TyKind::Adt(_, args) = cx.ty.kind(root) {
+            if let [k, v] = *args.as_slice() {
+                let mut ps = vec![];
+                crate::types::collect_params(&cx.ty, k, &mut ps);
+                let k = ps.is_empty().then_some(k);
+                if !out.contains(&(k, v)) {
+                    out.push((k, v));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn field_tys(cx: &Ctx, d: DefId) -> Vec<TyId> {
@@ -420,7 +529,16 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AsyncGeneratorReturn
         | I::AsyncGeneratorDispose
         | I::SymbolStatic
-        | I::SymbolRegistry => false,
+        | I::SymbolRegistry
+        // Weak maps and refs (std/prelude/weak.vlt): a value a map drops (a replaced or deleted
+        // entry's, or a released key's) is counted as a drop (8 of the module docs).
+        | I::WeakMapSet
+        | I::WeakMapGet
+        | I::WeakMapHas
+        | I::WeakMapDelete
+        | I::WeakMapValue
+        | I::WeakRefNew
+        | I::WeakRefDeref => false,
     }
 }
 

@@ -24,7 +24,8 @@ use crate::visit::{self, VisitMut};
 
 /// One pass over body `f` (of `def`): grow the regions (`rewrite: false`, repeated to a
 /// fixpoint), or insert the transfers (`rewrite: true`, once, with the final regions).
-/// Returns the calls that would share a part of one side with the other and cannot be fixed
+/// Returns the calls that would share a part of one side with the other and cannot be fixed,
+/// the captured variables stored into the value, and the closures stored into the value
 /// (`rewrite` only).
 pub(super) fn visit(
     cx: &mut Ctx,
@@ -33,7 +34,7 @@ pub(super) fn visit(
     def: DefId,
     f: &mut FnDef,
     rewrite: bool,
-) -> (Vec<Unfixable>, Vec<(LocalId, Span, bool)>) {
+) -> Visited {
     let mut w = Stores {
         cx,
         r,
@@ -42,10 +43,18 @@ pub(super) fn visit(
         rewrite,
         unfixable: vec![],
         inward: vec![],
+        stored_fns: vec![],
     };
     visit::block(&mut f.body.block, &mut w);
-    (w.unfixable, w.inward)
+    (w.unfixable, w.inward, w.stored_fns)
 }
+
+/// What [`visit`] found.
+pub(super) type Visited = (
+    Vec<Unfixable>,
+    Vec<(LocalId, Span, bool)>,
+    Vec<(DefId, Span)>,
+);
 
 /// A store across the lock that cannot be made a copy.
 pub(super) struct Unfixable {
@@ -77,6 +86,9 @@ struct Stores<'a, 'r, 's, 'm> {
     /// Captured variables (in the function making the callback) stored into the value, with
     /// where, and whether as themselves (a resource without `clone()`) rather than as copies.
     inward: Vec<(LocalId, Span, bool)>,
+    /// Closures (literals) stored into the value, with where: what they capture is used by
+    /// other threads too (a weak collection cannot be, `crate::weak_threads`).
+    stored_fns: Vec<(DefId, Span)>,
 }
 
 impl Stores<'_, '_, '_, '_> {
@@ -108,6 +120,9 @@ impl Stores<'_, '_, '_, '_> {
         let (root, dest) = self.dest(place);
         let rebind = matches!(place.kind, E::Local(..))
             && root.is_some_and(|l| !self.r.is_home(self.def, l));
+        if self.rewrite && !rebind {
+            self.note_stored_fn(value, dest);
+        }
         if rebind || dest == 0 || !crosses(dest, b) {
             if let (false, Some(root)) = (self.rewrite, root) {
                 self.r.add(self.def, root, b);
@@ -185,12 +200,29 @@ impl Stores<'_, '_, '_, '_> {
                 }
                 continue;
             }
+            if self.rewrite {
+                self.note_stored_fn(&args[a], dest);
+            }
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
                 continue;
             }
             if let Err(kind) = self.transfer_arg(&mut args[a], dest) {
                 self.unfixable.push(Unfixable { span, kind });
             }
+        }
+    }
+
+    /// A closure literal stored into the value (`v.f = () => r.deref()`).
+    fn note_stored_fn(&mut self, value: &Expr, dest: u8) {
+        if dest & IN == 0 {
+            return;
+        }
+        let mut x = unshared(value);
+        while let E::Upcast(inner) | E::WrapSome(inner) = &x.kind {
+            x = unshared(inner);
+        }
+        if let E::Closure(n) = x.kind {
+            self.stored_fns.push((n, value.span));
         }
     }
 
