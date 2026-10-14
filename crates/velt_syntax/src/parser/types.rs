@@ -487,7 +487,7 @@ impl<'a> Parser<'a> {
                 _ if depth == 0 && params && self.line_break_before() => break,
                 Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
                 Tok::RParen | Tok::RBracket | Tok::RBrace => {
-                    depth -= 1;
+                    depth = depth.saturating_sub(1);
                     params |= depth == 0;
                 }
                 _ => {}
