@@ -1,0 +1,1 @@
+a weak collection (`WeakRef<V>`) cannot be the result of a spawned task

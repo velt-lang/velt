@@ -6,7 +6,7 @@
 // non-special schemes. Not supported: IDNA / punycode — a host that is not ASCII after decoding
 // is rejected. Every parser returns null where the URL is invalid.
 
-import { C0, encodeSet, decodeLenient, bytesOf } from "velt:url/encode";
+import { C0, encodeSet, decodeLenient, bytesOf, isAscii } from "velt:url/encode";
 
 /** The serialized host for `input` (the text between the userinfo and the port), or null. */
 export function parseHost(input: string, special: bool): string | null {
@@ -16,14 +16,20 @@ export function parseHost(input: string, special: bool): string | null {
   if (!special) {
     return parseOpaqueHost(input);
   }
-  const domain = decodeLenient(input, false);
-  const b = bytesOf(domain);
-  for (let i: usize = 0; i < b.length; i++) {
-    if (isForbiddenDomainByte(b[i] as i64)) {
+  const kind = scanDomain(input);
+  if (kind == DOMAIN_INVALID) {
+    return null;
+  }
+  let ascii = "";
+  if (kind == DOMAIN_ENCODED) {
+    const decoded = decodedDomain(input);
+    if (decoded == null) {
       return null;
     }
+    ascii = decoded;
+  } else {
+    ascii = kind == DOMAIN_UPPER ? input.toLowerCase() : input.clone();
   }
-  const ascii = domain.toLowerCase();
   if (ascii.length == 0) {
     return null;
   }
@@ -31,6 +37,53 @@ export function parseHost(input: string, special: bool): string | null {
     return parseIpv4(ascii);
   }
   return ascii;
+}
+
+// What `scanDomain` found.
+const DOMAIN_LOWER: i64 = 0;
+const DOMAIN_UPPER: i64 = 1;
+const DOMAIN_ENCODED: i64 = 2;
+const DOMAIN_INVALID: i64 = 3;
+
+// `isForbiddenDomainByte` for the ASCII range as two bit sets, so the scan tests a character
+// with one shift: bit `c` of LOW for `c < 64`, bit `c - 64` of HIGH above.
+const FORBIDDEN_DOMAIN_LOW: u64 = 0xd4008029ffffffff;
+const FORBIDDEN_DOMAIN_HIGH: u64 = 0x9000000078000001;
+
+// One pass over a domain as written, without copying it: `DOMAIN_ENCODED` when it has a `%` or
+// a non-ASCII character (it is decoded first, `decodedDomain`), `DOMAIN_INVALID` for a forbidden
+// code point, else whether it has an upper-case letter to fold.
+function scanDomain(input: string): i64 {
+  if (!isAscii(input)) {
+    return DOMAIN_ENCODED;
+  }
+  let kind = DOMAIN_LOWER;
+  for (let i: i64 = 0; i < (input.length as i64); i++) {
+    const c = input.charCodeAt(i);
+    if (c == 37) {
+      return DOMAIN_ENCODED;
+    }
+    const bits = c < 64 ? FORBIDDEN_DOMAIN_LOW : FORBIDDEN_DOMAIN_HIGH;
+    if (((bits >> ((c & 63) as u64)) & 1) != 0) {
+      kind = DOMAIN_INVALID;
+    } else if (c >= 65 && c <= 90 && kind == DOMAIN_LOWER) {
+      kind = DOMAIN_UPPER;
+    }
+  }
+  return kind;
+}
+
+// A domain with percent-escapes or non-ASCII text: decoded, checked and lowercased; null if it
+// has a forbidden code point.
+function decodedDomain(input: string): string | null {
+  const domain = decodeLenient(input, false);
+  const b = bytesOf(domain);
+  for (let i: usize = 0; i < b.length; i++) {
+    if (isForbiddenDomainByte(b[i] as i64)) {
+      return null;
+    }
+  }
+  return domain.toLowerCase();
 }
 
 // Forbidden host code points (WHATWG), without `%`.
@@ -102,20 +155,30 @@ function labels(host: string): string[] {
 
 // WHATWG "ends in a number": the last label is decimal digits or `0x` + hex digits.
 function endsInNumber(host: string): bool {
-  const parts = labels(host);
-  const last = parts.length - 1;
-  if (parts[last].length == 0) {
+  // The last label is `host[start..end]`: one trailing dot is not part of it.
+  let end = host.length as i64;
+  if (end > 0 && host.charCodeAt(end - 1) == 46) {
+    end--;
+  }
+  let start = end;
+  while (start > 0 && host.charCodeAt(start - 1) != 46) {
+    start--;
+  }
+  if (start == end) {
     return false;
   }
-  if (allDigits(parts[last], 0, 10)) {
+  if (digitsOnly(host, start, end, 10)) {
     return true;
   }
-  return parts[last].startsWith("0x") && allDigits(parts[last], 2, 16);
+  return end - start >= 2 &&
+    host.charCodeAt(start) == 48 &&
+    host.charCodeAt(start + 1) == 120 &&
+    digitsOnly(host, start + 2, end, 16);
 }
 
-// Whether `s[from..]` is only digits of `radix` (10, 16 or 8); true when empty.
-function allDigits(s: string, from: i64, radix: i64): bool {
-  for (let i = from; i < (s.length as i64); i++) {
+// Whether `s[from..to]` is only digits of `radix`; true when empty.
+function digitsOnly(s: string, from: i64, to: i64, radix: i64): bool {
+  for (let i = from; i < to; i++) {
     if (digitValue(s.charCodeAt(i), radix) < 0) {
       return false;
     }

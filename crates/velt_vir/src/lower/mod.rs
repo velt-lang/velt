@@ -79,6 +79,7 @@ mod track_caller;
 mod transfer;
 mod truthy;
 mod types;
+mod weak;
 mod widen;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -134,6 +135,7 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
             }
             if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
                 eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
+                eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
             return cx.finish();
         }
@@ -253,6 +255,9 @@ struct Cx<'h> {
     extern_map: HashMap<String, ExternId>,
     statics: Vec<StaticData>,
     static_map: HashMap<(Vec<u8>, u32), StaticId>,
+    /// The stored elements of each module constant table read so far (`table_read`): the data
+    /// and the length, or `None` for a constant that is not one.
+    tables: HashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: HashMap<Work, FuncId>,

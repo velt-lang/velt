@@ -5,6 +5,11 @@
 //! a benchmark (a driver function gaining an error type, say) would otherwise go unnoticed until
 //! someone runs it. The gate runs this test whenever the compiler, the standard library or
 //! `bench/` changes (crates/xtask/src/plan.rs).
+//!
+//! A program that does not name `WeakMap`, `WeakSet` or `WeakRef` must have no weak-capable
+//! types (docs/internals/design/weak-refs.md): its VIR is the one it had before weak references
+//! existed, which shows as no call of the weak runtime (every release of a weak-capable type
+//! has one).
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -49,7 +54,7 @@ fn compile(path: &Path) -> Option<String> {
     };
     let mut sess = Session::new();
     match catch_unwind(AssertUnwindSafe(|| driver::compile(&mut sess, &opts))) {
-        Ok(Ok(_)) => None,
+        Ok(Ok(vir)) => weak_without_weak_collections(path, &vir),
         Ok(Err(BuildError::Diagnostics)) => Some(sess.render_diagnostics()),
         Ok(Err(BuildError::Failed(msg))) => {
             Some(format!("{}\nerror: {msg}", sess.render_diagnostics()))
@@ -57,6 +62,27 @@ fn compile(path: &Path) -> Option<String> {
         Ok(Err(BuildError::Ice(msg))) => Some(format!("internal compiler error: {msg}")),
         Err(_) => Some("the compiler panicked".to_string()),
     }
+}
+
+/// `Some(message)` when `vir` calls the weak runtime although its program never names a weak
+/// collection.
+fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> Option<String> {
+    let src = std::fs::read_to_string(path).unwrap_or_default();
+    if ["WeakMap", "WeakSet", "WeakRef"]
+        .iter()
+        .any(|n| src.contains(n))
+    {
+        return None;
+    }
+    let weak: Vec<&str> = vir
+        .externs
+        .iter()
+        .map(|e| e.symbol.as_str())
+        .filter(|s| s.starts_with("velt_rt_weak"))
+        .collect();
+    (!weak.is_empty()).then(|| {
+        format!("weak-capable types in a program without weak collections (calls {weak:?})")
+    })
 }
 
 #[test]

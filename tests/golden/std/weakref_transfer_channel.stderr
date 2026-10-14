@@ -1,0 +1,1 @@
+panic: a `WeakRef` cannot go to another thread (`spawn`, a channel, a timer, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it

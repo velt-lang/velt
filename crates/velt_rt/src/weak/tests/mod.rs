@@ -30,6 +30,11 @@ pub(super) fn live() -> i64 {
     LIVE.with(Cell::get)
 }
 
+/// Counts `n` objects freed on another thread as freed on this one.
+pub(super) fn freed_elsewhere(n: i64) {
+    LIVE.with(|l| l.set(l.get() - n));
+}
+
 /// A new object (count 1) holding `fields` (whose references it takes over).
 pub(super) fn new_obj(fields: &[*mut u8]) -> *mut u8 {
     let mut f = [std::ptr::null_mut(); 3];
@@ -161,7 +166,7 @@ pub(super) fn proxy_of(cache: MapId, raw: *mut u8, handler: *mut u8) -> *mut u8 
     p
 }
 
-/// Drops the map; asserts nothing of this thread's weak state is left behind.
+/// Drops the maps; asserts nothing of the weak state is left behind.
 pub(super) fn finish(maps: &[MapId]) {
     for &m in maps {
         // SAFETY: each map is dropped once.
@@ -170,8 +175,15 @@ pub(super) fn finish(maps: &[MapId]) {
     assert_eq!(tracked_objects(), 0, "side table not empty");
 }
 
-/// Runs `f` and asserts it leaves no test object alive.
+/// Runs `f` alone on an empty side table and asserts it leaves no test object alive. The table
+/// is the process's, so tests that look at it (`tracked_objects`, handle reuse) run one at a
+/// time; a failed test's leftovers are cleared for the next.
 pub(super) fn no_leak(f: impl FnOnce()) {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    table::reset();
     let before = live();
     f();
     assert_eq!(live(), before, "test objects leaked");

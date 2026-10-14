@@ -1,0 +1,62 @@
+// check: no leaks
+// A class nothing extends, whose counted fields all come from its base classes, crosses a
+// `Channel<Leaf>` with those fields (#1057): what the sender still shares is copied for the
+// receiver, never shared between the tasks.
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+class Base {
+  xs: number[];
+  f: () => number;
+  constructor(xs: number[]) {
+    this.xs = xs;
+    this.f = () => xs.length;
+  }
+  go(): number {
+    return this.xs.length + this.f();
+  }
+}
+
+class Mid extends Base {
+  tags: Map<string, number> = new Map<string, number>();
+  override go(): number {
+    return super.go() + this.tags.size;
+  }
+}
+
+class Leaf extends Mid {
+  n: number = 1;
+  poke(): void {
+    this.xs.push(7);
+    this.tags.set("k" + this.tags.size, this.n);
+    this.n += 1;
+  }
+}
+
+async function consume(ch: Channel<Leaf>): Promise<number> {
+  let n = 0;
+  for await (const t of ch) {
+    for (let i = 0; i < 10000; i++) {
+      n += t.go();
+    }
+    t.poke();
+    n += t.go() + t.n;
+  }
+  return n;
+}
+
+async function main(): Promise<void> throws ChannelClosed {
+  const xs = [1, 2, 3];
+  const kept = new Leaf(xs);
+  const ch = channel<Leaf>();
+  const c = spawn(consume(ch));
+  await ch.send(new Leaf(xs));
+  await ch.send(kept);
+  await ch.send(new Leaf(xs));
+  let busy = 0;
+  for (let i = 0; i < 10000; i++) {
+    const ys = xs;
+    busy += ys.length;
+  }
+  ch.close();
+  console.log(await c, busy, xs.length);
+}

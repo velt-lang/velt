@@ -49,7 +49,18 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   or method: the closure refers to the object, the object to the closure); replace the field
   (`this.onChange = () => {}`) when the object is done to free both. **Planned**
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
-  `weak` references and a compile-time warning for reference cycles.
+  `weak` fields and a compile-time warning for reference cycles.
+- `WeakMap`, `WeakSet` and `WeakRef` ([prelude](../std/prelude.md#weakmap-weakset-and-weakref))
+  don't keep their keys and targets alive: an object's entries go when its last reference does,
+  at once (Node waits for a garbage collection). A weak map whose value refers back to its key,
+  such as a cache from an object to a wrapper holding it (`cache.set(raw, new Proxy(raw))`),
+  frees both once nothing else refers to either, like JavaScript
+  ([design](../internals/design/weak-refs.md#the-ephemeron-rule)). Not freed: a value graph of
+  more than 256 objects, a key that is also in an ordinary cycle (`raw.self = raw`), and two
+  maps whose entries keep each other's keys (`m1.set(a, b); m2.set(b, a)`), which stay until an
+  entry is deleted or a map goes.
+  Releasing an object of a type that can be a weak key, or be reached from a weak map's keys and
+  values, costs two more instructions when it frees the object; other types are unaffected.
 - **Evaluation order is JS's**: operands and arguments run left to right, and one read before a
   later operand's call keeps the value it had (`f(o.v, o.change())` passes the old `o.v`). The
   target of an assignment is evaluated before its right-hand side: a call at its root runs

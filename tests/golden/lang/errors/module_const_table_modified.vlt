@@ -1,0 +1,34 @@
+// A table (a module constant that is an array) is read-only data: nothing may modify it or take
+// it over, directly, through a function, or through a runtime function that fills an array.
+
+const K: u32[] = [1, 2, 3];
+const BYTES: u8[] = [1, 2, 255];
+
+function bump(xs: u32[]) {
+  xs[0] = 9;
+}
+
+class Box {
+  items: u32[] = [];
+}
+
+function keep(xs: u32[]): Box {
+  const b = new Box();
+  b.items = xs;
+  return b;
+}
+
+function main() {
+  K[0] = 1;
+  K.push(4);
+  BYTES.pop();
+  BYTES.reverse();
+  BYTES.fill(0);
+  BYTES.copyWithin(0, 1);
+  BYTES.xorMask(7);
+  BYTES.set([1], 0);
+  bump(K);
+  const mine = K;
+  const box = keep(K);
+  console.log(mine.length, box.items.length);
+}

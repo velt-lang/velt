@@ -1,0 +1,34 @@
+// A table in a program that shares arrays of its type (two owners of one `u32[]`, which makes
+// every `u32[]` a counted heap object): an element, the length and a loop still read the table
+// where it is stored, and it reads the same.
+const K: u32[] = [10, 20, 30];
+
+class Holder {
+  items: u32[];
+  constructor(items: u32[]) {
+    this.items = items;
+  }
+}
+
+function total(xs: u32[]): u32 {
+  let s: u32 = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function main() {
+  // Two owners of one array: arrays of this type are shared in this program.
+  const mine: u32[] = [1, 2];
+  const a = new Holder(mine);
+  const b = new Holder(mine);
+  a.items.push(3);
+  console.log(b.items.length, total(K), K[1], K.length);
+  for (const x of K) {
+    console.log(x);
+  }
+  const copy = K.slice();
+  copy.push(40);
+  console.log(copy, K, total(a.items));
+}

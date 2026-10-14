@@ -35,6 +35,7 @@ impl<'h> Cx<'h> {
             extern_map: HashMap::new(),
             statics: vec![],
             static_map: HashMap::new(),
+            tables: HashMap::new(),
             funcs: vec![],
             work_map: HashMap::new(),
             queue: VecDeque::new(),

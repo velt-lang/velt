@@ -157,6 +157,118 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `d` the prelude's `WeakMap`, `WeakSet` or `WeakRef` class, or a subclass of one
+    /// (`class Cache extends WeakMap<K, V>` is the same runtime handle with fields of its own)?
+    pub fn is_weak_class(&self, d: DefId) -> bool {
+        ["WeakMap", "WeakSet", "WeakRef"]
+            .iter()
+            .filter_map(|n| self.prelude_adt(n))
+            .any(|w| self.class_extends(d, w))
+    }
+
+    /// The `WeakMap<K, V>`, `WeakSet<T>` or `WeakRef<T>` that the class type `t` is or extends
+    /// (the base class with `t`'s type arguments substituted), and that class's name.
+    pub fn weak_root(&mut self, t: TyId) -> Option<(TyId, &'static str)> {
+        let mut cur = t;
+        for _ in 0..64 {
+            let (d, _) = self.class_of(cur)?;
+            let own = ["WeakMap", "WeakSet", "WeakRef"]
+                .into_iter()
+                .find(|n| self.prelude_adt(n) == Some(d));
+            if let Some(name) = own {
+                return Some((cur, name));
+            }
+            cur = self.base_of(cur)?;
+        }
+        None
+    }
+
+    /// Does a value of type `t` hold a `WeakMap`, `WeakSet` or `WeakRef` (in a field, element
+    /// or payload)? They belong to the task that made them (a copy would share the runtime
+    /// handle), so such values cannot be copied or passed to another task. This looks at the
+    /// written type only: an interface value, a base-class value that may be a subclass, and a
+    /// type parameter are looked into by the whole-program check of the values crossing
+    /// threads (`crate::weak_threads`), which asks [`holds_weak_with`](Self::holds_weak_with).
+    pub fn holds_weak(&mut self, t: TyId) -> bool {
+        self.holds_weak_in(t, None, &mut std::collections::HashSet::new())
+    }
+
+    /// [`holds_weak`](Self::holds_weak), where an interface value or a class value also holds
+    /// one when its interface or class is in `hiding` (some class converted to it holds one).
+    pub(crate) fn holds_weak_with(
+        &mut self,
+        t: TyId,
+        hiding: &std::collections::HashSet<DefId>,
+    ) -> bool {
+        self.holds_weak_in(t, Some(hiding), &mut std::collections::HashSet::new())
+    }
+
+    fn holds_weak_in(
+        &mut self,
+        t: TyId,
+        hiding: Option<&std::collections::HashSet<DefId>>,
+        seen: &mut std::collections::HashSet<TyId>,
+    ) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Adt(d, _) if self.is_weak_class(d) => return true,
+            TyKind::Adt(d, _) | TyKind::Dyn(d, _) if hiding.is_some_and(|h| h.contains(&d)) => {
+                return true
+            }
+            TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
+            TyKind::Dyn(_, args) if hiding.is_some() => args,
+            TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.holds_weak_in(p, hiding, seen))
+    }
+
+    /// Does a value of type `t` hold a function value (in a field, element or payload)?
+    /// Interface and `shared` values are not looked into.
+    pub fn holds_fn(&mut self, t: TyId) -> bool {
+        self.holds_fn_in(t, &mut std::collections::HashSet::new())
+    }
+
+    fn holds_fn_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => return true,
+            TyKind::Shared(_) | TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_fn_in(p, seen))
+    }
+
     /// Does a value of type `t` hold a generator object (`Generator`, `AsyncGenerator`; in a
     /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
     /// be cloned or passed to another task. Interface values are not looked into.

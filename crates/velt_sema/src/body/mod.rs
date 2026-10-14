@@ -47,7 +47,7 @@ mod for_iter;
 mod for_map;
 mod generators;
 pub(crate) mod literal_locals;
-pub(crate) use generators::GenCopy;
+pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
 mod locals;
 mod loops;
 pub(crate) mod narrow;

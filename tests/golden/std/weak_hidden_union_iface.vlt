@@ -1,0 +1,10 @@
+// An optional interface value returned from with.
+class K { n: number; constructor(n: number) { this.n = n; } }
+class Box { k: K; constructor(k: K) { this.k = k; } }
+interface Peek { peek(): number; }
+class H implements Peek { r: WeakRef<K>; constructor(r: WeakRef<K>) { this.r = r; } peek(): number { return 1; } }
+async function main() {
+  const m = shared(new Mutex<Box>(new Box(new K(5))));
+  const p: Peek | null = m.with((v): Peek | null => new H(new WeakRef(v.k)));
+  console.log(p === null ? 0 : p.peek());
+}

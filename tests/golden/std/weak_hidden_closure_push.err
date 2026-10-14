@@ -1,0 +1,1 @@
+a function stored into the locked value cannot capture the weak collection `r`

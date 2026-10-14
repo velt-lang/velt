@@ -281,6 +281,26 @@ impl Types {
     }
 }
 
+/// Is `name` one of the built-in type names TypeScript does not have (`i8`..`u64`, `isize`,
+/// `usize`, `f32`, `f64`, `bool`)? A declaration of the program may use it (#1074).
+pub(crate) fn velt_only_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+    )
+}
+
 /// Direct component types of a type.
 pub(crate) fn children(k: &TyKind) -> Vec<TyId> {
     match k {

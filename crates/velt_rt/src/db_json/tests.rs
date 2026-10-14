@@ -211,3 +211,44 @@ fn text_is_escaped_and_invalid_utf8_replaced() {
         "{\"t\":\"é😀\\u0001\\\\\",\"u\":\"a\u{fffd}b\"}"
     );
 }
+
+#[test]
+fn binary_rows_stand_for_the_same_json() {
+    let mut b =
+        crate::json::rows_bin::BinRows::new(["id", "name", "score", "ok", "data", "nöte"], false);
+    b.int(7);
+    b.text(b"ada \"x\"");
+    b.float(1.5);
+    b.bool(true);
+    b.bytes(&[1, 255]);
+    b.null();
+    b.end_row();
+    b.int(-1);
+    b.text(b"");
+    b.float(3.0);
+    b.bool(false);
+    b.bytes(&[]);
+    b.text("é".as_bytes());
+    b.end_row();
+    let mut w = RowWriter::new(["id", "name", "score", "ok", "data", "nöte"]);
+    w.begin_row();
+    w.int(7);
+    w.text(b"ada \"x\"");
+    w.float(1.5);
+    w.bool(true);
+    w.bytes(&[1, 255]);
+    w.null();
+    w.end_row();
+    w.begin_row();
+    w.int(-1);
+    w.text(b"");
+    w.float(3.0);
+    w.bool(false);
+    w.bytes(&[]);
+    w.text("é".as_bytes());
+    w.end_row();
+    assert_eq!(
+        crate::json::rows_bin::to_json(&b.finish()).unwrap(),
+        w.into_array()
+    );
+}

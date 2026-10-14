@@ -208,7 +208,19 @@ impl Ctx<'_> {
         // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
         let simd_outside_std =
             crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
-        if let Some(p) = self.ty.primitive(name).filter(|_| !simd_outside_std) {
+        // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
+        // program declares or imports shadows them, as TypeScript code may declare one (#1074).
+        // A value of that name does not (a function `f64`). TypeScript's own (`number`,
+        // `string`, …) cannot be declared.
+        let shadowed = crate::types::velt_only_type_name(name)
+            && self
+                .lookup_item_at(env.module, name, t.span)
+                .is_some_and(|item| self.is_type_item(item));
+        if let Some(p) = self
+            .ty
+            .primitive(name)
+            .filter(|_| !simd_outside_std && !shadowed)
+        {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -354,6 +366,17 @@ impl Ctx<'_> {
             format!("type `{name}` takes {want} type argument(s) but {got} were supplied"),
             t.span,
         );
+    }
+
+    /// Does `item` name a type (an alias, class, struct, enum or interface)?
+    fn is_type_item(&self, item: Item) -> bool {
+        match item {
+            Item::Alias(_) => true,
+            Item::Def(d) => matches!(
+                self.info[d.0 as usize],
+                DefInfo::Adt(_) | DefInfo::Enum(_) | DefInfo::Iface(_)
+            ),
+        }
     }
 
     /// The type named by a type definition applied to `args`.
