@@ -7,7 +7,7 @@
 //! One task can read while another writes. The object behind a stream handle is in `stream.rs`:
 //! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
-use super::stream::{read_chunk, Ready, StreamObj};
+use super::stream::{Ready, StreamObj, Writing};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -15,6 +15,7 @@ use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
@@ -250,7 +251,7 @@ pub unsafe extern "C" fn velt_rt_tcp_read(s: StreamHandle, max: u64) -> *mut Vel
         if obj.plain().is_some() {
             return new_leaf(async move {
                 let r = match obj.plain() {
-                    Some(stream) => read_chunk(stream, max).await,
+                    Some(stream) => obj.read_raw(stream, max).await,
                     None => read_any(&obj, max).await,
                 };
                 IoResult::from_io(r, VeltBytes::from_vec)
@@ -314,9 +315,11 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
 fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
     STREAMS.op::<()>(s, |obj| {
         // A raw socket usually takes everything at once: written here, from the caller's
-        // buffer, there is nothing to copy and nothing to wait for.
+        // buffer, there is nothing to copy and nothing to wait for. Not while an earlier write
+        // is still going on: these bytes go after its.
         let mut rest = data;
-        if let Some(stream) = obj.plain() {
+        let earlier = obj.writing.load(Ordering::Acquire) != 0;
+        if let Some(stream) = obj.plain().filter(|_| !earlier) {
             while !rest.is_empty() {
                 match stream.try_write(rest) {
                     Ok(n) => rest = &rest[n..],
@@ -334,7 +337,9 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
             }
         }
         let data = rest.to_vec();
-        new_leaf(async move { IoResult::from_io(write_any(&obj, &data).await, |()| ()) })
+        // Counted from the call, so a write made after this one waits for it.
+        let w = Writing::new(obj);
+        new_leaf(async move { IoResult::from_io(write_any(&w.0, &data).await, |()| ()) })
     })
 }
 
@@ -345,6 +350,9 @@ fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const VeltBytes) -> u64 {
     let Some(obj) = STREAMS.get(s) else { return 0 };
+    if obj.writing.load(Ordering::Acquire) != 0 {
+        return 0;
+    }
     let Some(stream) = obj.plain() else { return 0 };
     let data = (*data).as_bytes();
     let mut done = 0;

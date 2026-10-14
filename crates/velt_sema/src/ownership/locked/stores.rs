@@ -217,7 +217,7 @@ impl Stores<'_, '_, '_, '_> {
         // one that also holds `shared` values: its copy reaches the same shared objects.
         let identity = self.cx.class_of(x.ty).is_some()
             || matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
-            || (holds_shared(self.cx, x.ty) && !is_handle(self.cx, x.ty, 0));
+            || (holds_shared(self.cx, x.ty) && !is_handle(self.cx, self.s, x.ty, 0));
         let outer = place_root(x).and_then(|l| self.r.captured_var(self.def, l));
         if let (Some(outer), true) = (outer, identity) {
             self.inward.push((outer, e.span, itself));
@@ -277,9 +277,10 @@ impl Stores<'_, '_, '_, '_> {
 }
 
 /// A struct whose fields are plain values, strings, `shared` values or such structs (std's
-/// handles: a `TcpStream`, a `WebSocket` with its `shared` queue): nothing in it belongs to one
-/// copy only, so a copy and the original are interchangeable.
-fn is_handle(cx: &mut Ctx, t: crate::hir::TyId, depth: u32) -> bool {
+/// handles: a `TcpStream`, a `WebSocket` with its `shared` queue), none of them ever assigned:
+/// nothing in it belongs to one copy only, and no copy can change, so a copy and the original
+/// are interchangeable.
+fn is_handle(cx: &mut Ctx, s: &Summaries, t: crate::hir::TyId, depth: u32) -> bool {
     if depth > 8 {
         return false;
     }
@@ -288,8 +289,10 @@ fn is_handle(cx: &mut Ctx, t: crate::hir::TyId, depth: u32) -> bool {
     }
     match cx.ty.kind(t).clone() {
         TyKind::Shared(_) => true,
-        TyKind::Option(e) => is_handle(cx, e, depth + 1),
-        TyKind::Adt(d, args) if Some(d) != cx.mutex_ty() && cx.class_of(t).is_none() => {
+        TyKind::Option(e) => is_handle(cx, s, e, depth + 1),
+        TyKind::Adt(d, args)
+            if Some(d) != cx.mutex_ty() && cx.class_of(t).is_none() && !s.assigned.contains(&d) =>
+        {
             let Some(fields) = cx.adt(d).map(|a| {
                 a.fields
                     .iter()
@@ -300,7 +303,7 @@ fn is_handle(cx: &mut Ctx, t: crate::hir::TyId, depth: u32) -> bool {
             };
             fields.into_iter().all(|f| {
                 let f = cx.subst(f, &args);
-                is_handle(cx, f, depth + 1)
+                is_handle(cx, s, f, depth + 1)
             })
         }
         _ => false,

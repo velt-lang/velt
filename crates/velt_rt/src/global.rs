@@ -1,4 +1,4 @@
-//! Process-wide slots for standard-library state (std/global_slot.vlt).
+//! Process-wide slots for standard-library state (std/websocket/topics.vlt owns slot 0).
 //!
 //! Velt modules have no mutable globals, and a few std features need one object per process (the
 //! topics of std/websocket). The runtime cannot hold a typed Velt value, but a channel can: each
@@ -11,7 +11,7 @@ use parking_lot::lock_api::RawMutex as _;
 use parking_lot::RawMutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Number of slots (std assigns them: std/global_slot.vlt).
+/// Number of slots (std assigns them; each is read only by the std module that owns it).
 const SLOTS: usize = 8;
 
 static LOCKS: [RawMutex; SLOTS] = [const { RawMutex::INIT }; SLOTS];

@@ -1,8 +1,8 @@
 // check: no leaks
 // Topics beyond the basics (websocket_topics): a client-side connection can subscribe too, and
 // gets every published frame masked with a key of its own (the server would fail the connection
-// otherwise); a subscription that races an unsubscribe emptying the topic is kept; a closed
-// connection has left its topics.
+// otherwise), also while its reading task has a message in hand; a subscription that races an
+// unsubscribe emptying the topic is kept; a closed connection has left its topics.
 import { serve } from "velt:http";
 import { channel, Channel } from "velt:channel";
 import { WebSocket, upgradeWebSocket, connectWebSocket, publish } from "velt:websocket";
@@ -55,6 +55,15 @@ async function main() {
   console.log("except itself:", c1.publish("up", "nobody"));
   console.log("bytes:", c1.publishBytes("up", [7u8]), publish("up", "again"));
   console.log((await s1.receive())?.text ?? "none");
+
+  // Published while the client's reading task has a message in hand (the moment its own send
+  // would be written as a reply): the publish still starts the connection's flusher, and what
+  // the client sends next goes out after it.
+  await s1.send("to the client");
+  console.log((await c1.receive())?.text ?? "none");
+  console.log("while a message is in hand:", publish("up", "in hand"));
+  await c1.send("after it");
+  console.log((await s1.receive())?.text ?? "none", (await s1.receive())?.text ?? "none");
   c1.unsubscribe("up");
   console.log("after unsubscribe:", publish("up", "gone"));
 

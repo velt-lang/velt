@@ -3,6 +3,9 @@ from a publish
 except itself: 0
 bytes: 0 1
 again
+to the client
+while a message is in hand: 1
+in hand after it
 after unsubscribe: 0
 missed while subscribed: 0 0
 left over: 0

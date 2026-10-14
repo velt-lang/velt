@@ -205,7 +205,8 @@ export class SendQueue {
   /**
    * Queues a published frame (`frame`: whole and unmasked, its payload from `payloadAt`) unless
    * the connection is closing, stopped or has more than `PUBLISH_LIMIT` bytes waiting: `QUEUED`
-   * (with `START`), or -1. A client masks every frame with a key of its own.
+   * (with `START`, never `DIRECT`: a publish is no reply, and `publish` starts flushers only),
+   * or -1. A client masks every frame with a key of its own.
    */
   appendFrame(frame: u8[], payloadAt: i64): i64 {
     if (this.refusal() >= 0 || (this.out.length as i64) > PUBLISH_LIMIT) {
@@ -213,7 +214,7 @@ export class SendQueue {
     }
     if (this.client) {
       const r = this.pushBytes((frame[0] as i64) & 0x0f, frame.slice(payloadAt));
-      return r & ~OVER;
+      return (r & DIRECT) != 0 ? (r & ~(DIRECT | OVER)) | START : r & ~OVER;
     }
     const at = this.grow(frame.length as i64);
     this.out.set(frame, at as usize);
