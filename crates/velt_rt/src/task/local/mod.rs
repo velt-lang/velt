@@ -50,8 +50,6 @@ struct TaskCx {
     /// Something yielded during this poll (`yieldNow()`): it must not run again before the
     /// task's next poll (losers.rs).
     yielded: Cell<bool>,
-    /// The task's microtask queue (micro.rs).
-    micro: *mut micro::Queue,
 }
 
 thread_local! {
@@ -122,15 +120,14 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
-/// microtask queue.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32, micro::Queue);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0, micro::Queue::new());
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -147,7 +144,6 @@ impl SetPtr {
             timers: &mut self.2,
             turn: self.3,
             yielded: Cell::new(false),
-            micro: &mut self.4,
         };
         let _enter = Enter::new(&tcx);
         let timers = self.2.as_deref();
@@ -167,17 +163,14 @@ impl SetPtr {
             });
         }
         root();
-        if micro::pending() {
-            if self.0.is_null() {
-                micro::drain_root(&*waker, root);
-            } else {
-                micro::drain(&mut set::Driver {
-                    set: self.0,
-                    task: &*waker,
-                    root,
-                    timers: None,
-                });
-            }
+        // The microtasks the root's poll queued (micro.rs); they live in the set.
+        if !self.0.is_null() && set::has_microtasks(self.0) {
+            micro::drain(&mut set::Driver {
+                set: self.0,
+                task: &*waker,
+                root,
+                timers: None,
+            });
         }
     }
 
@@ -308,12 +301,8 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     if tcx.is_null() {
         return;
     }
-    let tcx = &*tcx;
-    if (*tcx.set).is_null() {
-        *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
-    }
-    let set = *tcx.set;
-    node::stamp(f, tcx.turn);
+    let set = task_set(&*tcx);
+    node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
     if node::poll_first(f) {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
@@ -322,6 +311,24 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
         // A wake during the first poll was queued; the next drain runs it as a member.
         node::count_set(f);
         set::add_member(set, f);
+    }
+}
+
+/// The set of task `tcx`, created on first use.
+unsafe fn task_set(tcx: &TaskCx) -> *mut LocalSet {
+    if (*tcx.set).is_null() {
+        *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
+    }
+    *tcx.set
+}
+
+/// The set of the task being polled, created on first use (null outside a task).
+fn current_set_or_new() -> *mut LocalSet {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    match unsafe { tcx.as_ref() } {
+        Some(t) => unsafe { task_set(t) },
+        None => std::ptr::null_mut(),
     }
 }
 

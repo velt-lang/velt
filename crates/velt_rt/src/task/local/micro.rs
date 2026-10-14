@@ -36,17 +36,10 @@ pub(super) struct Slot {
 /// A task's queue (lives with its local set, `SetPtr`).
 pub(super) type Queue = VecDeque<Arc<Slot>>;
 
-/// The queue of the task being polled (`None` outside a task).
+/// The queue of the task being polled, in its local set (null when there is none yet).
 fn current<'a>() -> Option<&'a mut Queue> {
-    let tcx = super::CURRENT.with(std::cell::Cell::get);
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`), and `micro` points into
-    // the task's own `SetPtr`, which only this task's polls touch.
-    unsafe { tcx.as_ref().map(|t| &mut *t.micro) }
-}
-
-/// Microtasks are waiting in the queue of the task being polled.
-pub(super) fn pending() -> bool {
-    current().is_some_and(|q| !q.is_empty())
+    // SAFETY: the set of the task being polled, used only by this task's polls.
+    unsafe { super::current_set().as_mut().map(|s| &mut s.micro) }
 }
 
 /// Run the queued microtasks of the task polling `d` (with its set), in order, until the queue
@@ -71,21 +64,6 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     }
 }
 
-/// [`drain`] for a task without a set: its entries are the root's or other tasks'.
-pub(super) fn drain_root(task: &Waker, root: &mut dyn FnMut()) {
-    while let Some(slot) = current().and_then(VecDeque::pop_front) {
-        slot.fired.store(true, Ordering::Release);
-        let Some(w) = slot.waker.lock().take() else {
-            continue;
-        };
-        if w.will_wake(task) {
-            root();
-        } else {
-            w.wake();
-        }
-    }
-}
-
 /// The future of `velt_rt_microtask`.
 struct Microtask {
     slot: Option<Arc<Slot>>,
@@ -104,7 +82,10 @@ impl Future for Microtask {
                 Poll::Pending
             }
             None => {
-                let Some(q) = current() else {
+                // SAFETY: the set of the task being polled, used only by this task's polls.
+                let Some(q) =
+                    (unsafe { super::current_set_or_new().as_mut() }).map(|s| &mut s.micro)
+                else {
                     // Outside a task: nothing else runs meanwhile.
                     return Poll::Ready(());
                 };

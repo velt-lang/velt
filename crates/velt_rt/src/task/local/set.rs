@@ -106,6 +106,8 @@ pub(crate) struct LocalSet {
     /// The nodes being polled right now, innermost first ([`polling`]): a node never runs
     /// again from inside its own poll.
     running: *const Running,
+    /// The task's microtask queue (micro.rs).
+    pub(super) micro: super::micro::Queue,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -121,6 +123,7 @@ impl LocalSet {
             members: Vec::new(),
             pending: VecDeque::new(),
             running: std::ptr::null(),
+            micro: super::micro::Queue::new(),
         })
     }
 
@@ -128,6 +131,11 @@ impl LocalSet {
     pub(super) fn is_idle(&self) -> bool {
         self.members.is_empty()
     }
+}
+
+/// Has `set` queued microtasks?
+pub(super) unsafe fn has_microtasks(set: *mut LocalSet) -> bool {
+    !(*set).micro.is_empty()
 }
 
 /// Add unfinished node `f` to the members of `set` (taking a reference).
@@ -266,7 +274,7 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     for ran in 0..(*set).pending.len() {
         if root_at == Some(ran) {
             (d.root)();
-            if super::micro::pending() {
+            if has_microtasks(set) {
                 super::micro::drain(d);
             }
         }
@@ -282,7 +290,7 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         if fl & (DONE | CANCELLED) == 0 && h.member.load(Relaxed) != NO_MEMBER {
             run(d, f);
             // A job ended: the microtasks it queued run before the next one (micro.rs).
-            if super::micro::pending() {
+            if has_microtasks(set) {
                 super::micro::drain(d);
             }
         }
