@@ -281,14 +281,16 @@ fn not(b: &mut Body, ty: &str, n: u32, x: &str) -> String {
 }
 
 /// Whether the `n` elements from `%a1` are inside the array `%a0` (its length is the second
-/// word of its header): `%a1 + n` does not wrap and is at most the length.
+/// word of its header): the length is at least `n` and `%a1` at most the length minus `n`.
+/// Nothing in it can wrap, unlike `%a1 + n <= len`, so LLVM 18 too removes the range checks of
+/// the loads a loop on `fits(xs, i + 48)` makes at `i`, `i + 16` and `i + 32`.
 fn fits(b: &mut Body, n: u32) -> String {
     let at = b.inst("getelementptr inbounds i8, ptr %a0, i64 8".to_string());
     let len = b.inst(format!("load i64, ptr {at}, align 8"));
-    let end = b.inst(format!("add i64 %a1, {n}"));
-    let no_wrap = b.inst(format!("icmp uge i64 {end}, %a1"));
-    let inside = b.inst(format!("icmp ule i64 {end}, {len}"));
-    let both = b.inst(format!("and i1 {no_wrap}, {inside}"));
+    let room = b.inst(format!("icmp uge i64 {len}, {n}"));
+    let last = b.inst(format!("sub i64 {len}, {n}"));
+    let inside = b.inst(format!("icmp ule i64 %a1, {last}"));
+    let both = b.inst(format!("and i1 {room}, {inside}"));
     b.inst(format!("zext i1 {both} to i8"))
 }
 
