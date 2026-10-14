@@ -184,7 +184,8 @@ impl FnCx<'_, '_> {
 
     /// The key `e` of `{ [e]: value }` for a record keyed by `k`: on a `string`-keyed record
     /// a number is converted to its string (as JavaScript converts a property key), and a symbol
-    /// is an error, as a symbol made at run time cannot name a member.
+    /// is an error, as a symbol made at run time cannot name a member; so is any other type
+    /// (TypeScript's TS2464).
     fn computed_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
         let str_ = self.cx.ty.str_;
         if k != str_ {
@@ -210,7 +211,18 @@ impl FnCx<'_, '_> {
             }
             return self.error_expr(e.span);
         }
-        self.coerce(h, k)
+        self.try_coerce(h, k).unwrap_or_else(|h| {
+            // Reported here, once, rather than as a mismatch with `string`.
+            let found = self.cx.display(h.ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("a computed key must be a string, number or symbol, found `{found}`"),
+                    e.span,
+                )
+                .with_note("convert it to a string first (`[String(k)]`)"),
+            );
+            self.error_expr(e.span)
+        })
     }
 
     /// The member of the string enum `k` whose value is `id` (`None`: `k` is not an enum).
