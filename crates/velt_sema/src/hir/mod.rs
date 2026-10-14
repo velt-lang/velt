@@ -30,6 +30,7 @@
 
 mod intrinsic;
 mod nothing;
+mod table;
 
 use std::collections::HashMap;
 
@@ -37,6 +38,7 @@ use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
+pub use table::TyTable;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId(pub u32);
@@ -146,52 +148,6 @@ pub enum LitValue {
     Bool(bool),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct TyTable {
-    kinds: Vec<TyKind>,
-    map: std::collections::HashMap<TyKind, TyId>,
-}
-
-impl TyTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn intern(&mut self, kind: TyKind) -> TyId {
-        // An option of an option is the inner option, with the inner one's nothing (`T | null |
-        // null` is `T | null`; hir_encodings.md "Undefined"); wrapping into it is the identity.
-        if let TyKind::Option(inner, _) = kind {
-            if matches!(self.kinds[inner.0 as usize], TyKind::Option(..)) {
-                return inner;
-            }
-        }
-        if let Some(&id) = self.map.get(&kind) {
-            return id;
-        }
-        let id = TyId(self.kinds.len() as u32);
-        self.kinds.push(kind.clone());
-        self.map.insert(kind, id);
-        id
-    }
-
-    pub fn kind(&self, id: TyId) -> &TyKind {
-        &self.kinds[id.0 as usize]
-    }
-
-    /// Lookup without inserting.
-    pub fn get(&self, kind: &TyKind) -> Option<TyId> {
-        self.map.get(kind).copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.kinds.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.kinds.is_empty()
-    }
-}
-
 // ─────────────────────────── Program & defs ───────────────────────────
 
 #[derive(Clone, Debug)]
@@ -214,10 +170,7 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
-    /// `impls` index of the implementation of the prelude's `any` for every type (`ty` is
-    /// `Param(0)`, no methods): the `ToDyn` of a value converted to `any` or `unknown`, whose
-    /// tables are the type descriptors (hir_encodings.md "any and unknown"). `None` without
-    /// a prelude.
+    /// `impls` index of `impl<T> any for T` (hir_encodings.md "any and unknown"), if used.
     pub any_impl: Option<u32>,
 }
 

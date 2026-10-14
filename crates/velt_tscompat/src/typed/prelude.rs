@@ -57,6 +57,9 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "setTimeout",
     // A deep copy (TypeScript's baseline has it from the DOM's lib, Node as a global).
     "structuredClone",
+    // TypeScript's dynamic types (prelude interfaces in Velt, std/prelude/z_dynamic.vlt).
+    "any",
+    "unknown",
     // Builtins.
     "console",
     "Promise",
