@@ -4,6 +4,7 @@
 import * as lib from "./_module_const_table_escapes_lib";
 
 const K: number[] = [10, 20, 30];
+const L: number[] = [1, 2];
 
 class Limits {
   static readonly STEPS: u8[] = [1, 2, 4];
@@ -19,6 +20,30 @@ function each(fs: ((xs: number[]) => void)[]) {
   }
 }
 
+// Routes that hand the function value something other than the table's name: each moves the
+// table (an error), or is rejected before that (`??` on a value that is never null).
+function pick(c: boolean): number[] {
+  return c ? K : L;
+}
+
+function identity<T>(x: T): T {
+  return x;
+}
+
+interface Sink {
+  put(xs: number[]): void;
+}
+
+class Appender implements Sink {
+  put(xs: number[]) {
+    xs.push(1);
+  }
+}
+
+function feed(s: Sink) {
+  s.put(K);
+}
+
 function main() {
   const w = (xs: number[]) => {
     xs[0] = 9;
@@ -26,7 +51,12 @@ function main() {
     return xs.length;
   };
   console.log(w(K), w(K!), w(lib.T));
-  const fs = [(xs: number[]) => xs.fill(0), (xs: number[]) => { xs.length = 1; }];
+  const fs = [
+    (xs: number[]) => xs.fill(0),
+    (xs: number[]) => {
+      xs.length = 1;
+    },
+  ];
   fs[0](K);
   fs.forEach((f) => f(K));
   apply((xs) => xs.push(1), K);
@@ -37,4 +67,7 @@ function main() {
   const c = Limits.STEPS;
   a.push(4);
   console.log(a, b, c);
+  console.log(w(Math.random() > 2 ? K : L), w(K ?? L), w((K as number[])), w(identity(K)));
+  console.log(w(pick(true)));
+  feed(new Appender());
 }
