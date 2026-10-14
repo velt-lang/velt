@@ -1,0 +1,123 @@
+// The spellings the parser's in-place scans decide on: letter case in the scheme and host,
+// hosts that end in a number, `@` and `:` in the authority, bracketed hosts, paths that are or
+// are not already serialized, and text to escape in each component. Expected output is Node's, except for the two hosts at
+// the end.
+import { URL } from "velt:url";
+
+function show(input: string) {
+  const u = URL.parse(input);
+  if (u == null) {
+    console.log(`${input} -> invalid`);
+    return;
+  }
+  console.log(
+    `${input} -> ${u.href} | ${u.username}:${u.password} | ${u.hostname} | ${u.port} | ${u.pathname} | ${u.search} | ${u.hash}`,
+  );
+}
+
+function main() {
+  const inputs = [
+    "HtTpS://ExAmPlE.CoM/Path",
+    "http://example.com",
+    "http://example.com./",
+    "http://1.2.3.4./",
+    "http://0x7f.1/",
+    "http://0x/",
+    "http://example.0x1g/",
+    "http://127.1/",
+    "http://999.1.1.1/",
+    "http://a.b.c.d.5/",
+    "http://exa%6dple.com/",
+    "http://exa mple.com/",
+    "http://exa<mple.com/",
+    "http://exa^mple.com/",
+    "http://exa|mple.com/",
+    "http://ex%25ample.com/",
+    "http://user@example.com/",
+    "http://user:pw@example.com:8080/",
+    "http://a@b@example.com/",
+    "http://a:b:c@example.com/",
+    "http://us er:p@ss@example.com/",
+    "http://@example.com/",
+    "http://:@example.com/",
+    "http://example.com:/",
+    "http://example.com:80/",
+    "http://example.com:080/",
+    "http://example.com:65535/",
+    "http://example.com:65536/",
+    "http://example.com:8a/",
+    "https://example.com:443/",
+    "https://example.com:80/",
+    "http://:80/",
+    "http://user@/",
+    "http://[::1]/",
+    "http://[::1]:8080/x",
+    "http://[2001:DB8::1]:443/",
+    "http://[::1/",
+    "http://[::1]x/",
+    "http://u@[::1]:9/",
+    "http://example.com/a/b/c",
+    "http://example.com/a/./b",
+    "http://example.com/a/../b",
+    "http://example.com/a/.b/..c/d.",
+    "http://example.com/a/%2e/b",
+    "http://example.com/a/%2E%2e/b",
+    "http://example.com/a/%2fb/%zz",
+    "http://example.com/a b/c",
+    "http://example.com/a\\b\\c",
+    "http://example.com//a//b/",
+    "http://example.com/a/b/",
+    "http://example.com/é/ü",
+    "http://example.com/{a}/`b`",
+    "http://example.com?q=1",
+    "http://example.com/?q=a b&r='x'",
+    "http://example.com/#frag ment",
+    "http://example.com/?#",
+    "http://example.com/p?q#f?g#h",
+    "  http://example.com/trim  ",
+    "http://exam\tple.com/a\nb",
+    "ws://example.com:80/chat",
+    "wss://example.com:443/chat",
+    "ftp://example.com:21/file",
+    "foo://Example.COM:80/a/../b?q='x'",
+    "foo://exa%6dple/",
+    "foo:/a/b",
+    "mailto:User@Example.com?subject=a b",
+    "file:///etc/hosts",
+    "file://localhost/etc/hosts",
+    "http:example.com/a",
+    "http:/example.com/a",
+    "http:\\\\example.com\\a",
+    "https://example.com/café/menü",
+    "https://example.com/search?q=café",
+    "https://example.com/page#über",
+    "http://üser:pässword@example.com:8080/a",
+    "HTTP://EXAMPLE.COM/É/../ü?x=é#É",
+    "foo://example.com/é?é#é",
+    "mailto:é@example.com",
+    "://example.com",
+    "1http://example.com",
+  ];
+  for (const input of inputs) {
+    show(input);
+  }
+  // Components long enough to be searched by the runtime instead of looked through in place.
+  const long = new URL(
+    `https://example.com/${"seg ment/".repeat(40)}?${"k=v w&".repeat(60)}#${"f ".repeat(80)}`,
+  );
+  console.log(long.href.length, long.pathname.length, long.search.length, long.hash.length);
+  console.log(long.pathname.slice(0, 24), long.search.slice(0, 16), long.hash.slice(0, 8));
+  const data = new URL(`data:text/plain,${"a b\tc".repeat(100)}`);
+  console.log(data.href.length, data.pathname.slice(0, 30));
+  // Either side of the length up to which a text is looked through for tabs in place.
+  for (const n of [31, 32, 33, 48, 64, 65]) {
+    const mid = new URL(`https://example.com/${"p".repeat(n - 29)}\t?q=1\n#f\r`);
+    console.log(n, mid.href.length, mid.pathname.length, mid.search, mid.hash);
+    mid.search = `?${"k".repeat(n - 2)}\tv`;
+    mid.hash = `#${"h".repeat(n - 2)}\nz`;
+    console.log(mid.search.length, mid.hash.length, mid.search.slice(-2), mid.hash.slice(-2));
+  }
+  // No IDNA yet: a host that is not ASCII is rejected (Node maps it to `xn--…`).
+  show("http://exämple.com/a");
+  show("http://user@exämple.com:8080/a");
+}
