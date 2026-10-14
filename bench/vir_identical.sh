@@ -43,11 +43,12 @@ emit_all() {
   wait
 }
 
-# The glue that disposes of an unclaimed promise result is named after its type's index in the
-# compiler's type table (`_Gunclaimed_205`), which moves whenever the standard library declares
-# one more type: the same function under another name, so the index is left out of the comparison.
+# Two kinds of glue are named after a type's index in the compiler's type table (the disposal of
+# an unclaimed promise result, `_Gunclaimed_205`, and a field initializer that can throw,
+# `_Ginit_E211_…`). The index moves whenever the standard library declares one more type: the
+# same function under another name, so the index is left out of the comparison.
 names() {
-  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g' "$1"
+  sed -E 's/_Gunclaimed_[0-9]+/_Gunclaimed_N/g; s/_Ginit_E[0-9]+_/_Ginit_EN_/g' "$1"
 }
 
 emit_all "$base" "$base_std" "$tmp/base"
