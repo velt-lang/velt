@@ -32,13 +32,17 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 
 const ONES: u64 = 0x0101_0101_0101_0101;
 
+/// Strings this long and longer are scanned eight bytes at a time where they are plain ASCII
+/// ([`push_long`]); shorter ones a byte at a time, which costs them less.
+const LONG: usize = 16;
+
 /// Whether the eight bytes of `word` are all ASCII that is written as is: no control
-/// character, `"` or `\\`. A word with a byte from 0x80 up is never plain, so text that is
-/// not ASCII goes a byte at a time (after one such word the byte loop runs to the next escape).
+/// character, `"` or `\\`. A word with a byte from 0x80 up is never plain.
 ///
 /// Per byte, the high bit of each term says: below 0x20 (the subtraction borrows), equal to
 /// `"`, equal to `\\` (zero minus one), or not ASCII. A borrow reaches a byte only from a
-/// lower byte that already set its own bit, so an all-ASCII word is judged exactly.
+/// lower byte that already set its own bit, so an all-ASCII word is judged exactly. (`| word`
+/// is redundant, the other terms flag every byte from 0x80 up, but says what is meant.)
 #[inline]
 fn plain_ascii(word: u64) -> bool {
     let control = word.wrapping_sub(ONES * 0x20);
@@ -56,16 +60,15 @@ pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
 /// [`push_json_string`], returning the number of lone surrogates written as `\udxxx` (each 3
 /// bytes and 1 unit in, 6 ASCII bytes out).
 pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
+    if s.len() >= LONG {
+        return push_long(out, s);
+    }
     out.reserve(s.len() + 2);
     out.push(b'"');
     let mut run_start = 0;
     let mut lone = 0;
     let mut i = 0;
     loop {
-        // Eight bytes at a time while they are plain ASCII.
-        while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
-            i += 8;
-        }
         while i < s.len() && ESCAPE[s[i] as usize] == 0 {
             i += 1;
         }
@@ -99,6 +102,68 @@ pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
         } else {
             out.push(b'\\');
             out.push(esc);
+        }
+    }
+    out.extend_from_slice(&s[run_start..]);
+    out.push(b'"');
+    lone
+}
+
+/// [`push_json_string_counted`] for a string of [`LONG`] bytes or more: eight bytes at a time
+/// while they are plain ASCII, then a byte at a time. The byte loop goes back to words only
+/// after an escape that ended a run of eight plain bytes or more, so text that is not ASCII
+/// (which stops every word) and strings dense in escapes test one word, not one per character.
+#[inline(never)]
+fn push_long(out: &mut Vec<u8>, s: &[u8]) -> usize {
+    out.reserve(s.len() + 2);
+    out.push(b'"');
+    let mut run_start = 0;
+    let mut lone = 0;
+    let mut i = 0;
+    'words: loop {
+        while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
+            i += 8;
+        }
+        loop {
+            while i < s.len() && ESCAPE[s[i] as usize] == 0 {
+                i += 1;
+            }
+            let Some(&byte) = s.get(i) else {
+                break 'words;
+            };
+            let esc = ESCAPE[byte as usize];
+            if esc == MAYBE_LONE {
+                if s.get(i + 1).is_some_and(|&b| b >= 0xA0) {
+                    out.extend_from_slice(&s[run_start..i]);
+                    let unit =
+                        0xD000 | ((s[i + 1] as usize & 0x3F) << 6) | (s[i + 2] as usize & 0x3F);
+                    out.extend_from_slice(b"\\u");
+                    for shift in [12, 8, 4, 0] {
+                        out.push(HEX[(unit >> shift) & 0xf]);
+                    }
+                    lone += 1;
+                    i += 3;
+                    run_start = i;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            let long_run = i - run_start >= 8;
+            out.extend_from_slice(&s[run_start..i]);
+            i += 1;
+            run_start = i;
+            if esc == b'u' {
+                out.extend_from_slice(b"\\u00");
+                out.push(HEX[(byte >> 4) as usize]);
+                out.push(HEX[(byte & 0xf) as usize]);
+            } else {
+                out.push(b'\\');
+                out.push(esc);
+            }
+            if long_run {
+                continue 'words;
+            }
         }
     }
     out.extend_from_slice(&s[run_start..]);
@@ -159,6 +224,113 @@ mod tests {
         }
         // Hangul (an `ED` lead byte that is no surrogate) is copied.
         assert_eq!(esc("\u{D55C}\u{D7FF}"), "\"\u{D55C}\u{D7FF}\"");
+    }
+
+    /// `JSON.stringify` of WTF-8 `s`, a code point at a time: the reference for the loops.
+    fn reference(s: &[u8]) -> (Vec<u8>, usize) {
+        let mut out = vec![b'"'];
+        let mut lone = 0;
+        let mut i = 0;
+        while i < s.len() {
+            let len = match s[i] {
+                0..=0x7f => 1,
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                _ => 4,
+            };
+            let cp = match len {
+                1 => s[i] as u32,
+                2 => (s[i] as u32 & 0x1f) << 6 | (s[i + 1] as u32 & 0x3f),
+                3 => {
+                    (s[i] as u32 & 0x0f) << 12
+                        | (s[i + 1] as u32 & 0x3f) << 6
+                        | (s[i + 2] as u32 & 0x3f)
+                }
+                _ => 0x10000,
+            };
+            match cp {
+                0x22 => out.extend_from_slice(b"\\\""),
+                0x5c => out.extend_from_slice(b"\\\\"),
+                0x08 => out.extend_from_slice(b"\\b"),
+                0x0c => out.extend_from_slice(b"\\f"),
+                0x0a => out.extend_from_slice(b"\\n"),
+                0x0d => out.extend_from_slice(b"\\r"),
+                0x09 => out.extend_from_slice(b"\\t"),
+                0..=0x1f | 0xd800..=0xdfff => {
+                    out.extend_from_slice(format!("\\u{cp:04x}").as_bytes());
+                    lone += (cp >= 0xd800) as usize;
+                }
+                _ => out.extend_from_slice(&s[i..i + len]),
+            }
+            i += len;
+        }
+        out.push(b'"');
+        (out, lone)
+    }
+
+    #[test]
+    fn every_special_at_every_offset_matches_the_reference() {
+        let wtf8 = |cp: u32| {
+            let mut b = [0; 4];
+            crate::str::wtf8::encode(cp, &mut b).to_vec()
+        };
+        let specials: Vec<Vec<u8>> = vec![
+            b"\"".to_vec(),
+            b"\\".to_vec(),
+            b"\n".to_vec(),
+            b"\x01".to_vec(),
+            b"\x7f".to_vec(),
+            "é".into(),
+            "\u{D55C}".into(),
+            "\u{D7FF}".into(),
+            "😀".into(),
+            wtf8(0xD83D),
+            wtf8(0xDE00),
+        ];
+        let text = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let check = |s: &[u8]| {
+            let mut out = Vec::new();
+            let lone = push_json_string_counted(&mut out, s);
+            let (want, want_lone) = reference(s);
+            assert_eq!(out, want, "{s:?}");
+            assert_eq!(lone, want_lone, "{s:?}");
+        };
+        // One special at every offset of every length up to the whole text (short and long
+        // strings, every position in and between words), then a `"`: an `ED` lead byte or an
+        // escape followed by words that are plain again.
+        for len in 0..=text.len() {
+            for at in 0..=len {
+                for sp in &specials {
+                    let mut s = text[..len].to_vec();
+                    s.splice(at..at, sp.iter().copied());
+                    check(&s);
+                    s.push(b'"');
+                    check(&s);
+                }
+            }
+        }
+        // Two specials at every pair of offsets of a long string.
+        for a in 0..=40 {
+            for b in a..=40 {
+                for (x, y) in [(0, 9), (2, 6), (9, 10), (6, 0), (8, 3)] {
+                    let mut s = text[..40].to_vec();
+                    s.splice(b..b, specials[y].iter().copied());
+                    s.splice(a..a, specials[x].iter().copied());
+                    check(&s);
+                }
+            }
+        }
+        // Runs of specials between plain runs.
+        for n in 1..20 {
+            for sp in &specials {
+                let mut s = text[..20].to_vec();
+                for _ in 0..n {
+                    s.extend_from_slice(sp);
+                }
+                s.extend_from_slice(&text[..20]);
+                check(&s);
+            }
+        }
     }
 
     #[test]

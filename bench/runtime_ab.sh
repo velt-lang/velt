@@ -66,6 +66,11 @@ benches() {
   echo "typical/consume 1000000|$b/typical/consume.vlt|1000000"
   echo "sqlite/rows feed|$b/sqlite/rows.vlt|feed 2000"
   echo "sqlite/rows post|$b/sqlite/rows.vlt|post 2000"
+  for n in empty ascii1 ascii5 ascii7 ascii8 ascii9 ascii12 winpath15 quote16 nl32 sentence44 \
+    quotes49 url56 nl64 ascii200 twobyte198 quote4th200 nl76x3 korean200 korean_in_ascii207 \
+    japanese198 emoji11; do
+    echo "json/escape $n|$b/json/escape/kinds.vlt|$n 20000"
+  done
 }
 
 # one "name|source|arguments": prints "name\tA\tB\tsame|DIFF".
