@@ -29,6 +29,7 @@ mod switch;
 mod symbol_keys;
 mod type_assertion;
 mod type_decls;
+mod type_members;
 mod types;
 mod undefined;
 

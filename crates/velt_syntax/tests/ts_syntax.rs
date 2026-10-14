@@ -252,9 +252,9 @@ fn numeric_property_names_and_call_signatures() {
     };
     assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
     assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
-    let msg = "call and construct signatures in an interface or object type are not supported yet";
+    let msg = "call signatures in an interface or object type are not supported yet";
     assert_eq!(
-        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { new (): F; z: string };"),
+        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { <T>(x: T): T; z: string };"),
         vec![msg, msg]
     );
 }
