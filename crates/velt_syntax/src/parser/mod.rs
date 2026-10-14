@@ -9,6 +9,7 @@ mod arrow;
 mod expr;
 mod field_types;
 mod for_loop;
+mod import_meta;
 mod imports;
 mod items;
 mod jsx;
@@ -87,6 +88,8 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// Where the module first mentions `import.meta` (`import_meta`).
+    import_meta: Option<Span>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -133,6 +136,7 @@ impl<'a> Parser<'a> {
             more_vars: Vec::new(),
             computed_keys: BTreeSet::new(),
             no_in: false,
+            import_meta: None,
         }
     }
 

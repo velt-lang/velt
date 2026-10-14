@@ -37,6 +37,11 @@ impl<'a> Parser<'a> {
                 ExprKind::This
             }
             Tok::Kw(Kw::New) => self.parse_new()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::Dot => self.parse_import_meta()?,
+            Tok::Kw(Kw::Import) if self.nth(1) == Tok::LParen => {
+                self.dynamic_import();
+                return Err(Fail);
+            }
             Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
             Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
                 self.bump(); // async

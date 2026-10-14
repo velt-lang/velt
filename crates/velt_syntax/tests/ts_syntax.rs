@@ -175,3 +175,21 @@ fn computed_keys_are_spreads_of_the_prelude_function() {
         vec!["a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression"]
     );
 }
+
+#[test]
+fn import_meta_and_dynamic_import() {
+    let m = parse_ok("const u = import.meta.url;\nfunction f() { return import.meta; }");
+    let last = m.items.last().expect("an item");
+    let ItemKind::Var(v) = &last.kind else {
+        panic!("not a constant: {last:?}");
+    };
+    assert!(matches!(&v.pattern.kind, PatternKind::Ident(n) if n.name == IMPORT_META));
+    assert_eq!(parse_ok("const u = 1;").items.len(), 1);
+    assert_eq!(
+        errors("const m = import(\"./m\");\nconst n = import(x).then((y) => y);"),
+        vec![
+            "dynamic `import()` is not supported",
+            "dynamic `import()` is not supported"
+        ]
+    );
+}

@@ -31,6 +31,7 @@
 
 mod case;
 mod globals;
+mod import_meta;
 mod jsx;
 mod locate;
 mod pick;
@@ -232,11 +233,12 @@ impl Loader<'_, '_> {
     ) -> usize {
         let file = self.sm.add(path, src);
         let src = &self.sm.get(file).src;
-        let (ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
+        let (mut ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
             velt_syntax::parse_ts_file(file, src)
         } else {
             velt_syntax::parse_file(file, src)
         };
+        import_meta::fill(&mut ast, path);
         self.diags.extend(parse_diags);
         let index = self.modules.len();
         self.by_file.insert(key, index);

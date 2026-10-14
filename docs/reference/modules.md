@@ -22,6 +22,17 @@
   only; using one as a value is an error. Types are compile-time only either way, so this
   changes no code, as in TypeScript.
 - `import "…";` loads a module without binding names.
+- `import.meta` describes the module, as in Node: `import.meta.url` is its source file's
+  `file:` URL, `import.meta.filename` the file's absolute path and `import.meta.dirname` its
+  directory. They are fixed while compiling, so they name the source file, not the built
+  program, wherever it runs.
+- A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with
+  a static `import` instead.
+
+```ts
+const here = import.meta.url;
+console.log(here.startsWith("file:///")); // true
+```
 
 ## Scripts: top-level statements
 

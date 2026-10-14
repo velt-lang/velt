@@ -48,6 +48,9 @@ impl<'a> Parser<'a> {
         if !stmts.is_empty() {
             self.finish_script(&mut items, stmts);
         }
+        if let Some(span) = self.import_meta {
+            items.push(self.import_meta_item(span));
+        }
         Module {
             items,
             span: Span::new(self.file, 0, self.src.len() as u32),

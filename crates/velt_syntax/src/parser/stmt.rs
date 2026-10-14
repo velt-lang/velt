@@ -149,9 +149,9 @@ impl<'a> Parser<'a> {
                 | Kw::Class
                 | Kw::Interface
                 | Kw::Enum
-                | Kw::Import
                 | Kw::Export,
             ) => true,
+            Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(Kw::Async | Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),
             _ => false,
