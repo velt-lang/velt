@@ -32,8 +32,8 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 
 const ONES: u64 = 0x0101_0101_0101_0101;
 
-/// Strings this long and longer start with a scan eight bytes at a time over their plain ASCII
-/// prefix ([`plain_prefix`]); shorter ones go a byte at a time, which costs them less.
+/// Strings this long and longer whose first eight bytes are plain ASCII go eight bytes at a
+/// time while they stay plain ([`push_long`]); all others a byte at a time, as before.
 const LONG: usize = 16;
 
 /// Whether the eight bytes of `word` are all ASCII that is written as is: no control
@@ -41,14 +41,15 @@ const LONG: usize = 16;
 ///
 /// Per byte, the high bit of each term says: below 0x20 (the subtraction borrows), equal to
 /// `"`, equal to `\\` (zero minus one), or not ASCII. A borrow reaches a byte only from a
-/// lower byte that already set its own bit, so an all-ASCII word is judged exactly. (`| word`
-/// is redundant, the other terms flag every byte from 0x80 up, but says what is meant.)
+/// lower byte that already set its own bit, so an all-ASCII word is judged exactly. A byte
+/// from 0x80 up sets bit 7 in the quote term (all but 0xA2) or in the backslash term (all but
+/// 0xDC), so the three terms flag it too.
 #[inline]
 fn plain_ascii(word: u64) -> bool {
     let control = word.wrapping_sub(ONES * 0x20);
     let quote = (word ^ (ONES * b'"' as u64)).wrapping_sub(ONES);
     let backslash = (word ^ (ONES * b'\\' as u64)).wrapping_sub(ONES);
-    (control | quote | backslash | word) & (ONES * 0x80) == 0
+    (control | quote | backslash) & (ONES * 0x80) == 0
 }
 
 /// Append `s` (canonical WTF-8) as a quoted, escaped JSON string literal.
@@ -60,23 +61,75 @@ pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
 /// [`push_json_string`], returning the number of lone surrogates written as `\udxxx` (each 3
 /// bytes and 1 unit in, 6 ASCII bytes out).
 pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
+    if s.len() >= LONG && first_word_plain(s) {
+        return push_long(out, s);
+    }
     out.reserve(s.len() + 2);
     out.push(b'"');
-    if s.len() < LONG {
-        return push_from(out, s, 0);
+    let mut run_start = 0;
+    let mut lone = 0;
+    let mut i = 0;
+    loop {
+        while i < s.len() && ESCAPE[s[i] as usize] == 0 {
+            i += 1;
+        }
+        let Some(&byte) = s.get(i) else {
+            break;
+        };
+        let esc = ESCAPE[byte as usize];
+        if esc == MAYBE_LONE {
+            if s.get(i + 1).is_some_and(|&b| b >= 0xA0) {
+                out.extend_from_slice(&s[run_start..i]);
+                let unit = 0xD000 | ((s[i + 1] as usize & 0x3F) << 6) | (s[i + 2] as usize & 0x3F);
+                out.extend_from_slice(b"\\u");
+                for shift in [12, 8, 4, 0] {
+                    out.push(HEX[(unit >> shift) & 0xf]);
+                }
+                lone += 1;
+                i += 3;
+                run_start = i;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        out.extend_from_slice(&s[run_start..i]);
+        i += 1;
+        run_start = i;
+        if esc == b'u' {
+            out.extend_from_slice(b"\\u00");
+            out.push(HEX[(byte >> 4) as usize]);
+            out.push(HEX[(byte & 0xf) as usize]);
+        } else {
+            out.push(b'\\');
+            out.push(esc);
+        }
     }
-    push_from(out, s, plain_prefix(s))
+    out.extend_from_slice(&s[run_start..]);
+    out.push(b'"');
+    lone
 }
 
-/// How many bytes at the start of `s` are plain ASCII, in whole words of eight (out of line,
-/// so that the word test's constants stay out of the byte loop's registers).
+/// Whether the first eight bytes of `s` (at least eight) are plain ASCII.
+#[inline(always)]
+fn first_word_plain(s: &[u8]) -> bool {
+    plain_ascii(u64::from_le_bytes(s[..8].try_into().unwrap()))
+}
+
+/// [`push_json_string_counted`] for a string of [`LONG`] bytes or more that starts with a plain
+/// word: eight bytes at a time while they are plain ASCII, then a byte at a time to the end.
+/// Out of line, with its own copy of the byte loop: the base loop in
+/// `push_json_string_counted` keeps its registers, so text that does not start plain (not
+/// ASCII, dense in escapes) costs only the one word test more than before.
 #[inline(never)]
-fn plain_prefix(s: &[u8]) -> usize {
-    let mut i = 0;
+fn push_long(out: &mut Vec<u8>, s: &[u8]) -> usize {
+    out.reserve(s.len() + 2);
+    out.push(b'"');
+    let mut i = 8;
     while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
         i += 8;
     }
-    i
+    push_from(out, s, i)
 }
 
 /// The rest of [`push_json_string_counted`] once the opening quote is written and `s[..i]` is
