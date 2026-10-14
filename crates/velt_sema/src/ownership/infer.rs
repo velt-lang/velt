@@ -322,7 +322,10 @@ pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic
                 };
                 return true;
             }
-            if !cx.is_copy(ty) && ty != cx.ty.str_ {
+            if crate::body::pure_init::is_table(cx, *d) {
+                let msg = format!("cannot move out of module constant `{name}`");
+                errors.push(crate::body::pure_init::table_escapes(&name, msg, e.span));
+            } else if !cx.is_copy(ty) && ty != cx.ty.str_ {
                 errors.push(
                     Diagnostic::error(
                         format!("cannot move out of module constant `{name}`"),

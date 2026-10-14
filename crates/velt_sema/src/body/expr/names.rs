@@ -291,7 +291,11 @@ impl FnCx<'_, '_> {
             let read = self.mk(H::Global(d), ty, span);
             return self.intrinsic(hir::Intrinsic::Share, vec![read], ty, span);
         }
-        if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
+        if want == Want::Move && crate::body::pure_init::is_table(self.cx, d) {
+            let msg = format!("cannot move out of module constant `{name}`");
+            self.cx
+                .error(crate::body::pure_init::table_escapes(&name, msg, span));
+        } else if want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_ {
             self.cx.error(
                 Diagnostic::error(format!("cannot move out of module constant `{name}`"), span)
                     .with_note(format!("use `{name}.clone()` for an owned copy")),
