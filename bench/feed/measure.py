@@ -35,6 +35,13 @@ request = function() return pick[test]() end
 
 
 def cpu_seconds(pid):
+    """User + system CPU time of the process: /proc on Linux, `ps` elsewhere (macOS)."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            fields = f.read().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+    except FileNotFoundError:
+        pass
     out = subprocess.run(["ps", "-o", "utime=,stime=", "-p", str(pid)], capture_output=True, text=True).stdout
     total = 0.0
     for field in out.split():
