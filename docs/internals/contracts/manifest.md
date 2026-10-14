@@ -77,17 +77,22 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   (`vpm::manifest::define_literal`: `true`, `false`, `null`, a non-negative number, a string in
   double quotes (JSON) or in single quotes without escapes). Only the root package's apply
   (`vpm::PackageGraph::defines`). The loader parses each non-std module with them
-  (`velt_syntax::parse_with`, `ParseOptions::defines`): an identifier expression of a defined
-  name (not an arrow parameter) is the literal.
+  (`velt_syntax::parse_with`, `ParseOptions::defines`): an identifier expression (or
+  shorthand property) of a defined name that nothing in its scope declares
+  (`velt_syntax::scope::free_values`) is the literal.
 - Ambient declarations: `declare const|let|var NAME: T;` (also `export declare …`) and
   `declare global { [declare] var NAME: T; … }` are returned by `parse_with` in
   `Parsed::ambient`, not as items (`parse_file` keeps reporting them as errors, so the formatter
-  never drops them); anything else in `declare global` is an error. The loader also reads them
+  never drops them); anything else in `declare global` is an error. `Ambient::global` marks
+  those in `declare global`, and `Parsed::is_module` a source with a top-level `import` or
+  `export`: the others of such a module are its own, and those of a declaration file that is a
+  module are not read. The loader also reads them
   from the `.d.ts` files of each package it loads a module of (the nearest directory with a
   `package.json` or `package.vlt`: its own `.d.ts` files and those below `src/`, skipping
   `node_modules`, `target`, `dist`, hidden and symlinked directories and nested packages),
-  ignoring those files' syntax errors. A name a module uses as a value without a `define` is an
-  error at its first declaration ("`X` is declared here but has no value"); so is a `define`
+  ignoring those files' syntax errors. A name a module refers to (`free_values`; any module for
+  a global declaration, its own module otherwise) without a `define` is an error at its first
+  declaration ("`X` is declared here but has no value"); so is a `define`
   whose literal is not of a declared `boolean`, `string` or `number`.
 
 ## npm packages (additive, #929)
@@ -96,12 +101,15 @@ classifies as a package, or rejects, other than `std…` and `velt:…`) that no
 matches and that is not a Velt dependency of the importing package. Its answer is a file,
 loaded like a relative import's (the importer's origin). Order: `node_modules/<name>/package.json`
 in the importer's directory and each ancestor (skipping `node_modules` directories
-themselves), the nearest ancestor whose `package.json` has that `name`, then the first ancestor
+themselves; a symlinked package directory is replaced by its real path), the nearest ancestor whose `package.json` has that `name`, then the first ancestor
 that is a workspace root (`pnpm-workspace.yaml` `packages:`, or `package.json` `workspaces`;
-globs with `*`, `**` and `!`). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
+globs with `*`, `**` and `!`; `**` does not enter symlinks; at most
+`vpm::npm::workspace::MAX_DIRS` directories are listed). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
 subpath, then the `*` pattern with the longest prefix; conditions in written order under
-`vpm::npm::SERVER_CONDITIONS` plus `default`; every target reached is kept, best first; `null`
-under a matching condition ends that object), else `types`, `typings`, `main`, `./index`;
+`vpm::npm::SERVER_CONDITIONS` plus `default`: the targets of `types` and `velt` are hints, and
+besides them only the first other matching condition's target is kept, as Node takes it
+(`exports::Targets::runtime`, named by the no-source error); `null` under a matching condition
+is not exported), else `types`, `typings`, `main`, `./index`;
 without `exports` a subpath names that path. Each target maps to source candidates
 (`vpm::npm::source_candidates`) and the first existing file wins. Errors: a subpath not
 exported, an `exports` mixing subpaths and conditions, a target without a source.

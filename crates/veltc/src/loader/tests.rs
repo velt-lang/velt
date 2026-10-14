@@ -704,3 +704,43 @@ fn ambient_constants_without_a_define_are_errors_only_when_used() {
         ["`__DEV__` is declared here but has no value"]
     );
 }
+
+#[test]
+fn ambient_declarations_of_modules_are_not_global() {
+    // #1091 review: `export declare const` (and any `declare const` of a file with imports or
+    // exports) belongs to its module; a local of the same name elsewhere is no use of it.
+    let t = Tree::new();
+    t.write("lib/package.json", r#"{ "name": "lib" }"#);
+    t.write(
+        "lib/index.d.ts",
+        "export declare const version: string;\nexport declare function label(): string;\n",
+    );
+    t.write(
+        "lib/src/env.d.ts",
+        "declare const MISSING: number;\ndeclare const FLAG: boolean;\n",
+    );
+    t.write(
+        "lib/src/own.ts",
+        "declare const LOCAL: number;\nexport function own(): number {\n  return LOCAL;\n}\n",
+    );
+    // A script (no imports or exports) whose top-level `const` declares the name itself.
+    let root = t.write(
+        "lib/src/main.ts",
+        "const MISSING: number = 3;\nfunction named(): string {\n  const version = \"local\";\n  return version;\n}\nconsole.log(MISSING);\nconsole.log(named());\nconsole.log(FLAG ? 1 : 2);\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`FLAG` is declared here but has no value"]
+    );
+    // A module's own ambient declaration is checked against its own uses.
+    let root = t.write(
+        "lib/src/main.ts",
+        "import { own } from \"./own\";\nconsole.log(own());\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["`LOCAL` is declared here but has no value"]
+    );
+}

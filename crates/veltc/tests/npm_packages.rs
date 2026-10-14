@@ -160,3 +160,82 @@ fn workspace_packages_compile_from_source_with_defines() {
         "{stderr}"
     );
 }
+
+/// `define` replaces only the references nothing in scope declares (as esbuild's `define`,
+/// whose output for this program is the expected one), and an `export declare const` of a
+/// package's `index.d.ts` is that module's, not a global the app's own `version` must define.
+#[test]
+fn define_leaves_the_programs_own_names_alone() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let root = tmp.path();
+    write(
+        root,
+        "app/package.vlt",
+        "import type { Package } from \"velt:package\";\n\nexport const pkg: Package = {\n  name: \"scoped\",\n  version: \"0.1.0\",\n  entry: \"src/main.ts\",\n  define: { __DEV__: \"false\" },\n};\n",
+    );
+    write(
+        root,
+        "app/src/e2.ts",
+        "export const __DEV__: boolean = true;\n",
+    );
+    write(
+        root,
+        "app/src/other.ts",
+        "import { __DEV__ } from \"./e2\";\n\nexport function fromImport(): boolean {\n  return __DEV__;\n}\n",
+    );
+    write(
+        root,
+        "app/node_modules/versioned/package.json",
+        r#"{ "name": "versioned", "exports": { ".": { "types": "./index.d.ts", "import": "./dist/index.js" } } }"#,
+    );
+    write(
+        root,
+        "app/node_modules/versioned/index.d.ts",
+        "export declare const version: string;\nexport declare function label(): string;\n",
+    );
+    write(
+        root,
+        "app/node_modules/versioned/src/index.ts",
+        "export function label(): string {\n  return \"versioned\";\n}\n",
+    );
+    write(
+        root,
+        "app/src/main.ts",
+        r#"import { fromImport } from "./other";
+import { label } from "versioned";
+
+function f(__DEV__: boolean): boolean {
+  return __DEV__;
+}
+
+function local(): boolean {
+  const __DEV__ = true;
+  return __DEV__;
+}
+
+function named(): string {
+  const version = "local";
+  return version;
+}
+
+console.log(f(true));
+console.log(local());
+console.log(fromImport());
+for (const __DEV__ of [1, 2]) {
+  console.log(__DEV__);
+}
+const o = { __DEV__ };
+console.log(o.__DEV__);
+console.log(__DEV__);
+console.log(named() + " " + label());
+"#,
+    );
+    let out = velt(&root.join("app"), &["run"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "velt run failed:\n{stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true\ntrue\ntrue\n1\n2\nfalse\nfalse\nlocal versioned\n"
+    );
+}

@@ -38,26 +38,31 @@ alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivi
 `sigx`) names an npm package:
 
 1. **Finding it**, as Node does: `node_modules/<name>` in the importing file's directory or one
-   above it (symlinks are followed, so pnpm's layout works), then the package the importing
+   above it (at its real path when it is a symlink, as Node loads it, so pnpm's
+   `node_modules/.pnpm` layout finds the package's own dependencies), then the package the importing
    file belongs to when it has that name, then the packages of the workspace around it
    (`packages:` globs in `pnpm-workspace.yaml`, or `workspaces` in the root `package.json`), so
-   a workspace compiles before `pnpm install` has linked anything.
+   a workspace compiles before `pnpm install` has linked anything. A `**` glob does not enter
+   symlinked directories.
 2. **The file**, from its `package.json`: `exports` when it has one (a subpath it doesn't list
    is an error, as in Node), else `types`, `main`, then `index`. Conditions are matched in the
    order the package writes them, as in Node, with those of a server build as Vite's SSR build
-   picks them: `node`, `import`, `module` and `default`, plus `types` and `velt` (a package can
-   point Velt at a file of its own). `browser`, `require`, `development` and `production` never
-   match, so a package that maps `browser` and `node` to different files is compiled from its
-   `node` one.
+   picks them: `node`, `import`, `module` and `default`. `browser`, `require`, `development`
+   and `production` never match (Velt has no development or production mode), so a package that
+   maps `browser` and `node` to different files is compiled from its `node` one. As in Node,
+   only the first matching condition counts: with `{ "node": "./dist/server.js", "default":
+   "./dist/client.js" }`, Velt compiles the source of `dist/server.js` or reports that it has
+   none, never the client build. Besides it, the targets of `types` and `velt` (a package can
+   point Velt at a file of its own) are tried as hints to the source.
 3. **Back to the source.** The file `exports` names is usually build output
    (`./dist/index.js`, `./dist/index.d.ts`). Velt drops the extension and looks for the
    TypeScript file it was built from, as TypeScript's project references do: below `rootDir`
    where the package's `tsconfig.json` puts `outDir` (or `declarationDir`), then with `dist/`,
    `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place (`.ts`, `.tsx`,
-   `/index.ts`, `/index.tsx`). Each target the conditions reach is tried in order, so
-   `"types": "./dist/index.d.ts"` finds `src/index.ts` even when the JavaScript bundle has
-   another name. A package without TypeScript sources is an error that says what was looked
-   for.
+   `/index.ts`, `/index.tsx`). The hints and the matching condition's target are tried in the
+   order written, so `"types": "./dist/index.d.ts"` finds `src/index.ts` even when the
+   JavaScript bundle has another name. A package without TypeScript sources is an error that
+   names the file Node loads and says what was looked for.
 
 The package's modules then compile like the program's own, and their `env.d.ts` constants come
 from [`define`](manifest.md#define). A Velt dependency of the same name wins over an npm

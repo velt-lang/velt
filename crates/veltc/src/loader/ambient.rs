@@ -1,21 +1,26 @@
 //! Build-time constants and ambient declarations.
 //!
-//! - **`define`** (the root package's, as Vite's `define`): while a module parses, every use of
-//!   a defined name as a value is the literal (`velt_syntax::ParseOptions::defines`), so
-//!   `if (__DEV__)` with `__DEV__: "false"` is `if (false)` and its branch folds.
+//! - **`define`** (the root package's, as Vite's `define`): while a module parses, every
+//!   reference to a defined name that nothing in its scope declares is the literal
+//!   (`velt_syntax::ParseOptions::defines`), so `if (__DEV__)` with `__DEV__: "false"` is
+//!   `if (false)` and its branch folds, while a parameter, local or import named `__DEV__` keeps
+//!   its value (as esbuild's `define`).
 //! - **Ambient declarations**: `declare const NAME: T;` (or `let`/`var`, or in
 //!   `declare global { … }`) in a module or in a declaration file (`.d.ts`) of the module's
-//!   package. Declaration files are not modules: each package's are read once, when the first
-//!   of its modules loads; a package is the nearest directory above the module with a
-//!   `package.json` or `package.vlt`, and its declaration files are those in that directory and
-//!   below its `src/` (outside `node_modules`, `target`, `dist`, hidden directories and nested
-//!   packages). Only their
-//!   ambient variables are read (anything else in them is skipped, as are their syntax errors:
-//!   they may use TypeScript Velt doesn't parse).
+//!   package. As in TypeScript, they are global when in `declare global` or in a file without
+//!   imports or exports; otherwise they belong to their module (and those of a declaration
+//!   file, which no one imports here, are not read). Declaration files are not modules: each
+//!   package's are read once, when the first of its modules loads; a package is the nearest
+//!   directory above the module with a `package.json` or `package.vlt`, and its declaration
+//!   files are those in that directory and below its `src/` (outside `node_modules`, `target`,
+//!   `dist`, hidden directories and nested packages). Only their ambient variables are read
+//!   (anything else in them is skipped, as are their syntax errors: they may use TypeScript
+//!   Velt doesn't parse).
 //!
 //! Velt has no global variables, so an ambient constant needs a `define`. One that a module
-//! uses without a `define` is an error at its declaration ([`Ambients::check`]), and so is a
-//! `define` whose literal is not of the declared type (`boolean`, `string`, `number`).
+//! refers to without a `define` (and without declaring the name in scope,
+//! `velt_syntax::scope::free_values`) is an error at its declaration ([`Ambients::check`]), and
+//! so is a `define` whose literal is not of the declared type (`boolean`, `string`, `number`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -35,8 +40,9 @@ pub(super) struct Ambients {
     defines: HashMap<String, Lit>,
     /// The `define` entries as written, for messages.
     written: BTreeMap<String, String>,
-    /// Every ambient variable declared so far, with its file.
-    declared: Vec<(Ambient, FileId)>,
+    /// Every ambient variable declared so far, with the module it belongs to (`None`: a
+    /// global one).
+    declared: Vec<(Ambient, Option<FileId>)>,
     /// Package directories whose declaration files have been read.
     read: HashSet<PathBuf>,
 }
@@ -61,9 +67,14 @@ impl Ambients {
         (!self.defines.is_empty()).then_some(&self.defines)
     }
 
-    /// Record the ambient declarations of `file`.
-    pub(super) fn declared(&mut self, ambient: Vec<Ambient>, file: FileId) {
-        self.declared.extend(ambient.into_iter().map(|a| (a, file)));
+    /// Record the ambient declarations of loaded module `file`: global when in
+    /// `declare global` or when the file has no imports or exports (as in TypeScript), else
+    /// the module's own.
+    pub(super) fn declared(&mut self, ambient: Vec<Ambient>, file: FileId, is_module: bool) {
+        for a in ambient {
+            let owner = (!a.global && is_module).then_some(file);
+            self.declared.push((a, owner));
+        }
     }
 
     /// Read the declaration files of the package containing module `path`, once per package.
@@ -87,18 +98,30 @@ impl Ambients {
                 defines: None,
             };
             let parsed = velt_syntax::parse_with(id, &sm.get(id).src, &opts);
-            self.declared(parsed.ambient, id);
+            // A declaration file with imports or exports is a module no one loads here: only
+            // its `declare global` is global.
+            let is_module = parsed.is_module;
+            let global = parsed
+                .ambient
+                .into_iter()
+                .filter(|a| a.global || !is_module);
+            self.declared.extend(global.map(|a| (a, None)));
         }
     }
 
-    /// The errors about ambient constants: used (`mentioned`) but without a `define`, or with
-    /// a `define` of another type than declared. One per name, at its first declaration.
-    pub(super) fn check(&self, mentioned: &dyn Fn(&str) -> bool) -> Vec<Diagnostic> {
+    /// The errors about ambient constants: used without a `define` (`mentioned(name, in)`:
+    /// whether a module refers to `name` without declaring it, any module when `in` is
+    /// `None`), or with a `define` of another type than declared. One per name and module it
+    /// belongs to, at its first declaration.
+    pub(super) fn check(
+        &self,
+        mentioned: &dyn Fn(&str, Option<FileId>) -> bool,
+    ) -> Vec<Diagnostic> {
         let mut out = vec![];
         let mut seen = HashSet::new();
-        for (decl, _) in &self.declared {
+        for (decl, owner) in &self.declared {
             let name = decl.name.name.as_str();
-            if !seen.insert(name) {
+            if !seen.insert((name, *owner)) {
                 continue;
             }
             match self.defines.get(name) {
@@ -116,7 +139,7 @@ impl Ambients {
                         }
                     }
                 }
-                None if mentioned(name) => {
+                None if mentioned(name, *owner) => {
                     let example = match decl.ty.as_ref().and_then(primitive) {
                         Some("string") => "\"\\\"…\\\"\"",
                         Some("number") => "\"0\"",
@@ -137,21 +160,6 @@ impl Ambients {
         }
         out
     }
-}
-
-/// Whether `module` uses `name` as a value (an identifier expression).
-pub(super) fn uses_value(module: &ast::Module, name: &str) -> bool {
-    struct Find<'n>(&'n str, bool);
-    impl<'a> velt_syntax::visit::Visit<'a> for Find<'_> {
-        fn expr(&mut self, e: &'a ast::Expr) {
-            if let ast::ExprKind::Ident(id) = &e.kind {
-                self.1 |= id.name == self.0;
-            }
-        }
-    }
-    let mut find = Find(name, false);
-    velt_syntax::visit::walk_module(module, &mut find);
-    find.1
 }
 
 /// `boolean`, `string` or `number` when `ty` is one of them.

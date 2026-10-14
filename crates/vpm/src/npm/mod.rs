@@ -9,20 +9,25 @@
 //! aliases do. The package's sources then compile like the program's own.
 //!
 //! - **Finding the package** ([`NpmResolver::package_dir`]): `node_modules/<name>` in the
-//!   importer's directory and each one above it (symlinks followed, so pnpm's layout works);
+//!   importer's directory and each one above it, at its real path when it is a symlink (as
+//!   Node, which does not preserve symlinks: pnpm's `.pnpm` layout finds a package's own
+//!   dependencies next to it);
 //!   then the package itself (an import of its own name); then the packages of the workspace
 //!   around the importer ([`workspace`]: `pnpm-workspace.yaml`, or `workspaces` in the root
 //!   `package.json`), so a workspace needs no `pnpm install` first.
 //! - **The entry** ([`exports`]): `exports` when present (a subpath not in it is an error, as in
 //!   Node), under the conditions [`SERVER_CONDITIONS`]; else for the package itself `types` (or
 //!   `typings`), then `main`, then `index`; a subpath without `exports` names the file at that
-//!   path.
+//!   path. Of `exports`, the targets of `types` and `velt` are source hints; besides them only
+//!   the first other matching condition counts, as in Node (never a later one, such as
+//!   `default` after `node`, which would compile another build than Node runs).
 //! - **Back to the source** ([`source_candidates`]): a target that is a source file is taken as
 //!   is. Otherwise its extension (`.d.ts`, `.js`, `.mjs`, …) is dropped and the stem is looked
 //!   for as `.ts`/`.tsx` (or `/index.ts`/`.tsx`): first below `rootDir` where the package's
 //!   `tsconfig.json` puts its `outDir` (or `declarationDir`), then with a leading `dist/`,
-//!   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place. Every target the
-//!   conditions reach is tried in order; the first with a source wins.
+//!   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place. The targets are
+//!   tried in order (the hints and Node's target as written); the first with a source wins,
+//!   and without one the error names the target Node loads.
 
 pub mod exports;
 pub mod json;
@@ -32,6 +37,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use json::Json;
+
+/// `dir` with its symlinks resolved when it is one (pnpm links `node_modules/a` to
+/// `node_modules/.pnpm/a@1.0.0/node_modules/a`): Node loads a package from its real path, so its
+/// own dependencies are found next to it, in the `.pnpm` directory.
+fn real_dir(dir: PathBuf) -> PathBuf {
+    let link = std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink());
+    match std::fs::canonicalize(&dir) {
+        Ok(real) if link => crate::relpath::plain(&real),
+        _ => dir,
+    }
+}
 
 /// The `exports` conditions a build matches, as Vite's server build does (`node`, `import`,
 /// `module`, `default`), plus `types` (whose targets are declaration files, which map back to
@@ -115,7 +131,7 @@ impl NpmResolver {
             }
             let candidate = dir.join("node_modules").join(name);
             if candidate.join("package.json").is_file() {
-                return Some(candidate);
+                return Some(real_dir(candidate));
             }
         }
         for dir in start.ancestors() {
@@ -179,8 +195,12 @@ impl NpmResolver {
             .manifest(dir)
             .cloned()
             .ok_or_else(|| (format!("cannot read `{shown}` (package `{name}`)"), vec![]))?;
+        let mut runtime = None;
         let targets = match manifest.get("exports") {
-            Some(map) => exports::resolve(map, subpath, SERVER_CONDITIONS).map_err(|e| match e {
+            Some(map) => exports::resolve_targets(map, subpath, SERVER_CONDITIONS).map(|t| {
+                runtime = t.runtime;
+                t.all
+            }).map_err(|e| match e {
                 exports::ExportsError::NotExported => (
                     format!("package `{name}` does not export `{subpath}` (`exports` in its package.json)"),
                     vec![format!("the conditions Velt matches are {}", conditions_list())],
@@ -223,15 +243,25 @@ impl NpmResolver {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        let mut notes = vec![note];
+        let shown = match &runtime {
+            Some((cond, target)) if !cond.is_empty() => {
+                notes.push(format!(
+                    "Node loads `{}` (condition `{cond}`); Velt compiles the source of that build, not of a later condition's",
+                    target.trim_start_matches("./")
+                ));
+                target.as_str()
+            }
+            Some((_, target)) => target.as_str(),
+            None => targets[0].as_str(),
+        };
+        notes.push("Velt compiles npm packages from their `.ts` sources; map the specifier to one with `paths` in package.vlt".to_string());
         Err((
             format!(
                 "package `{name}` maps `{spec}` to `{}`, which has no TypeScript source in the package",
-                targets[0].trim_start_matches("./")
+                shown.trim_start_matches("./")
             ),
-            vec![
-                note,
-                "Velt compiles npm packages from their `.ts` sources; map the specifier to one with `paths` in package.vlt".to_string(),
-            ],
+            notes,
         ))
     }
 

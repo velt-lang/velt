@@ -138,10 +138,13 @@ reads it from a `//` comment, `tsc` only from a block comment.
 define: { __DEV__: "false", __SIGX_VERSION__: "\"1.0.1\"" },
 ```
 
-Build-time constants, as Vite's `define`. Every use of the name as a value in the build's
-modules (the package's, and those of the npm packages it compiles) is the literal, so
-`if (__DEV__) { … }` becomes `if (false) { … }` and the branch folds away. A property
-(`o.__DEV__`), a type and a parameter of the same name are left alone. Each value is the
+Build-time constants, as Vite's `define`. Every reference to the name in the build's modules
+(the package's, and those of the npm packages it compiles) that nothing in scope declares is
+the literal, so `if (__DEV__) { … }` becomes `if (false) { … }` and the branch folds away, and
+`{ __DEV__ }` is `{ __DEV__: false }`. A name the code declares keeps its own value, as with
+esbuild's `define`: a parameter, a local, an import, a loop variable, a `catch` parameter or a
+function or class of that name, in its scope. A property (`o.__DEV__`) and a type are left
+alone too. Each value is the
 *source* of a literal, as in Vite: `"true"`, `"false"`, `"null"`, a number (`"3"`), or a string
 in quotes (`"\"1.0.1\""` or `"'1.0.1'"`); other expressions are an error. Only the root
 package's `define` applies.
@@ -154,9 +157,11 @@ declare const __DEV__: boolean;
 
 Velt reads these ambient declarations (`declare const`, `let` and `var`, also inside
 `declare global { … }`) from modules and from the `.d.ts` files of each package it compiles (in
-the package's directory and below its `src/`). Velt has no global variables, so a declared
-constant that a module uses needs a `define`; without one, the declaration is an error that
-says so. A `define` whose literal is not of the declared type (`boolean`, `string`, `number`)
+the package's directory and below its `src/`). As in TypeScript, a declaration is global only
+in `declare global` or in a file without imports and exports; in a module (such as an
+`index.d.ts` with `export declare const version: string;`) it is the module's own. Velt has no
+global variables, so a declared constant that a module refers to (without declaring the name
+itself) needs a `define`; without one, the declaration is an error that says so. A `define` whose literal is not of the declared type (`boolean`, `string`, `number`)
 is an error too.
 
 ## `native`

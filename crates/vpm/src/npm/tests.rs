@@ -165,3 +165,139 @@ fn maps_targets_back_to_sources() {
     assert_eq!(source_candidates("./src/a.ts", &[]), ["src/a.ts"]);
     assert_eq!(source_candidates("./build/a.mjs", &out)[0], "lib/a.ts");
 }
+
+/// Link directory `link` to `target` (a symlink, or a junction on Windows when symlinks need
+/// privileges); `false` when the OS allows neither.
+fn link_dir(target: &Path, link: &Path) -> bool {
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        let back = |p: &Path| p.to_string_lossy().replace('/', "\\");
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+            || std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(back(link))
+                .arg(back(target))
+                .output()
+                .is_ok_and(|o| o.status.success())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        false
+    }
+}
+
+#[test]
+fn pnpm_layout_finds_dependencies_of_dependencies() {
+    // node_modules/a → .pnpm/a@1.0.0/node_modules/a; `b` is only next to `a` in `.pnpm`, where
+    // Node finds it because it loads `a` from its real path.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = &crate::relpath::plain(&std::fs::canonicalize(tmp.path()).unwrap());
+    let store = root.join("node_modules/.pnpm/a@1.0.0/node_modules");
+    write(
+        &store,
+        "a/package.json",
+        r#"{ "name": "a", "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } } }"#,
+    );
+    write(
+        &store,
+        "a/src/index.ts",
+        "export * from \"b\";
+",
+    );
+    write(
+        &store,
+        "b/package.json",
+        r#"{ "name": "b", "exports": "./src/index.ts" }"#,
+    );
+    write(&store, "b/src/index.ts", "");
+    write(root, "app/main.ts", "");
+    if !link_dir(&store.join("a"), &root.join("node_modules/a")) {
+        return;
+    }
+    let mut npm = NpmResolver::default();
+    let a = npm
+        .resolve(&root.join("app/main.ts"), "a")
+        .unwrap()
+        .unwrap();
+    assert_eq!(a, store.join("a/src/index.ts"));
+    assert_eq!(
+        npm.resolve(&a, "b").unwrap().unwrap(),
+        store.join("b/src/index.ts")
+    );
+    // Not a dependency of the app itself.
+    assert!(npm.resolve(&root.join("app/main.ts"), "b").is_none());
+}
+
+#[test]
+fn workspace_symlink_loops_end_fast() {
+    // #1091 review: `packages: ["**"]` with links back up used to run for minutes.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "pnpm-workspace.yaml",
+        "packages:
+  - \"**\"
+",
+    );
+    write(root, "packages/p/package.json", r#"{ "name": "p" }"#);
+    write(root, "packages/p/src/main.ts", "");
+    if !link_dir(&root.join("packages"), &root.join("packages/loop1"))
+        || !link_dir(&root.join("packages"), &root.join("packages/p/loop2"))
+    {
+        return;
+    }
+    let started = std::time::Instant::now();
+    let mut npm = NpmResolver::default();
+    assert!(npm
+        .resolve(&root.join("packages/p/src/main.ts"), "missing")
+        .is_none());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    let dirs = workspace::package_dirs(root, &["**".to_string()]);
+    let rel: Vec<String> = dirs
+        .iter()
+        .map(|d| crate::relpath::relative(d, root))
+        .collect();
+    assert_eq!(rel, ["packages/p"]);
+}
+
+#[test]
+fn a_later_condition_is_no_fallback() {
+    // #1091 review, #929 gap 2: Node loads `server.js`; its source is missing, so the client
+    // build must not be compiled in its place.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "node_modules/iso/package.json",
+        r#"{ "name": "iso", "exports": { ".": { "node": "./dist/server.js", "default": "./dist/client.js" } } }"#,
+    );
+    write(root, "node_modules/iso/src/client.ts", "");
+    write(root, "main.ts", "");
+    let mut npm = NpmResolver::default();
+    let (msg, notes) = npm
+        .resolve(&root.join("main.ts"), "iso")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        msg,
+        "package `iso` maps `iso` to `dist/server.js`, which has no TypeScript source in the package"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("Node loads `dist/server.js` (condition `node`)")),
+        "{notes:?}"
+    );
+    write(root, "node_modules/iso/src/server.ts", "");
+    assert_eq!(
+        npm.resolve(&root.join("main.ts"), "iso").unwrap().unwrap(),
+        root.join("node_modules/iso/src/server.ts")
+    );
+}

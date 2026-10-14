@@ -264,7 +264,8 @@ impl Loader<'_, '_> {
             };
             let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);
             self.diags.extend(parsed.diags);
-            self.ambient.declared(parsed.ambient, file);
+            self.ambient
+                .declared(parsed.ambient, file, parsed.is_module);
             parsed.module
         };
         let index = self.modules.len();
@@ -318,12 +319,14 @@ impl Loader<'_, '_> {
     /// ([`ambient::Ambients::check`]).
     fn check_ambients(&mut self) {
         let (modules, sm) = (&self.modules, &*self.sm);
-        let mentioned = |name: &str| {
-            modules.iter().filter(|m| !m.is_std).any(|m| {
-                globals::mentions(&sm.get(m.file).src, name)
-                    && !globals::bound_names(&m.ast).contains(name)
-                    && ambient::uses_value(&m.ast, name)
-            })
+        let mentioned = |name: &str, owner: Option<velt_common::FileId>| {
+            modules
+                .iter()
+                .filter(|m| !m.is_std && owner.is_none_or(|f| f == m.file))
+                .any(|m| {
+                    globals::mentions(&sm.get(m.file).src, name)
+                        && !velt_syntax::scope::free_values(&m.ast, &|n| n == name).is_empty()
+                })
         };
         let found = self.ambient.check(&mentioned);
         self.diags.extend(found);

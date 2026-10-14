@@ -24,6 +24,13 @@ impl Parser<'_> {
             || (k == 0 && self.is_word(1, "global") && self.nth(2) == Tok::LBrace)
     }
 
+    /// At a top-level `import` or `export` (not `import(…)` / `import.meta`): the file is a
+    /// module ([`crate::Parsed::is_module`]).
+    pub(super) fn at_module_syntax(&mut self) -> bool {
+        self.at_kw(Kw::Export)
+            || (self.at_kw(Kw::Import) && !matches!(self.nth(1), Tok::LParen | Tok::Dot))
+    }
+
     fn is_word(&mut self, n: usize, word: &str) -> bool {
         let t = self.tok(self.pos + n);
         t.kind == Tok::Ident && self.text(t.lo, t.hi) == word
@@ -38,7 +45,7 @@ impl Parser<'_> {
         self.eat_kw(Kw::Export);
         self.bump(); // declare
         if !self.at_word("global") {
-            return self.parse_ambient_vars();
+            return self.parse_ambient_vars(false);
         }
         self.bump(); // global
         self.expect(Tok::LBrace)?;
@@ -56,7 +63,7 @@ impl Parser<'_> {
                         if declare == 1 {
                             self.bump();
                         }
-                        self.parse_ambient_vars()?;
+                        self.parse_ambient_vars(true)?;
                     } else {
                         let span = self.cur_span();
                         self.error(
@@ -72,7 +79,7 @@ impl Parser<'_> {
     }
 
     /// `const|let|var A: T, B: U;`, at the keyword.
-    fn parse_ambient_vars(&mut self) -> PResult<()> {
+    fn parse_ambient_vars(&mut self, global: bool) -> PResult<()> {
         self.bump(); // const / let / var
         loop {
             let lo = self.cur_lo();
@@ -89,7 +96,12 @@ impl Parser<'_> {
             }
             let span = self.span_from(lo);
             if let Some(list) = &mut self.ambient {
-                list.push(Ambient { name, ty, span });
+                list.push(Ambient {
+                    name,
+                    ty,
+                    span,
+                    global,
+                });
             }
             if !self.eat(Tok::Comma) {
                 break;

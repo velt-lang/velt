@@ -90,9 +90,11 @@ pub(crate) struct Parser<'a> {
     no_in: bool,
     /// Ambient declarations read so far, when the caller asked for them (`ambient`).
     pub(crate) ambient: Option<Vec<crate::Ambient>>,
-    /// Build-time constants: an identifier expression of one of these names is its literal
-    /// (`crate::ParseOptions::defines`).
-    pub(crate) defines: Option<&'a HashMap<String, Lit>>,
+    /// Build-time constants: the identifier expression (or shorthand property) starting at
+    /// one of these offsets is the literal (`crate::ParseOptions::defines`).
+    pub(crate) define_at: Option<&'a HashMap<u32, Lit>>,
+    /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
+    pub(crate) saw_module_syntax: bool,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -140,7 +142,8 @@ impl<'a> Parser<'a> {
             computed_keys: BTreeSet::new(),
             no_in: false,
             ambient: None,
-            defines: None,
+            define_at: None,
+            saw_module_syntax: false,
         }
     }
 

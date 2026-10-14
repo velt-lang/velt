@@ -15,6 +15,9 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !self.at(Tok::Eof) {
             let start = self.pos;
+            if self.at_module_syntax() {
+                self.saw_module_syntax = true;
+            }
             match self.peek() {
                 Tok::Semi => self.bump(),
                 Tok::RBrace => {

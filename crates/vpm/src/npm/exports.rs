@@ -2,10 +2,12 @@
 //! resolution algorithm): the subpath (`"."`, `"./internals"`, a `"./*"` pattern) picks an
 //! entry, and the entry's condition objects are matched in the order their keys are written.
 //!
-//! Node stops at the first condition that matches; here every target a matching condition
-//! reaches is returned, best first, because the caller maps each target back to a TypeScript
-//! source and takes the first one that has one (`types` usually comes first and names the
-//! declaration file next to the source's place in `dist/`).
+//! Node stops at the first condition that matches, and so does this, with one addition: the
+//! targets of `types` and `velt` (wherever written) are returned too, as hints, because the
+//! caller maps each target back to a TypeScript source and takes the first one that has one
+//! (`types` usually comes first and names the declaration file next to the source's place in
+//! `dist/`). A later condition (`default` after `node`) is never taken in place of the first
+//! matching one: that would compile another build than Node runs.
 
 use super::json::Json;
 
@@ -18,6 +20,17 @@ pub enum ExportsError {
     Invalid,
 }
 
+/// What `exports` maps a subpath to under the build's conditions.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Targets {
+    /// Every target to try, best first (hints and the runtime target, in written order); each
+    /// a `./`-relative path inside the package.
+    pub all: Vec<String>,
+    /// The target Node loads and the condition that chose it (empty for a target without
+    /// one; `None` when a `velt` target stands for it).
+    pub runtime: Option<(String, String)>,
+}
+
 /// The targets `exports` maps `subpath` (`"."` or `"./x"`) to under `conditions`, best first,
 /// each a `./`-relative path inside the package.
 pub fn resolve(
@@ -25,6 +38,15 @@ pub fn resolve(
     subpath: &str,
     conditions: &[&str],
 ) -> Result<Vec<String>, ExportsError> {
+    resolve_targets(exports, subpath, conditions).map(|t| t.all)
+}
+
+/// [`resolve`], with the target Node loads.
+pub fn resolve_targets(
+    exports: &Json,
+    subpath: &str,
+    conditions: &[&str],
+) -> Result<Targets, ExportsError> {
     let subpaths = match exports {
         Json::Obj(fields) if !fields.is_empty() => {
             let dotted = fields.iter().filter(|(k, _)| k.starts_with('.')).count();
@@ -79,8 +101,8 @@ pub fn resolve(
     }
 }
 
-fn found(targets: Vec<String>) -> Result<Vec<String>, ExportsError> {
-    if targets.is_empty() {
+fn found(targets: Targets) -> Result<Targets, ExportsError> {
+    if targets.all.is_empty() {
         Err(ExportsError::NotExported)
     } else {
         Ok(targets)
@@ -97,42 +119,121 @@ fn pattern_cmp(a: &str, b: &str) -> bool {
     }
 }
 
-/// Every target `entry` reaches under `conditions`, in order; `matched` replaces the `*` of a
-/// pattern's targets. A target must start with `./` and stay inside the package.
-fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str]) -> Vec<String> {
-    let mut out = vec![];
-    collect(entry, matched, conditions, &mut out);
-    out
+/// The conditions that are source hints: their targets are tried, but they don't stand in
+/// for the condition Node takes.
+const HINTS: &[&str] = &["velt", "types"];
+
+/// The targets `entry` gives under `conditions` (see the module docs); `matched` replaces the
+/// `*` of a pattern's targets. A target must start with `./` and stay inside the package.
+fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str]) -> Targets {
+    let mut walk = Walk {
+        matched,
+        conditions,
+        out: vec![],
+        runtime: None,
+        path: vec![],
+    };
+    if walk.entry(entry) != Outcome::Taken {
+        // Nothing Node would load (only `types`, or `null`): not exported.
+        return Targets {
+            all: vec![],
+            runtime: None,
+        };
+    }
+    Targets {
+        all: walk.out,
+        runtime: walk.runtime,
+    }
 }
 
-fn collect(entry: &Json, matched: Option<&str>, conditions: &[&str], out: &mut Vec<String>) {
-    match entry {
-        Json::Str(target) => {
-            let target = match matched {
-                Some(m) => target.replace('*', m),
-                None => target.clone(),
-            };
-            if is_valid_target(&target) && !out.contains(&target) {
-                out.push(target);
-            }
-        }
-        Json::Arr(items) => {
-            for item in items {
-                collect(item, matched, conditions, out);
-            }
-        }
-        Json::Obj(fields) => {
-            for (key, value) in fields {
-                if key == "default" || conditions.contains(&key.as_str()) {
-                    // `null` under a matching condition: not exported under it (Node stops).
-                    if *value == Json::Null {
-                        return;
-                    }
-                    collect(value, matched, conditions, out);
+/// How an entry turned out ([`Walk::entry`]).
+#[derive(PartialEq)]
+enum Outcome {
+    /// A target was chosen.
+    Taken,
+    /// No condition matched (Node goes on with the next one).
+    NoMatch,
+    /// A matching condition maps to `null`: not exported (Node stops).
+    Null,
+}
+
+struct Walk<'a> {
+    matched: Option<&'a str>,
+    conditions: &'a [&'a str],
+    out: Vec<String>,
+    runtime: Option<(String, String)>,
+    /// The conditions leading to the entry being walked.
+    path: Vec<String>,
+}
+
+impl Walk<'_> {
+    fn entry(&mut self, entry: &Json) -> Outcome {
+        match entry {
+            Json::Str(target) => {
+                let target = match self.matched {
+                    Some(m) => target.replace('*', m),
+                    None => target.clone(),
+                };
+                if !is_valid_target(&target) {
+                    return Outcome::NoMatch;
                 }
+                let hint = self.path.iter().any(|c| HINTS.contains(&c.as_str()));
+                if !hint && self.runtime.is_none() {
+                    let cond = self.path.last().cloned().unwrap_or_default();
+                    self.runtime = Some((cond, target.clone()));
+                }
+                if !self.out.contains(&target) {
+                    self.out.push(target);
+                }
+                Outcome::Taken
             }
+            Json::Arr(items) => {
+                for item in items {
+                    let mark = self.out.len();
+                    match self.entry(item) {
+                        Outcome::Taken => return Outcome::Taken,
+                        _ => self.out.truncate(mark),
+                    }
+                }
+                Outcome::NoMatch
+            }
+            Json::Obj(fields) => {
+                let mut outcome = Outcome::NoMatch;
+                for (key, value) in fields {
+                    let hint = HINTS.contains(&key.as_str());
+                    let applies =
+                        hint || key == "default" || self.conditions.contains(&key.as_str());
+                    // After the condition Node takes, only hints are read.
+                    if !applies || (outcome != Outcome::NoMatch && !hint) {
+                        continue;
+                    }
+                    if *value == Json::Null {
+                        if hint {
+                            continue;
+                        }
+                        return Outcome::Null;
+                    }
+                    let mark = self.out.len();
+                    self.path.push(key.clone());
+                    let got = self.entry(value);
+                    self.path.pop();
+                    match got {
+                        Outcome::Taken if hint => {
+                            // `velt` is a real condition: it stands for a runtime target.
+                            if key == "velt" && outcome == Outcome::NoMatch {
+                                outcome = Outcome::Taken;
+                            }
+                        }
+                        Outcome::Taken => outcome = Outcome::Taken,
+                        Outcome::NoMatch => self.out.truncate(mark),
+                        Outcome::Null if hint => self.out.truncate(mark),
+                        Outcome::Null => return Outcome::Null,
+                    }
+                }
+                outcome
+            }
+            _ => Outcome::NoMatch,
         }
-        _ => {}
     }
 }
 
@@ -184,12 +285,44 @@ mod tests {
         let exports = j(
             r#"{ ".": { "browser": "./src/dom.ts", "node": "./src/server.ts", "default": "./src/dom.ts" } }"#,
         );
+        assert_eq!(resolve(&exports, ".", SERVER).unwrap(), ["./src/server.ts"]);
+        let nested = j(r#"{ "node": { "import": "./a.js" }, "default": "./b.js" }"#);
+        assert_eq!(resolve(&nested, ".", SERVER).unwrap(), ["./a.js"]);
+        // A nested object without a match goes on with the next condition, as in Node.
+        let nested = j(r#"{ "node": { "require": "./a.cjs" }, "default": "./b.js" }"#);
+        assert_eq!(resolve(&nested, ".", SERVER).unwrap(), ["./b.js"]);
+    }
+
+    #[test]
+    fn only_the_first_matching_condition_besides_hints() {
+        // #1091 review: `default` after `node` is not a fallback for `node`'s target.
+        let exports =
+            j(r#"{ ".": { "node": "./dist/server.js", "default": "./dist/client.js" } }"#);
+        let t = resolve_targets(&exports, ".", SERVER).unwrap();
+        assert_eq!(t.all, ["./dist/server.js"]);
+        assert_eq!(
+            t.runtime,
+            Some(("node".to_string(), "./dist/server.js".to_string()))
+        );
+        // `types` is a hint wherever written; `velt` too, and it stands for a match.
+        let exports =
+            j(r#"{ "import": "./dist/a.js", "default": "./dist/b.js", "types": "./dist/a.d.ts" }"#);
         assert_eq!(
             resolve(&exports, ".", SERVER).unwrap(),
-            ["./src/server.ts", "./src/dom.ts"]
+            ["./dist/a.js", "./dist/a.d.ts"]
         );
-        let nested = j(r#"{ "node": { "import": "./a.js" }, "default": "./b.js" }"#);
-        assert_eq!(resolve(&nested, ".", SERVER).unwrap(), ["./a.js", "./b.js"]);
+        let velt = j(r#"{ "velt": "./src/velt.ts", "node": "./dist/n.js" }"#);
+        let t = resolve_targets(&velt, ".", &["velt", "types", "node"]).unwrap();
+        assert_eq!(t.all, ["./src/velt.ts"]);
+        assert_eq!(t.runtime, None);
+        // Only a hint, nothing Node loads: not exported.
+        let types_only = j(r#"{ "types": "./a.d.ts", "require": "./a.cjs" }"#);
+        assert_eq!(
+            resolve(&types_only, ".", SERVER),
+            Err(ExportsError::NotExported)
+        );
+        let null = j(r#"{ "types": "./a.d.ts", "node": null, "default": "./a.js" }"#);
+        assert_eq!(resolve(&null, ".", SERVER), Err(ExportsError::NotExported));
     }
 
     #[test]

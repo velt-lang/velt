@@ -89,15 +89,25 @@ fn unquote(s: &str) -> String {
         .to_string()
 }
 
+/// The most directories one [`package_dirs`] call lists: a workspace glob over a huge tree
+/// stops there instead of taking minutes.
+pub const MAX_DIRS: usize = 20_000;
+
 /// The directories below `root` that `patterns` select (each holding a `package.json`): `*`
 /// matches one directory name, `**` any number of them, and a pattern starting with `!`
-/// excludes what it matches. `node_modules` and hidden directories are never entered.
+/// excludes what it matches. `node_modules` and hidden directories are never entered, `**` does
+/// not enter symlinked directories (a link back up would never end), and at most [`MAX_DIRS`]
+/// directories are listed.
 pub fn package_dirs(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = vec![];
+    let mut walk = Walk {
+        out: vec![],
+        listed: 0,
+    };
     for pattern in patterns.iter().filter(|p| !p.starts_with('!')) {
         let parts = split(pattern);
-        expand(root, &parts, &mut out);
+        walk.expand(root, &parts);
     }
+    let mut out = walk.out;
     for pattern in patterns.iter().filter_map(|p| p.strip_prefix('!')) {
         let parts = split(pattern);
         out.retain(|dir| {
@@ -117,53 +127,67 @@ fn split(pattern: &str) -> Vec<&str> {
         .collect()
 }
 
-fn expand(dir: &Path, parts: &[&str], out: &mut Vec<PathBuf>) {
-    let Some((first, rest)) = parts.split_first() else {
-        if !out.iter().any(|d| d == dir) {
-            out.push(dir.to_path_buf());
-        }
-        return;
-    };
-    if *first == "**" {
-        expand(dir, rest, out);
-        for child in children(dir) {
-            expand(&child, parts, out);
-        }
-        return;
-    }
-    if !first.contains('*') {
-        if *first == ".." {
-            return;
-        }
-        let child = dir.join(first);
-        if child.is_dir() {
-            expand(&child, rest, out);
-        }
-        return;
-    }
-    for child in children(dir) {
-        let name = child.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if segment_match(first, name) {
-            expand(&child, rest, out);
-        }
-    }
+struct Walk {
+    out: Vec<PathBuf>,
+    /// Directories listed so far (at most [`MAX_DIRS`]).
+    listed: usize,
 }
 
-/// The subdirectories of `dir` a workspace glob may enter, sorted by name.
-fn children(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return vec![];
-    };
-    let mut dirs: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            p.is_dir() && name != "node_modules" && !name.starts_with('.')
-        })
-        .collect();
-    dirs.sort();
-    dirs
+impl Walk {
+    fn expand(&mut self, dir: &Path, parts: &[&str]) {
+        let Some((first, rest)) = parts.split_first() else {
+            if !self.out.iter().any(|d| d == dir) {
+                self.out.push(dir.to_path_buf());
+            }
+            return;
+        };
+        if *first == "**" {
+            self.expand(dir, rest);
+            for child in self.children(dir, false) {
+                self.expand(&child, parts);
+            }
+            return;
+        }
+        if !first.contains('*') {
+            if *first == ".." {
+                return;
+            }
+            let child = dir.join(first);
+            if child.is_dir() {
+                self.expand(&child, rest);
+            }
+            return;
+        }
+        for child in self.children(dir, true) {
+            let name = child.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if segment_match(first, name) {
+                self.expand(&child, rest);
+            }
+        }
+    }
+
+    /// The subdirectories of `dir` a workspace glob may enter, sorted by name; symlinked ones
+    /// only with `links`. None once [`MAX_DIRS`] directories have been listed.
+    fn children(&mut self, dir: &Path, links: bool) -> Vec<PathBuf> {
+        if self.listed >= MAX_DIRS {
+            return vec![];
+        }
+        self.listed += 1;
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return vec![];
+        };
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| links || e.file_type().is_ok_and(|t| !t.is_symlink()))
+            .map(|e| e.path())
+            .filter(|p| {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                p.is_dir() && name != "node_modules" && !name.starts_with('.')
+            })
+            .collect();
+        dirs.sort();
+        dirs
+    }
 }
 
 fn glob_match(parts: &[&str], segs: &[&str]) -> bool {

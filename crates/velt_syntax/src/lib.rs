@@ -10,8 +10,11 @@ mod lexer;
 #[cfg(test)]
 mod linear_tests;
 mod parser;
+pub mod scope;
 pub mod visit;
 mod work;
+
+use std::collections::HashMap;
 
 use velt_common::{Diagnostics, FileId};
 
@@ -34,15 +37,15 @@ pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
     (module, diags)
 }
 
-/// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
 /// What [`parse_with`] reads besides the source.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ParseOptions<'a> {
     /// A plain `.ts` file (as [`parse_ts_file`]).
     pub plain_ts: bool,
     /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
-    /// expression of one of these names parses as the literal.
-    pub defines: Option<&'a std::collections::HashMap<String, ast::Lit>>,
+    /// expression of one of these names that nothing in its scope declares parses as the
+    /// literal ([`scope::free_values`]).
+    pub defines: Option<&'a HashMap<String, ast::Lit>>,
 }
 
 /// An ambient variable declaration: `declare const NAME: T;`, or `var NAME: T;` in
@@ -53,6 +56,8 @@ pub struct Ambient {
     /// The declared type (`None`: none written).
     pub ty: Option<ast::TypeExpr>,
     pub span: velt_common::Span,
+    /// Declared in `declare global { … }`.
+    pub global: bool,
 }
 
 /// [`parse_with`]'s result.
@@ -61,29 +66,53 @@ pub struct Parsed {
     pub diags: Diagnostics,
     /// The ambient variable declarations, in source order; they are not items of `module`.
     pub ambient: Vec<Ambient>,
+    /// The source has `import` or `export` at its top level: it is a module, whose ambient
+    /// declarations outside `declare global` are its own, not global (as in TypeScript).
+    pub is_module: bool,
 }
 
 /// Parse a module as the compiler loads it: with `opts`, and with ambient declarations
 /// (`declare const`, `declare global`) returned in [`Parsed::ambient`] instead of being
 /// errors.
 pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
-    on_parser_thread(|| {
-        let mut parser = parser::Parser::new(file, src);
-        parser.plain_ts = opts.plain_ts;
-        parser.defines = opts.defines;
-        parser.ambient = Some(vec![]);
-        let module = parser.parse_module();
-        let ambient = parser.ambient.take().unwrap_or_default();
-        let (mut diags, _) = parser.finish();
-        diags.sort_by_key(|d| d.labels.first().map_or(0, |l| l.span.lo));
-        Parsed {
-            module,
-            diags,
-            ambient,
-        }
-    })
+    let parse = |define_at: &HashMap<u32, ast::Lit>| {
+        on_parser_thread(|| {
+            let mut parser = parser::Parser::new(file, src);
+            parser.plain_ts = opts.plain_ts;
+            parser.define_at = Some(define_at);
+            parser.ambient = Some(vec![]);
+            let module = parser.parse_module();
+            let ambient = parser.ambient.take().unwrap_or_default();
+            let is_module = parser.saw_module_syntax;
+            let (mut diags, _) = parser.finish();
+            diags.sort_by_key(|d| d.labels.first().map_or(0, |l| l.span.lo));
+            Parsed {
+                module,
+                diags,
+                ambient,
+                is_module,
+            }
+        })
+    };
+    let none = HashMap::new();
+    let parsed = parse(&none);
+    let Some(defines) = opts.defines.filter(|d| !d.is_empty()) else {
+        return parsed;
+    };
+    // The references to replace are known once the module's scopes are: parse again,
+    // replacing them (rare: only modules that name a constant pay for it).
+    let define_at: HashMap<u32, ast::Lit> =
+        scope::free_values(&parsed.module, &|n| defines.contains_key(n))
+            .into_iter()
+            .map(|id| (id.span.lo, defines[id.name.as_str()].clone()))
+            .collect();
+    if define_at.is_empty() {
+        return parsed;
+    }
+    parse(&define_at)
 }
 
+/// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
 fn on_parser_thread<T: Send>(f: impl Fn() -> T + Sync) -> T {
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
