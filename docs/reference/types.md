@@ -1037,8 +1037,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
-  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. TypeScript's errors
-  for writing to them (`xs.push(x)`, `xs[0] = x`) are not reported yet.
+  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. A variable or
+  parameter declared with a read-only array type cannot be written through: a mutating method
+  (``property 'push' does not exist on type 'readonly number[]'``, TypeScript's TS2339, also
+  `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, `copyWithin`) and an element
+  assignment (`xs[0] = x`, TS2542) are errors; the elements' own fields may change
+  (`xs[0].n = 1`). The check follows the variable: a `readonly T[]` copied into a `T[]`
+  variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
   string]`. `Promise.all` over tuples of different types is not supported.

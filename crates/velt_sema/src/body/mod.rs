@@ -59,6 +59,7 @@ pub(crate) mod places;
 mod predicates;
 mod property_pattern;
 pub(crate) mod pure_init;
+mod readonly_arrays;
 pub(crate) mod recheck;
 pub(crate) mod recursion;
 pub(crate) mod returns;
@@ -203,6 +204,9 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: std::collections::HashSet<LocalId>,
+    /// Locals declared with a read-only array type (`readonly T[]`, `ReadonlyArray<T>`), which
+    /// the body may not write to (`readonly_arrays.rs`).
+    pub readonly_arrays: std::collections::HashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
     /// call `f(…)` fills in.
     pub closure_consts: std::collections::HashMap<LocalId, DefId>,
@@ -279,6 +283,7 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
+            readonly_arrays: Default::default(),
             closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],

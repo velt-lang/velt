@@ -268,6 +268,7 @@ impl FnCx<'_, '_> {
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
+            self.note_readonly_array(l, p.ty.as_ref());
             // An index from a std callback is a number in the body.
             let std_int = std_callback
                 .as_ref()

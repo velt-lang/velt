@@ -76,6 +76,7 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
+        self.readonly_method_call(&recv, &prop.name, prop.span);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };

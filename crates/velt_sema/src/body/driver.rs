@@ -381,6 +381,10 @@ impl FnCx<'_, '_> {
         for p in &f.params {
             // `mutable` is set when the body assigns or modifies the param (`mark_mutated`).
             let l = self.new_local(&p.name, p.ty, false, p.span, LocalKind::Param);
+            if let Some(crate::defs::FnSource::Decl(d)) = f.source {
+                let written = d.sig.params.iter().find(|q| q.name.name == p.name);
+                self.note_readonly_array(l, written.map(|q| &q.ty));
+            }
             self.f.scopes[0].names.entry(p.name.clone()).or_insert(l);
             self.rec_local_decl(l);
             params.push(hir::Param {
