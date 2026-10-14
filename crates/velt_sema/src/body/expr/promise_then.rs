@@ -67,7 +67,9 @@ impl FnCx<'_, '_> {
         } = &h.kind
         {
             let name = &self.cx.fn_info(*d).name;
-            return name.strip_prefix("std/prelude/promise::").is_some_and(is_promise_callback_fn);
+            return name
+                .strip_prefix("std/prelude/promise::")
+                .is_some_and(is_promise_callback_fn);
         }
         false
     }
@@ -174,7 +176,10 @@ impl FnCx<'_, '_> {
             }
             ("then", [(u, xf), (ug, xg)]) => {
                 if u != ug || xf != xg {
-                    let (a, b) = (self.cx.display(callbacks[0].0.ty), self.cx.display(callbacks[1].0.ty));
+                    let (a, b) = (
+                        self.cx.display(callbacks[0].0.ty),
+                        self.cx.display(callbacks[1].0.ty),
+                    );
                     self.cx.err(
                         format!("the callbacks of `then(onFulfilled, onRejected)` must give the same type and throw the same errors; found `{a}` and `{b}`"),
                         span,
@@ -182,7 +187,11 @@ impl FnCx<'_, '_> {
                     return self.error_expr(span);
                 }
                 let f = xf.unwrap_or(never);
-                let name = if all_async { "promiseThenElseAsync" } else { "promiseThenElse" };
+                let name = if all_async {
+                    "promiseThenElseAsync"
+                } else {
+                    "promiseThenElse"
+                };
                 (name, vec![t, e, *u, f], recv.ty, *u, f)
             }
             ("catch", [(u, xg)]) => {
@@ -195,7 +204,11 @@ impl FnCx<'_, '_> {
                     return self.error_expr(span);
                 }
                 let g = xg.unwrap_or(never);
-                let name = if all_async { "promiseCatchAsync" } else { "promiseCatch" };
+                let name = if all_async {
+                    "promiseCatchAsync"
+                } else {
+                    "promiseCatch"
+                };
                 (name, vec![t, e, g], recv.ty, t, g)
             }
             (_, [(r, x)]) => {

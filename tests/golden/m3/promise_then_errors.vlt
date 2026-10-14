@@ -16,19 +16,14 @@ async function cleanup(): Promise<void> {
 
 async function main() {
   // A rejection passes through `then` without a handler to `catch`.
-  const a = await fail("a")
-    .then((v) => v + 1)
-    .catch((e) => {
-      console.log(`caught ${e.message}`);
-      return -1;
-    });
+  const a = await fail("a").then((v) => v + 1).catch((e) => {
+    console.log(`caught ${e.message}`);
+    return -1;
+  });
   console.log(`a = ${a}`);
 
   // `then(onFulfilled, onRejected)`.
-  const b = await fail("b").then(
-    (v) => `value ${v}`,
-    (e) => `reason ${e.message}`,
-  );
+  const b = await fail("b").then((v) => `value ${v}`, (e) => `reason ${e.message}`);
   console.log(b);
 
   // An error a callback throws rejects the next promise.

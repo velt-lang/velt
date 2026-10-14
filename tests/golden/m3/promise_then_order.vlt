@@ -25,9 +25,7 @@ async function chains() {
 }
 
 async function flattening() {
-  const r = await value(5)
-    .then((v) => value(v * 10))
-    .then((v) => v + 1);
+  const r = await value(5).then((v) => value(v * 10)).then((v) => v + 1);
   console.log(`flattened ${r}`);
 }
 

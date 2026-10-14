@@ -341,7 +341,10 @@ async function settledOf<T, E>(p: Promise<T, E>): Promise<PromiseSettledResult<T
 // and whether it can fail.
 
 /** `p.then(f)`: `f` returns a value and does not throw. */
-export async function promiseThen<T, E, U>(p: Promise<T, E>, f: (value: T) => U): Promise<U> throws E {
+export async function promiseThen<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => U,
+): Promise<U> throws E {
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
