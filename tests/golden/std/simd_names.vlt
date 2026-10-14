@@ -1,0 +1,40 @@
+// Types named like the SIMD types: a declaration or import of the module wins over the built-in
+// type (#1055); the built-in is used where none is in scope.
+
+import { dot, describe, mask8x16, u8x16, type f32x4, type i32x4 } from "./_simd_names";
+
+type u16x8 = { label: string };
+
+interface i64x2 {
+  first: i64;
+  second: i64;
+}
+
+enum f64x2 {
+  Low = 1,
+  High = 2,
+}
+
+class mask32x4 {
+  constructor(public bits: number) {}
+}
+
+function sum(v: i64x2): i64 {
+  return v.first + v.second;
+}
+
+function main() {
+  const a: f32x4 = [1, 2, 3, 4];
+  console.log(dot(a, a));
+  const v: u8x16 = u8x16.splat(7);
+  console.log(v.bytes.length, v.bytes[15]);
+  const w: i32x4 = { lanes: [1, 2, 3, 4] };
+  console.log(describe(mask8x16.All, w));
+  const l: u16x8 = { label: "eight" };
+  console.log(l.label, sum({ first: 40, second: 2 }), f64x2.High as i32);
+  console.log(new mask32x4(5).bits);
+  // Not declared here: the built-in types.
+  const b = u32x4.splat(3).add(u32x4.splat(4));
+  const m: mask16x8 = i16x8.splat(1).lt(i16x8.splat(2));
+  console.log(b.lane(3), m.all());
+}

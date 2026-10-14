@@ -292,8 +292,8 @@ fn fits(b: &mut Body, n: u32) -> String {
     b.inst(format!("zext i1 {both} to i8"))
 }
 
-/// Address of element `%a{array + 1}` of the array whose header `%a{array}` points to (its
-/// first word is the buffer, rt_abi.md "Arrays").
+/// Address of element `%a{array + 1}` of the array whose header `%a{array}` points to (the
+/// `{ data, len, cap }` header of docs/internals/design/semantics-stage2.md).
 fn element(b: &mut Body, lane: &str, array: usize) -> String {
     let data = b.inst(format!("load ptr, ptr %a{array}, align 8"));
     b.inst(format!(

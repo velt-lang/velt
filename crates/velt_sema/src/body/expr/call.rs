@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
         let js_api = self.is_js_api(d);
+        let positions = js_numbers && super::numbers::is_simd_method(&f.name);
         let rest = f.source.is_some_and(|s| {
             crate::body::defaults::fn_sig_ast(s)
                 .params
@@ -143,6 +144,7 @@ impl FnCx<'_, '_> {
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
             js_numbers,
+            positions,
             js_api,
             rest,
             defaults: f.generics.defaults.clone(),
@@ -294,6 +296,7 @@ impl FnCx<'_, '_> {
             slot_names: vec![],
             bounds: vec![],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],

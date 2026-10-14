@@ -286,5 +286,5 @@ files = {
  "simd_floats.vlt": ("float lanes", [t for t in TYPES if isf(t[0])]),
 }
 for fn,(what,ts) in files.items():
-    open(f"{OUT}/{fn}","w").write(HEAD.format(what=what)+"\n"+"\n".join(vector(l,n) for l,n in ts))
-open(f"{OUT}/simd_masks.vlt","w").write(HEAD.format(what="masks")+"\n"+"\n".join(maskty(b,128//b) for b in (8,16,32,64)))
+    open(f"{OUT}/{fn}","w",encoding="utf-8",newline="\n").write(HEAD.format(what=what)+"\n"+"\n".join(vector(l,n) for l,n in ts))
+open(f"{OUT}/simd_masks.vlt","w",encoding="utf-8",newline="\n").write(HEAD.format(what="masks")+"\n"+"\n".join(maskty(b,128//b) for b in (8,16,32,64)))

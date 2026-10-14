@@ -334,9 +334,11 @@ A SIMD vector holds several numbers of one type, its *lanes*, and an operation o
 all of them with one CPU instruction: a `u8x16` is sixteen `u8`, an `f32x4` four `f32`. The
 types are `i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`, each 128 bits, which
 every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU flag, in debug
-and release builds. A WebAssembly program that uses vectors needs an engine with WebAssembly
-SIMD (every current browser and runtime); other programs are built without it, as before. Like the integer widths, they are Velt's own:
-code shared with TypeScript does not name them.
+and release builds. On WebAssembly they are `v128` values: WebAssembly SIMD is part of Velt's
+WebAssembly baseline, and a program that uses vectors needs an engine with it (every current
+browser and runtime). Like the integer widths, they are Velt's own: code shared with TypeScript
+does not name them, and a type the program declares or imports under one of these names (as
+TypeScript code may) takes precedence over the built-in one.
 
 A vector is a value like a number: it is copied when assigned or passed, lives in a register,
 and can be a field, an array element, `T | null` or a `Map` value. Its operations are methods

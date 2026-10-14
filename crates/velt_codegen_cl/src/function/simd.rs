@@ -209,8 +209,8 @@ impl<M: Module> Translator<'_, '_, M> {
         self.builder.ins().band(no_wrap, inside)
     }
 
-    /// Address of element `at` of the array whose header `array` points to (its first word is
-    /// the buffer, rt_abi.md "Arrays").
+    /// Address of element `at` of the array whose header `array` points to (the `{ data, len, cap }`
+    /// header of docs/internals/design/semantics-stage2.md).
     fn simd_element(&mut self, lanes: Lanes, array: ir::Value, at: ir::Value) -> ir::Value {
         let data = self.builder.ins().load(types::I64, mem_flags(), array, 0);
         let offset = self.builder.ins().imul_imm(at, i64::from(lanes.bits() / 8));

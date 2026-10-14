@@ -204,7 +204,11 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
-        if let Some(p) = self.ty.primitive(name) {
+        // The SIMD type names (`u8x16`) came after TypeScript code could already use them: a
+        // declaration or import of the module wins over the built-in (#1055).
+        let declared = crate::hir::SimdTy::named(name).is_some()
+            && self.lookup_item_at(env.module, name, t.span).is_some();
+        if let Some(p) = self.ty.primitive(name).filter(|_| !declared) {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),

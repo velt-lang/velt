@@ -158,5 +158,5 @@ function main() {""")
         T=f"{l}x{n}"
         o.append(f"  console.log(\"{T}\", test{tname(T)}(), \"checks\");")
     o.append("}")
-    open(f"{OUT}/simd_ints.vlt","w").write("\n".join(o)+"\n")
+    open(f"{OUT}/simd_ints.vlt","w",encoding="utf-8",newline="\n").write("\n".join(o)+"\n")
 ints()
