@@ -1,16 +1,24 @@
-//! The per-thread side table: weakly held objects, the weak maps and the `WeakRef` slots.
+//! The side table: weakly held objects, the weak maps and the `WeakRef` slots.
 //!
-//! Weakly held objects and weak handles are thread-bound (the compiler keeps weak-capable types
-//! out of transfers and `shared<T>`; a release on another thread finds no record and is an ICE),
-//! so the table is thread-local and unlocked. No borrow of it is held while generated code runs
-//! (value retains and releases; trace glue runs only inside `trial`, which reads the table and
-//! never re-enters it).
+//! One table for the process, behind a lock. A weakly held object is used by one task at a time
+//! (weak-capable types are never atomic, and sema keeps weak handles out of transfers), but a
+//! task moves between worker threads at an `await`, and an object reached through a `shared`
+//! `Mutex` is released by whichever task holds the lock: so map ids, `WeakRef` slots and object
+//! records must mean the same on every thread. The lock is taken only on cold paths (weak map
+//! and `WeakRef` operations, and releases of objects with [`RC_WEAK`] set); programs without
+//! weak collections never touch it.
+//!
+//! Lock discipline: `with` never runs generated code that could re-enter it. Value retains and
+//! releases run after the lock is released (`release_values`, `velt_rt_weakmap_get`); trace glue
+//! runs under the lock (in `trial`) but only reads fields and calls `visit`, which records into
+//! a local graph. A re-entry would deadlock, so `with` turns it into an ICE instead.
 
 use super::trial::{self, Contribution};
-use super::{not_held_here, rc_word, ReleaseFn, RetainFn, TraceFn, RC_COUNT, RC_WEAK};
+use super::{no_record, rc_word, ReleaseFn, RetainFn, TraceFn, RC_COUNT, RC_WEAK};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::{Mutex, PoisonError};
 
 /// A weak map's handle.
 pub type MapId = u32;
@@ -81,7 +89,7 @@ pub(super) struct MapData {
     pub(super) entries: AddrMap<Entry>,
 }
 
-/// This thread's weak state.
+/// The process's weak state.
 #[derive(Default)]
 pub(super) struct State {
     pub(super) nodes: AddrMap<Node>,
@@ -91,17 +99,49 @@ pub(super) struct State {
     free_refs: Vec<RefId>,
 }
 
+static STATE: Mutex<State> = Mutex::new(State {
+    nodes: HashMap::with_hasher(BuildHasherDefault::new()),
+    maps: Vec::new(),
+    free_maps: Vec::new(),
+    refs: Vec::new(),
+    free_refs: Vec::new(),
+});
+
+// A cascade (the releases `release_values` runs) is synchronous code: drop glue never awaits,
+// so it starts and ends on one thread, and these are per thread. Two threads may run cascades
+// at once over different objects; each defers only its own trials.
 thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State::default());
     /// Value releases under way: trials wait until the outermost finishes (`PENDING`).
     static CASCADE: Cell<u32> = const { Cell::new(0) };
     /// Objects that reached their hint during a cascade, tried once it ends.
     static PENDING: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// This thread holds the table's lock (a re-entry would deadlock).
+    static LOCKED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Runs `f` on this thread's state.
+/// Runs `f` with the table locked. `f` must not call back into `with` (module docs).
 pub(super) fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|s| f(&mut s.borrow_mut()))
+    struct Unlocked;
+    impl Drop for Unlocked {
+        fn drop(&mut self) {
+            LOCKED.with(|l| l.set(false));
+        }
+    }
+    assert!(
+        !LOCKED.with(|l| l.replace(true)),
+        "ICE: the weak table was re-entered while locked"
+    );
+    let _unlocked = Unlocked;
+    // A panic under the lock is an ICE that unwinds out of the program (or a test); the table
+    // is not left half-updated by any path that panics, so a poisoned lock is still usable.
+    let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    f(&mut state)
+}
+
+/// Empties the table (tests: each starts from a clean one).
+#[cfg(test)]
+pub(super) fn reset() {
+    with(|s| *s = State::default());
 }
 
 impl State {
@@ -137,6 +177,10 @@ impl State {
                 m
             }
             None => {
+                if self.maps.is_empty() {
+                    // Id 0 is never a map: generated code keeps it for "not created yet".
+                    self.maps.push(None);
+                }
                 self.maps.push(Some(data));
                 (self.maps.len() - 1) as MapId
             }
@@ -236,7 +280,7 @@ impl State {
     }
 
     /// `obj` is about to be freed: it leaves every map, entry record and `WeakRef`. Returns the
-    /// values of its entries to release (`None`: this thread has no record of `obj`).
+    /// values of its entries to release (`None`: there is no record of `obj`).
     pub(super) fn forget(&mut self, obj: *mut u8) -> Option<Vec<(ReleaseFn, u64)>> {
         let o = obj as usize;
         let node = self.nodes.remove(&o)?;
@@ -264,6 +308,10 @@ impl State {
                 r
             }
             None => {
+                if self.refs.is_empty() {
+                    // Id 0 is never a `WeakRef` slot (as for maps).
+                    self.refs.push(None);
+                }
                 self.refs.push(Some(obj as usize));
                 (self.refs.len() - 1) as RefId
             }
@@ -323,56 +371,72 @@ pub(super) fn release_values(values: Vec<(ReleaseFn, u64)>) {
 }
 
 /// Decrements the count of `obj` (weakly held, count above 1); if that leaves it at or below its
-/// hint, tries whether its cycle is garbage (now, or once the cascade under way ends). A thread
-/// with no record of `obj` is an ICE, reported before the count changes.
+/// hint, tries whether its cycle is garbage (now, or once the cascade under way ends). No record of
+/// `obj` is an ICE, reported before the count changes.
 ///
 /// # Safety
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
 pub(super) unsafe fn decrement(obj: *mut u8) {
     let o = obj as usize;
-    let hint = with(|s| s.nodes.get(&o).map(|n| n.hint.max(n.observed)));
-    let Some(hint) = hint else { not_held_here(obj) };
-    let rc = rc_word(obj);
-    *rc -= 1;
-    if *rc & RC_COUNT > u64::from(hint) {
-        return;
-    }
-    if CASCADE.with(Cell::get) > 0 {
-        PENDING.with(|p| {
-            let mut p = p.borrow_mut();
-            if !p.contains(&o) {
-                p.push(o);
-            }
-        });
-    } else {
-        try_free(o);
-    }
+    let cascade = CASCADE.with(Cell::get) > 0;
+    // One acquisition: the record check, the decrement and (outside a cascade) the trial.
+    let values = with(|s| {
+        let n = s.nodes.get(&o)?;
+        let hint = n.hint.max(n.observed);
+        // SAFETY: as for the function; the count changes under the lock, like `deref`'s increment.
+        let left = unsafe {
+            let rc = rc_word(obj);
+            *rc -= 1;
+            *rc & RC_COUNT
+        };
+        if left > u64::from(hint) {
+            return Some(Vec::new());
+        }
+        if cascade {
+            PENDING.with(|p| {
+                let mut p = p.borrow_mut();
+                if !p.contains(&o) {
+                    p.push(o);
+                }
+            });
+            return Some(Vec::new());
+        }
+        Some(trial_locked(s, o))
+    });
+    let Some(values) = values else { no_record(obj) };
+    release_values(values);
 }
 
-fn at_hint(o: usize) -> bool {
-    with(|s| match s.nodes.get(&o) {
+fn at_hint(s: &State, o: usize) -> bool {
+    match s.nodes.get(&o) {
         // SAFETY: a recorded object is live.
         Some(n) => {
             (unsafe { *rc_word(o as *mut u8) & RC_COUNT }) <= u64::from(n.hint.max(n.observed))
         }
         None => false,
-    })
+    }
+}
+
+/// The trial from `o` with the table locked: the values of the dead keys' entries to release.
+fn trial_locked(s: &mut State, o: usize) -> Vec<(ReleaseFn, u64)> {
+    let trial = trial::run(s, o);
+    for c in trial.observed {
+        s.node(c.obj, c.trace).observed = c.refs;
+    }
+    let dead = trial.dead.into_iter();
+    dead.flat_map(|(m, k)| s.delete(m, k as *mut u8).unwrap_or_default())
+        .collect()
 }
 
 /// Runs a trial deletion from `o` (a live recorded object) and deletes the entries of every key
 /// it finds dead, which frees the cycle.
 fn try_free(o: usize) {
-    if !at_hint(o) {
-        return;
-    }
     let values = with(|s| {
-        let trial = trial::run(s, o);
-        for c in trial.observed {
-            s.node(c.obj, c.trace).observed = c.refs;
+        if at_hint(s, o) {
+            trial_locked(s, o)
+        } else {
+            Vec::new()
         }
-        let dead = trial.dead.into_iter();
-        dead.flat_map(|(m, k)| s.delete(m, k as *mut u8).unwrap_or_default())
-            .collect()
     });
     release_values(values);
 }

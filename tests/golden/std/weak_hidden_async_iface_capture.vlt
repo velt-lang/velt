@@ -1,0 +1,10 @@
+// An async closure capturing an interface value holding a WeakMap.
+class K { n: number; constructor(n: number) { this.n = n; } }
+interface Put { put(k: K): void; }
+class P implements Put { wm: WeakMap<K, number>; constructor() { this.wm = new WeakMap<K, number>(); } put(k: K): void { this.wm.set(k, 1); } }
+async function main() {
+  const p: Put = new P();
+  const k = new K(1);
+  await spawn(async () => { p.put(k); return 1; });
+  console.log(k.n);
+}

@@ -38,7 +38,7 @@ pub(crate) use exclusive::check_exclusive;
 pub(crate) use infer::infer_modes;
 pub(crate) use local_async::infer_local_async;
 pub(crate) use local_closures::{demote_local_closures, held_closures};
-pub(crate) use locked::check_locked;
+pub(crate) use locked::{check_locked, WeakCrossings};
 pub(crate) use many::check_many_threads;
 pub(crate) use shares::soften_moves;
 pub(crate) use soft::clone_reused;

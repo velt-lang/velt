@@ -1,0 +1,31 @@
+// URL parsing off the short ASCII path of `url_parse`: URLs with a character that is not ASCII
+// in the path, the query or the fragment, a query of 500 characters, a path of 1000, a `data:`
+// URL of 1000, and an opaque URL that is not ASCII. 700 distinct URLs, 40 times. The Rust port
+// uses the `url` crate.
+import { URL } from "velt:url";
+
+function main() {
+  const shapes = [
+    "https://example.com/café/menü",
+    "https://example.com/search?q=café",
+    "https://example.com/page#über",
+    `https://example.com/${"abcdefghij".repeat(100)}é`,
+    `https://example.com/s?${"q=abcdefg&".repeat(50)}`,
+    `data:text/plain,${"abcdefghij".repeat(100)}`,
+    "mailto:üser@example.com",
+  ];
+  const urls: string[] = [];
+  for (let k = 0; k < 100; k++) {
+    for (const shape of shapes) {
+      urls.push(`${shape}${k}`);
+    }
+  }
+  let total: i64 = 0;
+  for (let round = 0; round < 40; round++) {
+    for (const text of urls) {
+      const u = new URL(text);
+      total += (u.href.length + u.hostname.length + u.pathname.length + u.search.length) as i64;
+    }
+  }
+  console.log(total);
+}

@@ -220,7 +220,8 @@ impl FnLower<'_, '_> {
         let value = proj(&pp, Proj::Deref(payload));
         let glue = cfunc(self.cx.func(Work::Glue(Glue::QueuedDrop, ty)));
         let q = p.clone();
-        self.release(p, |lw| {
+        let weak = self.cx.weak_capable(ty);
+        self.release_as(p, weak, |lw| {
             let boxed = q.clone();
             lw.bracket(
                 |lw| lw.call_rt(Rt::DropQueue, vec![boxed, glue], None),

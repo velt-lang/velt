@@ -110,3 +110,65 @@ fn fields_borrowed_from_a_plain_variable_stay_uncounted() {
     );
     assert!(!c.iter().any(|t| t.starts_with("class")), "{c:?}");
 }
+
+/// The weak-capable types lowering settles on for `src` (`VELT_DEBUG_COUNTED=1`).
+fn weak_capable(src: &str) -> Vec<String> {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.vlt", "--emit", "vir"])
+        .env("VELT_DEBUG_COUNTED", "1")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let line = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("velt: weak-capable types:"))
+        .unwrap_or_else(|| panic!("no weak-capable types reported:\n{stderr}"));
+    line.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[test]
+fn weak_keys_and_what_weak_map_values_reach_are_weak_capable() {
+    let w = weak_capable(
+        "class Raw { n: number = 1; tag: Tag = new Tag(); }
+         class Tag { s: string = \"t\"; }
+         class Proxy { target: Raw; extras: Extra[] = []; constructor(t: Raw) { this.target = t; } }
+         class Extra { v: number = 2; }
+         class Other { v: number = 3; }
+         function main() {
+           const m = new WeakMap<Raw, Proxy>();
+           const r = new Raw();
+           const p = new Proxy(r);
+           const ex = new Extra();
+           p.extras.push(ex);
+           console.log(ex.v);
+           m.set(r, p);
+           const o = new Other();
+           const keep = [o, o];
+           console.log(m.has(r), keep.length);
+         }",
+    );
+    for t in ["class Raw", "class Proxy", "class Extra"] {
+        assert!(w.iter().any(|x| x == t), "{t} missing: {w:?}");
+    }
+    assert!(!w.iter().any(|x| x == "class Other"), "{w:?}");
+}
+
+#[test]
+fn programs_without_weak_collections_have_no_weak_capable_types() {
+    let w = weak_capable(
+        "class A { next: A | null = null; }
+         function main() {
+           const a = new A();
+           const b = a;
+           console.log(a === b);
+         }",
+    );
+    assert!(w.is_empty(), "{w:?}");
+}

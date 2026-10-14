@@ -1,0 +1,1 @@
+`Peek | null`, which holds a weak collection, cannot be returned from `with`

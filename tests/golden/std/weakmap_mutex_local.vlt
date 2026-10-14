@@ -1,0 +1,43 @@
+// check: no leaks
+// A weak map made inside `with` and dropped there may key on the locked value: it never leaves
+// the lock. Tasks on other threads then replace the keys.
+class K {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Box {
+  k: K;
+  constructor(k: K) {
+    this.k = k;
+  }
+}
+
+async function swap(m: shared<Mutex<Box>>, i: number): Promise<number> {
+  return m.with((v) => {
+    const seen = new WeakSet<K>();
+    seen.add(v.k);
+    v.k = new K(i);
+    return seen.has(v.k) ? 0 : i;
+  });
+}
+
+async function main() {
+  const m = shared(new Mutex<Box>(new Box(new K(5))));
+  const n = m.with((v) => {
+    const wm = new WeakMap<K, number>();
+    wm.set(v.k, 3);
+    return wm.get(v.k)!;
+  });
+  const ps: Promise<number>[] = [];
+  for (let i = 1; i < 9; i++) {
+    ps.push(spawn(swap(m.clone(), i)));
+  }
+  let t = 0;
+  for (const x of await Promise.all(ps)) {
+    t += x;
+  }
+  console.log(n, t);
+}

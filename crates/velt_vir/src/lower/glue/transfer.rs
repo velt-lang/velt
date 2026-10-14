@@ -40,6 +40,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     fn transfer_expand(&mut self, place: &Place, ty: TyId) {
+        if let Some(name) = self.cx.weak_class(ty) {
+            // Its slot in the runtime's weak table belongs to the thread that made it, so
+            // neither a move nor a copy is safe. Sema rejects the visible cases (velt_sema
+            // weak_threads.rs); this is one in a function value's environment, or behind a type
+            // sema could not see into (docs/internals/design/weak-refs.md).
+            self.panic_msg(&format!(
+                "a `{name}` cannot go to another thread (`spawn`, a channel, a timer, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: it belongs to the task that made it; make it on the task that uses it"
+            ));
+            return;
+        }
         if self.cx.boxed(ty) {
             return self.transfer_boxed(place, ty);
         }
@@ -237,12 +247,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.goto(now);
         }
         self.switch_to(now);
-        let c = self.count_place(v);
-        let n = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
-        );
-        self.assign(c, Rvalue::Use(n));
+        if self.cx.weak_capable(ty) {
+            // A weakly held object's count word is not its count (weak-refs.md): release it
+            // with the full sequence, which frees it if this was its last reference.
+            let p = self.operand_place(v, Ty::Ptr);
+            self.drop_glue(p, ty);
+        } else {
+            let c = self.count_place(v);
+            let n = self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
+            );
+            self.assign(c, Rvalue::Use(n));
+        }
         self.goto(done);
         self.switch_to(done);
         new

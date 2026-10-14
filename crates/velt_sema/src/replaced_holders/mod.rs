@@ -414,7 +414,8 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let slots = fn_slots(cx);
-    let im = Implicit::new(cx);
+    let weak = implicit::weak_entries(cx);
+    let im = Implicit::new(cx, weak);
     let mut fns: Vec<Option<Effects>> = (0..cx.defs.len()).map(|_| None).collect();
     let (mut values, mut methods) = (Vec::new(), Vec::new());
     let mut type_args: Vec<TyId> = Vec::new();

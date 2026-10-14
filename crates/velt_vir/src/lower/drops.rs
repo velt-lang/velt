@@ -133,7 +133,8 @@ impl FnLower<'_, '_> {
             lw.object_free(Operand::Copy(p.clone()), ty);
         };
         if self.cx.counted(ty) {
-            self.release(obj, free);
+            let weak = self.cx.weak_capable(ty);
+            self.release_as(obj, weak, free);
         } else {
             free(self);
         }

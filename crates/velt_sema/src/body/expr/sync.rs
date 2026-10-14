@@ -9,9 +9,9 @@ use velt_syntax::ast;
 
 use super::args::as_arrow;
 use crate::body::places::set_place_mode;
-use crate::body::{FnCx, Want};
+use crate::body::{FnCx, GenCopy, Want};
 use crate::ctx::Item;
-use crate::hir::{self, Intrinsic, TyId, TyKind, UseMode};
+use crate::hir::{self, Def, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     /// `new Mutex<T>(x)` when `Mutex` is the prelude's; `None` for any other `new`.
@@ -80,6 +80,9 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         };
+        if self.cx.holds_weak(ret) {
+            self.no_weak_copy(ret, GenCopy::LockResult, f.span);
+        }
         set_place_mode(&mut recv, UseMode::Borrow);
         self.intrinsic(Intrinsic::MutexWith, vec![recv, f], ret, span)
     }
@@ -96,6 +99,31 @@ impl FnCx<'_, '_> {
                     .with_note("it runs while the lock is held; await before or after `with`"),
             );
         }
-        self.closure(arrow, Some(expected), false)
+        let f = self.closure(arrow, Some(expected), false);
+        if let H::Closure(def) = f.kind {
+            self.no_weak_in_lock(def);
+        }
+        f
+    }
+
+    /// A `with` callback cannot use a weak collection from outside the lock: a part of the
+    /// locked value it keys (or targets) would be released, or read, by another thread without
+    /// the lock (docs/internals/design/weak-refs.md "Threads and `shared`"). Reports each capture
+    /// of closure `def` that holds one.
+    pub(crate) fn no_weak_in_lock(&mut self, def: DefId) {
+        let caps: Vec<(TyId, String, Span)> = match &self.cx.defs[def.0 as usize] {
+            Some(Def::Fn(f)) => f
+                .captures
+                .iter()
+                .map(|c| &f.body.locals[c.inner.0 as usize])
+                .map(|l| (l.ty, l.name.clone(), l.span))
+                .collect(),
+            _ => return,
+        };
+        for (ty, name, at) in caps {
+            if self.cx.holds_weak(ty) {
+                self.no_weak_copy(ty, GenCopy::LockCapture(name), at);
+            }
+        }
     }
 }

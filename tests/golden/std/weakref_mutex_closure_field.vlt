@@ -1,0 +1,23 @@
+// The guarded value holds a function; `with` stores a closure (made under the lock) that derefs
+// a WeakRef to main's object; tasks on other threads call it under the lock.
+class V { n: number; constructor(n: number) { this.n = n; } }
+class Box { f: () => number; constructor() { this.f = () => 0; } }
+async function look(m: shared<Mutex<Box>>, i: number): Promise<number> {
+  let s = 0;
+  for (let j = 0; j < 20000; j++) s += m.with((v) => v.f());
+  return s;
+}
+async function main() {
+  const m = shared(new Mutex<Box>(new Box()));
+  const keep = new V(7);
+  m.with((v) => { const r = new WeakRef(keep); v.f = () => { const x = r.deref(); if (x === null) return -1; return x.n; }; });
+  let total = 0;
+  for (let round = 0; round < 50; round++) {
+    const ps: Promise<number>[] = [];
+    for (let t = 1; t < 5; t++) ps.push(spawn(look(m.clone(), t)));
+    const a: V[] = [];
+    for (let j = 0; j < 200000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
+    for (const x of await Promise.all(ps)) { total += x; }
+  }
+  console.log(total, keep.n);
+}

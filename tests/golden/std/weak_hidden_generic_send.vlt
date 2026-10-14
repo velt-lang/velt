@@ -1,0 +1,10 @@
+// A channel send through a generic helper.
+import { channel, Channel } from "velt:channel";
+class V { n: number; constructor(n: number) { this.n = n; } }
+async function put<T>(ch: Channel<T>, x: T): Promise<void> { await ch.send(x); }
+async function main() {
+  const keep = new V(7);
+  const ch = channel<WeakRef<V>>(4);
+  await put(ch, new WeakRef(keep));
+  console.log(keep.n);
+}
