@@ -1,0 +1,24 @@
+// Velt's own type names (`u8`, `f32`, `bool`, …) are shadowed by a declaration or import of the
+// module, as a library global is in TypeScript (#1074). `_shadow_type_names.ts` declares all of
+// them; this module imports two and uses the built-in types for the others.
+
+import { describe, f32, i64 } from "./_shadow_type_names";
+
+// A value does not shadow a type: `f64` is still Velt's type here.
+function f64(x: number): number {
+  return x * 2;
+}
+
+function main() {
+  console.log(describe());
+  // Imported: the declarations of `_shadow_type_names.ts`.
+  const f: f32 = new f32(2).twice();
+  const level: i64 = i64.High;
+  console.log(f.bits, level);
+  // Not declared here: Velt's types, which wrap at their width.
+  const byte: u8 = 255;
+  const word: u16 = 65535;
+  const flag: bool = byte == 255;
+  const doubled: f64 = f64(2.25);
+  console.log(byte + 1, word + 1, flag, (300 as u8) + 2, doubled);
+}

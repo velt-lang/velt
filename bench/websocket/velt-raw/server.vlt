@@ -1,0 +1,419 @@
+// A WebSocket server written in Velt on std/net (bench/websocket/README.md): its own HTTP/1.1
+// handshake and RFC 6455 framing, no tungstenite.
+//   /echo   sends every message back to its sender
+//   /bcast  sends every message to every connection on /bcast: the frame is encoded once, and
+//           each connection's writer task sends everything queued for it in one write (corking)
+// Usage: server [port]; env PORT, HOST (127.0.0.1), READ_MAX (bytes per read, default 16384).
+
+import { listen, TcpListener, TcpStream } from "velt:net";
+import { availableParallelism } from "velt:os";
+import { IoError } from "velt:io";
+import { args } from "velt:process";
+import { sha1 } from "velt:crypto";
+import { base64Encode, utf8Encode, utf8Decode, utf8Valid } from "velt:encoding";
+import { channel, Channel } from "velt:channel";
+
+const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const MAX_MESSAGE: i64 = 16 * 1024 * 1024;
+
+const OP_CONT: i64 = 0;
+const OP_TEXT: i64 = 1;
+const OP_BINARY: i64 = 2;
+const OP_CLOSE: i64 = 8;
+const OP_PING: i64 = 9;
+const OP_PONG: i64 = 10;
+
+type Room = shared<Mutex<Map<i64, Channel<u8[]>>>>;
+
+// One frame from the client, unmasked.
+struct Frame {
+  fin: bool;
+  opcode: i64;
+  payload: u8[];
+}
+
+// Buffered reads from one connection.
+class Reader {
+  stream: TcpStream;
+  buf: u8[] = [];
+  pos: i64 = 0;
+  readMax: u64;
+
+  constructor(stream: TcpStream, readMax: u64) {
+    this.stream = stream;
+    this.readMax = readMax;
+  }
+
+  // Reads more bytes into `buf`; false at end of stream.
+  async fill(): Promise<bool> {
+    const chunk = await this.stream.read(this.readMax);
+    if (chunk.length == 0) {
+      return false;
+    }
+    if (this.pos >= this.buf.length) {
+      this.buf = chunk;
+      this.pos = 0;
+    } else {
+      if (this.pos > 0) {
+        this.buf = this.buf.slice(this.pos);
+        this.pos = 0;
+      }
+      this.buf = this.buf.concat(chunk);
+    }
+    return true;
+  }
+
+  // Marks `n` bytes as used; a drained buffer is dropped, so an idle connection keeps none.
+  consume(n: i64) {
+    this.pos += n;
+    if (this.pos == (this.buf.length as i64)) {
+      this.buf = [];
+      this.pos = 0;
+    }
+  }
+
+  available(): i64 {
+    return (this.buf.length as i64) - this.pos;
+  }
+
+  byteAt(i: i64): i64 {
+    return this.buf[this.pos + i] as i64;
+  }
+
+  // The HTTP request head (up to the blank line), or null if the peer went away first.
+  async head(): Promise<string | null> {
+    while (true) {
+      const text = utf8Decode(this.buf.slice(this.pos));
+      const end = text.indexOf("\r\n\r\n");
+      if (end >= 0) {
+        this.consume((end as i64) + 4);
+        return text.slice(0, end);
+      }
+      if (this.available() > 16384 || !(await this.fill())) {
+        return null;
+      }
+    }
+  }
+
+  // The next frame, or null at end of stream or on a protocol error.
+  async frame(): Promise<Frame | null> {
+    while (true) {
+      const f = this.parse();
+      if (f != null) {
+        return f;
+      }
+      if (this.available() > MAX_MESSAGE + 14 || !(await this.fill())) {
+        return null;
+      }
+    }
+  }
+
+  // Whether `buf` holds a whole unfragmented text or binary frame (one `parse` can take without
+  // reading, and that `message` handles without control replies).
+  hasPlainFrame(): bool {
+    const n = this.available();
+    if (n < 2) {
+      return false;
+    }
+    const b0 = this.byteAt(0);
+    const op = b0 & 0x0f;
+    if ((b0 & 0x80) == 0 || (op != OP_TEXT && op != OP_BINARY)) {
+      return false;
+    }
+    let len = this.byteAt(1) & 0x7f;
+    let at: i64 = 2;
+    if (len == 126) {
+      if (n < 4) {
+        return false;
+      }
+      len = (this.byteAt(2) << 8) | this.byteAt(3);
+      at = 4;
+    } else if (len == 127) {
+      return false;
+    }
+    if ((this.byteAt(1) & 0x80) != 0) {
+      at += 4;
+    }
+    return n >= at + len;
+  }
+
+  // A whole frame from `buf`, or null if it holds only part of one.
+  parse(): Frame | null {
+    const n = this.available();
+    if (n < 2) {
+      return null;
+    }
+    const b0 = this.byteAt(0);
+    const b1 = this.byteAt(1);
+    let len = b1 & 0x7f;
+    let at: i64 = 2;
+    if (len == 126) {
+      if (n < 4) {
+        return null;
+      }
+      len = (this.byteAt(2) << 8) | this.byteAt(3);
+      at = 4;
+    } else if (len == 127) {
+      if (n < 10) {
+        return null;
+      }
+      len = 0;
+      for (let i: i64 = 2; i < 10; i++) {
+        len = (len << 8) | this.byteAt(i);
+      }
+      at = 10;
+    }
+    const masked = (b1 & 0x80) != 0;
+    const maskAt = at;
+    if (masked) {
+      at += 4;
+    }
+    if (n < at + len) {
+      return null;
+    }
+    const start = this.pos + at;
+    const payload = this.buf.slice(start, start + len);
+    if (masked) {
+      const mask = ((this.byteAt(maskAt) << 24) | (this.byteAt(maskAt + 1) << 16) |
+        (this.byteAt(maskAt + 2) << 8) | this.byteAt(maskAt + 3)) as u32;
+      payload.xorMask(mask);
+    }
+    this.consume(at + len);
+    return Frame { fin: (b0 & 0x80) != 0, opcode: b0 & 0x0f, payload: payload };
+  }
+}
+
+// A server frame (unmasked, FIN set) carrying `payload`.
+function encode(opcode: i64, payload: u8[]): u8[] {
+  const len = payload.length as i64;
+  const head: i64 = len < 126 ? 2 : len < 65536 ? 4 : 10;
+  const out = Buffer.alloc((head + len) as usize);
+  out[0] = (0x80 | opcode) as u8;
+  if (len < 126) {
+    out[1] = len as u8;
+  } else if (len < 65536) {
+    out[1] = 126u8;
+    out[2] = ((len >> 8) & 0xff) as u8;
+    out[3] = (len & 0xff) as u8;
+  } else {
+    out[1] = 127u8;
+    for (let i: i64 = 0; i < 8; i++) {
+      out[2 + i] = ((len >> (56 - 8 * i)) & 0xff) as u8;
+    }
+  }
+  out.set(payload, head as usize);
+  return out;
+}
+
+function closeFrame(code: i64): u8[] {
+  return encode(OP_CLOSE, [((code >> 8) & 0xff) as u8, (code & 0xff) as u8]);
+}
+
+// The value of header `name` (lower case) in `head`, or "".
+function header(head: string, name: string): string {
+  for (const line of head.split("\r\n")) {
+    const colon = line.indexOf(":");
+    if (colon > 0 && line.slice(0, colon).trim().toLowerCase() == name) {
+      return line.slice(colon + 1).trim();
+    }
+  }
+  return "";
+}
+
+// The next whole message (fragments joined; pings answered), or null once the connection is done.
+// `send` writes a control reply.
+async function message(r: Reader, s: TcpStream): Promise<Frame | null> {
+  let parts: u8[] = [];
+  let opcode: i64 = -1;
+  while (true) {
+    const f = await r.frame();
+    if (f == null) {
+      return null;
+    }
+    if (f.opcode == OP_PING) {
+      await s.writeBytes(encode(OP_PONG, f.payload));
+      continue;
+    }
+    if (f.opcode == OP_PONG) {
+      continue;
+    }
+    if (f.opcode == OP_CLOSE) {
+      await s.writeBytes(closeFrame(1000));
+      return null;
+    }
+    if (f.opcode == OP_CONT) {
+      if (opcode < 0) {
+        return null;
+      }
+      parts = parts.concat(f.payload);
+    } else {
+      opcode = f.opcode;
+      parts = f.payload;
+    }
+    if (parts.length > MAX_MESSAGE) {
+      await s.writeBytes(closeFrame(1009));
+      return null;
+    }
+    if (f.fin) {
+      if (opcode == OP_TEXT && !utf8Valid(parts)) {
+        await s.writeBytes(closeFrame(1007));
+        return null;
+      }
+      return Frame { fin: true, opcode: opcode, payload: parts };
+    }
+  }
+}
+
+// Echoes every message. The replies to all whole messages that arrived together go out in one
+// write (what uWebSockets calls corking), so a client that pipelines costs one syscall per batch.
+async function echo(r: Reader, s: TcpStream) {
+  let m = await message(r, s);
+  while (m != null) {
+    if (!r.hasPlainFrame()) {
+      await s.writeBytes(encode(m.opcode, m.payload));
+    } else {
+      const parts: u8[][] = [encode(m.opcode, m.payload)];
+      let total = parts[0].length;
+      while (r.hasPlainFrame()) {
+        const f = r.parse();
+        if (f == null) {
+          break;
+        }
+        if (f.opcode == OP_TEXT && !utf8Valid(f.payload)) {
+          await s.writeBytes(closeFrame(1007));
+          return;
+        }
+        const e = encode(f.opcode, f.payload);
+        total += e.length;
+        parts.push(e);
+      }
+      const out = Buffer.alloc(total as usize);
+      let at: i64 = 0;
+      for (const p of parts) {
+        out.set(p, at as usize);
+        at += p.length as i64;
+      }
+      await s.writeBytes(out);
+    }
+    m = await message(r, s);
+  }
+}
+
+// Sends what the room queues for one connection: everything queued goes out in one write.
+async function writer(s: TcpStream, queue: Channel<u8[]>) {
+  let first = await queue.receive();
+  while (first != null) {
+    let more = queue.tryReceive();
+    if (more == null) {
+      try {
+        await s.writeBytes(first);
+      } catch (e) {
+        return;
+      }
+    } else {
+      const parts: u8[][] = [first];
+      let total = first.length;
+      while (more != null) {
+        total += more.length;
+        parts.push(more);
+        more = queue.tryReceive();
+      }
+      const out = Buffer.alloc(total as usize);
+      let at: i64 = 0;
+      for (const p of parts) {
+        out.set(p, at as usize);
+        at += p.length as i64;
+      }
+      try {
+        await s.writeBytes(out);
+      } catch (e) {
+        return;
+      }
+    }
+    first = await queue.receive();
+  }
+}
+
+async function bcast(r: Reader, s: TcpStream, id: i64, room: Room) {
+  const queue = channel<u8[]>();
+  room.with((m) => {
+    m.set(id, queue);
+  });
+  const w = spawn(writer(s, queue));
+  try {
+    let m = await message(r, s);
+    while (m != null) {
+      const frame = encode(m.opcode, m.payload);
+      room.with((members) => {
+        for (const q of members.values()) {
+          q.trySend(frame.clone());
+        }
+      });
+      m = await message(r, s);
+    }
+  } catch (e) {
+    // The connection broke: leave the room below.
+  }
+  room.with((m) => {
+    m.delete(id);
+  });
+  queue.close();
+  await w;
+}
+
+async function connection(s: TcpStream, id: i64, room: Room, readMax: u64) {
+  const r = new Reader(s, readMax);
+  try {
+    const head = await r.head();
+    if (head == null) {
+      s.close();
+      return;
+    }
+    const key = header(head, "sec-websocket-key");
+    if (key == "") {
+      await s.write("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+      s.close();
+      return;
+    }
+    const accept = base64Encode(sha1(utf8Encode(key + GUID)));
+    await s.write(
+      `HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ${accept}\r\n\r\n`,
+    );
+    const path = head.slice(head.indexOf(" ") + 1, head.indexOf(" HTTP/"));
+    if (path == "/bcast") {
+      await bcast(r, s, id, room);
+    } else {
+      await echo(r, s);
+    }
+  } catch (e) {
+    // Reset by the peer, or a write failed: nothing to tell anyone.
+  }
+  s.close();
+}
+
+// Accepts connections forever; each runs on this task's thread (with VELT_SCHEDULER=per-core, on the
+// worker this loop was placed on).
+async function acceptLoop(l: TcpListener, ids: shared<i64>, room: Room, readMax: u64) {
+  while (true) {
+    const s = await l.accept();
+    spawn(connection(s, ids.add(1), room, readMax));
+  }
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
+  const readMax = parseInt(process.env.READ_MAX ?? "16384", 10) as u64;
+  const l = await listen(`${process.env.HOST ?? "127.0.0.1"}:${port}`);
+  console.log(`listening on ws://127.0.0.1:${l.port}`);
+  const room: Room = shared(new Mutex<Map<i64, Channel<u8[]>>>(new Map<i64, Channel<u8[]>>()));
+  const ids = shared(0);
+  // One accept loop per core: spawned from main, so the per-core scheduler spreads them over the workers.
+  const loops = parseInt(process.env.VELT_THREADS ?? "0", 10) as i64;
+  const n = loops > 0 ? loops : availableParallelism();
+  const tasks: Promise<void, IoError>[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    tasks.push(spawn(acceptLoop(l, ids, room, readMax)));
+  }
+  await Promise.all(tasks);
+}

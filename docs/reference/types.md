@@ -27,6 +27,13 @@ written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interfac
 fields ([Intersection types](#intersection-types)). There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
+The names TypeScript does not have (`i8`…`i64`, `isize`, `u8`…`u64`, `usize`, `f32`, `f64`,
+`bool`) are like library globals: a type alias, class, interface or enum of the module with
+one of these names, or one it imports, takes their place there, as a local `Map` would in
+TypeScript. So TypeScript code that declares `type u8 = number` compiles and behaves as in
+Node. A module that declares none of them has Velt's types. TypeScript's own names (`number`,
+`boolean`, `string`, …) cannot be declared.
+
 ## Booleans
 
 `boolean` and `bool` are the same type, and either name can be used anywhere a type is written:

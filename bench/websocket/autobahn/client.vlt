@@ -1,0 +1,66 @@
+// Autobahn fuzzingserver client: runs every case against ws://127.0.0.1:9001, echoing messages.
+import { connectWebSocket, WebSocket, WsMessage } from "velt:websocket";
+
+const BASE = "ws://127.0.0.1:9001";
+
+async function next(ws: WebSocket): Promise<WsMessage | null> {
+  try {
+    return await ws.receive();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function runCase(i: i64) {
+  let ws: WebSocket | null = null;
+  try {
+    ws = await connectWebSocket(`${BASE}/runCase?case=${i}&agent=velt-client`);
+  } catch (e) {
+    console.log(`case ${i}: connect failed: ${e.message}`);
+    return;
+  }
+  if (ws == null) {
+    return;
+  }
+  const s = ws;
+  let m = await next(s);
+  while (m != null) {
+    try {
+      if (m.isBinary) {
+        await s.sendBytes(m.data);
+      } else {
+        await s.send(m.text);
+      }
+    } catch (e) {
+      break;
+    }
+    m = await next(s);
+  }
+  try {
+    await s.close();
+  } catch (e) {
+    return;
+  }
+}
+
+async function main() {
+  const c = await connectWebSocket(`${BASE}/getCaseCount`);
+  const first = await next(c);
+  const n = parseInt(first?.text ?? "0", 10) as i64;
+  try {
+    await c.close();
+  } catch (e) {
+    // already closed by the server
+  }
+  console.log(`${n} cases`);
+  for (let i: i64 = 1; i <= n; i++) {
+    await runCase(i);
+  }
+  const u = await connectWebSocket(`${BASE}/updateReports?agent=velt-client`);
+  await next(u);
+  try {
+    await u.close();
+  } catch (e) {
+    return;
+  }
+}
