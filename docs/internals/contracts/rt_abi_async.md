@@ -296,9 +296,10 @@ it.
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
 
-**Process-wide slots (`std/global_slot.vlt`).** A module has no mutable globals; a std feature
-that needs one object per process (std/websocket's topics) keeps a `shared<T>` in a runtime
-slot. A slot is an unbounded channel holding at most one item, since a channel is what can own
+**Process-wide slots.** A module has no mutable globals; a std feature that needs one object
+per process (std/websocket's topics, slot 0) keeps a `shared<T>` in a runtime slot. Only the
+std module that owns a slot touches it, with the slot's one type: there is no generic accessor
+an importer could use to read a slot as another type. A slot is an unbounded channel holding at most one item, since a channel is what can own
 a typed Velt value: std locks the slot, takes the item out (making it the first time), puts a
 reference back and unlocks. The item is dropped with the channel's leftovers when the program
 ends. No suspension point may lie between lock and unlock.
@@ -480,12 +481,12 @@ alive, so `close` may be called at any time. A `VeltStream` is a raw TCP socket,
 | `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltStream>` |
 | `velt_rt_tcp_read` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltBytes>` 1..max bytes, empty = EOF; `max == 0` ⇒ 64 KiB |
 | `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
-| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied |
+| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied. Writes go out in call order: a write that cannot finish at the call goes on in its first poll (at the `await`, which a std `write` reaches at its call), and later ones wait for it |
 | `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
-| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
+| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what a raw socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, a TLS stream or one not set up yet, or an error, which the next write reports) |
 | `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
 | `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
-| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail (a raw socket is shut down both ways); the handle stays open |
+| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail with `ECONNABORTED` (a raw socket is shut down both ways, which ends a waiting read; the read then reports the abort, not EOF); the handle stays open |
 | `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
 | `velt_rt_tcp_listen_tls` | `(const VeltStr* addr, const VeltStr* cert_pem, const VeltStr* key_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltListener>` whose accepted streams are TLS; `alpn` = protocols to offer, comma-separated (`""`: none); bad PEM ⇒ `EINVAL`. `velt_rt_tcp_accept` returns once the TCP connection is accepted: the handshake (10 s limit) runs with the stream's first operation, which reports its failure |
 | `velt_rt_tcp_connect_tls` | `(const VeltStr* addr, const VeltStr* server_name, const VeltStr* ca_pem, const VeltStr* alpn) -> VeltFut*` | `IoResult<VeltStream>` once the handshake is done; `server_name` `""` = the host of `addr`; `ca_pem` = extra trusted CAs |

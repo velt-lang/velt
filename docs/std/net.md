@@ -12,15 +12,15 @@
   - `read(max = 0): Promise<u8[]>`: empty means end of stream.
   - `readString(max = 0): Promise<string>`: UTF-8; a character split across reads is completed
     by the next read.
-  - `write(data: string)`, `writeBytes(data: u8[])`.
+  - `write(data: string)`, `writeBytes(data: u8[])`: bytes go out in the order of the calls,
+    also when a write is started and not awaited yet.
   - `tryWrite(data: u8[]): i64`: writes what the socket takes right now, without waiting, and
-    returns the number of bytes written (0 when it takes nothing now, for a TLS stream, and
-    after an error, which the next `write` reports). When everything was written there is
-    nothing to await.
+    returns the number of bytes written (0 when it takes nothing now, while an earlier write is
+    still going on, for a TLS stream, and after an error, which the next `write` reports). When
+    everything was written there is nothing to await.
   - `shutdown()`: half-close.
   - `abort()`: fails the operations in flight (a `write` to a peer that stopped reading would
-    otherwise never finish; a `read` may see the end of the stream instead) and every later
-    one. The handle stays open until `close()`.
+    otherwise never finish) and every later one. The handle stays open until `close()`.
   - `peerAddr(): string`, `close()`.
 - `connectTls(addr, opts?: TlsConnectOptions { serverName?; ca?; alpn?: string[] }):
   Promise<TcpStream>`: a TLS connection (rustls), resolved once the handshake is done. The

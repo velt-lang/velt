@@ -5,11 +5,11 @@
 // encode and one queue append per socket. A subscriber with more than `PUBLISH_LIMIT` bytes
 // already queued is skipped for that message, so one slow reader cannot grow the server's
 // memory without bound (a direct `send` waits instead). Topics are process-wide (one registry,
-// std/global_slot); a connection leaves all of them when it is closed.
+// a runtime slot, rt_abi_async.md §2.2); a connection leaves all of them when it is closed.
 //
 // Locks, always in this order: the registry, a topic, a connection's queue.
 
-import { SLOT_WS_TOPICS, processGlobal } from "velt:global_slot";
+import { Channel } from "velt:channel";
 import { TcpStream } from "velt:net";
 import { START } from "velt:websocket/queue";
 import { Tx, flush } from "velt:websocket/writer";
@@ -53,11 +53,24 @@ class Topic {
 type TopicRef = shared<Mutex<Topic>>;
 type Registry = Mutex<Map<string, TopicRef>>;
 
+declare function velt_rt_global_lock(slot: u32);
+declare function velt_rt_global_unlock(slot: u32);
+declare function velt_rt_global_chan(slot: u32): u64;
+
+// The topics' runtime slot (rt_abi_async.md §2.2). The slot is read only here, with its one
+// type: a generic accessor would let any importer read it as another type.
+const SLOT: u32 = 0;
+
+// The process's registry, made on first use: taken out of the slot and a reference put back.
 function registry(): shared<Registry> {
-  return processGlobal<Registry>(
-    SLOT_WS_TOPICS,
-    () => shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())),
-  );
+  velt_rt_global_lock(SLOT);
+  const ch: Channel<shared<Registry>> = Channel { handle: velt_rt_global_chan(SLOT) };
+  const found = ch.tryReceive();
+  const value =
+    found == null ? shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())) : found;
+  ch.trySend(value.clone());
+  velt_rt_global_unlock(SLOT);
+  return value;
 }
 
 /** Subscribes connection `id` (queue `tx`) to `topic`; false if its handle was released. */

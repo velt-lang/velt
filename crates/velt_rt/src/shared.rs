@@ -67,6 +67,8 @@ const LOCKED: u8 = 1;
 const PARKED: u8 = 2;
 /// Rounds of spinning (1, 2, 4… pauses, 16 at most) before parking.
 const SPINS: u32 = 10;
+/// Unpark token: the lock was handed to the woken thread, which owns it now.
+const HANDOFF: parking_lot_core::UnparkToken = parking_lot_core::UnparkToken(1);
 
 const _: () = assert!(std::mem::size_of::<Lock>() <= MUTEX_SIZE);
 
@@ -121,7 +123,7 @@ impl Lock {
             }
             let key = self as *const Lock as usize;
             // SAFETY: the key is this lock's address; the closures neither panic nor park.
-            unsafe {
+            let woken = unsafe {
                 parking_lot_core::park(
                     key,
                     || self.0.load(Ordering::Relaxed) == LOCKED | PARKED,
@@ -129,7 +131,12 @@ impl Lock {
                     |_, _| {},
                     parking_lot_core::DEFAULT_PARK_TOKEN,
                     None,
-                );
+                )
+            };
+            if woken == parking_lot_core::ParkResult::Unparked(HANDOFF) {
+                // Synchronizes with the unlocking thread's critical section.
+                std::sync::atomic::fence(Ordering::Acquire);
+                return;
             }
             spins = 0;
             state = self.0.load(Ordering::Relaxed);
@@ -150,11 +157,18 @@ impl Lock {
     fn unlock_slow(&self) {
         let key = self as *const Lock as usize;
         // SAFETY: as in `lock_slow`. The callback runs with the queue of this key locked, so
-        // the parked bit it leaves matches whether threads are still parked.
+        // the parked bit it leaves matches whether threads are still parked. Now and then
+        // (`be_fair`, about every 0.5 ms per lock, as `parking_lot`) the lock goes straight to
+        // the woken thread instead of being released, so spinning threads that keep winning it
+        // cannot starve a parked one.
         unsafe {
             parking_lot_core::unpark_one(key, |result| {
-                let state = if result.have_more_threads { PARKED } else { 0 };
-                self.0.store(state, Ordering::Release);
+                let parked = if result.have_more_threads { PARKED } else { 0 };
+                if result.unparked_threads != 0 && result.be_fair {
+                    self.0.store(LOCKED | parked, Ordering::Release);
+                    return HANDOFF;
+                }
+                self.0.store(parked, Ordering::Release);
                 parking_lot_core::DEFAULT_UNPARK_TOKEN
             });
         }
@@ -802,5 +816,50 @@ mod tests {
         }
         let cell = unsafe { Box::from_raw(shared as *mut Cell) };
         assert_eq!(cell.items.len(), 8000);
+    }
+
+    #[test]
+    fn a_parked_thread_gets_the_lock_from_threads_that_keep_taking_it() {
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+        use std::time::{Duration, Instant};
+        // Liveness under the worst pattern for a waiter: four threads take the lock again right
+        // after releasing it, so a thread that parks loses most races for it. (The hand-off
+        // bounds the wait; here, on an M4, it took the 50 acquisitions from ~200 ms to ~10 ms.
+        // A bound that tight would be flaky on a loaded machine, so this checks only progress.)
+        let lock = Box::leak(Box::new(AtomicU64::new(0))).as_ptr() as usize;
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let hogs: Vec<_> = (0..4)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        unsafe {
+                            velt_rt_mutex_lock(lock as *mut u64);
+                            for _ in 0..2000 {
+                                std::hint::spin_loop();
+                            }
+                            velt_rt_mutex_unlock(lock as *mut u64);
+                        }
+                    }
+                })
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(20));
+        let start = Instant::now();
+        for _ in 0..50 {
+            unsafe {
+                velt_rt_mutex_lock(lock as *mut u64);
+                velt_rt_mutex_unlock(lock as *mut u64);
+            }
+        }
+        let took = start.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        for h in hogs {
+            h.join().unwrap();
+        }
+        assert!(
+            took < Duration::from_secs(5),
+            "50 acquisitions took {took:?}"
+        );
     }
 }

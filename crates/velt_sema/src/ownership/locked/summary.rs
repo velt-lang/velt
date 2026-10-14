@@ -42,6 +42,9 @@ pub(super) struct Summaries {
     sums: FxHashMap<DefId, Summary>,
     /// The variables each closure of the program captures (in the body making it).
     captures: FxHashMap<DefId, Vec<LocalId>>,
+    /// Object types with a field assigned somewhere (`AdtDef::assigned`, known only once sema
+    /// is done): a copy of such a value can drift from the original.
+    pub(super) assigned: FxHashSet<DefId>,
 }
 
 impl Summaries {
@@ -67,6 +70,7 @@ impl Summaries {
         let mut s = Summaries {
             sums: FxHashMap::default(),
             captures,
+            assigned: crate::assigned_fields::assigned_objects(cx),
         };
         // A body's summary depends only on the summaries of the functions it calls by name
         // (`Walk::callees`). A pass summarizes a function again only when one of those changed

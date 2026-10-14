@@ -94,8 +94,8 @@ export struct TcpStream {
 
   /**
    * Writes what the socket takes of `data` right now, without waiting, and returns the number
-   * of bytes written (0 when it takes nothing now, for a TLS stream, and after an error, which
-   * the next `write` reports). For protocols that send small messages: when everything was
+   * of bytes written (0 when it takes nothing now, while an earlier `write` is still going on,
+   * for a TLS stream, and after an error, which the next `write` reports). For protocols that send small messages: when everything was
    * written there is nothing to await.
    */
   tryWrite(data: u8[]): i64 {
@@ -114,8 +114,7 @@ export struct TcpStream {
 
   /**
    * Fails the operations in flight on this stream (a `write` to a peer that stopped reading
-   * would otherwise never finish; a `read` may see the end of the stream instead) and every
-   * later one; nothing more is sent or received. The handle stays open until `close()`.
+   * would otherwise never finish) and every later one; nothing more is sent or received. The handle stays open until `close()`.
    */
   abort() {
     velt_rt_tcp_abort(this.handle);

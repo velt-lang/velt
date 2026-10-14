@@ -11,14 +11,16 @@
 //!   any other transport, each behind its own lock so one task can read while another writes.
 //!
 //! `abort` makes operations in flight fail: a write to a peer that stopped reading would
-//! otherwise keep the socket alive for ever.
+//! otherwise keep the socket alive for ever. A raw socket's read does not watch for it (that
+//! would cost every read); `abort` shuts the socket down, which ends the read, and the read then
+//! reports the abort instead of the end of the stream.
 
 use super::utf8::Utf8Decoder;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -90,6 +92,28 @@ pub struct StreamObj {
     pub(crate) utf8: Mutex<Utf8Decoder>,
     aborted: AtomicBool,
     abort: Notify,
+    /// Writes that are still going on (not done at the call); while there are any, a new write
+    /// is not written at the call, which would put its bytes before theirs.
+    pub(crate) writing: AtomicUsize,
+    /// Taken by a raw socket's write for as long as it goes on: writes go out one after another,
+    /// in the order they started (a `write` first polls at its call; the lock is FIFO).
+    turn: AsyncMutex<()>,
+}
+
+/// A write counted in [`StreamObj::writing`] from its call until it is done or dropped.
+pub(crate) struct Writing(pub(crate) std::sync::Arc<StreamObj>);
+
+impl Writing {
+    pub(crate) fn new(obj: std::sync::Arc<StreamObj>) -> Writing {
+        obj.writing.fetch_add(1, Ordering::AcqRel);
+        Writing(obj)
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        self.0.writing.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn aborted_error() -> io::Error {
@@ -127,6 +151,8 @@ impl StreamObj {
             utf8: Mutex::new(Utf8Decoder::default()),
             aborted: AtomicBool::new(false),
             abort: Notify::new(),
+            writing: AtomicUsize::new(0),
+            turn: AsyncMutex::new(()),
         }
     }
 
@@ -180,10 +206,20 @@ impl StreamObj {
         }
     }
 
+    /// `read_chunk` on this stream's raw socket: after `abort` (which shut the socket down, ending
+    /// the read) it fails as every other operation does, instead of reading the end of the stream.
+    pub(crate) async fn read_raw(&self, stream: &TcpStream, max: u64) -> io::Result<Vec<u8>> {
+        let r = read_chunk(stream, max).await;
+        if self.aborted.load(Ordering::Acquire) {
+            return Err(aborted_error());
+        }
+        r
+    }
+
     /// Reads what is available (at least 1 byte, at most `max`; empty only at end of stream).
     pub(crate) async fn read(&self, max: u64) -> io::Result<Vec<u8>> {
         match &self.io {
-            Io::Tcp(stream) => read_chunk(stream, max).await,
+            Io::Tcp(stream) => self.read_raw(stream, max).await,
             Io::Lazy(lazy) => self.read_lazy(lazy, max).await,
         }
     }
@@ -216,7 +252,13 @@ impl StreamObj {
                         return Ok(head);
                     }
                 }
-                read_chunk(stream, max).await
+                // An `abort` that ran while the setup finished may have found no socket to shut
+                // down; the fences make sure that either it saw this one or this sees the flag.
+                fence(Ordering::SeqCst);
+                if self.aborted.load(Ordering::Relaxed) {
+                    return Err(aborted_error());
+                }
+                self.read_raw(stream, max).await
             }
             Ready::Split(split) => {
                 self.until_abort(async {
@@ -232,6 +274,7 @@ impl StreamObj {
 
     /// Writes all of `data` to a raw socket.
     async fn write_tcp(&self, stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
+        let _turn = self.turn.lock().await;
         while !data.is_empty() {
             // Not what the socket says after `abort` shut it down (a broken pipe, as if the
             // peer had closed): the stream was aborted.
@@ -269,15 +312,17 @@ impl StreamObj {
     /// that turned out to be a raw socket, once the bytes read ahead of it are delivered. (A
     /// stream that was aborted has its socket shut down: a read sees the end of the stream.)
     pub(crate) fn plain(&self) -> Option<&TcpStream> {
-        if self.aborted.load(Ordering::Relaxed) {
-            return None;
-        }
         match &self.io {
-            Io::Tcp(s) => Some(s),
+            Io::Tcp(s) => (!self.aborted.load(Ordering::Relaxed)).then_some(s),
             Io::Lazy(l) => match l.ready.get() {
                 Some(Ok(Ready::Tcp {
                     stream, has_prefix, ..
-                })) if !has_prefix.load(Ordering::Acquire) => Some(stream),
+                })) if !has_prefix.load(Ordering::Acquire) => {
+                    // As in `read_lazy`: an `abort` racing the setup either sees this socket or
+                    // is seen here.
+                    fence(Ordering::SeqCst);
+                    (!self.aborted.load(Ordering::Relaxed)).then_some(stream)
+                }
                 _ => None,
             },
         }
@@ -336,6 +381,7 @@ impl StreamObj {
     pub(crate) fn abort(&self) {
         self.aborted.store(true, Ordering::Release);
         self.abort.notify_waiters();
+        fence(Ordering::SeqCst);
         if let Some(s) = self.socket() {
             let _ = shutdown_socket(s, std::net::Shutdown::Both);
         }

@@ -1,0 +1,71 @@
+// check: no leaks
+// Raw TCP streams: `abort` fails a waiting read (it does not read as the end of the stream),
+// and bytes go out in call order when a large write cannot finish at the call.
+import { connect, listen } from "velt:net";
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+
+  // A read waiting when the stream is aborted fails, and so does a later write.
+  const quiet = spawn(async () => {
+    const conn = await server.accept();
+    const chunk = await conn.read();
+    conn.close();
+    return chunk.length;
+  });
+  const c = await connect(`127.0.0.1:${server.port}`);
+  const waiting = spawn(async () => {
+    try {
+      const chunk = await c.read();
+      return `read returned ${chunk.length} bytes`;
+    } catch (e) {
+      return `read failed: ${e.message}`;
+    }
+  });
+  await sleep(20);
+  c.abort();
+  console.log(await waiting);
+  try {
+    await c.write("more");
+    console.log("unexpected");
+  } catch (e) {
+    console.log("write failed:", e.message);
+  }
+  console.log("tryWrite after abort:", c.tryWrite([1, 2, 3]));
+  c.close();
+  console.log("server read:", await quiet);
+
+  // 16 MiB does not fit in the socket's buffers: the write goes on after the call. The small
+  // writes started after it come after it on the wire, and tryWrite takes nothing meanwhile.
+  const size = 16 << 20;
+  const sink = spawn(async () => {
+    const conn = await server.accept();
+    await sleep(50);
+    let total = 0;
+    let tail: u8[] = [];
+    while (true) {
+      const chunk = await conn.read(65536);
+      if (chunk.length == 0) {
+        break;
+      }
+      total += chunk.length;
+      tail = tail.concat(chunk);
+      if (tail.length > 16) {
+        tail = tail.slice(tail.length - 16, tail.length);
+      }
+    }
+    conn.close();
+    return total == size + 3 && tail[13] == 1 && tail[14] == 2 && tail[15] == 3;
+  });
+  const w = await connect(`127.0.0.1:${server.port}`);
+  const big = Buffer.alloc(size);
+  const first = w.writeBytes(big);
+  console.log("tryWrite while writing:", w.tryWrite([9]));
+  const second = w.writeBytes([1, 2, 3]);
+  await first;
+  await second;
+  w.shutdown();
+  console.log("all bytes, the small write last:", await sink);
+  w.close();
+  server.close();
+}
