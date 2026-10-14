@@ -1,5 +1,8 @@
 // A vector is a value like a number wherever a value can be: fields, arrays, `| null`, tuples,
 // maps, captured by closures, across `await`, through generics, in generators.
+
+import { u8x16, u16x8, i32x4, i64x2, f32x4, f64x2 } from "velt:simd";
+
 class Accumulator {
   total: i32x4 = i32x4.splat(0);
   seen = 0;

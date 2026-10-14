@@ -1,7 +1,12 @@
 # SIMD
 
-Methods of the 128-bit vector types ([SIMD vectors](../reference/types.md#simd-vectors)), which
-are in scope without an import (`std/prelude/global/simd_*.vlt`). `T` is a vector type
+```ts
+import { u8x16, f32x4, mask8x16 } from "velt:simd";
+```
+
+The 128-bit vector types ([SIMD vectors](../reference/types.md#simd-vectors)) and their
+methods. A module imports the types it names; the methods work on every vector, also one whose
+type the module does not name (the mask `eq` returns). `T` is a vector type
 (`i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`), `L` the type of its lanes, `n`
 their number and `M` its mask type (`mask8x16`, `mask16x8`, `mask32x4`, `mask64x2`: lanes as
 wide as the vector's). Each method is one instruction, or a few, on x86-64 (SSE2) and arm64
@@ -55,11 +60,13 @@ Generic code given a vector (`xs.includes(v)`, a `Map` key, `xs.join()`) compare
 all 128 bits (so NaN equals NaN and `0` differs from `-0` there) and prints the type's name,
 `[u8x16]`; `typeof v` is `"object"`. A vector cannot be the value of a module-level `const` yet.
 
-The type names are built in where nothing else is declared: a type alias, class, interface or
-enum of the module named `u8x16`, or one it imports, takes precedence, as it would in
-TypeScript code written before the SIMD types.
+A module that does not import a name from `velt:simd` can use it for a type of its own (as
+TypeScript code written before the SIMD types may); one that imports it and declares it too gets
+the usual "defined multiple times" error. `import { u8x16 as Bytes }` works as for any import.
 
 ```ts
+import { f32x4, u8x16 } from "velt:simd";
+
 // The dot product, sixteen floats per step in four sums.
 function dot(a: f32[], b: f32[]): f32 {
   let s0 = f32x4.splat(0);

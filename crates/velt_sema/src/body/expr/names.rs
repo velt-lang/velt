@@ -228,8 +228,8 @@ impl FnCx<'_, '_> {
             return;
         }
         if !self.enclosing_locals.contains(&id.name) {
-            self.cx
-                .err(format!("cannot find `{}` in this scope", id.name), id.span);
+            let msg = format!("cannot find `{}` in this scope", id.name);
+            self.cx.not_found(msg, &id.name, id.span);
             return;
         }
         if self.generic_arrow {

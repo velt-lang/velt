@@ -1,5 +1,8 @@
 // SIMD values have methods, not operators, and no printed or JSON form: each error says what
 // to write.
+
+import { i8x16, u8x16 } from "velt:simd";
+
 function main() {
   const a = u8x16.splat(1);
   const b = u8x16.splat(2);

@@ -336,9 +336,9 @@ types are `i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`, each 12
 every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU flag, in debug
 and release builds. On WebAssembly they are `v128` values: WebAssembly SIMD is part of Velt's
 WebAssembly baseline, and a program that uses vectors needs an engine with it (every current
-browser and runtime). Like the integer widths, they are Velt's own: code shared with TypeScript
-does not name them, and a type the program declares or imports under one of these names (as
-TypeScript code may) takes precedence over the built-in one.
+browser and runtime). They are Velt's own, and not global: a module imports the ones it names
+from [`velt:simd`](../std/simd.md) (`import { u8x16 } from "velt:simd";`), so a module that
+does not is free to use these names for its own types, as TypeScript code may.
 
 A vector is a value like a number: it is copied when assigned or passed, lives in a register,
 and can be a field, an array element, `T | null` or a `Map` value. Its operations are methods
@@ -348,6 +348,8 @@ per lane, set or not, which `any()`, `all()`, `first()`, `count()` and `bitmask(
 `boolean` or a number and `select` into a choice between two vectors.
 
 ```ts
+import { u8x16 } from "velt:simd";
+
 // The position of the first `b` in `d`, sixteen bytes at a time.
 function indexOf(d: u8[], b: u8): i64 {
   const needle = u8x16.splat(b);

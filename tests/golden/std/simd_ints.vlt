@@ -2,6 +2,8 @@
 // the expected values are Python integer arithmetic). Prints the number of checks per
 // type, and a line per lane that differs.
 
+import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt:simd";
+
 function lanesI8x16(what: string, got: i8x16, want: i8[]): i64 {
   for (let i: usize = 0; i < 16; i++) {
     if (got.lane(i) != want[i]) {

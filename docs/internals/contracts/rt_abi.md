@@ -324,7 +324,7 @@ Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes,
 A mask lane is all ones or all zeros.
 
 The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
-`velt_simd_mask8x16_any`) declared by `std/prelude/global/simd_*.vlt`. **No runtime defines
+`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt:simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.

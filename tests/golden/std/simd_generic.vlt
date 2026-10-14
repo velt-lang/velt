@@ -1,5 +1,8 @@
 // Generic code given a vector: equality and hashing cover all 128 bits, and the printed form
 // is the type's name (a vector's lanes are printed with `lane`).
+
+import { u8x16, i32x4, u64x2, f32x4 } from "velt:simd";
+
 function same<T>(a: T, b: T): bool {
   return a == b;
 }

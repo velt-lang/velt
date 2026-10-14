@@ -323,6 +323,18 @@ impl<'m> Ctx<'m> {
         self.diags.push(Diagnostic::error(msg, span));
     }
 
+    /// `msg` for a name `name` that nothing declares: with a note naming the import when it is
+    /// one of the SIMD types, which are not global (`velt:simd`).
+    pub fn not_found(&mut self, msg: String, name: &str, span: Span) {
+        let mut d = Diagnostic::error(msg, span);
+        if crate::hir::SimdTy::named(name).is_some() {
+            d = d.with_note(format!(
+                "import it: `import {{ {name} }} from \"velt:simd\";`"
+            ));
+        }
+        self.diags.push(d);
+    }
+
     /// Define the closure of a rolled-back check again as `info` (`body::recheck`).
     pub(crate) fn redefine_closure(&mut self, id: DefId, span: Span, info: DefInfo<'m>) {
         self.fn_defs.push(id);

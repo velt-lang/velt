@@ -1,5 +1,8 @@
 // `store` does not grow the array, and a position near the largest integer does not wrap
 // around to the start.
+
+import { f32x4 } from "velt:simd";
+
 function main() {
   const out: f32[] = [0, 0, 0, 0, 0];
   f32x4.splat(2).store(out, 1);

@@ -1,7 +1,8 @@
-// Types named like the SIMD types: a declaration or import of the module wins over the built-in
-// type (#1055); the built-in is used where none is in scope.
+// The SIMD types are names a module imports from `velt:simd` (#1055): a module that does not
+// is free to declare or import other types of these names, as TypeScript code may.
 
 import { dot, describe, mask8x16, u8x16, type f32x4, type i32x4 } from "./_simd_names";
+import { u32x4, i16x8, mask16x8, u8x16 as Bytes } from "velt:simd";
 
 type u16x8 = { label: string };
 
@@ -33,8 +34,9 @@ function main() {
   const l: u16x8 = { label: "eight" };
   console.log(l.label, sum({ first: 40, second: 2 }), f64x2.High as i32);
   console.log(new mask32x4(5).bits);
-  // Not declared here: the built-in types.
+  // Imported from `velt:simd`, one of them under another name.
   const b = u32x4.splat(3).add(u32x4.splat(4));
   const m: mask16x8 = i16x8.splat(1).lt(i16x8.splat(2));
-  console.log(b.lane(3), m.all());
+  const bytes: Bytes = Bytes.splat(9);
+  console.log(b.lane(3), m.all(), bytes.lane(15));
 }

@@ -1,7 +1,7 @@
 //! The SIMD operations: what each `velt_simd_*` extern means (rt_abi.md "SIMD").
 //!
-//! A vector value is a [`Ty::V128`]; its lanes are given by the operation. The prelude
-//! (`std/prelude/global/simd_*.vlt`) declares one extern per vector type and operation,
+//! A vector value is a [`Ty::V128`]; its lanes are given by the operation. The SIMD API
+//! (`std/simd/*.vlt`, `velt:simd`) declares one extern per vector type and operation,
 //! `velt_simd_<type>_<op>`, and backends emit each call inline from the [`SimdCall`] its symbol
 //! parses to. No runtime function exists behind these symbols.
 
@@ -429,9 +429,9 @@ mod tests {
     /// program uses one).
     #[test]
     fn std_declarations_are_operations() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude/global");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/simd");
         let mut seen = 0;
-        for entry in std::fs::read_dir(dir).expect("std/prelude/global") {
+        for entry in std::fs::read_dir(dir).expect("std/simd") {
             let text = std::fs::read_to_string(entry.expect("entry").path()).expect("source");
             for line in text.lines() {
                 let Some(rest) = line.strip_prefix("declare function velt_simd_") else {

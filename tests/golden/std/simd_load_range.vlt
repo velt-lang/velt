@@ -1,4 +1,7 @@
 // `load` needs the whole vector inside the array: the last 16 bytes load, one further panics.
+
+import { u8x16 } from "velt:simd";
+
 function main() {
   const d: u8[] = Buffer.alloc(20);
   d[19] = 7;
