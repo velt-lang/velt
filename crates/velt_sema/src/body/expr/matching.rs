@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
         &mut self,
         inner: &ast::Expr,
         exp: Option<TyId>,
+        want: Want,
         span: Span,
     ) -> hir::Expr {
         let mk = |kind| ast::Expr {
@@ -149,8 +150,12 @@ impl FnCx<'_, '_> {
             args: vec![msg],
             optional: false,
         });
-        let h = self.expr(inner, None, Want::Borrow);
+        let mut h = self.expr(inner, None, Want::Borrow);
         if self.cx.ty.opt_payload(h.ty).is_none() {
+            // `const v = K!` takes over what `K` names, as `const v = K` does.
+            if want == Want::Move && matches!(h.kind, H::Global(_)) {
+                self.force_move(&mut h);
+            }
             return h;
         }
         self.nullish_checked(h, &panic, exp, span)

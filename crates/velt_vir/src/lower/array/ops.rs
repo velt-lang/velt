@@ -26,6 +26,11 @@ impl FnLower<'_, '_> {
             return self.array_move(args);
         }
         let aty = self.sub(args[0].ty);
+        if i == I::ArrayLen {
+            if let Some(arr) = self.table_read(&args[0]) {
+                return self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1)));
+            }
+        }
         // An argument that may run code (`aa[0].push(g())`, where `g` grows or replaces `aa`)
         // runs after the array's address is taken: borrow the array as a call borrows its
         // receiver, so that address stays valid.

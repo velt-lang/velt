@@ -1,0 +1,194 @@
+// A module constant that is an array of number or boolean literals is a table. Its elements
+// are stored once as read-only data, and an element, the length and a `for…of` loop read them
+// there; printed, copied or passed to a function that only reads it, it is a new array with
+// those elements. What could modify it (a function value) gets a copy: `K.slice()`.
+// Every table below is read all three ways, and the stored data must agree with the array.
+const K: u32[] = [0x428a2f98, 0x71374491, 4294967295];
+const SMALL: u8[] = [1, 2, 255];
+const NEG: i16[] = [-1, -32768, 32767];
+const F: f64[] = [0.5, -1.25, 3];
+const N: number[] = [1, 2.5, -3];
+const SINGLE: f32[] = [0.1, 16777217];
+const FLAGS: bool[] = [true, false, true];
+const ONE: i64 = 7;
+const WITH: i64[] = [ONE, -5, 300 as i64, -9223372036854775808];
+const CAST: u8[] = [300 as u8, 65 as u8, 3.9 as u8, true as u8];
+const EMPTY: u8[] = [];
+const BIG: u64[] = [18446744073709551615, 1];
+const WIDE: i64 = 16777217;
+const ROUNDED: f64[] = [WIDE as f32 as f64, 33554435 as u32 as f32 as f64, true as u8 as f64];
+const ONLY: usize[] = [42];
+
+function sum(xs: u32[]): u64 {
+  let s: u64 = 0;
+  for (const x of xs) {
+    s += x as u64;
+  }
+  return s;
+}
+
+function at(i: usize): u32 {
+  return K[i];
+}
+
+function scribble(write: (xs: u32[]) => void) {
+  write(K.slice());
+}
+
+function main() {
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < K.length; i++) {
+      byIndex += `${K[i]} `;
+    }
+    let byLoop = "";
+    for (const x of K) {
+      byLoop += `${x} `;
+    }
+    console.log("K", K.length, K, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < SMALL.length; i++) {
+      byIndex += `${SMALL[i]} `;
+    }
+    let byLoop = "";
+    for (const x of SMALL) {
+      byLoop += `${x} `;
+    }
+    console.log("SMALL", SMALL.length, SMALL, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < NEG.length; i++) {
+      byIndex += `${NEG[i]} `;
+    }
+    let byLoop = "";
+    for (const x of NEG) {
+      byLoop += `${x} `;
+    }
+    console.log("NEG", NEG.length, NEG, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < F.length; i++) {
+      byIndex += `${F[i]} `;
+    }
+    let byLoop = "";
+    for (const x of F) {
+      byLoop += `${x} `;
+    }
+    console.log("F", F.length, F, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < N.length; i++) {
+      byIndex += `${N[i]} `;
+    }
+    let byLoop = "";
+    for (const x of N) {
+      byLoop += `${x} `;
+    }
+    console.log("N", N.length, N, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < SINGLE.length; i++) {
+      byIndex += `${SINGLE[i]} `;
+    }
+    let byLoop = "";
+    for (const x of SINGLE) {
+      byLoop += `${x} `;
+    }
+    console.log("SINGLE", SINGLE.length, SINGLE, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < FLAGS.length; i++) {
+      byIndex += `${FLAGS[i]} `;
+    }
+    let byLoop = "";
+    for (const x of FLAGS) {
+      byLoop += `${x} `;
+    }
+    console.log("FLAGS", FLAGS.length, FLAGS, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < WITH.length; i++) {
+      byIndex += `${WITH[i]} `;
+    }
+    let byLoop = "";
+    for (const x of WITH) {
+      byLoop += `${x} `;
+    }
+    console.log("WITH", WITH.length, WITH, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < CAST.length; i++) {
+      byIndex += `${CAST[i]} `;
+    }
+    let byLoop = "";
+    for (const x of CAST) {
+      byLoop += `${x} `;
+    }
+    console.log("CAST", CAST.length, CAST, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < BIG.length; i++) {
+      byIndex += `${BIG[i]} `;
+    }
+    let byLoop = "";
+    for (const x of BIG) {
+      byLoop += `${x} `;
+    }
+    console.log("BIG", BIG.length, BIG, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < ROUNDED.length; i++) {
+      byIndex += `${ROUNDED[i]} `;
+    }
+    let byLoop = "";
+    for (const x of ROUNDED) {
+      byLoop += `${x} `;
+    }
+    console.log("ROUNDED", ROUNDED.length, ROUNDED, "|", byIndex, "|", byLoop);
+  }
+  {
+    let byIndex = "";
+    for (let i: usize = 0; i < ONLY.length; i++) {
+      byIndex += `${ONLY[i]} `;
+    }
+    let byLoop = "";
+    for (const x of ONLY) {
+      byLoop += `${x} `;
+    }
+    console.log("ONLY", ONLY.length, ONLY, "|", byIndex, "|", byLoop);
+  }
+  let empties = 0;
+  for (const x of EMPTY) {
+    empties += x as i64;
+  }
+  console.log("EMPTY", EMPTY.length, EMPTY, empties);
+  console.log(at(1), sum(K), FLAGS[1], WITH[0] + WITH[1], BIG[0] - BIG[1]);
+  const copy = K.slice();
+  copy.push(1);
+  copy[0] = 2;
+  console.log(copy, K);
+  const own = SMALL.clone();
+  own.reverse();
+  console.log(own, SMALL, SMALL.includes(255), SMALL.indexOf(2), K.map((x) => x >> 28));
+  console.log(NEG.join("/"), [...SMALL, 9], SMALL.concat(CAST));
+  const write = (xs: u32[]) => {
+    xs[0] = 9;
+    xs.push(10);
+    xs.reverse();
+    console.log(xs);
+  };
+  write(K.slice());
+  scribble(write);
+  console.log(K, K[0], sum(K));
+}

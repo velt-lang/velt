@@ -504,6 +504,30 @@ their state in `#` fields. Handle types that are structs (sockets, files, databa
 `Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
 every std type with private state, `private` or `#`, out of JSON.
 
+## Module constant tables
+
+`GlobalDef.init` is evaluated at each use of the constant, with one exception that sema and
+lowering agree on. A **table** is a `GlobalDef` whose `init` is an `ArrayLit`
+
+- of an array type whose element is `Int`, `Float` or `Bool`,
+- with every element a `Lit` (`Int`, `Float`, `Bool`), a `Unary { op: Neg }` of an `Int` or
+  `Float` literal, a `Cast` of an element of this list, or a `Global` whose own `init` is one
+  (followed for at most 16 constants).
+
+Sema accepts an `ArrayLit` as a whole initializer only in this form (`body::pure_init`,
+`table_elem`), and never nested in another initializer. Lowering may store the elements of a
+table once as static data (`velt_vir`, `table_const` folds exactly the forms above, with `as`
+semantics for the casts) and read them there for three uses whose base is the `Global` itself:
+`Index`, the `ArrayLen` intrinsic, and a borrowing `ForOf`. Every other use of the constant
+evaluates the initializer to a new array, like any module constant. The header lowering reads
+through, `{ data, len, cap: 0 }`, is local to the code of those three reads: it is never passed,
+stored, boxed or handed to the runtime, so nothing can write through it or count it. An empty
+`ArrayLit` is not stored. Sema also rejects every use that could modify a table, including the
+ones it cannot follow (an argument of a call through a function value, or of a call that also
+passes one that may modify its arguments; a move out of it, however it is named), so the new
+array is never written either. The two lists must stay equal: an element sema accepts and lowering
+does not fold would make the table an array built at every read.
+
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is
