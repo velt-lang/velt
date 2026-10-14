@@ -40,7 +40,7 @@ interface AsyncIterable<T, E = never> {
 
 They live in `std/prelude/iter.vlt`.
 
-- The done case has no `value` (Velt has no `undefined`), and there is no `TReturn`.
+- The done case has no `value` (an `undefined` there is a later phase of #930), and there is no `TReturn`.
   `IteratorResult<T>` is an ordinary discriminated union on a `bool` literal field; `if (r.done)`
   and `if (!r.done)` narrow it (sema `body/narrow.rs`: a member access tested for truthiness on
   a union local whose discriminant values are all `bool` literals), and a union of `bool`

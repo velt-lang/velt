@@ -85,7 +85,7 @@ impl Cx<'_> {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Literal(_) => true,
-            TyKind::Array(e) | TyKind::Option(e) => self.json_writable(e, stack),
+            TyKind::Array(e) | TyKind::Option(e, _) => self.json_writable(e, stack),
             TyKind::Tuple(es) => es.into_iter().all(|e| self.json_writable(e, stack)),
             TyKind::Adt(d, args) => {
                 if stack.contains(&t) || self.is_json_value(t) {

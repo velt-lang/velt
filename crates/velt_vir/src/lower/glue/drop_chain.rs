@@ -46,7 +46,7 @@ impl Chain {
 impl Cx<'_> {
     /// Does a field of type `t` hold an object of the class `ty` (`ty` or `ty | null`)?
     fn holds_self(&mut self, t: TyId, ty: TyId) -> bool {
-        t == ty || matches!(self.kind(t), TyKind::Option(e) if e == ty)
+        t == ty || matches!(self.kind(t), TyKind::Option(e, _) if e == ty)
     }
 
     /// Is dropping a value of `t` unobservable: can it never run a `[Symbol.dispose]()` hook
@@ -63,7 +63,7 @@ impl Cx<'_> {
         }
         match self.kind(t) {
             TyKind::Str => true,
-            TyKind::Array(e) | TyKind::Option(e) => self.silent_in(e, seen),
+            TyKind::Array(e) | TyKind::Option(e, _) => self.silent_in(e, seen),
             TyKind::Map(k, v) => self.silent_in(k, seen) && self.silent_in(v, seen),
             TyKind::Adt(d, _) => {
                 if self.dispose_of(d).is_some() || (self.is_class(t) && self.has_header(d)) {

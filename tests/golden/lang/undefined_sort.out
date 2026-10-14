@@ -1,0 +1,9 @@
+[ 1, 2, 3, undefined, undefined ]
+[ 3, 1, undefined ] [ 3, undefined, 1 ]
+[ 'a', 'b', undefined ]
+bdac-- true
+[ 1, 2, 'a', 'b', undefined, undefined ] 6
+[ undefined, undefined ] true
+[ 1, 2, 3, 4, 5 ] [ 99, 100, undefined, undefined ] 100
+[ 'x' ]
+[ null, 1, 3 ]

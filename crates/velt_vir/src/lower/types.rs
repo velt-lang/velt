@@ -27,6 +27,13 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn intern(&mut self, k: TyKind) -> TyId {
+        // `TyTable::intern` makes an option of an option the inner one; with another nothing
+        // that would lose one (issue #930): report it.
+        if let TyKind::Option(e, n) = &k {
+            if matches!(self.types.kind(*e), TyKind::Option(_, m) if m != n) {
+                self.nothing_clashes.push(self.cur_def);
+            }
+        }
         self.types.intern(k)
     }
 
@@ -55,7 +62,7 @@ impl<'h> Cx<'h> {
             TyKind::Array(e) => TyKind::Array(c(self, e)),
             TyKind::Map(k, v) => TyKind::Map(c(self, k), c(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| c(self, a)).collect()),
-            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(c(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
@@ -127,7 +134,7 @@ impl<'h> Cx<'h> {
             let m = self.canon(m);
             let plain = !matches!(
                 self.kind(m),
-                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+                TyKind::Option(..) | TyKind::Unit | TyKind::Never | TyKind::Error
             ) && !self.is_union(m);
             if !plain {
                 return None;
@@ -218,7 +225,7 @@ impl<'h> Cx<'h> {
                     stack.extend(args);
                 }
                 TyKind::Tuple(es) => stack.extend(es),
-                TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => stack.push(e),
+                TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => stack.push(e),
                 TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                     stack.extend([a, b]);
                 }
@@ -259,7 +266,7 @@ impl<'h> Cx<'h> {
             TyKind::Array(e) => TyKind::Array(s(self, e)),
             TyKind::Map(k, v) => TyKind::Map(s(self, k), s(self, v)),
             TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| s(self, a)).collect()),
-            TyKind::Option(e) => TyKind::Option(s(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(s(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(s(self, a), s(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(s(self, v), s(self, e)),
             TyKind::Shared(e) => TyKind::Shared(s(self, e)),
@@ -360,10 +367,12 @@ impl<'h> Cx<'h> {
                 hir::Def::Enum(_) => Ty::Agg(self.value_agg(t)),
                 _ => ice("type refers to a non-type definition"),
             },
-            TyKind::Option(inner) if self.has_null_niche(inner) => Ty::Ptr,
+            TyKind::Option(inner, _) if self.has_null_niche(inner) => Ty::Ptr,
             // No payload to store (`void`, `never`, a literal): the option is its present flag.
-            TyKind::Option(inner) if self.ty(inner) == Ty::Unit => Ty::Bool,
-            TyKind::Tuple(_) | TyKind::Option(_) | TyKind::Result(..) => Ty::Agg(self.value_agg(t)),
+            TyKind::Option(inner, _) if self.ty(inner) == Ty::Unit => Ty::Bool,
+            TyKind::Tuple(_) | TyKind::Option(..) | TyKind::Result(..) => {
+                Ty::Agg(self.value_agg(t))
+            }
             TyKind::Array(_) => Ty::Agg(self.array_agg()),
             TyKind::Shared(_) | TyKind::Promise(..) => Ty::Ptr,
             TyKind::FnPtr { .. } | TyKind::Closure(_) => Ty::Agg(self.closure_agg()),
@@ -393,7 +402,7 @@ impl<'h> Cx<'h> {
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {
                 self.part_types(t).into_iter().any(|p| self.needs_drop(p))
             }
-            TyKind::Option(e) => self.needs_drop(e),
+            TyKind::Option(e, _) => self.needs_drop(e),
             _ => false,
         };
         self.lay.drop_memo.insert(t, b);
@@ -424,7 +433,7 @@ impl<'h> Cx<'h> {
             },
             TyKind::Tuple(es) => es,
             TyKind::Result(a, b) => vec![a, b],
-            TyKind::Option(e) => vec![e],
+            TyKind::Option(e, _) => vec![e],
             _ => vec![],
         }
     }

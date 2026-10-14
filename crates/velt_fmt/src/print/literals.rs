@@ -17,6 +17,7 @@ impl<'a> Printer<'a> {
             Lit::Bool(true) => "true".into(),
             Lit::Bool(false) => "false".into(),
             Lit::Null => "null".into(),
+            Lit::Undefined => "undefined".into(),
         }
     }
 

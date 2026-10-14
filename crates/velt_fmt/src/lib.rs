@@ -17,19 +17,31 @@ mod doc;
 mod print;
 mod source;
 
-use velt_common::{Diagnostics, FileId};
+use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 
 pub use comments::count as count_comments;
 
 /// Target line width.
 pub const MAX_WIDTH: usize = 100;
 
-/// Formats one source file. Returns the parse diagnostics instead if the file does not parse
-/// (diagnostic spans refer to `FileId(0)`).
+/// The message of the error [`format_source`] returns for a file with a `this: T` parameter,
+/// which the AST does not keep yet.
+pub const NO_THIS_PARAMS: &str = "`velt fmt` does not format files with `this` parameters yet";
+
+/// Formats one source file. Returns the parse diagnostics instead if the file does not parse,
+/// or a [`NO_THIS_PARAMS`] error if it has a `this: T` parameter (diagnostic spans refer to
+/// `FileId(0)`).
 pub fn format_source(src: &str) -> Result<String, Diagnostics> {
     let (module, diags) = velt_syntax::parse_file(FileId(0), src);
     if diags.iter().any(|d| d.is_error()) {
         return Err(diags);
+    }
+    if src.contains("this") {
+        if let Some(at) = velt_syntax::first_this_param(src) {
+            let d = Diagnostic::error(NO_THIS_PARAMS, Span::new(FileId(0), at.start, at.end))
+                .with_note("the formatter would drop it; the file is left as written");
+            return Err(vec![d]);
+        }
     }
     // The module moves to the printing thread so that its (recursive) drop happens there too.
     let out = on_big_stack(move || {

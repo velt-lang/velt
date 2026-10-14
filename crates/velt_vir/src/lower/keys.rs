@@ -96,7 +96,15 @@ impl Cx<'_> {
             TyKind::Array(e) => format!("{}[]", self.type_key_in(*e, env, stack)),
             TyKind::Map(k, v) => format!("Map<{}>", list(&[*k, *v], stack)),
             TyKind::Tuple(ts) => format!("[{}]", list(ts, stack)),
-            TyKind::Option(e) => format!("Option<{}>", self.type_key_in(*e, env, stack)),
+            TyKind::Option(e, n) => {
+                // `T | null` keeps its key; `T | undefined` prints and writes JSON differently.
+                let name = match n {
+                    velt_sema::hir::Nothing::Null => "Option",
+                    velt_sema::hir::Nothing::Undefined => "OptionU",
+                    velt_sema::hir::Nothing::Both => "OptionNU",
+                };
+                format!("{name}<{}>", self.type_key_in(*e, env, stack))
+            }
             TyKind::Result(a, b) => format!("Result<{}>", list(&[*a, *b], stack)),
             TyKind::Promise(t, e) => format!("Promise<{}>", list(&[*t, *e], stack)),
             TyKind::Shared(e) => format!("shared<{}>", self.type_key_in(*e, env, stack)),

@@ -31,7 +31,7 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(ty) {
             TyKind::Symbol => true,
-            TyKind::Option(e) => self.holds_symbol(e, depth + 1),
+            TyKind::Option(e, _) => self.holds_symbol(e, depth + 1),
             TyKind::Adt(d, _) if self.cx.is_union(ty) => {
                 let n = self.cx.enum_def(d).variants.len() as u32;
                 (0..n).any(|v| {
@@ -55,7 +55,7 @@ impl FnLower<'_, '_> {
                 self.push_scalar(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Never => {}
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let (some_bb, none_bb, done) =
                     (self.new_block(), self.new_block(), self.new_block());
                 let some = self.option_is_some(place, ty);

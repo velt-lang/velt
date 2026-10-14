@@ -100,7 +100,7 @@ pub(super) fn strict_eq(
     rhs: &ast::Expr,
     t: &mut Typed,
 ) {
-    if !matches!(op, BinaryOp::Eq | BinaryOp::NotEq) {
+    if !op.is_strict() {
         return;
     }
     let value = match (is_null(lhs), is_null(rhs)) {
@@ -110,7 +110,11 @@ pub(super) fn strict_eq(
     };
     let between = Span::new(e.span.file, lhs.span.hi, rhs.span.lo);
     let text = t.cx.text(between);
-    let strict = if op == BinaryOp::Eq { "===" } else { "!==" };
+    let strict = if op == BinaryOp::StrictEq {
+        "==="
+    } else {
+        "!=="
+    };
     let Some(at) = text.find(strict) else { return };
     let Some(why) = undefined_source(value, t) else {
         return;

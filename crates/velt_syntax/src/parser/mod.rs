@@ -9,6 +9,7 @@ mod arrow;
 mod augment;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
 mod import_meta;
 mod imports;
@@ -92,6 +93,14 @@ pub(crate) struct Parser<'a> {
     no_in: bool,
     /// Where the module first mentions `import.meta` (`import_meta`).
     import_meta: Option<Span>,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and whether `T` is `void`.
+    this_param: Option<(Span, bool)>,
+    /// The value of the object-literal property being parsed is a function expression
+    /// (`{ get: function () { ... } }`), whose `this` TypeScript types as the literal.
+    fn_in_object: bool,
+    /// The first `this: T` parameter parsed (the AST does not keep them).
+    pub(crate) first_this_param: Option<std::ops::Range<u32>>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -136,6 +145,9 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            this_param: None,
+            fn_in_object: false,
+            first_this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
             import_meta: None,

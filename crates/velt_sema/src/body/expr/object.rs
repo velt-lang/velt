@@ -647,6 +647,13 @@ impl FnCx<'_, '_> {
                 .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
                 .collect();
             let expected = self.cx.subst_known(fields[i].ty, &known);
+            if fields[i].optional {
+                let slot = crate::body::OptionalSlot::Field;
+                match value {
+                    Some(v) => self.optional_slot(v, slot),
+                    None => self.optional_slots.push((pname.span, slot)),
+                }
+            }
             let kind = self.cx.adt(d).map_or(AdtKind::Struct, |a| a.kind);
             let watched = crate::anon::absent_is_null(&self.cx.ty, kind, &fields[i]);
             let h = self.field_value(pname, *value, Some(expected), watched);

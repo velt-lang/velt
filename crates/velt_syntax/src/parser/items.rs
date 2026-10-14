@@ -190,7 +190,12 @@ impl<'a> Parser<'a> {
             exported = next_exported;
             sig = self.parse_fn_sig(next_lo, next_async)?;
         }
+        let this_param = self.this_param.take();
         let body = self.parse_block()?;
+        // Without a `this` parameter, `this` in a function declaration is sema's to report.
+        if this_param.is_some() {
+            self.check_fn_this(this_param, &body, false);
+        }
         // TypeScript's TS2383, at each signature exported differently from the implementation.
         for (s, e) in &sigs {
             if *e != exported {
@@ -279,28 +284,6 @@ impl<'a> Parser<'a> {
                 );
             }
         }
-    }
-
-    /// A function expression at `function` (after `async`, with `is_async`): `function*
-    /// [name](...)[: R] { ... }`; the name may be left out (empty). Sema allows only generators.
-    pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
-        self.expect_kw(Kw::Function, "function")?;
-        let is_generator = self.eat(Tok::Star);
-        let name = match Self::is_ident_like(self.peek()) {
-            true => self.parse_binding_ident()?,
-            false => Ident {
-                name: String::new(),
-                span: self.span_from(lo),
-            },
-        };
-        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
-        sig.is_generator = is_generator;
-        let body = self.parse_block()?;
-        Ok(ExprKind::Function(Box::new(FnDecl {
-            sig,
-            body,
-            overloads: vec![],
-        })))
     }
 
     /// `function name(...)` or `function* name(...)` (a generator).
@@ -429,6 +412,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_params(&mut self) -> PResult<Vec<Param>> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
+        self.parse_this_param()?;
         while !self.at(Tok::RParen) {
             let p = self.parse_param(params.len())?;
             if params.last().is_some_and(|q: &Param| q.rest) {

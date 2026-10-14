@@ -131,7 +131,7 @@ fn contains_by_value(
             tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Tuple(ts) => ts,
-        TyKind::Option(x) => vec![x],
+        TyKind::Option(x, _) => vec![x],
         TyKind::Result(a, b) => vec![a, b],
         _ => vec![],
     };

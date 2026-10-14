@@ -344,6 +344,7 @@ impl<'a> Walker<'a> {
             ast::TypeExprKind::Predicate { ty, .. } => ty.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Undefined
             | ast::TypeExprKind::Void
             | ast::TypeExprKind::Query(_) => {}
         }

@@ -92,10 +92,12 @@ accept; compiler messages and editors print `boolean` either way
   sockets and HTTP bodies need no conversion; `Buffer.byteLength(s)` is the UTF-8 size.
 - Strings are immutable values, as in JS, and cheap to copy.
 
-## `null`, not `undefined`
+## `null` and `undefined`
 
-There is one "nothing": `null`. `undefined` is a compile error with the fix "use `null`", and
-`a?: T` means `T | null`:
+`null` and `undefined` are two values, as in Node: `T | undefined` prints, compares, tests with
+`typeof` and serializes to JSON as in JavaScript ([Null and undefined](../reference/types.md#null-and-undefined)).
+For now, `a?: T` still means `T | null`, and the standard library returns `null` where
+TypeScript returns `undefined` (issue #930 moves them to `undefined`):
 
 ```ts
 class Config {
@@ -110,7 +112,7 @@ function connect(c: Config, timeout?: i64): string {
 console.log(connect(new Config()));  // localhost:80 (30 s)
 ```
 
-*Why*: the `null` vs `undefined` bug class disappears. `JSON.parse` treats an absent key like
+Until then, `JSON.parse` treats an absent key like
 `null`; only `JsonValue` tells them apart. What JS gives as `undefined` for a missing value is
 `null`, and prints as `null`: `m.get(k)` for a key a `Map` lacks, `arr.find(…)` without a match,
 `s.at(i)` past the end (`s[i]` and `s.charAt(i)` there are `""`).
@@ -118,7 +120,8 @@ console.log(connect(new Config()));  // localhost:80 (30 s)
 ## Truthiness
 
 The same as in JavaScript: conditions, `!`, `&&` and `||` take values of any type, and `0`,
-`-0`, `NaN`, `""` and `null` are falsy (also `0` of `i64`, `u8` and the other integer types).
+`-0`, `NaN`, `""`, `null` and `undefined` are falsy (also `0` of `i64`, `u8` and the other
+integer types).
 `||` and `&&` return an operand, typed as TypeScript types them, and `if (!user) return;` is a
 null check that narrows `user`.
 
@@ -139,8 +142,9 @@ length check.
 
 ## Equality
 
-`==` and `===` are the same operator (as are `!=` and `!==`), and both sides must have the same
-type: `1 == "1"` is a compile error. Strings compare by content; every object (arrays, class
+`==` never coerces, so it is `===` (and `!=` is `!==`) except against `null` and `undefined`,
+where `x == null` matches either and `x === null` only `null`, as in JavaScript. Both sides must
+have the same type: `1 == "1"` is a compile error. Strings compare by content; every object (arrays, class
 instances, structs, object literals) compares by identity, as in JS. `deepEqual(a, b)` compares
 contents.
 
@@ -316,9 +320,9 @@ server-side rendering ([TSX](../reference/tsx.md), [`velt:jsx`](../std/jsx.md)).
 |---|---|---|
 | `number` is always a float | the same; the compiler stores it as an integer where that gives the same result; `i64`, `u8`, … are opt-in | — |
 | `"5" + 1 === "51"` | the same, for numbers and booleans; a string `+` an object or array is a compile error | — |
-| `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
-| `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""` and `null` are falsy; `\|\|` and `&&` return an operand) | — |
-| `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
+| `null` and `undefined` | both, as in Node; `a?: T` is still `T \| null` (#930) | — |
+| `if (count)`, `port \|\| 8080` | the same (`0`, `NaN`, `""`, `null` and `undefined` are falsy; `\|\|` and `&&` return an operand) | — |
+| `==` coerces | no coercion: `==` is `===` except that `x == null` also matches `undefined`, and the reverse (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
 | structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |

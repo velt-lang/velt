@@ -1,0 +1,22 @@
+// The backstop in lowering (issue #930, phase 1): a generic method called through a bounded type
+// parameter is instantiated only there, where its `T | null` at `T = number | undefined` would
+// hold both nothings in one value. Lowering reports it instead of losing one.
+interface Wrapper {
+  wrap<T>(x: T): boolean;
+}
+
+class C implements Wrapper {
+  wrap<T>(x: T): boolean {
+    let r: T | null = null;
+    r = x;
+    return r === null;
+  }
+}
+
+function viaParam<P extends Wrapper>(p: P): boolean {
+  return p.wrap<number | undefined>(undefined);
+}
+
+function main() {
+  console.log(viaParam(new C()));
+}

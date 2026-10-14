@@ -92,6 +92,7 @@ impl<'a> Printer<'a> {
             }
             TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
             TypeExprKind::Null => "null".into(),
+            TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
             TypeExprKind::Predicate { param, ty, asserts } => {
                 let asserts = if *asserts { "asserts " } else { "" };
@@ -350,6 +351,7 @@ fn signed_lit(lit: &SignedLit, spelled: Option<&String>) -> String {
             Lit::Str(s) => format!("{s:?}"),
             Lit::Bool(b) => b.to_string(),
             Lit::Null => "null".to_string(),
+            Lit::Undefined => "undefined".to_string(),
         },
     };
     format!("{sign}{body}")

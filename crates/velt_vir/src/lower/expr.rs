@@ -377,7 +377,10 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
-                Some(matches!(self.cx.kind(t), velt_sema::hir::TyKind::Option(_)))
+                Some(matches!(
+                    self.cx.kind(t),
+                    velt_sema::hir::TyKind::Option(..)
+                ))
             }
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,

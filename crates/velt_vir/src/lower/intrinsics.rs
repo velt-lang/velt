@@ -121,12 +121,12 @@ impl FnLower<'_, '_> {
             }
             (I::HoldsNull, [a]) => {
                 let t = self.sub(a.ty);
-                let holds = matches!(self.cx.kind(t), hir::TyKind::Option(_));
+                let holds = matches!(self.cx.kind(t), hir::TyKind::Option(..));
                 Operand::Const(crate::vir::Const::Bool(holds), Ty::Bool)
             }
             (I::NullAs, []) => {
                 let t = self.sub(ty);
-                if matches!(self.cx.kind(t), hir::TyKind::Option(_)) {
+                if matches!(self.cx.kind(t), hir::TyKind::Option(..)) {
                     return self.none_value(t);
                 }
                 // Behind a `HoldsNull` test that is false here: never runs.

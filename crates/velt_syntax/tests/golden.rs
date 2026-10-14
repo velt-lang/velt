@@ -30,7 +30,6 @@ fn golden_m1_files_parse() {
                 | "class_field_uninferred.vlt"
                 | "using_syntax.vlt"
                 | "modules_export_default.vlt"
-                | "undefined_removed.vlt"
                 | "strict_mode_names.vlt"
                 | "generator_syntax.vlt"
                 | "generator_done_undefined.vlt"
@@ -50,6 +49,8 @@ fn golden_m1_files_parse() {
                 | "overload_signature_asi_no_body.vlt"
                 | "cast_union_number_literal.vlt"
                 | "call_signatures.vlt"
+                | "function_expression_errors.vlt"
+                | "function_expression_this_errors.vlt"
         ) {
             continue;
         }

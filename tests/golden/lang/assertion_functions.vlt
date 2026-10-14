@@ -1,0 +1,57 @@
+// Assertion functions (expected output from `node`): after a call of a function returning
+// `asserts v is T` (or `asserts v`), the variable passed is narrowed for the rest of the block.
+
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Dog extends Animal {
+  bark(): string {
+    return this.name + " woofs";
+  }
+}
+
+function assertIsString(v: string | number): asserts v is string {
+  if (typeof v !== "string") {
+    throw new Error("not a string");
+  }
+}
+
+function assertDog(a: Animal): asserts a is Dog {
+  if (!(a instanceof Dog)) {
+    throw new Error("not a dog");
+  }
+}
+
+function assertDefined(v: string | null): asserts v {
+  if (v === null) {
+    throw new Error("null");
+  }
+}
+
+function shout(v: string | number): string {
+  assertIsString(v);
+  return v.toUpperCase();
+}
+
+console.log(shout("hi"));
+try {
+  shout(1);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+const pets: Animal[] = [new Dog("rex"), new Animal("cat")];
+const first = pets[0];
+assertDog(first);
+console.log(first.bark());
+
+function len(s: string | null): number {
+  assertDefined(s);
+  return s.length;
+}
+
+console.log(len("four"));

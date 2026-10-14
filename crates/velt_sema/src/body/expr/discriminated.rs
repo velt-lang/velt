@@ -352,5 +352,6 @@ pub(crate) fn show_lit(l: &ast::SignedLit) -> String {
         ast::Lit::Float { value, .. } => format!("{sign}{value}"),
         ast::Lit::Bool(b) => b.to_string(),
         ast::Lit::Null => "null".into(),
+        ast::Lit::Undefined => "undefined".into(),
     }
 }

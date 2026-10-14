@@ -5,8 +5,8 @@ export type Pt = { x: number | null; y: number };
 
 export function scaled(p: Pt, by: number = 2.0): number { //~ number-suffix
   const { y = 0.0 } = p; //~ number-suffix
-  const x = p.x ?? 1.0; //~ null-default
-  return (x + y) * by;
+  const { x = 1.0 } = p;
+  return ((x ?? 1.0) + y) * by;
 }
 
 export function shifted(x: number): number {

@@ -108,7 +108,7 @@ impl<'a> Parser<'a> {
     /// and its `[]` suffixes, or any other type without a top-level union.
     fn parse_cast_member(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
-        if self.at_ident_like() && !self.at_keyof() {
+        if self.at_ident_like() && !self.at_keyof() && !self.at_word("undefined") {
             let named = self.parse_named_type_with(true)?;
             let ty = self.parse_array_suffixes(lo, named);
             return self.parse_indexed_suffixes(lo, ty);
@@ -270,8 +270,29 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
-            Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Undefined,
+                    span,
+                })
+            }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
+            // resolves to the class of the method.
+            Tok::Kw(Kw::This) => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: "this".into(),
+                            span,
+                        }],
+                        args: vec![],
+                    },
+                    span,
+                })
+            }
             _ if self.at_keyof() => {
                 self.bump(); // keyof
                 let inner = self.parse_type_no_union()?;
@@ -589,6 +610,9 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         let mut rest = false;
+        // `(this: T, …) => R`: the type of `this`, no parameter (`fn_exprs`).
+        self.parse_this_param()?;
+        self.this_param = None;
         while !self.at(Tok::RParen) {
             if rest {
                 let span = self.cur_span();

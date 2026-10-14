@@ -1,56 +1,9 @@
-//! `undefined` and `void expr` are not part of Velt: `null` is the only "nothing" (one way of
-//! writing absence, so the null-vs-undefined bug class cannot exist). Each use is reported with
-//! the fix-it note "use `null`" (editors offer it as a quick fix) and parses on as `null`, so
-//! the rest of the file is still checked.
-
-use super::{PResult, Parser};
-use crate::ast::*;
-use velt_common::{Diagnostic, Span};
-
-/// The note every `undefined` diagnostic carries; `velt_lsp` turns it into a replacement.
-const USE_NULL: &str = "use `null`";
-
-impl<'a> Parser<'a> {
-    fn undefined_error(&mut self, msg: &str, span: Span) {
-        if self.speculating == 0 {
-            self.diags
-                .push(Diagnostic::error(msg, span).with_note(USE_NULL));
-        }
-    }
-
-    /// `undefined` as a value (the cursor is at it): reported, parsed as `null`.
-    pub(super) fn undefined_expr(&mut self, span: Span) -> ExprKind {
-        self.bump();
-        self.undefined_error("`undefined` is not part of Velt", span);
-        ExprKind::Lit(Lit::Null)
-    }
-
-    /// `void expr` (the cursor is at `void`): reported, parsed as `null`.
-    pub(super) fn void_expr(&mut self) -> PResult<ExprKind> {
-        let lo = self.cur_lo();
-        self.bump();
-        self.parse_unary()?;
-        let span = self.span_from(lo);
-        self.undefined_error(
-            "`void` expressions are `undefined`, which is not part of Velt",
-            span,
-        );
-        Ok(ExprKind::Lit(Lit::Null))
-    }
-
-    /// `undefined` as a type (the cursor is at it): reported, parsed as `null`.
-    pub(super) fn undefined_type(&mut self, span: Span) -> TypeExpr {
-        self.bump();
-        self.undefined_error("`undefined` is not part of Velt", span);
-        TypeExpr {
-            kind: TypeExprKind::Null,
-            span,
-        }
-    }
-}
+//! `undefined` (a value and a type, issue #930) and `void expr` (`UnaryOp::Void`) are parsed by
+//! `primary`, `types` and `expr`; this module holds their tests.
 
 #[cfg(test)]
 mod tests {
+    use crate::ast::{ExprKind, Lit, TypeExprKind, UnaryOp};
     use crate::parse_file;
     use velt_common::FileId;
 
@@ -60,21 +13,22 @@ mod tests {
     }
 
     #[test]
-    fn undefined_value_type_and_void_are_reported_once_each() {
+    fn undefined_value_type_and_void_parse() {
         let src =
             "function f(a: string | undefined) {\n  const x = undefined;\n  const y = void 0;\n}";
-        let found = messages(src);
-        assert_eq!(found.len(), 3, "{found:?}");
-        assert!(found.iter().all(|(_, notes)| notes == &[super::USE_NULL]));
-        assert!(found[2].0.starts_with("`void` expressions"));
+        assert!(messages(src).is_empty());
+        let (file, _) = parse_file(
+            FileId(0),
+            "const x = undefined; void g(); let t: undefined;",
+        );
+        let shown = format!("{:?}", file.items);
+        assert!(shown.contains(&format!("{:?}", ExprKind::Lit(Lit::Undefined))));
+        assert!(shown.contains(&format!("op: {:?}", UnaryOp::Void)));
+        assert!(shown.contains(&format!("{:?}", TypeExprKind::Undefined)));
     }
 
     #[test]
     fn undefined_as_a_protocol_types_return_type_is_left_to_sema() {
-        let src = "function* g(): Generator<number, undefined, undefined> {}\nconst x: Box<undefined> = 1;";
-        let found = messages(src);
-        assert_eq!(found.len(), 1, "{found:?}");
-        // TS's other protocol types (#424) take it too.
         let src = "function f(r: IteratorResult<number, undefined>, i: IterableIterator<string, undefined>, o: IteratorObject<i64, undefined>, a: AsyncIterableIterator<i64, undefined>) {}";
         assert!(messages(src).is_empty());
     }
@@ -87,9 +41,8 @@ mod tests {
             found[0].1[0].ends_with("write `{ done: true }`"),
             "{found:?}"
         );
-        // Elsewhere, `value: undefined` is `null`.
-        let found = messages("function f() { return { done: false, value: undefined }; }");
-        assert_eq!(found[0].1, [super::USE_NULL]);
+        // Elsewhere, `value: undefined` is a value.
+        assert!(messages("function f() { return { done: false, value: undefined }; }").is_empty());
     }
 
     #[test]
