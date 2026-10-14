@@ -636,8 +636,25 @@ console.log(show("ab"), show(41)); // AB 42
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
-- `asserts x is T` and `asserts x` declare a function that returns nothing (it throws instead
-  of returning `false`); the narrowing after its call is not made yet.
+- `asserts x is T` and `asserts x` declare an assertion function, which returns nothing (it
+  throws instead of returning `false`). A call of it as a statement narrows the variable passed
+  as `x` for the rest of the block, as `if (!isT(x)) throw …;` would: to `T`, or for `asserts
+  x` to a truthy value (`string | null` to `string`). As for a predicate, the value is checked
+  after the call, and an assertion function that returns for a value that is not `T` makes the
+  call throw a `TypeError` (``the assertion function `assertDog` returned for a value that is
+  not `Dog` ``).
+
+```ts
+function assertIsString(v: string | number): asserts v is string {
+  if (typeof v !== "string") throw new Error("not a string");
+}
+
+function shout(v: string | number): string {
+  assertIsString(v);
+  return v.toUpperCase();
+}
+console.log(shout("hi")); // HI
+```
 
 ## Intersection types
 

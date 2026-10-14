@@ -75,8 +75,13 @@ impl FnCx<'_, '_> {
         match &s.kind {
             A::Var(v) => self.var_decl(v, span, out),
             A::Expr(e) => {
+                // `assertIsT(x);` (`asserts v is T`) narrows `x` after it (`predicates.rs`).
+                let facts = self.assertion_facts(e);
                 let h = self.expr_stmt(e);
                 Self::push(out, S::Expr(h), span);
+                if let Some(p) = facts {
+                    self.assertion_checked(p, span, out);
+                }
             }
             A::Return(e) => self.return_stmt(e.as_ref(), span, out),
             A::If { cond, then, els } => self.if_stmt(cond, then, els.as_deref(), span, out),
