@@ -1,0 +1,120 @@
+// check: no leaks
+// Base64 at every length around the group and table boundaries, in both alphabets, and what
+// decoding rejects: characters outside the alphabet (at each position of a group, in short and
+// long texts, ASCII or not), misplaced padding and impossible lengths.
+import {
+  base64Decode,
+  base64Encode,
+  base64UrlDecode,
+  base64UrlEncode,
+  hexEncode,
+} from "velt:encoding";
+
+function bytes(n: usize): u8[] {
+  const data = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    data[i] = (i * 151 + 251) as u8;
+  }
+  return data;
+}
+
+function tryDecode(label: string, text: string, url: bool) {
+  try {
+    const out = url ? base64UrlDecode(text) : base64Decode(text);
+    console.log(label, out.length, hexEncode(out.slice(0, 6)));
+  } catch (e) {
+    console.log(label, e.message);
+  }
+}
+
+function main() {
+  // Round trips: 0 to 7 bytes, and lengths on both sides of the table threshold (24 digits).
+  const sizes: usize[] = [0, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17, 18, 19, 189, 190, 191, 192, 1000];
+  for (const n of sizes) {
+    const data = bytes(n);
+    const std = base64Encode(data);
+    const url = base64UrlEncode(data);
+    const a = base64Decode(std);
+    const b = base64UrlDecode(url);
+    console.log(
+      n,
+      std.length,
+      url.length,
+      std.slice(0, 12),
+      url.slice(-8),
+      hexEncode(a) == hexEncode(data),
+      hexEncode(b) == hexEncode(data),
+    );
+  }
+
+  // Padding is optional when decoding; the URL-safe decoder accepts it too.
+  tryDecode("no pad 1", "QQ", false);
+  tryDecode("no pad 2", "QUI", false);
+  tryDecode("pad 1", "QUI=", false);
+  tryDecode("pad 2", "QQ==", false);
+  tryDecode("url pad", "QQ==", true);
+  tryDecode("empty", "", false);
+  tryDecode("only pad", "==", false);
+
+  // Bad lengths and padding.
+  tryDecode("one digit", "Q", false);
+  tryDecode("five digits", "QUJDR", false);
+  tryDecode("short pad", "QQ=", false);
+  tryDecode("pad then digit", "QQ=Q", false);
+  tryDecode("three pads", "Q===", false);
+  tryDecode("pad inside", "QU=JD", false);
+
+  // A character outside the alphabet at each position of a group.
+  tryDecode("bad 0", "*UJD", false);
+  tryDecode("bad 1", "Q*JD", false);
+  tryDecode("bad 2", "QU*D", false);
+  tryDecode("bad 3", "QUJ*", false);
+  tryDecode("bad second group", "QUJDRE*G", false);
+  tryDecode("bad tail", "QUJDR*", false);
+  tryDecode("space", "QUJD RUZH", false);
+  tryDecode("newline", "QUJD\nRUZH", false);
+
+  // Each alphabet rejects the other's two characters.
+  tryDecode("std -", "ab-_", false);
+  tryDecode("std +", "ab+/", false);
+  tryDecode("url +", "ab+/", true);
+  tryDecode("url -", "ab-_", true);
+  tryDecode("std _", "abc_", false);
+  tryDecode("url /", "abc/", true);
+
+  // Characters next to the digit ranges.
+  tryDecode("at", "QUJ@", false);
+  tryDecode("bracket", "QUJ[", false);
+  tryDecode("backtick", "QUJ`", false);
+  tryDecode("brace", "QUJ{", false);
+  tryDecode("colon", "QUJ:", false);
+  tryDecode("del", "QUJ\x7f", false);
+
+  // Not ASCII.
+  tryDecode("latin", "QUJDé", false);
+  tryDecode("latin first", "éUJD", false);
+  tryDecode("emoji", "QUJD😀QUJD", false);
+
+  // Just under the table threshold, and at it.
+  const under = base64Encode(bytes(15));
+  const at = base64Encode(bytes(18));
+  tryDecode("under", under, false);
+  tryDecode("under bad", `${under.slice(0, 10)}*${under.slice(11)}`, false);
+  tryDecode("under latin", `${under.slice(0, 19)}é`, false);
+  tryDecode("threshold", at, false);
+  tryDecode("threshold bad", `${at.slice(0, 23)}*`, false);
+  tryDecode("threshold latin", `é${at.slice(1)}`, false);
+  tryDecode("threshold url", base64UrlEncode(bytes(18)), true);
+
+  // The same in a text long enough for the table.
+  const long = base64Encode(bytes(600));
+  tryDecode("long", long, false);
+  tryDecode("long bad middle", `${long.slice(0, 401)}*${long.slice(402)}`, false);
+  tryDecode("long bad first", `*${long.slice(1)}`, false);
+  tryDecode("long bad last", `${long.slice(0, long.length - 1)}*`, false);
+  tryDecode("long latin", `${long.slice(0, 300)}é${long.slice(301)}`, false);
+  tryDecode("long wrong alphabet", base64UrlEncode(bytes(600)), false);
+  tryDecode("long url", base64UrlEncode(bytes(600)), true);
+  tryDecode("long extra digit", `${long}Q`, false);
+  tryDecode("long pad inside", `${long.slice(0, 400)}=${long.slice(401)}`, false);
+}

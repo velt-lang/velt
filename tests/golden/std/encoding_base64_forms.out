@@ -1,0 +1,70 @@
+0 0 0   true true
+1 4 2 +w== -w true true
+2 4 3 +5I= -5I true true
+3 4 4 +5Ip -5Ip true true
+4 8 6 +5IpwA== -5IpwA true true
+5 8 7 +5IpwFc= -5IpwFc true true
+6 8 8 +5IpwFfu -5IpwFfu true true
+7 12 10 +5IpwFfuhQ== IpwFfuhQ true true
+15 20 20 +5IpwFfuhRyz SuF4D6Y9 true true
+16 24 22 +5IpwFfuhRyz F4D6Y91A true true
+17 24 23 +5IpwFfuhRyz 4D6Y91Gs true true
+18 24 24 +5IpwFfuhRyz D6Y91GsC true true
+19 28 26 +5IpwFfuhRyz Y91GsCmQ true true
+189 252 252 +5IpwFfuhRyz 7IMasUjf true true
+190 256 254 +5IpwFfuhRyz MasUjfdg true true
+191 256 255 +5IpwFfuhRyz asUjfdg0 true true
+192 256 256 +5IpwFfuhRyz sUjfdg2k true true
+1000 1336 1334 +5IpwFfuhRyz ngdw6lPA true true
+no pad 1 1 41
+no pad 2 2 4142
+pad 1 2 4142
+pad 2 1 41
+url pad 1 41
+empty 0 
+only pad Invalid base64: bad length or padding
+one digit Invalid base64: bad length or padding
+five digits Invalid base64: bad length or padding
+short pad Invalid base64: bad length or padding
+pad then digit Invalid base64 character at offset 2
+three pads Invalid base64 character at offset 1
+pad inside Invalid base64 character at offset 2
+bad 0 Invalid base64 character at offset 0
+bad 1 Invalid base64 character at offset 1
+bad 2 Invalid base64 character at offset 2
+bad 3 Invalid base64 character at offset 3
+bad second group Invalid base64 character at offset 6
+bad tail Invalid base64 character at offset 5
+space Invalid base64 character at offset 4
+newline Invalid base64 character at offset 4
+std - Invalid base64 character at offset 2
+std + 3 69bfbf
+url + Invalid base64 character at offset 2
+url - 3 69bfbf
+std _ Invalid base64 character at offset 3
+url / Invalid base64 character at offset 3
+at Invalid base64 character at offset 3
+bracket Invalid base64 character at offset 3
+backtick Invalid base64 character at offset 3
+brace Invalid base64 character at offset 3
+colon Invalid base64 character at offset 3
+del Invalid base64 character at offset 3
+latin Invalid base64 character at offset 4
+latin first Invalid base64 character at offset 0
+emoji Invalid base64 character at offset 4
+under 15 fb9229c057ee
+under bad Invalid base64 character at offset 10
+under latin Invalid base64 character at offset 19
+threshold 18 fb9229c057ee
+threshold bad Invalid base64 character at offset 23
+threshold latin Invalid base64 character at offset 0
+threshold url 18 fb9229c057ee
+long 600 fb9229c057ee
+long bad middle Invalid base64 character at offset 401
+long bad first Invalid base64 character at offset 0
+long bad last Invalid base64 character at offset 799
+long latin Invalid base64 character at offset 300
+long wrong alphabet Invalid base64 character at offset 0
+long url 600 fb9229c057ee
+long extra digit Invalid base64: bad length or padding
+long pad inside Invalid base64 character at offset 400
