@@ -1,7 +1,7 @@
 // `import.meta`: the module's `file:` URL, path and directory, as in Node (fixed while compiling:
 // they name the source file).
 const url = import.meta.url;
-console.log(typeof import.meta.url === "string" ? "string" : "other");
+console.log(typeof import.meta.url === "string" ? import.meta.url.slice(0, 5) : "other");
 console.log(url.startsWith("file:///"), url.includes("\\"));
 console.log(url.slice(url.lastIndexOf("/") + 1).split(".")[0]);
 const { filename, dirname } = import.meta;

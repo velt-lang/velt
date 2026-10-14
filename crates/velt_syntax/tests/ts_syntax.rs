@@ -185,6 +185,11 @@ fn import_meta_and_dynamic_import() {
     };
     assert!(matches!(&v.pattern.kind, PatternKind::Ident(n) if n.name == IMPORT_META));
     assert_eq!(parse_ok("const u = 1;").items.len(), 1);
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors("const u = typeof import.meta.url === \"string\" ? import.meta.url : \"\";"),
+        none
+    );
     assert_eq!(
         errors("const m = import(\"./m\");\nconst n = import(x).then((y) => y);"),
         vec![

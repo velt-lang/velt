@@ -62,6 +62,7 @@ fn as_binds_like_relational() {
     check("k as \"a\" | \"b\" | null", "(as k (\"a\" | \"b\" | null))");
     check("x as 1 | y", "(as x (1 | y))");
     check("x as A | B<C>[]", "(as x (A | B<C>[]))");
+    check("c ? x as T[\"k\"] : y", "(? c (as x T[\"k\"]) y)");
     check(
         "x as
     | A

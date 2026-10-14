@@ -255,6 +255,7 @@ impl<'a> Parser<'a> {
                             | Kw::Await
                             | Kw::Async
                             | Kw::Yield
+                            | Kw::Import
                     )
             }
             _ => false,

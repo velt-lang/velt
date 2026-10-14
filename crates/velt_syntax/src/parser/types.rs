@@ -108,7 +108,8 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         if self.at_ident_like() && !self.at_keyof() {
             let named = self.parse_named_type_with(true)?;
-            return Ok(self.parse_array_suffixes(lo, named));
+            let ty = self.parse_array_suffixes(lo, named);
+            return self.parse_indexed_suffixes(lo, ty);
         }
         self.parse_type_no_union()
     }
@@ -130,24 +131,28 @@ impl<'a> Parser<'a> {
                 return p.parse_readonly_type();
             }
             let prim = p.parse_type_prim()?;
-            let mut ty = p.parse_array_suffixes(lo, prim);
-            // `T["k"]` / `T["a" | "b"]`: an indexed access (string keys only, so `x as T[0]`
-            // and the like keep their meaning).
-            while p.at(Tok::LBracket) && matches!(p.nth(1), Tok::Str(_)) {
-                p.bump();
-                let key = p.parse_type()?;
-                p.expect(Tok::RBracket)?;
-                let indexed = TypeExpr {
-                    kind: TypeExprKind::Indexed {
-                        object: Box::new(ty),
-                        key: Box::new(key),
-                    },
-                    span: p.span_from(lo),
-                };
-                ty = p.parse_array_suffixes(lo, indexed);
-            }
-            Ok(ty)
+            let ty = p.parse_array_suffixes(lo, prim);
+            p.parse_indexed_suffixes(lo, ty)
         })
+    }
+
+    /// `T["k"]` / `T["a" | "b"]` after type `ty` (from `lo`): an indexed access (string keys
+    /// only, so `x as T[0]` and the like keep their meaning), with `[]` suffixes after it.
+    fn parse_indexed_suffixes(&mut self, lo: u32, mut ty: TypeExpr) -> PResult<TypeExpr> {
+        while self.at(Tok::LBracket) && matches!(self.nth(1), Tok::Str(_)) {
+            self.bump();
+            let key = self.parse_type()?;
+            self.expect(Tok::RBracket)?;
+            let indexed = TypeExpr {
+                kind: TypeExprKind::Indexed {
+                    object: Box::new(ty),
+                    key: Box::new(key),
+                },
+                span: self.span_from(lo),
+            };
+            ty = self.parse_array_suffixes(lo, indexed);
+        }
+        Ok(ty)
     }
 
     /// `readonly` as a type operator: before an array or tuple type (`readonly T[]`,
