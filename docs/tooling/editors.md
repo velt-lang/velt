@@ -64,7 +64,7 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   `let` bindings carry a `mutable` modifier, and calls of functions and methods declared in
   Velt source that modify their receiver or an argument a `mutating` modifier (built-in methods
   such as `push` are not marked), which you can style.
-- **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
+- **Quick fixes** for compiler errors: remove `mut`, turn
   `"a" + xs` (a string and a value `+` does not convert, such as an array) into a template
   literal, replace `export default` with a named export, add `await`
   or `spawn(...)` to a floating promise, add `async` to a method whose promise must carry

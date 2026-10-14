@@ -288,6 +288,7 @@ impl FileDocs {
             }
             ast::TypeExprKind::Literal(_)
             | ast::TypeExprKind::Null
+            | ast::TypeExprKind::Undefined
             | ast::TypeExprKind::Void
             | ast::TypeExprKind::Query(_) => {}
         }

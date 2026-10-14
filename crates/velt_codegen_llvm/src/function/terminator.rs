@@ -172,6 +172,17 @@ impl Emitter<'_> {
             }
             return Some(name.to_string());
         }
+        if let Some((name, definitions, want_params, want_ret)) =
+            crate::simd::helper(symbol, self.simd)
+        {
+            if params != want_params || ret != want_ret {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d);
+            }
+            return Some(name);
+        }
         if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
             if params != want_params || ret != want_ret {
                 return None;

@@ -161,3 +161,19 @@ fn getters_returning_a_field_borrow_this() {
     let getter = common::hir_walk::func(&p, "Scope.signal");
     assert_eq!(getter.params[0].mode, velt_sema::hir::PassMode::Borrow);
 }
+
+/// An optional chain on an object whose type failed reports that type, not the local the
+/// chain binds its object to (`<chain@..>`).
+#[test]
+fn a_chain_on_an_object_of_a_failed_type_names_no_internal_local() {
+    let r = err_src(
+        "function f(p: Map<string, f64> | null | undefined): f64 | undefined {
+           return p?.get(\"a\") as f64 | undefined;
+         }
+         function g(p: Missing | null): f64 { return p?.get(\"a\").size ?? 0; }
+         function main() { console.log(f(undefined), g(null)); }",
+    );
+    assert!(!r.contains("<chain"), "{r}");
+    assert!(r.contains("`T | null | undefined`"), "{r}");
+    assert!(r.contains("`Missing`"), "{r}");
+}

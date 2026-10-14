@@ -133,6 +133,7 @@ pub const ARRAY_AGG_NAME: &str = "T[]";
 
 mod lower;
 pub mod mangle;
+pub mod simd;
 mod verify;
 
 #[cfg(test)]
@@ -177,12 +178,31 @@ pub struct NativeInit {
 /// CONTRACT: lower a checked program. Infallible for any `Program` sema accepted
 /// (internal bugs may panic with a clear "ICE:" message).
 pub fn lower(program: &hir::Program) -> vir::Program {
-    lower::lower_program(program, &LowerOptions::default())
+    lower_with(program, &LowerOptions::default())
 }
 
-/// CONTRACT: [`lower`] with options (source locations for panics and debug info).
+/// CONTRACT: [`lower`] with options (source locations for panics and debug info). Panics
+/// (`ICE:`) where [`lower_checked`] reports an error.
 pub fn lower_with(program: &hir::Program, opts: &LowerOptions) -> vir::Program {
-    lower::lower_program(program, opts)
+    match lower_checked(program, opts) {
+        Ok(p) => p,
+        Err(diags) => panic!("ICE: {}", diags[0].message),
+    }
+}
+
+/// CONTRACT: [`lower_with`], reporting what a checked program can still ask for that lowering
+/// cannot represent yet: an instance that would hold both `null` and `undefined` in one value
+/// (issue #930; sema reports the cases it can see, `undefined_args.rs`).
+pub fn lower_checked(
+    program: &hir::Program,
+    opts: &LowerOptions,
+) -> Result<vir::Program, Vec<velt_common::Diagnostic>> {
+    let (p, diags) = lower::lower_program(program, opts);
+    if diags.is_empty() {
+        Ok(p)
+    } else {
+        Err(diags)
+    }
 }
 
 /// CONTRACT: check VIR invariants (see vir.rs header). Returns human-readable errors.

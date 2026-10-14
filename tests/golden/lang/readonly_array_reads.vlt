@@ -1,0 +1,21 @@
+// Read-only arrays are read like arrays (expected output from `node`): a `T[]` is passed as one,
+// a copy may be sorted, and the elements' own fields may change.
+
+function total(xs: readonly number[]): number {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+const nums: number[] = [3, 1, 2];
+console.log(total(nums), nums.length);
+const ro: ReadonlyArray<string> = ["b", "a"];
+console.log(ro.slice().sort().join(","), ro.indexOf("a"), ro[0]);
+type Pair = readonly [string, number];
+const p: Pair = ["x", 1];
+console.log(p[0], p[1]);
+const objs: readonly { n: number }[] = [{ n: 1 }];
+objs[0].n = 5;
+console.log(objs[0].n);

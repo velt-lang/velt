@@ -22,6 +22,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::closure_sig::Expected;
+use crate::body::stmt::void_op;
 use crate::body::{FnCx, Frame, LocalKind, Want};
 use crate::collect::fn_placeholder;
 use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
@@ -268,6 +269,7 @@ impl FnCx<'_, '_> {
                 continue;
             }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
+            self.note_readonly_array(l, p.ty.as_ref());
             // An index from a std callback is a number in the body.
             let std_int = std_callback
                 .as_ref()
@@ -399,6 +401,10 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
                     Some(_) if self.f.discards_value => self.expr_stmt(e),
+                    // `(): void => void e` is `e;`, as in TypeScript.
+                    Some(r) if r == self.cx.ty.unit && void_op(e).is_some() => {
+                        self.expr_stmt(void_op(e).unwrap_or(e))
+                    }
                     Some(r) => self.returned(e, r),
                     None => self.expr(e, None, Want::Move),
                 };

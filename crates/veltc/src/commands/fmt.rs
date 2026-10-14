@@ -63,8 +63,12 @@ fn format_file(path: &Path, check: bool) -> Result<bool, String> {
         let mut sm = SourceMap::new();
         sm.add(path, src.clone());
         let rendered: Vec<String> = diags.iter().map(|d| d.render(&sm)).collect();
+        let why = match diags.iter().any(|d| d.message == velt_fmt::NO_THIS_PARAMS) {
+            true => "it has a `this` parameter",
+            false => "it does not parse",
+        };
         format!(
-            "{}\nerror: `{}` was not formatted because it does not parse",
+            "{}\nerror: `{}` was not formatted because {why}",
             rendered.join("\n"),
             path.display()
         )

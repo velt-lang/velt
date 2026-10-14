@@ -61,7 +61,7 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(ty) {
             _ if self.cx.counted(ty) => WordKind::Direct(ty),
-            TyKind::Option(e) if vt == Ty::Ptr && self.cx.counted(e) => WordKind::Direct(e),
+            TyKind::Option(e, _) if vt == Ty::Ptr && self.cx.counted(e) => WordKind::Direct(e),
             _ => WordKind::Boxed,
         }
     }
@@ -107,7 +107,7 @@ impl FnLower<'_, '_> {
             (I::WeakRefDeref, [r]) => {
                 let r = self.expr(r);
                 let t = self.sub(ty);
-                if let TyKind::Option(e) = self.cx.kind(t) {
+                if let TyKind::Option(e, _) = self.cx.kind(t) {
                     self.cx.note_weak_seed(e);
                 }
                 let d = self.temp(Ty::Ptr);

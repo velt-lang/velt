@@ -234,6 +234,7 @@ impl Implicit {
             | TyKind::Never
             | TyKind::Error
             | TyKind::Symbol
+            | TyKind::Simd(_)
             | TyKind::Literal(_) => {}
             TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {
                 Some(r) => out.add(r),
@@ -245,7 +246,7 @@ impl Implicit {
                 self.weak_values(cx, t, None, stack, out);
                 self.reach_in(cx, x, env, stack, out)
             }
-            TyKind::Option(x) | TyKind::Shared(x) => self.reach_in(cx, *x, env, stack, out),
+            TyKind::Option(x, _) | TyKind::Shared(x) => self.reach_in(cx, *x, env, stack, out),
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                 let (a, b) = (*a, *b);
                 self.reach_in(cx, a, env, stack, out);

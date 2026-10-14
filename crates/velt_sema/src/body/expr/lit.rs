@@ -4,7 +4,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, Nothing, TyId, TyKind};
 use crate::types::{int_max, int_name, int_range};
 
 impl FnCx<'_, '_> {
@@ -17,6 +17,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let exp = match l {
             ast::Lit::Null => return self.null_lit(exp, span),
+            ast::Lit::Undefined => return self.undefined_lit(exp, span),
             _ => self.hint(exp),
         };
         // A literal expected as a union takes the type of the member it belongs to.
@@ -41,7 +42,7 @@ impl FnCx<'_, '_> {
             }
             ast::Lit::Str(s) => self.str_lit(s, span),
             ast::Lit::Bool(b) => self.mk(H::Lit(hir::Lit::Bool(*b)), self.cx.ty.bool_, span),
-            ast::Lit::Null => unreachable!("ICE: null handled above"),
+            ast::Lit::Null | ast::Lit::Undefined => unreachable!("ICE: nothings handled above"),
         }
     }
 
@@ -129,6 +130,9 @@ impl FnCx<'_, '_> {
     /// `null` takes its `T | null` type from context.
     fn null_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
         match exp {
+            Some(t) if self.cx.ty.nothing_of(t) == Some(Nothing::Undefined) => {
+                self.nothing_mismatch("null", t, span)
+            }
             Some(t)
                 if self
                     .cx
@@ -155,6 +159,122 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
         }
+    }
+
+    /// `undefined` takes its `T | undefined` type from context (issue #930). In HIR it is the
+    /// nothing of that option type, `Lit::Null` (hir_encodings.md "Undefined").
+    fn undefined_lit(&mut self, exp: Option<TyId>, span: Span) -> hir::Expr {
+        self.cx.writes_undefined |= !self.cx.scopes[self.module].is_std;
+        match exp {
+            Some(t) if self.cx.ty.has_error(t) => self.error_expr(span),
+            Some(t) if self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined()) => {
+                self.mk(H::Lit(hir::Lit::Null), t, span)
+            }
+            Some(t) => self.nothing_mismatch("undefined", t, span),
+            None => {
+                self.cx.error(
+                    Diagnostic::error(
+                        "`undefined` with no type to take here is not supported yet (its type would be `undefined` alone)",
+                        span,
+                    )
+                    .with_note("add a type annotation like `let x: T | undefined = undefined`"),
+                );
+                self.error_expr(span)
+            }
+        }
+    }
+
+    /// `void operand` as a value: evaluates `operand`, then gives `undefined` (typed from
+    /// context, like the `undefined` literal). As a statement it is `StmtKind::Expr` of the
+    /// operand (`expr_stmt`).
+    pub(crate) fn void_expr(
+        &mut self,
+        operand: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let value = self.expr(operand, None, Want::Borrow);
+        let undefined = self.undefined_lit(exp, span);
+        if undefined.ty == self.cx.ty.error {
+            return undefined;
+        }
+        let ty = undefined.ty;
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(value),
+                span: operand.span,
+            }],
+            value: Some(Box::new(undefined)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// `e` is given for an optional parameter or field (`slot`): records its span, and those
+    /// of the branches of a conditional (`c ? v : undefined`), for `optional_slot_error`.
+    pub(crate) fn optional_slot(&mut self, e: &ast::Expr, slot: crate::body::OptionalSlot) {
+        self.optional_slots.push((e.span, slot));
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.optional_slot(inner, slot),
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.optional_slot(then, slot);
+                self.optional_slot(els, slot);
+            }
+            _ => {}
+        }
+    }
+
+    /// An `undefined` (a literal, or a value that may be one) at `span`, given for an optional
+    /// parameter, a parameter with a default or an optional field: TypeScript accepts it, and
+    /// this phase of #930 cannot pass it on (`true`: reported). Such a parameter or field is
+    /// still a `T | null` whose `null` stands for "left out".
+    pub(crate) fn optional_slot_error(&mut self, span: Span) -> bool {
+        let Some(&(_, slot)) = self.optional_slots.iter().rev().find(|(s, _)| *s == span) else {
+            return false;
+        };
+        let (what, note) = match slot {
+            crate::body::OptionalSlot::Param => (
+                "`undefined` passed for an optional parameter or one with a default",
+                "JavaScript treats it as a left-out argument (the default applies); leave the argument out instead",
+            ),
+            crate::body::OptionalSlot::Field => (
+                "`undefined` as the value of an optional field",
+                "JavaScript keeps a field holding `undefined` apart from a field left out; leave the field out instead",
+            ),
+        };
+        self.cx.error(
+            Diagnostic::error(format!("{what} is not supported yet (#930)"), span).with_note(note),
+        );
+        true
+    }
+
+    /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
+    fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
+        if what == "undefined" && self.optional_slot_error(span) {
+            return self.error_expr(span);
+        }
+        if what == "undefined" && t == self.cx.ty.unit {
+            // TypeScript accepts `undefined` as a `void` value.
+            self.cx.error(
+                Diagnostic::error(
+                    "`undefined` as a `void` value here is not supported yet (#930)",
+                    span,
+                )
+                .with_note("leave the value out: `return;`, or the statement `e;` for `void e`"),
+            );
+            return self.error_expr(span);
+        }
+        let tn = self.cx.display(t);
+        let core = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let core = self.cx.display(core);
+        self.cx.error(
+            Diagnostic::error(
+                format!("type `{what}` is not assignable to type `{tn}` (TypeScript's TS2322)"),
+                span,
+            )
+            .with_note(format!("make the type allow it: `{core} | {what}`")),
+        );
+        self.error_expr(span)
     }
 
     pub(crate) fn str_lit(&self, s: &str, span: Span) -> hir::Expr {
@@ -225,6 +345,7 @@ impl FnCx<'_, '_> {
             | TyKind::Closure(_)
             | TyKind::Dyn(..)
             | TyKind::Unit
+            | TyKind::Simd(_)
             | TyKind::Shared(_) => return false,
             // A promise prints its state and, once settled, its value (`void`: `undefined`).
             TyKind::Promise(v, e) => [v, e]

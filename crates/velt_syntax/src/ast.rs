@@ -345,6 +345,8 @@ pub enum TypeExprKind {
     KeyOf(Box<TypeExpr>),
     /// `null` in type position.
     Null,
+    /// `undefined` in type position (issue #930).
+    Undefined,
     /// `void`
     Void,
     /// A type predicate as a return type (TypeScript's user-defined type guards):
@@ -513,6 +515,8 @@ pub enum Lit {
     Str(String),
     Bool(bool),
     Null,
+    /// `undefined` (issue #930): the nothing of a `T | undefined` type.
+    Undefined,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,6 +527,7 @@ pub enum UnaryOp {
     BitNot, // ~x
     TypeOf, // typeof x
     Delete, // delete r[k] (only on `Record`s; sema checks)
+    Void,   // void x: evaluates x, the value is `undefined`
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,8 +538,15 @@ pub enum BinaryOp {
     Div,
     Rem,
     Pow,
-    Eq,    // == (same as === in Velt; no coercion)
-    NotEq, // != / !==
+    /// `==`: as `===` in typed code (no coercion), except that `== null` and `== undefined`
+    /// match both nothings.
+    Eq,
+    /// `!=`
+    NotEq,
+    /// `===`
+    StrictEq,
+    /// `!==`
+    StrictNotEq,
     Lt,
     LtEq,
     Gt,
@@ -553,6 +565,23 @@ pub enum BinaryOp {
     /// `Symbol.iterator in o`); in a `for` head before the first `;`, `in` outside parentheses
     /// is the loop's.
     In,
+}
+
+impl BinaryOp {
+    /// `===` / `!==` as `==` / `!=` (the same operation unless one side is `null` or
+    /// `undefined`); every other operator unchanged.
+    pub fn loose(self) -> BinaryOp {
+        match self {
+            BinaryOp::StrictEq => BinaryOp::Eq,
+            BinaryOp::StrictNotEq => BinaryOp::NotEq,
+            op => op,
+        }
+    }
+
+    /// `===` / `!==`.
+    pub fn is_strict(self) -> bool {
+        matches!(self, BinaryOp::StrictEq | BinaryOp::StrictNotEq)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

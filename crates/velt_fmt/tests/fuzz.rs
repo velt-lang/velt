@@ -302,7 +302,8 @@ fn extra_whitespace_does_not_change_the_output() {
                 .unwrap_or(&path),
         );
         let src = std::fs::read_to_string(&path).unwrap();
-        if !parses(&src) {
+        // Files that do not parse, or have a `this` parameter, are refused (`corpus.rs`).
+        if !parses(&src) || velt_syntax::first_this_param(&src).is_some() {
             continue;
         }
         let expected = format_source(&src).unwrap();

@@ -13,7 +13,7 @@ impl PB {
         self.ty(TyKind::Array(e))
     }
     pub fn opt(&mut self, e: TyId) -> TyId {
-        self.ty(TyKind::Option(e))
+        self.ty(TyKind::Option(e, Nothing::Null))
     }
     pub fn adt_ty(&mut self, d: DefId, args: Vec<TyId>) -> TyId {
         self.ty(TyKind::Adt(d, args))

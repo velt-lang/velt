@@ -60,7 +60,7 @@ impl Cx<'_> {
 
     fn json_needs_key_uncached(&mut self, ty: TyId) -> bool {
         match self.kind(ty) {
-            TyKind::Option(e) | TyKind::Shared(e) => self.json_needs_key(e),
+            TyKind::Option(e, _) | TyKind::Shared(e) => self.json_needs_key(e),
             TyKind::Adt(d, args) => match self.hir.def(d) {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => {
                     if self.keyed_class(ty) {

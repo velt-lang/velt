@@ -83,6 +83,10 @@ impl FnLower<'_, '_> {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
             }
+            TyKind::Simd(_) => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.simd_same_bits(x, y)
+            }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
@@ -129,6 +133,11 @@ impl FnLower<'_, '_> {
                 let x = self.key_float_bits(Operand::Copy(place.clone()), vt);
                 self.fx_combine(cint(0, Ty::U64), x)
             }
+            TyKind::Simd(_) => {
+                let [low, high] = self.simd_halves(Operand::Copy(place.clone()));
+                let h = self.fx_combine(cint(0, Ty::U64), low);
+                self.fx_combine(h, high)
+            }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let x = self.cast_to(Operand::Copy(place.clone()), vt, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), x)
@@ -148,7 +157,7 @@ impl FnLower<'_, '_> {
     /// A `Map` or `Record` (or a nullable one): a pointer that still compares by content.
     fn dictionary_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.is_dictionary(e),
+            TyKind::Option(e, _) => self.is_dictionary(e),
             _ => self.is_dictionary(ty),
         }
     }
@@ -178,7 +187,7 @@ impl FnLower<'_, '_> {
     /// (or a nullable one), whose pointer is only its representation (semantics stage 2).
     fn boxed_content(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
-            TyKind::Option(e) => self.cx.boxed(e),
+            TyKind::Option(e, _) => self.cx.boxed(e),
             _ => self.cx.boxed(ty),
         }
     }
@@ -298,7 +307,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => self.eq_option(&a, &b, ty, e, no),
+            TyKind::Option(e, _) => self.eq_option(&a, &b, ty, e, no),
             TyKind::Array(e) => {
                 let (ca, cb) = (self.content(&a, ty), self.content(&b, ty));
                 self.eq_array(&ca, &cb, e, no)
@@ -383,7 +392,7 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let some = self.option_is_some(&place, ty);
                 let s64 = self.cast_to(some.clone(), Ty::Bool, Ty::U64);
                 add(self, s64);

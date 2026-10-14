@@ -131,6 +131,6 @@ fn names(t: &ast::TypeExpr, name: &str) -> bool {
         }
         K::KeyOf(t) => names(t, name),
         K::Predicate { ty, .. } => ty.as_deref().is_some_and(|x| names(x, name)),
-        K::Literal(_) | K::Null | K::Void | K::Query(_) => false,
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => false,
     }
 }

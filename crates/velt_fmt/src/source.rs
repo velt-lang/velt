@@ -47,12 +47,6 @@ pub(crate) fn blank_line_before(src: &str, pos: u32) -> bool {
     before[gap.len()..].matches('\n').count() >= 2
 }
 
-/// The source spelling of `==`/`!=` between two operands: `===`/`!==` if written that way.
-pub(crate) fn strict_equality(src: &str, lhs_hi: u32, rhs_lo: u32) -> bool {
-    src.get(lhs_hi as usize..rhs_lo as usize)
-        .is_some_and(|gap| gap.contains("===") || gap.contains("!=="))
-}
-
 /// The literal tokens (numbers, strings, `true`/`false`/`null`) inside a pattern's span, in order.
 /// Pattern literals keep no spelling in the AST, so it is re-read from the source.
 pub(crate) fn literal_tokens(src: &str, span: Span) -> Vec<String> {

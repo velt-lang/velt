@@ -29,6 +29,8 @@ pub(super) struct Layouts {
     objs: HashMap<TyId, AggId>,
     /// Roots of the class hierarchies whose objects start with a vtable pointer (built once).
     headers: Option<HashSet<DefId>>,
+    /// The classes some class of the program extends (`Cx::has_subclasses`).
+    extended: Option<HashSet<DefId>>,
     /// Class id ranges for `instanceof` (class_test.rs, built once).
     pub(super) class_ids: Option<HashMap<DefId, (u64, u64)>>,
     boxes: HashMap<TyId, AggId>,
@@ -66,10 +68,10 @@ impl Cx<'_> {
                 (l.size, l.align)
             }
             Ty::Unit => (0, 1),
-            s => {
-                let n = s.scalar_size().unwrap_or_else(|| ice("scalar size"));
-                (n, n)
-            }
+            s => match (s.scalar_size(), s.scalar_align()) {
+                (Some(n), Some(a)) => (n, a),
+                _ => ice("scalar size"),
+            },
         }
     }
 
@@ -157,7 +159,7 @@ impl Cx<'_> {
                 let tys = self.stored_tys(es);
                 self.new_agg("tuple".into(), &tys)
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let vt = self.ty(e);
                 self.new_agg("option".into(), &[Ty::Bool, vt])
             }
@@ -273,7 +275,10 @@ impl Cx<'_> {
         }
     }
 
-    /// Does the class hierarchy of `d` need a vtable pointer in every object?
+    /// Does the class hierarchy of `d` need a vtable pointer in every object? It is decided per
+    /// hierarchy, so the leaves have one too; whether a class reference may hold a subclass
+    /// instance (what the transfer checks in transfer.rs ask) is
+    /// [`has_subclasses`](Self::has_subclasses).
     pub(super) fn has_header(&mut self, d: DefId) -> bool {
         let root = self.class_root(d);
         if self.lay.headers.is_none() {
@@ -295,6 +300,28 @@ impl Cx<'_> {
             }
         }
         roots
+    }
+
+    /// Does some class of the program extend class `d`? A reference of such a class type may
+    /// hold an instance of any of them, so what it reaches is not in its own fields; a class
+    /// nothing extends holds exactly its own. The answer is over the whole program, like
+    /// [`has_header`](Self::has_header), which it implies.
+    pub(super) fn has_subclasses(&mut self, d: DefId) -> bool {
+        if self.lay.extended.is_none() {
+            self.lay.extended = Some(self.extended_classes());
+        }
+        self.lay.extended.as_ref().is_some_and(|e| e.contains(&d))
+    }
+
+    fn extended_classes(&self) -> HashSet<DefId> {
+        let mut extended = HashSet::new();
+        for def in &self.hir.defs {
+            let hir::Def::Adt(a) = def else { continue };
+            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| self.types.kind(b)) {
+                extended.insert(*b);
+            }
+        }
+        extended
     }
 
     pub(super) fn class_root(&self, mut d: DefId) -> DefId {

@@ -21,7 +21,8 @@ const KEYWORDS: &str = "async await break case catch class const constructor con
     default do else enum export extends false finally for from function if implements import in \
     interface let new null of return shared static struct switch this throw true try type void \
     while as readonly override super i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 number \
-    bool string";
+    bool string i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2 mask8x16 mask16x8 \
+    mask32x4 mask64x2";
 
 /// Globals the compiler provides without a declaration in the prelude.
 const BUILTINS: &[&str] = &[

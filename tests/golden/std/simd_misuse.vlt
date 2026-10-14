@@ -1,0 +1,25 @@
+// SIMD values have methods, not operators, and no printed or JSON form: each error says what
+// to write. `store` writes its array, so a module constant table cannot be stored to.
+
+import { i8x16, u8x16 } from "velt:simd";
+
+const TABLE: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+function main() {
+  const a = u8x16.splat(1);
+  const b = u8x16.splat(2);
+  if (a == b) {
+    console.log("same");
+  }
+  if (a.eq(b)) {
+    console.log("set");
+  }
+  console.log(a);
+  const sum = a + b;
+  const made = u8x16.nope(1);
+  const added = u8x16.add(a, b);
+  const signed: i8x16 = a;
+  const product = a.mul(b);
+  const text = JSON.stringify(a);
+  a.store(TABLE);
+}

@@ -64,17 +64,20 @@ impl Names {
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),
             TyKind::Error => "unknown".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.table.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => format!("({})[]", self.show(*e, param)),
+                TyKind::Option(..) | TyKind::FnPtr { .. } => {
+                    format!("({})[]", self.show(*e, param))
+                }
                 _ => format!("{}[]", self.show(*e, param)),
             },
             TyKind::Map(k, v) => with_args("Map", &[*k, *v]),
             TyKind::Tuple(ts) => format!("[{}]", list(ts)),
-            TyKind::Option(x) => format!("{} | null", self.show(*x, param)),
+            TyKind::Option(x, n) => format!("{}{}", self.show(*x, param), n.suffix()),
             TyKind::Result(a, b) => with_args("Result", &[*a, *b]),
             TyKind::Promise(x, e) if matches!(self.table.kind(*e), TyKind::Never) => {
                 with_args("Promise", &[*x])

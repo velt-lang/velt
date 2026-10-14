@@ -81,6 +81,7 @@ impl FnCx<'_, '_> {
             slot_names: names.names,
             bounds: names.bounds,
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: self.cx.adt_param_defaults(d),
@@ -152,7 +153,7 @@ impl FnCx<'_, '_> {
             | TyKind::Literal(_)
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Option(_) => true,
+            | TyKind::Option(..) => true,
             _ => false,
         };
         let tn = self.cx.display(k);

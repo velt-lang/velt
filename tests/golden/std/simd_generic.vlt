@@ -1,0 +1,38 @@
+// Generic code given a vector: equality and hashing cover all 128 bits, and the printed form
+// is the type's name (a vector's lanes are printed with `lane`).
+
+import { u8x16, i32x4, u64x2, f32x4 } from "velt:simd";
+
+function same<T>(a: T, b: T): bool {
+  return a == b;
+}
+
+function show<T>(x: T): string {
+  return `<${x}>`;
+}
+
+function main() {
+  const a = u8x16.splat(1);
+  const b = u8x16.splat(1).withLane(15, 2);
+  const vs: u8x16[] = [a, b];
+  console.log("includes", vs.includes(b), vs.includes(u8x16.splat(9)), vs.indexOf(b));
+  console.log("generic ==", same(a, a), same(a, b), same(f32x4.splat(0), f32x4.splat(-0)));
+
+  const maybe: u8x16 | null = vs.length > 1 ? b : null;
+  const other: u8x16 | null = a;
+  console.log("nullable ==", maybe == other, maybe == maybe);
+
+  const seen = new Map<i32x4, string>();
+  seen.set(i32x4.splat(1), "ones");
+  seen.set(i32x4.splat(2), "twos");
+  seen.set(i32x4.splat(1), "ones again");
+  console.log("map", seen.size, seen.get(i32x4.splat(1)), seen.has(i32x4.splat(3)));
+
+  const set = new Set<u64x2>();
+  set.add(u64x2.splat(7));
+  set.add(u64x2.splat(7));
+  set.add(u64x2.splat(7).withLane(1, 8));
+  console.log("set", set.size);
+
+  console.log("print", show(a), vs.join(","), show(a.eq(b)));
+}

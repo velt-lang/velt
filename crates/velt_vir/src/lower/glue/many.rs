@@ -56,7 +56,7 @@ impl FnLower<'_, '_> {
                     }
                 }
             }
-            TyKind::Option(e) => self.many_check_option(place, ty, e),
+            TyKind::Option(e, _) => self.many_check_option(place, ty, e),
             TyKind::Array(e) => self.many_check_elems(place, e),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.many_check_closure(place),
             TyKind::Dyn(..) => {

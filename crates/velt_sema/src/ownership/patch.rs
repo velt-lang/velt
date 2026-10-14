@@ -227,8 +227,8 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
     modes
 }
 
-/// The parameter a runtime function writes through, for the ones that fill an array they are
-/// given. An extern's signature says nothing about it (its parameters are borrows), so without
+/// The parameter a runtime function (or a SIMD `store`) writes through, for the ones that fill
+/// an array they are given. An extern's signature says nothing about it (its parameters are borrows), so without
 /// this the std method that calls it would look like a reader: `K.fill(0)` on a module constant
 /// would be accepted, and a table is read-only data.
 fn extern_written_param(symbol: &str) -> Option<usize> {
@@ -238,6 +238,8 @@ fn extern_written_param(symbol: &str) -> Option<usize> {
         | "velt_rt_bytes_fill"
         | "velt_rt_bytes_xor_mask" => 0,
         "velt_rt_regex_exec" => 3,
+        // `velt_simd_<type>_store(v, to, at)` (rt_abi.md "SIMD"): `v.store(K)` modifies `K`.
+        s if s.starts_with("velt_simd_") && s.ends_with("_store") => 1,
         _ => return None,
     })
 }
