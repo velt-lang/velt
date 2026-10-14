@@ -1,6 +1,7 @@
 // The spellings the parser's in-place scans decide on: letter case in the scheme and host,
 // hosts that end in a number, `@` and `:` in the authority, bracketed hosts, paths that are or
-// are not already serialized, and text to escape in each component. Expected output is Node's.
+// are not already serialized, and text to escape in each component. Expected output is Node's, except for the two hosts at
+// the end.
 import { URL } from "velt:url";
 
 function show(input: string) {
@@ -108,6 +109,14 @@ function main() {
   console.log(long.pathname.slice(0, 24), long.search.slice(0, 16), long.hash.slice(0, 8));
   const data = new URL(`data:text/plain,${"a b\tc".repeat(100)}`);
   console.log(data.href.length, data.pathname.slice(0, 30));
+  // Either side of the length up to which a text is looked through for tabs in place.
+  for (const n of [31, 32, 33, 48, 64, 65]) {
+    const mid = new URL(`https://example.com/${"p".repeat(n - 30)}\t?q=1\n#f\r`);
+    console.log(n, mid.href.length, mid.pathname.length, mid.search, mid.hash);
+    mid.search = `?${"k".repeat(n - 2)}\tv`;
+    mid.hash = `#${"h".repeat(n - 2)}\nz`;
+    console.log(mid.search.length, mid.hash.length, mid.search.slice(-2), mid.hash.slice(-2));
+  }
   // No IDNA yet: a host that is not ASCII is rejected (Node maps it to `xn--…`).
   show("http://exämple.com/a");
   show("http://user@exämple.com:8080/a");

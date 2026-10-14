@@ -8,6 +8,7 @@ fn main() {
         format!("https://example.com/{}é", "abcdefghij".repeat(100)),
         format!("https://example.com/s?{}", "q=abcdefg&".repeat(50)),
         format!("data:text/plain,{}", "abcdefghij".repeat(100)),
+        "mailto:üser@example.com".to_string(),
     ];
     let mut urls: Vec<String> = Vec::new();
     for k in 0..100 {

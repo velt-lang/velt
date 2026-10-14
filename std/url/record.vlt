@@ -50,9 +50,10 @@ const AT: i64 = 64;
 const OPEN_BRACKET: i64 = 91;
 const CLOSE_BRACKET: i64 = 93;
 
-// Up to this many code units, `removeTabNewline` looks through an ASCII text itself: three
-// runtime searches cost more than that many loads and compares.
-const SCAN_UP_TO: i64 = 64;
+// Up to this many code units, `removeTabNewline` looks through an ASCII text itself. The
+// runtime's three searches cost a fixed amount and little per unit, so they are the cheaper way
+// from about 48 units on.
+const SCAN_UP_TO: i64 = 32;
 
 /** Whether `scheme` is one of WHATWG's special schemes. */
 export function isSpecial(scheme: string): bool {
@@ -176,18 +177,21 @@ function componentEnd(s: string, from: i64, special: bool, pathToo: bool): i64 {
 // Parses `s[from..]`, everything after the scheme's colon. The components are found by index
 // in `s`; only the ones kept are cut out of it.
 function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
+  const special = isSpecial(scheme);
+  if (!special && s.charCodeAt(from) != SLASH) {
+    // Decided before the cut below, so that an opaque URL is sliced once.
+    const o = new UrlRecord();
+    o.scheme = scheme;
+    return parseOpaque(o, s.slice(from));
+  }
   if (from > 0 && !isAscii(s)) {
     // Finding a position in text that is not ASCII costs more the further in it is: cut the
     // scheme off first.
     return parseAbsolute(scheme, s.slice(from), 0);
   }
-  const special = isSpecial(scheme);
   const file = scheme == "file";
   const r = new UrlRecord();
   r.scheme = scheme;
-  if (!special && s.charCodeAt(from) != SLASH) {
-    return parseOpaque(r, s.slice(from));
-  }
   let at = from;
   const twoSlashes = isSep(s, from, special) && isSep(s, from + 1, special);
   if (special && !file) {
