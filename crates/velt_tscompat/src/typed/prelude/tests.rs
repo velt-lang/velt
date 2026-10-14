@@ -73,7 +73,12 @@ fn collect(
         },
         I::TypeAlias(a) => Some(&a.name),
         I::Enum(e) => Some(&e.name),
-        I::Class(_) | I::Struct(_) | I::Interface(_) | I::Import(_) | I::ExternFn(_) => None,
+        I::Class(_)
+        | I::Struct(_)
+        | I::Interface(_)
+        | I::Import(_)
+        | I::ExternFn(_)
+        | I::Augment(_) => None,
     };
     if let Some(name) = name.filter(|_| item.exported) {
         if !name.name.starts_with("__") {
