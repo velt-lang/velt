@@ -29,6 +29,21 @@ function kinds(): string[] {
     "korean_in_ascii207",
     "japanese198",
     "emoji11",
+    "quote_every1_64",
+    "quote_every2_32",
+    "quote_every4_16",
+    "quote_every8_64",
+    "ctrl_every1_64",
+    "ctrl_every2_16",
+    "ctrl_every4_32",
+    "ctrl_every8_64",
+    "tab_every3_48",
+    "hangul_spaces200",
+    "latin1_200",
+    "chinese200",
+    "lone_surrogates60",
+    "d7ff_d000_mixed60",
+    "mixed_json200",
   ];
 }
 
@@ -104,6 +119,39 @@ function sample(kind: string): string {
   }
   if (kind == "emoji11") {
     return "plain text 🙂".repeat(15) + "plain text";
+  }
+  if (
+    kind.startsWith("quote_every") || kind.startsWith("ctrl_every") || kind.startsWith("tab_every")
+  ) {
+    // `<what>_every<k>_<n>`: n characters, every k-th of them the escaped one.
+    const parts = kind.split("_");
+    const k = parseInt(parts[1].slice(5), 10) as i64;
+    const n = parseInt(parts[2], 10) as i64;
+    const special = parts[0] == "quote" ? "\"" : parts[0] == "ctrl" ? "\u0001" : "\t";
+    return cut("abcdefg".slice(0, k - 1) + special, n);
+  }
+  if (kind == "hangul_spaces200") {
+    return cut("한 글 자 모 음 ", 200);
+  }
+  if (kind == "latin1_200") {
+    return cut("Größe Ärger über Çà déjà vu ñandú ", 200);
+  }
+  if (kind == "chinese200") {
+    return cut("天地玄黃宇宙洪荒日月盈昃辰宿列張寒來暑往秋收冬藏", 200);
+  }
+  if (kind == "lone_surrogates60") {
+    const hi = String.fromCharCode(0xD800);
+    const lo = String.fromCharCode(0xDC00);
+    return cut(`ab${hi}cd${lo}`, 60);
+  }
+  if (kind == "d7ff_d000_mixed60") {
+    return cut("\uD7FFa\uD000", 60);
+  }
+  if (kind == "mixed_json200") {
+    return cut(
+      "{\"name\": \"Zoë\", \"tags\": [\"a\tb\"], \"note\": \"line\nnext\", \"n\": 3} ",
+      200,
+    );
   }
   return "?";
 }

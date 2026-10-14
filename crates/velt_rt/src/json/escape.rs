@@ -32,8 +32,8 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 
 const ONES: u64 = 0x0101_0101_0101_0101;
 
-/// Strings this long and longer are scanned eight bytes at a time where they are plain ASCII
-/// ([`push_long`]); shorter ones a byte at a time, which costs them less.
+/// Strings this long and longer start with a scan eight bytes at a time over their plain ASCII
+/// prefix ([`plain_prefix`]); shorter ones go a byte at a time, which costs them less.
 const LONG: usize = 16;
 
 /// Whether the eight bytes of `word` are all ASCII that is written as is: no control
@@ -60,26 +60,23 @@ pub fn push_json_string(out: &mut Vec<u8>, s: &[u8]) {
 /// [`push_json_string`], returning the number of lone surrogates written as `\udxxx` (each 3
 /// bytes and 1 unit in, 6 ASCII bytes out).
 pub fn push_json_string_counted(out: &mut Vec<u8>, s: &[u8]) -> usize {
-    if s.len() >= LONG {
-        return push_long(out, s);
-    }
     out.reserve(s.len() + 2);
     out.push(b'"');
-    push_from(out, s, 0)
+    if s.len() < LONG {
+        return push_from(out, s, 0);
+    }
+    push_from(out, s, plain_prefix(s))
 }
 
-/// [`push_json_string_counted`] for a string of [`LONG`] bytes or more: eight bytes at a time
-/// while they are plain ASCII, then a byte at a time to the end. Text that is not ASCII, or
-/// dense in escapes, stops the first word or one soon after and so costs one test more.
+/// How many bytes at the start of `s` are plain ASCII, in whole words of eight (out of line,
+/// so that the word test's constants stay out of the byte loop's registers).
 #[inline(never)]
-fn push_long(out: &mut Vec<u8>, s: &[u8]) -> usize {
-    out.reserve(s.len() + 2);
-    out.push(b'"');
+fn plain_prefix(s: &[u8]) -> usize {
     let mut i = 0;
     while i + 8 <= s.len() && plain_ascii(u64::from_le_bytes(s[i..i + 8].try_into().unwrap())) {
         i += 8;
     }
-    push_from(out, s, i)
+    i
 }
 
 /// The rest of [`push_json_string_counted`] once the opening quote is written and `s[..i]` is
