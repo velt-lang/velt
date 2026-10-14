@@ -1,38 +1,38 @@
-//! The process-wide tokio runtime and `velt_rt_block_on` (the entry for `async main`).
+//! The async runtime behind every task, and `velt_rt_block_on` (the entry for `async main`).
 //!
-//! One multi-thread runtime is created lazily on first use and lives until the process exits
-//! (there is no shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the
-//! process alive after `main` returns while something can still happen: a keep-alive reference
-//! (a listening HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O
-//! (quiet.rs, which also ends an `async main` that can never finish). Worker count = `VELT_THREADS`
-//! if set to a positive integer, else the number of available cores. Workers flush buffered
-//! stdout whenever they go idle, so a server logging to a pipe shows its output promptly.
-//!
-//! Two schedulers (#211), chosen once per process by `VELT_SCHEDULER`:
+//! The runtime is a backend chosen once per process; everything else in the crate goes through
+//! the functions here ([`spawn`], [`spawn_with`], [`spawn_blocking`], [`enter`], [`block_on`])
+//! and the handles they give back ([`JoinHandle`], [`AbortHandle`]), never through a backend's
+//! own types. Backends, chosen by `VELT_SCHEDULER` (#211):
 //! - `stealing` (the default): one tokio multi-thread runtime; idle workers steal tasks.
 //! - `per-core`: every worker is a one-worker tokio multi-thread runtime with its own I/O and
 //!   timer driver, and a task stays on the worker it started on, so its sockets, timers and data stay
 //!   on one core and no other worker is woken to run it. An unpinned spawn starts on the
 //!   spawning worker unless that worker runs [`STEAL_MARGIN`] more tasks than the least loaded
 //!   one, which then gets it: an idle worker taking a task before its first poll (steal before
-//!   start), decided when the task is spawned. [`runtime`] is then a small runtime of the main
-//!   thread's own that only waits (for `main` and for keep-alive references).
+//!   start), decided when the task is spawned.
 //!
-//! Every spawn in the runtime goes through [`spawn`], which applies that placement.
+//! The runtime starts lazily on first use and lives until the process exits (there is no
+//! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
+//! after `main` returns while something can still happen: a keep-alive reference (a listening
+//! HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O (quiet.rs,
+//! which also ends an `async main` that can never finish). Worker count = `VELT_THREADS` if set
+//! to a positive integer, else the number of available cores. Workers flush buffered stdout whenever they go
+//! idle, so a server logging to a pipe shows its output promptly.
+
+mod handle;
+mod tokio_backend;
+
+pub use handle::{AbortHandle, JoinError, JoinHandle};
+pub use tokio_backend::runtime;
 
 use super::compiled::{Borrowed, Compiled};
 use super::{PollFn, SendPtr};
 use crate::panic::ThrowLoc;
 use std::cell::Cell;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use std::task::{Context, Poll};
-use tokio::runtime::{Handle, Runtime};
-use tokio::task::JoinHandle;
-
-static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 /// Keep-alive references (Node's "ref'd handles"): while > 0, the process outlives `main`.
 static KEEP_ALIVE: AtomicUsize = AtomicUsize::new(0);
@@ -108,21 +108,17 @@ static QUIET: super::quiet::Runtime<'static> = super::quiet::Runtime {
     queued: &queued_tasks,
 };
 
-/// Tasks waiting in the runtime's global queues (spawned from outside a worker, or woken there).
+/// Tasks waiting in the runtime's queues outside a worker's own (spawned from outside a worker,
+/// or woken there).
 fn queued_tasks() -> usize {
-    if let Some(Some(workers)) = PER_CORE.get() {
-        return workers
-            .iter()
-            .map(|w| w.handle.metrics().global_queue_depth())
-            .sum();
+    match BACKEND.get() {
+        None => 0,
+        Some(_) => tokio_backend::queued_tasks(),
     }
-    RUNTIME
-        .get()
-        .map_or(0, |rt| rt.handle().metrics().global_queue_depth())
 }
 
 /// The park hook of every worker: publish its output, then count it idle (quiet.rs).
-fn parked() {
+pub(super) fn parked() {
     crate::io::flush_idle();
     super::quiet::parked(&QUIET);
 }
@@ -146,14 +142,14 @@ pub const SCHEDULER_ENV: &str = "VELT_SCHEDULER";
 /// unpinned spawn goes to the least loaded worker instead (per-core mode).
 pub const STEAL_MARGIN: usize = 2;
 
-/// A per-core worker: its runtime and how many of its tasks are alive (spawned, not finished).
-struct Worker {
-    handle: Handle,
-    load: AtomicUsize,
+/// The runtime backend of this process.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Backend {
+    Stealing,
+    PerCore,
 }
 
-/// `Some` in per-core mode (decided on first use).
-static PER_CORE: OnceLock<Option<Vec<Worker>>> = OnceLock::new();
+static BACKEND: OnceLock<Backend> = OnceLock::new();
 
 /// The scheduler the program asked for before the runtime started ([`velt_rt_set_scheduler`]):
 /// `SCHED_PER_CORE` when it uses the placement API, else `SCHED_DEFAULT`.
@@ -170,18 +166,16 @@ thread_local! {
 }
 
 /// `VELT_SCHEDULER` wins (`per-core` or `stealing`, for measurement); otherwise the scheduler the
-/// program requested.
-fn per_core() -> Option<&'static [Worker]> {
-    PER_CORE
-        .get_or_init(|| {
-            let per_core = match std::env::var(SCHEDULER_ENV).as_deref().map(str::trim) {
-                Ok("per-core") => true,
-                Ok("stealing") => false,
-                _ => REQUESTED.load(Ordering::Relaxed) == SCHED_PER_CORE,
-            };
-            per_core.then(start_workers)
-        })
-        .as_deref()
+/// program requested. Decided on first use.
+fn backend() -> Backend {
+    *BACKEND.get_or_init(
+        || match std::env::var(SCHEDULER_ENV).as_deref().map(str::trim) {
+            Ok("per-core") => Backend::PerCore,
+            Ok("stealing") => Backend::Stealing,
+            _ if REQUESTED.load(Ordering::Relaxed) == SCHED_PER_CORE => Backend::PerCore,
+            _ => Backend::Stealing,
+        },
+    )
 }
 
 /// `velt_rt_set_scheduler(1)`: run on the per-core scheduler (`velt_main` calls it first, before
@@ -195,9 +189,9 @@ pub extern "C" fn velt_rt_set_scheduler(kind: u32) {
 /// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.
 #[no_mangle]
 pub extern "C" fn velt_rt_worker_count() -> u64 {
-    match per_core() {
-        Some(ws) => ws.len() as u64,
-        None => worker_count() as u64,
+    match backend() {
+        Backend::PerCore => tokio_backend::workers().len() as u64,
+        Backend::Stealing => worker_count() as u64,
     }
 }
 
@@ -208,7 +202,7 @@ pub extern "C" fn velt_rt_current_worker() -> u64 {
     if let Some(i) = current_worker() {
         return i as u64;
     }
-    if per_core().is_some() {
+    if is_per_core() {
         return 0;
     }
     thread_local! {
@@ -240,7 +234,7 @@ pub extern "C" fn velt_rt_spawn_target(worker: i64) {
 
 /// Whether the per-core scheduler is in use.
 pub fn is_per_core() -> bool {
-    per_core().is_some()
+    backend() == Backend::PerCore
 }
 
 /// The per-core worker this thread runs (`None` on other threads and with the stealing
@@ -248,70 +242,6 @@ pub fn is_per_core() -> bool {
 pub fn current_worker() -> Option<usize> {
     let i = WORKER.with(Cell::get);
     (i != usize::MAX).then_some(i)
-}
-
-fn start_workers() -> Vec<Worker> {
-    start_n_workers(worker_count())
-}
-
-/// `n` per-core workers, started in parallel. Never blocks on a runtime, so it works from any
-/// context (also inside another runtime, where `block_on` would panic).
-fn start_n_workers(n: usize) -> Vec<Worker> {
-    super::quiet::add_workers(n);
-    let (marked, ready) = std::sync::mpsc::channel();
-    let handles: Vec<Handle> = (0..n)
-        .map(|i| {
-            // A multi-thread runtime with one worker thread, not a current-thread runtime: a wake
-            // from another worker queues the task and unparks this worker only when it is idle,
-            // where a current-thread runtime signals its I/O driver (a system call) on every
-            // remote wake. pingpong_pinned on 9 threads: 5.4× fewer system calls; the actors
-            // bench at c=64..512: 12–22 % more calls/s (#211 step 3). Its one worker still runs
-            // every task of this worker, so a task stays where it started.
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .thread_name("velt-worker")
-                .enable_all()
-                .on_thread_park(parked)
-                .on_thread_unpark(super::quiet::unparked)
-                .build()
-                .unwrap_or_else(|e| {
-                    crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
-                });
-            let handle = rt.handle().clone();
-            // Mark the worker thread (tasks only ever run there), then report.
-            let marked = marked.clone();
-            handle.spawn(async move {
-                WORKER.with(|w| w.set(i));
-                let _ = marked.send(());
-            });
-            // The runtime lives as long as the process (like the threads it replaces).
-            std::mem::forget(rt);
-            handle
-        })
-        .collect();
-    drop(marked);
-    // Every worker marked its thread before any task is placed on it.
-    for _ in 0..n {
-        if ready.recv().is_err() {
-            crate::panic::fatal("cannot start the async runtime: a worker did not start");
-        }
-    }
-    handles
-        .into_iter()
-        .map(|handle| Worker {
-            handle,
-            load: AtomicUsize::new(0),
-        })
-        .collect()
-}
-
-/// The worker an unpinned spawn from this thread starts on (see the module docs).
-fn place(workers: &[Worker]) -> usize {
-    pick(
-        workers.len(),
-        |i| workers[i].load.load(Ordering::Relaxed),
-        current_worker(),
-    )
 }
 
 /// Steal before start: the spawning worker `current` keeps the task unless it runs
@@ -331,27 +261,6 @@ fn pick(n: usize, load: impl Fn(usize) -> usize, current: Option<usize>) -> usiz
     }
 }
 
-/// A task's future that counts towards its worker's load until it finishes or is dropped.
-struct Counted<F> {
-    fut: F,
-    load: &'static AtomicUsize,
-}
-
-impl<F: Future> Future for Counted<F> {
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
-        // SAFETY: structural pinning of `fut`; `load` is never moved out.
-        unsafe { self.map_unchecked_mut(|s| &mut s.fut) }.poll(cx)
-    }
-}
-
-impl<F> Drop for Counted<F> {
-    fn drop(&mut self) {
-        self.load.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
 /// Spawns a task: on the work-stealing runtime, or in per-core mode on the worker chosen by
 /// placement. Every task the runtime starts goes through here.
 pub fn spawn<F>(fut: F) -> JoinHandle<F::Output>
@@ -360,13 +269,12 @@ where
     F::Output: Send + 'static,
 {
     let pinned = SPAWN_TARGET.with(Cell::take);
-    match per_core() {
-        None => runtime().spawn(fut),
-        Some(workers) => {
+    match backend() {
+        Backend::Stealing => tokio_backend::spawn_stealing(fut),
+        Backend::PerCore => {
             // A pinned task starts on its worker and stays there (never taken by another).
-            let w = &workers[pinned.unwrap_or_else(|| place(workers))];
-            w.load.fetch_add(1, Ordering::Relaxed);
-            w.handle.spawn(Counted { fut, load: &w.load })
+            let i = pinned.unwrap_or_else(|| tokio_backend::place(tokio_backend::workers()));
+            tokio_backend::spawn_on(i, fut)
         }
     }
 }
@@ -379,66 +287,41 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    match per_core() {
-        None => runtime().spawn(make(false)),
-        Some(workers) => {
-            let i = place(workers);
-            let fut = make(current_worker() != Some(i));
-            let w = &workers[i];
-            w.load.fetch_add(1, Ordering::Relaxed);
-            w.handle.spawn(Counted { fut, load: &w.load })
+    match backend() {
+        Backend::Stealing => tokio_backend::spawn_stealing(make(false)),
+        Backend::PerCore => {
+            let i = tokio_backend::place(tokio_backend::workers());
+            tokio_backend::spawn_on(i, make(current_worker() != Some(i)))
         }
     }
 }
 
-fn build() -> Runtime {
-    if is_per_core() {
-        // The main thread's own runtime: it only waits for work running on the workers.
-        return tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|e| {
-                crate::panic::fatal(&format!("cannot start the async runtime: {e}"))
-            });
-    }
-    let n = worker_count();
-    super::quiet::add_workers(n);
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(n)
-        .thread_name("velt-worker")
-        .enable_all()
-        .on_thread_park(parked)
-        .on_thread_unpark(super::quiet::unparked)
-        .build()
-        .unwrap_or_else(|e| crate::panic::fatal(&format!("cannot start the async runtime: {e}")))
+/// Runs `f` on a thread that may block (file system, DNS, a native call), not on a worker.
+pub fn spawn_blocking<R, F>(f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    JoinHandle::Tokio(tokio_backend::handle().spawn_blocking(f))
 }
 
-/// The global runtime (created on first use): the work-stealing one, or in per-core mode the
-/// main thread's waiting runtime.
-pub fn runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(build)
+/// Makes the runtime's tokio context current on this thread while the guard lives, for code that
+/// creates tokio objects outside a task (a child process's pipes).
+pub fn enter() -> tokio::runtime::EnterGuard<'static> {
+    tokio_backend::handle().enter()
+}
+
+/// Runs `f` to completion on this thread, which must not be a worker (the main thread at exit,
+/// tests).
+pub fn block_on<F: Future>(f: F) -> F::Output {
+    runtime().block_on(f)
 }
 
 /// How many tasks are alive (spawned and not finished); 0 if the runtime never started.
 pub(crate) fn alive_tasks() -> usize {
-    if let Some(Some(workers)) = PER_CORE.get() {
-        return workers
-            .iter()
-            .map(|w| w.handle.metrics().num_alive_tasks())
-            .sum();
-    }
-    RUNTIME
-        .get()
-        .map_or(0, |rt| rt.handle().metrics().num_alive_tasks())
-}
-
-/// A runtime handle for this thread (for `spawn_blocking` and entering a runtime context):
-/// the work-stealing runtime, or in per-core mode this worker's (worker 0's off the workers).
-/// Spawn tasks with [`spawn`] instead.
-pub fn handle() -> &'static Handle {
-    match per_core() {
-        None => runtime().handle(),
-        Some(workers) => &workers[current_worker().unwrap_or(0)].handle,
+    match BACKEND.get() {
+        None => 0,
+        Some(_) => tokio_backend::alive_tasks(),
     }
 }
 
@@ -456,7 +339,6 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // The module state initialized before `main` is the tasks' from now on.
     super::local::module_release_outside();
     let root = Compiled::from_store(poll, never_dropped, Borrowed(SendPtr(state)));
-    let rt = runtime();
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
     // The worker that finished it hands over where its error (if any) was thrown: the caller
     // reports it on this thread.
@@ -474,7 +356,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     if !super::quiet::wait(&QUIET, done) {
         crate::entry::exit_unfinished();
     }
-    match rt.block_on(join) {
+    match block_on(join) {
         Ok(loc) => loc.restore(),
         Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
         Err(_) => crate::panic::fatal("async main was cancelled"),
@@ -485,22 +367,6 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn per_core_workers_start_inside_another_runtime_and_mark_their_threads() {
-        // `block_on` would panic here ("Cannot start a runtime from within a runtime").
-        let outer = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        outer.block_on(async {
-            let workers = start_n_workers(2);
-            for (i, w) in workers.iter().enumerate() {
-                let on = w.handle.spawn(async { current_worker() }).await.unwrap();
-                assert_eq!(on, Some(i), "worker {i} reports its own index");
-            }
-        });
-    }
 
     #[test]
     fn releasing_a_keep_alive_publishes_this_threads_output_first() {

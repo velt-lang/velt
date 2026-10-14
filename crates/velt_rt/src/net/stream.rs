@@ -377,7 +377,7 @@ impl StreamObj {
             return shutdown_socket(s, std::net::Shutdown::Write);
         }
         let obj = self.clone();
-        crate::task::runtime::handle().spawn(async move {
+        crate::task::runtime::spawn(async move {
             let Io::Lazy(lazy) = &obj.io else { return };
             let _ = tokio::time::timeout(SHUTDOWN, async {
                 match obj.until_abort(obj.set_up(lazy)).await {

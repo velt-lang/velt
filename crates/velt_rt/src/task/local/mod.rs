@@ -536,7 +536,7 @@ fn outside_home_step(f: impl FnOnce()) {
     let mut home = OUTSIDE_HOME.lock();
     home.4 |= module_state::used();
     // Its promises may start timers and I/O, which need the runtime.
-    let _rt = super::runtime::handle().enter();
+    let _rt = super::runtime::enter();
     let mut f = Some(f);
     // SAFETY: the no-op waker is static; the set is the home's own.
     unsafe {

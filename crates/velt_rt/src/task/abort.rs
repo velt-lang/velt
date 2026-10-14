@@ -41,7 +41,7 @@ pub struct Signal {
     /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
     sources: Mutex<Vec<Arc<Signal>>>,
     /// The timer task of an `AbortSignal.timeout` signal, aborted when the signal is dropped.
-    timer: std::sync::OnceLock<tokio::task::AbortHandle>,
+    timer: std::sync::OnceLock<super::runtime::AbortHandle>,
 }
 
 impl Drop for Signal {

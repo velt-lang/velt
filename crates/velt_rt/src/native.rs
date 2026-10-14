@@ -273,7 +273,7 @@ unsafe extern "C" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         let ctx = std::mem::replace(&mut work.ctx, std::ptr::null_mut());
         let (run, ctx) = (work.work, crate::task::SendPtr(ctx));
         drop(work);
-        crate::task::runtime::handle().spawn_blocking(move || {
+        crate::task::runtime::spawn_blocking(move || {
             let ctx = ctx;
             let mut b = buf(size);
             // SAFETY: the library's work function fills `size` bytes and consumes `ctx`.

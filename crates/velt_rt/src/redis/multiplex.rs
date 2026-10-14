@@ -17,12 +17,12 @@
 use super::connect::{self, Endpoint, Stream};
 use super::error::RedisErr;
 use super::resp::{Parser, Value};
+use crate::task::runtime::AbortHandle;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::AbortHandle;
 
 /// What one request resolves to: its replies, in order.
 type Replies = Result<Vec<Value>, RedisErr>;
