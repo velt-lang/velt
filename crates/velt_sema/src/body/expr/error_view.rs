@@ -87,7 +87,11 @@ impl FnCx<'_, '_> {
 
     /// `String(h)` for a nullable `h` whose payload is written by its `toString()`:
     /// `match (h) { Some(v) => String(v), null => "null" }`; `Err(h)` for other values.
-    pub(crate) fn nullable_text(&mut self, mut h: hir::Expr, what: &str) -> Result<hir::Expr, hir::Expr> {
+    pub(crate) fn nullable_text(
+        &mut self,
+        mut h: hir::Expr,
+        what: &str,
+    ) -> Result<hir::Expr, hir::Expr> {
         let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
             return Err(h);
         };
