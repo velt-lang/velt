@@ -96,6 +96,12 @@ impl FnCx<'_, '_> {
             return e;
         }
         let span = e.span;
+        if self.cx.dynamic(e.ty).is_some() && self.cx.class_of(target).is_none() {
+            // `typeof x === "number"` on an `any`: the value it holds, checked (crate::any).
+            let ty = e.ty;
+            let share = self.intrinsic(hir::Intrinsic::Share, vec![e], ty, span);
+            return self.intrinsic(hir::Intrinsic::AnyTo, vec![share], target, span);
+        }
         self.mk(H::Downcast(Box::new(e)), target, span)
     }
 

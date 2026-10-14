@@ -277,4 +277,25 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_weakref_deref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+
+    // The dynamic value `any` / `unknown` (issue #924; hir_encodings.md "any and unknown"). Its
+    // operand is a `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with
+    // `Program::any_impl`.
+    /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: a value of another
+    /// type stops the program with a `TypeError` naming the expected and the found type. `T` is
+    /// a concrete type, a class (an instance of it or of a subclass), `U | null` (`null` and
+    /// `undefined` give `null`) or `any` / `unknown` (the same value).
+    AnyTo,
+    /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
+    AnyTypeof,
+    /// `(x: borrow any) -> bool`: JavaScript's truthiness of `x`.
+    AnyTruthy,
+    /// `(a: borrow any, b: borrow any) -> bool`: `a === b` (numbers by value, `NaN` unequal,
+    /// strings by content, objects and functions by identity).
+    AnyStrictEq,
+    /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
+    /// `null == undefined`, `"1" == 1`, `true == 1`).
+    AnyLooseEq,
+    /// `(x: borrow any) -> string`: JavaScript's `String(x)` (also template literals).
+    AnyToString,
 }

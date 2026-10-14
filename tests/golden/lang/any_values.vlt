@@ -1,0 +1,82 @@
+// `any` and `unknown`: boxing, checked conversions, typeof, equality, truthiness, printing.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Point3 extends Point {
+  z: number;
+  constructor(x: number, y: number, z: number) {
+    super(x, y);
+    this.z = z;
+  }
+}
+
+function describe(v: any): string {
+  return typeof v;
+}
+
+function truthy(v: any): boolean {
+  if (v) {
+    return true;
+  }
+  return false;
+}
+
+function main(): void {
+  const n: any = 1.5;
+  const s: any = "hi";
+  const b: any = true;
+  const nul: any = null;
+  const und: any = undefined;
+  const p = new Point(1, 2);
+  const o: any = p;
+  const xs: any = [1, 2, 3];
+  const f: any = (a: number): number => a + 1;
+  console.log(n, s, b, nul, und, o, xs);
+  console.log([describe(n), describe(s), describe(b), describe(nul), describe(und)]);
+  console.log([describe(o), describe(xs), describe(f)]);
+
+  // Checked conversions out of `any`.
+  const m: number = n;
+  const t: string = s;
+  const c: boolean = b;
+  const q: Point = o;
+  console.log(m + 1, t + "!", !c, q.x, q === p);
+  const maybe: string | null = nul;
+  const maybe2: string | null = s;
+  console.log(maybe, maybe2);
+  const sub: any = new Point3(1, 2, 3);
+  const base: Point = sub;
+  console.log(base.x, base instanceof Point3);
+
+  // Truthiness.
+  const vals: any[] = [0, 1, "", "a", null, undefined, false, true, NaN, p, xs];
+  const tr: boolean[] = [];
+  for (const v of vals) {
+    tr.push(truthy(v));
+  }
+  console.log(tr);
+
+  // Equality.
+  const one: any = 1;
+  const oneStr: any = "1";
+  const other: any = new Point(1, 2);
+  console.log(one === 1, one == 1, one === oneStr, one == oneStr, one != oneStr);
+  console.log(nul == und, nul === und, nul == 0, und == null, s === "hi", s !== "hi");
+  console.log(o === p, o === other, o == other, xs === xs, b == 1, b === 1);
+
+  // `unknown` narrows before use.
+  const u: unknown = 42;
+  if (typeof u === "number") {
+    console.log(u + 1);
+  }
+  const w: unknown = "text";
+  console.log(typeof w, (w as string).length);
+  const back: any = u;
+  console.log(back);
+}

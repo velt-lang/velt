@@ -56,6 +56,9 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
+            return self.coerce_dynamic(h, exp, false);
+        }
         // Two forms of one anonymous object type (a generic shape at concrete arguments and the
         // written shape, crate::anon): the same values, so only the type changes.
         if self.cx.canon(h.ty) == self.cx.canon(exp) {
@@ -249,6 +252,9 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
+            return self.unknown_use_error(found.span);
+        }
         if self.shared_widening_error(expected, found) {
             return;
         }

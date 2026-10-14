@@ -1,0 +1,36 @@
+// Values boxed in `any` and their boxes are released once, never used after: strings, objects,
+// arrays, closures, values shared between an `any` and a typed variable, an object that refers
+// to itself through an `any` field (a counted cycle, kept like any other until #11), and `any`
+// values passed to and returned from async functions (the debug runs' checking allocator).
+class Node {
+  next: any = null;
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+async function echo(v: any): Promise<any> {
+  return v;
+}
+
+async function main(): Promise<void> {
+  const items: any[] = [];
+  for (let i = 0; i < 3; i++) {
+    items.push("item " + i);
+    items.push([i, i + 1]);
+    items.push(new Node("n" + i));
+  }
+  console.log(items.length, items[0], items[1], items[2]);
+  const n = new Node("a");
+  const held: any = n;
+  n.next = held;
+  console.log(n.name, typeof n.next);
+  const f: any = (x: number): number => x * 2;
+  console.log(typeof f);
+  const s: string = await echo("back");
+  console.log(s);
+  const r = await echo(new Node("task"));
+  const back: Node = r;
+  console.log(back.name);
+}

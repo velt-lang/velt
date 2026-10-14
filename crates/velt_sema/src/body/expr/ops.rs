@@ -256,6 +256,12 @@ impl FnCx<'_, '_> {
                 }
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
+            B::Eq | B::NotEq if self.dynamic_operand(lhs) || self.dynamic_operand(rhs) => {
+                return self.dynamic_eq(lhs, rhs, strict, op == B::NotEq, span);
+            }
+            _ if self.dynamic_operand(lhs) || self.dynamic_operand(rhs) => {
+                return self.dynamic_operator(op_str(op), lhs, rhs, span);
+            }
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {
                 let (other, word) = match nothing_word(rhs) {
                     Some(w) => (lhs, w),

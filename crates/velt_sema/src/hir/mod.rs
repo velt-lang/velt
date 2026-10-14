@@ -214,6 +214,11 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// `impls` index of the implementation of the prelude's `any` for every type (`ty` is
+    /// `Param(0)`, no methods): the `ToDyn` of a value converted to `any` or `unknown`, whose
+    /// tables are the type descriptors (hir_encodings.md "any and unknown"). `None` without
+    /// a prelude.
+    pub any_impl: Option<u32>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

@@ -95,6 +95,9 @@ pub(crate) enum Glue {
     WeakRetain,
     WeakRelease,
     WeakBoxTrace,
+    AnyTruthy,
+    AnySame,
+    AnyNumber,
 }
 
 /// Vtable slots below 0 (interface/virtual methods use slots 0..n).
@@ -141,6 +144,9 @@ impl Glue {
             Glue::WeakRetain => "weakretain",
             Glue::WeakRelease => "weakrelease",
             Glue::WeakBoxTrace => "weakboxtrace",
+            Glue::AnyTruthy => "anytruthy",
+            Glue::AnySame => "anysame",
+            Glue::AnyNumber => "anynumber",
         }
     }
 
@@ -170,6 +176,9 @@ impl Glue {
             Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
+            Glue::AnyTruthy => (vec![Ptr], Bool),
+            Glue::AnySame => (vec![Ptr, Ptr], Bool),
+            Glue::AnyNumber => (vec![Ptr], F64),
         }
     }
 }
@@ -213,6 +222,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
             Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
             Glue::WeakRelease => lw.weak_release_body(args[0], ty),
+            Glue::AnyTruthy => lw.any_truthy_body(args[0], ty),
+            Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
+            Glue::AnyNumber => lw.any_number_body(args[0], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

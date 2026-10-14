@@ -221,6 +221,11 @@ impl Ctx<'_> {
         ty: TyId,
         iface: crate::hir::DefId,
     ) -> Option<(u32, Vec<TyId>, TyId)> {
+        if let Some(a) = self.any {
+            if iface == a.any || iface == a.unknown {
+                return Some((a.imp, vec![], ty));
+            }
+        }
         self.impl_index.extend(&self.impls);
         let mut cur = Some(ty);
         let mut guard = 0;
