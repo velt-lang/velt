@@ -737,8 +737,8 @@ Differences from TypeScript, each a compile error with a note on what to write i
   (overloads) are not parts either; `T extends A & B` stays a bound on two interfaces.
 - A part that is a type parameter (`function merge<T, U>(t: T, u: U): T & U`) is not supported
   yet (#350). A generic alias works, since each use has concrete type arguments.
-- Interface declarations are not merged (#652): declare an interface once, or name the
-  combination with `&`.
+- Interface declarations merge as in TypeScript
+  ([declaration merging](classes.md#declaration-merging)).
 
 ```ts error
 type Conflict = { k: string } & { k: number }; // error: no value has type ...

@@ -193,3 +193,28 @@ fn import_meta_and_dynamic_import() {
         ]
     );
 }
+
+#[test]
+fn declare_global_and_module_blocks() {
+    let m = parse_ok(
+        "declare global {\n  interface W { a: number }\n}\ndeclare module \"./m\" {\n  export interface O { b?: string }\n}",
+    );
+    let ItemKind::Augment(g) = &m.items[0].kind else {
+        panic!("not an augmentation: {:?}", m.items[0]);
+    };
+    assert!(g.module.is_none());
+    assert!(matches!(&g.items[0].kind, ItemKind::Interface(i) if i.name.name == "W"));
+    let ItemKind::Augment(a) = &m.items[1].kind else {
+        panic!("not an augmentation: {:?}", m.items[1]);
+    };
+    assert_eq!(a.module.as_ref().map(|(s, _)| s.as_str()), Some("./m"));
+    assert!(a.items[0].exported);
+    assert_eq!(
+        errors("declare global {\n  var x: number;\n}"),
+        vec!["a variable cannot be declared in `declare global` or `declare module` yet: only interfaces, which merge into the declaration they augment"]
+    );
+    assert_eq!(
+        errors("declare module \"virtual:x\";"),
+        vec!["a shorthand ambient module declaration (`declare module \"…\";`) is not supported: Velt types every module from its source"]
+    );
+}

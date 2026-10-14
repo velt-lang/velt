@@ -117,7 +117,10 @@ fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
         ast::ItemKind::Enum(e) => &e.name,
         ast::ItemKind::Interface(d) => &d.name,
         ast::ItemKind::TypeAlias(a) => &a.name,
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_) => return None,
     })
 }
 
@@ -130,7 +133,10 @@ pub(super) fn new_def<'m>(
     q: String,
 ) -> Option<(&'m ast::Ident, Item)> {
     let (name, info): (&ast::Ident, DefInfo<'m>) = match &item.kind {
-        ast::ItemKind::Import(_) | ast::ItemKind::Extend(_) | ast::ItemKind::Var(_) => return None,
+        ast::ItemKind::Import(_)
+        | ast::ItemKind::Extend(_)
+        | ast::ItemKind::Var(_)
+        | ast::ItemKind::Augment(_) => return None,
         ast::ItemKind::Function(f) => {
             let src = Some(FnSource::Decl(f));
             let info = fn_placeholder(q, f.sig.name.span, f.sig.span, m, FnKind::Free, src);
@@ -187,9 +193,9 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
             name.span,
         );
         if matches!(item.kind, ast::ItemKind::Interface(_)) {
-            // TypeScript merges the declarations of an interface (#384).
+            // TypeScript also merges an interface with a class, function or namespace (#384).
             d = d.with_note(format!(
-                "Velt does not merge interface declarations: declare `{0}` once with every member, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
+                "Velt merges an interface only with other interface declarations: give `{0}` another name, or name the combination with an intersection (`type More = {0} & {{ … }}`)",
                 name.name
             ));
         }

@@ -316,6 +316,11 @@ impl Loader<'_, '_> {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
                     Some((imp.from.clone(), imp.from_span))
                 }
+                // `declare module "spec" { … }` augments that module: it is loaded as an import.
+                ast::ItemKind::Augment(ast::Augment {
+                    module: Some((spec, span)),
+                    ..
+                }) => Some((spec.clone(), *span)),
                 _ => None,
             })
             .collect();

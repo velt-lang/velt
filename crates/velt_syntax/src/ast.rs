@@ -100,6 +100,18 @@ pub enum ItemKind {
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI).
     ExternFn(FnSig),
+    /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
+    /// global scope or another module (TypeScript's augmentation; interfaces merge into the
+    /// declaration of the same name).
+    Augment(Augment),
+}
+
+#[derive(Clone, Debug)]
+pub struct Augment {
+    /// `declare module "spec"`: the module specifier (resolved like an import's) and its span;
+    /// `None` for `declare global`.
+    pub module: Option<(String, Span)>,
+    pub items: Vec<Item>,
 }
 
 #[derive(Clone, Debug)]

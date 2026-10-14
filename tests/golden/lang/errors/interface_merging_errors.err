@@ -1,0 +1,5 @@
+interface_merging_errors.vlt:6:3: error: `x` is declared in two declarations of the interface `A`
+  = note: merged interface declarations each add their own members: declare each member once (TypeScript allows a repeated field of the same type, and makes a repeated method an overload)
+interface_merging_errors.vlt:12:11: error: all declarations of `B` must have identical type parameters
+  --> interface_merging_errors.vlt:9:11: the first declaration
+interface_merging_errors.vlt:19:11: error: individual declarations of the merged interface `C` must be all exported or all local

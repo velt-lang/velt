@@ -179,3 +179,11 @@ fn computed_keys() {
 fn import_meta() {
     round_trips("const u = import.meta.url;\nconsole.log(import.meta.dirname);\n");
 }
+
+#[test]
+fn declare_global_and_module_blocks() {
+    round_trips("declare global {\n  // the hook\n  interface W {\n    a: number;\n  }\n}\n");
+    round_trips(
+        "declare module \"./m\" {\n  interface O {\n    b?: string;\n  }\n\n  export interface P {\n    c: number;\n  }\n}\n",
+    );
+}

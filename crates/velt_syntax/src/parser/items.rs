@@ -125,6 +125,7 @@ impl<'a> Parser<'a> {
                 self.expect_semi()?;
                 ItemKind::Var(var)
             }
+            Some(Kw::Declare) if self.at_augment() => ItemKind::Augment(self.parse_augment()?),
             Some(Kw::Declare) => ItemKind::ExternFn(self.parse_declare(lo)?),
             _ if self.at_using_decl() => {
                 let span = self.cur_span();

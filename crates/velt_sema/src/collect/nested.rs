@@ -204,6 +204,7 @@ fn nested_name<'m>(cx: &mut Ctx, item: &'m ast::Item) -> Option<&'m str> {
         ast::ItemKind::ExternFn(_) => "`declare function` declarations",
         ast::ItemKind::Extend(_) => "`extend` blocks",
         ast::ItemKind::Var(_) => "module constants",
+        ast::ItemKind::Augment(_) => "`declare global` and `declare module` blocks",
     };
     cx.err(format!("{what} must be at the module level"), item.span);
     None

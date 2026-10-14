@@ -247,7 +247,9 @@ fn declared_name(item: &Item) -> Option<&String> {
             ast::PatternKind::Ident(name) => &name.name,
             _ => return None,
         },
-        ItemKind::Extend(_) | ItemKind::Import(_) | ItemKind::ExternFn(_) => return None,
+        ItemKind::Extend(_) | ItemKind::Import(_) | ItemKind::ExternFn(_) | ItemKind::Augment(_) => {
+            return None
+        }
     })
 }
 
@@ -333,7 +335,7 @@ impl Source<'_> {
                     ..leaf(Kind::Extension, &target, &e.generics, doc)
                 }
             }
-            ItemKind::Import(_) | ItemKind::ExternFn(_) => return None,
+            ItemKind::Import(_) | ItemKind::ExternFn(_) | ItemKind::Augment(_) => return None,
         })
     }
 

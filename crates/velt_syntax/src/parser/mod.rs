@@ -6,6 +6,7 @@
 //! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
 mod arrow;
+mod augment;
 mod expr;
 mod field_types;
 mod for_loop;
