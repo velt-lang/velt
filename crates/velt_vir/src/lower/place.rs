@@ -133,12 +133,15 @@ impl FnLower<'_, '_> {
 
     pub(super) fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr) -> Operand {
         let bty = self.sub(base.ty);
-        let v = match self.table_read(base) {
+        // A table's header is the inline value, also where arrays of its type are boxes.
+        let arr = match self.table_read(base) {
             Some(table) => table,
-            None => self.expr(base),
+            None => {
+                let v = self.expr(base);
+                let arr = self.place_of(v, bty);
+                self.content(&arr, bty)
+            }
         };
-        let arr = self.place_of(v, bty);
-        let arr = self.content(&arr, bty);
         let i = self.expr(index);
         let ity = self.vty(index.ty);
         Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))

@@ -1,6 +1,6 @@
-// A table in a program that shares arrays of its type (two owners of one `u32[]`): those are
-// counted heap objects, so the table is built where it is used instead of being read-only data.
-// It reads the same.
+// A table in a program that shares arrays of its type (two owners of one `u32[]`, which makes
+// every `u32[]` a counted heap object): an element, the length and a loop still read the table
+// where it is stored, and it reads the same.
 const K: u32[] = [10, 20, 30];
 
 class Holder {

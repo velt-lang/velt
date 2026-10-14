@@ -196,9 +196,10 @@ impl FnLower<'_, '_> {
 
     /// `e` when it is a table (a module constant that is an array literal of number or boolean
     /// constants), for a use that only reads it where it stands: an element, the length, an
-    /// iteration. Its elements are read-only data emitted once, and the value is the header
-    /// `{ data, len, cap: 0 }` over them (`cap == 0`: the buffer is not owned, so nothing frees
-    /// it).
+    /// iteration. Its elements are read-only data emitted once, and the result is the place of
+    /// the inline header `{ data, len, cap: 0 }` over them (`cap == 0`: the buffer is not owned, so nothing
+    /// frees it), also where arrays of this type are counted boxes: the header never leaves the
+    /// code of those three reads, so nothing counts it.
     ///
     /// Only those three uses get it. Anywhere else (an argument, a receiver, a value that is
     /// kept) the constant is evaluated like any other, to a new array, because what receives it
@@ -206,24 +207,45 @@ impl FnLower<'_, '_> {
     /// data must never be reachable from there.
     ///
     /// `None`, for the initializer to be evaluated, also when the array is empty (nothing to
-    /// store), when an element is not one `table_const` folds, or when the program shares
-    /// arrays of this type: those are counted heap boxes, and a count can't live in read-only
-    /// data.
-    pub(super) fn table_read(&mut self, e: &hir::Expr) -> Option<Operand> {
+    /// store) or an element is not one `table_const` folds.
+    pub(super) fn table_read(&mut self, e: &hir::Expr) -> Option<Place> {
         let hir::ExprKind::Global(d) = e.kind else {
             return None;
         };
-        let hir::Def::Global(g) = self.cx.hir.def(d) else {
-            return None;
+        let (data, len) = match self.cx.tables.get(&d) {
+            Some(known) => (*known)?,
+            None => {
+                let hir::Def::Global(g) = self.cx.hir.def(d) else {
+                    return None;
+                };
+                let stored = self.store_table(g);
+                self.cx.tables.insert(d, stored);
+                stored?
+            }
         };
-        self.static_table(g)
+        let a = self.cx.array_agg();
+        let t = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(t),
+            Rvalue::Aggregate(
+                a,
+                vec![
+                    Operand::Const(Const::Static(data), Ty::Ptr),
+                    cint(len as i128, Ty::U64),
+                    cint(0, Ty::U64),
+                ],
+            ),
+        );
+        Some(Place::local(t))
     }
 
-    fn static_table(&mut self, g: &hir::GlobalDef) -> Option<Operand> {
+    /// The elements of table `g` as static data, with their number; `None` when `g` is not a
+    /// table lowering stores (`table_read`).
+    fn store_table(&mut self, g: &hir::GlobalDef) -> Option<(vir::StaticId, usize)> {
         let hir::ExprKind::ArrayLit(es) = &g.init.kind else {
             return None;
         };
-        if es.is_empty() || self.cx.boxed(g.ty) {
+        if es.is_empty() {
             return None;
         }
         let elem = self.elem_ty(g.ty);
@@ -241,21 +263,7 @@ impl FnLower<'_, '_> {
                 _ => return None,
             }
         }
-        let data = self.cx.static_bytes(bytes, size as u32);
-        let a = self.cx.array_agg();
-        let t = self.temp(Ty::Agg(a));
-        self.assign(
-            Place::local(t),
-            Rvalue::Aggregate(
-                a,
-                vec![
-                    Operand::Const(Const::Static(data), Ty::Ptr),
-                    cint(es.len() as i128, Ty::U64),
-                    cint(0, Ty::U64),
-                ],
-            ),
-        );
-        Some(Operand::Copy(Place::local(t)))
+        Some((self.cx.static_bytes(bytes, size as u32), es.len()))
     }
 
     /// The value of table element `e` as a constant of type `to`: a number or boolean literal,

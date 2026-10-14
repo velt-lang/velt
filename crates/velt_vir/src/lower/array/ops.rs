@@ -27,8 +27,7 @@ impl FnLower<'_, '_> {
         }
         let aty = self.sub(args[0].ty);
         if i == I::ArrayLen {
-            if let Some(table) = self.table_read(&args[0]) {
-                let arr = self.place_of(table, aty);
+            if let Some(arr) = self.table_read(&args[0]) {
                 return self.rvalue_temp(Ty::U64, Rvalue::Use(Self::arr_field(&arr, 1)));
             }
         }
