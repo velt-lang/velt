@@ -296,6 +296,4 @@ pub enum Intrinsic {
     /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
     /// `null == undefined`, `"1" == 1`, `true == 1`).
     AnyLooseEq,
-    /// `(x: borrow any) -> string`: JavaScript's `String(x)` (also template literals).
-    AnyToString,
 }

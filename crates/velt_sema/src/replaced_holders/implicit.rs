@@ -469,8 +469,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MutexWith
         | I::PromiseAll
         | I::PromiseRace
-        | I::PromiseAny
-        | I::AnyToString => true,
+        | I::PromiseAny => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat

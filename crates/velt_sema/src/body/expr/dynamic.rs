@@ -27,18 +27,18 @@ impl FnCx<'_, '_> {
         let from = self.cx.dynamic(h.ty);
         match (from, to) {
             (None, None) => Err(h),
-            (None, Some(_)) => self.to_dynamic(h, exp),
+            (None, Some(_)) => self.box_dynamic(h, exp),
             (Some(Dynamic::Unknown), None) if !checked_from_unknown => Err(h),
-            (Some(_), _) => Ok(self.from_dynamic(h, exp)),
+            (Some(_), _) => Ok(self.unbox_dynamic(h, exp)),
         }
     }
 
     /// A typed value boxed as `exp` (`any` or `unknown`).
-    fn to_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    fn box_dynamic(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;
         if let Some(v) = self.cx.lit_value(h.ty) {
             let b = self.lit_to_base(h, &v);
-            return self.to_dynamic(b, exp);
+            return self.box_dynamic(b, exp);
         }
         if self.cx.union_def(h.ty).is_some() {
             return self.union_to_common(h, exp);
@@ -72,7 +72,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn dynamic_nothing(&mut self, n: Nothing, exp: TyId, span: Span) -> hir::Expr {
         let t = self.cx.dynamic_nothing_ty(n);
         let null = self.mk(H::Lit(hir::Lit::Null), t, span);
-        match self.to_dynamic(null, exp) {
+        match self.box_dynamic(null, exp) {
             Ok(h) | Err(h) => h,
         }
     }
@@ -96,7 +96,7 @@ impl FnCx<'_, '_> {
         };
         let b = self.new_local("<some>", payload, false, span, LocalKind::Bind);
         let value = self.mk(H::Local(b, mode), payload, span);
-        let boxed = self.to_dynamic(value, exp)?;
+        let boxed = self.box_dynamic(value, exp)?;
         let none = self.dynamic_nothing(nothing, exp, span);
         let bind = hir::Pat {
             kind: P::Binding(b, mode),
@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A dynamic value as `exp`: checked at run time (`Intrinsic::AnyTo`).
-    fn from_dynamic(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+    fn unbox_dynamic(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;
         // A variable keeps its value: the conversion takes a share of it.
         let h = if is_place(&h) {
