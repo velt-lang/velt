@@ -1,0 +1,67 @@
+// `Number.prototype.toString(radix)` against Node: thousands of generated values (integers,
+// fractions, tiny and huge magnitudes, negatives, NaN and the infinities) in every radix from
+// 2 to 36. The digits are folded into one checksum per radix, plus a few printed samples; the
+// expected output is Node's (this file runs unchanged under `node`).
+
+// Powers by repeated multiplication (exact IEEE steps on both sides).
+function pow(base: number, n: number): number {
+  let r = 1;
+  for (let i = 0; i < n; i++) {
+    r *= base;
+  }
+  return r;
+}
+
+class Rng {
+  seed: number = 12345;
+
+  // Park-Miller: exact in f64.
+  next(): number {
+    this.seed = (this.seed * 48271) % 2147483647;
+    return this.seed;
+  }
+}
+
+function values(): number[] {
+  const rng = new Rng();
+  const out: number[] = [0, -0, 1, -1, 0.5, 0.1, 0.2, 0.3, 1 / 3, 2 / 3, 255, -255.5, 1e21, 1e-7,
+    123.456, 5e-324, 1.7976931348623157e308, 9007199254740991, 9007199254740993, 0.000001,
+    NaN, Infinity, -Infinity, 4294967295, 4294967296, 1e300, 1e-300, 35, 36, 37];
+  for (let i = 0; i < 1500; i++) {
+    const a = rng.next();
+    const b = rng.next() + 1;
+    const k = rng.next() % 40;
+    const scale = k < 20 ? 1 / pow(10, 20 - k) : pow(10, k - 20);
+    let x = (a / b) * scale;
+    if (i % 3 == 0) {
+      x = -x;
+    }
+    if (i % 5 == 0) {
+      x = Math.floor(a / 1000);
+    }
+    if (i % 7 == 0) {
+      x = a / pow(2, rng.next() % 60);
+    }
+    out.push(x);
+  }
+  return out;
+}
+
+{
+  const xs = values();
+  for (let radix = 2; radix <= 36; radix++) {
+    let h = 0;
+    let chars = 0;
+    for (const x of xs) {
+      const s = x.toString(radix);
+      chars += s.length;
+      for (let i = 0; i < s.length; i++) {
+        h = (h * 31 + s.charCodeAt(i)) % 2147483647;
+      }
+    }
+    console.log(`radix ${radix}: ${xs.length} values, ${chars} chars, checksum ${h}`);
+    console.log(`  ${xs[7].toString(radix)} ${xs[11].toString(radix)} ${xs[40].toString(radix)} ${xs[41].toString(radix)}`);
+  }
+  console.log((255).toString(16).padStart(6, "0"));
+  console.log((-0.5).toString(2), (10).toString(10.9), (3.75).toString(16));
+}

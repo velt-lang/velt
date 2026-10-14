@@ -75,6 +75,14 @@ surrogate pair its character),
   A digit count is truncated as in JS (`toExponential(2.7)` is `toExponential(2)`); one out of
   range (`toFixed` and `toExponential`: 0 to 100, `toPrecision`: 1 to 100) panics like JS's
   `RangeError`.
+- `x.toString(radix)` on any number writes it in base `radix` (2 to 36) with Node's digits,
+  fractions and the sign included; `NaN` and ±Infinity print as themselves. The radix is
+  truncated as in JS, and one out of range panics like JS's `RangeError`. On an integer type
+  (`i64`, `u64`, …) the digits are exact over the whole range:
+
+  ```ts
+  console.log((255).toString(16).padStart(6, "0"), (-0.5).toString(2), (3.75).toString(16)); // 0000ff -0.1 3.c
+  ```
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
   not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
