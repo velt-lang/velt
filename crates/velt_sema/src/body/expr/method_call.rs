@@ -122,6 +122,7 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 let ck = self.check_call(&c, slots, args, exp, span);
+                let this_recv = self.this_recv(&recv);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
@@ -130,7 +131,8 @@ impl FnCx<'_, '_> {
                     callee: Callee::Virtual { slot },
                     args: all,
                 };
-                self.mk(kind, ck.ret, span)
+                let call = self.mk(kind, ck.ret, span);
+                self.this_result(call, def, this_recv)
             }
             Resolved::Iface {
                 on_param,
@@ -187,6 +189,7 @@ impl FnCx<'_, '_> {
         self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
+        let this_recv = self.this_recv(&recv);
         let recv = self.receiver(
             recv,
             Some(recv_ty),
@@ -200,7 +203,8 @@ impl FnCx<'_, '_> {
             callee: Callee::Def(def, ck.type_args),
             args: all,
         };
-        self.mk(kind, ck.ret, span)
+        let call = self.mk(kind, ck.ret, span);
+        self.this_result(call, def, this_recv)
     }
 
     /// The receiver argument: upcast to the declaring type, then used per the `this` mode

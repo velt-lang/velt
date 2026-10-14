@@ -150,3 +150,57 @@ fn object_literal_methods_are_arrow_properties() {
         vec!["getters and setters in object literals are not supported yet"]
     );
 }
+
+#[test]
+fn function_expressions_are_arrows() {
+    let e = expr("x = async function name<T>(a: T, b) { return a; }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!()
+    };
+    let ExprKind::Arrow {
+        type_params,
+        params,
+        is_async,
+        body: ArrowBody::Block(_),
+        ..
+    } = &value.kind
+    else {
+        panic!("expected an arrow, got {:?}", value.kind)
+    };
+    assert_eq!((type_params.len(), params.len(), *is_async), (1, 2, true));
+    assert_eq!(
+        errors("const f = function () { return this; };"),
+        vec!["'this' implicitly has type 'any' because it does not have a type annotation (TypeScript's TS2683)"]
+    );
+    // `this` in a class declared inside the function is the class's.
+    assert!(errors("const f = function () { class C { m() { return this; } } };").is_empty());
+    assert_eq!(
+        errors("const f = function g(n: number): number { return g(n); };"),
+        vec!["a function expression's own name (`g`) inside its body is not supported yet"]
+    );
+}
+
+#[test]
+fn this_parameters_and_the_this_type() {
+    let m = parse_ok(
+        "function f(this: void, x: number) {} type F = (this: Window, e: number) => void;",
+    );
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(f.sig.params.len(), 1);
+    assert_eq!(alias_ty(&m, 1), "fn(number) => void");
+    assert_eq!(
+        errors("function f(this: { n: number }) { return this.n; }"),
+        vec!["`this` in a function with a `this` parameter is not supported yet"]
+    );
+    assert_eq!(
+        errors("const f = (this: number) => 1;"),
+        vec!["an arrow function cannot have a 'this' parameter (TypeScript's TS2730)"]
+    );
+    let m = parse_ok("class C { m(): this { return this; } }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(ty(c.methods[0].decl.sig.ret.as_ref().unwrap()), "this");
+}

@@ -1,0 +1,54 @@
+// Function expressions (expected output from `node`): `function (x) { ... }` as a value,
+// named or not, async or generic, behaves as the arrow function with the same parameters
+// and body (it has no `this`). A `this: void` parameter is erased.
+
+const id = "xxxx-4xxx-yxxx"
+  .split("")
+  .map(function (c) {
+    return c === "x" ? "a" : c === "y" ? "b" : c;
+  })
+  .join("");
+console.log(id);
+
+type Ops = { double: (n: number) => number; square: (n: number) => number };
+const ops: Ops = {
+  double: function (n: number): number {
+    return n * 2;
+  },
+  square: function square(n) {
+    return n * n;
+  },
+};
+ops.double = function (n) {
+  return n + n + 1;
+};
+console.log(ops.double(4), ops.square(5));
+
+const add = function <T>(xs: T[], x: T): T[] {
+  return [...xs, x];
+};
+console.log(add([1, 2], 3).join(","));
+
+type Subscriber = () => void;
+let count = 0;
+const effect: Subscriber = function () {
+  count++;
+};
+effect();
+effect();
+console.log(count);
+
+const later = async function (x: number): Promise<number> {
+  return x + 1;
+};
+console.log("later", await later(41));
+
+function noThis(this: void, x: number): number {
+  return x * 3;
+}
+
+console.log(noThis(2));
+const nums = [3, 1, 2].map(function (n, i) {
+  return n * 10 + i;
+});
+console.log(nums.join(" "));

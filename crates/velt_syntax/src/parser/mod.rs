@@ -8,6 +8,7 @@
 mod arrow;
 mod expr;
 mod field_types;
+mod fn_exprs;
 mod for_loop;
 mod imports;
 mod items;
@@ -87,6 +88,9 @@ pub(crate) struct Parser<'a> {
     /// `in` there is the loop's (`for (k in o)`), not the operator (`"k" in o`), as in
     /// JavaScript's grammar (`[~In]`).
     no_in: bool,
+    /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
+    /// and whether `T` is `void`.
+    this_param: Option<(Span, bool)>,
 }
 
 /// What the lookahead at a `?` found (`question_is_ternary`).
@@ -131,6 +135,7 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            this_param: None,
             computed_keys: BTreeSet::new(),
             no_in: false,
         }

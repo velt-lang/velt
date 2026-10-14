@@ -242,6 +242,27 @@ pub(crate) struct FnInfo<'m> {
     pub mutated_captures: Vec<(String, Span)>,
 }
 
+impl FnInfo<'_> {
+    /// The type the polymorphic `this` type resolves to in this function: its class in an
+    /// instance method.
+    pub fn this_type(&self) -> Option<TyId> {
+        match self.kind {
+            FnKind::Method => self.this.as_ref().map(|t| t.ty),
+            _ => None,
+        }
+    }
+
+    /// Is the written result the polymorphic `this` type (`m(): this`)?
+    pub fn returns_this(&self) -> bool {
+        let Some(FnSource::Decl(d)) = self.source else {
+            return false;
+        };
+        self.kind == FnKind::Method
+            && matches!(&d.sig.ret, Some(ast::TypeExpr { kind: ast::TypeExprKind::Named { path, args }, .. })
+                if path.len() == 1 && path[0].name == "this" && args.is_empty())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MethodRef {
     pub def: DefId,

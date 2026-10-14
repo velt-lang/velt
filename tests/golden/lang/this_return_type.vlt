@@ -1,0 +1,64 @@
+// The polymorphic `this` type as a method's result (expected output from `node`): a call on
+// a subclass instance has the subclass's type, so chained calls keep its methods.
+
+class Registry {
+  names: string[] = [];
+  register(name: string): this {
+    this.names.push(name);
+    return this;
+  }
+  twice(name: string): this {
+    return this.register(name).register(name);
+  }
+}
+
+class Tagged extends Registry {
+  tags: string[] = [];
+  tag(t: string): this {
+    this.tags.push(t);
+    return this;
+  }
+}
+
+const t = new Tagged().register("a").tag("x").twice("b").tag("y");
+console.log(t.names.join(","), t.tags.join(","));
+const r: Registry = t;
+console.log(r.register("c").names.length);
+
+class Box<T> {
+  items: T[] = [];
+  add(x: T): this {
+    this.items.push(x);
+    return this;
+  }
+}
+
+class NumBox extends Box<number> {
+  sum(): number {
+    let s = 0;
+    for (const x of this.items) {
+      s += x;
+    }
+    return s;
+  }
+}
+
+console.log(new NumBox().add(1).add(2).add(3).sum());
+
+class Counter {
+  n = 0;
+  inc(): this {
+    this.n++;
+    return this;
+  }
+}
+
+class Loud extends Counter {
+  override inc(): this {
+    super.inc();
+    console.log("inc", this.n);
+    return this;
+  }
+}
+
+console.log(new Loud().inc().inc().n);

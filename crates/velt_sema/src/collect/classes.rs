@@ -290,6 +290,19 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
     Some(fwd)
 }
 
+/// May an override returning `this` (the class `own`) give the base method's result `base`:
+/// is `base` a class that `own` extends?
+fn this_result_ok(cx: &mut Ctx, own: TyId, base: TyId) -> bool {
+    let mut cur = own;
+    while let Some(next) = cx.base_of(cur) {
+        if next == base {
+            return true;
+        }
+        cur = next;
+    }
+    false
+}
+
 fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_syntax::ast::Ident) {
     let (mp, mr, mg) = {
         let f = cx.fn_info(m.def);
@@ -324,6 +337,15 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
         name.name
     );
     let at = (name.span, message.clone());
+    // `override m(): this`: the override returns its receiver, typed as the base method's
+    // result, which a call converts to the receiver's class (`body::expr::this_type`).
+    let mr = match cx.fn_info(m.def).returns_this() && mr != br && this_result_ok(cx, mr, br) {
+        true => {
+            cx.fn_info_mut(m.def).ret = br;
+            br
+        }
+        false => mr,
+    };
     let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
     if mp != bp || !ret_ok || mg != bg {
         cx.err(message, name.span);

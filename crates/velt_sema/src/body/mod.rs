@@ -375,6 +375,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A list is being checked for a fold: lists inside it are not tried (each try may check
     /// its rows twice).
     pub jsx_list_trial: bool,
+    /// Calls of methods returning the polymorphic `this` on `this` (`expr/this_type.rs`): their
+    /// result is `this` itself, which such a method may return.
+    pub this_calls: std::collections::HashSet<Span>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -410,6 +413,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_fold: None,
             jsx_list_folded: false,
             jsx_list_trial: false,
+            this_calls: Default::default(),
         }
     }
 

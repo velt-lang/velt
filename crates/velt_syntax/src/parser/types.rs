@@ -258,6 +258,21 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident if self.at_word("undefined") => Ok(self.undefined_type(span)),
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
+            // resolves to the class of the method.
+            Tok::Kw(Kw::This) => {
+                self.bump();
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Named {
+                        path: vec![Ident {
+                            name: "this".into(),
+                            span,
+                        }],
+                        args: vec![],
+                    },
+                    span,
+                })
+            }
             _ if self.at_keyof() => {
                 self.bump(); // keyof
                 let inner = self.parse_type_no_union()?;
@@ -569,6 +584,9 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         let mut rest = false;
+        // `(this: T, …) => R`: the type of `this`, no parameter (`fn_exprs`).
+        self.parse_this_param()?;
+        self.this_param = None;
         while !self.at(Tok::RParen) {
             if rest {
                 let span = self.cur_span();
