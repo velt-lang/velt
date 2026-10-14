@@ -1,0 +1,240 @@
+// The feed API of the "$12 server challenge" (bench/feed/README.md) on std/http + std/sqlite,
+// written the way an application would be: typed rows, `Response.json`, a connection for reads
+// and one for writes.
+// Env: SQLITE_PATH, JWT_SECRET, HOST (127.0.0.1), PORT (3000).
+
+import { hmacSha256, timingSafeEqual } from "velt:crypto";
+import { base64UrlDecode, utf8Decode, utf8Encode } from "velt:encoding";
+import { serve } from "velt:http";
+import { open, Database, SqliteError } from "velt:sqlite";
+
+const POST_COLUMNS =
+  "SELECT p.id, p.body, p.created_at, u.username AS author, (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count FROM posts p JOIN users u ON u.id = p.user_id";
+const SELECT_FEED = `${POST_COLUMNS} ORDER BY p.created_at DESC, p.id DESC LIMIT 20`;
+const SELECT_POST = `${POST_COLUMNS} WHERE p.id = ?`;
+const INSERT_POST = "INSERT INTO posts (user_id, body) VALUES (?, ?) RETURNING id, created_at";
+const INSERT_LIKE =
+  "INSERT INTO likes (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO NOTHING";
+const POST_EXISTS = "SELECT id FROM posts WHERE id = ?";
+
+struct Post {
+  id: i64;
+  body: string;
+  created_at: string;
+  author: string;
+  like_count: i64;
+}
+
+struct Feed {
+  posts: Post[];
+}
+
+struct OnePost {
+  post: Post;
+}
+
+struct Created {
+  id: i64;
+  created_at: string;
+}
+
+struct Id {
+  id: i64;
+}
+
+struct Liked {
+  liked: bool;
+  already_liked: bool;
+  post_id: i64;
+}
+
+struct Health {
+  status: string;
+  db: string;
+  uptime_s: i64;
+}
+
+struct Failure {
+  error: string;
+}
+
+struct User {
+  id: i64;
+  name: string;
+}
+
+// A request that ends with `status` and `{"error": message}`.
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function fail(status: number, message: string): Response {
+  return Response.json(Failure { error: message }, { status: status });
+}
+
+// The path of `url`, an absolute URL (`http://host/path?query`).
+function pathOf(url: string): string {
+  const start = url.indexOf("/", 8);
+  const q = url.indexOf("?", start);
+  return q < 0 ? url.slice(start) : url.slice(start, q);
+}
+
+// A positive integer in decimal digits, else 0.
+function positiveInt(s: string): i64 {
+  if (s.length == 0 || s.length > 15) {
+    return 0;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < s.length as i64; i++) {
+    const c = s.charCodeAt(i) as i64;
+    if (c < 48 || c > 57) {
+      return 0;
+    }
+    n = n * 10 + (c - 48);
+  }
+  return n;
+}
+
+// The user of an HS256 token signed with `secret`.
+function authenticate(req: Request, secret: u8[]): User throws HttpError {
+  const header = req.headers.get("authorization") ?? "";
+  if (!header.startsWith("Bearer ")) {
+    throw new HttpError(401, "missing bearer token");
+  }
+  const invalid = new HttpError(401, "invalid or expired token");
+  const parts = header.slice(7).split(".");
+  if (parts.length != 3) {
+    throw invalid;
+  }
+  let claims: JsonValue;
+  try {
+    const head = JSON.parseValue(utf8Decode(base64UrlDecode(parts[0])));
+    if (head.get("alg")?.asString() != "HS256") {
+      throw invalid;
+    }
+    const mac = hmacSha256(secret, utf8Encode(`${parts[0]}.${parts[1]}`));
+    if (!timingSafeEqual(mac, base64UrlDecode(parts[2]))) {
+      throw invalid;
+    }
+    claims = JSON.parseValue(utf8Decode(base64UrlDecode(parts[1])));
+  } catch (e) {
+    throw invalid;
+  }
+  const exp = claims.get("exp")?.asNumber();
+  if (exp == null || exp * 1000.0 <= Date.now()) {
+    throw invalid;
+  }
+  const id = positiveInt(claims.get("sub")?.asString() ?? "");
+  const name = claims.get("username")?.asString();
+  if (id == 0 || name == null) {
+    throw new HttpError(401, "invalid token payload");
+  }
+  return User { id: id, name: name };
+}
+
+function postId(raw: string): i64 throws HttpError {
+  const id = positiveInt(raw);
+  if (id == 0) {
+    throw new HttpError(400, "invalid post id");
+  }
+  return id;
+}
+
+function getPost(db: Database, id: i64): Response throws HttpError | SqliteError {
+  const post: Post | null = db.prepare(SELECT_POST).getWith([id]);
+  if (post == null) {
+    throw new HttpError(404, "post not found");
+  }
+  return Response.json(OnePost { post: post });
+}
+
+async function createPost(req: Request, db: Database, user: User): Promise<Response, HttpError | SqliteError> {
+  let input: JsonValue;
+  try {
+    input = JSON.parseValue(await req.text());
+  } catch (e) {
+    throw new HttpError(400, "malformed JSON body");
+  }
+  const body = (input.get("body")?.asString() ?? "").trim();
+  if (body.length == 0) {
+    throw new HttpError(400, "body is required");
+  }
+  if ([...body].length > 500) {
+    throw new HttpError(400, "body must be at most 500 characters");
+  }
+  const row: Created | null = db.prepare(INSERT_POST).getWith([JsonValue.of(user.id as f64), JsonValue.of(body)]);
+  if (row == null) {
+    throw new HttpError(500, "internal server error");
+  }
+  const post = Post { id: row.id, body: body, created_at: row.created_at, author: user.name, like_count: 0 };
+  return Response.json(OnePost { post: post }, { status: 201 });
+}
+
+function like(db: Database, user: User, id: i64): Response throws HttpError | SqliteError {
+  const found: Id | null = db.prepare(POST_EXISTS).getWith([id]);
+  if (found == null) {
+    throw new HttpError(404, "post not found");
+  }
+  const added = db.prepare(INSERT_LIKE).runWith([user.id, id]).changes == 1;
+  return Response.json(Liked { liked: true, already_liked: !added, post_id: id }, { status: added ? 201 : 200 });
+}
+
+async function route(req: Request, db: Database, writes: Database, secret: u8[], started: number): Promise<Response, HttpError | SqliteError> {
+  const path = pathOf(req.url);
+  const method = req.method;
+  if (method == "GET") {
+    if (path == "/feed") {
+      const posts: Post[] = db.prepare(SELECT_FEED).all();
+      return Response.json(Feed { posts: posts });
+    }
+    if (path.startsWith("/posts/")) {
+      return getPost(db, postId(path.slice(7)));
+    }
+    if (path == "/health") {
+      db.prepare("SELECT 1").run();
+      return Response.json(Health { status: "ok", db: "ok", uptime_s: Math.floor((Date.now() - started) / 1000.0) as i64 });
+    }
+  }
+  if (method == "POST") {
+    if (path == "/posts") {
+      return await createPost(req, writes, authenticate(req, secret));
+    }
+    if (path.startsWith("/posts/") && path.endsWith("/like")) {
+      const user = authenticate(req, secret);
+      return like(writes, user, postId(path.slice(7, -5)));
+    }
+  }
+  throw new HttpError(404, "not found");
+}
+
+async function main() {
+  const path = process.env.SQLITE_PATH ?? "feed.db";
+  const writes = open(path, { fileMustExist: true, wal: true });
+  writes.pragma("synchronous = NORMAL");
+  // Reads have a connection of their own, which reads pages through a mapping instead of one
+  // pread per page (on the writing connection a mapping makes checkpoints slow).
+  const db = open(path, { fileMustExist: true, readonly: true });
+  db.pragma("mmap_size = 1073741824");
+  const secret = utf8Encode(process.env.JWT_SECRET ?? "");
+  const started = Date.now();
+  const port = parseInt(process.env.PORT ?? "3000", 10);
+  const server = await serve({ port: port, host: process.env.HOST ?? "127.0.0.1" }, async (
+    req: Request,
+  ): Promise<Response> => {
+    try {
+      return await route(req, db, writes, secret, started);
+    } catch (e) {
+      if (e instanceof HttpError) {
+        return fail(e.status, e.message);
+      }
+      console.error("request failed:", e);
+      return fail(500, "internal server error");
+    }
+  });
+  console.log(`listening on port ${server.port}`);
+}
