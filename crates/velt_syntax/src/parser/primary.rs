@@ -245,6 +245,7 @@ impl<'a> Parser<'a> {
                 self.error("private names are only allowed in class bodies", span);
                 return Err(Fail);
             }
+            Tok::LBracket => return self.parse_computed_prop(),
             _ => {
                 self.error_expected("property name");
                 return Err(Fail);
@@ -258,6 +259,59 @@ impl<'a> Parser<'a> {
             return Err(Fail);
         }
         Ok(ObjectProp::Shorthand(key))
+    }
+
+    /// `[key]: value` with any expression as the key (a symbol key or a module constant,
+    /// `[KEY]`, is [`Self::parse_symbol_key`]'s). A string or integer literal key is the plain
+    /// key (`["a"]: 1` is `a: 1`). Any other key is known only at run time: the property is
+    /// written as a spread of a call of the prelude's [`COMPUTED_KEY_FN`], `...__computed_key(key,
+    /// value)`, which sema checks where a `Record` is built (the object has string keys).
+    fn parse_computed_prop(&mut self) -> PResult<ObjectProp> {
+        let lo = self.cur_lo();
+        self.bump(); // [
+        let key = self.allow_in(|p| p.parse_assign())?;
+        self.expect(Tok::RBracket)?;
+        let key_span = self.span_from(lo);
+        if self.at(Tok::LParen) {
+            self.error(
+                "a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression",
+                key_span,
+            );
+            return Err(Fail);
+        }
+        self.expect(Tok::Colon)?;
+        let value = self.parse_assign()?;
+        let plain = match &key.kind {
+            ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
+            ExprKind::Lit(Lit::Int { value, suffix: None }) if *value < 1 << 53 => {
+                Some(value.to_string())
+            }
+            _ => None,
+        };
+        if let Some(name) = plain {
+            return Ok(ObjectProp::KeyValue(
+                Ident {
+                    name,
+                    span: key.span,
+                },
+                value,
+            ));
+        }
+        let callee = self.mk_expr(
+            ExprKind::Ident(Ident {
+                name: COMPUTED_KEY_FN.into(),
+                span: key_span,
+            }),
+            key_span,
+        );
+        let span = self.span_from(lo);
+        let call = ExprKind::Call {
+            callee: Box::new(callee),
+            type_args: vec![],
+            args: vec![key, value],
+            optional: false,
+        };
+        Ok(ObjectProp::Spread(self.mk_expr(call, span)))
     }
 
     /// A method in an object literal: `[async] [*]name(...) { ... }`, where the name may be a

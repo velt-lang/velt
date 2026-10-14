@@ -28,6 +28,12 @@ pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
 /// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
 
+/// The prelude function an object-literal property with a computed key known only at run time
+/// is written as a spread of: `{ [k]: v }` is `{ ...__computed_key(k, v) }` (a one-entry
+/// `Record<string, V>`). The callee's span is the bracketed key, which tells it from a written
+/// call.
+pub const COMPUTED_KEY_FN: &str = "__computed_key";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: String,

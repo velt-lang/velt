@@ -35,9 +35,7 @@ impl FnCx<'_, '_> {
             );
             return true;
         }
-        let spread = props
-            .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
+        let spread = props.iter().any(is_spread);
         !spread
             && self.reject_generic_key(
                 k,
@@ -57,9 +55,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let error = self.cx.ty.error;
-        let spread = props
-            .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
+        let spread = props.iter().any(is_spread);
         if (k != error && v != error) || spread || props.is_empty() {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
@@ -83,15 +79,18 @@ impl FnCx<'_, '_> {
         let mut pre = vec![];
         let mut other = None;
         for p in props {
-            let (name, value) = match p {
-                ast::ObjectProp::KeyValue(name, value) => (name, Some(value)),
-                ast::ObjectProp::Shorthand(name) => (name, None),
+            let h = match p {
+                ast::ObjectProp::KeyValue(name, value) => self.prop_value(name, Some(value), v),
+                ast::ObjectProp::Shorthand(name) => self.prop_value(name, None, v),
+                ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
+                    let (_, value) = computed_entry(e).expect("ICE: a computed entry");
+                    self.expr(value, v, crate::body::Want::Move)
+                }
                 ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => {
                     pre.push(None);
                     continue;
                 }
             };
-            let h = self.prop_value(name, value, v);
             // `{ a: "x", b: "y" }` holds `string`s: literal types widen, as in array literals.
             let vt = match v {
                 Some(vt) => vt,
@@ -185,6 +184,20 @@ impl FnCx<'_, '_> {
         for (i, p) in props.iter().enumerate() {
             let recv = self.mk(H::Local(t, UseMode::Borrow), ty, span);
             let call = match p {
+                ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
+                    let (key, value) = computed_entry(e).expect("ICE: a computed entry");
+                    let key = RecordKey::Index(key);
+                    match pre.get_mut(i).and_then(Option::take) {
+                        Some(h) => self.record_set_checked(recv, key, h, e.span),
+                        None => self.record_call_keyed(
+                            recv,
+                            "__set",
+                            key,
+                            std::slice::from_ref(value),
+                            e.span,
+                        ),
+                    }
+                }
                 ast::ObjectProp::Spread(e) => {
                     complete = true;
                     self.record_call(recv, "__extend", std::slice::from_ref(e), e.span)
@@ -260,4 +273,35 @@ impl FnCx<'_, '_> {
         };
         Some(self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span))
     }
+}
+
+/// The key and value of `{ [key]: value }` with a key known only at run time, which the parser
+/// writes as a spread of a call of the prelude's `__computed_key` (`ast::COMPUTED_KEY_FN`).
+pub(crate) fn computed_entry(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
+    let ast::ExprKind::Call {
+        callee, args, type_args, ..
+    } = &e.kind
+    else {
+        return None;
+    };
+    match (&callee.kind, args.as_slice()) {
+        (ast::ExprKind::Ident(f), [key, value])
+            if f.name == ast::COMPUTED_KEY_FN && type_args.is_empty() =>
+        {
+            Some((key, value))
+        }
+        _ => None,
+    }
+}
+
+/// Is `p` a spread (`...e`, not a computed-key entry)?
+fn is_spread(p: &ast::ObjectProp) -> bool {
+    matches!(p, ast::ObjectProp::Spread(e) if computed_entry(e).is_none())
+}
+
+/// Does an object literal have a property with a computed key known only at run time?
+pub(crate) fn has_computed_entry(props: &[ast::ObjectProp]) -> bool {
+    props
+        .iter()
+        .any(|p| matches!(p, ast::ObjectProp::Spread(e) if computed_entry(e).is_some()))
 }

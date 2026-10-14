@@ -150,3 +150,28 @@ fn object_literal_methods_are_arrow_properties() {
         vec!["getters and setters in object literals are not supported yet"]
     );
 }
+
+#[test]
+fn computed_keys_are_spreads_of_the_prelude_function() {
+    let e = expr("x = { a: 1, [o.tag]: 2, [\"b\"]: 3, [7]: 4 }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(props) = &value.kind else {
+        panic!("not an object literal");
+    };
+    let ObjectProp::Spread(call) = &props[1] else {
+        panic!("not a spread: {:?}", props[1]);
+    };
+    let ExprKind::Call { callee, args, .. } = &call.kind else {
+        panic!("not a call");
+    };
+    assert!(matches!(&callee.kind, ExprKind::Ident(i) if i.name == COMPUTED_KEY_FN));
+    assert_eq!(args.len(), 2);
+    assert!(matches!(&props[2], ObjectProp::KeyValue(k, _) if k.name == "b"));
+    assert!(matches!(&props[3], ObjectProp::KeyValue(k, _) if k.name == "7"));
+    assert_eq!(
+        errors("const o = { [a.b]() { return 1; } };"),
+        vec!["a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression"]
+    );
+}

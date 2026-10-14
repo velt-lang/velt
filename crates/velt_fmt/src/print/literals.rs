@@ -84,8 +84,33 @@ impl<'a> Printer<'a> {
                 }
             }
             ObjectProp::Shorthand(key) => self.prop_key(key),
-            ObjectProp::Spread(value) => cat!["...", self.expr(value)],
+            ObjectProp::Spread(value) => match self.computed_entry(value) {
+                // `[key]: value`, which the parser gives as a spread of a call of
+                // `__computed_key` whose callee's span is the bracketed key.
+                Some((key, v)) => {
+                    let key = cat!["[", self.expr(key), "]"];
+                    self.property(key, v)
+                }
+                None => cat!["...", self.expr(value)],
+            },
             ObjectProp::Method(f) => self.fn_decl(f, ""),
+        }
+    }
+
+    /// The key and value of `[key]: value` (a computed key known only at run time), if `e` is
+    /// the call the parser writes it as (not a written `__computed_key(...)`).
+    fn computed_entry<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+        let ExprKind::Call { callee, args, .. } = &e.kind else {
+            return None;
+        };
+        match (&callee.kind, args.as_slice()) {
+            (ExprKind::Ident(f), [key, value])
+                if f.name == velt_syntax::ast::COMPUTED_KEY_FN
+                    && slice(self.src, callee.span).starts_with('[') =>
+            {
+                Some((key, value))
+            }
+            _ => None,
         }
     }
 

@@ -168,3 +168,9 @@ fn array_pattern_holes_stay_holes() {
 ",
     );
 }
+
+#[test]
+fn computed_keys() {
+    round_trips("const r = { a: 1, [o.tag]: 2, [k + \"!\"]: 3 };\n");
+    round_trips("function f(t: string) {\n  return { [t]: 1, ...rest };\n}\n");
+}
