@@ -278,6 +278,10 @@ pub(crate) struct AdtInfo<'m> {
     /// All fields; for classes the base class's fields come first.
     pub fields: Vec<FieldInfo>,
     pub own_fields_start: usize,
+    /// Inherited fields this class gives an initializer of its own, with the name it declares
+    /// them by: an error class's `name = "AppError"` (the prelude `Error`'s `#name`). It runs
+    /// with the class's own initializers, as the assignment `this.name = …` would.
+    pub redefined: Vec<(usize, String)>,
     pub base: Option<TyId>,
     pub methods: HashMap<String, MethodRef>,
     /// Constructor: own, or inherited from the nearest base class that has one.

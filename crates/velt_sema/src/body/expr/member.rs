@@ -338,6 +338,7 @@ impl FnCx<'_, '_> {
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
         }
+        let obj = self.error_union_accessor(obj, &prop.name);
         let obj = match self.getter_read(obj, prop, span) {
             Ok(call) => return call,
             Err(obj) => obj,

@@ -13,9 +13,12 @@ compiler knows exactly what each function and each `try` block can throw.
 - As in JavaScript, an error has a `name` (`"Error"` unless a subclass assigns its own:
   `this.name = "AppError"` in the constructor), and `String(e)`, `` `${e}` `` and `e.toString()`
   give `"<name>: <message>"` (only the name when the message is empty, only the message when the
-  name is). `name` is `Error`'s: a subclass may declare it again without an initializer
-  (`name: string;`), but not with one (`name = "AppError"`): assign it in the constructor
-  instead. `console.log(e)` and `JSON.stringify(e)` leave it out. The standard error classes
+  name is). `name` is `Error`'s: a subclass may declare it again (`name: string;`), give it an
+  initializer (`name = "AppError"`, which sets it right after `super(...)` like the class's other
+  initializers) or redefine it with a getter (`get name() { … }`), which `toString()` then
+  reads. A union of error classes (`AppError | TypeError`, a `catch` variable) and a nullable
+  error have `e.name` and `e.toString()` too, and are written the same way in templates, by
+  `String(e)` and by string concatenation (`null` for `null`). `console.log(e)` and `JSON.stringify(e)` leave it out. The standard error classes
   `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
   `Error` with their own names; throw, catch, test (`instanceof`) and extend them like any
   error class:
@@ -108,10 +111,13 @@ nothing; `null` means success).
 
 ## Uncaught errors and panics
 
-- An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
-  exits with code 1. `<Class>` is the `name` an error class assigned (`Uncaught AppError: boom`),
-  else the error's actual class (an `IoError` thrown through a
-  function declared `throws Error` prints `IoError`), and the location is where it was thrown;
+- An error escaping `main` prints `Uncaught <header> at file:line:col` to stderr and exits with
+  code 1. `<header>` is the first line of Node's report: `<name>: <message>` as `Error`'s
+  `toString()` writes it (`Uncaught AppError: boom`), with the error's actual class in front
+  when its `name` ends in `Error` but is not the class's name (`class E extends TypeError {}`
+  gives `E [TypeError]: boom`; `MyTypeError: boom` when the class's name contains the name).
+  The class is the dynamic one (an `IoError` thrown through a function declared `throws Error`
+  reports `IoError`), and the location is where it was thrown;
   for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw
   that `main` awaited.

@@ -1,1 +1,0 @@
-error_name_initializer.vlt:2:3: error: `name` is inherited from `Error`: it cannot be declared again with an initializer

@@ -77,6 +77,14 @@ impl FnCx<'_, '_> {
             false => recv,
         };
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
+            // `e.toString()` on an error union: `Error`'s method, dispatched to each class's.
+            if self.is_error_union(recv.ty) {
+                let recv = self.error_union_accessor(recv, &prop.name);
+                if !self.is_error_union(recv.ty) {
+                    return self.method_call_at(recv, prop, type_args, args, exp, span, getter);
+                }
+                return self.no_method(recv, prop, args, span);
+            }
             return self.no_method(recv, prop, args, span);
         };
         if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {

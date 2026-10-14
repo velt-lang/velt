@@ -94,6 +94,27 @@ pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
         field.default = default;
         field.default_throws = throws;
     }
+    // An inherited field given an initializer here (an error class's `name = "AppError"`).
+    let redefined = cx.adt(d).expect("ICE: adt").redefined.clone();
+    for (i, name) in redefined {
+        let Some(e) = decl
+            .fields
+            .iter()
+            .find(|af| af.name.name == name)
+            .and_then(|af| af.default.as_ref())
+        else {
+            continue;
+        };
+        let fty = cx.adt(d).expect("ICE: adt").fields[i].ty;
+        let mut fcx = detached(cx, module, &names);
+        fcx.owner = Some(d);
+        fcx.fn_name = format!("{qual}.{name}");
+        let h = fcx.expr_coerce(e, fty, Want::Move);
+        let throws = std::mem::take(&mut fcx.f.uncaught);
+        let field = &mut cx.adt_mut(d).fields[i];
+        field.default = Some(h);
+        field.default_throws = throws;
+    }
     cx.display_params = saved;
 }
 

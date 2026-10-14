@@ -103,8 +103,10 @@ pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -
     let Some(a) = cx.adt(d) else {
         return vec![];
     };
+    let redefined = a.redefined.iter().map(|(i, _)| &a.fields[*i]);
     let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
         .iter()
+        .chain(redefined)
         .flat_map(|f| f.default_throws.iter().cloned())
         .collect();
     own.iter()

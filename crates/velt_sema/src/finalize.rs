@@ -169,6 +169,11 @@ fn field_defaults(
     }
     out.resize(start, None);
     out.extend(own);
+    // Inherited fields this class initializes itself (`AdtInfo::redefined`).
+    let a = cx.adt(d).expect("ICE: adt");
+    for (i, _) in &a.redefined {
+        out[*i] = a.fields[*i].default.clone();
+    }
     memo.insert(d, out.clone());
     out
 }

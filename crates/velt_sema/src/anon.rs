@@ -348,6 +348,7 @@ impl Ctx<'_> {
             generics,
             fields: vec![],
             own_fields_start: 0,
+            redefined: vec![],
             base: None,
             methods: HashMap::new(),
             ctor: None,

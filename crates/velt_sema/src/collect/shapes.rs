@@ -435,19 +435,21 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let start = all.len();
     let own = std::mem::take(&mut cx.adt_mut(d).fields);
     let error_class = all.iter().any(|g| cx.plain_private(g.private_to, &g.name));
+    let mut redefined = vec![];
     for f in own {
         // `name` of an error class is `Error`'s accessor: a declaration `name: string;` is that
-        // (assignments go through it), one with an initializer must assign it instead.
+        // (assignments go through it), one with an initializer (`name = "AppError"`) sets it
+        // with the class's other initializers.
         if error_class && f.name == "name" {
-            if f.has_default {
-                cx.error(
-                    Diagnostic::error(
-                        "`name` is inherited from `Error`: it cannot be declared again with an initializer",
-                        f.span,
-                    )
-                    .with_note("assign it in the constructor instead: `this.name = \"…\";`"),
-                );
-            } else if !matches!(cx.ty.kind(f.declared), TyKind::Str | TyKind::Literal(_)) {
+            if f.has_default && !f.optional {
+                let i = all
+                    .iter()
+                    .position(|g| cx.plain_private(g.private_to, &g.name))
+                    .expect("ICE: error class without `#name`");
+                redefined.push((i, f.name.clone()));
+            } else if !f.has_default
+                && !matches!(cx.ty.kind(f.declared), TyKind::Str | TyKind::Literal(_))
+            {
                 cx.err("`name` is inherited from `Error` as a `string`", f.span);
             }
             continue;
@@ -466,6 +468,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let a = cx.adt_mut(d);
     a.fields = all;
     a.own_fields_start = start;
+    a.redefined = redefined;
     cx.laid_out.insert(d);
 }
 

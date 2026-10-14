@@ -1,0 +1,5 @@
+// `toString(radix)` with a radix outside 2..36 is a RangeError with Node's message (Node throws
+// it; Velt panics with the same text, exit code 101, as for other runtime RangeErrors).
+const n = 255;
+console.log(n.toString(16));
+console.log(n.toString(37));

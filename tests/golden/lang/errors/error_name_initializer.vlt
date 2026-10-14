@@ -1,4 +1,0 @@
-class AppError extends Error {
-  name = "AppError";
-}
-console.log(String(new AppError("x")));

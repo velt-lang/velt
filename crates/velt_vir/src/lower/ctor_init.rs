@@ -99,7 +99,74 @@ impl FnLower<'_, '_> {
         }
         let from = self.ctor_fields(def);
         let this = self.local_place(LocalId(0));
+        self.init_redefined(&this, ty, def);
         self.init_fields(&this, ty, from, false);
+    }
+
+    /// `init_redefined` after the constructor `new` calls for class `ty` (none: `init_fields`
+    /// runs every initializer).
+    fn new_redefined(&mut self, obj: &Place, ty: TyId) {
+        if let TyKind::Adt(d, _) = self.cx.kind(ty) {
+            if let Some(ctor) = self.cx.adt_def(d).ctor {
+                self.init_redefined(obj, ty, ctor);
+            }
+        }
+    }
+
+    /// The class declaring constructor `ctor`.
+    fn ctor_owner(&mut self, ctor: DefId) -> DefId {
+        match self.cx.fn_def(ctor).self_ty.map(|t| self.cx.kind(t)) {
+            Some(TyKind::Adt(d, _)) => d,
+            _ => ice("constructor without a class `this`"),
+        }
+    }
+
+    /// The initializers that classes below the one declaring constructor `ctor` give fields
+    /// they inherit from it or above (sema's `AdtInfo::redefined`: an error class's
+    /// `name = "AppError"`): a field of class `ty` (concrete) whose initializer is not the one
+    /// of that class's field, which the constructor ran. Stored like `init_fields` does.
+    fn init_redefined(&mut self, obj: &Place, ty: TyId, ctor: DefId) {
+        let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
+            ice("field initializers of a non-class type")
+        };
+        let owner = self.ctor_owner(ctor);
+        let ran: Vec<Option<velt_common::Span>> = self
+            .cx
+            .adt_def(owner)
+            .fields
+            .iter()
+            .map(|f| f.default.as_ref().map(|e| e.span))
+            .collect();
+        let adt = self.cx.adt_def(d);
+        let redefined: Vec<usize> = (0..ran.len())
+            .filter(|&i| {
+                let own = adt.fields[i].default.as_ref().map(|e| e.span);
+                own.is_some() && own != ran[i]
+            })
+            .collect();
+        if redefined.is_empty() {
+            return;
+        }
+        let ftys = self.cx.adt_field_tys(ty);
+        let saved = std::mem::replace(&mut self.targs, cargs);
+        for i in redefined {
+            let def = self.cx.adt_def(d).fields[i]
+                .default
+                .clone()
+                .unwrap_or_else(|| ice("redefined field without an initializer"));
+            let v = self.consume(&def);
+            let p = self.field_place(obj, ty, i as u32);
+            let fty = ftys[i];
+            if !self.cx.needs_drop(fty) {
+                self.store(p, v);
+            } else {
+                let vt = self.cx.ty(fty);
+                let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
+                self.store(p, v);
+                self.drop_glue(Place::local(old), fty);
+            }
+        }
+        self.targs = saved;
     }
 
     /// Store the initializer of every field of class `ty` (concrete) from index `from` on
@@ -140,6 +207,7 @@ impl FnLower<'_, '_> {
     pub(super) fn new_inits(&mut self, obj: &Place, ty: TyId, from: usize) {
         if !self.init_stack.contains(&ty) {
             self.init_stack.push(ty);
+            self.new_redefined(obj, ty);
             self.init_fields(obj, ty, from, false);
             self.init_stack.pop();
             return;
@@ -184,6 +252,7 @@ impl FnLower<'_, '_> {
         }
         lw.init_stack.push(ty);
         lw.push_scope(ScopeKind::Block);
+        lw.new_redefined(&Place::local(this), ty);
         lw.init_fields(&Place::local(this), ty, from, false);
         lw.emit_return(None);
         lw.pop_scope();

@@ -85,7 +85,7 @@ extend f64 {
 function toStringRadix(radix: f64): i64 {
   const r = radix as i64;
   if (r < 2 || r > 36) {
-    panic("RangeError: toString() radix must be between 2 and 36");
+    panic("RangeError: toString() radix argument must be between 2 and 36");
   }
   return r;
 }

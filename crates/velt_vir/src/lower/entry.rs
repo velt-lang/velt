@@ -8,7 +8,7 @@
 //! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
 //! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::glue::SLOT_NAME;
 use super::operand::proj;
@@ -173,8 +173,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let stream = cint(2, Ty::U32);
         self.write_text(&stream, "Uncaught ");
-        self.write_error_name(&stream, ep, err);
-        if let Some(i) = self.message_field(err) {
+        if let Some(root) = self.error_root(err) {
+            self.write_error_header(&stream, ep, err, root);
+        } else {
+            self.write_error_name(&stream, ep, err);
+        }
+        if let (None, Some(i)) = (self.error_root(err), self.message_field(err)) {
             self.write_text(&stream, ": ");
             let mp = self.field_place(ep, err, i);
             let a = self.addr(mp);
@@ -200,40 +204,39 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.write_text(stream, &name);
             return;
         }
-        if let Some(i) = self.error_name_field(err) {
-            // An error whose `name` was assigned (`this.name = "AppError"`) reports that name,
-            // as Node's stack does; otherwise its class.
-            let np = self.field_place(ep, err, i);
-            let na = self.addr(np);
-            let default = self.str_lit("Error");
-            let dp = Place::local(self.copy_to_temp(default, Ty::Agg(crate::vir::STR_AGG)));
-            let da = self.addr(dp);
-            let same = self.temp(Ty::U8);
-            self.call_rt(Rt::StrEq, vec![na.clone(), da], Some(Place::local(same)));
-            let (own, class, done) = (self.new_block(), self.new_block(), self.new_block());
-            let c = self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(
-                    BinOp::Ne,
-                    Operand::Copy(Place::local(same)),
-                    cint(0, Ty::U8),
-                ),
-            );
-            self.branch(c, class, own);
-            self.switch_to(own);
-            self.call_rt(Rt::WriteStr, vec![stream.clone(), na], None);
-            self.goto(done);
-            self.switch_to(class);
-            let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
-            let name = self.dispatch(vt, SLOT_NAME);
-            self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
-            self.goto(done);
-            self.switch_to(done);
-            return;
-        }
         let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
         let name = self.dispatch(vt, SLOT_NAME);
         self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
+    }
+
+    /// The first line Node prints for an uncaught error of class `err` (extending the prelude
+    /// `Error` class `root`): `Error.__uncaughtHeader(<dynamic class name>)`, which writes
+    /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
+    /// they differ (`E [TypeError]: m`).
+    fn write_error_header(&mut self, stream: &Operand, ep: &Place, err: TyId, root: DefId) {
+        let dynamic = match self.cx.kind(err) {
+            TyKind::Adt(d, _) => self.cx.has_header(d),
+            _ => false,
+        };
+        let cls = if dynamic {
+            let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
+            let p = self.dispatch(vt, SLOT_NAME);
+            let pp = self.operand_place(p, Ty::Ptr);
+            Place {
+                local: pp.local,
+                proj: vec![Proj::Deref(Ty::Agg(crate::vir::STR_AGG))],
+            }
+        } else {
+            let name = self.cx.type_name(err);
+            let s = self.str_lit(&name);
+            Place::local(self.copy_to_temp(s, Ty::Agg(crate::vir::STR_AGG)))
+        };
+        let m = self.class_method(root, "__uncaughtHeader");
+        let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
+        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(&cls));
+        let a = self.addr(text.clone());
+        self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+        self.drop_glue(text, ty);
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.
@@ -256,12 +259,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(done);
     }
 
-    /// Index of the prelude `Error`'s `#name` field (behind `e.name`) in class `err`, when `err`
-    /// is `Error` or extends it.
-    fn error_name_field(&mut self, err: TyId) -> Option<u32> {
+    /// The prelude `Error` class when class `err` is it or extends it.
+    fn error_root(&mut self, err: TyId) -> Option<DefId> {
         let TyKind::Adt(mut d, _) = self.cx.kind(err) else {
             return None;
         };
+        if !self.cx.is_class(err) {
+            return None;
+        }
         // The root class: its fields are a prefix of every subclass's.
         while let Some(b) = self.cx.adt_def(d).base {
             let TyKind::Adt(bd, _) = self.cx.kind(b) else {
@@ -274,7 +279,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             && root.fields.len() == 2
             && root.fields[0].name == "message"
             && root.fields[1].name == "#name";
-        is_error.then_some(1)
+        is_error.then_some(d)
     }
 
     /// Index of a `message: string` field of a struct/class error type.
