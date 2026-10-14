@@ -26,8 +26,8 @@
 //!   for as `.ts`/`.tsx` (or `/index.ts`/`.tsx`): first below `rootDir` where the package's
 //!   `tsconfig.json` puts its `outDir` (or `declarationDir`), then with a leading `dist/`,
 //!   `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place. The targets are
-//!   tried in order (the hints and Node's target as written); the first with a source wins,
-//!   and without one the error names the target Node loads.
+//!   tried in order (a `velt` hint, Node's target, then a `types` hint); the first with a
+//!   source wins, and without one the error names the target Node loads.
 
 pub mod exports;
 pub mod json;
@@ -73,7 +73,15 @@ pub struct NpmResolver {
     /// `package.json` by directory (`None`: none, or unreadable).
     manifests: HashMap<PathBuf, Option<Json>>,
     /// Workspace root → its packages by name; a directory without a workspace maps to `None`.
-    workspaces: HashMap<PathBuf, Option<HashMap<String, PathBuf>>>,
+    workspaces: HashMap<PathBuf, Option<Workspace>>,
+    /// The most directories a workspace walk lists (`None`: [`workspace::MAX_DIRS`]).
+    max_dirs: Option<usize>,
+}
+
+/// A workspace's packages by name, and the pattern whose walk was cut short, if one was.
+struct Workspace {
+    by_name: HashMap<String, PathBuf>,
+    cut: Option<String>,
 }
 
 /// A bare specifier split into package name and subpath (`@a/b/c` → (`@a/b`, `./c`)).
@@ -141,7 +149,26 @@ impl NpmResolver {
         }
         for dir in start.ancestors() {
             if let Some(found) = self.workspace(dir) {
-                return found.get(name).cloned();
+                return found.by_name.get(name).cloned();
+            }
+        }
+        None
+    }
+
+    /// Why the workspace around `importer` may lack a package: a note naming its root and the
+    /// pattern whose walk stopped at [`workspace::MAX_DIRS`] directories, if one did. For the
+    /// error of a specifier [`NpmResolver::resolve`] found no package for.
+    pub fn workspace_note(&mut self, importer: &Path) -> Option<String> {
+        let start = crate::relpath::absolute(importer.parent()?);
+        let max = self.max_dirs.unwrap_or(workspace::MAX_DIRS);
+        for dir in start.ancestors() {
+            if let Some(found) = self.workspace(dir) {
+                let pattern = found.cut.as_ref()?;
+                return Some(format!(
+                    "the workspace at `{}` was not searched in full: its pattern `{pattern}` reaches more than {} directories; narrow it to the package directories",
+                    dir.display(),
+                    max
+                ));
             }
         }
         None
@@ -166,16 +193,21 @@ impl NpmResolver {
     }
 
     /// The packages of the workspace rooted at `dir` by name, if `dir` is a workspace root.
-    fn workspace(&mut self, dir: &Path) -> Option<&HashMap<String, PathBuf>> {
+    fn workspace(&mut self, dir: &Path) -> Option<&Workspace> {
         if !self.workspaces.contains_key(dir) {
+            let max = self.max_dirs.unwrap_or(workspace::MAX_DIRS);
             let found = workspace::patterns(dir).map(|patterns| {
+                let listing = workspace::package_dirs_limited(dir, &patterns, max);
                 let mut by_name = HashMap::new();
-                for pkg in workspace::package_dirs(dir, &patterns) {
+                for pkg in listing.dirs {
                     if let Some(name) = self.manifest_name(&pkg) {
                         by_name.entry(name).or_insert(pkg);
                     }
                 }
-                by_name
+                Workspace {
+                    by_name,
+                    cut: listing.cut,
+                }
             });
             self.workspaces.insert(dir.to_path_buf(), found);
         }

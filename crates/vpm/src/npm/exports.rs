@@ -4,10 +4,13 @@
 //!
 //! Node stops at the first condition that matches, and so does this, with one addition: the
 //! targets of `types` and `velt` (wherever written) are returned too, as hints, because the
-//! caller maps each target back to a TypeScript source and takes the first one that has one
-//! (`types` usually comes first and names the declaration file next to the source's place in
-//! `dist/`). A later condition (`default` after `node`) is never taken in place of the first
-//! matching one: that would compile another build than Node runs.
+//! caller maps each target back to a TypeScript source and takes the first one that has one.
+//! They are ordered `velt` first (the package's own choice for Velt), then the target Node
+//! loads, then `types` (the declaration file usually sits next to the source's place in
+//! `dist/`, so it finds the source when the JavaScript bundle has another name; but where the
+//! runtime target has a source of its own, that one is what Node runs). A later condition
+//! (`default` after `node`) is never taken in place of the first matching one: that would
+//! compile another build than Node runs.
 
 use super::json::Json;
 
@@ -23,8 +26,8 @@ pub enum ExportsError {
 /// What `exports` maps a subpath to under the build's conditions.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Targets {
-    /// Every target to try, best first (hints and the runtime target, in written order); each
-    /// a `./`-relative path inside the package.
+    /// Every target to try, best first (`velt` hints, the runtime target, then `types`
+    /// hints; written order within each); each a `./`-relative path inside the package.
     pub all: Vec<String>,
     /// The target Node loads and the condition that chose it (empty for a target without
     /// one; `None` when a `velt` target stands for it).
@@ -140,9 +143,23 @@ fn targets(entry: &Json, matched: Option<&str>, conditions: &[&str]) -> Targets 
             runtime: None,
         };
     }
+    // Stable: written order within each rank.
+    walk.out.sort_by_key(|(_, rank)| *rank);
     Targets {
-        all: walk.out,
+        all: walk.out.into_iter().map(|(t, _)| t).collect(),
         runtime: walk.runtime,
+    }
+}
+
+/// Where a target ranks among those to try: `velt` hints, then the runtime target, then
+/// `types` hints.
+fn rank(path: &[String]) -> u8 {
+    if path.iter().any(|c| c == "velt") {
+        0
+    } else if path.iter().any(|c| HINTS.contains(&c.as_str())) {
+        2
+    } else {
+        1
     }
 }
 
@@ -160,7 +177,8 @@ enum Outcome {
 struct Walk<'a> {
     matched: Option<&'a str>,
     conditions: &'a [&'a str],
-    out: Vec<String>,
+    /// The targets found and their [`rank`].
+    out: Vec<(String, u8)>,
     runtime: Option<(String, String)>,
     /// The conditions leading to the entry being walked.
     path: Vec<String>,
@@ -182,8 +200,10 @@ impl Walk<'_> {
                     let cond = self.path.last().cloned().unwrap_or_default();
                     self.runtime = Some((cond, target.clone()));
                 }
-                if !self.out.contains(&target) {
-                    self.out.push(target);
+                let rank = rank(&self.path);
+                match self.out.iter_mut().find(|(t, _)| *t == target) {
+                    Some((_, r)) => *r = (*r).min(rank),
+                    None => self.out.push((target, rank)),
                 }
                 Outcome::Taken
             }
@@ -268,7 +288,7 @@ mod tests {
         }"#);
         assert_eq!(
             resolve(&exports, ".", SERVER).unwrap(),
-            ["./dist/index.d.ts", "./dist/index.js"]
+            ["./dist/index.js", "./dist/index.d.ts"]
         );
         assert_eq!(
             resolve(&exports, "./internals", SERVER).unwrap(),
@@ -323,6 +343,26 @@ mod tests {
         );
         let null = j(r#"{ "types": "./a.d.ts", "node": null, "default": "./a.js" }"#);
         assert_eq!(resolve(&null, ".", SERVER), Err(ExportsError::NotExported));
+    }
+
+    #[test]
+    fn the_runtime_target_before_a_types_hint() {
+        // #1091 re-check: `types` written first must not pick another source than Node runs.
+        let exports = j(r#"{ ".": {
+            "types": "./dist/index.d.ts",
+            "node": "./dist/index.node.js",
+            "default": "./dist/index.js"
+        } }"#);
+        assert_eq!(
+            resolve(&exports, ".", SERVER).unwrap(),
+            ["./dist/index.node.js", "./dist/index.d.ts"]
+        );
+        // A `velt` hint stays first, wherever written.
+        let velt = j(r#"{ "types": "./a.d.ts", "node": "./n.js", "velt": "./v.ts" }"#);
+        assert_eq!(
+            resolve(&velt, ".", &["velt", "types", "node"]).unwrap(),
+            ["./v.ts", "./n.js", "./a.d.ts"]
+        );
     }
 
     #[test]

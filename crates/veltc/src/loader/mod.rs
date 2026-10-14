@@ -433,6 +433,9 @@ impl Loader<'_, '_> {
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
         let mut aliased = alias.is_some();
+        // No npm package was found for the specifier: an error that follows says why the
+        // workspace walk may have missed it.
+        let mut npm_missed = false;
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
             None => {
@@ -449,10 +452,16 @@ impl Loader<'_, '_> {
                         ModuleRef::Relative { file }
                     }
                     Some(Err((msg, notes))) => return self.error(msg, notes, span),
-                    None => match classified {
-                        Ok(m) => m,
-                        Err(msg) => return self.error(msg, vec![], span),
-                    },
+                    None => {
+                        npm_missed = matches!(classified, Ok(ModuleRef::Package { .. }));
+                        match classified {
+                            Ok(m) => m,
+                            Err(msg) => {
+                                let notes = self.npm.workspace_note(&importer);
+                                return self.error(msg, notes.into_iter().collect(), span);
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -464,7 +473,12 @@ impl Loader<'_, '_> {
             self.opts.packages,
         ) {
             Ok(t) => t,
-            Err((msg, notes)) => return self.error(msg, notes, span),
+            Err((msg, mut notes)) => {
+                if npm_missed {
+                    notes.extend(self.npm.workspace_note(&importer));
+                }
+                return self.error(msg, notes, span);
+            }
         };
         let shown = pick::Shown {
             dir,

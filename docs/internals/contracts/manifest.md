@@ -104,11 +104,12 @@ in the importer's directory and each ancestor (skipping `node_modules` directori
 themselves; a symlinked package directory is replaced by its real path), the nearest ancestor whose `package.json` has that `name`, then the first ancestor
 that is a workspace root (`pnpm-workspace.yaml` `packages:`, or `package.json` `workspaces`;
 globs with `*`, `**` and `!`; `**` does not enter symlinks; at most
-`vpm::npm::workspace::MAX_DIRS` directories are listed). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
+`vpm::npm::workspace::MAX_DIRS` directories are listed, and when a walk stops there, an unresolved import's error gets `NpmResolver::workspace_note`). Entry: `exports` (Node's PACKAGE_EXPORTS_RESOLVE: the exact
 subpath, then the `*` pattern with the longest prefix; conditions in written order under
 `vpm::npm::SERVER_CONDITIONS` plus `default`: the targets of `types` and `velt` are hints, and
 besides them only the first other matching condition's target is kept, as Node takes it
-(`exports::Targets::runtime`, named by the no-source error); `null` under a matching condition
+(`exports::Targets::runtime`, named by the no-source error); targets are tried `velt` hints
+first, then the runtime target, then `types` hints; `null` under a matching condition
 is not exported), else `types`, `typings`, `main`, `./index`;
 without `exports` a subpath names that path. Each target maps to source candidates
 (`vpm::npm::source_candidates`) and the first existing file wins. Errors: a subpath not

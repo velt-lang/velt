@@ -2,8 +2,9 @@
 //! declares, as JavaScript scopes them. Bindings are imports (not `import type`), top-level and
 //! block-level declarations (functions, classes, structs, enums, `const`/`let`, the whole block
 //! being their scope), parameters, the name of a function expression, `for` and `for … of`
-//! variables and `catch` parameters. Types are not values: `typeof x` in a type, interfaces and
-//! type aliases neither bind nor refer.
+//! variables and `catch` parameters. Types are not values: interfaces and type aliases neither
+//! bind nor refer, but a type query of one name (`typeof x` in a type) refers to the value `x`
+//! as an expression there would (a query of a defined name is the type of its literal).
 //!
 //! The build-time constants of `define` replace exactly these references ([`crate::parse_with`]),
 //! as esbuild's `define` does, and the loader reports an ambient constant without a value only
@@ -11,8 +12,9 @@
 
 use crate::ast::*;
 
-/// The identifier expressions (and shorthand properties, `{ x }`) of `module` that refer to a
-/// name for which `wanted` holds and that nothing in scope declares, in source order.
+/// The identifier expressions (and shorthand properties, `{ x }`, and one-name type queries,
+/// `typeof x`) of `module` that refer to a name for which `wanted` holds and that nothing in
+/// scope declares, in source order.
 pub fn free_values<'a>(
     module: &'a Module,
     wanted: &(dyn Fn(&str) -> bool + Sync),
@@ -122,6 +124,7 @@ impl<'a> Walker<'a, '_> {
             ItemKind::Function(f) => self.function(f, None),
             ItemKind::Struct(t) | ItemKind::Class(t) => {
                 for field in &t.fields {
+                    self.ty(&field.ty);
                     if let Some(e) = &field.default {
                         self.expr(e);
                     }
@@ -132,9 +135,11 @@ impl<'a> Walker<'a, '_> {
                 t.methods.iter().for_each(|m| self.function(&m.decl, None));
             }
             ItemKind::Interface(i) => {
+                i.fields.iter().for_each(|f| self.ty(&f.ty));
                 for m in &i.methods {
-                    if let Some(body) = &m.body {
-                        self.body(&m.sig, body, None);
+                    match &m.body {
+                        Some(body) => self.body(&m.sig, body, None),
+                        None => self.signature(&m.sig),
                     }
                 }
             }
@@ -150,7 +155,71 @@ impl<'a> Walker<'a, '_> {
                 }
             }
             ItemKind::Var(v) => self.var(v),
-            ItemKind::TypeAlias(_) | ItemKind::ExternFn(_) | ItemKind::Import(_) => {}
+            ItemKind::TypeAlias(a) => self.ty(&a.ty),
+            ItemKind::ExternFn(sig) => self.signature(sig),
+            ItemKind::Import(_) => {}
+        }
+    }
+
+    /// A signature without a body: its types, with its parameters in scope.
+    fn signature(&mut self, sig: &'a FnSig) {
+        let mut names = vec![];
+        for p in &sig.params {
+            match &p.pattern {
+                Some(pat) => self.pattern_names(pat, &mut names),
+                None => self.bind(&p.name, &mut names),
+            }
+        }
+        self.scopes.push(names);
+        self.sig_types(sig);
+        self.scopes.pop();
+    }
+
+    /// The parameter, return and `throws` types of `sig`.
+    fn sig_types(&mut self, sig: &'a FnSig) {
+        sig.params.iter().for_each(|p| self.ty(&p.ty));
+        sig.ret.iter().chain(&sig.throws).for_each(|t| self.ty(t));
+    }
+
+    /// The type queries in type `t`.
+    fn ty(&mut self, t: &'a TypeExpr) {
+        use TypeExprKind as T;
+        match &t.kind {
+            T::Query(path) => {
+                if let [id] = path.as_slice() {
+                    self.reference(id);
+                }
+            }
+            T::Named { args, .. } => args.iter().for_each(|a| self.ty(a)),
+            T::Array(x) | T::Construct(x) | T::KeyOf(x) => self.ty(x),
+            T::GenericFunction { ty, .. } => self.ty(ty),
+            T::Tuple(xs) | T::Union(xs) | T::Intersection(xs) => {
+                xs.iter().for_each(|x| self.ty(x));
+            }
+            T::Function {
+                params,
+                ret,
+                throws,
+                ..
+            } => {
+                params.iter().for_each(|p| self.ty(p));
+                self.ty(ret);
+                throws.iter().for_each(|x| self.ty(x));
+            }
+            T::Indexed { object, key } => {
+                self.ty(object);
+                self.ty(key);
+            }
+            T::Object(fields) => fields.iter().for_each(|f| self.ty(&f.ty)),
+            T::IndexSig {
+                fields, key, value, ..
+            } => {
+                fields.iter().for_each(|f| self.ty(&f.ty));
+                self.ty(&key.ty);
+                self.ty(value);
+            }
+            T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
+            T::Literal(_) | T::Null | T::Void => {}
         }
     }
 
@@ -172,6 +241,7 @@ impl<'a> Walker<'a, '_> {
             }
         }
         self.scopes.push(names);
+        self.sig_types(sig);
         for p in &sig.params {
             if let Some(d) = &p.default {
                 self.expr(d);
@@ -185,6 +255,9 @@ impl<'a> Walker<'a, '_> {
     }
 
     fn var(&mut self, v: &'a VarDecl) {
+        if let Some(t) = &v.ty {
+            self.ty(t);
+        }
         self.pattern_defaults(&v.pattern);
         if let Some(init) = &v.init {
             self.expr(init);
@@ -321,11 +394,13 @@ impl<'a> Walker<'a, '_> {
             | E::Update { target: expr, .. }
             | E::Spread(expr)
             | E::Await(expr)
-            | E::Cast { expr, .. }
-            | E::InstanceOf { expr, .. }
             | E::Paren(expr)
             | E::NonNull(expr)
             | E::Member { object: expr, .. } => self.expr(expr),
+            E::Cast { expr, ty } | E::InstanceOf { expr, ty } => {
+                self.expr(expr);
+                self.ty(ty);
+            }
             E::Binary { lhs, rhs, .. } => {
                 self.expr(lhs);
                 self.expr(rhs);
@@ -339,8 +414,14 @@ impl<'a> Walker<'a, '_> {
                 self.expr(then);
                 self.expr(els);
             }
-            E::Call { callee, args, .. } => {
+            E::Call {
+                callee,
+                type_args,
+                args,
+                ..
+            } => {
                 self.expr(callee);
+                type_args.iter().for_each(|t| self.ty(t));
                 self.exprs(args);
             }
             E::New { args, .. } => self.exprs(args),
@@ -363,7 +444,9 @@ impl<'a> Walker<'a, '_> {
                 }
             }
             E::Function(f) => self.function(f, Some(&f.sig.name)),
-            E::Arrow { params, body, .. } => {
+            E::Arrow {
+                params, ret, body, ..
+            } => {
                 let mut names = vec![];
                 for p in params {
                     match &p.pattern {
@@ -372,6 +455,11 @@ impl<'a> Walker<'a, '_> {
                     }
                 }
                 self.scopes.push(names);
+                params
+                    .iter()
+                    .filter_map(|p| p.ty.as_ref())
+                    .chain(ret)
+                    .for_each(|t| self.ty(t));
                 for p in params {
                     if let Some(d) = &p.default {
                         self.expr(d);
@@ -463,6 +551,22 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(3), lo(4)]);
+    }
+
+    #[test]
+    fn type_queries_refer_as_expressions_do() {
+        // #1091 re-check: `typeof __DEV__` in a type names the constant.
+        let src = "const v: typeof __DEV__ = true;\n\
+                   function f(x: typeof __DEV__): typeof __DEV__ { return x; }\n\
+                   function g(__DEV__: string): void { const s: typeof __DEV__ = __DEV__; }\n\
+                   type T = { a: typeof __DEV__ };\n";
+        let lo = |n: usize| {
+            src.match_indices("__DEV__")
+                .nth(n)
+                .map(|(i, _)| i as u32)
+                .unwrap()
+        };
+        assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(6)]);
     }
 
     #[test]

@@ -261,10 +261,41 @@ fn workspace_symlink_loops_end_fast() {
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     let dirs = workspace::package_dirs(root, &["**".to_string()]);
     let rel: Vec<String> = dirs
+        .dirs
         .iter()
         .map(|d| crate::relpath::relative(d, root))
         .collect();
     assert_eq!(rel, ["packages/p"]);
+}
+
+#[test]
+fn a_cut_workspace_walk_is_reported() {
+    // #1091 re-check: `packages: ["**"]` over a huge tree stopped at the limit and the
+    // package past it was then "not a dependency", without a word about the cut.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "pnpm-workspace.yaml", "packages: [\"**\"]\n");
+    for i in 0..5 {
+        std::fs::create_dir_all(root.join(format!("a/{i}"))).unwrap();
+    }
+    write(root, "zzz/target/package.json", r#"{ "name": "target" }"#);
+    write(root, "zzz/target/src/index.ts", "");
+    let importer = root.join("app/main.ts");
+    let mut npm = NpmResolver {
+        max_dirs: Some(4),
+        ..NpmResolver::default()
+    };
+    assert!(npm.resolve(&importer, "target").is_none());
+    let note = npm.workspace_note(&importer).unwrap();
+    assert!(
+        note.contains("pattern `**` reaches more than 4 directories"),
+        "{note}"
+    );
+    assert!(note.contains("narrow it"), "{note}");
+    // Under the limit the package is found and there is nothing to say.
+    let mut npm = NpmResolver::default();
+    assert!(npm.resolve(&importer, "target").unwrap().is_ok());
+    assert_eq!(npm.workspace_note(&importer), None);
 }
 
 #[test]

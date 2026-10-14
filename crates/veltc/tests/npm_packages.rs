@@ -199,11 +199,31 @@ fn define_leaves_the_programs_own_names_alone() {
         "app/node_modules/versioned/src/index.ts",
         "export function label(): string {\n  return \"versioned\";\n}\n",
     );
+    // `types` written first does not pick another source than the build Node loads (#1091).
+    write(
+        root,
+        "app/node_modules/cond/package.json",
+        r#"{ "name": "cond", "exports": { ".": { "types": "./dist/index.d.ts", "node": "./dist/index.node.js", "default": "./dist/index.js" } } }"#,
+    );
+    write(
+        root,
+        "app/node_modules/cond/src/index.ts",
+        "export function side(): string {\n  return \"client\";\n}\n",
+    );
+    write(
+        root,
+        "app/node_modules/cond/src/index.node.ts",
+        "export function side(): string {\n  return \"server\";\n}\n",
+    );
     write(
         root,
         "app/src/main.ts",
         r#"import { fromImport } from "./other";
 import { label } from "versioned";
+import { side } from "cond";
+
+declare const __DEV__: boolean;
+const typed: typeof __DEV__ = true;
 
 function f(__DEV__: boolean): boolean {
   return __DEV__;
@@ -229,6 +249,7 @@ const o = { __DEV__ };
 console.log(o.__DEV__);
 console.log(__DEV__);
 console.log(named() + " " + label());
+console.log(side() + " " + typed + " " + __DEV__);
 "#,
     );
     let out = velt(&root.join("app"), &["run"]);
@@ -236,6 +257,6 @@ console.log(named() + " " + label());
     assert!(out.status.success(), "velt run failed:\n{stderr}");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "true\ntrue\ntrue\n1\n2\nfalse\nfalse\nlocal versioned\n"
+        "true\ntrue\ntrue\n1\n2\nfalse\nfalse\nlocal versioned\nserver true false\n"
     );
 }

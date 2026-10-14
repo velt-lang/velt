@@ -43,7 +43,8 @@ alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivi
    file belongs to when it has that name, then the packages of the workspace around it
    (`packages:` globs in `pnpm-workspace.yaml`, or `workspaces` in the root `package.json`), so
    a workspace compiles before `pnpm install` has linked anything. A `**` glob does not enter
-   symlinked directories.
+   symlinked directories, and the search lists at most 10,000 directories: past that, an
+   import it did not find says which pattern to narrow.
 2. **The file**, from its `package.json`: `exports` when it has one (a subpath it doesn't list
    is an error, as in Node), else `types`, `main`, then `index`. Conditions are matched in the
    order the package writes them, as in Node, with those of a server build as Vite's SSR build
@@ -59,9 +60,10 @@ alias and no entry of `dependencies` claims (`@sigx/reactivity`, `@sigx/reactivi
    TypeScript file it was built from, as TypeScript's project references do: below `rootDir`
    where the package's `tsconfig.json` puts `outDir` (or `declarationDir`), then with `dist/`,
    `lib/`, `build/`, `out/` or `types/` replaced by `src/`, then in place (`.ts`, `.tsx`,
-   `/index.ts`, `/index.tsx`). The hints and the matching condition's target are tried in the
-   order written, so `"types": "./dist/index.d.ts"` finds `src/index.ts` even when the
-   JavaScript bundle has another name. A package without TypeScript sources is an error that
+   `/index.ts`, `/index.tsx`). A `velt` target is tried first, then the target Node loads, then
+   the `types` target, wherever each is written: with `{ "types": "./dist/index.d.ts", "node":
+   "./dist/index.node.js" }`, Velt compiles `src/index.node.ts`, as Node runs its build, and
+   `"types"` still finds `src/index.ts` when the JavaScript bundle has another name. A package without TypeScript sources is an error that
    names the file Node loads and says what was looked for.
 
 The package's modules then compile like the program's own, and their `env.d.ts` constants come

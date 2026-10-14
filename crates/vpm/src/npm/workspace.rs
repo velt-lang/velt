@@ -3,6 +3,7 @@
 //! the workspace imports another by name before (or without) `pnpm install` linking it into
 //! `node_modules`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::json::Json;
@@ -90,22 +91,44 @@ fn unquote(s: &str) -> String {
 }
 
 /// The most directories one [`package_dirs`] call lists: a workspace glob over a huge tree
-/// stops there instead of taking minutes.
-pub const MAX_DIRS: usize = 20_000;
+/// stops there instead of taking minutes, and [`Listing::cut`] says so.
+pub const MAX_DIRS: usize = 10_000;
+
+/// The package directories of a workspace ([`package_dirs`]).
+#[derive(Debug, Default)]
+pub struct Listing {
+    /// The directories, each holding a `package.json`.
+    pub dirs: Vec<PathBuf>,
+    /// The pattern whose walk stopped at the directory limit, if one did: packages past it
+    /// are missing from [`Listing::dirs`].
+    pub cut: Option<String>,
+}
 
 /// The directories below `root` that `patterns` select (each holding a `package.json`): `*`
 /// matches one directory name, `**` any number of them, and a pattern starting with `!`
 /// excludes what it matches. `node_modules` and hidden directories are never entered, `**` does
 /// not enter symlinked directories (a link back up would never end), and at most [`MAX_DIRS`]
 /// directories are listed.
-pub fn package_dirs(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
+pub fn package_dirs(root: &Path, patterns: &[String]) -> Listing {
+    package_dirs_limited(root, patterns, MAX_DIRS)
+}
+
+/// [`package_dirs`], listing at most `max_dirs` directories.
+pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -> Listing {
     let mut walk = Walk {
         out: vec![],
+        seen: HashSet::new(),
         listed: 0,
+        max_dirs,
+        cut: false,
     };
+    let mut cut = None;
     for pattern in patterns.iter().filter(|p| !p.starts_with('!')) {
         let parts = split(pattern);
         walk.expand(root, &parts);
+        if walk.cut && cut.is_none() {
+            cut = Some(pattern.clone());
+        }
     }
     let mut out = walk.out;
     for pattern in patterns.iter().filter_map(|p| p.strip_prefix('!')) {
@@ -117,7 +140,7 @@ pub fn package_dirs(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
         });
     }
     out.retain(|d| d.join("package.json").is_file());
-    out
+    Listing { dirs: out, cut }
 }
 
 fn split(pattern: &str) -> Vec<&str> {
@@ -129,14 +152,19 @@ fn split(pattern: &str) -> Vec<&str> {
 
 struct Walk {
     out: Vec<PathBuf>,
-    /// Directories listed so far (at most [`MAX_DIRS`]).
+    /// The directories in `out`.
+    seen: HashSet<PathBuf>,
+    /// Directories listed so far (at most `max_dirs`).
     listed: usize,
+    max_dirs: usize,
+    /// Whether a directory was left unlisted for the limit.
+    cut: bool,
 }
 
 impl Walk {
     fn expand(&mut self, dir: &Path, parts: &[&str]) {
         let Some((first, rest)) = parts.split_first() else {
-            if !self.out.iter().any(|d| d == dir) {
+            if self.seen.insert(dir.to_path_buf()) {
                 self.out.push(dir.to_path_buf());
             }
             return;
@@ -167,9 +195,10 @@ impl Walk {
     }
 
     /// The subdirectories of `dir` a workspace glob may enter, sorted by name; symlinked ones
-    /// only with `links`. None once [`MAX_DIRS`] directories have been listed.
+    /// only with `links`. None once `max_dirs` directories have been listed.
     fn children(&mut self, dir: &Path, links: bool) -> Vec<PathBuf> {
-        if self.listed >= MAX_DIRS {
+        if self.listed >= self.max_dirs {
+            self.cut = true;
             return vec![];
         }
         self.listed += 1;
@@ -178,12 +207,19 @@ impl Walk {
         };
         let mut dirs: Vec<PathBuf> = entries
             .flatten()
-            .filter(|e| links || e.file_type().is_ok_and(|t| !t.is_symlink()))
-            .map(|e| e.path())
-            .filter(|p| {
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                p.is_dir() && name != "node_modules" && !name.starts_with('.')
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_str().unwrap_or("");
+                if name == "node_modules" || name.starts_with('.') {
+                    return false;
+                }
+                match e.file_type() {
+                    Ok(t) if t.is_symlink() => links && e.path().is_dir(),
+                    Ok(t) => t.is_dir(),
+                    Err(_) => false,
+                }
             })
+            .map(|e| e.path())
             .collect();
         dirs.sort();
         dirs
@@ -263,11 +299,29 @@ mod tests {
             ],
         );
         let rel: Vec<String> = dirs
+            .dirs
             .iter()
             .map(|d| crate::relpath::relative(d, root))
             .collect();
         assert_eq!(rel, ["packages/a", "packages/b", "examples/x/deep"]);
         assert!(segment_match("a*c", "abbc"));
         assert!(!segment_match("a*c", "abd"));
+    }
+
+    #[test]
+    fn a_cut_walk_says_so() {
+        // #1091 re-check: a walk stopped at the limit used to end silently.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["a/1", "a/2", "a/3", "zzz/target"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(root.join("zzz/target/package.json"), "{}").unwrap();
+        let all = package_dirs_limited(root, &["**".into()], 100);
+        assert_eq!(all.dirs, [root.join("zzz/target")]);
+        assert_eq!(all.cut, None);
+        let cut = package_dirs_limited(root, &["**".into()], 3);
+        assert!(cut.dirs.is_empty());
+        assert_eq!(cut.cut.as_deref(), Some("**"));
     }
 }
