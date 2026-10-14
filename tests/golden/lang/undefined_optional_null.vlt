@@ -1,6 +1,7 @@
 // More of `undefined` (issue #930): a destructuring default leaves a present `null` of an
 // optional field (`a?: T | null`) alone and applies when the field is absent, `void` and
-// `typeof` start a branch of `? :`, and `return undefined;` in a `void` function is `return;`.
+// `typeof` start a branch of `? :`, `return undefined;` in a `void` function is `return;`, and
+// `void e` as its result (`return void e;`, `(): void => void e`) is `e;` then `return;`.
 // Output from Node.
 type O = { b?: string | null; c?: string | null; d?: string; e: string | null };
 
@@ -35,6 +36,15 @@ async function bumpLater(s: Count): Promise<void> {
   return undefined;
 }
 
+function pushTwice(xs: number[]): void {
+  return void xs.push(1);
+}
+
+function pushLater(xs: number[], c: boolean): void {
+  if (c) return (void xs.push(2));
+  xs.push(3);
+}
+
 async function main() {
   const o: { b?: number | null; c?: number | null } = { b: null };
   const { b = 6, c = 7 } = o;
@@ -64,4 +74,15 @@ async function main() {
   bumpUnless(s, false);
   await bumpLater(s);
   console.log(s.n);
+  const log: string[] = [];
+  const push = (t: string): void => void log.push(t);
+  push("a");
+  push("b");
+  const xs: number[] = [];
+  pushTwice(xs);
+  pushLater(xs, true);
+  pushLater(xs, false);
+  push("c");
+  pushTwice(xs);
+  console.log(log, xs);
 }

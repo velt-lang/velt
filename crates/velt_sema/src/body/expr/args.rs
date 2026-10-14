@@ -127,8 +127,7 @@ impl FnCx<'_, '_> {
         }
         for (a, p) in args.iter().zip(&c.params) {
             if p.default.is_some() {
-                let slot = crate::body::OptionalSlot::Param;
-                self.optional_slots.push((a.span, slot));
+                self.optional_slot(a, crate::body::OptionalSlot::Param);
             }
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);

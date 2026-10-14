@@ -12,7 +12,7 @@
 use velt_common::Diagnostic;
 
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// Convert `h` to type `exp`, or report "mismatched types".
@@ -229,6 +229,25 @@ impl FnCx<'_, '_> {
         ))
     }
 
+    /// Is `h` the result of a standard library function or method (`Map.get`, `find`)?
+    fn std_result(&self, h: &hir::Expr) -> bool {
+        match &h.kind {
+            H::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self
+                .cx
+                .try_fn(*d)
+                .is_some_and(|fi| self.cx.scopes[fi.module].is_std),
+            H::Call {
+                callee: Callee::Intrinsic(_),
+                ..
+            } => true,
+            H::Block(b) => b.value.as_deref().is_some_and(|v| self.std_result(v)),
+            _ => false,
+        }
+    }
+
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
         if self.shared_widening_error(expected, found) {
             return;
@@ -245,6 +264,17 @@ impl FnCx<'_, '_> {
         ) {
             if !have.within(want) {
                 let (x, y) = (have.word(), want.word());
+                if want.has_undefined() && self.std_result(found) {
+                    // TypeScript accepts it: the library gives `undefined` there (phase 3).
+                    self.cx.error(
+                        Diagnostic::error(
+                            format!("a `{f}` from the standard library where a `{e}` is expected is not supported yet (#930)"),
+                            found.span,
+                        )
+                        .with_note("the standard library still gives `null` where Node gives `undefined`; convert it with `?? undefined`"),
+                    );
+                    return;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!("type `{f}` is not assignable to type `{e}` (TypeScript's TS2322)"),

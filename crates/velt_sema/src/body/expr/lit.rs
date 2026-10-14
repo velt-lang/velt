@@ -210,6 +210,20 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
+    /// `e` is given for an optional parameter or field (`slot`): records its span, and those
+    /// of the branches of a conditional (`c ? v : undefined`), for `optional_slot_error`.
+    pub(crate) fn optional_slot(&mut self, e: &ast::Expr, slot: crate::body::OptionalSlot) {
+        self.optional_slots.push((e.span, slot));
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.optional_slot(inner, slot),
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.optional_slot(then, slot);
+                self.optional_slot(els, slot);
+            }
+            _ => {}
+        }
+    }
+
     /// An `undefined` (a literal, or a value that may be one) at `span`, given for an optional
     /// parameter, a parameter with a default or an optional field: TypeScript accepts it, and
     /// this phase of #930 cannot pass it on (`true`: reported). Such a parameter or field is
@@ -237,6 +251,17 @@ impl FnCx<'_, '_> {
     /// `null` / `undefined` (`what`) where `t` does not allow it (TS2322).
     fn nothing_mismatch(&mut self, what: &str, t: TyId, span: Span) -> hir::Expr {
         if what == "undefined" && self.optional_slot_error(span) {
+            return self.error_expr(span);
+        }
+        if what == "undefined" && t == self.cx.ty.unit {
+            // TypeScript accepts `undefined` as a `void` value.
+            self.cx.error(
+                Diagnostic::error(
+                    "`undefined` as a `void` value here is not supported yet (#930)",
+                    span,
+                )
+                .with_note("leave the value out: `return;`, or the statement `e;` for `void e`"),
+            );
             return self.error_expr(span);
         }
         let tn = self.cx.display(t);

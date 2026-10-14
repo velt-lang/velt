@@ -397,7 +397,7 @@ the value is `undefined` (an `undefined` element or field, an absent optional fi
 array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
 the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
 and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
-those elements last. `return undefined;` in a `void` function is `return;`. `null` where `T | undefined` is expected, and `undefined` where
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
 `T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
 expected and the reverse.
 
@@ -418,7 +418,10 @@ as `Nullable<number | undefined>`). Also not supported yet, although TypeScript 
   parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
   leave the argument out;
 - `undefined` as the value of an optional field (`{ a: undefined }` for `a?: number`): leave the
-  field out;
+  field out (also for a conditional with an `undefined` branch, `c ? v : undefined`, given
+  for either);
+- a `T | null` from the standard library where a `T | undefined` is expected
+  (`return m.get(k);` in a function returning `number | undefined`): write `m.get(k) ?? undefined`;
 - a type argument that allows `undefined` for generic code that sorts an array of its type
   parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
   reach the comparator;
@@ -428,8 +431,27 @@ as `Nullable<number | undefined>`). Also not supported yet, although TypeScript 
   (`class C { b?: number | null }`, `const { b = 6 } = c`): a class does not keep an unset field
   apart from one set to `null`.
 
-Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the
-standard library still use `null` for now:
+### Silent differences until phase 3
+
+These compile and print or test differently from Node, with no error, until later phases of
+[issue #930](https://github.com/velt-lang/velt/issues/930) give them `undefined`:
+
+- a missing key of a `Map`: `m.get("z")` is `null` where Node gives `undefined` (`console.log`
+  prints `null`, `typeof` gives `"object"`), whatever the value type (`Map<string, number>`,
+  `Map<string, number | null>`);
+- a missing key of a `Record`: `r["z"]` on a `Record<string, number>` or
+  `Record<string, number | null>` is `null` likewise;
+- an absent optional field or a left-out optional parameter (`a?: T`), `?.` on a `T | null`
+  and the rest of the standard library (`find`, `at`, `shift`, …) give `null` where Node gives
+  `undefined` (phases 2 and 3); `a?: T | undefined` is reported as a type with both nothings.
+
+`x == null` tests for either nothing and `x ?? d` treats both alike, so code written with them
+behaves as in Node.
+
+### Optional values and `null`
+
+Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the standard library use
+`null` for now:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,

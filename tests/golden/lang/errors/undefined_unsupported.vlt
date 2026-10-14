@@ -184,3 +184,19 @@ function aliases(a: Nullable<number | undefined>, b: Maybe<number | null>) {
 function main() {
   console.log(withDefault());
 }
+
+// A branch of a conditional giving `undefined` for an optional parameter or field.
+function prodError(code: number, detail?: string): string {
+  return `${code}:${detail ?? "-"}`;
+}
+
+function conditionals(name: string, c: boolean) {
+  const a = prodError(1, name ? `"${name}"` : undefined);
+  const b = prodError(2, c ? undefined : "d");
+  const o: { a?: number; b: string } = { a: c ? 1 : undefined, b: "x" };
+}
+
+// A `T | null` the standard library gives where Node gives `undefined` (phase 3).
+function lookup(m: Map<string, number>, k: string): number | undefined {
+  return m.get(k);
+}

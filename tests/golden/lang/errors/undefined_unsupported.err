@@ -38,3 +38,7 @@ undefined_unsupported.vlt:170:45: error: `undefined` as the value of an optional
 undefined_unsupported.vlt:178:21: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
 undefined_unsupported.vlt:178:54: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
 undefined_unsupported.vlt:179:12: error: a type that allows both `null` and `undefined` (`T | null | undefined`) is not supported yet
+undefined_unsupported.vlt:194:47: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:195:30: error: `undefined` passed for an optional parameter or one with a default is not supported yet (#930)
+undefined_unsupported.vlt:196:53: error: `undefined` as the value of an optional field is not supported yet (#930)
+undefined_unsupported.vlt:201:10: error: a `f64 | null` from the standard library where a `f64 | undefined` is expected is not supported yet (#930)
