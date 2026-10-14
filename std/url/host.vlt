@@ -6,7 +6,7 @@
 // non-special schemes. Not supported: IDNA / punycode — a host that is not ASCII after decoding
 // is rejected. Every parser returns null where the URL is invalid.
 
-import { C0, encodeSet, decodeLenient, bytesOf } from "velt:url/encode";
+import { C0, encodeSet, decodeLenient, bytesOf, isAscii } from "velt:url/encode";
 
 /** The serialized host for `input` (the text between the userinfo and the port), or null. */
 export function parseHost(input: string, special: bool): string | null {
@@ -54,10 +54,13 @@ const FORBIDDEN_DOMAIN_HIGH: u64 = 0x9000000078000001;
 // a non-ASCII character (it is decoded first, `decodedDomain`), `DOMAIN_INVALID` for a forbidden
 // code point, else whether it has an upper-case letter to fold.
 function scanDomain(input: string): i64 {
+  if (!isAscii(input)) {
+    return DOMAIN_ENCODED;
+  }
   let kind = DOMAIN_LOWER;
   for (let i: i64 = 0; i < (input.length as i64); i++) {
     const c = input.charCodeAt(i);
-    if (c >= 0x80 || c == 37) {
+    if (c == 37) {
       return DOMAIN_ENCODED;
     }
     const bits = c < 64 ? FORBIDDEN_DOMAIN_LOW : FORBIDDEN_DOMAIN_HIGH;

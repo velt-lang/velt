@@ -16,6 +16,7 @@ import {
   C0,
   encodeSet,
   inSetCode,
+  isAscii,
 } from "velt:url/encode";
 import { parseHost } from "velt:url/host";
 
@@ -49,6 +50,10 @@ const AT: i64 = 64;
 const OPEN_BRACKET: i64 = 91;
 const CLOSE_BRACKET: i64 = 93;
 
+// Up to this many code units, `removeTabNewline` looks through an ASCII text itself: three
+// runtime searches cost more than that many loads and compares.
+const SCAN_UP_TO: i64 = 64;
+
 /** Whether `scheme` is one of WHATWG's special schemes. */
 export function isSpecial(scheme: string): bool {
   return scheme == "http" ||
@@ -78,9 +83,11 @@ export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | nul
     return base == null ? null : parseRelative(s, base);
   }
   const scheme = s.slice(0, colon).toLowerCase();
-  const twoSlashes = s.charCodeAt(colon + 1) == SLASH && s.charCodeAt(colon + 2) == SLASH;
-  if (base != null && isSpecial(scheme) && base.scheme == scheme && !twoSlashes) {
-    return parseRelative(s.slice(colon + 1), base);
+  if (base != null && isSpecial(scheme) && base.scheme == scheme) {
+    const rest = s.slice(colon + 1);
+    if (!rest.startsWith("//")) {
+      return parseRelative(rest, base);
+    }
   }
   return parseAbsolute(scheme, s, colon + 1);
 }
@@ -103,15 +110,21 @@ function cleanInput(input: string): string {
  * and every setter that runs it).
  */
 export function removeTabNewline(s: string): string {
-  let found = false;
-  for (let i: i64 = 0; i < (s.length as i64); i++) {
-    const c = s.charCodeAt(i);
-    if (c == 9 || c == 10 || c == 13) {
-      found = true;
-      break;
+  // A short ASCII text is looked through where it stands; a long one, or one where each
+  // `charCodeAt` has a position to find first, is searched by the runtime.
+  if ((s.length as i64) <= SCAN_UP_TO && isAscii(s)) {
+    let found = false;
+    for (let i: i64 = 0; i < (s.length as i64); i++) {
+      const c = s.charCodeAt(i);
+      if (c == 9 || c == 10 || c == 13) {
+        found = true;
+        break;
+      }
     }
-  }
-  if (!found) {
+    if (!found) {
+      return s;
+    }
+  } else if (s.indexOf("\t") < 0 && s.indexOf("\n") < 0 && s.indexOf("\r") < 0) {
     return s;
   }
   return s.replaceAll("\t", "").replaceAll("\n", "").replaceAll("\r", "");
@@ -163,6 +176,11 @@ function componentEnd(s: string, from: i64, special: bool, pathToo: bool): i64 {
 // Parses `s[from..]`, everything after the scheme's colon. The components are found by index
 // in `s`; only the ones kept are cut out of it.
 function parseAbsolute(scheme: string, s: string, from: i64): UrlRecord | null {
+  if (from > 0 && !isAscii(s)) {
+    // Finding a position in text that is not ASCII costs more the further in it is: cut the
+    // scheme off first.
+    return parseAbsolute(scheme, s.slice(from), 0);
+  }
   const special = isSpecial(scheme);
   const file = scheme == "file";
   const r = new UrlRecord();
@@ -206,6 +224,10 @@ function parseOpaque(r: UrlRecord, rest: string): UrlRecord {
 function parseAuthority(r: UrlRecord, s: string, from: i64, end: i64, special: bool): bool {
   if (r.scheme == "file") {
     return setFileHost(r, s.slice(from, end));
+  }
+  if (!isAscii(s)) {
+    // The scans below are for ASCII text.
+    return parseWideAuthority(r, s.slice(from, end), special);
   }
   // The last `@` ends the userinfo.
   let at: i64 = -1;
@@ -271,6 +293,44 @@ export function setFileHost(r: UrlRecord, text: string): bool {
   r.hasHost = true;
   r.host = host;
   return true;
+}
+
+// `parseAuthority` for the authority of a URL that is not ASCII: the runtime's searches find
+// `@` and `:`, and the parts are cut out to be looked at.
+function parseWideAuthority(r: UrlRecord, auth: string, special: bool): bool {
+  const at = auth.lastIndexOf("@");
+  if (at >= 0) {
+    const info = auth.slice(0, at);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      r.username = encodeSet(info.slice(0, colon), USERINFO);
+      r.password = encodeSet(info.slice(colon + 1), USERINFO);
+    } else {
+      r.username = encodeSet(info, USERINFO);
+    }
+  }
+  const hostPort = auth.slice(at + 1);
+  // An IPv6 literal's colons are not the port separator.
+  let colon = hostPort.indexOf(":", hostPort.startsWith("[") ? hostPort.indexOf("]") : 0);
+  if (colon < 0) {
+    colon = hostPort.length as i64;
+  }
+  const hostText = hostPort.slice(0, colon);
+  if (hostText.length == 0) {
+    if (special && r.scheme != "file") {
+      return false;
+    }
+    r.hasHost = true;
+    return at < 0 && colon == (hostPort.length as i64);
+  }
+  const host = parseHost(hostText, special);
+  if (host == null) {
+    return false;
+  }
+  r.hasHost = true;
+  r.host = host;
+  const port = hostPort.slice(colon + 1);
+  return parsePort(r, port, 0, port.length as i64);
 }
 
 // The port `s[from..end]` (empty: none): digits only, at most 65535; leading zeros and the
@@ -340,6 +400,11 @@ function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
 // Sets path, query and fragment from `s[from..]` (everything after the authority); a relative
 // path continues from `segs`. `special`: whether `r.scheme` is special.
 function applyTail(r: UrlRecord, s: string, from: i64, segs: string[], special: bool) {
+  if (from > 0 && !isAscii(s)) {
+    // As in `parseAbsolute`: positions are counted from the tail's start.
+    applyTail(r, s.slice(from), 0, segs, special);
+    return;
+  }
   const end = componentEnd(s, from, special, false);
   r.path = parsePath(s.slice(from, end), segs, special);
   applyQueryFragment(r, s, end, special);
@@ -402,7 +467,7 @@ export function parsePath(p: string, segs: string[], special: bool): string {
 // URLs; the others just take the long way), and no segment starts with `.` or `%` (every
 // spelling of a dot segment does).
 function isSerializedPath(p: string): bool {
-  if (p.charCodeAt(0) != SLASH) {
+  if (!isAscii(p) || p.charCodeAt(0) != SLASH) {
     return false;
   }
   let segmentStart = true;
@@ -412,7 +477,7 @@ function isSerializedPath(p: string): bool {
       segmentStart = true;
       continue;
     }
-    if (c >= 0x80 || c == BACKSLASH || inSetCode(c, PATH)) {
+    if (c == BACKSLASH || inSetCode(c, PATH)) {
       return false;
     }
     if (segmentStart && (c == 46 || c == 37)) {

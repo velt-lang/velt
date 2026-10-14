@@ -70,5 +70,17 @@ file://localhost/etc/hosts -> file:///etc/hosts | : |  |  | /etc/hosts |  |
 http:example.com/a -> http://example.com/a | : | example.com |  | /a |  | 
 http:/example.com/a -> http://example.com/a | : | example.com |  | /a |  | 
 http:\\example.com\a -> http://example.com/a | : | example.com |  | /a |  | 
+https://example.com/café/menü -> https://example.com/caf%C3%A9/men%C3%BC | : | example.com |  | /caf%C3%A9/men%C3%BC |  | 
+https://example.com/search?q=café -> https://example.com/search?q=caf%C3%A9 | : | example.com |  | /search | ?q=caf%C3%A9 | 
+https://example.com/page#über -> https://example.com/page#%C3%BCber | : | example.com |  | /page |  | #%C3%BCber
+http://üser:pässword@example.com:8080/a -> http://%C3%BCser:p%C3%A4ssword@example.com:8080/a | %C3%BCser:p%C3%A4ssword | example.com | 8080 | /a |  | 
+HTTP://EXAMPLE.COM/É/../ü?x=é#É -> http://example.com/%C3%BC?x=%C3%A9#%C3%89 | : | example.com |  | /%C3%BC | ?x=%C3%A9 | #%C3%89
+foo://example.com/é?é#é -> foo://example.com/%C3%A9?%C3%A9#%C3%A9 | : | example.com |  | /%C3%A9 | ?%C3%A9 | #%C3%A9
+mailto:é@example.com -> mailto:%C3%A9@example.com | : |  |  | %C3%A9@example.com |  | 
 ://example.com -> invalid
 1http://example.com -> invalid
+1259 441 481 318
+/seg%20ment/seg%20ment/s ?k=v%20w&k=v%20w #f%20f%2
+416 text/plain,a bca bca bca bca b
+http://exämple.com/a -> invalid
+http://user@exämple.com:8080/a -> invalid

@@ -87,10 +87,28 @@ function main() {
     "http:example.com/a",
     "http:/example.com/a",
     "http:\\\\example.com\\a",
+    "https://example.com/café/menü",
+    "https://example.com/search?q=café",
+    "https://example.com/page#über",
+    "http://üser:pässword@example.com:8080/a",
+    "HTTP://EXAMPLE.COM/É/../ü?x=é#É",
+    "foo://example.com/é?é#é",
+    "mailto:é@example.com",
     "://example.com",
     "1http://example.com",
   ];
   for (const input of inputs) {
     show(input);
   }
+  // Components long enough to be searched by the runtime instead of looked through in place.
+  const long = new URL(
+    `https://example.com/${"seg ment/".repeat(40)}?${"k=v w&".repeat(60)}#${"f ".repeat(80)}`,
+  );
+  console.log(long.href.length, long.pathname.length, long.search.length, long.hash.length);
+  console.log(long.pathname.slice(0, 24), long.search.slice(0, 16), long.hash.slice(0, 8));
+  const data = new URL(`data:text/plain,${"a b\tc".repeat(100)}`);
+  console.log(data.href.length, data.pathname.slice(0, 30));
+  // No IDNA yet: a host that is not ASCII is rejected (Node maps it to `xn--…`).
+  show("http://exämple.com/a");
+  show("http://user@exämple.com:8080/a");
 }
