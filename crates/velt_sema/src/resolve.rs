@@ -226,6 +226,10 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
+        // The SIMD type names (`u8x16`) are built in only for std: other modules import them
+        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        let simd_outside_std =
+            crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
         // Velt's own type names (`u8`, `f32`, `bool`, …) are like library globals: a type the
         // program declares or imports shadows them, as TypeScript code may declare one (#1074).
         // A value of that name does not (a function `f64`). TypeScript's own (`number`,
@@ -234,7 +238,11 @@ impl Ctx<'_> {
             && self
                 .lookup_item_at(env.module, name, t.span)
                 .is_some_and(|item| self.is_type_item(item));
-        if let Some(p) = self.ty.primitive(name).filter(|_| !shadowed) {
+        if let Some(p) = self
+            .ty
+            .primitive(name)
+            .filter(|_| !simd_outside_std && !shadowed)
+        {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -257,7 +265,11 @@ impl Ctx<'_> {
                 args.iter().for_each(|a| {
                     self.resolve_type(a, env);
                 });
-                self.err(format!("cannot find type `{name}` in this scope"), t.span);
+                self.not_found(
+                    format!("cannot find type `{name}` in this scope"),
+                    name,
+                    t.span,
+                );
                 self.ty.error
             }
         }

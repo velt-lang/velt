@@ -19,6 +19,7 @@ pub(crate) fn llvm_type(ty: Ty) -> Option<&'static str> {
         Ty::Ptr => "ptr",
         Ty::F32 => "float",
         Ty::F64 => "double",
+        Ty::V128 => "<16 x i8>",
         Ty::Unit | Ty::Agg(_) => return None,
     })
 }
@@ -123,10 +124,10 @@ pub(crate) fn size_align(program: &vir::Program, ty: Ty) -> CodegenResult<(u32, 
             Ok((layout.size, layout.align))
         }
         Ty::Unit => Ok((0, 1)),
-        scalar => {
-            let n = scalar.scalar_size().unwrap_or(1);
-            Ok((n, n))
-        }
+        scalar => Ok((
+            scalar.scalar_size().unwrap_or(1),
+            scalar.scalar_align().unwrap_or(1),
+        )),
     }
 }
 

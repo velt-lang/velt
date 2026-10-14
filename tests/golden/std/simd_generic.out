@@ -1,0 +1,6 @@
+includes true false 1
+generic == true false false
+nullable == false true
+map 2 ones again false
+set 2
+print <[u8x16]> [u8x16],[u8x16] <[mask8x16]>

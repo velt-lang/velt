@@ -1,0 +1,1567 @@
+// Every integer SIMD operation against lanes computed outside the compiler (generated;
+// the expected values are Python integer arithmetic). Prints the number of checks per
+// type, and a line per lane that differs.
+
+import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt:simd";
+
+function lanesI8x16(what: string, got: i8x16, want: i8[]): i64 {
+  for (let i: usize = 0; i < 16; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testI8x16(): i64 {
+  const a: i8[] = [0, 1, 127, -128, 126, 5, 100, -127, 3, 77, 63, -64, 9, 64, 2, 124];
+  const b: i8[] = [1, 127, 1, -128, 2, 5, 27, 127, 4, 77, 3, 100, 0, 65, 126, 7];
+  const va = i8x16.load(a);
+  const vb = i8x16.load(b);
+  let n = 0;
+  n += lanesI8x16("i8x16.load", va, [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    -127,
+    3,
+    77,
+    63,
+    -64,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += flag("i8x16.fits", i8x16.fits(a), true);
+  n += flag("i8x16.fits past the end", i8x16.fits(a, 1), false);
+  n += flag("i8x16.fits wrapping", i8x16.fits(a, 18446744073709551615), false);
+  n += lanesI8x16("i8x16.splat", i8x16.splat(1), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  n += lanesI8x16("i8x16.add", va.add(vb), [
+    1,
+    -128,
+    -128,
+    0,
+    -128,
+    10,
+    127,
+    0,
+    7,
+    -102,
+    66,
+    36,
+    9,
+    -127,
+    -128,
+    -125,
+  ]);
+  n += lanesI8x16("i8x16.sub", va.sub(vb), [
+    -1,
+    -126,
+    126,
+    0,
+    124,
+    0,
+    73,
+    2,
+    -1,
+    0,
+    60,
+    92,
+    9,
+    -1,
+    -124,
+    117,
+  ]);
+  n += lanesI8x16("i8x16.min", va.min(vb), [
+    0,
+    1,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    -127,
+    3,
+    77,
+    3,
+    -64,
+    0,
+    64,
+    2,
+    7,
+  ]);
+  n += lanesI8x16("i8x16.max", va.max(vb), [
+    1,
+    127,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    127,
+    4,
+    77,
+    63,
+    100,
+    9,
+    65,
+    126,
+    124,
+  ]);
+  n += lanesI8x16("i8x16.addSat", va.addSat(vb), [
+    1,
+    127,
+    127,
+    -128,
+    127,
+    10,
+    127,
+    0,
+    7,
+    127,
+    66,
+    36,
+    9,
+    127,
+    127,
+    127,
+  ]);
+  n += lanesI8x16("i8x16.subSat", va.subSat(vb), [
+    -1,
+    -126,
+    126,
+    0,
+    124,
+    0,
+    73,
+    -128,
+    -1,
+    0,
+    60,
+    -128,
+    9,
+    -1,
+    -124,
+    117,
+  ]);
+  n += lanesI8x16("i8x16.neg", va.neg(), [
+    0,
+    -1,
+    -127,
+    -128,
+    -126,
+    -5,
+    -100,
+    127,
+    -3,
+    -77,
+    -63,
+    64,
+    -9,
+    -64,
+    -2,
+    -124,
+  ]);
+  n += lanesI8x16("i8x16.abs", va.abs(), [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    127,
+    3,
+    77,
+    63,
+    64,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += lanesI8x16("i8x16.and", va.and(vb), [0, 1, 1, -128, 2, 5, 0, 1, 0, 77, 3, 64, 0, 64, 2, 4]);
+  n += lanesI8x16("i8x16.or", va.or(vb), [
+    1,
+    127,
+    127,
+    -128,
+    126,
+    5,
+    127,
+    -1,
+    7,
+    77,
+    63,
+    -28,
+    9,
+    65,
+    126,
+    127,
+  ]);
+  n += lanesI8x16("i8x16.xor", va.xor(vb), [
+    1,
+    126,
+    126,
+    0,
+    124,
+    0,
+    127,
+    -2,
+    7,
+    0,
+    60,
+    -92,
+    9,
+    1,
+    124,
+    123,
+  ]);
+  n += lanesI8x16("i8x16.not", va.not(), [
+    -1,
+    -2,
+    -128,
+    127,
+    -127,
+    -6,
+    -101,
+    126,
+    -4,
+    -78,
+    -64,
+    63,
+    -10,
+    -65,
+    -3,
+    -125,
+  ]);
+  n += lanesI8x16("i8x16.shl(0)", va.shl(0), [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    -127,
+    3,
+    77,
+    63,
+    -64,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += lanesI8x16("i8x16.shr(0)", va.shr(0), [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    -127,
+    3,
+    77,
+    63,
+    -64,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += lanesI8x16("i8x16.shl(1)", va.shl(1), [
+    0,
+    2,
+    -2,
+    0,
+    -4,
+    10,
+    -56,
+    2,
+    6,
+    -102,
+    126,
+    -128,
+    18,
+    -128,
+    4,
+    -8,
+  ]);
+  n += lanesI8x16("i8x16.shr(1)", va.shr(1), [
+    0,
+    0,
+    63,
+    -64,
+    63,
+    2,
+    50,
+    -64,
+    1,
+    38,
+    31,
+    -32,
+    4,
+    32,
+    1,
+    62,
+  ]);
+  n += lanesI8x16("i8x16.shl(7)", va.shl(7), [
+    0,
+    -128,
+    -128,
+    0,
+    0,
+    -128,
+    0,
+    -128,
+    -128,
+    -128,
+    -128,
+    0,
+    -128,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesI8x16("i8x16.shr(7)", va.shr(7), [0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, 0]);
+  n += lanesI8x16("i8x16.shl(11)", va.shl(11), [
+    0,
+    8,
+    -8,
+    0,
+    -16,
+    40,
+    32,
+    8,
+    24,
+    104,
+    -8,
+    0,
+    72,
+    0,
+    16,
+    -32,
+  ]);
+  n += lanesI8x16("i8x16.shr(11)", va.shr(11), [
+    0,
+    0,
+    15,
+    -16,
+    15,
+    0,
+    12,
+    -16,
+    0,
+    9,
+    7,
+    -8,
+    1,
+    8,
+    0,
+    15,
+  ]);
+  n += bitmask("i8x16.eq", va.eq(vb).bitmask(), 552);
+  n += bitmask("i8x16.ne", va.ne(vb).bitmask(), 64983);
+  n += bitmask("i8x16.lt", va.lt(vb).bitmask(), 27011);
+  n += bitmask("i8x16.le", va.le(vb).bitmask(), 27563);
+  n += bitmask("i8x16.gt", va.gt(vb).bitmask(), 37972);
+  n += bitmask("i8x16.ge", va.ge(vb).bitmask(), 38524);
+  n += lanesI8x16("i8x16.select", i8x16.select(va.lt(vb), va, vb), [
+    0,
+    1,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    -127,
+    3,
+    77,
+    3,
+    -64,
+    0,
+    64,
+    2,
+    7,
+  ]);
+  n += count("i8x16.lt count", va.lt(vb).count(), 7);
+  n += count("i8x16.lt first", va.lt(vb).first(), 0);
+  n += flag("i8x16.eq any", va.eq(vb).any(), true);
+  n += flag("i8x16.eq all", va.eq(vb).all(), false);
+  n += flag("i8x16.eq self all", va.eq(va).all(), true);
+  n += flag("i8x16.ne self any", va.ne(va).any(), false);
+  n += bitmask("i8x16.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 27011);
+  n += bitmask("i8x16.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 27563);
+  n += bitmask("i8x16.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 27011);
+  n += bitmask("i8x16.mask not", va.lt(vb).not().bitmask(), 38524);
+  n += lanesI8x16("i8x16.withLane", va.withLane(15, 1), [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    -127,
+    3,
+    77,
+    63,
+    -64,
+    9,
+    64,
+    2,
+    1,
+  ]);
+  const out: i8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesI8x16("i8x16.store", i8x16.load(out, 1), [
+    0,
+    1,
+    127,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    127,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    126,
+  ]);
+  n += lanesU8x16("i8x16.asU8x16", va.asU8x16(), [
+    0,
+    1,
+    127,
+    128,
+    126,
+    5,
+    100,
+    129,
+    3,
+    77,
+    63,
+    192,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += lanesI8x16("i8x16 round trip", va.asU8x16().asI8x16(), [
+    0,
+    1,
+    127,
+    -128,
+    126,
+    5,
+    100,
+    -127,
+    3,
+    77,
+    63,
+    -64,
+    9,
+    64,
+    2,
+    124,
+  ]);
+  n += lanesI8x16("i8x16.zipLow", va.zipLow(vb), [
+    0,
+    1,
+    1,
+    127,
+    127,
+    1,
+    -128,
+    -128,
+    126,
+    2,
+    5,
+    5,
+    100,
+    27,
+    -127,
+    127,
+  ]);
+  n += lanesI8x16("i8x16.zipHigh", va.zipHigh(vb), [
+    3,
+    4,
+    77,
+    77,
+    63,
+    3,
+    -64,
+    100,
+    9,
+    0,
+    64,
+    65,
+    2,
+    126,
+    124,
+    7,
+  ]);
+  n += lanesI16x8("i8x16.widenLow", va.widenLow(), [0, 1, 127, -128, 126, 5, 100, -127]);
+  n += lanesI16x8("i8x16.widenHigh", va.widenHigh(), [3, 77, 63, -64, 9, 64, 2, 124]);
+  return n;
+}
+
+function lanesU8x16(what: string, got: u8x16, want: u8[]): i64 {
+  for (let i: usize = 0; i < 16; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testU8x16(): i64 {
+  const a: u8[] = [0, 1, 255, 0, 254, 5, 100, 1, 3, 77, 127, 200, 9, 64, 2, 252];
+  const b: u8[] = [1, 255, 1, 1, 2, 5, 27, 255, 4, 77, 3, 100, 0, 65, 254, 7];
+  const va = u8x16.load(a);
+  const vb = u8x16.load(b);
+  let n = 0;
+  n += lanesU8x16("u8x16.load", va, [0, 1, 255, 0, 254, 5, 100, 1, 3, 77, 127, 200, 9, 64, 2, 252]);
+  n += flag("u8x16.fits", u8x16.fits(a), true);
+  n += flag("u8x16.fits past the end", u8x16.fits(a, 1), false);
+  n += flag("u8x16.fits wrapping", u8x16.fits(a, 18446744073709551615), false);
+  n += lanesU8x16("u8x16.splat", u8x16.splat(1), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  n += lanesU8x16("u8x16.add", va.add(vb), [
+    1,
+    0,
+    0,
+    1,
+    0,
+    10,
+    127,
+    0,
+    7,
+    154,
+    130,
+    44,
+    9,
+    129,
+    0,
+    3,
+  ]);
+  n += lanesU8x16("u8x16.sub", va.sub(vb), [
+    255,
+    2,
+    254,
+    255,
+    252,
+    0,
+    73,
+    2,
+    255,
+    0,
+    124,
+    100,
+    9,
+    255,
+    4,
+    245,
+  ]);
+  n += lanesU8x16("u8x16.min", va.min(vb), [0, 1, 1, 0, 2, 5, 27, 1, 3, 77, 3, 100, 0, 64, 2, 7]);
+  n += lanesU8x16("u8x16.max", va.max(vb), [
+    1,
+    255,
+    255,
+    1,
+    254,
+    5,
+    100,
+    255,
+    4,
+    77,
+    127,
+    200,
+    9,
+    65,
+    254,
+    252,
+  ]);
+  n += lanesU8x16("u8x16.addSat", va.addSat(vb), [
+    1,
+    255,
+    255,
+    1,
+    255,
+    10,
+    127,
+    255,
+    7,
+    154,
+    130,
+    255,
+    9,
+    129,
+    255,
+    255,
+  ]);
+  n += lanesU8x16("u8x16.subSat", va.subSat(vb), [
+    0,
+    0,
+    254,
+    0,
+    252,
+    0,
+    73,
+    0,
+    0,
+    0,
+    124,
+    100,
+    9,
+    0,
+    0,
+    245,
+  ]);
+  n += lanesU8x16("u8x16.and", va.and(vb), [0, 1, 1, 0, 2, 5, 0, 1, 0, 77, 3, 64, 0, 64, 2, 4]);
+  n += lanesU8x16("u8x16.or", va.or(vb), [
+    1,
+    255,
+    255,
+    1,
+    254,
+    5,
+    127,
+    255,
+    7,
+    77,
+    127,
+    236,
+    9,
+    65,
+    254,
+    255,
+  ]);
+  n += lanesU8x16("u8x16.xor", va.xor(vb), [
+    1,
+    254,
+    254,
+    1,
+    252,
+    0,
+    127,
+    254,
+    7,
+    0,
+    124,
+    172,
+    9,
+    1,
+    252,
+    251,
+  ]);
+  n += lanesU8x16("u8x16.not", va.not(), [
+    255,
+    254,
+    0,
+    255,
+    1,
+    250,
+    155,
+    254,
+    252,
+    178,
+    128,
+    55,
+    246,
+    191,
+    253,
+    3,
+  ]);
+  n += lanesU8x16("u8x16.shl(0)", va.shl(0), [
+    0,
+    1,
+    255,
+    0,
+    254,
+    5,
+    100,
+    1,
+    3,
+    77,
+    127,
+    200,
+    9,
+    64,
+    2,
+    252,
+  ]);
+  n += lanesU8x16("u8x16.shr(0)", va.shr(0), [
+    0,
+    1,
+    255,
+    0,
+    254,
+    5,
+    100,
+    1,
+    3,
+    77,
+    127,
+    200,
+    9,
+    64,
+    2,
+    252,
+  ]);
+  n += lanesU8x16("u8x16.shl(1)", va.shl(1), [
+    0,
+    2,
+    254,
+    0,
+    252,
+    10,
+    200,
+    2,
+    6,
+    154,
+    254,
+    144,
+    18,
+    128,
+    4,
+    248,
+  ]);
+  n += lanesU8x16("u8x16.shr(1)", va.shr(1), [
+    0,
+    0,
+    127,
+    0,
+    127,
+    2,
+    50,
+    0,
+    1,
+    38,
+    63,
+    100,
+    4,
+    32,
+    1,
+    126,
+  ]);
+  n += lanesU8x16("u8x16.shl(7)", va.shl(7), [
+    0,
+    128,
+    128,
+    0,
+    0,
+    128,
+    0,
+    128,
+    128,
+    128,
+    128,
+    0,
+    128,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU8x16("u8x16.shr(7)", va.shr(7), [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1]);
+  n += lanesU8x16("u8x16.shl(11)", va.shl(11), [
+    0,
+    8,
+    248,
+    0,
+    240,
+    40,
+    32,
+    8,
+    24,
+    104,
+    248,
+    64,
+    72,
+    0,
+    16,
+    224,
+  ]);
+  n += lanesU8x16("u8x16.shr(11)", va.shr(11), [
+    0,
+    0,
+    31,
+    0,
+    31,
+    0,
+    12,
+    0,
+    0,
+    9,
+    15,
+    25,
+    1,
+    8,
+    0,
+    31,
+  ]);
+  n += bitmask("u8x16.eq", va.eq(vb).bitmask(), 544);
+  n += bitmask("u8x16.ne", va.ne(vb).bitmask(), 64991);
+  n += bitmask("u8x16.lt", va.lt(vb).bitmask(), 24971);
+  n += bitmask("u8x16.le", va.le(vb).bitmask(), 25515);
+  n += bitmask("u8x16.gt", va.gt(vb).bitmask(), 40020);
+  n += bitmask("u8x16.ge", va.ge(vb).bitmask(), 40564);
+  n += lanesU8x16("u8x16.select", u8x16.select(va.lt(vb), va, vb), [
+    0,
+    1,
+    1,
+    0,
+    2,
+    5,
+    27,
+    1,
+    3,
+    77,
+    3,
+    100,
+    0,
+    64,
+    2,
+    7,
+  ]);
+  n += count("u8x16.lt count", va.lt(vb).count(), 7);
+  n += count("u8x16.lt first", va.lt(vb).first(), 0);
+  n += flag("u8x16.eq any", va.eq(vb).any(), true);
+  n += flag("u8x16.eq all", va.eq(vb).all(), false);
+  n += flag("u8x16.eq self all", va.eq(va).all(), true);
+  n += flag("u8x16.ne self any", va.ne(va).any(), false);
+  n += bitmask("u8x16.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 24971);
+  n += bitmask("u8x16.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 25515);
+  n += bitmask("u8x16.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 24971);
+  n += bitmask("u8x16.mask not", va.lt(vb).not().bitmask(), 40564);
+  n += lanesU8x16("u8x16.withLane", va.withLane(15, 1), [
+    0,
+    1,
+    255,
+    0,
+    254,
+    5,
+    100,
+    1,
+    3,
+    77,
+    127,
+    200,
+    9,
+    64,
+    2,
+    1,
+  ]);
+  const out: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesU8x16("u8x16.store", u8x16.load(out, 1), [
+    0,
+    1,
+    255,
+    1,
+    1,
+    2,
+    5,
+    27,
+    255,
+    4,
+    77,
+    3,
+    100,
+    0,
+    65,
+    254,
+  ]);
+  n += lanesU8x16("u8x16.zipLow", va.zipLow(vb), [
+    0,
+    1,
+    1,
+    255,
+    255,
+    1,
+    0,
+    1,
+    254,
+    2,
+    5,
+    5,
+    100,
+    27,
+    1,
+    255,
+  ]);
+  n += lanesU8x16("u8x16.zipHigh", va.zipHigh(vb), [
+    3,
+    4,
+    77,
+    77,
+    127,
+    3,
+    200,
+    100,
+    9,
+    0,
+    64,
+    65,
+    2,
+    254,
+    252,
+    7,
+  ]);
+  n += lanesU16x8("u8x16.widenLow", va.widenLow(), [0, 1, 255, 0, 254, 5, 100, 1]);
+  n += lanesU16x8("u8x16.widenHigh", va.widenHigh(), [3, 77, 127, 200, 9, 64, 2, 252]);
+  return n;
+}
+
+function lanesI16x8(what: string, got: i16x8, want: i16[]): i64 {
+  for (let i: usize = 0; i < 8; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testI16x8(): i64 {
+  const a: i16[] = [0, 1, 32767, -32768, 32766, 5, 100, -32767];
+  const b: i16[] = [1, 32767, 1, -32768, 2, 5, 27, 32767];
+  const va = i16x8.load(a);
+  const vb = i16x8.load(b);
+  let n = 0;
+  n += lanesI16x8("i16x8.load", va, [0, 1, 32767, -32768, 32766, 5, 100, -32767]);
+  n += flag("i16x8.fits", i16x8.fits(a), true);
+  n += flag("i16x8.fits past the end", i16x8.fits(a, 1), false);
+  n += flag("i16x8.fits wrapping", i16x8.fits(a, 18446744073709551615), false);
+  n += lanesI16x8("i16x8.splat", i16x8.splat(1), [1, 1, 1, 1, 1, 1, 1, 1]);
+  n += lanesI16x8("i16x8.add", va.add(vb), [1, -32768, -32768, 0, -32768, 10, 127, 0]);
+  n += lanesI16x8("i16x8.sub", va.sub(vb), [-1, -32766, 32766, 0, 32764, 0, 73, 2]);
+  n += lanesI16x8("i16x8.mul", va.mul(vb), [0, 32767, 32767, 0, -4, 25, 2700, -1]);
+  n += lanesI16x8("i16x8.min", va.min(vb), [0, 1, 1, -32768, 2, 5, 27, -32767]);
+  n += lanesI16x8("i16x8.max", va.max(vb), [1, 32767, 32767, -32768, 32766, 5, 100, 32767]);
+  n += lanesI16x8("i16x8.addSat", va.addSat(vb), [1, 32767, 32767, -32768, 32767, 10, 127, 0]);
+  n += lanesI16x8("i16x8.subSat", va.subSat(vb), [-1, -32766, 32766, 0, 32764, 0, 73, -32768]);
+  n += lanesI16x8("i16x8.neg", va.neg(), [0, -1, -32767, -32768, -32766, -5, -100, 32767]);
+  n += lanesI16x8("i16x8.abs", va.abs(), [0, 1, 32767, -32768, 32766, 5, 100, 32767]);
+  n += lanesI16x8("i16x8.and", va.and(vb), [0, 1, 1, -32768, 2, 5, 0, 1]);
+  n += lanesI16x8("i16x8.or", va.or(vb), [1, 32767, 32767, -32768, 32766, 5, 127, -1]);
+  n += lanesI16x8("i16x8.xor", va.xor(vb), [1, 32766, 32766, 0, 32764, 0, 127, -2]);
+  n += lanesI16x8("i16x8.not", va.not(), [-1, -2, -32768, 32767, -32767, -6, -101, 32766]);
+  n += lanesI16x8("i16x8.shl(0)", va.shl(0), [0, 1, 32767, -32768, 32766, 5, 100, -32767]);
+  n += lanesI16x8("i16x8.shr(0)", va.shr(0), [0, 1, 32767, -32768, 32766, 5, 100, -32767]);
+  n += lanesI16x8("i16x8.shl(1)", va.shl(1), [0, 2, -2, 0, -4, 10, 200, 2]);
+  n += lanesI16x8("i16x8.shr(1)", va.shr(1), [0, 0, 16383, -16384, 16383, 2, 50, -16384]);
+  n += lanesI16x8("i16x8.shl(15)", va.shl(15), [0, -32768, -32768, 0, 0, -32768, 0, -32768]);
+  n += lanesI16x8("i16x8.shr(15)", va.shr(15), [0, 0, 0, -1, 0, 0, 0, -1]);
+  n += lanesI16x8("i16x8.shl(19)", va.shl(19), [0, 8, -8, 0, -16, 40, 800, 8]);
+  n += lanesI16x8("i16x8.shr(19)", va.shr(19), [0, 0, 4095, -4096, 4095, 0, 12, -4096]);
+  n += bitmask("i16x8.eq", va.eq(vb).bitmask(), 40);
+  n += bitmask("i16x8.ne", va.ne(vb).bitmask(), 215);
+  n += bitmask("i16x8.lt", va.lt(vb).bitmask(), 131);
+  n += bitmask("i16x8.le", va.le(vb).bitmask(), 171);
+  n += bitmask("i16x8.gt", va.gt(vb).bitmask(), 84);
+  n += bitmask("i16x8.ge", va.ge(vb).bitmask(), 124);
+  n += lanesI16x8("i16x8.select", i16x8.select(va.lt(vb), va, vb), [
+    0,
+    1,
+    1,
+    -32768,
+    2,
+    5,
+    27,
+    -32767,
+  ]);
+  n += count("i16x8.lt count", va.lt(vb).count(), 3);
+  n += count("i16x8.lt first", va.lt(vb).first(), 0);
+  n += flag("i16x8.eq any", va.eq(vb).any(), true);
+  n += flag("i16x8.eq all", va.eq(vb).all(), false);
+  n += flag("i16x8.eq self all", va.eq(va).all(), true);
+  n += flag("i16x8.ne self any", va.ne(va).any(), false);
+  n += bitmask("i16x8.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 131);
+  n += bitmask("i16x8.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 171);
+  n += bitmask("i16x8.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 131);
+  n += bitmask("i16x8.mask not", va.lt(vb).not().bitmask(), 124);
+  n += lanesI16x8("i16x8.withLane", va.withLane(7, 1), [0, 1, 32767, -32768, 32766, 5, 100, 1]);
+  const out: i16[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesI16x8("i16x8.store", i16x8.load(out, 1), [0, 1, 32767, 1, -32768, 2, 5, 27]);
+  n += lanesU8x16("i16x8.asU8x16", va.asU8x16(), [
+    0,
+    0,
+    1,
+    0,
+    255,
+    127,
+    0,
+    128,
+    254,
+    127,
+    5,
+    0,
+    100,
+    0,
+    1,
+    128,
+  ]);
+  n += lanesI16x8("i16x8 round trip", va.asU8x16().asI16x8(), [
+    0,
+    1,
+    32767,
+    -32768,
+    32766,
+    5,
+    100,
+    -32767,
+  ]);
+  n += lanesI16x8("i16x8.zipLow", va.zipLow(vb), [0, 1, 1, 32767, 32767, 1, -32768, -32768]);
+  n += lanesI16x8("i16x8.zipHigh", va.zipHigh(vb), [32766, 2, 5, 5, 100, 27, -32767, 32767]);
+  n += lanesI32x4("i16x8.widenLow", va.widenLow(), [0, 1, 32767, -32768]);
+  n += lanesI32x4("i16x8.widenHigh", va.widenHigh(), [32766, 5, 100, -32767]);
+  n += lanesI8x16("i16x8.narrow", va.narrow(vb), [
+    0,
+    1,
+    127,
+    -128,
+    127,
+    5,
+    100,
+    -128,
+    1,
+    127,
+    1,
+    -128,
+    2,
+    5,
+    27,
+    127,
+  ]);
+  const edge: i16[] = [127, 128, -128, -129, 32767, -32768, 16384, 16385];
+  n += lanesI8x16("i16x8.narrow edges", i16x8.load(edge).narrow(i16x8.load(edge)), [
+    127,
+    127,
+    -128,
+    -128,
+    127,
+    -128,
+    127,
+    127,
+    127,
+    127,
+    -128,
+    -128,
+    127,
+    -128,
+    127,
+    127,
+  ]);
+  n += lanesI16x8("i16x8.asU16x8", va.asU16x8().asI16x8(), [
+    0,
+    1,
+    32767,
+    -32768,
+    32766,
+    5,
+    100,
+    -32767,
+  ]);
+  n += lanesU16x8("i16x8.asU16x8", va.asU16x8(), [0, 1, 32767, 32768, 32766, 5, 100, 32769]);
+  return n;
+}
+
+function lanesU16x8(what: string, got: u16x8, want: u16[]): i64 {
+  for (let i: usize = 0; i < 8; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testU16x8(): i64 {
+  const a: u16[] = [0, 1, 65535, 0, 65534, 5, 100, 1];
+  const b: u16[] = [1, 65535, 1, 1, 2, 5, 27, 65535];
+  const va = u16x8.load(a);
+  const vb = u16x8.load(b);
+  let n = 0;
+  n += lanesU16x8("u16x8.load", va, [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  n += flag("u16x8.fits", u16x8.fits(a), true);
+  n += flag("u16x8.fits past the end", u16x8.fits(a, 1), false);
+  n += flag("u16x8.fits wrapping", u16x8.fits(a, 18446744073709551615), false);
+  n += lanesU16x8("u16x8.splat", u16x8.splat(1), [1, 1, 1, 1, 1, 1, 1, 1]);
+  n += lanesU16x8("u16x8.add", va.add(vb), [1, 0, 0, 1, 0, 10, 127, 0]);
+  n += lanesU16x8("u16x8.sub", va.sub(vb), [65535, 2, 65534, 65535, 65532, 0, 73, 2]);
+  n += lanesU16x8("u16x8.mul", va.mul(vb), [0, 65535, 65535, 0, 65532, 25, 2700, 65535]);
+  n += lanesU16x8("u16x8.min", va.min(vb), [0, 1, 1, 0, 2, 5, 27, 1]);
+  n += lanesU16x8("u16x8.max", va.max(vb), [1, 65535, 65535, 1, 65534, 5, 100, 65535]);
+  n += lanesU16x8("u16x8.addSat", va.addSat(vb), [1, 65535, 65535, 1, 65535, 10, 127, 65535]);
+  n += lanesU16x8("u16x8.subSat", va.subSat(vb), [0, 0, 65534, 0, 65532, 0, 73, 0]);
+  n += lanesU16x8("u16x8.and", va.and(vb), [0, 1, 1, 0, 2, 5, 0, 1]);
+  n += lanesU16x8("u16x8.or", va.or(vb), [1, 65535, 65535, 1, 65534, 5, 127, 65535]);
+  n += lanesU16x8("u16x8.xor", va.xor(vb), [1, 65534, 65534, 1, 65532, 0, 127, 65534]);
+  n += lanesU16x8("u16x8.not", va.not(), [65535, 65534, 0, 65535, 1, 65530, 65435, 65534]);
+  n += lanesU16x8("u16x8.shl(0)", va.shl(0), [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  n += lanesU16x8("u16x8.shr(0)", va.shr(0), [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  n += lanesU16x8("u16x8.shl(1)", va.shl(1), [0, 2, 65534, 0, 65532, 10, 200, 2]);
+  n += lanesU16x8("u16x8.shr(1)", va.shr(1), [0, 0, 32767, 0, 32767, 2, 50, 0]);
+  n += lanesU16x8("u16x8.shl(15)", va.shl(15), [0, 32768, 32768, 0, 0, 32768, 0, 32768]);
+  n += lanesU16x8("u16x8.shr(15)", va.shr(15), [0, 0, 1, 0, 1, 0, 0, 0]);
+  n += lanesU16x8("u16x8.shl(19)", va.shl(19), [0, 8, 65528, 0, 65520, 40, 800, 8]);
+  n += lanesU16x8("u16x8.shr(19)", va.shr(19), [0, 0, 8191, 0, 8191, 0, 12, 0]);
+  n += bitmask("u16x8.eq", va.eq(vb).bitmask(), 32);
+  n += bitmask("u16x8.ne", va.ne(vb).bitmask(), 223);
+  n += bitmask("u16x8.lt", va.lt(vb).bitmask(), 139);
+  n += bitmask("u16x8.le", va.le(vb).bitmask(), 171);
+  n += bitmask("u16x8.gt", va.gt(vb).bitmask(), 84);
+  n += bitmask("u16x8.ge", va.ge(vb).bitmask(), 116);
+  n += lanesU16x8("u16x8.select", u16x8.select(va.lt(vb), va, vb), [0, 1, 1, 0, 2, 5, 27, 1]);
+  n += count("u16x8.lt count", va.lt(vb).count(), 4);
+  n += count("u16x8.lt first", va.lt(vb).first(), 0);
+  n += flag("u16x8.eq any", va.eq(vb).any(), true);
+  n += flag("u16x8.eq all", va.eq(vb).all(), false);
+  n += flag("u16x8.eq self all", va.eq(va).all(), true);
+  n += flag("u16x8.ne self any", va.ne(va).any(), false);
+  n += bitmask("u16x8.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 139);
+  n += bitmask("u16x8.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 171);
+  n += bitmask("u16x8.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 139);
+  n += bitmask("u16x8.mask not", va.lt(vb).not().bitmask(), 116);
+  n += lanesU16x8("u16x8.withLane", va.withLane(7, 1), [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  const out: u16[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesU16x8("u16x8.store", u16x8.load(out, 1), [0, 1, 65535, 1, 1, 2, 5, 27]);
+  n += lanesU8x16("u16x8.asU8x16", va.asU8x16(), [
+    0,
+    0,
+    1,
+    0,
+    255,
+    255,
+    0,
+    0,
+    254,
+    255,
+    5,
+    0,
+    100,
+    0,
+    1,
+    0,
+  ]);
+  n += lanesU16x8("u16x8 round trip", va.asU8x16().asU16x8(), [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  n += lanesU16x8("u16x8.zipLow", va.zipLow(vb), [0, 1, 1, 65535, 65535, 1, 0, 1]);
+  n += lanesU16x8("u16x8.zipHigh", va.zipHigh(vb), [65534, 2, 5, 5, 100, 27, 1, 65535]);
+  n += lanesU32x4("u16x8.widenLow", va.widenLow(), [0, 1, 65535, 0]);
+  n += lanesU32x4("u16x8.widenHigh", va.widenHigh(), [65534, 5, 100, 1]);
+  n += lanesU8x16("u16x8.narrow", va.narrow(vb), [
+    0,
+    1,
+    255,
+    0,
+    255,
+    5,
+    100,
+    1,
+    1,
+    255,
+    1,
+    1,
+    2,
+    5,
+    27,
+    255,
+  ]);
+  const edge: u16[] = [255, 256, 0, 254, 65535, 0, 32768, 32769];
+  n += lanesU8x16("u16x8.narrow edges", u16x8.load(edge).narrow(u16x8.load(edge)), [
+    255,
+    255,
+    0,
+    254,
+    255,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    254,
+    255,
+    0,
+    255,
+    255,
+  ]);
+  n += lanesU16x8("u16x8.asI16x8", va.asI16x8().asU16x8(), [0, 1, 65535, 0, 65534, 5, 100, 1]);
+  n += lanesI16x8("u16x8.asI16x8", va.asI16x8(), [0, 1, -1, 0, -2, 5, 100, 1]);
+  return n;
+}
+
+function lanesI32x4(what: string, got: i32x4, want: i32[]): i64 {
+  for (let i: usize = 0; i < 4; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testI32x4(): i64 {
+  const a: i32[] = [0, 1, 2147483647, -2147483648];
+  const b: i32[] = [1, 2147483647, 1, -2147483648];
+  const va = i32x4.load(a);
+  const vb = i32x4.load(b);
+  let n = 0;
+  n += lanesI32x4("i32x4.load", va, [0, 1, 2147483647, -2147483648]);
+  n += flag("i32x4.fits", i32x4.fits(a), true);
+  n += flag("i32x4.fits past the end", i32x4.fits(a, 1), false);
+  n += flag("i32x4.fits wrapping", i32x4.fits(a, 18446744073709551615), false);
+  n += lanesI32x4("i32x4.splat", i32x4.splat(1), [1, 1, 1, 1]);
+  n += lanesI32x4("i32x4.add", va.add(vb), [1, -2147483648, -2147483648, 0]);
+  n += lanesI32x4("i32x4.sub", va.sub(vb), [-1, -2147483646, 2147483646, 0]);
+  n += lanesI32x4("i32x4.mul", va.mul(vb), [0, 2147483647, 2147483647, 0]);
+  n += lanesI32x4("i32x4.min", va.min(vb), [0, 1, 1, -2147483648]);
+  n += lanesI32x4("i32x4.max", va.max(vb), [1, 2147483647, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.neg", va.neg(), [0, -1, -2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.abs", va.abs(), [0, 1, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.and", va.and(vb), [0, 1, 1, -2147483648]);
+  n += lanesI32x4("i32x4.or", va.or(vb), [1, 2147483647, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.xor", va.xor(vb), [1, 2147483646, 2147483646, 0]);
+  n += lanesI32x4("i32x4.not", va.not(), [-1, -2, -2147483648, 2147483647]);
+  n += lanesI32x4("i32x4.shl(0)", va.shl(0), [0, 1, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.shr(0)", va.shr(0), [0, 1, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.shl(1)", va.shl(1), [0, 2, -2, 0]);
+  n += lanesI32x4("i32x4.shr(1)", va.shr(1), [0, 0, 1073741823, -1073741824]);
+  n += lanesI32x4("i32x4.shl(31)", va.shl(31), [0, -2147483648, -2147483648, 0]);
+  n += lanesI32x4("i32x4.shr(31)", va.shr(31), [0, 0, 0, -1]);
+  n += lanesI32x4("i32x4.shl(35)", va.shl(35), [0, 8, -8, 0]);
+  n += lanesI32x4("i32x4.shr(35)", va.shr(35), [0, 0, 268435455, -268435456]);
+  n += bitmask("i32x4.eq", va.eq(vb).bitmask(), 8);
+  n += bitmask("i32x4.ne", va.ne(vb).bitmask(), 7);
+  n += bitmask("i32x4.lt", va.lt(vb).bitmask(), 3);
+  n += bitmask("i32x4.le", va.le(vb).bitmask(), 11);
+  n += bitmask("i32x4.gt", va.gt(vb).bitmask(), 4);
+  n += bitmask("i32x4.ge", va.ge(vb).bitmask(), 12);
+  n += lanesI32x4("i32x4.select", i32x4.select(va.lt(vb), va, vb), [0, 1, 1, -2147483648]);
+  n += count("i32x4.lt count", va.lt(vb).count(), 2);
+  n += count("i32x4.lt first", va.lt(vb).first(), 0);
+  n += flag("i32x4.eq any", va.eq(vb).any(), true);
+  n += flag("i32x4.eq all", va.eq(vb).all(), false);
+  n += flag("i32x4.eq self all", va.eq(va).all(), true);
+  n += flag("i32x4.ne self any", va.ne(va).any(), false);
+  n += bitmask("i32x4.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 3);
+  n += bitmask("i32x4.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 11);
+  n += bitmask("i32x4.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 3);
+  n += bitmask("i32x4.mask not", va.lt(vb).not().bitmask(), 12);
+  n += lanesI32x4("i32x4.withLane", va.withLane(3, 1), [0, 1, 2147483647, 1]);
+  n += lanesI32x4("i32x4.sum", i32x4.splat(va.sum()), [0, 0, 0, 0]);
+  const out: i32[] = [0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesI32x4("i32x4.store", i32x4.load(out, 1), [0, 1, 2147483647, 1]);
+  n += lanesU8x16("i32x4.asU8x16", va.asU8x16(), [
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    127,
+    0,
+    0,
+    0,
+    128,
+  ]);
+  n += lanesI32x4("i32x4 round trip", va.asU8x16().asI32x4(), [0, 1, 2147483647, -2147483648]);
+  n += lanesI32x4("i32x4.zipLow", va.zipLow(vb), [0, 1, 1, 2147483647]);
+  n += lanesI32x4("i32x4.zipHigh", va.zipHigh(vb), [2147483647, 1, -2147483648, -2147483648]);
+  n += lanesI64x2("i32x4.widenLow", va.widenLow(), [0, 1]);
+  n += lanesI64x2("i32x4.widenHigh", va.widenHigh(), [2147483647, -2147483648]);
+  n += lanesI16x8("i32x4.narrow", va.narrow(vb), [0, 1, 32767, -32768, 1, 32767, 1, -32768]);
+  const edge: i32[] = [32767, 32768, -32768, -32769];
+  n += lanesI16x8("i32x4.narrow edges", i32x4.load(edge).narrow(i32x4.load(edge)), [
+    32767,
+    32767,
+    -32768,
+    -32768,
+    32767,
+    32767,
+    -32768,
+    -32768,
+  ]);
+  n += lanesI32x4("i32x4.asU32x4", va.asU32x4().asI32x4(), [0, 1, 2147483647, -2147483648]);
+  n += lanesU32x4("i32x4.asU32x4", va.asU32x4(), [0, 1, 2147483647, 2147483648]);
+  return n;
+}
+
+function lanesU32x4(what: string, got: u32x4, want: u32[]): i64 {
+  for (let i: usize = 0; i < 4; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testU32x4(): i64 {
+  const a: u32[] = [0, 1, 4294967295, 0];
+  const b: u32[] = [1, 4294967295, 1, 1];
+  const va = u32x4.load(a);
+  const vb = u32x4.load(b);
+  let n = 0;
+  n += lanesU32x4("u32x4.load", va, [0, 1, 4294967295, 0]);
+  n += flag("u32x4.fits", u32x4.fits(a), true);
+  n += flag("u32x4.fits past the end", u32x4.fits(a, 1), false);
+  n += flag("u32x4.fits wrapping", u32x4.fits(a, 18446744073709551615), false);
+  n += lanesU32x4("u32x4.splat", u32x4.splat(1), [1, 1, 1, 1]);
+  n += lanesU32x4("u32x4.add", va.add(vb), [1, 0, 0, 1]);
+  n += lanesU32x4("u32x4.sub", va.sub(vb), [4294967295, 2, 4294967294, 4294967295]);
+  n += lanesU32x4("u32x4.mul", va.mul(vb), [0, 4294967295, 4294967295, 0]);
+  n += lanesU32x4("u32x4.min", va.min(vb), [0, 1, 1, 0]);
+  n += lanesU32x4("u32x4.max", va.max(vb), [1, 4294967295, 4294967295, 1]);
+  n += lanesU32x4("u32x4.and", va.and(vb), [0, 1, 1, 0]);
+  n += lanesU32x4("u32x4.or", va.or(vb), [1, 4294967295, 4294967295, 1]);
+  n += lanesU32x4("u32x4.xor", va.xor(vb), [1, 4294967294, 4294967294, 1]);
+  n += lanesU32x4("u32x4.not", va.not(), [4294967295, 4294967294, 0, 4294967295]);
+  n += lanesU32x4("u32x4.shl(0)", va.shl(0), [0, 1, 4294967295, 0]);
+  n += lanesU32x4("u32x4.shr(0)", va.shr(0), [0, 1, 4294967295, 0]);
+  n += lanesU32x4("u32x4.shl(1)", va.shl(1), [0, 2, 4294967294, 0]);
+  n += lanesU32x4("u32x4.shr(1)", va.shr(1), [0, 0, 2147483647, 0]);
+  n += lanesU32x4("u32x4.shl(31)", va.shl(31), [0, 2147483648, 2147483648, 0]);
+  n += lanesU32x4("u32x4.shr(31)", va.shr(31), [0, 0, 1, 0]);
+  n += lanesU32x4("u32x4.shl(35)", va.shl(35), [0, 8, 4294967288, 0]);
+  n += lanesU32x4("u32x4.shr(35)", va.shr(35), [0, 0, 536870911, 0]);
+  n += bitmask("u32x4.eq", va.eq(vb).bitmask(), 0);
+  n += bitmask("u32x4.ne", va.ne(vb).bitmask(), 15);
+  n += bitmask("u32x4.lt", va.lt(vb).bitmask(), 11);
+  n += bitmask("u32x4.le", va.le(vb).bitmask(), 11);
+  n += bitmask("u32x4.gt", va.gt(vb).bitmask(), 4);
+  n += bitmask("u32x4.ge", va.ge(vb).bitmask(), 4);
+  n += lanesU32x4("u32x4.select", u32x4.select(va.lt(vb), va, vb), [0, 1, 1, 0]);
+  n += count("u32x4.lt count", va.lt(vb).count(), 3);
+  n += count("u32x4.lt first", va.lt(vb).first(), 0);
+  n += flag("u32x4.eq any", va.eq(vb).any(), false);
+  n += flag("u32x4.eq all", va.eq(vb).all(), false);
+  n += flag("u32x4.eq self all", va.eq(va).all(), true);
+  n += flag("u32x4.ne self any", va.ne(va).any(), false);
+  n += bitmask("u32x4.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 11);
+  n += bitmask("u32x4.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 11);
+  n += bitmask("u32x4.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 11);
+  n += bitmask("u32x4.mask not", va.lt(vb).not().bitmask(), 4);
+  n += lanesU32x4("u32x4.withLane", va.withLane(3, 1), [0, 1, 4294967295, 1]);
+  n += lanesU32x4("u32x4.sum", u32x4.splat(va.sum()), [0, 0, 0, 0]);
+  const out: u32[] = [0, 0, 0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesU32x4("u32x4.store", u32x4.load(out, 1), [0, 1, 4294967295, 1]);
+  n += lanesU8x16("u32x4.asU8x16", va.asU8x16(), [
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  n += lanesU32x4("u32x4 round trip", va.asU8x16().asU32x4(), [0, 1, 4294967295, 0]);
+  n += lanesU32x4("u32x4.zipLow", va.zipLow(vb), [0, 1, 1, 4294967295]);
+  n += lanesU32x4("u32x4.zipHigh", va.zipHigh(vb), [4294967295, 1, 0, 1]);
+  n += lanesU64x2("u32x4.widenLow", va.widenLow(), [0, 1]);
+  n += lanesU64x2("u32x4.widenHigh", va.widenHigh(), [4294967295, 0]);
+  n += lanesU16x8("u32x4.narrow", va.narrow(vb), [0, 1, 65535, 0, 1, 65535, 1, 1]);
+  const edge: u32[] = [65535, 65536, 0, 65534];
+  n += lanesU16x8("u32x4.narrow edges", u32x4.load(edge).narrow(u32x4.load(edge)), [
+    65535,
+    65535,
+    0,
+    65534,
+    65535,
+    65535,
+    0,
+    65534,
+  ]);
+  n += lanesU32x4("u32x4.asI32x4", va.asI32x4().asU32x4(), [0, 1, 4294967295, 0]);
+  n += lanesI32x4("u32x4.asI32x4", va.asI32x4(), [0, 1, -1, 0]);
+  return n;
+}
+
+function lanesI64x2(what: string, got: i64x2, want: i64[]): i64 {
+  for (let i: usize = 0; i < 2; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testI64x2(): i64 {
+  const a: i64[] = [0, 1];
+  const b: i64[] = [1, 9223372036854775807];
+  const va = i64x2.load(a);
+  const vb = i64x2.load(b);
+  let n = 0;
+  n += lanesI64x2("i64x2.load", va, [0, 1]);
+  n += flag("i64x2.fits", i64x2.fits(a), true);
+  n += flag("i64x2.fits past the end", i64x2.fits(a, 1), false);
+  n += flag("i64x2.fits wrapping", i64x2.fits(a, 18446744073709551615), false);
+  n += lanesI64x2("i64x2.splat", i64x2.splat(1), [1, 1]);
+  n += lanesI64x2("i64x2.add", va.add(vb), [1, -9223372036854775807 - 1]);
+  n += lanesI64x2("i64x2.sub", va.sub(vb), [-1, -9223372036854775806]);
+  n += lanesI64x2("i64x2.mul", va.mul(vb), [0, 9223372036854775807]);
+  n += lanesI64x2("i64x2.neg", va.neg(), [0, -1]);
+  n += lanesI64x2("i64x2.and", va.and(vb), [0, 1]);
+  n += lanesI64x2("i64x2.or", va.or(vb), [1, 9223372036854775807]);
+  n += lanesI64x2("i64x2.xor", va.xor(vb), [1, 9223372036854775806]);
+  n += lanesI64x2("i64x2.not", va.not(), [-1, -2]);
+  n += lanesI64x2("i64x2.shl(0)", va.shl(0), [0, 1]);
+  n += lanesI64x2("i64x2.shr(0)", va.shr(0), [0, 1]);
+  n += lanesI64x2("i64x2.shl(1)", va.shl(1), [0, 2]);
+  n += lanesI64x2("i64x2.shr(1)", va.shr(1), [0, 0]);
+  n += lanesI64x2("i64x2.shl(63)", va.shl(63), [0, -9223372036854775807 - 1]);
+  n += lanesI64x2("i64x2.shr(63)", va.shr(63), [0, 0]);
+  n += lanesI64x2("i64x2.shl(67)", va.shl(67), [0, 8]);
+  n += lanesI64x2("i64x2.shr(67)", va.shr(67), [0, 0]);
+  n += bitmask("i64x2.eq", va.eq(vb).bitmask(), 0);
+  n += bitmask("i64x2.ne", va.ne(vb).bitmask(), 3);
+  n += bitmask("i64x2.lt", va.lt(vb).bitmask(), 3);
+  n += bitmask("i64x2.le", va.le(vb).bitmask(), 3);
+  n += bitmask("i64x2.gt", va.gt(vb).bitmask(), 0);
+  n += bitmask("i64x2.ge", va.ge(vb).bitmask(), 0);
+  n += lanesI64x2("i64x2.select", i64x2.select(va.lt(vb), va, vb), [0, 1]);
+  n += count("i64x2.lt count", va.lt(vb).count(), 2);
+  n += count("i64x2.lt first", va.lt(vb).first(), 0);
+  n += flag("i64x2.eq any", va.eq(vb).any(), false);
+  n += flag("i64x2.eq all", va.eq(vb).all(), false);
+  n += flag("i64x2.eq self all", va.eq(va).all(), true);
+  n += flag("i64x2.ne self any", va.ne(va).any(), false);
+  n += bitmask("i64x2.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 3);
+  n += bitmask("i64x2.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 3);
+  n += bitmask("i64x2.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 3);
+  n += bitmask("i64x2.mask not", va.lt(vb).not().bitmask(), 0);
+  n += lanesI64x2("i64x2.withLane", va.withLane(1, 1), [0, 1]);
+  n += lanesI64x2("i64x2.sum", i64x2.splat(va.sum()), [1, 1]);
+  const out: i64[] = [0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesI64x2("i64x2.store", i64x2.load(out, 1), [0, 1]);
+  n += lanesU8x16("i64x2.asU8x16", va.asU8x16(), [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+  n += lanesI64x2("i64x2 round trip", va.asU8x16().asI64x2(), [0, 1]);
+  n += lanesI64x2("i64x2.zipLow", va.zipLow(vb), [0, 1]);
+  n += lanesI64x2("i64x2.zipHigh", va.zipHigh(vb), [1, 9223372036854775807]);
+  n += lanesI64x2("i64x2.asU64x2", va.asU64x2().asI64x2(), [0, 1]);
+  n += lanesU64x2("i64x2.asU64x2", va.asU64x2(), [0, 1]);
+  return n;
+}
+
+function lanesU64x2(what: string, got: u64x2, want: u64[]): i64 {
+  for (let i: usize = 0; i < 2; i++) {
+    if (got.lane(i) != want[i]) {
+      console.log("FAIL", what, "lane", i, got.lane(i), want[i]);
+    }
+  }
+  return 1;
+}
+
+function testU64x2(): i64 {
+  const a: u64[] = [0, 1];
+  const b: u64[] = [1, 18446744073709551615];
+  const va = u64x2.load(a);
+  const vb = u64x2.load(b);
+  let n = 0;
+  n += lanesU64x2("u64x2.load", va, [0, 1]);
+  n += flag("u64x2.fits", u64x2.fits(a), true);
+  n += flag("u64x2.fits past the end", u64x2.fits(a, 1), false);
+  n += flag("u64x2.fits wrapping", u64x2.fits(a, 18446744073709551615), false);
+  n += lanesU64x2("u64x2.splat", u64x2.splat(1), [1, 1]);
+  n += lanesU64x2("u64x2.add", va.add(vb), [1, 0]);
+  n += lanesU64x2("u64x2.sub", va.sub(vb), [18446744073709551615, 2]);
+  n += lanesU64x2("u64x2.mul", va.mul(vb), [0, 18446744073709551615]);
+  n += lanesU64x2("u64x2.and", va.and(vb), [0, 1]);
+  n += lanesU64x2("u64x2.or", va.or(vb), [1, 18446744073709551615]);
+  n += lanesU64x2("u64x2.xor", va.xor(vb), [1, 18446744073709551614]);
+  n += lanesU64x2("u64x2.not", va.not(), [18446744073709551615, 18446744073709551614]);
+  n += lanesU64x2("u64x2.shl(0)", va.shl(0), [0, 1]);
+  n += lanesU64x2("u64x2.shr(0)", va.shr(0), [0, 1]);
+  n += lanesU64x2("u64x2.shl(1)", va.shl(1), [0, 2]);
+  n += lanesU64x2("u64x2.shr(1)", va.shr(1), [0, 0]);
+  n += lanesU64x2("u64x2.shl(63)", va.shl(63), [0, 9223372036854775808]);
+  n += lanesU64x2("u64x2.shr(63)", va.shr(63), [0, 0]);
+  n += lanesU64x2("u64x2.shl(67)", va.shl(67), [0, 8]);
+  n += lanesU64x2("u64x2.shr(67)", va.shr(67), [0, 0]);
+  n += bitmask("u64x2.eq", va.eq(vb).bitmask(), 0);
+  n += bitmask("u64x2.ne", va.ne(vb).bitmask(), 3);
+  n += bitmask("u64x2.lt", va.lt(vb).bitmask(), 3);
+  n += bitmask("u64x2.le", va.le(vb).bitmask(), 3);
+  n += bitmask("u64x2.gt", va.gt(vb).bitmask(), 0);
+  n += bitmask("u64x2.ge", va.ge(vb).bitmask(), 0);
+  n += lanesU64x2("u64x2.select", u64x2.select(va.lt(vb), va, vb), [0, 1]);
+  n += count("u64x2.lt count", va.lt(vb).count(), 2);
+  n += count("u64x2.lt first", va.lt(vb).first(), 0);
+  n += flag("u64x2.eq any", va.eq(vb).any(), false);
+  n += flag("u64x2.eq all", va.eq(vb).all(), false);
+  n += flag("u64x2.eq self all", va.eq(va).all(), true);
+  n += flag("u64x2.ne self any", va.ne(va).any(), false);
+  n += bitmask("u64x2.mask and", va.lt(vb).and(va.ne(vb)).bitmask(), 3);
+  n += bitmask("u64x2.mask or", va.lt(vb).or(va.eq(vb)).bitmask(), 3);
+  n += bitmask("u64x2.mask xor", va.le(vb).xor(va.eq(vb)).bitmask(), 3);
+  n += bitmask("u64x2.mask not", va.lt(vb).not().bitmask(), 0);
+  n += lanesU64x2("u64x2.withLane", va.withLane(1, 1), [0, 1]);
+  n += lanesU64x2("u64x2.sum", u64x2.splat(va.sum()), [1, 1]);
+  const out: u64[] = [0, 0, 0, 0];
+  vb.store(out, 2);
+  n += lanesU64x2("u64x2.store", u64x2.load(out, 1), [0, 1]);
+  n += lanesU8x16("u64x2.asU8x16", va.asU8x16(), [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+  n += lanesU64x2("u64x2 round trip", va.asU8x16().asU64x2(), [0, 1]);
+  n += lanesU64x2("u64x2.zipLow", va.zipLow(vb), [0, 1]);
+  n += lanesU64x2("u64x2.zipHigh", va.zipHigh(vb), [1, 18446744073709551615]);
+  n += lanesU64x2("u64x2.asI64x2", va.asI64x2().asU64x2(), [0, 1]);
+  n += lanesI64x2("u64x2.asI64x2", va.asI64x2(), [0, 1]);
+  return n;
+}
+
+function bitmask(what: string, got: u64, want: u64): i64 {
+  if (got != want) {
+    console.log("FAIL", what, got, want);
+  }
+  return 1;
+}
+
+function count(what: string, got: usize, want: usize): i64 {
+  if (got != want) {
+    console.log("FAIL", what, got, want);
+  }
+  return 1;
+}
+
+function flag(what: string, got: bool, want: bool): i64 {
+  if (got != want) {
+    console.log("FAIL", what, got, want);
+  }
+  return 1;
+}
+
+function main() {
+  console.log("i8x16", testI8x16(), "checks");
+  console.log("u8x16", testU8x16(), "checks");
+  console.log("i16x8", testI16x8(), "checks");
+  console.log("u16x8", testU16x8(), "checks");
+  console.log("i32x4", testI32x4(), "checks");
+  console.log("u32x4", testU32x4(), "checks");
+  console.log("i64x2", testI64x2(), "checks");
+  console.log("u64x2", testU64x2(), "checks");
+}
