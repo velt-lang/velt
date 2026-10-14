@@ -522,7 +522,10 @@ semantics for the casts) and read them there for three uses whose base is the `G
 evaluates the initializer to a new array, like any module constant. The header lowering reads
 through, `{ data, len, cap: 0 }`, is local to the code of those three reads: it is never passed,
 stored, boxed or handed to the runtime, so nothing can write through it or count it. An empty
-`ArrayLit` is not stored. The two lists must stay equal: an element sema accepts and lowering
+`ArrayLit` is not stored. Sema also rejects every use that could modify a table, including the
+ones it cannot follow (an argument of a call through a function value, or of a call that also
+passes one that may modify its arguments; a move out of it, however it is named), so the new
+array is never written either. The two lists must stay equal: an element sema accepts and lowering
 does not fold would make the table an array built at every read.
 
 ## Symbols

@@ -185,10 +185,19 @@ function main() {
 - Used in any other way, a table is what every module constant is: evaluated at that use, here
   to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
   in a hot loop index the table or iterate it instead of passing it along.
-- Nothing can modify a table or take it over: `K[0] = 1`, `K.push(1)`, `K.fill(0)`, a call that
-  modifies its argument and `const mine = K` are compile errors, like for any module constant.
-  `K.slice()` gives a copy to keep or modify (also to pass to an `async` function, which takes
-  over its arguments).
+- Nothing can modify a table or take it over, and a use that could is a compile error. That is
+  `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
+  parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
+  table it is also:
+  - passing it to a function value (`const f = (xs: u8[]) => …; f(K)`, `fs[0](K)`, a callback
+    parameter), or to a function together with a function value that could modify it
+    (``cannot pass module constant `K` to a function value``): the compiler can't see what that
+    function does;
+  - binding it to a name or a field, however it is named: `const mine = K`, `K!`, `ns.K` for an
+    imported table, `Cls.K` for a `static readonly` one (``cannot move out of module constant
+    `K` ``); an `async` function, which takes over its arguments, is the same.
+
+  `K.slice()` is the copy to use there: an ordinary array to keep, modify or pass anywhere.
 - Comparing a table by identity (`K === K`) is an error, like for other module constants.
 
 ## Module constants initialized by a call

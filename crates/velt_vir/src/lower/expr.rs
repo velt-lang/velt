@@ -202,9 +202,10 @@ impl FnLower<'_, '_> {
     /// code of those three reads, so nothing counts it.
     ///
     /// Only those three uses get it. Anywhere else (an argument, a receiver, a value that is
-    /// kept) the constant is evaluated like any other, to a new array, because what receives it
-    /// may write to it in ways sema does not see (through a function value, say) and read-only
-    /// data must never be reachable from there.
+    /// kept) the constant is evaluated like any other, to a new array. Sema rejects the uses
+    /// that could write to a table, those it can follow and those it can't (a function value),
+    /// but read-only data must never be reachable from code that writes, so this does not rely
+    /// on it.
     ///
     /// `None`, for the initializer to be evaluated, also when the array is empty (nothing to
     /// store) or an element is not one `table_const` folds.

@@ -40,7 +40,7 @@ pub(super) fn patch_calls(
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
         let span = e.span;
-        let (modes, args) = match &mut e.kind {
+        let (modes, args, unknown) = match &mut e.kind {
             E::Call { callee, args } => {
                 if fixed_callee(cx, callee, args) {
                     // A promise the call returns may run the callee after this frame is gone
@@ -51,14 +51,19 @@ pub(super) fn patch_calls(
                     };
                     changed |= escape_literal_args(cx, args, &keeps, borrowed);
                 }
-                (call_modes(cx, callee, args), args)
+                let modes = call_modes(cx, callee, args);
+                let unknown = modes.is_none() && !matches!(callee, Callee::Intrinsic(_));
+                (modes, args, unknown)
             }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {
-                Some(c) => (Some(modes_of(cx, c)[1..].to_vec()), args),
+                Some(c) => (Some(modes_of(cx, c)[1..].to_vec()), args, false),
                 None => return,
             },
             _ => return,
         };
+        if unknown {
+            table_args(cx, args, &mut errors);
+        }
         if let Some(modes) = &modes {
             for (a, m) in args.iter_mut().zip(modes) {
                 match m {
@@ -250,6 +255,25 @@ fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
     )
 }
 
+/// Tables passed to a callee whose parameter modes are not known (a function value): it may
+/// modify them, and they are read-only data.
+fn table_args(cx: &Ctx, args: &[Expr], errors: &mut Vec<Diagnostic>) {
+    for a in args.iter().filter(|a| table_arg(cx, a)) {
+        let name = global_root(cx, a).unwrap_or_default();
+        let msg = format!("cannot pass module constant `{name}` to a function value");
+        errors.push(crate::body::pure_init::table_escapes(&name, msg, a.span));
+    }
+}
+
+/// Is argument `a` a table (through upcasts)?
+fn table_arg(cx: &Ctx, a: &Expr) -> bool {
+    let mut x = a;
+    while let E::Upcast(inner) | E::Downcast(inner) = &x.kind {
+        x = inner;
+    }
+    matches!(x.kind, E::Global(d) if crate::body::pure_init::is_table(cx, d))
+}
+
 /// Borrow argument place `e` mutably (through an upcast); returns whether a mode changed.
 fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     let target = match &mut e.kind {
@@ -265,7 +289,10 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
                 format!("cannot modify module-level constant `{name}`"),
                 target.span,
             )
-            .with_note("this call may modify it; call it on a local copy instead"),
+            .with_note(match table_arg(cx, target) {
+                true => format!("this call may modify it, and a table is read-only data: use a copy, `{name}.slice()`"),
+                false => "this call may modify it; call it on a local copy instead".to_string(),
+            }),
         );
         return false;
     }
@@ -348,7 +375,9 @@ fn callbacks(cx: &mut Ctx, args: &mut [Expr], errors: &mut Vec<Diagnostic>) -> b
             .unwrap_or(Callback::None);
         let hit = match others {
             Callback::Modifies => true,
-            Callback::Unknown => super::evidence::in_root_memory(arg),
+            // A table can't be told apart from a copy here either: the function value may be
+            // the one that modifies it.
+            Callback::Unknown => super::evidence::in_root_memory(arg) || table_arg(cx, arg),
             Callback::None => false,
         };
         // Only `Borrow` places change: Copy arguments are copied, receivers of any type

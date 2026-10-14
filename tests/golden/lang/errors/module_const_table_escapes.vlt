@@ -1,0 +1,40 @@
+// A table is read-only data: what the compiler can't follow, and so could modify it, is an
+// error. That is a function value it is passed to (or passed along with), and a binding that
+// would take it over, however the table is named. `K.slice()` is the copy to use instead.
+import * as lib from "./_module_const_table_escapes_lib";
+
+const K: number[] = [10, 20, 30];
+
+class Limits {
+  static readonly STEPS: u8[] = [1, 2, 4];
+}
+
+function apply(f: (xs: number[]) => void, xs: number[]) {
+  f(xs);
+}
+
+function each(fs: ((xs: number[]) => void)[]) {
+  for (const f of fs) {
+    f(K);
+  }
+}
+
+function main() {
+  const w = (xs: number[]) => {
+    xs[0] = 9;
+    xs.push(10);
+    return xs.length;
+  };
+  console.log(w(K), w(K!), w(lib.T));
+  const fs = [(xs: number[]) => xs.fill(0), (xs: number[]) => { xs.length = 1; }];
+  fs[0](K);
+  fs.forEach((f) => f(K));
+  apply((xs) => xs.push(1), K);
+  apply(fs[1], K);
+  each(fs);
+  const a = K!;
+  const b = lib.T;
+  const c = Limits.STEPS;
+  a.push(4);
+  console.log(a, b, c);
+}

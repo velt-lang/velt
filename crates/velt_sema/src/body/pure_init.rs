@@ -71,6 +71,21 @@ pub(crate) fn has_call(e: &Expr) -> bool {
     }
 }
 
+/// Is module constant `d` a table (an array literal stored once as read-only data)?
+pub(crate) fn is_table(cx: &Ctx, d: DefId) -> bool {
+    cx.global(d)
+        .and_then(|g| g.init.as_ref())
+        .is_some_and(|init| matches!(init.kind, H::ArrayLit(_)))
+}
+
+/// The error `msg` for table `name` used where the compiler cannot follow what is done with
+/// it: it could be modified there.
+pub(crate) fn table_escapes(name: &str, msg: String, span: velt_common::Span) -> Diagnostic {
+    Diagnostic::error(msg, span)
+        .with_note("a table is read-only data, and this use could modify it")
+        .with_note(format!("use a copy: `{name}.slice()`"))
+}
+
 /// Is a use by value of module constant `d` another reference to a function it computes? Only
 /// functions: a struct or object constant moved into a variable would be a copy that the
 /// constant doesn't see changes to (TypeScript aliases it), so those keep the move error.

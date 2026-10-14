@@ -525,6 +525,23 @@ fn imports_exports_and_intrinsics() {
     assert!(r.contains("module-level constant `X`"), "{r}");
     let r = err_src("const X: u8[] = [1]; function main() { X.fill(0); }");
     assert!(r.contains("cannot modify module-level constant `X`"), "{r}");
+    // What the compiler can't follow could write to it: a function value, a binding through `!`.
+    let r = err_src(
+        "const X: u8[] = [1]; function main() { const f = (xs: u8[]) => xs.fill(0); f(X); }",
+    );
+    assert!(
+        r.contains("cannot pass module constant `X` to a function value"),
+        "{r}"
+    );
+    let r = err_src("const X: u8[] = [1]; function main() { const v = X!; v.push(2); }");
+    assert!(r.contains("cannot move out of module constant `X`"), "{r}");
+    let r = err_src(
+        "class C { static readonly X: u8[] = [1]; } function main() { const v = C.X; v.push(2); }",
+    );
+    assert!(
+        r.contains("cannot move out of module constant `C.X`"),
+        "{r}"
+    );
 }
 
 #[test]

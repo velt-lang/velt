@@ -1,6 +1,7 @@
 // A module constant that is an array of number or boolean literals is a table. Its elements
 // are stored once as read-only data, and an element, the length and a `for…of` loop read them
-// there; used any other way (printed, passed, copied) it is a new array with those elements.
+// there; printed, copied or passed to a function that only reads it, it is a new array with
+// those elements. What could modify it (a function value) gets a copy: `K.slice()`.
 // Every table below is read all three ways, and the stored data must agree with the array.
 const K: u32[] = [0x428a2f98, 0x71374491, 4294967295];
 const SMALL: u8[] = [1, 2, 255];
@@ -30,10 +31,8 @@ function at(i: usize): u32 {
   return K[i];
 }
 
-// What receives a table as a value gets an array of its own: writing to that one, in ways the
-// compiler does not follow (through a function value), leaves the table as it was.
 function scribble(write: (xs: u32[]) => void) {
-  write(K);
+  write(K.slice());
 }
 
 function main() {
@@ -189,7 +188,7 @@ function main() {
     xs.reverse();
     console.log(xs);
   };
-  write(K);
+  write(K.slice());
   scribble(write);
   console.log(K, K[0], sum(K));
 }
