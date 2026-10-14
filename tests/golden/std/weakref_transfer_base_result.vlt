@@ -13,7 +13,7 @@ function mk(keep: V): () => number {
 }
 async function make(n: number): Promise<Base> {
   const d = new D(mk(new V(n)));
-  console.log("made", d.go());
+  if (d.go() !== 2 * n) throw new Error("the task itself can use it");
   return d;
 }
 async function main() {
