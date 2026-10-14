@@ -1,0 +1,19 @@
+// An uncaught error reports its assigned `name`; one without names its class.
+class AppError extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "AppError";
+  }
+}
+
+class Quiet extends Error {}
+
+function fail(which: number) {
+  if (which == 0) {
+    throw new Quiet("not reached");
+  }
+  throw new AppError("boom");
+}
+
+console.log("before");
+fail(1);

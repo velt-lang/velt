@@ -66,7 +66,9 @@ hidden classes and no runtime shape checks.
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass without a constructor of its own inherits its
-  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  base's. Redefining a base method requires `override`, except a method of a standard-library
+  class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
+  `super.m()` calls the base version.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they

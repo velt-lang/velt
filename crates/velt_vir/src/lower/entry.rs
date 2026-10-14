@@ -200,6 +200,37 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.write_text(stream, &name);
             return;
         }
+        if let Some(i) = self.error_name_field(err) {
+            // An error whose `name` was assigned (`this.name = "AppError"`) reports that name,
+            // as Node's stack does; otherwise its class.
+            let np = self.field_place(ep, err, i);
+            let na = self.addr(np);
+            let default = self.str_lit("Error");
+            let dp = Place::local(self.copy_to_temp(default, Ty::Agg(crate::vir::STR_AGG)));
+            let da = self.addr(dp);
+            let same = self.temp(Ty::U8);
+            self.call_rt(Rt::StrEq, vec![na.clone(), da], Some(Place::local(same)));
+            let (own, class, done) = (self.new_block(), self.new_block(), self.new_block());
+            let c = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Ne,
+                    Operand::Copy(Place::local(same)),
+                    cint(0, Ty::U8),
+                ),
+            );
+            self.branch(c, class, own);
+            self.switch_to(own);
+            self.call_rt(Rt::WriteStr, vec![stream.clone(), na], None);
+            self.goto(done);
+            self.switch_to(class);
+            let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
+            let name = self.dispatch(vt, SLOT_NAME);
+            self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
+            self.goto(done);
+            self.switch_to(done);
+            return;
+        }
         let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
         let name = self.dispatch(vt, SLOT_NAME);
         self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
@@ -223,6 +254,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::WriteStr, args, None);
         self.goto(done);
         self.switch_to(done);
+    }
+
+    /// Index of the prelude `Error`'s `#name` field (behind `e.name`) in class `err`, when `err`
+    /// is `Error` or extends it.
+    fn error_name_field(&mut self, err: TyId) -> Option<u32> {
+        let TyKind::Adt(mut d, _) = self.cx.kind(err) else {
+            return None;
+        };
+        // The root class: its fields are a prefix of every subclass's.
+        while let Some(b) = self.cx.adt_def(d).base {
+            let TyKind::Adt(bd, _) = self.cx.kind(b) else {
+                return None;
+            };
+            d = bd;
+        }
+        let root = self.cx.adt_def(d);
+        let is_error = (root.name == "Error" || root.name.ends_with("::Error"))
+            && root.fields.len() == 2
+            && root.fields[0].name == "message"
+            && root.fields[1].name == "#name";
+        is_error.then_some(1)
     }
 
     /// Index of a `message: string` field of a struct/class error type.

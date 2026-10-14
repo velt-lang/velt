@@ -10,6 +10,42 @@ compiler knows exactly what each function and each `try` block can throw.
 - `throw expr` throws a value of any type, usually a class extending the prelude `Error`, which
   has a `message` field. Calling a throwing function outside `try` makes the caller throw it
   too.
+- As in JavaScript, an error has a `name` (`"Error"` unless a subclass assigns its own:
+  `this.name = "AppError"` in the constructor), and `String(e)`, `` `${e}` `` and `e.toString()`
+  give `"<name>: <message>"` (only the name when the message is empty, only the message when the
+  name is). `name` is `Error`'s: a subclass may declare it again without an initializer
+  (`name: string;`), but not with one (`name = "AppError"`): assign it in the constructor
+  instead. `console.log(e)` and `JSON.stringify(e)` leave it out. The standard error classes
+  `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError` and `URIError` extend
+  `Error` with their own names; throw, catch, test (`instanceof`) and extend them like any
+  error class:
+
+  ```ts
+  class AppError extends Error {
+    code: string;
+    constructor(message: string, code: string) {
+      super(message);
+      this.name = "AppError";
+      this.code = code;
+    }
+  }
+
+  function check(n: number): number {
+    if (n < 0) {
+      throw new RangeError(`${n} is negative`);
+    }
+    if (n > 100) {
+      throw new AppError("too large", "E1");
+    }
+    return n;
+  }
+
+  try {
+    check(500);
+  } catch (e) {
+    console.log(String(e), e instanceof RangeError); // AppError: too large false
+  }
+  ```
 - A function's **error type** is the union of everything it can throw. It is inferred over the
   whole program (also through recursion), or written as a **`throws` clause** after the return
   type: `function load(id: string): User throws NotFound | Forbidden`.
@@ -73,7 +109,8 @@ nothing; `null` means success).
 ## Uncaught errors and panics
 
 - An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
-  exits with code 1. `<Class>` is the error's actual class (an `IoError` thrown through a
+  exits with code 1. `<Class>` is the `name` an error class assigned (`Uncaught AppError: boom`),
+  else the error's actual class (an `IoError` thrown through a
   function declared `throws Error` prints `IoError`), and the location is where it was thrown;
   for an error thrown inside the standard library, it is the line of your code that called
   into it. This holds for `async function main()` too, and for an error a spawned task threw

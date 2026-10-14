@@ -56,11 +56,14 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
         for m in decl
             .methods
             .iter()
-            .filter(|m| m.is_override && !m.decl.sig.name.is_private_name())
+            .filter(|m| !m.decl.sig.name.is_private_name())
         {
             let name = &m.decl.sig.name;
             let module = cx.adt(d).expect("ICE: adt").module;
             let key = cx.method_key(module, name, m.is_setter);
+            if !m.is_override && (m.is_static || !std_override(cx, d, &key)) {
+                continue;
+            }
             match introducer(cx, d, &key) {
                 // Generic methods get no vtable slot: calls through a base class are rejected
                 // (`body::expr::method_call`), calls on the concrete class are direct.
@@ -81,6 +84,13 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
         }
     }
     out
+}
+
+/// Does `d`'s method `key` redefine one a std class declares (`Error.toString`)? TypeScript
+/// code redefines its lib's methods without `override`, so such a redefinition overrides
+/// without it.
+fn std_override(cx: &Ctx, d: DefId, key: &str) -> bool {
+    introducer(cx, d, key).is_some_and(|o| cx.declared_in_std(o))
 }
 
 /// The ancestor of `d` (excluding `d`) that first declares the instance method `name` without
@@ -211,7 +221,7 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
             .filter(|f| !f.is_static());
-        if m.is_override {
+        if m.is_override || (inherited.is_some() && std_override(cx, d, &key)) {
             if let Some(f) = inherited {
                 check_override_sig(cx, mref, &f, name);
             }

@@ -358,10 +358,13 @@ impl FnCx<'_, '_> {
     /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
     /// reports the shapes this cannot call).
     pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
-        let Some((d, _)) = self.adt_of(h.ty) else {
+        let Some((d, args)) = self.adt_of(h.ty) else {
             return h;
         };
-        let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
+        // Declared by the class or inherited from a base class (`Error.toString`), as in JS.
+        let Some(crate::collect::Found::Class { m, .. }) =
+            crate::collect::lookup_method(self.cx, d, &args, method)
+        else {
             return h;
         };
         crate::body::param_defaults(self.cx, m.def);

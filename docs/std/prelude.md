@@ -325,7 +325,9 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
 
-- `class Error { message: string }`, the base class of thrown errors.
+- `class Error { message: string; name: string }`, the base class of thrown errors (`String(e)` is
+  `"<name>: <message>"`), and its subclasses `TypeError`, `RangeError`, `SyntaxError`,
+  `ReferenceError`, `EvalError` and `URIError` ([Errors](../reference/errors.md)).
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:

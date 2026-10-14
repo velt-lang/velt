@@ -182,11 +182,14 @@ fn adt_def(
     let defaults = field_defaults(cx, d, memo);
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
-    let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
-    let opaque = a
+    let private_fields = a
         .fields
         .iter()
-        .any(|f| f.private_to.is_some_and(|o| cx.declared_in_std(o)));
+        .any(|f| f.private_to.is_some() && !cx.plain_private(f.private_to, &f.name));
+    let opaque = a.fields.iter().any(|f| {
+        f.private_to.is_some_and(|o| cx.declared_in_std(o))
+            && !cx.plain_private(f.private_to, &f.name)
+    });
     let fields = a
         .fields
         .iter()

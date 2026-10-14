@@ -1,0 +1,69 @@
+// `Error.name`: assigned by subclasses, read by `String(e)`, `${e}` and `e.toString()`; and the
+// standard error classes (`TypeError`, `RangeError`, …) with `new`, `instanceof` and `extends`.
+// The output is Node's (this file runs unchanged under `node`).
+class AppError extends Error {
+  code: string;
+  constructor(m: string, c: string) {
+    super(m);
+    this.name = "AppError";
+    this.code = c;
+  }
+}
+
+class Plain extends Error {}
+
+class BadInput extends TypeError {
+  field: string;
+  constructor(field: string) {
+    super(`bad ${field}`);
+    this.field = field;
+  }
+}
+
+class Named extends RangeError {
+  name: string;
+  constructor(m: string) {
+    super(m);
+    this.name = "Named";
+  }
+}
+
+function check(n: number): number {
+  if (n < 0) {
+    throw new RangeError(`${n} is negative`);
+  }
+  if (n > 100) {
+    throw new BadInput("n");
+  }
+  return n;
+}
+
+{
+  const e = new AppError("boom", "E1");
+  console.log(e.name, e.message, String(e), `${e}`, e.code);
+  console.log([e.toString()]);
+  console.log(new Plain("p").name, String(new Plain("p")));
+  console.log(new TypeError("bad") instanceof Error, new TypeError("bad").name);
+  const all: Error[] = [new TypeError("a"), new RangeError("b"), new SyntaxError("c"),
+    new ReferenceError("d"), new EvalError("e"), new URIError("f"), new Error("g"), new Error()];
+  for (const x of all) {
+    console.log(String(x), x.name, x instanceof Error);
+  }
+  const b = new BadInput("age");
+  console.log(b.name, b instanceof TypeError, b instanceof BadInput, String(b), b.field);
+  console.log(String(new Named("n")), new Named("n") instanceof RangeError);
+  const blank = new Error("only message");
+  blank.name = "";
+  console.log(String(blank));
+  for (const n of [5, -1, 500]) {
+    try {
+      console.log(check(n));
+    } catch (err) {
+      if (err instanceof RangeError) {
+        console.log("range:", err.message, `${err}`);
+      } else {
+        console.log("type:", err.name, err.message);
+      }
+    }
+  }
+}

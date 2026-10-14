@@ -1,6 +1,6 @@
-// A template literal writes an error and a promise as `console.log` does in Velt; JavaScript as
-// `Error: message` and `[object Promise]`. Everything else prints the same in both: primitives,
-// enums, arrays, and objects (through a class's `toString()`, own or inherited, else
+// A template literal writes a promise as `console.log` does in Velt; JavaScript as
+// `[object Promise]`. Everything else prints the same in both: primitives, enums, arrays, errors
+// (`Error: message`), and objects (through a class's `toString()`, own or inherited, else
 // `[object Object]`).
 
 export type Point = { x: number; y: number };
@@ -40,9 +40,9 @@ export function describe(p: Point, xs: number[], m: Money, e: Euro, l: Level): s
 }
 
 export function errors(e: Error, nf: NotFound, s: Shown, maybe: Error | null): string {
-  const a = `${e}`; //~ object-in-template
-  const b = `${nf}`; //~ object-in-template
-  const c = `${maybe}`; //~ object-in-template
+  const a = `${e}`;
+  const b = `${nf}`;
+  const c = `${maybe}`;
   const d = `${s} ${e.message}`;
   return a + b + c + d;
 }
