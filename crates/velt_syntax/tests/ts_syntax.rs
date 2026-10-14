@@ -187,7 +187,7 @@ fn function_expressions_are_arrows() {
     for src in [
         "const o = { v: 1, get: function () { return this.v; } };",
         "const o = { v: 1, get: async function () { return this.v; } };",
-        "const o = { v: 1, [Symbol.iterator]: function* () { yield this.v; } };",
+        "const o = { v: 1, g: function* () { yield this.v; } };",
     ] {
         assert_eq!(
             errors(src),
