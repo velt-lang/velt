@@ -1,0 +1,61 @@
+// Rejections through `then`, `catch` and `finally`, as in Node.
+
+class Failed extends Error {}
+
+async function ok(n: number): Promise<number> {
+  return n;
+}
+
+async function fail(message: string): Promise<number, Failed> {
+  throw new Failed(message);
+}
+
+async function cleanup(): Promise<void> {
+  console.log("cleanup runs");
+}
+
+async function main() {
+  // A rejection passes through `then` without a handler to `catch`.
+  const a = await fail("a")
+    .then((v) => v + 1)
+    .catch((e) => {
+      console.log(`caught ${e.message}`);
+      return -1;
+    });
+  console.log(`a = ${a}`);
+
+  // `then(onFulfilled, onRejected)`.
+  const b = await fail("b").then(
+    (v) => `value ${v}`,
+    (e) => `reason ${e.message}`,
+  );
+  console.log(b);
+
+  // An error a callback throws rejects the next promise.
+  const c = await ok(1)
+    .then((v): number => {
+      throw new Failed(`thrown after ${v}`);
+    })
+    .catch((e) => {
+      console.log(`caught ${e.message}`);
+      return 0;
+    });
+  console.log(`c = ${c}`);
+
+  // `finally` passes the value and the reason through, after its callback.
+  const d = await ok(4).finally(() => console.log("finally d"));
+  console.log(`d = ${d}`);
+  try {
+    await fail("e").finally(() => console.log("finally e"));
+  } catch (e) {
+    console.log(`rethrown ${e.message}`);
+  }
+
+  // A promise returned by the `finally` callback settles first.
+  const f = await ok(6).finally(() => cleanup());
+  console.log(`f = ${f}`);
+
+  // `catch` on a promise that fulfills passes the value through.
+  const g = await ok(7).catch(() => 0);
+  console.log(`g = ${g}`);
+}

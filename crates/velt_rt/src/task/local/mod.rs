@@ -13,12 +13,14 @@
 //! allocation), and `spawn(f())` gives `f` its own task.
 
 mod losers;
+mod micro;
 mod node;
 mod set;
 mod timers;
 
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
+pub use micro::velt_rt_microtask;
 pub(crate) use timers::TimerLeaf;
 
 use std::cell::Cell;
@@ -48,6 +50,8 @@ struct TaskCx {
     /// Something yielded during this poll (`yieldNow()`): it must not run again before the
     /// task's next poll (losers.rs).
     yielded: Cell<bool>,
+    /// The task's microtask queue (micro.rs).
+    micro: *mut micro::Queue,
 }
 
 thread_local! {
@@ -118,18 +122,19 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn and its
+/// microtask queue.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32, micro::Queue);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0, micro::Queue::new());
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
-    /// after its last poll.
+    /// after its last poll, then run the microtasks that queued.
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
@@ -142,6 +147,7 @@ impl SetPtr {
             timers: &mut self.2,
             turn: self.3,
             yielded: Cell::new(false),
+            micro: &mut self.4,
         };
         let _enter = Enter::new(&tcx);
         let timers = self.2.as_deref();
@@ -161,6 +167,18 @@ impl SetPtr {
             });
         }
         root();
+        if micro::pending() {
+            if self.0.is_null() {
+                micro::drain_root(&*waker, root);
+            } else {
+                micro::drain(&mut set::Driver {
+                    set: self.0,
+                    task: &*waker,
+                    root,
+                    timers: None,
+                });
+            }
+        }
     }
 
     /// Hand the set over if promises in it are still running (it is dropped otherwise).

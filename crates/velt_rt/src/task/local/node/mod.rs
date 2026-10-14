@@ -379,6 +379,11 @@ pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
     head(f).flags.load(Ordering::Acquire) & QUEUED != 0
 }
 
+/// Is started node `f` driven by its owner right now (see [`started_poll`])?
+pub(super) unsafe fn is_adopted(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & ADOPTED != 0
+}
+
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
 pub(super) unsafe fn is_started(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(

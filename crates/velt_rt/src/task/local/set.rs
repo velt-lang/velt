@@ -266,6 +266,9 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     for ran in 0..(*set).pending.len() {
         if root_at == Some(ran) {
             (d.root)();
+            if super::micro::pending() {
+                super::micro::drain(d);
+            }
         }
         if !has_budget_remaining() {
             d.task.wake_by_ref();
@@ -278,6 +281,10 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let fl = h.flags.fetch_and(!QUEUED, AcqRel);
         if fl & (DONE | CANCELLED) == 0 && h.member.load(Relaxed) != NO_MEMBER {
             run(d, f);
+            // A job ended: the microtasks it queued run before the next one (micro.rs).
+            if super::micro::pending() {
+                super::micro::drain(d);
+            }
         }
         node::release(f);
     }

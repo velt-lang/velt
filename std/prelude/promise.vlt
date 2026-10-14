@@ -304,3 +304,194 @@ export async function promiseResolveVoid(): Promise<void> {}
 export async function promiseReject<T, E>(reason: E): Promise<T> throws E {
   throw reason;
 }
+
+// `then`, `catch` and `finally` (docs/reference/async.md "Callbacks"). The compiler compiles
+// `p.then(f)` to `promiseThen(p, f)`, or to `promiseThenAsync` when `f` returns a promise (which
+// is then awaited: flattened, like JS), and so on for the other forms. Each takes the promise,
+// waits until it settles, then for its turn in the task's microtask queue, then runs the
+// callback, so callbacks run in JS's order. A rejection without a handler passes through.
+
+declare async function velt_rt_microtask(): Promise<void>;
+
+/**
+ * `queueMicrotask(f)`: runs `f` after the code that is running now and the callbacks queued
+ * before it, before timers and I/O.
+ */
+export function queueMicrotask(f: () => void) {
+  const p = runMicrotask(f);
+}
+
+async function runMicrotask(f: () => void): Promise<void> {
+  await velt_rt_microtask();
+  f();
+}
+
+// How `p` settled, moved out (one step of the task: no tick of its own).
+async function settledOf<T, E>(p: Promise<T, E>): Promise<PromiseSettledResult<T, E>> {
+  try {
+    return { status: "fulfilled", value: await p };
+  } catch (e) {
+    return { status: "rejected", reason: e };
+  }
+}
+
+// What the new promise rejects with is a single type parameter in each function: the source's
+// error type, a callback's (the compiler converts the source to it), or both when they are the
+// same. Which function a call compiles to depends on whether the callback returns a promise
+// and whether it can fail.
+
+/** `p.then(f)`: `f` returns a value and does not throw. */
+export async function promiseThen<T, E, U>(p: Promise<T, E>, f: (value: T) => U): Promise<U> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return f(r.value);
+}
+
+/** `p.then(f)`: `f` returns a value and throws what `p` rejects with. */
+export async function promiseThenThrows<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => U throws E,
+): Promise<U> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return f(r.value);
+}
+
+/** `p.then(f)`: `f` returns a promise that does not reject. */
+export async function promiseThenAsync<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => Promise<U>,
+): Promise<U> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return await f(r.value);
+}
+
+/** `p.then(f)`: `f` returns a promise that rejects with what `p` rejects with. */
+export async function promiseThenAsyncThrows<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => Promise<U, E>,
+): Promise<U> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return await f(r.value);
+}
+
+/** `p.then(f, g)` where `f` and `g` return values (`F`: what they throw). */
+export async function promiseThenElse<T, E, U, F>(
+  p: Promise<T, E>,
+  f: (value: T) => U throws F,
+  g: (reason: E) => U throws F,
+): Promise<U> throws F {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return g(r.reason);
+  }
+  return f(r.value);
+}
+
+/** `p.then(f, g)` where `f` and `g` return promises. */
+export async function promiseThenElseAsync<T, E, U, F>(
+  p: Promise<T, E>,
+  f: (value: T) => Promise<U, F>,
+  g: (reason: E) => Promise<U, F>,
+): Promise<U> throws F {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return await g(r.reason);
+  }
+  return await f(r.value);
+}
+
+/** `p.catch(g)` where `g` returns a value. */
+export async function promiseCatch<T, E, G>(
+  p: Promise<T, E>,
+  g: (reason: E) => T throws G,
+): Promise<T> throws G {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return g(r.reason);
+  }
+  return r.value;
+}
+
+/** `p.catch(g)` where `g` returns a promise. */
+export async function promiseCatchAsync<T, E, G>(
+  p: Promise<T, E>,
+  g: (reason: E) => Promise<T, G>,
+): Promise<T> throws G {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  if (r.status == "rejected") {
+    return await g(r.reason);
+  }
+  return r.value;
+}
+
+/** `p.finally(h)`: the value or reason passes through once `h` returned (`h` does not throw). */
+export async function promiseFinally<T, E, R>(p: Promise<T, E>, h: () => R): Promise<T> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  const ignored = h();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return r.value;
+}
+
+/** `p.finally(h)` where `h` throws what `p` rejects with. */
+export async function promiseFinallyThrows<T, E, R>(
+  p: Promise<T, E>,
+  h: () => R throws E,
+): Promise<T> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  const ignored = h();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return r.value;
+}
+
+/** `p.finally(h)` where `h` returns a promise (that does not reject): it settles first. */
+export async function promiseFinallyAsync<T, E, R>(
+  p: Promise<T, E>,
+  h: () => Promise<R>,
+): Promise<T> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  const ignored = await h();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return r.value;
+}
+
+/** `p.finally(h)` where `h` returns a promise rejecting with what `p` rejects with. */
+export async function promiseFinallyAsyncThrows<T, E, R>(
+  p: Promise<T, E>,
+  h: () => Promise<R, E>,
+): Promise<T> throws E {
+  const r = await settledOf<T, E>(p);
+  await velt_rt_microtask();
+  const ignored = await h();
+  if (r.status == "rejected") {
+    throw r.reason;
+  }
+  return r.value;
+}

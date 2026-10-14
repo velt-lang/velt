@@ -114,6 +114,16 @@ struct Executor {
     yielded: u32,
     /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
     keep_alive: usize,
+    /// The microtask queue (`then` callbacks, `queueMicrotask`): it runs before the ready
+    /// tasks, so it is drained after every task poll, like Node's microtask checkpoint
+    /// (velt_rt task/local/micro.rs).
+    micro: VecDeque<Rc<MicroSlot>>,
+}
+
+/// An entry of the microtask queue: whom to run when the queue reaches it.
+pub struct MicroSlot {
+    fired: Cell<bool>,
+    waker: RefCell<Option<Waker>>,
 }
 
 thread_local! {
@@ -171,6 +181,42 @@ pub fn wake_next(w: Waker) {
         }
         e.ready.push_front(id);
     });
+}
+
+/// `velt_rt_microtask`: ready once the queue reached it (at once outside `block_on`).
+pub fn poll_microtask(slot: &mut Option<Rc<MicroSlot>>, cx: &mut Context<'_>) -> Poll<()> {
+    match slot {
+        Some(s) if s.fired.get() => Poll::Ready(()),
+        Some(s) => {
+            *s.waker.borrow_mut() = Some(cx.waker().clone());
+            Poll::Pending
+        }
+        None if !running() => Poll::Ready(()),
+        None => {
+            let s = Rc::new(MicroSlot {
+                fired: Cell::new(false),
+                waker: RefCell::new(Some(cx.waker().clone())),
+            });
+            with_exec(|e| e.micro.push_back(s.clone()));
+            *slot = Some(s);
+            Poll::Pending
+        }
+    }
+}
+
+/// The task the next microtask runs (other wakers in the queue are woken on the way).
+fn next_micro() -> Option<usize> {
+    loop {
+        let s = with_exec(|e| e.micro.pop_front())?;
+        s.fired.set(true);
+        let Some(w) = s.waker.borrow_mut().take() else {
+            continue;
+        };
+        if std::ptr::eq(w.vtable(), &VTABLE) {
+            return Some(w.data() as usize);
+        }
+        w.wake();
+    }
 }
 
 fn next_ready() -> Option<usize> {
@@ -469,7 +515,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
             return;
         }
         fire_due_now();
-        let Some(id) = next_ready() else {
+        let Some(id) = next_micro().or_else(next_ready) else {
             if !wait_for_timers() {
                 crate::panic::fatal(
                     "deadlock: the main task is waiting, but no task or timer can wake it",
