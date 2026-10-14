@@ -1,7 +1,8 @@
 //! Error unions as JS sees them: a value whose type is a union of classes that all are `Error`
 //! or extend it (`AppError | TypeError`, a `catch` variable of several error classes) has
 //! `Error`'s `name` and `toString()` (each class's own, dispatched), and `String(e)` writes
-//! it as `toString()` does; a nullable class value writes `null` or its `toString()`.
+//! it as `toString()` does; a nullable class value writes `null` (or `undefined`) or its
+//! `toString()`.
 
 use velt_common::Span;
 
@@ -86,7 +87,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `String(h)` for a nullable `h` whose payload is written by its `toString()`:
-    /// `match (h) { Some(v) => String(v), null => "null" }`; `Err(h)` for other values.
+    /// `match (h) { Some(v) => String(v), null => "null" }` (`"undefined"` for `T | undefined`);
+    /// `Err(h)` for other values.
     pub(crate) fn nullable_text(
         &mut self,
         mut h: hir::Expr,
@@ -105,7 +107,8 @@ impl FnCx<'_, '_> {
         }
         let v = self.mk(H::Local(l, mode), payload, span);
         let some = self.js_text(v, what);
-        let none = self.str_lit("null", span);
+        let word = self.cx.ty.nothing_of(h.ty).map_or("null", |n| n.word());
+        let none = self.str_lit(word, span);
         let sty = h.ty;
         let bind = self.pat(P::Binding(l, mode), payload, span);
         let arms = vec![

@@ -1,0 +1,48 @@
+// Errors written as text inside other values: arrays (join, templates, String), nested arrays,
+// tuples, unions with other types, generic code, nullable and `undefined` errors, and a
+// class whose toString() writes an error. Expected output from Node.
+class AppError extends Error { code: number = 3; }
+const arr: Error[] = [new Error("a"), new AppError("b"), new TypeError("c")];
+console.log(arr.map(e => `${e}`).join("|"));
+console.log(arr.join(","));
+console.log(String(arr));
+console.log(`${arr}`);
+const errs: AppError[] = [new AppError("x")];
+console.log(`${errs}`);
+class Loud extends Error { toString(): string { return "LOUD " + this.message; } }
+class Named extends Error { name = "Named"; }
+const mixed: Error[] = [new Loud("l"), new Named("m"), new RangeError("r")];
+console.log(`${mixed}`, mixed.join(" / "), String(mixed));
+function pick(i: number): Loud | Named { return i == 0 ? new Loud("u0") : new Named("u1"); }
+const us = [pick(0), pick(1)];
+console.log(`${us}`, us.join(";"));
+const nested: Error[][] = [[new Error("a")], [new TypeError("b"), new Named("c")]];
+console.log(`${nested}`);
+const opt: (Error | null)[] = [new Error("p"), null];
+console.log(`${opt}`);
+class E1 extends Error { name = ""; }
+class E2 extends Error {}
+console.log(`[${new Error()}]`, `[${new E1("only msg")}]`, `[${new E2("")}]`, `[${new E1("")}]`);
+function show<T>(x: T): string { return String(x) + "|" + `${x}`; }
+console.log(show(new TypeError("gen")), show(new E2("g2")));
+function either(i: number): Error | number { return i == 0 ? new RangeError("rr") : 42; }
+console.log(`${either(0)} ${either(1)}`, String(either(0)));
+const o = { e: new Error("in obj") };
+console.log(`${o}`, String(o));
+const m = new Map<string, Error>(); m.set("a", new Error("m"));
+console.log(`${m}`, `${m.get("a")}`);
+const t: [Error, number] = [new Error("tu"), 1];
+console.log(`${t}`);
+class Holder { err: Error = new TypeError("held"); toString(): string { return "H(" + this.err + ")"; } }
+console.log(`${new Holder()}`, [new Holder()].join());
+let maybe: Error | undefined = undefined;
+console.log(`${maybe}`);
+maybe = new Error("def");
+console.log(`${maybe}`, String(maybe));
+class P2 { toString(): string { return "P2!"; } }
+let pu: P2 | undefined = undefined;
+console.log(`${pu}`, String(pu), "p=" + pu);
+function eu(i: number): TypeError | RangeError | undefined { return i == 0 ? undefined : new TypeError("tu"); }
+console.log(`${eu(0)}`, `${eu(1)}`, "e=" + eu(0), String(eu(0)));
+const arrU: (Error | undefined)[] = [new Error("x"), undefined];
+console.log(arrU.join("+"), `${arrU}`);
