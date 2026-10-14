@@ -24,8 +24,9 @@ function's `return`s ([Return types](functions.md#return-types)), and everything
 inferred too. `type Name = …` declares an alias; it is checked even where nothing uses it. An
 alias may refer to itself only when it is an object type, or an intersection of object types,
 written out (`type Tree = { kids: Tree[]; v: number }`): it is then the interface with those
-fields ([Intersection types](#intersection-types)). There is no `any`
-or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
+fields ([Intersection types](#intersection-types)). `any` and `unknown` hold a value of any
+type, checked at run time ([any and unknown](#any-and-unknown)); dynamic JSON is `JsonValue`
+([`velt:json`](../std/json.md)).
 
 The names TypeScript does not have (`i8`…`i64`, `isize`, `u8`…`u64`, `usize`, `f32`, `f64`,
 `bool`) are like library globals: a type alias, class, interface or enum of the module with
@@ -1324,3 +1325,42 @@ console.log([...range(1, 3)]); // [ 1, 2, 3 ]
   generator function.
 - The value is an instance of the prelude class `__IterableObject<T, E>` (async:
   `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
+
+## any and unknown
+
+`any` and `unknown` hold a value of any type together with its type, like C#'s `dynamic`. Every
+value converts to either. An `any` converts back to every type, and the value is checked where it
+enters typed code: a value of another type stops the program with a `TypeError` (Node would
+keep the wrong value). An `unknown` must be narrowed first (`typeof`, `instanceof`), or
+converted with `as T`, which is checked the same way. Both are the same value at run time.
+
+```ts
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function main(): void {
+  const p = new Point(1);
+  const a: any = p;
+  const q: Point = a; // checked: `a` holds a `Point`
+  console.log(q === p, typeof a); // true object
+  const n: any = null;
+  console.log(n == undefined, n === undefined); // true false
+  const u: unknown = "text";
+  if (typeof u === "string") {
+    console.log(u.length); // 4
+  }
+}
+```
+
+What works on `any` and `unknown` today: conversions in and out (also `null`, `undefined`,
+`T | null`, unions and class instances, checked against the class and its subclasses),
+`typeof` (narrowing to `number`, `string` and `boolean`), `instanceof`, truthiness, `===`,
+`!==`, `==` and `!=` (JavaScript's loose equality: `null == undefined`, `"1" == 1`), and
+`console.log`. **Planned** (#924): member reads, writes and calls on an `any` (`x.f`, `x[k]`,
+`x(...)`), arithmetic and comparison operators, template literals and `String(x)`,
+`JSON.stringify`, iteration and the warning on a written `any`; until then each is a compile
+error.

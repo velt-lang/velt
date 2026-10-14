@@ -617,3 +617,35 @@ primitive before HIR leaves sema (`brands.rs`, `readonly::erase`).
   strict forms to the loose ones. They differ only against `null` / `undefined`: `==` matches
   either nothing, `===` only its own (`x === null` on a `T | undefined` is constant `false`).
   HIR keeps one `BinOp::Eq` / `NotEq`.
+
+## any and unknown (issue #924, phase 1a)
+- `any` and `unknown` are interfaces of the prelude (`std/prelude/z_dynamic.vlt`), so their type is
+  `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
+  implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
+  whose index is `Program::any_impl`. Converting a value to either type is `ToDyn` with that
+  index (for `unknown` too: both share one representation and one table per concrete type).
+- Sema unpacks before boxing, so a dynamic value always holds one concrete type: a literal type
+  becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
+  nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
+  of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
+  Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
+  integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
+  object), and at slots 1 to 3 the glue `AnyTruthy (data) -> bool`, `AnySame (a, b) -> bool`
+  and `AnyNumber (data) -> f64` (booleans, numbers and strings). Tables are memoized per
+  concrete type, so equal tables mean equal types.
+- `Intrinsic::AnyTo` converts out (assignment, argument, return, `as T`; an `unknown` only
+  with `as T` or after narrowing), checked at run time: the table must be `T`'s (a class: the
+  class id is `T` or a subclass; `U | null`: `null` and `undefined` give `null`). A mismatch
+  stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
+  owned: a place is wrapped in `Intrinsic::Share`.
+- `typeof x` is `AnyTypeof`; `typeof x === "number"` (also `"string"`, `"boolean"`) narrows a
+  dynamic local with `Fact::Class(l, T)`, read as `AnyTo(Share(x))`; `instanceof C` narrows as
+  on any interface value (`Downcast`). Conditions use `AnyTruthy`. `===` / `!==` and `==` / `!=`
+  with a dynamic variable on either side box both operands and use `AnyStrictEq` /
+  `AnyLooseEq` (JavaScript's algorithms for primitives: numbers by value, `null == undefined`,
+  `"1" == 1`, `true == 1`; objects by identity). `console.log` and the format glue print the
+  value the table formats; a string at the top level prints without quotes.
+- Not yet (each a compile error, phase 1b and 2 of #924): member reads, writes and calls on
+  `any` (`x.f`, `x[k]`, `x(...)`), other operators, template literals and `String(x)`,
+  `JSON.stringify` of an `any`, iteration.

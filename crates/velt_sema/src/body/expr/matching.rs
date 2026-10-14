@@ -53,6 +53,9 @@ impl FnCx<'_, '_> {
         if let H::UnwrapSome(base, _) = s.kind {
             s = *base;
         }
+        if self.cx.dynamic(s.ty).is_some() {
+            return self.dynamic_null_compare(s, word, strict, is_eq, span);
+        }
         if self.cx.ty.opt_payload(s.ty).is_none() && !self.cx.ty.is_bottom(s.ty) {
             let tn = self.cx.display(s.ty);
             self.cx.error(

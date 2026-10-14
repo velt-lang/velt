@@ -223,7 +223,7 @@ impl Ctx<'_> {
     ) -> Option<(u32, Vec<TyId>, TyId)> {
         if let Some(a) = self.any {
             if iface == a.any || iface == a.unknown {
-                return Some((a.imp, vec![], ty));
+                return self.any_impl().map(|i| (i, vec![], ty));
             }
         }
         self.impl_index.extend(&self.impls);

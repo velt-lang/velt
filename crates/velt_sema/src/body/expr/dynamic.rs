@@ -10,7 +10,9 @@ use super::union_coerce::outer_mode;
 use crate::any::Dynamic;
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, Intrinsic, Nothing, PatKind as P, TyId, TyKind, UseMode};
+use crate::hir::{
+    self, ExprKind as H, Intrinsic, LocalId, Nothing, PatKind as P, TyId, TyKind, UseMode,
+};
 
 impl FnCx<'_, '_> {
     /// `h` converted to `exp`, one of them `any` or `unknown`. `checked_from_unknown`: an
@@ -51,7 +53,7 @@ impl FnCx<'_, '_> {
             TyKind::Promise(..) => return Err(h),
             _ => {}
         }
-        let Some(defs) = self.cx.any else {
+        let Some(imp) = self.cx.any_impl() else {
             return Err(h);
         };
         let mut h = h;
@@ -59,7 +61,7 @@ impl FnCx<'_, '_> {
         Ok(self.mk(
             H::ToDyn {
                 expr: Box::new(h),
-                impl_index: defs.imp,
+                impl_index: imp,
             },
             exp,
             span,
@@ -157,17 +159,57 @@ impl FnCx<'_, '_> {
         Some(self.cx.ty.intern(TyKind::Dyn(defs.any, vec![])))
     }
 
-    /// Is `e` a variable of type `any` or `unknown`?
+    /// Is `e` a variable of this function of type `any` or `unknown` (not narrowed)? Looks
+    /// only: a variable of an enclosing function is not captured here.
     pub(crate) fn dynamic_operand(&mut self, e: &velt_syntax::ast::Expr) -> bool {
-        match e {
-            velt_syntax::ast::Expr {
-                kind: velt_syntax::ast::ExprKind::Paren(x),
-                ..
-            } => self.dynamic_operand(x),
-            _ => self.named_local(e).is_some_and(|l| {
-                self.cx.dynamic(self.local_ty(l)).is_some() && self.narrowed_class(l).is_none()
-            }),
-        }
+        self.own_dynamic_local(e)
+            .is_some_and(|l| self.narrowed_class(l).is_none())
+    }
+
+    /// The variable of this function `e` names, when its type is `any` or `unknown`.
+    pub(crate) fn own_dynamic_local(&mut self, e: &velt_syntax::ast::Expr) -> Option<LocalId> {
+        use velt_syntax::ast::ExprKind as A;
+        let name = match &e.kind {
+            A::Paren(x) => return self.own_dynamic_local(x),
+            A::Ident(i) => i.name.as_str(),
+            _ => return None,
+        };
+        let l = self
+            .f
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.names.get(name).copied())?;
+        self.cx.dynamic(self.local_ty(l)).map(|_| l)
+    }
+
+    /// `s === null` / `s == undefined` (`word`) on a dynamic value `s`.
+    pub(crate) fn dynamic_null_compare(
+        &mut self,
+        s: hir::Expr,
+        word: &str,
+        strict: bool,
+        is_eq: bool,
+        span: Span,
+    ) -> hir::Expr {
+        let Some(any) = self.any_ty() else {
+            return self.error_expr(span);
+        };
+        let n = if word == "undefined" {
+            Nothing::Undefined
+        } else {
+            Nothing::Null
+        };
+        let l = self.coerce(s, any);
+        let r = self.dynamic_nothing(n, any, span);
+        let i = if strict {
+            Intrinsic::AnyStrictEq
+        } else {
+            Intrinsic::AnyLooseEq
+        };
+        let b = self.cx.ty.bool_;
+        let test = self.intrinsic(i, vec![l, r], b, span);
+        self.negated(test, !is_eq, span)
     }
 
     /// `a === b` / `a == b` (`negate`: `!==` / `!=`) with a dynamic operand: both sides boxed
