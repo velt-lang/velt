@@ -303,6 +303,13 @@ impl Frame {
     }
 }
 
+/// What an `undefined` would be given for (`FnCx::optional_slots`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptionalSlot {
+    Param,
+    Field,
+}
+
 pub(crate) struct FnCx<'a, 'm> {
     pub cx: &'a mut Ctx<'m>,
     pub module: usize,
@@ -364,6 +371,10 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// Where a value is given for an optional parameter (or one with a default) or an optional
+    /// field: an `undefined` there is a limit of this phase of #930, not a type error
+    /// (`expr/lit.rs` `optional_slot_error`).
+    pub optional_slots: Vec<(Span, OptionalSlot)>,
     /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
     pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
     /// Locals declared from integer literals and their uses (`literal_locals`).
@@ -405,6 +416,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             member_choices: HashMap::new(),
             detached: false,
             collect_iterable_args: false,
+            optional_slots: vec![],
             refused_reads: vec![],
             literal: Default::default(),
             jsx_list_fold: None,

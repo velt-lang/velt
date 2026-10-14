@@ -51,7 +51,10 @@ impl<'a> Parser<'a> {
                 );
                 return Err(Fail);
             }
-            Tok::Ident if self.at_word("undefined") => self.undefined_expr(span),
+            Tok::Ident if self.at_word("undefined") => {
+                self.bump();
+                ExprKind::Lit(Lit::Undefined)
+            }
             Tok::LParen => {
                 self.bump();
                 let inner = self.allow_in(|p| p.parse_expr())?;
@@ -173,17 +176,13 @@ impl<'a> Parser<'a> {
     fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
-        // `value: undefined` (its position, and its diagnostic's).
+        // `value: undefined` (its position).
         let mut undefined_value = None;
         while !self.at(Tok::RBrace) {
-            let ndiags = self.diags.len();
             let prop = self.parse_object_prop()?;
             if let ObjectProp::KeyValue(k, v) = &prop {
-                if k.name == "value"
-                    && self.text(v.span.lo, v.span.hi) == "undefined"
-                    && self.diags.len() > ndiags
-                {
-                    undefined_value = Some((props.len(), ndiags));
+                if k.name == "value" && matches!(v.kind, ExprKind::Lit(Lit::Undefined)) {
+                    undefined_value = Some((props.len(), v.span));
                 }
             }
             props.push(prop);
@@ -192,16 +191,15 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(Tok::RBrace)?;
-        if let Some((i, d)) = undefined_value {
-            self.finished_result_value(&mut props, i, d);
+        if let Some((i, span)) = undefined_value {
+            self.finished_result_value(&mut props, i, span);
         }
         Ok(props)
     }
 
     /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
-    /// `value`. Says so instead of "use `null`" (which a `{ done: true }` result can't hold),
-    /// and drops the property.
-    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, d: usize) {
+    /// `value`. Says so, and drops the property.
+    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, span: Span) {
         let done = props.iter().any(|p| {
             matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
                 if k.name == "done")
@@ -209,11 +207,17 @@ impl<'a> Parser<'a> {
         if !done {
             return;
         }
-        let span = self.diags[d].labels[0].span;
-        self.diags[d] = velt_common::Diagnostic::error("`undefined` is not part of Velt", span)
-            .with_note(
-                "TypeScript allows this; Velt doesn't because it has no `undefined`, and a finished `IteratorResult` has no `value`; write `{ done: true }`",
+        if self.speculating == 0 {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    "`value: undefined` in a finished iterator result is not supported",
+                    span,
+                )
+                .with_note(
+                    "TypeScript allows this; a finished `IteratorResult` in Velt has no `value`; write `{ done: true }`",
+                ),
             );
+        }
         props.remove(i);
     }
 

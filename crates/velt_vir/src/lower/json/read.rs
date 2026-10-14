@@ -227,7 +227,7 @@ impl FnLower<'_, '_> {
             TyKind::Literal(_) => true,
             // A union of literal types is just its tag.
             TyKind::Adt(..) if self.cx.is_union(ty) => self.json_choices(ty).is_some(),
-            TyKind::Option(_) => true,
+            TyKind::Option(..) => true,
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
             }
@@ -297,7 +297,7 @@ impl FnLower<'_, '_> {
                 self.json_expect(Rt::JsonReadString, vec![ro, a], ctx, "string", fail);
             }
             TyKind::Unit => self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail),
-            TyKind::Option(e) => self.json_read_option(r, place, ctx, ty, e, fail),
+            TyKind::Option(e, _) => self.json_read_option(r, place, ctx, ty, e, fail),
             TyKind::Array(e) => {
                 let arr = self.content(place, ty);
                 self.json_read_array(r, &arr, ctx, e, fail)

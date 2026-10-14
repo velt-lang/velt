@@ -108,7 +108,7 @@ impl FnLower<'_, '_> {
                     });
                 }
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let done = self.new_block();
                 let some = self.option_is_some(&place, ty);
                 self.when(some, done);
@@ -147,7 +147,7 @@ impl FnLower<'_, '_> {
     fn trace_part(&mut self, place: Place, t: TyId, tv: (vir::Local, vir::Local)) {
         let target = match self.cx.kind(t) {
             _ if self.cx.counted(t) => Some(t),
-            TyKind::Option(e) if self.cx.ty(t) == Ty::Ptr && self.cx.counted(e) => Some(e),
+            TyKind::Option(e, _) if self.cx.ty(t) == Ty::Ptr && self.cx.counted(e) => Some(e),
             _ => None,
         };
         if let Some(c) = target {

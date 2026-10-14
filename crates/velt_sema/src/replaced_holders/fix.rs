@@ -146,6 +146,7 @@ fn source(e: &ast::Expr, depth: u32) -> Option<String> {
                 ast::UnaryOp::BitNot => "~",
                 ast::UnaryOp::TypeOf => "typeof ",
                 ast::UnaryOp::Delete => "delete ",
+                ast::UnaryOp::Void => "void ",
             };
             format!("{op}{}", s(expr)?)
         }
@@ -157,8 +158,10 @@ fn source(e: &ast::Expr, depth: u32) -> Option<String> {
                 B::Div => "/",
                 B::Rem => "%",
                 B::Pow => "**",
-                B::Eq => "===",
-                B::NotEq => "!==",
+                B::Eq => "==",
+                B::NotEq => "!=",
+                B::StrictEq => "===",
+                B::StrictNotEq => "!==",
                 B::Lt => "<",
                 B::LtEq => "<=",
                 B::Gt => ">",

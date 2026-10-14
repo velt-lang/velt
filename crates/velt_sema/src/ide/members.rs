@@ -481,7 +481,7 @@ fn show_shape(an: &Analysis, s: &Shape, param: &dyn Fn(u32) -> String) -> String
 /// `T | null` and `shared<T>` offer the members of `T`.
 fn strip(table: &TyTable, ty: TyId) -> TyId {
     match table.kind(ty) {
-        TyKind::Option(t) | TyKind::Shared(t) => strip(table, *t),
+        TyKind::Option(t, _) | TyKind::Shared(t) => strip(table, *t),
         _ => ty,
     }
 }
@@ -501,7 +501,7 @@ fn bind(table: &TyTable, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) ->
             None => false,
         },
         (TyKind::Array(p), TyKind::Array(a))
-        | (TyKind::Option(p), TyKind::Option(a))
+        | (TyKind::Option(p, _), TyKind::Option(a, _))
         | (TyKind::Shared(p), TyKind::Shared(a)) => bind(table, *p, *a, slots),
         (TyKind::Map(p1, p2), TyKind::Map(a1, a2))
         | (TyKind::Promise(p1, p2), TyKind::Promise(a1, a2))

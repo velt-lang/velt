@@ -282,9 +282,10 @@ impl FnCx<'_, '_> {
             d = d.with_note(
                 "promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error",
             );
-        } else if self.cx.ty.opt_payload(recv.ty).is_some() {
+        } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
-                "the value may be null: use `?.{}(...)` or check `!= null` first",
+                "the value may be {}: use `?.{}(...)` or check `!= null` first",
+                n.word(),
                 prop.name
             ));
         } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {

@@ -257,6 +257,6 @@ fn not_declared_before<'a>(
             .find_map(|a| not_declared_before(a, rest)),
         K::KeyOf(t) => not_declared_before(t, rest),
         K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
-        K::Literal(_) | K::Null | K::Void | K::Query(_) => None,
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => None,
     }
 }

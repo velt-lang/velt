@@ -56,7 +56,9 @@ pub(crate) fn want_of(mode: PassMode) -> Want {
 /// Does this argument take its type from the parameter (checked in the second round)?
 pub(crate) fn deferred(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Lit(ast::Lit::Null) | ast::ExprKind::Arrow { .. } => true,
+        ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) | ast::ExprKind::Arrow { .. } => {
+            true
+        }
         ast::ExprKind::Array(xs) => xs.is_empty(),
         ast::ExprKind::Paren(x) => deferred(x),
         _ => untyped(e),
@@ -122,6 +124,11 @@ impl FnCx<'_, '_> {
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
             self.cx.match_context(c.ret, e, &mut context);
+        }
+        for (a, p) in args.iter().zip(&c.params) {
+            if p.default.is_some() {
+                self.optional_slot(a, crate::body::OptionalSlot::Param);
+            }
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {

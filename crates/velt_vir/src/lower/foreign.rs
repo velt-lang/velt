@@ -31,7 +31,7 @@ impl Cx<'_> {
                 self.foreign_agg(t, fields, native)
             }
             TyKind::Tuple(es) => self.foreign_agg(t, es, native),
-            TyKind::Option(e) => match self.foreign_differs(e) {
+            TyKind::Option(e, _) => match self.foreign_differs(e) {
                 true => {
                     let fe = self.foreign_ty(e);
                     Ty::Agg(self.new_agg("foreign option".into(), &[Ty::Bool, fe]))
@@ -81,7 +81,7 @@ impl FnLower<'_, '_> {
                 let hdr = self.content(src, t);
                 self.assign(out.clone(), Rvalue::Use(Operand::Copy(hdr)));
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let zero = self.zero_value(ft);
                 self.assign(out.clone(), Rvalue::Use(zero));
                 let done = self.new_block();
@@ -120,7 +120,7 @@ impl FnLower<'_, '_> {
                 let v = self.box_value(Operand::Copy(src.clone()), t);
                 self.assign(dst.clone(), Rvalue::Use(v));
             }
-            TyKind::Option(e) => {
+            TyKind::Option(e, _) => {
                 let none = self.none_value(t);
                 self.assign(dst.clone(), Rvalue::Use(none));
                 let done = self.new_block();

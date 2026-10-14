@@ -1,0 +1,14 @@
+// `in` with string keys (#933) next to `undefined` as a value (#930): a field typed
+// `T | undefined` is present while it holds `undefined`, an optional field left out is not;
+// destructuring defaults and JSON follow Node, and so does a record holding `null`.
+
+interface P { a?: number; b: number | undefined }
+const p: P = { b: undefined };
+console.log("a" in p, "b" in p, JSON.stringify(p));
+const q: P = { a: 1, b: 2 };
+console.log("a" in q, JSON.stringify(q));
+function f({ a = 5, b }: P) { console.log(a, b); }
+f(p); f(q);
+const r: Record<string, number | null> = { x: null, y: 2 };
+console.log(Object.keys(r).join(","), JSON.stringify(r), "x" in r, "z" in r, r.x == undefined);
+console.log(r);

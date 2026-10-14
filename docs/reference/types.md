@@ -13,7 +13,7 @@
 | `Map<K, V>` | insertion-ordered hash map |
 | `{ a: T; b: U }` | anonymous object type |
 | classes, structs, interfaces | [Classes](classes.md) |
-| `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null) |
+| `A \| B`, `T \| null` | [unions](#union-types), [nullable values](#null-and-undefined) |
 | `A & B`, `T["k"]` | [intersections of object types](#intersection-types), [branded types](#branded-types), [indexed access](#indexed-access-types) |
 | `"up"`, `42`, `true` | [literal types](#literal-types) |
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
@@ -336,8 +336,10 @@ for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823))
 
 ## Equality and comparison
 
-- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
-  operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
+- `==` and `===` (and `!=` and `!==`) differ only against `null` and `undefined`, as in
+  JavaScript: `x == null` and `x == undefined` match either nothing, `===` only the one written
+  ([Null and undefined](#null-and-undefined)). Everywhere else they are the same operator: there
+  is no coercion, and the operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
   compared with an `i32` needs a cast). An interface value compares with a value of a class or
   struct that implements it, and a base class value with a subclass value.
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
@@ -375,12 +377,88 @@ for `Reflect` and proxies ([#823](https://github.com/velt-lang/velt/issues/823))
   `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
   `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).
 
-## Null
+## Null and undefined
 
-`null` is the only "nothing". `undefined` is not part of the language: `undefined` as a value or
-a type, and `void expr`, are errors with the fix "use `null`" (editors offer it as a quick fix),
-and `typeof x === "undefined"` is an error too (test `x === null`). A value that may be absent
-has type `T | null`, stored without an extra allocation where possible.
+`null` and `undefined` are two values, as in JavaScript. A value that may be absent has type
+`T | null` or `T | undefined` (`A | B | undefined` for a union), stored without an extra
+allocation where possible; the two types take the same space. `undefined` behaves as in Node:
+
+```ts
+function find(xs: string[], s: string): string | undefined {
+  return xs.includes(s) ? s : undefined;
+}
+
+const a = find(["x"], "y");
+console.log(a, typeof a, a === undefined, a == null); // undefined undefined true true
+console.log(a ?? "none", `${a}`, [a]);                 // none undefined [ undefined ]
+console.log(JSON.stringify({ a, b: 1 }), JSON.stringify([a]));    // {"b":1} [null]
+const v: number | undefined = void console.log("ran"); // `void e` evaluates `e`: undefined
+```
+
+`x == null` and `x == undefined` match either nothing; `x === undefined` tests a
+`T | undefined` for its nothing, and `x === null` on a `T | undefined` is `false` (`!==`: `true`)
+and narrows nothing, as in Node; `switch` compares like `===`. `typeof x === "undefined"`
+narrows, `?.` on a `T | undefined` gives `undefined`, and `JSON.stringify` leaves out a field
+holding `undefined` and writes an array element as `null`. A destructuring default applies where
+the value is `undefined` (an `undefined` element or field, an absent optional field, a too short
+array), never to a `null` a field or element is declared to hold: `const { a = 1 } = o` keeps
+the `null` of a field `a: T | null`, and of an optional `a?: T | null` that is present. `sort(cmp)`
+and `toSorted(cmp)` on a `(T | undefined)[]` never pass an `undefined` element to `cmp` and put
+those elements last. `return undefined;` in a `void` function is `return;`, and `return void e;` (or an arrow body `(): void => void e`) is `e;` then `return;`. `null` where `T | undefined` is expected, and `undefined` where
+`T | null` is, are errors (TS2322), also for a `T | undefined` value where a `T | null` is
+expected and the reverse.
+
+Not supported yet, each with a precise error ([issue #930](https://github.com/velt-lang/velt/issues/930)):
+a type with both nothings (`T | null | undefined`), `undefined` alone as a type, `JSON.stringify`
+of a value that may itself be `undefined` and `JSON.parse` into a type holding `undefined`;
+`x === undefined` and `typeof x === "undefined"` on a `T | null` (its `null` may be JavaScript's
+`undefined`, see below; `x == null` tests for either) and `case null` / `case undefined` with
+the nothing the type lacks; `as` between `T | undefined` and `T | null`; a parameter default
+other than `undefined` on a parameter whose type allows `undefined` (JavaScript applies it to
+a passed `undefined` too); and a type argument whose nothing differs from one the generic keeps
+of it, directly or through what it calls (a `T | undefined` for `Map.set`,
+`Array.prototype.find` or a generic function holding a `T | null`, a `T | null` for one holding
+a `T | undefined`), which includes a generic alias applied that way (`type Nullable<T> = T | null`
+as `Nullable<number | undefined>`). Also not supported yet, although TypeScript accepts them:
+
+- `undefined` (the literal, `void 0` or a value that may be `undefined`) passed for an optional
+  parameter or one with a default (`f(undefined)` for `function f(x = 5)` or `f(a?: number)`):
+  leave the argument out;
+- `undefined` as the value of an optional field (`{ a: undefined }` for `a?: number`): leave the
+  field out (also for a conditional with an `undefined` branch, `c ? v : undefined`, given
+  for either);
+- a `T | null` from the standard library where a `T | undefined` is expected
+  (`return m.get(k);` in a function returning `number | undefined`): write `m.get(k) ?? undefined`;
+- a type argument that allows `undefined` for generic code that sorts an array of its type
+  parameter (`xs.sort(cmp)` inside `function f<T>(xs: T[], …)`): an `undefined` element would
+  reach the comparator;
+- `JSON.stringify` of a value holding a class whose `toJSON()` may return `undefined` (its
+  own or a subclass's);
+- a destructuring default for an optional **class** field declared `T | null`
+  (`class C { b?: number | null }`, `const { b = 6 } = c`): a class does not keep an unset field
+  apart from one set to `null`.
+
+### Silent differences until phase 3
+
+These compile and print or test differently from Node, with no error, until later phases of
+[issue #930](https://github.com/velt-lang/velt/issues/930) give them `undefined`:
+
+- a missing key of a `Map`: `m.get("z")` is `null` where Node gives `undefined` (`console.log`
+  prints `null`, `typeof` gives `"object"`), whatever the value type (`Map<string, number>`,
+  `Map<string, number | null>`);
+- a missing key of a `Record`: `r["z"]` on a `Record<string, number>` or
+  `Record<string, number | null>` is `null` likewise;
+- an absent optional field or a left-out optional parameter (`a?: T`), `?.` on a `T | null`
+  and the rest of the standard library (`find`, `at`, `shift`, …) give `null` where Node gives
+  `undefined` (phases 2 and 3); `a?: T | undefined` is reported as a type with both nothings.
+
+`x == null` tests for either nothing and `x ?? d` treats both alike, so code written with them
+behaves as in Node.
+
+### Optional values and `null`
+
+Optional fields and parameters (`a?: T`), `?.` on a `T | null` and the standard library use
+`null` for now:
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
@@ -526,7 +604,7 @@ the nullable type; `void` cannot be a member.
     `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
-    A local that a closure assigns is not narrowed ([Null](#null)).
+    A local that a closure assigns is not narrowed ([Null](#null-and-undefined)).
 - Printing and template literals show the active member's value. A union with a member that
   cannot be printed (a closure) prints once a test has narrowed it to members that can
   (`typeof v !== "function"`). `JSON.stringify` works on
@@ -1003,8 +1081,11 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `const { length } = xs;` and `const { length: n } = "abcd";` read the length, and a getter
   is called (`const { area } = rect;`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
-  takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
-  too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
+  takes the default when the field is absent (optional) or `undefined`, and
+  `const [first = 0] = xs;` when the array is too short or the element is `undefined`, as in JS;
+  a field or element declared `T | null` keeps its `null`, and so does an optional field of an
+  object type declared `a?: T | null` when it is present (for a class field declared that way a
+  default is [not supported yet](#null-and-undefined)). Defaults in `for...of` patterns and parameter patterns
   are not supported.
 - **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push` (any number of items:

@@ -1,0 +1,64 @@
+// `sort(cmp)` and `toSorted(cmp)` on an array whose elements may be `undefined` (issue #930):
+// as in JavaScript, an `undefined` element is never passed to the comparator, and all of them
+// end up after the other elements. The sort stays stable. Output from Node.
+class P {
+  n: number;
+  tag: string;
+  constructor(n: number, tag: string) {
+    this.n = n;
+    this.tag = tag;
+  }
+}
+
+class Calls {
+  n = 0;
+}
+
+function main() {
+  const xs: (number | undefined)[] = [3, undefined, 1, undefined, 2];
+  xs.sort((a, b) => (a ?? 0) - (b ?? 0));
+  console.log(xs);
+  const ys: (number | undefined)[] = [3, undefined, 1];
+  console.log(ys.toSorted((a, b) => (b ?? 100) - (a ?? 100)), ys);
+  const zs: (string | undefined)[] = ["b", undefined, "a"];
+  console.log(zs.toSorted((a, b) => (a ?? "").localeCompare(b ?? "")));
+  // Objects, with a comparator that could not take an `undefined`; equal keys keep their order.
+  const ps: (P | undefined)[] = [
+    new P(2, "a"),
+    undefined,
+    new P(1, "b"),
+    new P(2, "c"),
+    undefined,
+    new P(1, "d"),
+  ];
+  const calls = new Calls();
+  ps.sort((a, b) => {
+    calls.n++;
+    return a!.n - b!.n;
+  });
+  console.log(ps.map((p) => (p === undefined ? "-" : p.tag)).join(""), calls.n > 0);
+  // A union with `undefined`.
+  const us: (string | number | undefined)[] = ["b", undefined, 2, "a", 1, undefined];
+  console.log(us.toSorted((a, b) => String(a).localeCompare(String(b))), us.length);
+  // Only `undefined` elements: the comparator is never called.
+  const all: (number | undefined)[] = [undefined, undefined];
+  all.sort((a, b) => {
+    calls.n += 1000;
+    return 0;
+  });
+  console.log(all, calls.n < 1000);
+  // Longer than the insertion-sort limit.
+  const big: (number | undefined)[] = [];
+  for (let i = 0; i < 100; i++) {
+    big.push(i % 7 === 0 ? undefined : (i * 37) % 101);
+  }
+  big.sort((a, b) => a! - b!);
+  console.log(big.slice(0, 5), big.slice(83, 87), big.length);
+  const one: (string | undefined)[] = ["x"];
+  one.sort((a, b) => 0);
+  console.log(one);
+  // A `null` element is a value like any other: the comparator gets it.
+  const ns: (number | null)[] = [3, null, 1];
+  ns.sort((a, b) => (a ?? 0) - (b ?? 0));
+  console.log(ns);
+}

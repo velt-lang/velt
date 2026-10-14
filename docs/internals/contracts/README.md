@@ -25,7 +25,7 @@ velt build main.vlt
   └─ driver (veltc): load main.vlt, follow imports, SourceMap
       ├─ velt_syntax::parse_file       per file      → ast::Module
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
-      ├─ velt_vir::lower_with (+ verify)              → vir::Program (with source locations)
+      ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
       │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
@@ -40,7 +40,8 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
 - `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, native_inits })` fills them (the driver
-  calls it); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
+  calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
+  hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
   `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
   uncaught error reports the location of its `throw` (`velt_rt_set_throw_loc`/`velt_rt_throw_loc`,

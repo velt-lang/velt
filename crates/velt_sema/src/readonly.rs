@@ -142,7 +142,7 @@ pub(crate) fn erase_ty(
         TyKind::Array(x) => TyKind::Array(sub(ty, cache, x)),
         TyKind::Map(a, b) => TyKind::Map(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Tuple(xs) => TyKind::Tuple(xs.iter().map(|a| sub(ty, cache, *a)).collect()),
-        TyKind::Option(x) => TyKind::Option(sub(ty, cache, x)),
+        TyKind::Option(x, n) => TyKind::Option(sub(ty, cache, x), n),
         TyKind::Result(a, b) => TyKind::Result(sub(ty, cache, a), sub(ty, cache, b)),
         TyKind::Promise(v, x) => TyKind::Promise(sub(ty, cache, v), sub(ty, cache, x)),
         TyKind::Shared(x) => TyKind::Shared(sub(ty, cache, x)),

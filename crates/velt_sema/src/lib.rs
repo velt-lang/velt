@@ -70,6 +70,7 @@ mod ts_protocol;
 mod type_defaults;
 mod type_queries;
 mod types;
+mod undefined_args;
 mod unions;
 mod utility_types;
 mod visit;
@@ -298,6 +299,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     record_keys::check_instantiations(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);
+    undefined_args::check_instantiations(cx);
     ownership::soften_moves(cx);
     ownership::validate_moves(cx);
     let moved = moves::check_all(cx);

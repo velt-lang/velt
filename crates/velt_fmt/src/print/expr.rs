@@ -145,6 +145,7 @@ impl<'a> Printer<'a> {
             UnaryOp::BitNot => ("~", None),
             UnaryOp::TypeOf => ("typeof ", None),
             UnaryOp::Delete => ("delete ", None),
+            UnaryOp::Void => ("void ", None),
         };
         // `- -x` must not become the decrement `--x`.
         let space = if sign.is_some() && leading_sign(inner) == sign {
@@ -254,6 +255,8 @@ pub(super) fn binary_op(op: BinaryOp) -> &'static str {
         Pow => "**",
         Eq => "==",
         NotEq => "!=",
+        StrictEq => "===",
+        StrictNotEq => "!==",
         Lt => "<",
         LtEq => "<=",
         Gt => ">",
