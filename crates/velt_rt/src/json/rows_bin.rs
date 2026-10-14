@@ -3,13 +3,14 @@
 //! `JSON.parse<T[]>` decoder without becoming JSON text: no escaping and number formatting on
 //! the way out, no scanning on the way in.
 //!
-//! Layout: a header `single: u8, columns: u16, (name_len: u16, name bytes)*`, then the rows,
+//! Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows,
 //! each one cell per column. A cell is a tag byte and its payload: [`NULL`], [`FALSE`],
 //! [`TRUE`], [`INT`] + `i64`, [`FLOAT`] + `f64`, [`TEXT`] or [`ASCII`] + `u32` length + UTF-8,
 //! [`BLOB`] + `u32` length + bytes (integers little-endian). Text that is all ASCII says so
 //! (the `ASCII` tag, [`ASCII_NAME`] in a name's length), because the writer looks at every
-//! byte anyway and the reader then need not: such a string's UTF-16 length is its byte length. To the decoder this reads as the JSON
-//! `db_json::rows` writes: `[{"col":value,...},...]`, or with `single` the one row's object.
+//! byte anyway and the reader then need not: such a string's UTF-16 length is its byte length.
+//! To the decoder this reads as the JSON `db_json::rows` writes: `[{"col":value,...},...]`, or
+//! with `single` the one row's object.
 //!
 //! Hand-off: std still gets a string from the driver and passes it to `JSON.parse`. A string
 //! cannot hold these bytes (they are not text), so the driver parks the buffer in a
@@ -32,7 +33,7 @@ pub const BLOB: u8 = 6;
 /// [`TEXT`] that is all ASCII.
 pub const ASCII: u8 = 7;
 /// Set in a column name's length when the name is all ASCII.
-pub const ASCII_NAME: u16 = 0x8000;
+pub const ASCII_NAME: u32 = 0x8000_0000;
 
 /// 2^53: every integer below it in magnitude is exactly representable as an `f64`.
 const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
@@ -56,7 +57,10 @@ pub fn take_pending(src: &[u8]) -> Option<Vec<u8>> {
     if !std::ptr::eq(src.as_ptr(), MARKER.as_ptr()) {
         return None;
     }
-    PENDING.with(|p| p.take())
+    match PENDING.with(|p| p.take()) {
+        Some(rows) => Some(rows),
+        None => crate::panic::fatal("ICE: JSON.parse of a query result with no rows parked"),
+    }
 }
 
 /// Builds a result set: one value method per column, in column order, for every row.
@@ -74,15 +78,13 @@ impl BinRows {
         buf.extend_from_slice(&[0, 0]);
         let mut count: u16 = 0;
         for name in columns {
-            // A longer name is cut (at a character boundary); SQLite's limit is far below.
-            let mut len = name.len().min((ASCII_NAME - 1) as usize);
-            while !name.is_char_boundary(len) {
-                len -= 1;
+            // A name is as long as the SQL allows (SQLite's limit is at most 2^30 bytes).
+            if name.len() >= ASCII_NAME as usize {
+                crate::panic::fatal("database column name too long");
             }
-            let name = &name.as_bytes()[..len];
             let ascii = if name.is_ascii() { ASCII_NAME } else { 0 };
-            buf.extend_from_slice(&(len as u16 | ascii).to_le_bytes());
-            buf.extend_from_slice(name);
+            buf.extend_from_slice(&(name.len() as u32 | ascii).to_le_bytes());
+            buf.extend_from_slice(name.as_bytes());
             count += 1;
         }
         buf[1..3].copy_from_slice(&count.to_le_bytes());
@@ -112,11 +114,13 @@ impl BinRows {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
-    /// A float; NaN and ±Infinity are `null`, as in JSON.
+    /// A float; NaN and ±Infinity are `null`, and -0 is 0, as in the JSON text the rows
+    /// stand for.
     pub fn float(&mut self, v: f64) {
         if !v.is_finite() {
             return self.null();
         }
+        let v = if v == 0.0 { 0.0 } else { v };
         self.buf.push(FLOAT);
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
@@ -212,8 +216,8 @@ pub fn header_end(buf: &[u8]) -> Option<(bool, usize, usize)> {
     let count = u16::from_le_bytes(buf.get(1..3)?.try_into().ok()?) as usize;
     let mut pos = NAMES;
     for _ in 0..count {
-        let len = u16::from_le_bytes(buf.get(pos..pos + 2)?.try_into().ok()?);
-        pos += 2 + (len & !ASCII_NAME) as usize;
+        let len = u32::from_le_bytes(buf.get(pos..pos + 4)?.try_into().ok()?);
+        pos += 4 + (len & !ASCII_NAME) as usize;
         if pos > buf.len() {
             return None;
         }
@@ -226,9 +230,9 @@ pub fn header_end(buf: &[u8]) -> Option<(bool, usize, usize)> {
 /// range's end.
 #[inline]
 pub fn name_at(buf: &[u8], pos: usize) -> (usize, usize, bool) {
-    let len = u16::from_le_bytes([buf[pos], buf[pos + 1]]);
-    let end = pos + 2 + (len & !ASCII_NAME) as usize;
-    (pos + 2, end, len & ASCII_NAME != 0)
+    let len = u32::from_le_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]);
+    let end = pos + 4 + (len & !ASCII_NAME) as usize;
+    (pos + 4, end, len & ASCII_NAME != 0)
 }
 
 /// Append one cell as a JSON value: a float in its shortest form that reads back the same, a

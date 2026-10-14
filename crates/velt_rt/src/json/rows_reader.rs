@@ -63,6 +63,9 @@ pub struct RowReader {
     reject_unknown: bool,
     /// Positions `mark` saved (none until a decoder looks ahead).
     marks: Vec<Cursor>,
+    /// How many marks there were when the array of rows was opened: a decoder looks ahead
+    /// within one value, so the next row forgets the marks made in the last one.
+    row_marks: usize,
 }
 
 /// 2^63 as a float: integral floats in `[-2^63, 2^63)` are exact `i64`s.
@@ -87,6 +90,7 @@ impl RowReader {
             error: None,
             reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
             marks: Vec::new(),
+            row_marks: 0,
         }
     }
 
@@ -162,7 +166,10 @@ impl RowReader {
             return 0;
         }
         match (self.c.at, bracket) {
-            (At::Top, b'[') if !self.single => self.c.at = At::Rows,
+            (At::Top, b'[') if !self.single => {
+                self.c.at = At::Rows;
+                self.row_marks = self.marks.len();
+            }
             (At::Top, b'{') if self.single => self.open_row(),
             (At::Row, b'{') => self.open_row(),
             (At::Val, b'[') => match bin::cell_at(&self.buf, self.c.pos) {
@@ -191,6 +198,7 @@ impl RowReader {
         match self.c.at {
             At::Rows if self.c.pos < self.buf.len() => {
                 self.c.at = At::Row;
+                self.marks.truncate(self.row_marks);
                 STEP_MORE
             }
             At::Rows => {
@@ -623,6 +631,71 @@ mod tests {
         let mut r = RowReader::new(sample(false), 0);
         assert!(matches!(&*r.value().unwrap(), Value::Array(rows) if rows.len() == 2));
         assert_eq!(r.end(), 1);
+    }
+
+    #[test]
+    fn negative_zero_reads_as_zero() {
+        // The JSON text these rows stand for writes -0.0 as `0`.
+        let mut w = BinRows::new(["x"], true);
+        w.float(-0.0);
+        w.end_row();
+        let buf = w.finish();
+        assert_eq!(bin::to_json(&buf).unwrap(), b"{\"x\":0}");
+        let mut r = RowReader::new(buf, 0);
+        r.open(b'{');
+        key(&mut r);
+        assert_eq!(r.f64().map(f64::is_sign_negative), Some(false));
+    }
+
+    #[test]
+    fn a_column_name_of_any_length_is_kept() {
+        let long = format!("{}z", "a".repeat(70_000));
+        let mut w = BinRows::new([long.as_str(), "ü".repeat(40_000).as_str()], true);
+        w.int(1);
+        w.int(2);
+        w.end_row();
+        let mut r = RowReader::new(w.finish(), 0);
+        r.open(b'{');
+        assert_eq!(key(&mut r), Some(long));
+        assert_eq!(r.i64(), Some(1));
+        assert_eq!(key(&mut r), Some("ü".repeat(40_000)));
+        assert_eq!(r.i64(), Some(2));
+        assert_eq!(key(&mut r), None);
+        assert_eq!(r.end(), 1);
+    }
+
+    #[test]
+    fn marks_made_in_a_row_are_forgotten_at_the_next() {
+        let mut w = BinRows::new(["id"], false);
+        for i in 0..1000 {
+            w.int(i);
+            w.end_row();
+        }
+        let mut r = RowReader::new(w.finish(), 0);
+        let top = r.mark();
+        r.open(b'[');
+        for i in 0..1000 {
+            assert_eq!(r.array_next(), STEP_MORE);
+            // A union decoder looks ahead in each row and reads it again.
+            let mark = r.mark();
+            r.open(b'{');
+            key(&mut r);
+            assert!(r.string().is_none());
+            r.reset(mark);
+            r.open(b'{');
+            key(&mut r);
+            assert_eq!(r.i64(), Some(i));
+            assert_eq!(key(&mut r), None);
+            assert!(r.marks.len() <= 2);
+        }
+        assert_eq!(r.array_next(), STEP_END);
+        // A mark made before the rows still reads them again.
+        r.reset(top);
+        r.open(b'[');
+        assert_eq!(r.array_next(), STEP_MORE);
+        r.open(b'{');
+        key(&mut r);
+        assert_eq!(r.i64(), Some(0));
     }
 
     #[test]
