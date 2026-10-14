@@ -1,0 +1,16 @@
+// Four conditional spawns each get a WeakRef to the same object the spawning task churns.
+class V { n: number; pad: number[]; constructor(n: number) { this.n = n; this.pad = [n, n]; } }
+async function run(r: WeakRef<V>): Promise<number> { let s = 0; const a: V[] = []; for (let j = 0; j < 300000; j++) { const x = r.deref(); if (x !== null) { s += x.pad[1]; a.push(x); if (a.length > 4) a.length = 0; } else s -= 1; } return s; }
+async function run2(r: WeakRef<V>): Promise<number> { return 0; }
+async function main() {
+  let total = 0;
+  for (let round = 0; round < 10; round++) {
+    const keep = new V(7);
+    const ps: Promise<number>[] = [];
+    for (let t = 0; t < 4; t++) ps.push(spawn(round >= 0 ? run(new WeakRef(keep)) : run2(new WeakRef(keep))));
+    const a: V[] = [];
+    for (let j = 0; j < 300000; j++) { a.push(keep); if (a.length > 8) { a.length = 0; } }
+    for (const x of await Promise.all(ps)) total += x;
+  }
+  console.log(total);
+}

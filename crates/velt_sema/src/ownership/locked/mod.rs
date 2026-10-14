@@ -42,12 +42,17 @@ use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, TyKind};
 use crate::visit::{self, VisitMut};
 
-/// Check and rewrite every `with` callback (module docs).
-pub(crate) fn check_locked(cx: &mut Ctx) {
+/// Values crossing the lock whose types `crate::weak_threads` checks for weak collections: the
+/// function the type is in terms of, the type, how it crosses and where.
+pub(crate) type WeakCrossings = Vec<(DefId, crate::hir::TyId, crate::body::GenCopy, Span)>;
+
+/// Check and rewrite every `with` callback (module docs). Returns the crossings for
+/// `crate::weak_threads`.
+pub(crate) fn check_locked(cx: &mut Ctx) -> WeakCrossings {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
     if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {
-        return;
+        return vec![];
     }
     let summaries = summary::Summaries::compute(cx);
     // Before the callbacks are rewritten: a candidate is checked as written. Only programs with
@@ -71,6 +76,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
     }
     let mut done = HashSet::new();
     let mut reported = HashSet::new();
+    let mut weak = vec![];
     for (c, direct) in callbacks {
         if !done.insert(c) {
             continue;
@@ -82,8 +88,16 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
             }
             continue;
         }
-        check_callback(cx, &summaries, &mut res, c, &mut reported);
+        check_callback(
+            cx,
+            &summaries,
+            &mut res,
+            (c, direct),
+            &mut reported,
+            &mut weak,
+        );
     }
+    weak
 }
 
 /// A named function passed to `with` (`m.with(fire)`), checked like `(v) => fire(v)`: it has
@@ -206,6 +220,7 @@ struct Crossings {
     made: Vec<promises::Made>,
     unfixable: Vec<stores::Unfixable>,
     inward: Vec<(crate::hir::LocalId, Span, bool)>,
+    stored_fns: Vec<(DefId, Span)>,
 }
 
 /// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
@@ -242,17 +257,20 @@ fn crossings(
         unfixable.extend(resource_results(cx, &r, c, f));
     }
     let mut inward = vec![];
+    let mut stored_fns = vec![];
     if !std {
         for (d, f) in bodies.iter_mut() {
-            let (u, i) = stores::visit(cx, &mut r, s, *d, f, true);
+            let (u, i, fns) = stores::visit(cx, &mut r, s, *d, f, true);
             unfixable.extend(u);
             inward.extend(i);
+            stored_fns.extend(fns);
         }
     }
     Crossings {
         made,
         unfixable,
         inward,
+        stored_fns,
     }
 }
 
@@ -263,13 +281,21 @@ fn check_callback(
     cx: &mut Ctx,
     s: &summary::Summaries,
     res: &mut values::Resolver,
-    c: DefId,
+    (c, direct): (DefId, bool),
     reported: &mut HashSet<Span>,
+    weak: &mut WeakCrossings,
 ) {
     let (mut bodies, resolved, named) = take_bodies(cx, res, c);
+    weak_across(cx, (c, direct), &bodies, reported, weak);
     let found = crossings(cx, s, c, &mut bodies, resolved, named);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    }
+    for (n, at) in found.stored_fns {
+        for (ty, name, _) in crate::weak_threads::captures(cx, n) {
+            let what = crate::body::GenCopy::LockFn(name);
+            weak.push((n, ty, what, at));
+        }
     }
     for m in found.made {
         let span = made_span(&m);
@@ -285,6 +311,80 @@ fn check_callback(
         unfixable_error(cx, u);
     }
     later_uses(cx, res, c, found.inward, reported);
+}
+
+/// A weak collection used across the lock (docs/internals/design/weak-refs.md "Threads and
+/// `shared`"): captured from outside by a closure `with` calls (`with`'s argument itself is
+/// checked by body/expr/sync.rs `no_weak_in_lock` when it is written there), or captured by a
+/// closure made under the lock when `with` returns a function value; or the result of a
+/// callback not written at the `with` (`lockWith(m, (v) => new WeakRef(v.k))`, where a
+/// generic helper calls `m.with(f)`). A type that may hide one (an interface value, a base
+/// class, a type parameter) is checked by `crate::weak_threads`, which sees the whole program.
+fn weak_across(
+    cx: &mut Ctx,
+    (c, direct): (DefId, bool),
+    bodies: &[(DefId, FnDef)],
+    reported: &mut HashSet<Span>,
+    weak: &mut WeakCrossings,
+) {
+    struct Made(HashSet<DefId>);
+    impl VisitMut for Made {
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::Closure(n) = e.kind {
+                self.0.insert(n);
+            }
+        }
+    }
+    let mut made = Made(HashSet::new());
+    for (_, f) in bodies {
+        let mut b = f.body.block.clone();
+        visit::block(&mut b, &mut made);
+    }
+    let ret = cx.fn_info(c).ret;
+    if !direct {
+        let at = cx.fn_info(c).span;
+        let what = crate::body::GenCopy::LockResult;
+        if cx.holds_weak(ret) {
+            if reported.insert(at) {
+                let d = crate::body::weak_copy_error(cx, ret, &what, at);
+                cx.error(d);
+            }
+        } else {
+            weak.push((c, ret, what, at));
+        }
+    }
+    let returns_fn = cx.holds_fn(ret);
+    for (d, f) in bodies {
+        let inside = made.0.contains(d);
+        if (*d == c && direct) || (inside && !returns_fn) {
+            continue;
+        }
+        for cap in &f.captures {
+            let l = &f.body.locals[cap.inner.0 as usize];
+            let (ty, at) = (l.ty, l.span);
+            if !cx.holds_weak(ty) {
+                let what = crate::body::GenCopy::LockCapture(l.name.clone());
+                weak.push((*d, ty, what, at));
+                continue;
+            }
+            if !reported.insert(at) {
+                continue;
+            }
+            let msg = if inside {
+                format!(
+                    "a function returned from `with` cannot capture the weak collection `{}`",
+                    l.name
+                )
+            } else {
+                format!(
+                    "`with` calls a function that uses the weak collection `{}`",
+                    l.name
+                )
+            };
+            let note = crate::body::LOCK_NOTE;
+            cx.error(Diagnostic::error(msg, at).with_note(note));
+        }
+    }
 }
 
 fn made_span(m: &promises::Made) -> Span {

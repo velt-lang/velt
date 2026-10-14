@@ -149,9 +149,11 @@ fn weak_ref_deref_and_clearing() {
 
 #[test]
 fn handles_are_reused() {
-    let a = obj_map();
-    finish(&[a]);
-    let b = obj_map();
-    assert_eq!(a, b);
-    finish(&[b]);
+    no_leak(|| {
+        let a = obj_map();
+        finish(&[a]);
+        let b = obj_map();
+        assert_eq!(a, b);
+        finish(&[b]);
+    });
 }

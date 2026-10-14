@@ -1,0 +1,17 @@
+// spawn(c ? f(x) : g(y)) with a weak-holding interface argument.
+class V { n: number; constructor(n: number) { this.n = n; } }
+interface Peek { peek(): number; }
+class H implements Peek {
+  r: WeakRef<V>; v: V;
+  constructor(v: V) { this.v = v; this.r = new WeakRef(v); }
+  peek(): number { const x = this.r.deref(); if (x === null) return -1; return x.n; }
+}
+class N implements Peek { peek(): number { return 0; } }
+async function run(p: Peek): Promise<number> { let s = 0; for (let j = 0; j < 100000; j++) s += p.peek(); return s; }
+async function run2(p: Peek): Promise<number> { return p.peek(); }
+async function main() {
+  const keep = new V(7);
+  let total = 0;
+  for (let r = 0; r < 20; r++) { const p: Peek = new H(keep); total += await spawn(r >= 0 ? run(p) : run2(p)); }
+  console.log(total, keep.n);
+}

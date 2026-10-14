@@ -1,0 +1,1 @@
+`WErr`, which holds a weak collection, cannot be thrown from a spawned task
