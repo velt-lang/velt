@@ -305,7 +305,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `e` checked as a trial, rolled back.
-    fn trial_expr(&mut self, e: &ast::Expr) -> hir::Expr {
+    pub(super) fn trial_expr(&mut self, e: &ast::Expr) -> hir::Expr {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();

@@ -229,3 +229,35 @@ export class Object {
     return r.__entries();
   }
 }
+
+/**
+ * `k in r` for a key known only at run time: whether `key` names a member every object inherits
+ * from `Object.prototype` (sema tests the record's own entries first).
+ */
+export function __objectPrototypeKey(key: string): bool {
+  switch (key) {
+    case "__defineGetter__":
+    case "__defineSetter__":
+    case "__lookupGetter__":
+    case "__lookupSetter__":
+    case "__proto__":
+    case "constructor":
+    case "hasOwnProperty":
+    case "isPrototypeOf":
+    case "propertyIsEnumerable":
+    case "toLocaleString":
+    case "toString":
+    case "valueOf":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * `k in r` for a key known only at run time (sema calls this): whether the record has the entry
+ * `key`, or `key` names a member every object inherits from `Object.prototype`.
+ */
+export function __recordIn<V>(key: string, r: Record<string, V>): bool {
+  return r.__has(key) || __objectPrototypeKey(key);
+}

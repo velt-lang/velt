@@ -65,6 +65,21 @@ impl<'a> Printer<'a> {
                         *is_async,
                         Some(doc),
                     ),
+                    // `*name(params) { body }` / `async *name()`, which the parser gives as a
+                    // property holding a generator function whose span starts before the name.
+                    ExprKind::Function(f) if method => {
+                        let raw = slice(self.src, key.span);
+                        let name = match raw.starts_with(['"', '\'']) {
+                            true => string_literal(raw),
+                            false => key.name.clone(),
+                        };
+                        let mut f = (**f).clone();
+                        f.sig.name = Ident {
+                            name,
+                            span: key.span,
+                        };
+                        self.fn_decl(&f, "")
+                    }
                     _ => self.property(doc, value),
                 }
             }
