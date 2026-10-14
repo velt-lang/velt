@@ -100,6 +100,9 @@ and memory where you want a fixed width; code shared with TypeScript never names
   To any other type, `as` is TypeScript's type assertion and converts nothing: the expression is
   typed as if annotated with that type, so a literal takes its shape
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
+  As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
+  `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
+  bitwise operator after a cast needs parentheses: `(x as i32) | y`.
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write

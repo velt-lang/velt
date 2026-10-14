@@ -56,10 +56,15 @@ fn as_binds_like_relational() {
     check("5 as f64 / 2.0", "(/ (as 5 f64) 2.0)");
     check("a + b as f64", "(as (+ a b) f64)");
     check("a as i64 < b", "(< (as a i64) b)");
-    check("x as u8 | y", "(| (as x u8) y)");
+    check("x as u8 | y", "(as x (u8 | y))");
+    check("(x as u8) | y", "(| (paren (as x u8)) y)");
     check("x as T | null", "(as x (T | null))");
     check("k as \"a\" | \"b\" | null", "(as k (\"a\" | \"b\" | null))");
-    check("x as 1 | y", "(| (as x 1) y)");
+    check("x as 1 | y", "(as x (1 | y))");
+    check("x as A | B<C>[]", "(as x (A | B<C>[]))");
+    check("x as
+    | A
+    | null", "(as x (A | null))");
     check("-x as f64", "(as (- x) f64)");
     check(
         "(small as i64) * 100000",

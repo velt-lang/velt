@@ -47,11 +47,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Type after `as`. Unions are limited to a trailing `| null` and string literals
-    /// (`k as "a" | "b"`) so `x as u8 | y` stays a bit-or, and generic arguments are speculative
-    /// so `a as i64 < b` stays a comparison.
+    /// Type after `as` or `satisfies`: a whole type, as in TypeScript, so `x as A | B` is a
+    /// union (a leading `|` is allowed) and `x as A & B` an intersection. Generic arguments of a
+    /// named type are speculative, so `a as i64 < b` stays a comparison.
     pub(super) fn parse_cast_type(&mut self) -> PResult<TypeExpr> {
-        let lo = self.cur_lo();
         if self.at_kw(Kw::Const) {
             // `as const`: the type named `const` (sema keeps the value as it is).
             let span = self.cur_span();
@@ -67,43 +66,51 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        let mut ty = if self.at_ident_like() && !self.at_keyof() {
-            let named = self.parse_named_type_with(true)?;
-            self.parse_array_suffixes(lo, named)
-        } else {
-            self.parse_type_no_union()?
-        };
-        let strings = matches!(
-            &ty.kind,
-            TypeExprKind::Literal(SignedLit {
-                lit: Lit::Str(_),
-                ..
-            })
-        );
-        let more = |p: &mut Self| {
-            p.at(Tok::Pipe)
-                && (p.nth(1) == Tok::Kw(Kw::Null) || strings && matches!(p.nth(1), Tok::Str(_)))
-        };
-        if more(self) {
-            let mut members = vec![ty];
-            while more(self) {
-                self.bump();
-                if self.at(Tok::Kw(Kw::Null)) {
-                    members.push(TypeExpr {
-                        kind: TypeExprKind::Null,
-                        span: self.cur_span(),
-                    });
-                    self.bump();
-                } else {
-                    members.push(self.parse_type_no_union()?);
-                }
+        self.guarded(|p| {
+            let lo = p.cur_lo();
+            p.eat(Tok::Pipe);
+            let first = p.parse_cast_intersection()?;
+            if !p.at(Tok::Pipe) {
+                return Ok(first);
             }
-            ty = TypeExpr {
+            let mut members = vec![first];
+            while p.eat(Tok::Pipe) {
+                members.push(p.parse_cast_intersection()?);
+            }
+            Ok(TypeExpr {
                 kind: TypeExprKind::Union(members),
-                span: self.span_from(lo),
-            };
+                span: p.span_from(lo),
+            })
+        })
+    }
+
+    /// `A & B & …` after `as` (a leading `&` is allowed), or one member type.
+    fn parse_cast_intersection(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.eat(Tok::Amp);
+        let first = self.parse_cast_member()?;
+        if !self.at(Tok::Amp) {
+            return Ok(first);
         }
-        Ok(ty)
+        let mut members = vec![first];
+        while self.eat(Tok::Amp) {
+            members.push(self.parse_cast_member()?);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Intersection(members),
+            span: self.span_from(lo),
+        })
+    }
+
+    /// One member of the type after `as`: a named type (with speculative generic arguments)
+    /// and its `[]` suffixes, or any other type without a top-level union.
+    fn parse_cast_member(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        if self.at_ident_like() && !self.at_keyof() {
+            let named = self.parse_named_type_with(true)?;
+            return Ok(self.parse_array_suffixes(lo, named));
+        }
+        self.parse_type_no_union()
     }
 
     /// Class name after `instanceof` (generic arguments are speculative, as after `as`).

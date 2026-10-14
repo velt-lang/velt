@@ -88,8 +88,9 @@ fn intersection_types() {
         alias_ty("string & { __brand: \"Id\" }"),
         "(string & {__brand: \"Id\"})"
     );
-    // A cast keeps its restricted grammar: `x as A & B` is a bitwise and.
-    check("x as i64 & m", "(& (as x i64) m)");
+    // As in TypeScript, `as` takes a whole type: `x as A & B` is an intersection.
+    check("x as i64 & m", "(as x (i64 & m))");
+    check("(x as i64) & m", "(& (paren (as x i64)) m)");
 }
 
 #[test]
