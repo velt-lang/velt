@@ -3,7 +3,9 @@
 # build (Cranelift) of long_main_<CLASSES> (CLASSES classes with an override and a generic instance
 # each, all used from one `main` of 6 × CLASSES blocks; the same program as run.sh's long_main)
 # must stay under LIMIT_MB of peak memory (resident set of the whole `velt build`). Prints the
-# stage times, the peak and the verdict; exits 1 over the limit.
+# stage times, the peak and the verdict; exits 1 over the limit. It says what it starts before
+# starting it, and on Linux the build's address space is bounded at 4 × LIMIT_MB, so a build
+# that needs far more fails with a message instead of taking the machine down.
 #
 #   bench/compile/stress.sh [classes = 16000] [limit in MB = 2048] [path to velt]
 #
@@ -42,11 +44,20 @@ exe = f"{out}/long_main_{n}_stress"
 for stale in (exe, exe + ".link-stamp"):
     if os.path.exists(stale):
         os.remove(stale)
+bound_mb = 4 * limit
+def bound():
+    # Linux only: macOS does not enforce RLIMIT_AS.
+    if sys.platform.startswith("linux"):
+        resource.setrlimit(resource.RLIMIT_AS, (bound_mb << 20, bound_mb << 20))
+print(f"velt build -v long_main_{n}.vlt (debug; {os.path.getsize(path) >> 10} KiB of source)...",
+      file=sys.stderr, flush=True)
+# The stage times go straight to stderr.
 r = subprocess.run([velt, "build", "-v", path, "-o", exe], stdout=subprocess.DEVNULL,
-                   stderr=subprocess.PIPE, text=True)
-sys.stderr.write(r.stderr)
+                   preexec_fn=bound)
 if r.returncode != 0:
-    sys.exit(f"velt build {path} failed")
+    sys.exit(f"velt build {path} failed (exit status {r.returncode}; its address space is "
+             f"bounded at {bound_mb} MB, a status of -6 or -9 usually means it ran out)")
+print(f"running long_main_{n}...", file=sys.stderr, flush=True)
 # ru_maxrss: KiB on Linux, bytes on macOS.
 peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
 peak_mb = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024

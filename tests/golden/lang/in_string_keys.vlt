@@ -1,0 +1,256 @@
+// `"k" in o` with a string key, as in Node: a declared member (field, method, accessor) is always
+// there, an optional field of an object type only while present, the members of
+// `Object.prototype` (`"toString"`) on every object, and a `Record<string, V>`'s keys are tested
+// at run time (also a key known only then, and after `delete`). On a union `in` narrows to the
+// members that may have the key, also negated, in `&&` and in a conditional, as tsc does.
+// Static members and `#private` names are not instance keys, a setter is (`"w"`, never
+// `"set w"`); a value whose class is known only at run time is tested for the subclasses and
+// implementing classes that declare the key; a number key on a record is its string, and a key
+// in a call argument or in a `for (;;)` head works. An enum-typed key is judged by its values: a
+// string enum's is a string, a numeric enum's is converted as a number is. Expected output from
+// node (the enum lines from tsc's JavaScript).
+interface Fish {
+  swim(): string;
+  name: string;
+}
+
+interface Bird {
+  fly(): string;
+  name: string;
+  wings?: number;
+}
+
+type A = { kind: string; a: number };
+type B = { kind: string; b?: string };
+
+class Salmon implements Fish {
+  name = "f";
+  swim(): string {
+    return "swims";
+  }
+}
+
+class Crow implements Bird {
+  name = "b";
+  wings?: number;
+  fly(): string {
+    return "flies";
+  }
+}
+
+class Base {
+  x: number = 1;
+  greet(): string {
+    return "hi";
+  }
+}
+
+class Sub extends Base {
+  y: number = 2;
+}
+
+interface Shape {
+  area(): number;
+}
+
+class Sq implements Shape {
+  side: number = 2;
+  area(): number {
+    return 4;
+  }
+}
+
+class Circle implements Shape {
+  area(): number {
+    return 3;
+  }
+}
+
+class S {
+  static s(): void {}
+  #p = 1;
+  h = 0;
+  set w(v: number) {
+    this.h = v;
+  }
+  get g(): number {
+    return this.#p;
+  }
+}
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function move(p: Fish | Bird): string {
+  if ("swim" in p) {
+    return p.swim();
+  }
+  return p.fly();
+}
+
+function describe(v: A | B): string {
+  return "a" in v ? `A ${v.a}` : `B ${v.kind}`;
+}
+
+function notIn(v: A | B): string {
+  if (!("a" in v)) {
+    return "no a: " + v.kind;
+  }
+  return "a=" + v.a;
+}
+
+function both(v: A | B): boolean {
+  return "b" in v && v.kind === "x";
+}
+
+class Sized {
+  get size(): number {
+    return 3;
+  }
+}
+
+function count(v: Record<string, number> | A): number {
+  if ("a" in v) {
+    return 1;
+  }
+  return 0;
+}
+
+// An optional field stays testable with `in` while every store into it has a value: left out,
+// a literal, a narrowed parameter, a default, or a spread of an object with the same optional field.
+type Note = { kind: string; note?: string };
+type Tagged = { note?: string; tag: string };
+
+function withNote(note?: string): Note {
+  const o: Note = { kind: "k" };
+  if (note) o.note = note;
+  return o;
+}
+
+function noteOr(note?: string): Note {
+  return { kind: "d", note: note ?? "none" };
+}
+
+function recopy(o: Note): Note {
+  return { ...o, kind: "c" };
+}
+
+function fromTagged(t: Tagged): Note {
+  return { ...t, kind: t.tag };
+}
+
+type Size = { w: number; h: number };
+
+enum Color {
+  Red = "red",
+  Blue = "blue",
+}
+
+enum Num {
+  One = 1,
+  Two,
+  Seven = 7,
+}
+
+function main() {
+  const f: Fish = new Salmon();
+  const b: Bird = new Crow();
+  console.log(move(f), move(b));
+  console.log(describe({ kind: "k", a: 1 }), describe({ kind: "j" }));
+  console.log(notIn({ kind: "k", a: 1 }), notIn({ kind: "j" }));
+  const o = { a: 1, b: "x" };
+  console.log("a" in o, "c" in o, "toString" in o, "constructor" in o);
+  const opt: B = { kind: "x" };
+  const opt2: B = { kind: "x", b: "y" };
+  console.log("b" in opt, "b" in opt2, both(opt), both(opt2));
+  const c = new Base();
+  console.log("x" in c, "greet" in c, "y" in c, "valueOf" in c);
+  const r: Record<string, number> = { one: 1 };
+  const k = "one";
+  let key: string = "two";
+  console.log("one" in r, "two" in r, k in r, key in r);
+  r[key] = 2;
+  console.log(key in r);
+  delete r["one"];
+  console.log("one" in r, "toString" in r, "hasOwnProperty" in r);
+  key = "valueOf";
+  console.log(key in r);
+  const closed: Record<"x" | "y", number> = { x: 1, y: 2 };
+  console.log("x" in closed, "z" in closed);
+  console.log(("a" in o) === true);
+  for (let i = 0; "a" in o && i < 2; i++) {
+    console.log("loop", i);
+  }
+  for (const kk in o) {
+    console.log(kk);
+  }
+  console.log(f.name, b.wings ?? 0);
+  console.log("size" in new Sized(), "length" in new Sized());
+  const counts: Record<string, number> = { a: 5 };
+  console.log(count(counts), count({}), count({ kind: "k", a: 2 }));
+  console.log("wings" in b, "fly" in b);
+  const sc = new S();
+  console.log("s" in sc, "#p" in sc, "w" in sc, "set w" in sc, "g" in sc, "get g" in sc);
+  const sub: Base = new Sub();
+  const base: Base = new Base();
+  console.log("y" in sub, "y" in base, "x" in sub);
+  const shapes: Shape[] = [new Sq(), new Circle()];
+  for (const s of shapes) {
+    console.log("side" in s, "area" in s);
+  }
+  const nums: Record<string, number> = { "1": 1, "2.5": 2 };
+  const one = 1;
+  console.log(1 in nums, 2 in nums, 2.5 in nums, one in nums);
+  for (const kk of ["1", "3"]) {
+    console.log(kk, kk in nums);
+  }
+  let x: boolean;
+  for (x = id("a" in o); x; x = false) {
+    console.log("x", x);
+  }
+  let st: string;
+  for (st = `${"a" in o}`; st !== ""; st = "") {
+    console.log("st", st);
+  }
+  let y: number;
+  for (y = true ? "z" in o ? 1 : 2 : 3; y > 0; y = 0) {
+    console.log("y", y);
+  }
+  console.log("note" in withNote(), "note" in withNote("n"), "note" in noteOr());
+  console.log("note" in recopy(withNote()), "note" in recopy(withNote("n")));
+  const tagged: Tagged = { tag: "t" };
+  console.log("note" in fromTagged(tagged), "note" in fromTagged({ tag: "u", note: "v" }));
+  const held = id(withNote("i"));
+  held.note = "set";
+  console.log("note" in held, held.note);
+  // A run-time key is judged by what its type is assignable to: a union of string literals
+  // and a `keyof` type are strings, `string | number` is converted as a number is.
+  let lit: "a" | "b" = "a";
+  console.log(lit in counts);
+  lit = "b";
+  console.log(lit in counts);
+  const sides: (keyof Size)[] = ["w", "h"];
+  const sizes: Record<string, number> = { w: 3 };
+  for (const side of sides) {
+    console.log(side, side in sizes);
+  }
+  let mixed: string | number = 1;
+  console.log(mixed in nums);
+  mixed = "2.5";
+  console.log(mixed in nums);
+  mixed = 7;
+  console.log(mixed in nums);
+  // An enum-typed key: a string enum's value, a numeric enum's value as its string.
+  const colors: Record<string, number> = { red: 1 };
+  let color: Color = Color.Red;
+  console.log(color in colors, Color.Blue in colors);
+  color = Color.Blue;
+  console.log(color in colors);
+  let num: Num = Num.One;
+  console.log(num in nums, Num.Two in nums);
+  num = Num.Seven;
+  console.log(num in nums);
+  const either: Color | Num = Num.One;
+  console.log(either in nums, either in colors);
+}

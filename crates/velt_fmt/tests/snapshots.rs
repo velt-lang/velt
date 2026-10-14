@@ -411,3 +411,22 @@ class C {
 ",
     );
 }
+
+#[test]
+fn generator_methods_in_object_literals_stay_methods() {
+    assert_fmt(
+        "const bag = { *items(n: i64): Generator<i64> { yield n; }, async  *ticks(): AsyncGenerator<i64> { yield 1; }, f: function* () { yield 2; } };\n",
+        "const bag = {
+  *items(n: i64): Generator<i64> {
+    yield n;
+  },
+  async *ticks(): AsyncGenerator<i64> {
+    yield 1;
+  },
+  f: function* () {
+    yield 2;
+  },
+};
+",
+    );
+}

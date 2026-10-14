@@ -1,0 +1,153 @@
+// A loop over a map that compacts for the first time while the loop runs (the map has a
+// tombstone and no sequence breakpoints yet; a `set` grows the index) goes on from the entry
+// after the current one: no entry is visited twice. Output equals node's.
+
+function fresh(): Map<string, number> {
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+    ["d", 4],
+    ["e", 5],
+    ["f", 6],
+  ]);
+  m.delete("e");
+  m.set("g", 7);
+  return m;
+}
+
+function freshNull(): Map<string, number | null> {
+  const m = new Map<string, number | null>([
+    ["a", 1],
+    ["b", null],
+    ["c", 3],
+    ["d", null],
+    ["e", 5],
+    ["f", null],
+  ]);
+  m.delete("e");
+  m.set("g", null);
+  return m;
+}
+
+function forOf() {
+  const m = fresh();
+  let s = "";
+  for (const [k, v] of m) {
+    s += k + v;
+    if (k == "c") {
+      m.set("h", 8); // grows the index: compacts the tombstone
+    }
+  }
+  console.log("for...of", s, m.size);
+}
+
+function forEach() {
+  const m = fresh();
+  // A second name for the map: a callback must not modify the receiver of its own call by name.
+  const alias = m;
+  let s = "";
+  m.forEach((v, k) => {
+    s += k + v;
+    if (k == "c") {
+      alias.set("h", 8);
+    }
+  });
+  console.log("forEach", s, m.size);
+}
+
+function keys() {
+  const m = fresh();
+  let s = "";
+  for (const k of m.keys()) {
+    s += k;
+    if (k == "c") {
+      m.set("h", 8);
+    }
+  }
+  console.log("keys", s, m.size);
+}
+
+function values() {
+  const m = fresh();
+  let s = "";
+  for (const v of m.values()) {
+    s += v;
+    if (v == 3) {
+      m.set("h", 8);
+    }
+  }
+  console.log("values", s, m.size);
+}
+
+function nullable() {
+  let m = freshNull();
+  let s = "";
+  for (const [k, v] of m) {
+    s += k + (v === null ? "-" : `${v}`);
+    if (k == "c") {
+      m.set("h", null);
+    }
+  }
+  console.log("null for...of", s, m.size);
+
+  m = freshNull();
+  const alias = m;
+  s = "";
+  m.forEach((v, k) => {
+    s += k + (v === null ? "-" : `${v}`);
+    if (k == "c") {
+      alias.set("h", null);
+    }
+  });
+  console.log("null forEach", s, m.size);
+
+  m = freshNull();
+  s = "";
+  for (const k of m.keys()) {
+    s += k;
+    if (k == "c") {
+      m.set("h", null);
+    }
+  }
+  console.log("null keys", s, m.size);
+  console.log(m);
+}
+
+// The compaction at each position of the loop in turn, with a tombstone at each position.
+function sweep() {
+  const names = ["a", "b", "c", "d", "e", "f"];
+  let out = "";
+  for (let dead = 0; dead < names.length; dead++) {
+    for (let at = 0; at < names.length; at++) {
+      if (at == dead) {
+        continue;
+      }
+      const m = new Map<string, number | null>();
+      for (let i = 0; i < names.length; i++) {
+        m.set(names[i], i % 2 == 0 ? i : null);
+      }
+      m.delete(names[dead]);
+      m.set("g", 7);
+      let s = "";
+      for (const k of m.keys()) {
+        s += k;
+        if (k == names[at]) {
+          m.set("h", 8);
+          m.delete("b");
+        }
+      }
+      out += s + " ";
+    }
+  }
+  console.log(out);
+}
+
+function main() {
+  forOf();
+  forEach();
+  keys();
+  values();
+  nullable();
+  sweep();
+}

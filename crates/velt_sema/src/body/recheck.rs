@@ -22,7 +22,7 @@ pub(crate) struct Lens {
     diags: usize,
     throw_checks: usize,
     fresh_checks: usize,
-    object_copies: [usize; 3],
+    object_copies: [usize; 5],
     jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
@@ -210,6 +210,16 @@ impl Mark {
         );
         keep_ranges(&mut copies.seen, start[2], &ranges(|l| l.object_copies[2]));
         keep_ranges(
+            &mut copies.in_optional,
+            start[3],
+            &ranges(|l| l.object_copies[3]),
+        );
+        keep_ranges(
+            &mut copies.null_literals,
+            start[4],
+            &ranges(|l| l.object_copies[4]),
+        );
+        keep_ranges(
             &mut cx.jsx_adapters,
             m.jsx_adapters,
             &ranges(|l| l.jsx_adapters),
@@ -295,7 +305,7 @@ mod tests {
             diags: 0,
             throw_checks: 0,
             fresh_checks: 0,
-            object_copies: [0; 3],
+            object_copies: [0; 5],
             jsx_adapters: 0,
             fn_values: 0,
             fn_defs: 0,

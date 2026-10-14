@@ -88,6 +88,14 @@ pub enum Intrinsic {
     /// reference while the call runs (lowering counts the type, or borrows values of it inside
     /// counted objects)? Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only (std/prelude/map.vlt): `__intrinsic_holds_null<T>(probe: borrow T) -> bool`, a
+    /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
+    /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
+    HoldsNull,
+    /// std only (std/prelude/map.vlt): `__intrinsic_null_as<T>() -> T`, `null` as a `T` that
+    /// holds null (`HoldsNull`). For any other `T` it stops the program with an internal error:
+    /// std reaches it only behind a `HoldsNull` test.
+    NullAs,
     /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, JS truthiness of a value
     /// whose type is a type parameter (`!x`, `if (x)` on a `T`), the test chosen by lowering
     /// per instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`,

@@ -386,6 +386,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::NeedsTransfer
         | I::NeedsDrop
         | I::MayAlias
+        | I::HoldsNull
+        | I::NullAs
         | I::Truthy
         | I::FnCapturesNothing
         | I::Sqrt

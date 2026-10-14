@@ -1,0 +1,17 @@
+for...of a1b2c3d4f6g7h8 7
+forEach a1b2c3d4f6g7h8 7
+keys abcdfgh 7
+values 1234678 7
+null for...of a1b-c3d-f-g-h- 7
+null forEach a1b-c3d-f-g-h- 7
+null keys abcdfgh 7
+Map(7) {
+  'a' => 1,
+  'b' => null,
+  'c' => 3,
+  'd' => null,
+  'f' => null,
+  'g' => null,
+  'h' => null
+}
+bcdefgh bcdefgh bcdefgh bcdefgh bcdefgh acdefgh acdefgh acdefgh acdefgh acdefgh adefgh abdefgh abdefgh abdefgh abdefgh acefgh abcefgh abcefgh abcefgh abcefgh acdfgh abcdfgh abcdfgh abcdfgh abcdfgh acdegh abcdegh abcdegh abcdegh abcdegh 
