@@ -712,17 +712,36 @@ console.log(show("ab"), show(41)); // AB 42
 
 - TypeScript does not check that a predicate's body answers correctly. A call that narrows
   checks the value at run time against what its result says, as `typeof` or `instanceof` would,
-  and throws a `TypeError` when they disagree (``the type predicate `isString` returned false
-  for a value that is `string` ``), where Node would go on with a value that is not of the
-  type it was narrowed to. A predicate that answers correctly behaves as in Node.
+  and panics when they disagree (``the type predicate `isString` returned false for a value
+  that is `string` ``; exit code 101), where Node would go on with a value that is not of the
+  type it was narrowed to. Unlike a thrown error, this panic cannot be caught with
+  `try`/`catch`. A predicate that answers correctly behaves as in Node.
 - A literal predicate type (`x is "a"` on `string | number`) narrows to the member it is a
   value of (`string`) when the call is true and leaves the variable as it is when false; a
   type no member of the variable's type is (`x is Dog` on `string | number`) does not narrow.
 - The function must be declared with `function` and not be generic for its calls to narrow; a
   predicate on an arrow or a function type (`(x: unknown) => x is T`) is just a `boolean`
   result. `this is T` is accepted and not used for narrowing yet.
-- `asserts x is T` and `asserts x` declare a function that returns nothing (it throws instead
-  of returning `false`); the narrowing after its call is not made yet.
+- `asserts x is T` and `asserts x` declare an assertion function, which returns nothing (it
+  throws instead of returning `false`). A call of it as a statement narrows the variable passed
+  as `x` for the rest of the block, as `if (!isT(x)) throw …;` would: to `T`, or for `asserts
+  x` to a truthy value (`string | null` to `string`). As for a predicate, the value is checked
+  after the call, and an assertion function that returns for a value that is not `T` makes the
+  call panic (``the assertion function `assertDog` returned for a value that is not `Dog` ``;
+  exit code 101, which `try`/`catch` cannot catch). The errors the function throws itself are
+  ordinary errors.
+
+```ts
+function assertIsString(v: string | number): asserts v is string {
+  if (typeof v !== "string") throw new Error("not a string");
+}
+
+function shout(v: string | number): string {
+  assertIsString(v);
+  return v.toUpperCase();
+}
+console.log(shout("hi")); // HI
+```
 
 ## Intersection types
 
@@ -1108,8 +1127,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
   an array, a string's characters, a map's entries, a generator, any iterable.
 - **`readonly T[]`** and **`ReadonlyArray<T>`** (the same type) are array types, and
-  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. TypeScript's errors
-  for writing to them (`xs.push(x)`, `xs[0] = x`) are not reported yet.
+  `readonly [A, B]` a tuple type; a `T[]` is passed where one is expected. A variable or
+  parameter declared with a read-only array type cannot be written through: a mutating method
+  (``property 'push' does not exist on type 'readonly number[]'``, TypeScript's TS2339, also
+  `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, `copyWithin`) and an element
+  assignment (`xs[0] = x`, TS2542) are errors; the elements' own fields may change
+  (`xs[0].n = 1`). The check follows the variable: a `readonly T[]` copied into a `T[]`
+  variable or passed as a `T[]` parameter (TypeScript's TS4104) is not reported yet.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. Element labels document the
   elements and are otherwise ignored, as in TypeScript: `type Wire = [kind: string, b64:
   string]`. `Promise.all` over tuples of different types is not supported.

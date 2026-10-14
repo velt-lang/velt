@@ -326,6 +326,41 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### Returning `this`
+
+```ts
+class Registry {
+  names: string[] = [];
+  register(name: string): this {
+    this.names.push(name);
+    return this;
+  }
+}
+
+class Tagged extends Registry {
+  tags: string[] = [];
+  tag(t: string): this {
+    this.tags.push(t);
+    return this;
+  }
+}
+
+const t = new Tagged().register("a").tag("x").register("b");
+console.log(t.names, t.tags); // [ 'a', 'b' ] [ 'x' ]
+```
+
+- `this` as a method's result type (the polymorphic `this` type) is the class of the object
+  the method is called on: `register` called on a `Tagged` gives a `Tagged`, so chained calls
+  keep the subclass's methods, as in TypeScript. An override returns `this` too: written
+  (`override register(name: string): this`) or left out, when it returns `this` (or
+  `super.register(name)`). An override with another result type (`override register(name:
+  string): Registry`) is TypeScript's error TS2416.
+- Such a method returns `this` (or the result of another `this`-returning method called on
+  `this`); returning another object of the class is TypeScript's error ``type `A` is not
+  assignable to type `this` ``. The `this` type elsewhere in an instance method's signature or
+  body (a parameter `other: this`) is the declaring class. In a static method or outside a class
+  it is TS2526; in an interface it is not supported yet.
+
 ### `instanceof` downcasts
 
 `x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true

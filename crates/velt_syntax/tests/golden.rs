@@ -45,6 +45,8 @@ fn golden_m1_files_parse() {
                 | "type_operators_unsupported.vlt"
                 | "param_property_pattern.vlt"
                 | "param_defaults_unsupported.vlt"
+                | "function_expression_errors.vlt"
+                | "function_expression_this_errors.vlt"
         ) {
             continue;
         }
