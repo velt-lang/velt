@@ -4,6 +4,8 @@
 // Base64 digits by value (RFC 4648 §4, and §5 for the URL-safe alphabet), and the value of every
 // byte as a digit: -1 for the others, signed so that one sign test finds a byte that is not a
 // digit among four.
+
+/** Standard Base64 digits by value. */
 export const STD_DIGITS: u8[] = [
   65,
   66,
@@ -70,6 +72,7 @@ export const STD_DIGITS: u8[] = [
   43,
   47,
 ];
+/** URL-safe Base64 digits by value. */
 export const URL_DIGITS: u8[] = [
   65,
   66,
@@ -136,6 +139,7 @@ export const URL_DIGITS: u8[] = [
   45,
   95,
 ];
+/** The value of every byte as a standard Base64 digit, -1 for the others. */
 export const STD_VALUES: i8[] = [
   -1,
   -1,
@@ -394,6 +398,7 @@ export const STD_VALUES: i8[] = [
   -1,
   -1,
 ];
+/** The value of every byte as a URL-safe Base64 digit, -1 for the others. */
 export const URL_VALUES: i8[] = [
   -1,
   -1,
@@ -653,9 +658,13 @@ export const URL_VALUES: i8[] = [
   -1,
 ];
 
+/** Lowercase hex digits by value. */
 export const HEX_DIGITS: u8[] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102];
-// The value of every byte as a hex digit of either case, 255 (std/encoding's `INVALID`) for the
-// others.
+
+/**
+ * The value of every byte as a hex digit of either case, 255 (std/encoding's `INVALID`) for the
+ * others.
+ */
 export const HEX_VALUES: u8[] = [
   255,
   255,
