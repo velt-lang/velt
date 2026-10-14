@@ -16,10 +16,6 @@ function kind(c: boolean | string): string {
   return c ? typeof c : "n";
 }
 
-function matches(s: string, c: boolean): boolean {
-  return c ? /a+/.test(s) : false;
-}
-
 class Count {
   n = 0;
 }
@@ -62,7 +58,6 @@ async function main() {
   console.log(b4, count);
   console.log(pick(true, 1), pick(false, 1));
   console.log(kind(true), kind(""), kind("s"));
-  console.log(matches("caat", true), matches("caat", false));
   const s = new Count();
   bump(s);
   bumpUnless(s, true);
