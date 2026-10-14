@@ -151,12 +151,10 @@ fn augment_global(
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let found = items
-        .iter_mut()
-        .find_map(|i| match &mut i.kind {
-            ast::ItemKind::Interface(d) if d.name.name == decl.name.name => Some(d),
-            _ => None,
-        });
+    let found = items.iter_mut().find_map(|i| match &mut i.kind {
+        ast::ItemKind::Interface(d) if d.name.name == decl.name.name => Some(d),
+        _ => None,
+    });
     match found {
         Some(into) => merge(into, decl, diags),
         None => items.push(ast::Item {
@@ -190,9 +188,12 @@ fn find_in(
     }
     seen.push(m);
     let module = &modules[m];
-    if let Some(i) = module.ast.items.iter().position(
-        |i| matches!(&i.kind, ast::ItemKind::Interface(d) if d.name.name == name),
-    ) {
+    if let Some(i) = module
+        .ast
+        .items
+        .iter()
+        .position(|i| matches!(&i.kind, ast::ItemKind::Interface(d) if d.name.name == name))
+    {
         return Some((m, i));
     }
     let target = |from: &str| {
@@ -246,12 +247,16 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
     }
     into.extends.extend(from.extends);
     let taken = |into: &ast::InterfaceDecl, n: &str| {
-        into.fields.iter().find(|f| f.name.name == n).map(|f| f.name.span).or_else(|| {
-            into.methods
-                .iter()
-                .find(|m| m.sig.name.name == n && !m.is_getter && !m.is_setter)
-                .map(|m| m.sig.name.span)
-        })
+        into.fields
+            .iter()
+            .find(|f| f.name.name == n)
+            .map(|f| f.name.span)
+            .or_else(|| {
+                into.methods
+                    .iter()
+                    .find(|m| m.sig.name.name == n && !m.is_getter && !m.is_setter)
+                    .map(|m| m.sig.name.span)
+            })
     };
     for f in from.fields {
         if taken(into, &f.name.name).is_some() {

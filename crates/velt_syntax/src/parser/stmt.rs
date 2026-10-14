@@ -143,14 +143,9 @@ impl<'a> Parser<'a> {
     /// Declarations allowed inside blocks (functions, types, ...).
     fn at_nested_item(&mut self) -> bool {
         match self.cur_kw() {
-            Some(
-                Kw::Function
-                | Kw::Struct
-                | Kw::Class
-                | Kw::Interface
-                | Kw::Enum
-                | Kw::Export,
-            ) => true,
+            Some(Kw::Function | Kw::Struct | Kw::Class | Kw::Interface | Kw::Enum | Kw::Export) => {
+                true
+            }
             Some(Kw::Import) => !matches!(self.nth(1), Tok::Dot | Tok::LParen),
             Some(Kw::Async | Kw::Declare) => self.nth(1) == Tok::Kw(Kw::Function),
             Some(Kw::Type) => Self::is_ident_like(self.nth(1)),

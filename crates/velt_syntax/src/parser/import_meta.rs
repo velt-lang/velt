@@ -52,11 +52,8 @@ impl<'a> Parser<'a> {
         };
         if self.speculating == 0 {
             self.diags.push(
-                velt_common::Diagnostic::error(
-                    "dynamic `import()` is not supported",
-                    span,
-                )
-                .with_note(note),
+                velt_common::Diagnostic::error("dynamic `import()` is not supported", span)
+                    .with_note(note),
             );
         }
     }

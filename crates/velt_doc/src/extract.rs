@@ -247,9 +247,10 @@ fn declared_name(item: &Item) -> Option<&String> {
             ast::PatternKind::Ident(name) => &name.name,
             _ => return None,
         },
-        ItemKind::Extend(_) | ItemKind::Import(_) | ItemKind::ExternFn(_) | ItemKind::Augment(_) => {
-            return None
-        }
+        ItemKind::Extend(_)
+        | ItemKind::Import(_)
+        | ItemKind::ExternFn(_)
+        | ItemKind::Augment(_) => return None,
     })
 }
 

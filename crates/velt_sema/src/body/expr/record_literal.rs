@@ -279,7 +279,10 @@ impl FnCx<'_, '_> {
 /// writes as a spread of a call of the prelude's `__computed_key` (`ast::COMPUTED_KEY_FN`).
 pub(crate) fn computed_entry(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr)> {
     let ast::ExprKind::Call {
-        callee, args, type_args, ..
+        callee,
+        args,
+        type_args,
+        ..
     } = &e.kind
     else {
         return None;

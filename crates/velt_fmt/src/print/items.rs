@@ -4,8 +4,8 @@
 use velt_syntax::ast::{Augment, Import, Item, ItemKind, TypeAlias, TypeExprKind, VarDecl};
 
 use super::lists::delimited;
-use super::Printer;
 use super::script::{blank_before, Top};
+use super::Printer;
 use crate::doc::{cat, group, hardline, if_break, indent, join, line, text, Doc};
 use crate::source::{slice, string_literal};
 
@@ -61,7 +61,10 @@ impl<'a> Printer<'a> {
     fn augment(&mut self, a: &Augment, end: u32) -> Doc {
         let head = match &a.module {
             None => text("declare global"),
-            Some((_, span)) => cat!["declare module ", text(string_literal(slice(self.src, *span)))],
+            Some((_, span)) => cat![
+                "declare module ",
+                text(string_literal(slice(self.src, *span)))
+            ],
         };
         if a.items.is_empty() {
             return cat![head, " {}"];

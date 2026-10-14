@@ -288,9 +288,10 @@ impl<'a> Parser<'a> {
         let value = self.parse_assign()?;
         let plain = match &key.kind {
             ExprKind::Lit(Lit::Str(s)) => Some(s.clone()),
-            ExprKind::Lit(Lit::Int { value, suffix: None }) if *value < 1 << 53 => {
-                Some(value.to_string())
-            }
+            ExprKind::Lit(Lit::Int {
+                value,
+                suffix: None,
+            }) if *value < 1 << 53 => Some(value.to_string()),
             _ => None,
         };
         if let Some(name) = plain {

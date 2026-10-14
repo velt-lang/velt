@@ -9,18 +9,23 @@ use velt_syntax::ast;
 
 /// Fills in the fields of `module`'s `import.meta` constant, if it has one, for the file `path`.
 pub(super) fn fill(module: &mut ast::Module, path: &Path) {
-    let Some(init) = module.items.iter_mut().rev().find_map(|i| match &mut i.kind {
-        ast::ItemKind::Var(ast::VarDecl {
-            pattern:
-                ast::Pattern {
-                    kind: ast::PatternKind::Ident(name),
-                    ..
-                },
-            init: Some(init),
-            ..
-        }) if name.name == ast::IMPORT_META => Some(init),
-        _ => None,
-    }) else {
+    let Some(init) = module
+        .items
+        .iter_mut()
+        .rev()
+        .find_map(|i| match &mut i.kind {
+            ast::ItemKind::Var(ast::VarDecl {
+                pattern:
+                    ast::Pattern {
+                        kind: ast::PatternKind::Ident(name),
+                        ..
+                    },
+                init: Some(init),
+                ..
+            }) if name.name == ast::IMPORT_META => Some(init),
+            _ => None,
+        })
+    else {
         return;
     };
     let file = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
@@ -72,12 +77,12 @@ mod tests {
     #[test]
     fn file_urls() {
         assert_eq!(file_url(Path::new("/a/b c/d.ts")), "file:///a/b%20c/d.ts");
-        assert_eq!(file_url(Path::new("/x/%#?é.ts")), "file:///x/%25%23%3F%C3%A9.ts");
+        assert_eq!(
+            file_url(Path::new("/x/%#?é.ts")),
+            "file:///x/%25%23%3F%C3%A9.ts"
+        );
         if cfg!(windows) {
-            assert_eq!(
-                file_url(Path::new(r"C:\Dev\m.ts")),
-                "file:///C:/Dev/m.ts"
-            );
+            assert_eq!(file_url(Path::new(r"C:\Dev\m.ts")), "file:///C:/Dev/m.ts");
         }
     }
 }
