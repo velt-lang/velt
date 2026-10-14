@@ -1,0 +1,7 @@
+load/target/
+.work/
+tls/*.pem
+*.db
+*.db-wal
+*.db-shm
+__pycache__/

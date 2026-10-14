@@ -1,0 +1,1 @@
+an async closure cannot capture the weak collection `p`

@@ -1,0 +1,62 @@
+// check: no leaks
+// Freeing a key releases its values, which can release other maps' keys and drop other maps
+// (a value owning a map of its own): each step finishes before the next starts.
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Proxy {
+  target: Node;
+  constructor(target: Node) {
+    this.target = target;
+  }
+}
+
+// A value that owns a map, its own `raw -> proxy` cache, and another map's key.
+class Scope {
+  cache = new WeakMap<Node, Proxy>();
+  parent: Node;
+  constructor(parent: Node) {
+    this.parent = parent;
+  }
+  proxy(n: Node): Proxy {
+    const p = this.cache.get(n);
+    if (p != null) {
+      return p;
+    }
+    const q = new Proxy(n);
+    this.cache.set(n, q);
+    return q;
+  }
+}
+
+function main() {
+  const scopes = new WeakMap<Node, Scope>();
+  const inner = new WeakMap<Node, string>();
+  let root: Node | null = new Node("root");
+  const refs: WeakRef<Node>[] = [];
+  for (let i = 0; i < 3; i++) {
+    // The scope's parent is a key of `inner`, held only by the scope.
+    const parent = new Node("parent " + i.toString());
+    inner.set(parent, "inner " + i.toString());
+    refs.push(new WeakRef(parent));
+    const s = new Scope(parent);
+    const child = new Node("child " + i.toString());
+    console.log(s.proxy(child) === s.proxy(child), s.proxy(child).target.name);
+    const own = new Proxy(parent);
+    s.cache.set(parent, own);
+    if (i == 0) {
+      scopes.set(root!, s);
+    } else {
+      // Chain: a scope keyed by the previous scope's parent.
+      scopes.set(refs[i - 1].deref()!, s);
+    }
+  }
+  console.log(scopes.has(root!), refs.map((r) => r.deref() != null));
+  // Dropping root frees its scope, whose parent is the next scope's key, and so on.
+  root = null;
+  console.log(refs.map((r) => r.deref() != null));
+}

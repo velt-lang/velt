@@ -1,10 +1,10 @@
 //! Weak references without a collector (#823, #11): the runtime core under `WeakMap`, `WeakSet`,
-//! `WeakRef` and `weak T`. Design: docs/internals/design/weak-refs.md; proposed ABI:
-//! docs/internals/contracts/rt_abi.md "Weak references (proposed)".
+//! `WeakRef` and `weak T`. Design: docs/internals/design/weak-refs.md; ABI:
+//! docs/internals/contracts/rt_abi.md "Weak references".
 //!
 //! A counted object (`[count: u64][value]`, the value pointer is the block + 8) that is weakly
-//! held has [`RC_WEAK`] set in its count word and a record in this thread's side table
-//! (`table`). Retain stays `count += 1`. [`RC_WEAK`] is the sign bit, so release, for the types
+//! held has [`RC_WEAK`] set in its count word and a record in the process's side table
+//! (`table`, behind a lock taken only on these cold paths). Retain stays `count += 1`. [`RC_WEAK`] is the sign bit, so release, for the types
 //! the compiler marks weak-capable, keeps today's single compare on the shared path (signed
 //! instead of `== 1`) and tells the unique and the weakly held case apart off it:
 //!
@@ -20,8 +20,8 @@
 //! only by its own entries' values (the `raw -> proxy` ephemeron), runs a bounded trial deletion
 //! (`trial`) that frees the cycle when nothing outside refers to it.
 //!
-//! Nothing here is called by generated code yet: the functions are exported with the proposed
-//! ABI, for the compiler to lower `WeakMap`/`WeakSet`/`WeakRef` to.
+//! Generated code calls these for `WeakMap`, `WeakSet` and `WeakRef` (`velt_vir`'s
+//! `lower/weak.rs`), and the release sequence above for weak-capable types.
 
 mod table;
 mod trial;
@@ -180,9 +180,10 @@ pub unsafe extern "C" fn velt_rt_weakref_drop(r: RefId) {
 /// count above 1 means another reference, and a cycle's last outside reference is never the
 /// one being released by the code that holds it).
 ///
-/// Weakly held objects are thread-bound: one released on a thread whose side table has no
-/// record of it is an internal compiler error (the compiler keeps weak-capable types off other
-/// threads), reported before the count word changes.
+/// The release may run on another thread than the one that made the object weakly held (an
+/// async task resumes on any worker; a `shared` `Mutex` hands its value to whichever task
+/// locks it): the side table is the process's. An object with [`RC_WEAK`] set and no record is
+/// an internal compiler error, reported before the count word changes.
 ///
 /// # Safety
 /// `obj` is a live counted object with [`RC_WEAK`] set, and the caller owns one reference.
@@ -204,7 +205,7 @@ pub(crate) unsafe fn weak_release(obj: *mut u8) -> bool {
         "ICE: release of a weakly held object with count 0"
     );
     if *rc & RC_COUNT == 1 {
-        let values = table::with(|s| s.forget(obj)).unwrap_or_else(|| not_held_here(obj));
+        let values = table::with(|s| s.forget(obj)).unwrap_or_else(|| no_record(obj));
         *rc = 1;
         table::release_values(values);
         return true;
@@ -213,15 +214,13 @@ pub(crate) unsafe fn weak_release(obj: *mut u8) -> bool {
     false
 }
 
-/// A weakly held object released on a thread with no record of it.
+/// An object with [`RC_WEAK`] set that the side table has no record of.
 #[cold]
-pub(crate) fn not_held_here(obj: *mut u8) -> ! {
-    panic!(
-        "ICE: weakly held object {obj:p} released on a thread that does not hold it          (weak-capable objects are thread-bound)"
-    )
+pub(crate) fn no_record(obj: *mut u8) -> ! {
+    panic!("ICE: weakly held object {obj:p} released with no record in the weak table")
 }
 
-/// The number of objects in this thread's side table (tests and leak checks).
+/// The number of objects in the side table (tests and leak checks).
 pub fn tracked_objects() -> usize {
     table::with(|s| s.tracked())
 }

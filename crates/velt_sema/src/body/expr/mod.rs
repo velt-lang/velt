@@ -72,7 +72,7 @@ mod structured_clone;
 mod supers;
 mod symbol_keys;
 mod sync;
-mod tasks;
+pub(crate) mod tasks;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
@@ -197,7 +197,7 @@ impl FnCx<'_, '_> {
             A::Cast { expr, ty } => self.cast(expr, ty, want, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),
-            A::NonNull(inner) => self.non_null(inner, exp, span),
+            A::NonNull(inner) => self.non_null(inner, exp, want, span),
             A::Jsx(el) => self.jsx(el),
         }
     }

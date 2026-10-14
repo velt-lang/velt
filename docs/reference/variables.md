@@ -104,8 +104,8 @@ Module scope holds only constants, functions and types. A module-level `let` is 
 ("mutable module-level state is not allowed"; in a root file with top-level statements, a `let`
 that only those statements use is a local of the generated `main`, see
 [Scripts](modules.md#scripts-top-level-statements)), and module `const` initializers must be
-constant expressions (literals, struct literals of constants, other module constants, closures)
-or [calls of pure functions](#module-constants-initialized-by-a-call). State that changes lives in values created by `main` (for
+constant expressions (literals, struct literals of constants, other module constants, closures),
+[tables](#tables) or [calls of pure functions](#module-constants-initialized-by-a-call). State that changes lives in values created by `main` (for
 example `shared(...)` or class instances) and is passed where it is needed. This keeps request
 handlers free of data races, and it is what lets `velt dev` swap code in a running program
 without migrating globals ([hot reload](../tooling/dev.md)).
@@ -147,6 +147,59 @@ function main() {
 }
 ```
 
+## Tables
+
+A module constant can be an array of numbers or booleans whose elements are literals: a table.
+Its elements are stored once in the program as read-only data, and `K[i]`, `K.length` and
+`for (const x of K)` read them there: no array is built, and an element costs what an element of
+a local array costs.
+
+```ts
+const POWERS: u64[] = [1, 10, 100, 1000];
+const HEX: u8[] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102];
+const SIGNS: number[] = [-1, 0, 1];
+
+function digits(n: u64): usize {
+  let count: usize = 1;
+  for (const p of POWERS) {
+    if (n >= p * 10) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function main() {
+  console.log(POWERS.length, POWERS[2], digits(4321), HEX[10], SIGNS.includes(0));
+  const mine = POWERS.slice();          // a copy is an ordinary array
+  mine.push(10000);
+  console.log(mine.length);
+}
+```
+
+- Each element is a number or boolean literal, also negated or converted with `as`, or a module
+  constant that is one (``an element of module constant `K` is not a literal``). Strings, nested
+  arrays and objects are not tables (``only arrays of numbers or booleans can be module
+  constants``), and neither is an array inside a struct or tuple constant: create those in
+  `main` and pass them on.
+- Used in any other way, a table is what every module constant is: evaluated at that use, here
+  to a new array with those elements. `K.includes(x)`, `f(K)` and `K.slice()` each build one, so
+  in a hot loop index the table or iterate it instead of passing it along.
+- Nothing can modify a table or take it over, and a use that could is a compile error. That is
+  `K[0] = 1`, `K.push(1)`, `K.fill(0)`, and passing `K` to a function that modifies its
+  parameter (``cannot modify module-level constant `K` ``), as for any module constant. For a
+  table it is also:
+  - passing it to a function value (`const f = (xs: u8[]) => …; f(K)`, `fs[0](K)`, a callback
+    parameter), or to a function together with a function value that could modify it
+    (``cannot pass module constant `K` to a function value``): the compiler can't see what that
+    function does;
+  - binding it to a name or a field, however it is named: `const mine = K`, `K!`, `ns.K` for an
+    imported table, `Cls.K` for a `static readonly` one (``cannot move out of module constant
+    `K` ``); an `async` function, which takes over its arguments, is the same.
+
+  `K.slice()` is the copy to use there: an ordinary array to keep, modify or pass anywhere.
+- Comparing a table by identity (`K === K`) is an error, like for other module constants.
+
 ## Module constants initialized by a call
 
 A module constant is not stored: its initializer is evaluated where the constant is used. A
@@ -165,7 +218,8 @@ TypeScript's single evaluation at load gives:
   In Node the constant is one closure whose state carries over from call to call; a new
   closure at each use would start over each time;
 - the result is a value: a number, string, struct, tuple, enum or function. Class instances,
-  arrays and maps are rejected (a new array at each use would change what `X.push(1)` does).
+  arrays and maps are rejected (a new array at each use would change what `X.push(1)` does;
+  an array of number literals is a [table](#tables), which needs no call).
   An object or struct constant can't be moved into a variable or a field (``cannot move out of
   module constant `UNIT` ``; `UNIT.clone()` makes an owned copy): TypeScript would alias it,
   so a change through the copy would show in the constant.

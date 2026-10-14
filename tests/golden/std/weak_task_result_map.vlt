@@ -1,0 +1,9 @@
+// A spawned task returns a WeakMap and its key.
+class K { n: number; constructor(n: number) { this.n = n; } }
+class Pair { m: WeakMap<K, number>; k: K; constructor() { this.m = new WeakMap<K, number>(); this.k = new K(1); this.m.set(this.k, 5); } }
+async function make(): Promise<Pair> { return new Pair(); }
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 300; i++) { const p = await spawn(make()); s += p.m.get(p.k) ?? -1000; }
+  console.log(s);
+}
