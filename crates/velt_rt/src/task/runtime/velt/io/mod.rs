@@ -16,6 +16,21 @@ use std::task::{Context, Poll};
 mod tcp;
 pub use tcp::{TcpListener, TcpStream};
 
+thread_local! {
+    /// Bytes this thread's sockets of the backend moved (read and written), for `spread`.
+    static MOVED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Bytes this thread's sockets moved so far.
+pub(crate) fn bytes_moved() -> u64 {
+    MOVED.with(std::cell::Cell::get)
+}
+
+/// Counts `n` bytes moved by a socket on this thread.
+pub(super) fn moved(n: usize) {
+    MOVED.with(|m| m.set(m.get() + n as u64));
+}
+
 pub(super) const READABLE: usize = 1;
 pub(super) const WRITABLE: usize = 2;
 const READ_CLOSED: usize = 4;

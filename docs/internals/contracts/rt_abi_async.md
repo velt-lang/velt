@@ -254,10 +254,13 @@ Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blockin
 types. `VELT_SCHEDULER=velt` (experimental, env only: `velt_rt_set_scheduler` kinds are
 unchanged) selects the runtime's own executor (`task/runtime/velt/`): worker threads with their
 own queue and `mio` poll; a task wakes on its home worker, a spawn stays on the spawning worker
-(from outside the workers: worker 0), and a worker that has run for longer than `VELT_BUSY_US`
-of CPU time since it last slept (default 5 ms) with tasks still waiting offers half of them to a
-sleeping worker, which takes them over; a connection's socket moves its registration to the
-worker its task reads on (Unix).
+(from outside the workers: worker 0). A worker that used 85 % of a 10 ms window in CPU time with
+tasks waiting gets a helper on trial (`velt/spread.rs`): the rate of work (socket bytes plus task
+polls) is measured for 20 ms without it and 20 ms with it, and the helper stays only if the rate
+rose by 30 % of what one more worker could add; otherwise its tasks go back on their next wake. A
+connection's socket moves its registration to the worker its task reads on (Unix). Tasks woken
+by I/O and timers run before queued work, and a worker with 256 or more queued tasks polls its
+reactor every 4 tasks.
 TCP sockets (`net/sys.rs`), the HTTP server and timers are native; tokio types elsewhere
 (files, processes, Postgres, Redis, the HTTP client, UDP, DNS, `spawn_blocking`) run on a
 one-thread tokio runtime whose context every worker stays inside.

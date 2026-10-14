@@ -3,12 +3,15 @@
 //!
 //! Work stays where it is made: a task wakes on its home worker, a spawn from a worker stays on
 //! it, so under light load one worker does everything and the others sleep. Wakes that would
-//! spread the work thinly (the cost measured in #717) are the exception: a worker wakes a
-//! sleeping one only after it has run for longer than `VELT_BUSY_US` of CPU time (default
-//! 5 ms) since it last slept and still has tasks waiting, and then offers half its queue,
-//! which the helper takes over. CPU time, not wall time: on a loaded machine a worker the OS
-//! takes off the core would otherwise look busy and spread work it can do alone.
+//! spread the work thinly (the cost measured in #717) are the exception: a worker that used at
+//! least [`BUSY`] of a [`WINDOW`] in CPU time and still has tasks waiting offers half its queue
+//! to a sleeping worker, which takes it over, on trial ([`super::spread`]: it stays only if it
+//! raised the rate). A burst of work does not fill a window; a worker that is nearly always
+//! busy does, even if it sleeps for a moment between its clients' round trips. CPU time, not
+//! wall time: on a loaded machine a worker the OS takes off the core would otherwise look busy
+//! and spread work it can do alone.
 
+use super::spread;
 use super::task::{Ran, Task};
 use super::timer::Timers;
 use std::cell::{Cell, RefCell};
@@ -21,11 +24,11 @@ use std::time::{Duration, Instant};
 pub(super) const WAKE: mio::Token = mio::Token(usize::MAX);
 /// Tasks between non-blocking reactor polls while a worker is busy.
 const IO_INTERVAL: u32 = 61;
-/// Tasks between non-blocking reactor polls while at least [`BACKLOG`] tasks are queued. A long
+/// Tasks between non-blocking reactor polls while at least [`BACKLOG`] tasks are queued: a long
 /// queue is usually one input's fan-out (a message published to 1000 connections, each with a
-/// write to make); reading the next input before writing on lets the writes carry both (one
-/// thread broadcasting: 7.6M deliveries/s at 1.0k instructions each, from 5.0M/s at 1.7k).
-/// With a short queue (echo) the extra polls would only cost system calls.
+/// write to make), and reading the next input before writing on lets the writes carry both (one
+/// thread broadcasting: 7.9M deliveries/s at 0.9k instructions each, from 5.0M/s at 1.7k). Echo
+/// on 1000 connections is unchanged by it.
 const FANOUT_IO_INTERVAL: u32 = 4;
 /// Queued tasks from which a worker polls its reactor every [`FANOUT_IO_INTERVAL`] tasks.
 const BACKLOG: usize = 256;
@@ -42,9 +45,10 @@ pub(super) struct Shared {
     offered: Mutex<VecDeque<Arc<Task>>>,
     offered_len: AtomicUsize,
     /// Asleep in its poll (or about to be): a push must wake it.
-    parked: AtomicBool,
+    pub(super) parked: AtomicBool,
     waker: mio::Waker,
     pub(super) registry: mio::Registry,
+    pub(super) counters: spread::Counters,
 }
 
 static WORKERS: OnceLock<Vec<Shared>> = OnceLock::new();
@@ -71,16 +75,12 @@ fn thread_cpu() -> Duration {
     START.get_or_init(Instant::now).elapsed()
 }
 
-/// The busy time after which a worker with waiting tasks wakes a helper.
-fn busy_limit() -> Duration {
-    static US: OnceLock<u64> = OnceLock::new();
-    Duration::from_micros(*US.get_or_init(|| {
-        std::env::var("VELT_BUSY_US")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(5000)
-    }))
-}
+/// The span over which a worker's CPU use is measured.
+const WINDOW: Duration = Duration::from_millis(10);
+/// The share of a [`WINDOW`] a worker must have used to count as busy.
+const BUSY: f64 = 0.85;
+/// Below this share, a worker that started a trial counts as no longer loaded.
+const CALM: f64 = 0.5;
 
 /// This thread's state when it is a worker.
 struct Local {
@@ -90,6 +90,14 @@ struct Local {
     dispatching: Cell<bool>,
     woken: RefCell<Vec<Arc<Task>>>,
     timers: RefCell<Timers>,
+    /// Task polls so far.
+    polls: Cell<u64>,
+    /// This worker has a trial of a helper going (see [`spread`]).
+    trialing: Cell<bool>,
+    /// The current window: when it started, and the thread's CPU time then; and the share of
+    /// the last full window the worker used.
+    window: Cell<(Instant, Duration)>,
+    used: Cell<f64>,
 }
 
 thread_local! {
@@ -121,7 +129,13 @@ pub(super) fn with_timers<R>(f: impl FnOnce(Option<&mut Timers>) -> R) -> R {
 /// output queued meanwhile leaves in one write (one thread broadcasting to 1000 connections:
 /// 1.4× the deliveries per second; FIFO wrote what was queued before reading on).
 pub(super) fn schedule(task: Arc<Task>) {
-    let home = task.home.load(Ordering::Relaxed);
+    let mut home = task.home.load(Ordering::Relaxed);
+    // A worker sent back after a trial: its tasks go home to the worker it helped.
+    let moved = workers()[home].counters.redirect.load(Ordering::Acquire);
+    if moved != spread::NONE {
+        task.home.store(moved, Ordering::Relaxed);
+        home = moved;
+    }
     let task = match with_local(|l| match l {
         Some(l) if l.index == home => {
             if l.dispatching.get() {
@@ -167,6 +181,7 @@ pub(super) fn start(n: usize) {
             parked: AtomicBool::new(false),
             waker,
             registry,
+            counters: spread::Counters::new(),
         });
         polls.push(poll);
     }
@@ -196,11 +211,14 @@ fn run(index: usize, mut poll: mio::Poll) {
         dispatching: Cell::new(false),
         woken: RefCell::new(Vec::new()),
         timers: RefCell::new(Timers::default()),
+        polls: Cell::new(0),
+        trialing: Cell::new(false),
+        window: Cell::new((Instant::now(), thread_cpu())),
+        used: Cell::new(0.0),
     };
     LOCAL.with(|l| l.set(&local));
     let me = &workers()[index];
     let mut events = mio::Events::with_capacity(256);
-    let mut awake_since = thread_cpu();
     let mut tick: u32 = 0;
     let mut since_io: u32 = 0;
     loop {
@@ -210,9 +228,11 @@ fn run(index: usize, mut poll: mio::Poll) {
             if let Ran::Again = task.run() {
                 local.queue.borrow_mut().push_back(task);
             }
+            local.polls.set(local.polls.get() + 1);
             tick = tick.wrapping_add(1);
             if tick.is_multiple_of(HELP_INTERVAL) {
-                maybe_help(index, &local, awake_since);
+                publish(me, &local);
+                maybe_help(index, &local);
             }
             since_io += 1;
             let every = if local.queue.borrow().len() >= BACKLOG {
@@ -230,6 +250,7 @@ fn run(index: usize, mut poll: mio::Poll) {
             continue;
         }
         crate::io::flush_idle();
+        publish(me, &local);
         me.parked.store(true, Ordering::SeqCst);
         if me.inbox_len.load(Ordering::SeqCst) > 0 {
             me.parked.store(false, Ordering::SeqCst);
@@ -242,7 +263,6 @@ fn run(index: usize, mut poll: mio::Poll) {
             .map(|d| d.saturating_duration_since(Instant::now()));
         turn(&mut poll, &mut events, &local, timeout);
         me.parked.store(false, Ordering::SeqCst);
-        awake_since = thread_cpu();
     }
 }
 
@@ -276,16 +296,47 @@ fn turn(poll: &mut mio::Poll, events: &mut mio::Events, local: &Local, timeout: 
     }
 }
 
-/// Busy for longer than the limit with tasks still waiting: offer half of them and wake a
-/// sleeping worker to take them.
-fn maybe_help(index: usize, local: &Local, awake_since: Duration) {
+/// The work this worker did so far, for [`spread`]: task polls and bytes its sockets moved.
+fn publish(me: &Shared, local: &Local) {
+    let work = local.polls.get() + super::io::bytes_moved();
+    me.counters.work.store(work, Ordering::Relaxed);
+}
+
+/// Busy for longer than the limit with tasks still waiting: a trial of a helper (measure, then
+/// offer half of the waiting tasks to a sleeping worker; see [`spread`]).
+fn maybe_help(index: usize, local: &Local) {
+    let now = Instant::now();
+    let (since, cpu) = local.window.get();
+    if now.duration_since(since) >= WINDOW {
+        let cpu_now = thread_cpu();
+        let wall = now.duration_since(since).as_secs_f64();
+        local
+            .used
+            .set(cpu_now.saturating_sub(cpu).as_secs_f64() / wall);
+        local.window.set((now, cpu_now));
+    }
     let waiting = local.queue.borrow().len();
-    if waiting < 2 || thread_cpu().saturating_sub(awake_since) < busy_limit() {
+    let busy = waiting >= 2 && local.used.get() >= BUSY;
+    if local.trialing.get() && local.used.get() < CALM {
+        // Its load fell (not a moment's sleep between round trips: a window mostly idle).
+        local.trialing.set(false);
+        spread::idle(index);
+        return;
+    }
+    if !busy && !local.trialing.get() {
+        return;
+    }
+    local.trialing.set(true);
+    if let spread::Step::Wait = spread::busy(index, Instant::now()) {
         return;
     }
     let ws = workers();
-    let Some(helper) = (0..ws.len()).find(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
-    else {
+    // The sleeping worker that did least: one with nothing to do, not a busy one between bursts.
+    let helper = (0..ws.len())
+        .filter(|&i| i != index && ws[i].parked.load(Ordering::SeqCst))
+        .min_by_key(|&i| ws[i].counters.work.load(Ordering::Relaxed));
+    spread::helping(index, helper);
+    let Some(helper) = helper else {
         return;
     };
     let me = &ws[index];

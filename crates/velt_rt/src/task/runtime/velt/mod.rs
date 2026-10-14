@@ -5,6 +5,7 @@
 mod bridge;
 pub(crate) mod coop;
 pub(crate) mod io;
+mod spread;
 mod task;
 #[cfg(test)]
 mod tests;
