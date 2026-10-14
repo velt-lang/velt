@@ -1,8 +1,8 @@
 #!/bin/sh
-# Regenerates the chatbench TEST-ONLY TLS material: a CA (ca.pem) and a server certificate
-# (cert.pem, key.pem) for 127.0.0.1 and localhost, signed by it. The keys are public; never use
-# them for anything but this benchmark. Key identifiers are included because strict verifiers
-# (Python 3.13+'s default VERIFY_X509_STRICT) require them.
+# Generates the chatbench TEST-ONLY TLS material: a CA (ca.pem) and a server certificate
+# (cert.pem, key.pem) for 127.0.0.1 and localhost, signed by it. Not committed: run this once
+# per checkout; never use the files for anything but this benchmark. Key identifiers are
+# included because strict verifiers (Python 3.13+'s default VERIFY_X509_STRICT) require them.
 set -eu
 cd "$(dirname "$0")"
 tmp=$(mktemp -d)

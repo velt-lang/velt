@@ -35,9 +35,10 @@ Today std/websocket (tungstenite) costs 1.7× velt-raw's CPU per message, writes
 Recommendation: **A** now (same API, every user gets it), and keep velt-raw as the proof that Velt
 code reaches this speed. (Decided: A, #976.)
 
-**A was prototyped** (codec, docs, runtime tests; goldens and the chat example passed). std/websocket, unchanged programs, 1 thread on the Mac:
+**A was prototyped** (codec, docs, runtime tests; goldens and the chat example passed). std/websocket, unchanged programs, 1 thread on the M4 machine
+of README.md (rows not kept):
 
-| | tungstenite (today) | 8 KiB fix | own codec | velt-raw |
+| | tungstenite (then) | 8 KiB fix | own codec | velt-raw |
 |---|---:|---:|---:|---:|
 | echo, 1000 clients | 163k/s | 216k/s | 217k/s | 213k/s |
 | pipelined (16) | 480k/s | 506k/s | **2.48M/s** | 3.14M/s |
@@ -76,7 +77,8 @@ database drivers) would start: the `VeltFut` ABI keeps compiled code independent
 ### 4. The default scheduler
 
 Shards win on throughput and latency at 8 cores; one VM run showed half the broadcast throughput
-on a single shard (not reproduced on the Mac; recheck with `vm/run.sh bcast`). Decide after 1–2,
+on a single shard (later reproduced on the VM and explained as a latency/throughput trade-off: README.md,
+"Shards vs work stealing"). Decide after 1–2,
 whether `VELT_SCHED=shards` becomes the default. (So far: it landed as the opt-in per-core
 scheduler, #992, chosen automatically for a program that places a task, #1032.)
 
@@ -93,38 +95,8 @@ scheduler, #992, chosen automatically for a program that places a task, #1032.)
   would drop from 1024 to 512, a velt-raw connection stays at 1024), the pending read's leaf box,
   the stream object's UTF-8 decoder (only `readString` needs it).
 
-## Status after the chatbench rounds (2026-10-10, evening)
+## After the plan
 
-Realistic app (bench/chat: auth, JSON, SQLite, rooms), Azure D48as_v5, 8 cores, database on tmpfs:
-Velt sustains 16 000 messages/s (1.57M deliveries/s) under 100 ms p99 with `VELT_SCHED=shards`:
-4× Go, over 16× Bun and Node. State then: the own codec passed Autobahn with 294 OK / 0 failed
-(Bun 287, Node 4 failed); background WAL checkpoints (the hybrid: background RESTART, the writer
-past 64 MiB) needed measuring on a steady disk (provisioned IOPS or local NVMe).
-
-Next:
-1. Checkpointer on a steady disk (D48ads_v5 local NVMe, or Premium SSD v2 with provisioned IOPS).
-2. Shards: single-shard broadcast is half of work stealing on Linux (reproduced twice); then decide the default.
-3. Idle memory per connection in chat: Velt 3.7 KB vs Bun 1.5 KB.
-4. TLS (`wss://`) in chatbench; batched-insert variant.
-5. #708 (`Atom`) for the rooms map, measured with chatbench's broadcast.
-
-## Round 4 (Azure D48ads_v5, local SSD; 2026-10-10 night)
-
-- **HTTP (`bench/web`, server pinned to 8 cores, Postgres to 4 cores + SMT, wrk to the rest;
-  `bench/web/results/azure-d48ads_v5-pinned-20261010.*`)**: JSON 64 connections: velt-shards 556k
-  req/s, velt 345k, Rust/axum 346k, Go 229k, Node cluster 243k, Bun 63k, Node 30k. Pipelined
-  plaintext: velt 3.27–3.34M, Rust 737k, Go 399k. Database tests are bound by the 16-connection
-  pool's round trips (Postgres at 3.5–3.9 of 8 vCPUs): velt 51k vs Go/Rust 54k single query
-  (~5 % more latency per query in the driver), fortunes 46k vs 51k, queries×20 33k (Go 31k, Rust
-  15k). Shards are worth +61 % on JSON at 64 connections (#717).
-- **Background SQLite checkpoints on a local SSD**: mixed (p99 better at 2 000 and 16 000/s, worse
-  at 8 000/s, +20 % CPU at 16 000/s). Parked: not a uniform win; candidate as an opt-in.
-- **Topics** in chatbench: same as the loop up to 8 000/s, p99 a little better at 16 000/s;
-  std/websocket broadcast (1000×8) reaches 4.9M deliveries/s on 8 threads (velt-raw 4.3–4.6M).
-- **Single-shard broadcast** at half of work stealing: a latency/throughput trade-off, not a bug:
-  work stealing runs woken writers later, so 96 messages go out per `sendto` against 36 on a shard
-  (p99 59 vs 12 ms). Yielding in the writer before each write was tried and rejected (−20 to
-  −50 %).
-
-Next: fortunes and the Postgres driver's per-query latency; Velt's idle memory per connection;
-TLS in chatbench; #708 `Atom` for rooms.
+The chat benchmark's later rounds (`../chat/README.md`, rounds 3 and 4: background checkpoints,
+topics) and the pinned HTTP run (`../web/README.md`) were measured against this plan. The next
+steps are tracked in #1023.

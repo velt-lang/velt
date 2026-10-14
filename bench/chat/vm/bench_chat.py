@@ -2,10 +2,11 @@
 """chatbench on a many-core Linux VM (../SPEC.md): each server pinned to the same physical cores,
 the load generator on the others (taskset); CPU, context switches and memory from /proc.
 
-  bench_chat.py [suite ...]   suites: join steady ramp idle percore (default: all)
+  bench_chat.py [suite ...]   suites: join steady ramp percore topics idle (default: all)
 
 Server cores: one vCPU per physical core, cores 0..CORES-1 (vCPUs 0,2,..); load generator on
-vCPUs 16-47. One JSON line per run goes to ~/chat-results.jsonl and stdout.
+vCPUs 16-47. One JSON line per run goes to ~/chat-results.jsonl and stdout, after a line with
+the versions of the servers' toolchains (suite "versions").
 """
 
 import json, os, subprocess, sys, time
@@ -31,6 +32,8 @@ def server_cpus(n):
 def server(name, cores):
     if name == "velt":
         return [f"{C}/.work/chat-velt"], {"VELT_THREADS": str(cores)}
+    if name == "velt-topics":
+        return [f"{C}/.work/chat-velt-topics"], {"VELT_THREADS": str(cores)}
     if name == "velt-per-core":
         return [f"{C}/.work/chat-velt"], {"VELT_THREADS": str(cores), "VELT_SCHEDULER": "per-core"}
     if name == "go":
@@ -162,14 +165,41 @@ def suite_percore():
         ramp(s, 1, "ramp-1core")
 
 
+def suite_topics():
+    # Rooms as std/websocket topics (velt/server-topics.vlt) against the plain send loop.
+    for rate in [4000, 8000, 16000]:
+        for s in ["velt", "velt-topics"]:
+            run("topics", s, CORES, ["steady", 10000, 100, rate, 10])
+
+
 def suite_idle():
     for s in SERVERS:
         run("idle", s, CORES, ["idle", 50000, 500, 5])
 
 
 SUITES = {"join": suite_join, "steady": suite_steady, "ramp": suite_ramp, "percore": suite_percore,
-          "idle": suite_idle}
+          "topics": suite_topics, "idle": suite_idle}
+
+
+def versions():
+    def out(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True).stdout.strip() or None
+        except OSError:
+            return None
+    try:
+        velt = open(f"{HOME}/velt-commit").read().strip()  # written by up.sh
+    except OSError:
+        velt = out(["git", "-C", C, "rev-parse", "HEAD"])
+    return {"suite": "versions", "velt": velt,
+            "go": out(["/usr/local/go/bin/go", "version"]), "bun": out([BUN, "--version"]),
+            "node": out(["node", "--version"]), "kernel": os.uname().release}
+
 
 if __name__ == "__main__":
+    row = versions()
+    print(json.dumps(row), flush=True)
+    OUT.write(json.dumps(row) + "\n")
+    OUT.flush()
     for name in sys.argv[1:] or list(SUITES):
         SUITES[name]()

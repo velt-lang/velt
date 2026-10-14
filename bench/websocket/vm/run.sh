@@ -5,6 +5,7 @@
 #   bench/websocket/vm/run.sh [suite ...]     suites of bench_vm.py (default: all)
 #
 # Env: AZ_LOCATION (swedencentral), AZ_SIZE (Standard_D48as_v5), AZ_GROUP (velt-bench-<time>),
+# SSH_FROM (the address allowed to SSH in; default: this machine's public IP from api.ipify.org),
 # KEEP=1 leaves the VM running (delete the group yourself). The resource group is deleted on exit,
 # also when a step fails; an auto-shutdown 4 hours out is the backstop.
 set -euo pipefail
@@ -29,7 +30,8 @@ cleanup() {
 trap cleanup EXIT
 
 ssh-keygen -q -t ed25519 -N "" -f "$KEY" -C velt-bench
-MYIP="$(curl -fsS https://api.ipify.org)"
+# The SSH rule admits only this address: SSH_FROM, or this machine's public IP as api.ipify.org sees it.
+MYIP="${SSH_FROM:-$(curl -fsS https://api.ipify.org)}"
 az group create -n "$GROUP" -l "$LOCATION" --tags purpose=velt-websocket-bench -o none
 IP="$(az vm create -g "$GROUP" -n velt-bench -l "$LOCATION" --size "$SIZE" \
   --image Canonical:ubuntu-24_04-lts:server:latest --admin-username velt \
@@ -49,7 +51,7 @@ for _ in $(seq 30); do "${SSH[@]}" true 2>/dev/null && break; sleep 5; done
   curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none >/dev/null 2>&1
   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - >/dev/null 2>&1
   sudo apt-get install -y -qq nodejs >/dev/null
-  curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1'
+  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2 >/dev/null 2>&1'
 rsync -az -e "ssh -i $KEY -o UserKnownHostsFile=$WORK/known_hosts" --exclude target \
   --exclude node_modules --exclude .work --exclude results --exclude .git "$ROOT/" "velt@$IP:velt/"
 scp -q -i "$KEY" -o UserKnownHostsFile="$WORK/known_hosts" "$HERE/build.sh" "$HERE/bench_vm.py" "velt@$IP:"

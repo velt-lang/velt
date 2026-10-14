@@ -6,7 +6,8 @@
 #   bench/chat/vm/up.sh <resource-group>
 #
 # Env: AZ_LOCATION (swedencentral), AZ_SIZE (Standard_D48as_v5), SSH_KEY (default: a new key in
-# the work directory printed at the end). An auto-shutdown 5 hours out is the backstop.
+# the work directory printed at the end), SSH_FROM (the address allowed to SSH in; default: this
+# machine's public IP from api.ipify.org). An auto-shutdown 5 hours out is the backstop.
 set -euo pipefail
 GROUP="$1"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +17,8 @@ SIZE="${AZ_SIZE:-Standard_D48as_v5}"
 WORK="${WORK:-$(mktemp -d)}"
 KEY="${SSH_KEY:-$WORK/key}"
 [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -f "$KEY" -C velt-bench
-MYIP="$(curl -fsS https://api.ipify.org)"
+# The SSH rule admits only this address: SSH_FROM, or this machine's public IP as api.ipify.org sees it.
+MYIP="${SSH_FROM:-$(curl -fsS https://api.ipify.org)}"
 az group create -n "$GROUP" -l "$LOCATION" --tags purpose=velt-bench -o none
 IP="$(az vm create -g "$GROUP" -n velt-bench -l "$LOCATION" --size "$SIZE" \
   --image Canonical:ubuntu-24_04-lts:server:latest --admin-username velt \
@@ -39,13 +41,15 @@ for _ in $(seq 30); do "$SSH" true 2>/dev/null && break; sleep 5; done
   curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none >/dev/null 2>&1
   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - >/dev/null 2>&1
   sudo apt-get install -y -qq nodejs >/dev/null
-  curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
+  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2 >/dev/null 2>&1
   curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" >/dev/null 2>&1 || true
   sudo sysctl -q -w net.ipv4.ip_local_port_range="10000 65000" net.core.somaxconn=65535 net.ipv4.tcp_tw_reuse=1 kernel.perf_event_paranoid=-1'
 rsync -az -e "ssh -i $KEY -o UserKnownHostsFile=$WORK/known_hosts" --exclude target \
   --exclude node_modules --exclude .work --exclude results --exclude .git --exclude chat-go \
   "$ROOT/" "velt@$IP:velt/"
+# The copy has no .git: bench_chat.py reads the Velt commit from this file.
+git -C "$ROOT" rev-parse HEAD | "$SSH" 'cat > velt-commit'
 "$SSH" 'cp velt/bench/chat/vm/bench_chat.py velt/bench/websocket/vm/bench_vm.py . &&
   bash velt/bench/chat/vm/build.sh > build.log 2>&1 && bash velt/bench/websocket/vm/build.sh >> build.log 2>&1 && tail -3 build.log'
 echo "VM ready: $IP   ssh helper: $SSH   group: $GROUP"

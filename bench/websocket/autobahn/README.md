@@ -1,7 +1,8 @@
 # Autobahn TestSuite for std/websocket
 
 `fuzzingclient.json` is the configuration used for the numbers in #976 (301 cases; 12.* and 13.*,
-permessage-deflate, excluded because no server here enables it). Start the servers on the host
+permessage-deflate, excluded because no server here enables it), without the tungstenite-based
+std/websocket that #976 compared against, which no longer exists. Start the servers on the host
 (`HOST=0.0.0.0`; velt: `bench/websocket/velt/server.vlt`, velt-raw, Bun, Node `ws`, as in the
 `servers` list), then:
 

@@ -53,7 +53,9 @@ CPU is the server's CPU time over the run (10 s), so 10 s = one core fully busy.
 
 ## Results
 
-Apple M4 (10 cores), macOS, Node 24.11.1, Bun 1.4.2, Velt `e0d33d7f` release build (LLVM).
+Apple M4 (10 cores), macOS, Node 24.11.1, Bun 1.4.2, Velt `e0d33d7f` release build (LLVM). The
+rows of the M4 runs in this section and the next two were not kept (`results/` is ignored); the
+Azure runs below have their raw rows in `vm/`.
 Server and load generator share the machine; another workload was running at times (load
 average 3 to 6 during this run), so treat differences under ~15 % as noise.
 
@@ -104,7 +106,7 @@ limit, because ports from the previous scenario were still in TIME_WAIT (bench.p
 `bench.py velt velt-8k velt-1t rust-hyper rust-hyper-8k rust-hyper-1t rust-raw rust-raw-8k node bun`
 (`-8k`: 8 KiB tungstenite read buffer, Velt's then built against a patched runtime; the variant
 is gone with tungstenite; `-1t`: one worker thread). Throughput is noisy here (another workload
-shared the machine), CPU per message less so. `results/investigation-1.jsonl` is local.
+shared the machine), CPU per message less so.
 
 | | Velt | Rust (hyper path) | Rust (raw) | Node | Bun |
 |---|---:|---:|---:|---:|---:|
@@ -176,7 +178,8 @@ servers.
 Ubuntu 24.04, kernel 6.17). The server runs on one vCPU per physical core, cores 0..7, and the load
 generator on the other 16 cores (`taskset`), so they never share a core. One EPYC vCPU is about
 half an M4 performance core, so compare scaling and ratios. Raw rows:
-`vm/results-20261010-d48as_v5.jsonl`.
+`vm/results-20261010-d48as_v5.jsonl`; the rows for std/websocket's own codec (#976), from a second
+run on the same VM type, are in `vm/results-20261010-codec-d48as_v5.jsonl`.
 
 **One message in flight per connection (echo, 1000 connections), round trips/s:**
 
@@ -185,7 +188,8 @@ half an M4 performance core, so compare scaling and ratios. Raw rows:
 | velt-raw, work stealing | 88k | 177k | 354k | 580k | 11.3–12.2 |
 | velt-raw, shards | 89k | 181k | 365k | **632k** | 11.0–11.9 |
 | rust-raw (tokio-tungstenite) | 98k | 200k | 401k | 603k | 10.0–11.0 |
-| velt (std/websocket today) | 54k | 102k | 192k | 328k | 18.6–24.4 |
+| velt, std/websocket (tungstenite, replaced) | 54k | 102k | 192k | 328k | 18.6–24.4 |
+| **velt, std/websocket (own codec, #976)** | 84k | 172k | 340k | 546k | 11.9–12.8 |
 | Bun | 103k | | | | 9.8 |
 | Node | 65k | | | | 15.7 |
 
@@ -196,7 +200,8 @@ half an M4 performance core, so compare scaling and ratios. Raw rows:
 | velt-raw, work stealing | 3.01M | 6.09M | 12.16M | 23.44M | 0.33 |
 | velt-raw, shards | **3.06M** | 6.18M | 12.63M | **24.78M** | 0.32 |
 | rust-raw | 0.14M | 0.29M | 0.58M | 1.21M | 6.6–7.3 |
-| velt (std/websocket today) | 0.13M | 0.26M | 0.52M | 1.08M | 7.5–8.1 |
+| velt, std/websocket (tungstenite, replaced) | 0.13M | 0.26M | 0.52M | 1.08M | 7.5–8.1 |
+| **velt, std/websocket (own codec, #976)** | 2.30M | 4.24M | 8.76M | 16.79M | 0.44–0.47 |
 | Bun | 2.61M | | | | 0.39 |
 | Node | 0.10M | | | | 10.4 |
 
@@ -206,7 +211,8 @@ half an M4 performance core, so compare scaling and ratios. Raw rows:
 |---|---:|---:|---:|---:|
 | velt-raw, work stealing | **1.96M** | 2.83M | 3.80M | **4.65M** |
 | velt-raw, shards | 0.92M | 3.03M | 3.87M | 3.98M |
-| velt (std/websocket today) | 0.13M | 0.23M | 0.15M | 0.16M |
+| velt, std/websocket (tungstenite, replaced) | 0.13M | 0.23M | 0.15M | 0.16M |
+| **velt, std/websocket (own codec, #976)** | **2.50M** | **3.44M** | **4.03M** | 4.54M |
 | Bun | 1.10M | | | |
 | Node | 0.11M | | | |
 
@@ -221,25 +227,29 @@ half an M4 performance core, so compare scaling and ratios. Raw rows:
 
 Bun 10.1, Node 15.6 (Node reaches only 66k/s).
 
-**20 000 idle connections:** velt (std today) 2 572 MB (131 KB each), with the 8 KiB read buffer
-223 MB (10.9 KB), velt-raw 71 MB (3.07 KB), rust-raw 201 MB (10.1 KB), Node 190 MB (6.5 KB), Bun
+**20 000 idle connections:** velt with tungstenite (replaced) 2 572 MB (131 KB each), with its
+8 KiB read buffer 223 MB (10.9 KB), velt with the own codec 2.58 KB each (codec run), velt-raw 71 MB (3.07 KB), rust-raw 201 MB (10.1 KB), Node 190 MB (6.5 KB), Bun
 48 MB (1.63 KB).
 
 What this says:
 
 - **Velt scales with cores**: 7.1× on 8 cores at one message in flight, 8.1× pipelined, and the
-  CPU per message stays flat while the cores are busy. The Mac's "more threads is slower" was the
-  laptop (client and server sharing four performance cores), not Velt.
+  CPU per message stays flat while the cores are busy. The "more threads is slower" of the M4
+  machine above came from client and server sharing four performance cores, not from Velt.
 - **velt-raw beats Bun on one core** where a connection has more than one message waiting (3.06M
   vs 2.61M) and is within 13 % of it otherwise; on 8 cores it does 6× (echo) to 9.5× (pipelined)
   Bun's throughput.
 - **Shards vs work stealing**: shards are 6–9 % faster on 8 cores and have lower tail latency, but
-  half the broadcast throughput on one core (open question: tokio's multi-thread scheduler runs a
-  task woken by the running task next, on the same thread; its single-threaded one does not).
+  half the broadcast throughput on one core. Reproduced in a later run (rows not kept), it is a latency/throughput
+  trade-off, not a bug: work stealing runs woken writers later, so 96 messages go out per `sendto`
+  against 36 on a shard (p99 59 against 12 ms). Yielding in the writer before each write was tried
+  and rejected (20–50 % slower).
 - **Broadcast scales only 2.4× on 8 cores**: every broadcast locks the room and wakes writer tasks
-  on other threads. Next: #708's `Atom` for the member list, and fanning out once per shard.
+  on other threads. Since then std/websocket encodes a broadcast once per publish (topics,
+  #985); #708's `Atom` for member lists is still open.
 - **Idle wake-ups**: with more threads than the load needs, CPU per message rises by up to 45 %
   (11 → 16 µs), in Rust as in Velt: workers sleep and are woken per event.
-- **std/websocket** (tungstenite) needs 1.7× velt-raw's CPU per message, does not batch writes, and
-  holds 131 KB per connection. Moving std/websocket onto the velt-raw design (or at least the
-  8 KiB read buffer) is the largest user-visible win.
+- **std/websocket** with tungstenite needed 1.7× velt-raw's CPU per message, did not batch
+  writes, and held 131 KB per connection. Its own codec (#976), on the velt-raw design, replaced
+  it: on 8 cores echo 546k/s, pipelined 16.8M/s, broadcast 4.5M/s (faster than velt-raw's room),
+  and 2.58 KB per idle connection.

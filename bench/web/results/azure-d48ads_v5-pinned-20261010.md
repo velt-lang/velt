@@ -1,4 +1,4 @@
-<!-- Linux x86_64, 48 cores, 10s runs, wrk -t16, DB_POOL=16 -->
+<!-- Linux x86_64, 48 cores, 10s runs, wrk -t16, DB_POOL=16; velt-shards is the prototype of the per-core scheduler (VELT_SCHEDULER=per-core today) -->
 | server | test | queries | connections | req/s | p99 | peak RSS | socket errors / non-2xx |
 |---|---|---:|---:|---:|---:|---:|---:|
 | velt | json | - | 64 | 345328 | 0.35 ms | 25.1 MB | 0 / 0 |
