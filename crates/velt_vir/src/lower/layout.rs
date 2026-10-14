@@ -66,10 +66,10 @@ impl Cx<'_> {
                 (l.size, l.align)
             }
             Ty::Unit => (0, 1),
-            s => {
-                let n = s.scalar_size().unwrap_or_else(|| ice("scalar size"));
-                (n, n.min(8))
-            }
+            s => match (s.scalar_size(), s.scalar_align()) {
+                (Some(n), Some(a)) => (n, a),
+                _ => ice("scalar size"),
+            },
         }
     }
 

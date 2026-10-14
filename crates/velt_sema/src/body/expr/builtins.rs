@@ -67,8 +67,8 @@ impl FnCx<'_, '_> {
                 if !self.unknown_namespace_member(name, id.span)
                     && !self.fn_expr_self_ref(name, id.span)
                 {
-                    self.cx
-                        .err(format!("cannot find `{name}` in this scope"), id.span);
+                    let msg = format!("cannot find `{name}` in this scope");
+                    self.cx.not_found(msg, name, id.span);
                 }
                 self.check_args_loose(args);
                 self.error_expr(span)
@@ -258,6 +258,7 @@ impl FnCx<'_, '_> {
             slot_names: names,
             bounds: vec![vec![]; n],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],

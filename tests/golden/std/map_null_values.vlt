@@ -1,0 +1,161 @@
+// A null value in a `Map` (and so in a `Record`) is a value like any other (#1005): the key
+// stays, it is counted, iterated and printed in its place, as in Node. Deleted entries are
+// told apart from entries that hold null, before and after the map compacts.
+
+class Box {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function maps() {
+  const m = new Map<string, number | null>([
+    ["a", null],
+    ["b", 2],
+    ["c", null],
+  ]);
+  console.log(m.size, m.has("a"), m.get("a"), m.get("b"), m.has("zz"));
+  console.log([...m.keys()], [...m.values()], [...m.entries()]);
+  console.log([...m], m);
+  m.set("b", null);
+  m.set("d", 4);
+  m.forEach((v, k) => console.log("forEach", k, v));
+  for (const [k, v] of m) {
+    console.log("for of", k, v);
+  }
+  for (const k of m.keys()) {
+    console.log("keys", k);
+  }
+  for (const v of m.values()) {
+    console.log("values", v);
+  }
+  for (const e of m.entries()) {
+    console.log("entries", e);
+  }
+
+  // Delete, then set again: the key moves to the end, holding null.
+  console.log(m.delete("a"), m.delete("a"), m.size, [...m.keys()]);
+  m.set("a", null);
+  console.log(m.size, [...m.keys()], m.get("a"), m.has("a"));
+
+  // Many deletes (tombstones, then compactions) between null and non-null values.
+  const big = new Map<number, number | null>();
+  for (let i = 0; i < 100; i++) {
+    big.set(i, i % 3 == 0 ? null : i);
+  }
+  for (let i = 0; i < 100; i += 2) {
+    big.delete(i);
+  }
+  console.log(big.size, [...big.keys()].slice(0, 8), [...big.values()].slice(0, 8));
+  let nulls = 0;
+  for (const [, v] of big) {
+    if (v === null) {
+      nulls++;
+    }
+  }
+  console.log("nulls", nulls);
+  for (let i = 1; i < 90; i += 2) {
+    big.delete(i);
+  }
+  console.log(big.size, big);
+  for (let i = 0; i < 6; i++) {
+    big.set(i, null);
+  }
+  console.log(big.size, [...big.keys()]);
+
+  // Deleting while iterating: the loop skips deleted entries and visits null ones.
+  const live = new Map<string, number | null>([
+    ["p", null],
+    ["q", 1],
+    ["r", null],
+    ["s", 3],
+  ]);
+  for (const [k, v] of live) {
+    console.log("live", k, v);
+    if (k == "p") {
+      live.delete("q");
+      live.delete("r");
+      live.set("t", null);
+    }
+  }
+  console.log(live.size, live);
+
+  // Other value representations: strings, objects, booleans.
+  const s = new Map<string, string | null>([
+    ["x", null],
+    ["y", "why"],
+  ]);
+  s.delete("y");
+  s.set("z", null);
+  console.log(s.size, [...s.entries()], s);
+  const objects = new Map<number, Box | null>();
+  objects.set(1, new Box(1));
+  objects.set(2, null);
+  objects.set(3, new Box(3));
+  objects.delete(1);
+  console.log(objects.size, [...objects.values()], objects.get(2), objects.get(3)?.n);
+  const flags = new Map<string, boolean | null>([
+    ["on", true],
+    ["unknown", null],
+    ["off", false],
+  ]);
+  console.log(flags, [...flags.keys()]);
+
+  // A map of maps that may be null.
+  const nested = new Map<string, Map<string, number | null> | null>();
+  nested.set("none", null);
+  nested.set(
+    "some",
+    new Map<string, number | null>([
+      ["q", null],
+      ["r", 1],
+    ]),
+  );
+  console.log(nested.size, nested.get("none"), nested.get("some")?.get("q"));
+  console.log(nested);
+}
+
+function records() {
+  const r: Record<string, number | null> = { x: null, y: 1 };
+  console.log(JSON.stringify(r), Object.keys(r), r.x, r.y, r["x"]);
+  r.z = null;
+  r.y = null;
+  console.log(r, Object.keys(r).length);
+  delete r.x;
+  console.log(Object.keys(r), Object.values(r), Object.entries(r));
+  r.x = 5;
+  for (const k in r) {
+    console.log("for in", k, r[k]);
+  }
+  const copy: Record<string, number | null> = { ...r, w: null };
+  console.log(copy, JSON.stringify(copy));
+
+  // JSON round trips keep null members.
+  const text = '{"a":null,"b":2,"c":null,"1":null}';
+  const back: Record<string, number | null> = JSON.parse(text);
+  console.log(back, Object.keys(back), JSON.stringify(back));
+  const again: Record<string, number | null> = JSON.parse(JSON.stringify(back));
+  console.log(JSON.stringify(again) == JSON.stringify(back));
+
+  const deep: Record<string, Record<string, string | null> | null> = {
+    a: null,
+    b: { c: null, d: "e" },
+  };
+  console.log(deep, JSON.stringify(deep));
+  const deepBack: Record<string, Record<string, string | null> | null> = JSON.parse(
+    JSON.stringify(deep),
+  );
+  console.log(deepBack, Object.keys(deepBack));
+
+  // A literal-key record reads a key holding null as null.
+  const lit: Record<"a" | "b", number | null> = { a: null, b: 1 };
+  console.log(lit.a, lit.b, lit["a"], Object.keys(lit));
+  lit.b = null;
+  console.log(lit, JSON.stringify(lit));
+}
+
+function main() {
+  maps();
+  records();
+}

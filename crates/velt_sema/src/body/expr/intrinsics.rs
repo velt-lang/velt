@@ -39,6 +39,8 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "needs_transfer" => I::NeedsTransfer,
         "needs_drop" => I::NeedsDrop,
         "may_alias" => I::MayAlias,
+        "holds_null" => I::HoldsNull,
+        "null_as" => I::NullAs,
         "fn_captures_nothing" => I::FnCapturesNothing,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
@@ -118,6 +120,7 @@ impl FnCx<'_, '_> {
             bounds: vec![vec![]; slot_names.len().max(1)],
             slot_names,
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],
@@ -148,9 +151,13 @@ impl FnCx<'_, '_> {
             I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer | I::NeedsDrop | I::MayAlias | I::FnCapturesNothing | I::Truthy => {
-                (vec![(t, B)], bool_, true)
-            }
+            I::NeedsTransfer
+            | I::NeedsDrop
+            | I::MayAlias
+            | I::HoldsNull
+            | I::FnCapturesNothing
+            | I::Truthy => (vec![(t, B)], bool_, true),
+            I::NullAs => (vec![], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));

@@ -46,7 +46,12 @@ Four steps, each its own pull request:
    source ranges nest like the blocks, so Cranelift puts each variable in a
    `DW_TAG_lexical_block` inside the one of the innermost variable whose range holds its own,
    covering the code located in its range. Not-yet-declared variables and those of a finished
-   loop are hidden.
+   loop are hidden. Code without a location (a few bytes between located instructions) goes
+   with the code before it: left out, it would cut every scope around it, and a function of n
+   declarations in a row would need n² ranges (a `main` of 16000 took tens of gigabytes to
+   build). For code laid out far from source order, a function's scopes get at most a number of
+   ranges in proportion to its code; a variable that no longer fits is shown in the scope around
+   it, from before its declaration.
 
 Locals of async functions, generators and inlined code are not described yet (phase 4: their
 values live in state machines or the caller's frame).

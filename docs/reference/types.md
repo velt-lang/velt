@@ -334,9 +334,11 @@ A SIMD vector holds several numbers of one type, its *lanes*, and an operation o
 all of them with one CPU instruction: a `u8x16` is sixteen `u8`, an `f32x4` four `f32`. The
 types are `i8x16 u8x16 i16x8 u16x8 i32x4 u32x4 i64x2 u64x2 f32x4 f64x2`, each 128 bits, which
 every x86-64 and arm64 CPU has: the same source compiles everywhere, with no CPU flag, in debug
-and release builds. A WebAssembly program that uses vectors needs an engine with WebAssembly
-SIMD (every current browser and runtime); other programs are built without it, as before. Like the integer widths, they are Velt's own:
-code shared with TypeScript does not name them.
+and release builds. On WebAssembly they are `v128` values: WebAssembly SIMD is part of Velt's
+WebAssembly baseline, and a program that uses vectors needs an engine with it (every current
+browser and runtime). They are Velt's own, and not global: a module imports the ones it names
+from [`velt:simd`](../std/simd.md) (`import { u8x16 } from "velt:simd";`), so a module that
+does not is free to use these names for its own types, as TypeScript code may.
 
 A vector is a value like a number: it is copied when assigned or passed, lives in a register,
 and can be a field, an array element, `T | null` or a `Map` value. Its operations are methods
@@ -346,6 +348,8 @@ per lane, set or not, which `any()`, `all()`, `first()`, `count()` and `bitmask(
 `boolean` or a number and `select` into a choice between two vectors.
 
 ```ts
+import { u8x16 } from "velt:simd";
+
 // The position of the first `b` in `d`, sixteen bytes at a time.
 function indexOf(d: u8[], b: u8): i64 {
   const needle = u8x16.splat(b);
@@ -568,6 +572,8 @@ the nullable type; `void` cannot be a member.
     ([downcasts](classes.md#instanceof-downcasts)). `x instanceof Promise` matches the
     promise member (`View | Promise<View>`), when no class named `Promise` is in scope.
   - `x == literal` / `x != literal` selects the literal's member.
+  - `"key" in x` keeps the members that may have the key (declare it, optionally or not) and
+    `!("key" in x)` those that may lack it ([the `in` operator](#the-in-operator)).
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
     A local that a closure assigns is not narrowed ([Null](#null)).
@@ -741,8 +747,9 @@ console.log(e.id, grace.age, w.meta); // e1 45 m
   a copied field of either type (`a.a += 1` on an `A` anywhere), or an optional field the
   value lacks (`x.c = "s"` on an `{ a: number; c?: string }`), compares values of the
   expected type with `===` (also as `A | null` or another union holding it), prints, serializes or lists the keys of a value holding the
-  expected type, or spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
-  or copy the original's fields, in its order), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
+  expected type, spreads a value of the expected type (`{ ...x, c: 3 }`; Node would show
+  or copy the original's fields, in its order), or tests a value of the expected type with `in`
+  for a key the copy left out (`"b" in a`, which Node finds on the original), directly or in generic code it calls (`xs.indexOf(x)` and `xs.includes(x)` compare with `===`). An array
   converts element by element only when fresh, like [wider element
   types](#objects-arrays-tuples-and-maps): `const ns: Named[] = roster();` for a `roster()`
   that returns a new `(Named & Scored)[]`; copy another one with
@@ -926,7 +933,10 @@ console.log(b.v); // hi
   as `{ name: (x: T): R => { ... } }` is; `async name() {}` holds an async function. As in an
   arrow, the parameter types may be left out where the literal's type gives them. `this` in such
   a method, and getters and setters in object literals (`get x() {}`), are not supported yet
-  (an object literal is plain data); generator methods only as `*[Symbol.iterator]()`
+  (an object literal is plain data). A generator method `*name() { ... }` (`async *name()`) is
+  a property holding a [generator function](functions.md#generator-function-expressions), as
+  `name: function* () { ... }` is; a generator method with a symbol key only as
+  `*[Symbol.iterator]()`
   ([Iterable object literals](#iterable-object-literals)).
 - **Method signatures in object types**: `{ size(n: number): number; stop(): void }` declares
   fields of function type, as `{ size: (n: number) => number; stop: () => void }` does, and
@@ -1085,7 +1095,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   two equal object literals are two different keys). Float keys compare like JS's
   (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
   after insertion makes its entry unreachable
-  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS.
+  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS. A value type may
+  include `null` (`Map<string, number | null>`, `Record<string, T | null>`): an entry holding
+  `null` is present like any other (`has` is true, it is counted, iterated and printed), and
+  `get` gives `null` both for it and for a missing key (use `has` to tell them apart). If
+  such an entry holding `null` has a content key that changed after insertion, then while the
+  map has deleted entries not yet compacted away, `forEach`, `for...of` and `console.log` skip
+  it (`keys()`, `values()` and `entries()` list it).
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
@@ -1124,11 +1140,12 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   there gives `null` where JavaScript gives `undefined` (#930), so a read is `V | null`
   (TypeScript types it `V`): `d.k === null` is `true` and `typeof d.k` is `"object"` for a
   missing key, `d.k === undefined` is a compile error, and `d[k] ?? 0`, `d[k] || 0` and
-  `d[k]?.push(x)` work as in JavaScript. As for `readonly T[]`, a `readonly`
+  `d[k]?.push(x)` work as in JavaScript. The value type may include `null` (`{ [k: string]:
+  number | null }`): a key holding `null` is present (listed by `Object.keys`, written by
+  `JSON.stringify`), and reading it gives `null` as for a missing key. As for `readonly T[]`, a `readonly`
   index signature is not checked for writes yet. Not supported yet (each is an error): named
   members next to an index signature (`{ name?: string; [key: string]: string | undefined }`,
-  which needs `undefined`, #930), a value type that includes `null` (`{ [k: string]: number |
-  null }`: a `null` value would be dropped, #1005), a `number` or `symbol` key, two index signatures in one type,
+  which needs `undefined`, #930), a `number` or `symbol` key, two index signatures in one type,
   and an interface with an index signature that also has methods or `extends`. An object of a
   named object type does not convert to an index-signature type (TypeScript allows it for type
   aliases but not interfaces): build a record (`{ ...o }` with values of one type) instead.
@@ -1172,6 +1189,76 @@ for (const [word, n] of counts) {
 console.log(moved, first, rest, [3, 1, 2].map((x) => x * 2).filter((x) => x > 2));
 const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
+```
+
+### The `in` operator
+
+`"key" in o` tests whether the object `o` has the member `key`, as in JavaScript. Velt objects
+have fixed fields, so a literal key is answered from `o`'s type while compiling: a field, method
+or accessor its object type, class (or a base class) or interface declares is always there, and
+one it doesn't declare is not. A setter makes its name a member (`"w" in o` for `set w(v)`);
+static members are the class's, not its instances', and a `#private` name is never a string key
+(`"#p" in o` is `false`). An optional field of an object type or interface (`b?: T`) is tested
+at run time: it is there once the object has it, also holding `null`, where the type keeps that
+apart. A class's optional field is always there (TypeScript-compiled classes define it). A value
+whose class is known only at run time is tested for it: a `Base` holding a `Sub` has the members
+`Sub` declares, and an interface value has those of the class it holds, an optional field the
+interface declares included. The members every object inherits from `Object.prototype`
+(`"toString"`, `"constructor"`, `"hasOwnProperty"`, …) are there on every object, as in Node. A
+`Record<string, V>` is a dictionary, so its keys are tested at run time, also a key known only
+then (`k in r`): a key `delete` removed is gone, and a number key is its string (`1 in r` tests
+`"1"`). Such a key may have any type that is a string or a number: `string`, a union of string
+literals (`"a" | "b"`, a `keyof` type), `string | number`, or an enum (a string enum's key is its
+value, a numeric enum's its value as a string). A closed record
+(`Record<"x" | "y", V>`) has exactly its keys. On a union, `in` answers for the member the value
+holds, and in a condition it narrows the union ([union types](#union-types)).
+
+A key known only at run time on anything but a `Record<string, V>` is an error (``` `in` with a
+key known only at run time is not supported on `T` ```): there is no table of names to look in.
+So is a key Velt cannot answer while compiling: a member declared by a struct an interface value
+may hold (structs carry no class to tell them apart), and a string key on a built-in or standard
+library value (an array, a `Map`). A value converted to a narrower object type by copying its
+fields (`const p: P = full`, see [intersection types](#intersection-types)) is an error when the program
+tests it for a key the copy left out, since Node would find it on the original. An optional
+field (`b?: T`) is its value or nothing, while Node also finds a key that holds `undefined`
+(`"b" in { b: undefined }` is `true`). So a program that tests such a field with `in` and
+somewhere stores a value that may be `undefined` in a field of that name (`{ kind, b }` with an
+optional parameter `b`, `o.b = maybe`, `{ b: other.b }`, a spread of a `b: T | null` field) is
+an error (``` cannot tell an absent `b` from one holding `undefined` ```, which points at the
+first such store and says how many others there are): store the value only
+when there is one (`if (v != null) o.b = v`), or test the value (`o.b != null`). Leaving the
+field out, a value that cannot be null and a spread of an object with the same optional field
+are fine. A primitive
+right operand is an error (TypeScript's TS2322; JavaScript throws a `TypeError`), as is a
+possibly `null` one (TS18047), and so is a left operand that is not a string, a number or a
+symbol (TS2322). Symbol keys are described under [Symbols](#symbols), and `#x in o` under
+[private names](classes.md).
+
+```ts
+type Circle = { kind: "circle"; radius: number };
+type Square = { kind: "square"; side: number; label?: string };
+
+function area(s: Circle | Square): number {
+  return "radius" in s ? 3 * s.radius * s.radius : s.side * s.side;
+}
+
+class Base {
+  x = 1;
+}
+class Sub extends Base {
+  y = 2;
+}
+
+function main() {
+  const sq: Square = { kind: "square", side: 2 };
+  console.log(area(sq), "label" in sq, "toString" in sq); // 4 false true
+  const seen: Record<string, number> = { a: 1 };
+  const k: string = "a";
+  delete seen[k];
+  console.log(k in seen); // false
+  const b: Base = new Sub();
+  console.log("y" in b, 1 in seen); // true false
+}
 ```
 
 ### Iterable object literals

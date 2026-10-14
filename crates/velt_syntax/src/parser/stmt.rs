@@ -9,6 +9,11 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> PResult<Block> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
+        // A function body in a `for` head (`for (f = () => { … }; …)`) has its own `in`.
+        self.allow_in(|p| p.parse_block_in(lo))
+    }
+
+    fn parse_block_in(&mut self, lo: u32) -> PResult<Block> {
         let mut stmts = Vec::new();
         loop {
             match self.peek() {

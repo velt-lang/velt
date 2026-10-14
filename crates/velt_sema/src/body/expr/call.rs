@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
         let js_api = self.is_js_api(d);
+        let positions = js_numbers && super::numbers::is_simd_method(&f.name);
         let rest = f.source.is_some_and(|s| {
             crate::body::defaults::fn_sig_ast(s)
                 .params
@@ -143,6 +144,7 @@ impl FnCx<'_, '_> {
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
             js_numbers,
+            positions,
             js_api,
             rest,
             defaults: f.generics.defaults.clone(),
@@ -294,6 +296,7 @@ impl FnCx<'_, '_> {
             slot_names: vec![],
             bounds: vec![],
             js_numbers: false,
+            positions: false,
             js_api: false,
             rest: false,
             defaults: vec![],
@@ -387,7 +390,11 @@ impl FnCx<'_, '_> {
         if self.is_local_name(&id.name) {
             return None;
         }
-        match self.lookup_item(&id.name, id.span) {
+        let item = self.lookup_item(&id.name, id.span);
+        if let Some(simd) = self.simd_type_named(&id.name, item) {
+            return self.simd_static_call(simd, id, prop, type_args, args, exp, span);
+        }
+        match item {
             Some(Item::Def(d)) if self.cx.enum_info(d).is_some() => {
                 Some(self.variant_value(d, prop, args, exp, span))
             }
@@ -404,18 +411,33 @@ impl FnCx<'_, '_> {
             None if id.name == "Promise" && matches!(prop.name.as_str(), "resolve" | "reject") => {
                 Some(self.promise_settled(&prop.name, type_args, args, exp, span))
             }
-            None => match self.simd_static_call(id, prop, type_args, args, exp, span) {
-                Some(call) => Some(call),
-                None => self.namespace_builtin(id, prop, args, exp, span),
-            },
+            None => self.namespace_builtin(id, prop, args, exp, span),
         }
     }
 
-    /// `u8x16.splat(x)`: a static method that an `extend` block of the SIMD type named `id`
-    /// declares. The SIMD types are the primitives with constructors of their own, and they
-    /// are not items, so `static_call` does not see them.
+    /// The SIMD type `name` names in this module, where `item` is what it binds: the built-in
+    /// type in std, elsewhere the `export type u8x16 = u8x16` of `velt:simd` it imports.
+    fn simd_type_named(&self, name: &str, item: Option<Item>) -> Option<hir::SimdTy> {
+        match item {
+            Some(Item::Alias(a)) => {
+                let info = &self.cx.aliases[a as usize];
+                let exported = self.cx.scopes[info.module].is_std && info.decl.generics.is_empty();
+                exported
+                    .then(|| hir::SimdTy::named(&info.decl.name.name))
+                    .flatten()
+            }
+            None if self.cx.scopes[self.module].is_std => hir::SimdTy::named(name),
+            _ => None,
+        }
+    }
+
+    /// `u8x16.splat(x)`: a static method that an `extend` block of SIMD type `simd` declares.
+    /// The SIMD types are primitives with constructors of their own, which `static_call` does
+    /// not see.
+    #[allow(clippy::too_many_arguments)]
     fn simd_static_call(
         &mut self,
+        simd: hir::SimdTy,
         id: &ast::Ident,
         prop: &ast::Ident,
         type_args: &[ast::TypeExpr],
@@ -423,7 +445,6 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Option<hir::Expr> {
-        let simd = hir::SimdTy::named(&id.name)?;
         if let Some(first) = type_args.first() {
             let message = format!("`{}.{}` takes no type arguments", id.name, prop.name);
             self.cx.err(message, first.span);

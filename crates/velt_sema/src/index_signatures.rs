@@ -50,17 +50,6 @@ impl Ctx<'_> {
                 );
             }
         }
-        if matches!(self.ty.kind(v), TyKind::Option(_)) {
-            ok = false;
-            let shown = self.display(v);
-            self.error(
-                Diagnostic::error(
-                    format!("an index signature whose values may be `null` (`{shown}`) is not supported yet (#1005)"),
-                    value.span,
-                )
-                .with_note("a `null` value would be dropped from the record; leave the key out instead (a missing key reads `null`)"),
-            );
-        }
         if let Some(f) = fields.first() {
             ok = false;
             self.error(

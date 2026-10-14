@@ -450,3 +450,10 @@ pub(crate) fn shape_field(f: &FieldInfo) -> ShapeField {
 pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
     f.optional && kind != AdtKind::Class && ty.opt_payload(f.declared).is_some()
 }
+
+/// Whether field `f` of a type of kind `kind` is optional without a presence flag (`a?: T`): a
+/// `null` in it stands for "absent", so it cannot hold a present `undefined`
+/// (`crate::absent_fields`).
+pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
+    f.optional && kind != AdtKind::Class && !has_presence(ty, kind, f)
+}

@@ -204,7 +204,11 @@ impl Ctx<'_> {
             }
             return self.ty.param(i as u32);
         }
-        if let Some(p) = self.ty.primitive(name) {
+        // The SIMD type names (`u8x16`) are built in only for std: other modules import them
+        // from `velt:simd` (#1055), whose `export type u8x16 = u8x16` names the built-in type.
+        let simd_outside_std =
+            crate::hir::SimdTy::named(name).is_some() && !self.scopes[env.module].is_std;
+        if let Some(p) = self.ty.primitive(name).filter(|_| !simd_outside_std) {
             if !args.is_empty() {
                 self.err(
                     format!("type `{name}` does not take type arguments"),
@@ -227,7 +231,11 @@ impl Ctx<'_> {
                 args.iter().for_each(|a| {
                     self.resolve_type(a, env);
                 });
-                self.err(format!("cannot find type `{name}` in this scope"), t.span);
+                self.not_found(
+                    format!("cannot find type `{name}` in this scope"),
+                    name,
+                    t.span,
+                );
                 self.ty.error
             }
         }

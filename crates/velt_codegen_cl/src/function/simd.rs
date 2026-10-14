@@ -195,22 +195,25 @@ impl<M: Module> Translator<'_, '_, M> {
 
     /// Whether a vector's worth of elements from `at` is inside the array whose header `array`
     /// points to (its second word is the length).
+    /// The length is at least the lane count and `at` at most the length minus it (the form the
+    /// LLVM backend uses, where it matters for removing checks).
     fn simd_fits(&mut self, lanes: Lanes, array: ir::Value, at: ir::Value) -> ir::Value {
         let len = self.builder.ins().load(types::I64, mem_flags(), array, 8);
-        let end = self.builder.ins().iadd_imm(at, i64::from(lanes.count()));
-        let no_wrap = self
+        let n = i64::from(lanes.count());
+        let room = self
             .builder
             .ins()
-            .icmp(IntCC::UnsignedGreaterThanOrEqual, end, at);
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, n);
+        let last = self.builder.ins().iadd_imm(len, -n);
         let inside = self
             .builder
             .ins()
-            .icmp(IntCC::UnsignedLessThanOrEqual, end, len);
-        self.builder.ins().band(no_wrap, inside)
+            .icmp(IntCC::UnsignedLessThanOrEqual, at, last);
+        self.builder.ins().band(room, inside)
     }
 
-    /// Address of element `at` of the array whose header `array` points to (its first word is
-    /// the buffer, rt_abi.md "Arrays").
+    /// Address of element `at` of the array whose header `array` points to (the `{ data, len, cap }`
+    /// header of docs/internals/design/semantics-stage2.md).
     fn simd_element(&mut self, lanes: Lanes, array: ir::Value, at: ir::Value) -> ir::Value {
         let data = self.builder.ins().load(types::I64, mem_flags(), array, 0);
         let offset = self.builder.ins().imul_imm(at, i64::from(lanes.bits() / 8));

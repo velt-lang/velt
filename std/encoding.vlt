@@ -50,7 +50,7 @@ export function base64Encode(data: u8[]): string {
  * alphabet or a length or padding that cannot come from whole bytes.
  */
 export function base64Decode(s: string): u8[] {
-  return decode64(s, BASE64_STD);
+  return decode64(s, false);
 }
 
 /** URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding. */
@@ -60,7 +60,7 @@ export function base64UrlEncode(data: u8[]): string {
 
 /** Decodes URL-safe Base64; padding is optional. Throws `EncodingError`. */
 export function base64UrlDecode(s: string): u8[] {
-  return decode64(s, BASE64_URL);
+  return decode64(s, true);
 }
 
 /** Base64 of the UTF-8 bytes of `s`. */
@@ -70,85 +70,175 @@ export function base64EncodeString(s: string): string {
 
 /** Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8. */
 export function base64DecodeString(s: string): string {
-  return utf8Decode(decode64(s, BASE64_STD));
+  return utf8Decode(decode64(s, false));
 }
 
 function encode64(data: u8[], alphabet: string, pad: bool): string {
-  const digits = velt_rt_bytes_from_str(alphabet);
   const n = data.length;
-  const out: u8[] = __intrinsic_array_with_capacity((n + 2) / 3 * 4);
-  let i: usize = 0;
-  while (i + 3 <= n) {
-    const t = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
-    out.push(digits[(t >> 18) as usize]);
-    out.push(digits[((t >> 12) & 63) as usize]);
-    out.push(digits[((t >> 6) & 63) as usize]);
-    out.push(digits[(t & 63) as usize]);
-    i += 3;
-  }
-  const rest = n - i;
+  const rest = n % 3;
+  const full = n - rest;
+  let size = full / 3 * 4;
   if (rest > 0) {
-    let t = (data[i] as u32) << 16;
+    size += pad ? 4 : rest + 1;
+  }
+  const digits = velt_rt_bytes_from_str(alphabet);
+  // Sized once and written by index: no growth check per character.
+  const out = Buffer.alloc(size);
+  let o: usize = 0;
+  for (let i: usize = 0; i < full; i += 3) {
+    const t = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
+    out[o] = digits[(t >> 18) as usize];
+    out[o + 1] = digits[((t >> 12) & 63) as usize];
+    out[o + 2] = digits[((t >> 6) & 63) as usize];
+    out[o + 3] = digits[(t & 63) as usize];
+    o += 4;
+  }
+  if (rest > 0) {
+    let t = (data[full] as u32) << 16;
     if (rest == 2) {
-      t = t | ((data[i + 1] as u32) << 8);
+      t = t | ((data[full + 1] as u32) << 8);
     }
-    out.push(digits[(t >> 18) as usize]);
-    out.push(digits[((t >> 12) & 63) as usize]);
+    out[o] = digits[(t >> 18) as usize];
+    out[o + 1] = digits[((t >> 12) & 63) as usize];
     if (rest == 2) {
-      out.push(digits[((t >> 6) & 63) as usize]);
+      out[o + 2] = digits[((t >> 6) & 63) as usize];
+      if (pad) {
+        out[o + 3] = PAD;
+      }
     } else if (pad) {
-      out.push(PAD);
-    }
-    if (pad) {
-      out.push(PAD);
+      out[o + 2] = PAD;
+      out[o + 3] = PAD;
     }
   }
   return validToString(out);
 }
 
-// Throws on characters outside `alphabet`, on `=` anywhere but the (at most two) final
-// positions, and on a length that cannot come from whole bytes. Leftover bits are ignored.
-function decode64(s: string, alphabet: string): u8[] {
-  const table = decodeTable(alphabet);
-  const text = velt_rt_bytes_from_str(s);
-  let n = text.length;
-  let pads: usize = 0;
-  while (n > 0 && pads < 2 && text[n - 1] == PAD) {
+// Texts of at least this many digits (without their padding) are decoded through a table
+// (`valueTable`): a digit costs about half through it of what computing it costs, and from here
+// on that pays for building the table (in instructions, the two paths meet at 24 digits).
+const TABLE_FROM: i64 = 24;
+
+// Throws on characters outside the alphabet (`url`: the URL-safe one), on `=` anywhere but the
+// (at most two) final positions, and on a length that cannot come from whole bytes. Leftover
+// bits are ignored. A short text is read where it stands, a long one from a copy of its bytes;
+// they agree up to the first character that is not ASCII, which is not a digit either way.
+function decode64(s: string, url: bool): u8[] {
+  let n = s.length as i64;
+  let pads: i64 = 0;
+  while (n > 0 && pads < 2 && s.charCodeAt(n - 1) == (PAD as i64)) {
     n--;
     pads++;
   }
-  const out: u8[] = __intrinsic_array_with_capacity(n / 4 * 3 + 2);
-  let acc: u32 = 0;
-  let bits: u32 = 0;
-  for (let i: usize = 0; i < n; i++) {
-    const v = table[text[i] as usize];
-    if (v == INVALID) {
+  const tail = n % 4;
+  const out = Buffer.alloc((n / 4 * 3 + (tail == 3 ? 2 : tail == 2 ? 1 : 0)) as usize);
+  let o: usize = 0;
+  let i: i64 = 0;
+  if (n >= TABLE_FROM) {
+    // A long text pays for a table of the 256 byte values and a copy of its bytes, which make
+    // each digit two loads.
+    const table = valueTable(url);
+    const text = velt_rt_bytes_from_str(s);
+    while (i + 4 <= n) {
+      const at = i as usize;
+      const a = table[text[at] as usize] as i64;
+      const b = table[text[at + 1] as usize] as i64;
+      const c = table[text[at + 2] as usize] as i64;
+      const d = table[text[at + 3] as usize] as i64;
+      if ((a | b | c | d) < 0) {
+        break;
+      }
+      put3(out, o, (a << 18) | (b << 12) | (c << 6) | d);
+      o += 3;
+      i += 4;
+    }
+  } else {
+    while (i + 4 <= n) {
+      const a = value64(s.charCodeAt(i), url);
+      const b = value64(s.charCodeAt(i + 1), url);
+      const c = value64(s.charCodeAt(i + 2), url);
+      const d = value64(s.charCodeAt(i + 3), url);
+      if ((a | b | c | d) < 0) {
+        break;
+      }
+      put3(out, o, (a << 18) | (b << 12) | (c << 6) | d);
+      o += 3;
+      i += 4;
+    }
+  }
+  // The last one to three digits, or the group with a character that is not a digit.
+  let acc: i64 = 0;
+  let bits: i64 = 0;
+  while (i < n) {
+    const v = value64(s.charCodeAt(i), url);
+    if (v < 0) {
       throw new EncodingError(`Invalid base64 character at offset ${i}`);
     }
-    acc = (acc << 6) | (v as u32);
+    acc = (acc << 6) | v;
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
-      out.push(((acc >> bits) & 0xff) as u8);
+      out[o] = ((acc >> bits) & 0xff) as u8;
+      o++;
     }
+    i++;
   }
-  if (n % 4 == 1 || (pads > 0 && (n + pads) % 4 != 0)) {
+  if (tail == 1 || (pads > 0 && (n + pads) % 4 != 0)) {
     throw new EncodingError("Invalid base64: bad length or padding");
   }
   return out;
 }
 
-// Digit value of every byte (`INVALID` for non-digits).
-function decodeTable(alphabet: string): u8[] {
-  const table: u8[] = __intrinsic_array_with_capacity(256);
-  for (let i = 0; i < 256; i++) {
-    table.push(INVALID);
+// Writes the 24 bits of `t` as three bytes at `out[o]`.
+function put3(out: u8[], o: usize, t: i64) {
+  out[o] = (t >> 16) as u8;
+  out[o + 1] = ((t >> 8) & 0xff) as u8;
+  out[o + 2] = (t & 0xff) as u8;
+}
+
+// The value of every byte as a digit, -1 for the others: what `value64` computes, laid out
+// with one pass of -1 and a store per digit. Signed, so that one sign test finds a byte that is
+// not a digit among four.
+function valueTable(url: bool): i8[] {
+  const table: i8[] = __intrinsic_array_with_capacity(256);
+  __intrinsic_array_set_len(table, 256);
+  for (let c: usize = 0; c < 256; c++) {
+    table[c] = -1;
   }
-  const digits = velt_rt_bytes_from_str(alphabet);
-  for (let d: usize = 0; d < digits.length; d++) {
-    table[digits[d] as usize] = d as u8;
+  for (let k: usize = 0; k < 26; k++) {
+    table[65 + k] = k as i8;
+    table[97 + k] = (26 + k) as i8;
   }
+  for (let k: usize = 0; k < 10; k++) {
+    table[48 + k] = (52 + k) as i8;
+  }
+  table[url ? 45 : 43] = 62;
+  table[url ? 95 : 47] = 63;
   return table;
+}
+
+// The value of Base64 digit `c` (a character code), or -1 if it is not one. Computed, so a
+// decode of a few digits builds no table: letters and digits are ranges, and the two alphabets differ
+// only in the characters for 62 and 63.
+function value64(c: i64, url: bool): i64 {
+  if (c >= 97) {
+    return c <= 122 ? c - 71 : -1;
+  }
+  if (c >= 65) {
+    if (c <= 90) {
+      return c - 65;
+    }
+    return url && c == 95 ? 63 : -1;
+  }
+  if (c >= 48) {
+    return c <= 57 ? c + 4 : -1;
+  }
+  if (url) {
+    return c == 45 ? 62 : -1;
+  }
+  if (c == 43) {
+    return 62;
+  }
+  return c == 47 ? 63 : -1;
 }
 
 // ───────────────────────────── hex ─────────────────────────────

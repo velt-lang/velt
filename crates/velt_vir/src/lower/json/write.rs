@@ -258,7 +258,10 @@ impl FnLower<'_, '_> {
         if recursive {
             self.json_enter(place);
         }
-        self.push_text(buf, "{");
+        // Text not pushed yet: the `{`, which goes out with the first key it meets (a member
+        // that is always written takes its `,` along the same way), so each member costs one
+        // push before its value, not two.
+        let mut pending = String::from("{");
         let mut sep = Sep::First;
         // JavaScript's order: array-index names (`"404"`) first, ascending (#756).
         let order = velt_sema::property_order::js_key_order(
@@ -283,6 +286,10 @@ impl FnLower<'_, '_> {
             });
             match (optional, self.cx.kind(fty)) {
                 (true, TyKind::Option(e)) => {
+                    if !pending.is_empty() {
+                        self.push_text(buf, &pending);
+                        pending.clear();
+                    }
                     let flag = match sep {
                         Sep::Maybe(f) => f,
                         _ => {
@@ -326,14 +333,21 @@ impl FnLower<'_, '_> {
                     sep = Sep::Maybe(flag);
                 }
                 _ => {
-                    self.json_member_sep(buf, sep);
-                    self.push_text(buf, &key);
+                    match sep {
+                        Sep::First => {}
+                        Sep::Rest => pending.push(','),
+                        Sep::Maybe(_) => self.json_member_sep(buf, sep),
+                    }
+                    pending.push_str(&key);
+                    self.push_text(buf, &pending);
+                    pending.clear();
                     self.json_write_at(buf, &fp, fty, JsonKey::Text(&name));
                     sep = Sep::Rest;
                 }
             }
         }
-        self.push_text(buf, "}");
+        pending.push('}');
+        self.push_text(buf, &pending);
         if recursive {
             self.call_rt(Rt::JsonLeave, vec![], None);
         }

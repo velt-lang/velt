@@ -1,0 +1,18 @@
+// `"k" in s` on an interface value that may hold a struct declaring the key is an error: struct
+// values carry no class to tell them apart at run time, so the answer cannot follow the value.
+// Classes declaring it are tested at run time (`lang/in_string_keys`).
+interface Shape {
+  area(): number;
+}
+
+struct Dot implements Shape {
+  r: number;
+  area(): number {
+    return 0;
+  }
+}
+
+function main() {
+  const s: Shape = Dot { r: 1 };
+  console.log("r" in s);
+}

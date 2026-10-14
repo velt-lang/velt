@@ -676,7 +676,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Enum without payloads (casts to its discriminant).
-    fn is_c_like_enum(&self, t: TyId) -> bool {
+    pub(crate) fn is_c_like_enum(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self
                 .cx

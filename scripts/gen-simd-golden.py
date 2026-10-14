@@ -5,7 +5,7 @@
 #
 #   python3 scripts/gen-simd-golden.py && velt fmt tests/golden/std/simd_ints.vlt
 #   velt run tests/golden/std/simd_ints.vlt > tests/golden/std/simd_ints.out
-import os
+import os, re
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "golden", "std")
 INTS = [("i8",16),("u8",16),("i16",8),("u16",8),("i32",4),("u32",4),("i64",2),("u64",2)]
 def bits(l): return int(l[1:])
@@ -29,6 +29,9 @@ def cast_targets(l,n):
     for t in same+hub:
         if t not in out: out.append(t)
     return out
+
+SIMD_NAMES = ["i8x16","u8x16","i16x8","u16x8","i32x4","u32x4","i64x2","u64x2","f32x4","f64x2",
+              "mask8x16","mask16x8","mask32x4","mask64x2"]
 
 def ints():
     o=["// Every integer SIMD operation against lanes computed outside the compiler (generated;",
@@ -158,5 +161,8 @@ function main() {""")
         T=f"{l}x{n}"
         o.append(f"  console.log(\"{T}\", test{tname(T)}(), \"checks\");")
     o.append("}")
-    open(f"{OUT}/simd_ints.vlt","w").write("\n".join(o)+"\n")
+    text="\n".join(o)+"\n"
+    names=[t for t in SIMD_NAMES if re.search(rf"\b{t}\b", text)]
+    o.insert(4, f"import {{ {', '.join(names)} }} from \"velt:simd\";\n")
+    open(f"{OUT}/simd_ints.vlt","w",encoding="utf-8",newline="\n").write("\n".join(o)+"\n")
 ints()

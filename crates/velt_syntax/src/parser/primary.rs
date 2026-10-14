@@ -54,7 +54,7 @@ impl<'a> Parser<'a> {
             Tok::Ident if self.at_word("undefined") => self.undefined_expr(span),
             Tok::LParen => {
                 self.bump();
-                let inner = self.parse_expr()?;
+                let inner = self.allow_in(|p| p.parse_expr())?;
                 self.expect(Tok::RParen)?;
                 // Parentheses around a JSX element are layout only (a formatter adds them to
                 // multi-line elements), so they leave no `Paren` node.
@@ -167,6 +167,10 @@ impl<'a> Parser<'a> {
 
     /// `{ key: value, shorthand, "quoted": v, ...spread }` — current token is `{`.
     fn parse_object_props(&mut self) -> PResult<Vec<ObjectProp>> {
+        self.allow_in(|p| p.parse_object_props_in())
+    }
+
+    fn parse_object_props_in(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
         // `value: undefined` (its position, and its diagnostic's).
@@ -303,6 +307,9 @@ impl<'a> Parser<'a> {
         if !is_generator && !name.name.starts_with("[Symbol.") {
             return self.finish_method_prop(lo, name, is_async).map(Some);
         }
+        if !name.name.starts_with('[') {
+            return self.generator_method_prop(lo, name, is_async).map(Some);
+        }
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
         let body = self.parse_block()?;
@@ -311,6 +318,48 @@ impl<'a> Parser<'a> {
             body,
             overloads: vec![],
         }))))
+    }
+
+    /// `*name(params) { body }` (`async *name`) in an object literal, after the name: a property
+    /// holding the generator function, `name: function* (params) { body }`.
+    fn generator_method_prop(
+        &mut self,
+        lo: u32,
+        name: Ident,
+        is_async: bool,
+    ) -> PResult<ObjectProp> {
+        let anonymous = Ident {
+            name: String::new(),
+            span: name.span,
+        };
+        let mut sig = self.parse_sig_rest(lo, anonymous, is_async)?;
+        sig.is_generator = true;
+        let body = self.parse_block()?;
+        self.reject_this_in_method(&name, &body);
+        let span = self.span_from(lo);
+        let f = FnDecl {
+            sig,
+            body,
+            overloads: vec![],
+        };
+        let f = self.mk_expr(ExprKind::Function(Box::new(f)), span);
+        Ok(ObjectProp::KeyValue(name, f))
+    }
+
+    /// Reports `this` in the body of object-literal method `name` (not supported yet).
+    fn reject_this_in_method(&mut self, name: &Ident, body: &Block) {
+        if let Some(at) = this_in_block(body) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "`this` in the object-literal method `{}` is not supported yet",
+                        name.name
+                    ),
+                    at,
+                )
+                .with_note("TypeScript allows this (`this` is the object the method is called on); Velt doesn't yet because the method is a function stored in a field, which sees the variables around it but not the object; use those variables, or declare a class"),
+            );
+        }
     }
 
     /// `name(params) { body }` in an object literal, after the name: a property holding the
@@ -338,18 +387,7 @@ impl<'a> Parser<'a> {
             (None, None)
         };
         let body = self.parse_block()?;
-        if let Some(at) = this_in_block(&body) {
-            self.diags.push(
-                velt_common::Diagnostic::error(
-                    format!(
-                        "`this` in the object-literal method `{}` is not supported yet",
-                        name.name
-                    ),
-                    at,
-                )
-                .with_note("TypeScript allows this (`this` is the object the method is called on); Velt doesn't yet because the method is a function stored in a field, which sees the variables around it but not the object; use those variables, or declare a class"),
-            );
-        }
+        self.reject_this_in_method(&name, &body);
         let span = self.span_from(lo);
         let arrow = self.mk_expr(
             ExprKind::Arrow {
@@ -376,7 +414,7 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         if part == TplPart::Head {
             loop {
-                exprs.push(self.parse_expr()?);
+                exprs.push(self.allow_in(|p| p.parse_expr())?);
                 let Tok::Template(idx, part @ (TplPart::Middle | TplPart::Tail)) = self.peek()
                 else {
                     self.error_expected("`}`");

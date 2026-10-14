@@ -1,0 +1,46 @@
+swims flies
+A 1 B j
+a=1 no a: j
+true false true true
+false true false true
+true true false true
+true false true false
+true
+false true true
+true
+true false
+true
+loop 0
+loop 1
+a
+b
+f 0
+true false
+1 0 1
+true true
+false false true false true false
+true false true
+true true
+false true
+true false true true
+1 true
+3 false
+x true
+st true
+y 2
+false true true
+false true
+false true
+true set
+true
+false
+w true
+h false
+true
+true
+false
+true false
+false
+true false
+false
+true false
