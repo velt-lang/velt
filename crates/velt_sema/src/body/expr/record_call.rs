@@ -13,18 +13,23 @@ use super::args::want_of;
 use super::method::Resolved;
 use super::setters::{side_effect_free, synth};
 use crate::body::{FnCx, Want};
-use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, TyId, TyKind};
 
 /// `(object, key)` of a record read or assignment target `object[key]` / `object.name`.
 pub(super) enum RecordKey<'a> {
     Index(&'a ast::Expr),
     Name(&'a ast::Ident),
+    /// The key of `{ [key]: value }` known only at run time: a number is converted to its
+    /// string as JavaScript does (`{ [1]: v }` has the key "1"), a symbol is an error.
+    Computed(&'a ast::Expr),
 }
 
 impl RecordKey<'_> {
     pub(super) fn side_effect_free(&self) -> bool {
         match self {
-            RecordKey::Index(e) => side_effect_free(e) || matches!(e.kind, ast::ExprKind::Lit(_)),
+            RecordKey::Index(e) | RecordKey::Computed(e) => {
+                side_effect_free(e) || matches!(e.kind, ast::ExprKind::Lit(_))
+            }
             RecordKey::Name(_) => true,
         }
     }
@@ -167,6 +172,7 @@ impl FnCx<'_, '_> {
     fn record_key_arg(&mut self, k: TyId, key: &RecordKey<'_>, want: Want) -> hir::Expr {
         let id = match key {
             RecordKey::Index(e) => return self.expr(e, Some(k), want),
+            RecordKey::Computed(e) => return self.computed_key_arg(k, e, want),
             RecordKey::Name(id) => *id,
         };
         if let Some(h) = self.enum_key(k, id) {
@@ -174,6 +180,37 @@ impl FnCx<'_, '_> {
         }
         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span);
         self.expr(&lit, Some(k), want)
+    }
+
+    /// The key `e` of `{ [e]: value }` for a record keyed by `k`: on a `string`-keyed record
+    /// a number is converted to its string (as JavaScript converts a property key), and a symbol
+    /// is an error, as a symbol made at run time cannot name a member.
+    fn computed_key_arg(&mut self, k: TyId, e: &ast::Expr, want: Want) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        if k != str_ {
+            return self.expr(e, Some(k), want);
+        }
+        let h = self.expr(e, None, want);
+        if self.cx.ty.is_numeric(h.ty) {
+            let span = h.span;
+            return self.intrinsic(Intrinsic::ToString, vec![h], str_, span);
+        }
+        if matches!(self.cx.ty.kind(h.ty), TyKind::Symbol) {
+            match &e.kind {
+                ast::ExprKind::Ident(id) => {
+                    self.cx.bad_key(&format!("[{}]", id.name), &id.name, e.span);
+                }
+                _ => self.cx.error(
+                    Diagnostic::error(
+                        "a symbol made at run time cannot be a key of an object literal",
+                        e.span,
+                    )
+                    .with_note("a computed key names a well-known symbol (`[Symbol.iterator]`), a module constant initialized with `Symbol(\"...\")`, or a string or number"),
+                ),
+            }
+            return self.error_expr(e.span);
+        }
+        self.coerce(h, k)
     }
 
     /// The member of the string enum `k` whose value is `id` (`None`: `k` is not an enum).

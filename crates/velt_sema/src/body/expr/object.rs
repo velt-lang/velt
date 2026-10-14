@@ -349,7 +349,13 @@ impl FnCx<'_, '_> {
         let local = |p: &ast::ObjectProp| match p {
             ast::ObjectProp::KeyValue(k, _) if crate::symbols::is_computed_key(k) => {
                 let inner = &k.name[1..k.name.len() - 1];
-                !inner.contains('.') && self.local_hides(inner)
+                // A local, or a module variable whose value is not a key the compiler knows
+                // (`const k = prefix + "x"`).
+                !inner.contains('.')
+                    && (self.local_hides(inner)
+                        || (self.cx.resolve_key(self.module, k).is_err()
+                            && matches!(self.cx.lookup_item(self.module, inner),
+                                Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Global(_)))))
             }
             _ => false,
         };

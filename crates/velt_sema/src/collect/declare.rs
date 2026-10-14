@@ -192,7 +192,8 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
             format!("the name `{}` is defined multiple times", name.name),
             name.span,
         );
-        if matches!(item.kind, ast::ItemKind::Interface(_)) {
+        let earlier_iface = matches!(cx.scopes[m].items.get(&name.name), Some(Item::Def(d)) if matches!(cx.info[d.0 as usize], DefInfo::Iface(_)));
+        if matches!(item.kind, ast::ItemKind::Interface(_)) || earlier_iface {
             // TypeScript also merges an interface with a class, function or namespace (#384).
             d = d.with_note(format!(
                 "Velt merges an interface only with other interface declarations: give `{0}` another name, or name the combination with an intersection (`type More = {0} & {{ … }}`)",

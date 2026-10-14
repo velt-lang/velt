@@ -1,5 +1,3 @@
-intersection_types.vlt:29:11: error: the name `Shape` is defined multiple times
-  = note: Velt does not merge interface declarations: declare `Shape` once with every member, or name the combination with an intersection (`type More = Shape & { … }`)
 intersection_types.vlt:13:35: error: `&` needs concrete object types; `T` is a type parameter
   = note: intersections on type parameters are not supported yet (#350); write the concrete object types
 intersection_types.vlt:21:23: error: missing field `b` in `AB` literal
@@ -15,5 +13,5 @@ intersection_types.vlt:10:15: error: `&` combines object types; `string[]` is an
   = note: write the fields as an object type `{ … }`
 intersection_types.vlt:11:18: error: intersections of function types (overloads) are not supported
   = note: declare one function type with the parameter types every call needs
-intersection_types.vlt:35:28: error: type alias `Tree` refers to itself
+intersection_types.vlt:27:28: error: type alias `Tree` refers to itself
   = note: an alias may refer to itself when it is an object type or an intersection of object types written out (`{ kids: T[] } & { v: number }`) with no field named twice; give any other recursive type a nominal member, such as an interface or a class

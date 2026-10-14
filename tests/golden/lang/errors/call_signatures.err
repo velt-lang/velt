@@ -1,0 +1,4 @@
+call_signatures.vlt:3:3: error: call and construct signatures in an interface or object type are not supported yet
+  = note: for a callable value, write a function type: `type F = (x: T) => R`
+call_signatures.vlt:6:3: error: call and construct signatures in an interface or object type are not supported yet
+  = note: for a callable value, write a function type: `type F = (x: T) => R`

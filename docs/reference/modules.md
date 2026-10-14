@@ -25,7 +25,8 @@
 - `import.meta` describes the module, as in Node: `import.meta.url` is its source file's
   `file:` URL, `import.meta.filename` the file's absolute path and `import.meta.dirname` its
   directory. They are fixed while compiling, so they name the source file, not the built
-  program, wherever it runs.
+  program, wherever it runs. `import.meta` used as a value of its own (`const m = import.meta`,
+  `return import.meta`) is a copy of the object.
 - A dynamic `import(…)` is an error: every module is loaded while compiling, so import it with
   a static `import` instead.
 

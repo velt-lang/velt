@@ -109,7 +109,9 @@ and memory where you want a fixed width; code shared with TypeScript never names
   (`[["a", 1]] as [string, u8][]`, `[] as string[]`), and it must be a value of that type.
   As in TypeScript, `as` and `satisfies` take a whole type: `x as A | B` is a union and
   `x as A & B` an intersection (a leading `|` may start the type on the next line), so a
-  bitwise operator after a cast needs parentheses: `(x as i32) | y`.
+  bitwise operator after a cast needs parentheses: `(x as i32) | y`. A number literal after
+  `|` in a cast type (`x as i32 | 1`) is an error that shows both spellings, `(x as i32) | 1`
+  and `x as (i32 | 1)`, since earlier versions of Velt read it as a bitwise or.
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
@@ -1072,8 +1074,10 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   may spread another record (`{ ...r, x: 1 }`) and have computed keys (`{ [k]: v, [a + b]: w }`,
   in order with the other keys); an object literal with a computed key that is not a module
   constant is a `Record<string, V>` also where no record is expected. A string or integer
-  literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`). The key must be a
-  `string` (TypeScript also takes a `number`: write `String(n)`). In generic code, where the key type is a type
+  literal key in brackets is the plain key (`{ ["a"]: 1 }` is `{ a: 1 }`), as is a numeric
+  property name (`{ 7: v }` and `{ 0x10: v }` have the keys `"7"` and `"16"`). A computed key
+  is a `string`, or a number converted to its string as in JavaScript (`{ [i + 0.5]: v }` with
+  `i = 3` has the key `"3.5"`); a symbol made at run time is an error. In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`

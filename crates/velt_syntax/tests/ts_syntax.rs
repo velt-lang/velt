@@ -223,3 +223,51 @@ fn declare_global_and_module_blocks() {
         vec!["a shorthand ambient module declaration (`declare module \"…\";`) is not supported: Velt types every module from its source"]
     );
 }
+
+#[test]
+fn members_end_at_a_line_break() {
+    // TypeScript's automatic semicolon insertion between interface and object type members.
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors(
+            "interface I {\n  a: number\n  readonly b: string // c\n  m(x: number): string\n  n?(): void\n  get g(): number\n}\n\
+             interface J {\n  [k: string]: number\n}\n\
+             type O = {\n  a: number\n  m(): void\n  [k: string]: number\n};\n\
+             class C {\n  a = 1\n  b: string = \"\"\n  m(): void {}\n}"
+        ),
+        none
+    );
+    // On one line, a separator is still needed.
+    assert_eq!(errors("interface I { a: number b: string }").len(), 1);
+}
+
+#[test]
+fn numeric_property_names_and_call_signatures() {
+    let e = expr("x = { 7: 1, 0x10: 2 }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(props) = &value.kind else {
+        panic!("not an object literal");
+    };
+    assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
+    assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
+    let msg = "call and construct signatures in an interface or object type are not supported yet";
+    assert_eq!(
+        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { new (): F; z: string };"),
+        vec![msg, msg]
+    );
+}
+
+#[test]
+fn a_cast_to_a_union_with_a_number_literal_is_an_error() {
+    let msg = "a cast to a union with a number literal member is ambiguous";
+    assert_eq!(errors("const y = x as i32 | 1;"), vec![msg]);
+    assert_eq!(errors("const y = x as number | -0.5;"), vec![msg]);
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors("const y = (x as i32) | 1;\nconst z = x as (i32 | 1);"),
+        none
+    );
+    assert_eq!(errors("const y = x as \"a\" | \"b\";"), none);
+}

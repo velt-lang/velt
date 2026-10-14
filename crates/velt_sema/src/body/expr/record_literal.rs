@@ -56,18 +56,27 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let error = self.cx.ty.error;
         let spread = props.iter().any(is_spread);
-        if (k != error && v != error) || spread || props.is_empty() {
+        if (k != error && v != error) || (spread && v != error) || props.is_empty() {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
         let k = if k == error { self.cx.ty.str_ } else { k };
         if v != error {
             return self.record_literal_with(d, k, v, props, vec![], span);
         }
+        if !props.iter().any(|p| !is_spread(p)) {
+            // Only spreads (`{ ...a, ...b }` where a `Record` of unknown value type is built).
+            self.cx.error(
+                Diagnostic::error("cannot infer the value type of this object literal", span)
+                    .with_note("annotate it (`const o: Record<string, V> = { ... }`)"),
+            );
+            return self.error_expr(span);
+        }
+        // The value type is the first value's; the spreads must have it too (`__extend`).
         let (v, pre) = self.record_literal_values(props, span);
         self.record_literal_with(d, k, v, props, pre, span)
     }
 
-    /// The values of a record literal (with no spread and at least one key) whose value type
+    /// The values of a record literal (with at least one key; spreads are skipped) whose value type
     /// is not known yet, checked: the first one gives the type, and the others must have it
     /// (a value that has not is reported, and replaced by an error expression).
     fn record_literal_values(
@@ -186,7 +195,7 @@ impl FnCx<'_, '_> {
             let call = match p {
                 ast::ObjectProp::Spread(e) if computed_entry(e).is_some() => {
                     let (key, value) = computed_entry(e).expect("ICE: a computed entry");
-                    let key = RecordKey::Index(key);
+                    let key = RecordKey::Computed(key);
                     match pre.get_mut(i).and_then(Option::take) {
                         Some(h) => self.record_set_checked(recv, key, h, e.span),
                         None => self.record_call_keyed(
@@ -252,6 +261,17 @@ impl FnCx<'_, '_> {
         seen: &mut Vec<String>,
         span: Span,
     ) -> Option<hir::Expr> {
+        // `[KEY]` with a module constant holding a string: the string is the key.
+        let resolved;
+        let name = if crate::symbols::is_computed_key(name) {
+            resolved = ast::Ident {
+                name: self.cx.member_key(self.module, name),
+                span: name.span,
+            };
+            &resolved
+        } else {
+            name
+        };
         if self.record_keys(k).is_some() && !self.record_has_key(k, &name.name, name.span) {
             return None;
         }

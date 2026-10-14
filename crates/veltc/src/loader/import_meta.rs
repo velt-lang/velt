@@ -28,13 +28,7 @@ pub(super) fn fill(module: &mut ast::Module, path: &Path) {
     else {
         return;
     };
-    let file = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let dir = file.parent().unwrap_or(&file).to_path_buf();
-    let values = [
-        file_url(&file),
-        file.display().to_string(),
-        dir.display().to_string(),
-    ];
+    let values = meta_values(path);
     let ast::ExprKind::Object(props) = &mut init.kind else {
         return;
     };
@@ -43,6 +37,18 @@ pub(super) fn fill(module: &mut ast::Module, path: &Path) {
             e.kind = ast::ExprKind::Lit(ast::Lit::Str(v));
         }
     }
+}
+
+/// `import.meta`'s `url`, `filename` and `dirname` for the module at `path`: absolute and
+/// normalized (`a/../b` is `b`) on every OS, as Node gives them.
+fn meta_values(path: &Path) -> [String; 3] {
+    let file = vpm::relpath::absolute(path);
+    let dir = file.parent().unwrap_or(&file).to_path_buf();
+    [
+        file_url(&file),
+        file.display().to_string(),
+        dir.display().to_string(),
+    ]
 }
 
 /// The `file:` URL of the absolute path `file`, as Node's `url.pathToFileURL` gives it:
@@ -71,8 +77,18 @@ pub(super) fn file_url(file: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::file_url;
+    use super::{file_url, meta_values};
     use std::path::Path;
+
+    #[test]
+    fn paths_are_normalized() {
+        let [url, filename, dirname] = meta_values(Path::new("a/../b/./m.ts"));
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(Path::new(&filename), cwd.join("b").join("m.ts"));
+        assert_eq!(Path::new(&dirname), cwd.join("b"));
+        assert!(!url.contains("..") && !url.contains("/./"), "{url}");
+        assert!(url.ends_with("/b/m.ts"), "{url}");
+    }
 
     #[test]
     fn file_urls() {

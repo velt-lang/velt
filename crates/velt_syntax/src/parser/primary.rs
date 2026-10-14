@@ -240,6 +240,26 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
+            // A numeric property name, as in TypeScript: `{ 7: v }` and `{ 0x10: v }` have the
+            // keys "7" and "16".
+            Tok::Int(_) => match self.literal_at_cursor() {
+                Some(Lit::Int {
+                    value,
+                    suffix: None,
+                }) if value < 1 << 53 => {
+                    let key = Ident {
+                        name: value.to_string(),
+                        span: self.cur_span(),
+                    };
+                    self.bump();
+                    self.expect(Tok::Colon)?;
+                    return Ok(ObjectProp::KeyValue(key, self.parse_assign()?));
+                }
+                _ => {
+                    self.error_expected("property name");
+                    return Err(Fail);
+                }
+            },
             Tok::LBracket if self.at_symbol_key() => {
                 let key = self.parse_symbol_key()?;
                 self.expect(Tok::Colon)?;

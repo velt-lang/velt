@@ -333,7 +333,12 @@ impl<'a> Parser<'a> {
 
     /// A field or interface member ends with `;`, `,` or the closing `}`.
     pub(super) fn expect_member_end(&mut self) -> PResult<()> {
-        if self.eat(Tok::Semi) || self.eat(Tok::Comma) || self.at(Tok::RBrace) {
+        // A line break ends a member too (TypeScript's automatic semicolon insertion).
+        if self.eat(Tok::Semi)
+            || self.eat(Tok::Comma)
+            || self.at(Tok::RBrace)
+            || self.line_break_before()
+        {
             return Ok(());
         }
         self.error_expected("`;`");

@@ -1,0 +1,7 @@
+// Call and construct signatures in an interface or object type are not supported yet.
+interface Fn {
+  (x: number): string
+}
+type Ctor = {
+  new (x: number): Fn;
+};
