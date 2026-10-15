@@ -117,6 +117,8 @@ impl Lanes {
 pub enum Op {
     /// `(lane) -> v`: every lane the same value.
     Splat,
+    /// `() -> v`: each lane its own index, 0 in lane 0.
+    Index,
     /// `(array: ptr, at: u64) -> bool`: whether a vector's worth of elements from `at` is
     /// inside the array (`at + lanes` does not wrap and is at most the length): what the
     /// prelude checks before `load` and `store`, and offers as a loop condition.
@@ -257,6 +259,7 @@ impl SimdCall {
             },
             SimdCall::Vector(lanes, op) => match op {
                 Op::Splat => (vec![lanes.scalar()], V128),
+                Op::Index => (vec![], V128),
                 Op::Fits => (vec![Ptr, U64], Bool),
                 Op::Load => (vec![Ptr, U64], V128),
                 Op::Store => (vec![V128, Ptr, U64], Unit),
@@ -313,6 +316,7 @@ fn vector_op(name: &str) -> Option<Op> {
     }
     Some(match name {
         "splat" => Op::Splat,
+        "index" => Op::Index,
         "fits" => Op::Fits,
         "load" => Op::Load,
         "store" => Op::Store,
@@ -441,7 +445,8 @@ mod tests {
                 let symbol = format!("velt_simd_{name}");
                 let call = SimdCall::of_symbol(&symbol)
                     .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
-                let declared = params.split_once(')').expect("`)`").0.split(", ").count();
+                let list = params.split_once(')').expect("`)`").0;
+                let declared = list.split(", ").filter(|p| !p.is_empty()).count();
                 assert_eq!(call.signature().0.len(), declared, "{symbol}");
                 seen += 1;
             }

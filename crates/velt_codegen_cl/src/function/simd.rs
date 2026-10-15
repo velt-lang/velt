@@ -128,6 +128,7 @@ impl<M: Module> Translator<'_, '_, M> {
             Op::Fits => return Inlined::Value(self.simd_fits(lanes, values[0], values[1])),
             Op::Lane => return Inlined::Value(self.simd_lane(lanes, &args[1], values)),
             Op::Splat => self.builder.ins().splat(ty, values[0]),
+            Op::Index => self.simd_index(lanes),
             Op::Load => {
                 let p = self.simd_element(lanes, values[0], values[1]);
                 self.builder.ins().load(ty, mem_flags(), p, 0)
@@ -168,6 +169,21 @@ impl<M: Module> Translator<'_, '_, M> {
             }
         };
         Inlined::Value(self.lanes_of(value, types::I8X16))
+    }
+
+    /// The vector whose lanes are their own indices: a constant, each lane's bytes in memory
+    /// order.
+    fn simd_index(&mut self, lanes: Lanes) -> ir::Value {
+        let mut bytes = Vec::with_capacity(16);
+        for k in 0..lanes.count() {
+            match lanes {
+                Lanes::F32 => bytes.extend((k as f32).to_le_bytes()),
+                Lanes::F64 => bytes.extend(f64::from(k).to_le_bytes()),
+                _ => bytes.extend(&u64::from(k).to_le_bytes()[..(lanes.bits() / 8) as usize]),
+            }
+        }
+        let constant = self.builder.func.dfg.constants.insert(bytes.into());
+        self.builder.ins().vconst(vector_type(lanes), constant)
     }
 
     /// An operation on one vector, `x`: negation and the like, widening half of it, or

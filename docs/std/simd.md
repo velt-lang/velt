@@ -20,6 +20,9 @@ browser, Node.js, wasmtime and wasmer do).
 | `T.fits(xs, at = 0)` | whether the `n` elements of the `L[]` from `at` are inside it: what `load` and `store` check |
 | `T.load(xs, at = 0)` | the `n` elements of the `L[]` from `at`; a RangeError panic unless all are inside the array |
 | `v.store(xs, at = 0)` | writes the lanes to the `L[]` from `at`; a RangeError panic unless they fit (the array does not grow) |
+| `T.loadPartial(xs, at = 0)` | the elements from `at` that exist, up to `n`, in the low lanes, 0 in the others |
+| `v.storePartial(xs, at = 0)` | writes the low lanes to the elements from `at` that exist |
+| `T.index()` | each lane its own index: 0, 1, 2, … |
 | `v.lane(i)`, `v.withLane(i, x)` | lane `i`; the vector with lane `i` set to `x` (a RangeError panic unless `i < n`) |
 | `add` `sub` `mul` | lane by lane; integers wrap (`mul`: not 8-bit lanes) |
 | `div` `sqrt` | floats |
@@ -42,6 +45,7 @@ A mask `m`:
 
 | Member | Meaning |
 |---|---|
+| `M.prefix(count)` | the mask with its first `count` lanes set |
 | `m.any()`, `m.all()` | whether some lane, every lane is set |
 | `m.first()` | the index of the first set lane, `n` when none is |
 | `m.count()` | the number of set lanes |
@@ -122,7 +126,36 @@ function main() {
 ```
 
 Write the loop as above: a step while a whole vector fits (`T.fits(xs, i)`; with several
-vectors per step, the last one's position), then the rest one element at a time. `fits` is the
-check `load` and `store` make, so in such a loop the compiler removes theirs. A condition
-written by hand (`i + 16 <= d.length`) works too, with the check left in.
+vectors per step, the last one's position). `fits` is the check `load` and `store` make, so in
+such a loop the compiler removes theirs; a condition written by hand (`i + 16 <= d.length`)
+works too, with the check left in.
+
+The last elements, fewer than a vector, can be done one at a time as in `dot` above, or as one
+more vector with `loadPartial` and `storePartial`, which is shorter and usually faster:
+
+```ts
+import { mask8x16, u8x16 } from "velt:simd";
+
+// The number of bytes equal to `b`.
+function count(d: u8[], b: u8): usize {
+  const needle = u8x16.splat(b);
+  let n: usize = 0;
+  let i: usize = 0;
+  while (u8x16.fits(d, i)) {
+    n += u8x16.load(d, i).eq(needle).count();
+    i += 16;
+  }
+  // The lanes past the end are 0, which `b` may be too: only the ones that exist count.
+  const rest = mask8x16.prefix((d.length as usize) - i);
+  return n + u8x16.loadPartial(d, i).eq(needle).and(rest).count();
+}
+
+function main() {
+  const d: u8[] = Buffer.alloc(37);
+  d[3] = 9;
+  d[36] = 9;
+  console.log(count(d, 9), count(d, 0)); // 2 35
+}
+```
+
 `bench/simd` measures these kernels against plain loops and against Rust.

@@ -17,6 +17,7 @@ export type u16x8 = u16x8;
 
 declare function velt_simd_i8x16_fits(xs: i8[], at: u64): bool;
 declare function velt_simd_i8x16_splat(x: i8): i8x16;
+declare function velt_simd_i8x16_index(): i8x16;
 declare function velt_simd_i8x16_load(from: i8[], at: u64): i8x16;
 declare function velt_simd_i8x16_store(v: i8x16, to: i8[], at: u64);
 declare function velt_simd_i8x16_lane(v: i8x16, index: u64): i8;
@@ -74,6 +75,29 @@ extend i8x16 {
     return velt_simd_i8x16_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): i8x16 {
+    return velt_simd_i8x16_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 16, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 16 at a time.
+   */
+  static loadPartial(from: i8[], at: usize = 0): i8x16 {
+    if (i8x16.fits(from, at)) {
+      return velt_simd_i8x16_load(from, at as u64);
+    }
+    let v = velt_simd_i8x16_splat(0);
+    if (at < from.length) {
+      const left = from.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        v = velt_simd_i8x16_with_lane(v, k as u64, from[at + k]);
+      }
+    }
+    return v;
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask8x16, a: i8x16, b: i8x16): i8x16 {
     return velt_simd_i8x16_select(m, a, b);
@@ -88,6 +112,21 @@ extend i8x16 {
       panic("RangeError: i8x16.store: range is out of bounds");
     }
     velt_simd_i8x16_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 16 (the
+   * array does not grow): what `loadPartial` read, back.
+   */
+  storePartial(to: i8[], at: usize = 0) {
+    if (i8x16.fits(to, at)) {
+      velt_simd_i8x16_store(this, to, at as u64);
+    } else if (at < to.length) {
+      const left = to.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        to[at + k] = velt_simd_i8x16_lane(this, k as u64);
+      }
+    }
   }
 
   /** Lane `index` (0 to 15; panics with a RangeError otherwise). */
@@ -234,6 +273,7 @@ extend i8x16 {
 
 declare function velt_simd_u8x16_fits(xs: u8[], at: u64): bool;
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_index(): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_lane(v: u8x16, index: u64): u8;
@@ -297,6 +337,29 @@ extend u8x16 {
     return velt_simd_u8x16_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): u8x16 {
+    return velt_simd_u8x16_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 16, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 16 at a time.
+   */
+  static loadPartial(from: u8[], at: usize = 0): u8x16 {
+    if (u8x16.fits(from, at)) {
+      return velt_simd_u8x16_load(from, at as u64);
+    }
+    let v = velt_simd_u8x16_splat(0);
+    if (at < from.length) {
+      const left = from.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        v = velt_simd_u8x16_with_lane(v, k as u64, from[at + k]);
+      }
+    }
+    return v;
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask8x16, a: u8x16, b: u8x16): u8x16 {
     return velt_simd_u8x16_select(m, a, b);
@@ -311,6 +374,21 @@ extend u8x16 {
       panic("RangeError: u8x16.store: range is out of bounds");
     }
     velt_simd_u8x16_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 16 (the
+   * array does not grow): what `loadPartial` read, back.
+   */
+  storePartial(to: u8[], at: usize = 0) {
+    if (u8x16.fits(to, at)) {
+      velt_simd_u8x16_store(this, to, at as u64);
+    } else if (at < to.length) {
+      const left = to.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        to[at + k] = velt_simd_u8x16_lane(this, k as u64);
+      }
+    }
   }
 
   /** Lane `index` (0 to 15; panics with a RangeError otherwise). */
@@ -487,6 +565,7 @@ extend u8x16 {
 
 declare function velt_simd_i16x8_fits(xs: i16[], at: u64): bool;
 declare function velt_simd_i16x8_splat(x: i16): i16x8;
+declare function velt_simd_i16x8_index(): i16x8;
 declare function velt_simd_i16x8_load(from: i16[], at: u64): i16x8;
 declare function velt_simd_i16x8_store(v: i16x8, to: i16[], at: u64);
 declare function velt_simd_i16x8_lane(v: i16x8, index: u64): i16;
@@ -547,6 +626,29 @@ extend i16x8 {
     return velt_simd_i16x8_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): i16x8 {
+    return velt_simd_i16x8_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 8, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 8 at a time.
+   */
+  static loadPartial(from: i16[], at: usize = 0): i16x8 {
+    if (i16x8.fits(from, at)) {
+      return velt_simd_i16x8_load(from, at as u64);
+    }
+    let v = velt_simd_i16x8_splat(0);
+    if (at < from.length) {
+      const left = from.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        v = velt_simd_i16x8_with_lane(v, k as u64, from[at + k]);
+      }
+    }
+    return v;
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask16x8, a: i16x8, b: i16x8): i16x8 {
     return velt_simd_i16x8_select(m, a, b);
@@ -561,6 +663,21 @@ extend i16x8 {
       panic("RangeError: i16x8.store: range is out of bounds");
     }
     velt_simd_i16x8_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 8 (the
+   * array does not grow): what `loadPartial` read, back.
+   */
+  storePartial(to: i16[], at: usize = 0) {
+    if (i16x8.fits(to, at)) {
+      velt_simd_i16x8_store(this, to, at as u64);
+    } else if (at < to.length) {
+      const left = to.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        to[at + k] = velt_simd_i16x8_lane(this, k as u64);
+      }
+    }
   }
 
   /** Lane `index` (0 to 7; panics with a RangeError otherwise). */
@@ -725,6 +842,7 @@ extend i16x8 {
 
 declare function velt_simd_u16x8_fits(xs: u16[], at: u64): bool;
 declare function velt_simd_u16x8_splat(x: u16): u16x8;
+declare function velt_simd_u16x8_index(): u16x8;
 declare function velt_simd_u16x8_load(from: u16[], at: u64): u16x8;
 declare function velt_simd_u16x8_store(v: u16x8, to: u16[], at: u64);
 declare function velt_simd_u16x8_lane(v: u16x8, index: u64): u16;
@@ -783,6 +901,29 @@ extend u16x8 {
     return velt_simd_u16x8_fits(xs, at as u64);
   }
 
+  /** The vector whose lanes are their own indices: 0, 1, 2, … */
+  static index(): u16x8 {
+    return velt_simd_u16x8_index();
+  }
+
+  /**
+   * The elements of `from` starting at `at` that exist, up to 8, in the low lanes; the other
+   * lanes are 0. For the last elements of an array, after the steps that take 8 at a time.
+   */
+  static loadPartial(from: u16[], at: usize = 0): u16x8 {
+    if (u16x8.fits(from, at)) {
+      return velt_simd_u16x8_load(from, at as u64);
+    }
+    let v = velt_simd_u16x8_splat(0);
+    if (at < from.length) {
+      const left = from.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        v = velt_simd_u16x8_with_lane(v, k as u64, from[at + k]);
+      }
+    }
+    return v;
+  }
+
   /** Lane by lane, `a` where the mask is set and `b` elsewhere. */
   static select(m: mask16x8, a: u16x8, b: u16x8): u16x8 {
     return velt_simd_u16x8_select(m, a, b);
@@ -797,6 +938,21 @@ extend u16x8 {
       panic("RangeError: u16x8.store: range is out of bounds");
     }
     velt_simd_u16x8_store(this, to, at as u64);
+  }
+
+  /**
+   * Writes the low lanes to the elements of `to` starting at `at` that exist, up to 8 (the
+   * array does not grow): what `loadPartial` read, back.
+   */
+  storePartial(to: u16[], at: usize = 0) {
+    if (u16x8.fits(to, at)) {
+      velt_simd_u16x8_store(this, to, at as u64);
+    } else if (at < to.length) {
+      const left = to.length - at;
+      for (let k: usize = 0; k < left; k++) {
+        to[at + k] = velt_simd_u16x8_lane(this, k as u64);
+      }
+    }
   }
 
   /** Lane `index` (0 to 7; panics with a RangeError otherwise). */
