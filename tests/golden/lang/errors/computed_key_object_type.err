@@ -1,0 +1,1 @@
+computed_key_object_type.vlt:4:28: error: missing field `a` in `{ a: f64 }` literal

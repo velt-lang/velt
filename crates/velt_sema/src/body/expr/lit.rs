@@ -317,12 +317,17 @@ impl FnCx<'_, '_> {
     }
 
     /// `x` as the non-string operand of a string `+` or `+=` ([`concat_operands`]): its
-    /// `String(x)` text when it is a number or boolean (or one of those or `null`), else `x`.
+    /// `String(x)` text when it is a number or boolean (or one of those or `null`), or an
+    /// object with a `toString()`, else `x`.
     pub(crate) fn concat_operand(&mut self, h: hir::Expr) -> hir::Expr {
         let h = self.unbrand(h);
         let h = self.widen_value(h);
+        let t = self.cx.ty.opt_payload(h.ty).unwrap_or(h.ty);
+        // An object with a `toString()` (an error, an error union): what it returns, as in JS.
+        if self.writes_by_to_string(t) {
+            return self.js_text(h, "a string concatenation");
+        }
         let ty = &self.cx.ty;
-        let t = ty.opt_payload(h.ty).unwrap_or(h.ty);
         if h.ty == ty.str_ || !(ty.is_numeric(t) || t == ty.bool_) {
             return h;
         }
@@ -453,6 +458,11 @@ impl FnCx<'_, '_> {
     /// it in errors): a `string` itself, else an `Intrinsic::ToString` of it.
     pub(crate) fn js_text(&mut self, h: hir::Expr, what: &str) -> hir::Expr {
         let h = self.unbrand(h);
+        let h = match self.nullable_text(h, what) {
+            Ok(text) => return text,
+            Err(h) => h,
+        };
+        let h = self.error_union_view(h).unwrap_or_else(|h| h);
         let h = self.own_to_string(h, "toString");
         let h = self.narrowed_for_print(h);
         let t = h.ty;
@@ -479,10 +489,13 @@ impl FnCx<'_, '_> {
     /// that is not a `string` is written with `String(result)`, as JS does (`crate::hooks`
     /// reports the shapes this cannot call).
     pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
-        let Some((d, _)) = self.adt_of(h.ty) else {
+        let Some((d, args)) = self.adt_of(h.ty) else {
             return h;
         };
-        let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
+        // Declared by the class or inherited from a base class (`Error.toString`), as in JS.
+        let Some(crate::collect::Found::Class { m, .. }) =
+            crate::collect::lookup_method(self.cx, d, &args, method)
+        else {
             return h;
         };
         crate::body::param_defaults(self.cx, m.def);

@@ -1,0 +1,31 @@
+// `as` and `satisfies` take a whole type, as in TypeScript: a union (also with a leading `|` on
+// a new line) or an intersection, not a bitwise operator after the cast.
+interface Bag {
+  size: number;
+}
+
+function describe(v: number | string | Bag): string {
+  const u = v as number | string | Bag;
+  if (typeof u === "number") return `number ${u}`;
+  if (typeof u === "string") return `string ${u}`;
+  return `bag ${u.size}`;
+}
+
+function parse(s: string): number | null {
+  const n = (s.length > 0 ? Number(s) : null) as
+    | number
+    | null;
+  return n;
+}
+
+type Named = { name: string };
+type Aged = { age: number };
+
+console.log(describe(1), describe("a"), describe({ size: 7 }));
+console.log(parse("42"), parse(""));
+const p = { name: "Ada", age: 36 } as Named & Aged;
+console.log(p.name, p.age);
+const q = 3 satisfies number | string;
+console.log(q);
+const bits = (5 as number) | 2;
+console.log(bits);

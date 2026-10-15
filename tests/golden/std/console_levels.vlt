@@ -1,0 +1,7 @@
+// `console.info` and `console.debug` write to stdout like `console.log`; `console.warn` and
+// `console.error` to stderr, as in Node.
+console.log("log", 1);
+console.info("info", [1, 2]);
+console.debug("debug", { a: 1 });
+console.warn("warn", 2);
+console.error("error", 3);

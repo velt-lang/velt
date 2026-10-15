@@ -152,6 +152,139 @@ fn object_literal_methods_are_arrow_properties() {
 }
 
 #[test]
+fn computed_keys_are_spreads_of_the_prelude_function() {
+    let e = expr("x = { a: 1, [o.tag]: 2, [\"b\"]: 3, [7]: 4 }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(props) = &value.kind else {
+        panic!("not an object literal");
+    };
+    let ObjectProp::Spread(call) = &props[1] else {
+        panic!("not a spread: {:?}", props[1]);
+    };
+    let ExprKind::Call { callee, args, .. } = &call.kind else {
+        panic!("not a call");
+    };
+    assert!(matches!(&callee.kind, ExprKind::Ident(i) if i.name == COMPUTED_KEY_FN));
+    assert_eq!(args.len(), 2);
+    assert!(matches!(&props[2], ObjectProp::KeyValue(k, _) if k.name == "b"));
+    assert!(matches!(&props[3], ObjectProp::KeyValue(k, _) if k.name == "7"));
+    assert_eq!(
+        errors("const o = { [a.b]() { return 1; } };"),
+        vec!["a method name in an object literal must be a well-known symbol (`[Symbol.iterator]`) or a module constant (`[KEY]`), not an expression"]
+    );
+}
+
+#[test]
+fn import_meta_and_dynamic_import() {
+    let m = parse_ok("const u = import.meta.url;\nfunction f() { return import.meta; }");
+    let last = m.items.last().expect("an item");
+    let ItemKind::Var(v) = &last.kind else {
+        panic!("not a constant: {last:?}");
+    };
+    assert!(matches!(&v.pattern.kind, PatternKind::Ident(n) if n.name == IMPORT_META));
+    assert_eq!(parse_ok("const u = 1;").items.len(), 1);
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors("const u = typeof import.meta.url === \"string\" ? import.meta.url : \"\";"),
+        none
+    );
+    assert_eq!(
+        errors("const m = import(\"./m\");\nconst n = import(x).then((y) => y);"),
+        vec![
+            "dynamic `import()` is not supported",
+            "dynamic `import()` is not supported"
+        ]
+    );
+}
+
+#[test]
+fn declare_global_and_module_blocks() {
+    let m = parse_ok(
+        "declare global {\n  interface W { a: number }\n}\ndeclare module \"./m\" {\n  export interface O { b?: string }\n}",
+    );
+    let ItemKind::Augment(g) = &m.items[0].kind else {
+        panic!("not an augmentation: {:?}", m.items[0]);
+    };
+    assert!(g.module.is_none());
+    assert!(matches!(&g.items[0].kind, ItemKind::Interface(i) if i.name.name == "W"));
+    let ItemKind::Augment(a) = &m.items[1].kind else {
+        panic!("not an augmentation: {:?}", m.items[1]);
+    };
+    assert_eq!(a.module.as_ref().map(|(s, _)| s.as_str()), Some("./m"));
+    assert!(a.items[0].exported);
+    assert_eq!(
+        errors("declare global {\n  var x: number;\n}"),
+        vec!["a variable cannot be declared in `declare global` or `declare module` yet: only interfaces, which merge into the declaration they augment"]
+    );
+    assert_eq!(
+        errors("declare module \"virtual:x\";"),
+        vec!["a shorthand ambient module declaration (`declare module \"…\";`) is not supported: Velt types every module from its source"]
+    );
+}
+
+#[test]
+fn members_end_at_a_line_break() {
+    // TypeScript's automatic semicolon insertion between interface and object type members.
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors(
+            "interface I {\n  a: number\n  readonly b: string // c\n  m(x: number): string\n  n?(): void\n  get g(): number\n}\n\
+             interface J {\n  [k: string]: number\n}\n\
+             type O = {\n  a: number\n  m(): void\n  [k: string]: number\n};\n\
+             class C {\n  a = 1\n  b: string = \"\"\n  m(): void {}\n}"
+        ),
+        none
+    );
+    // On one line, a separator is still needed.
+    assert_eq!(errors("interface I { a: number b: string }").len(), 1);
+}
+
+#[test]
+fn numeric_property_names_and_call_signatures() {
+    let e = expr("x = { 7: 1, 0x10: 2 }");
+    let ExprKind::Assign { value, .. } = &e.kind else {
+        panic!("not an assignment: {e:?}");
+    };
+    let ExprKind::Object(props) = &value.kind else {
+        panic!("not an object literal");
+    };
+    assert!(matches!(&props[0], ObjectProp::KeyValue(k, _) if k.name == "7"));
+    assert!(matches!(&props[1], ObjectProp::KeyValue(k, _) if k.name == "16"));
+    let msg = "call signatures in an interface or object type are not supported yet";
+    assert_eq!(
+        errors("interface F {\n  (x: number): string\n  y: number\n}\ntype G = { <T>(x: T): T; z: string };"),
+        vec![msg, msg]
+    );
+    // `new(…)` in an interface or object type is a construct signature, as in TypeScript; in a
+    // class it is a method.
+    let ctor = "construct signatures in an interface or object type are not supported yet";
+    assert_eq!(
+        errors("interface P {\n  new (x: number): P\n  y: number\n}\ntype Q = { new <T>(): T; z: string };"),
+        vec![ctor, ctor]
+    );
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors("interface N { new: number }\nclass C { new(): C { return this; } }"),
+        none
+    );
+}
+
+#[test]
+fn a_cast_to_a_union_with_a_number_literal_is_an_error() {
+    let msg = "a cast to a union with a number literal member is ambiguous";
+    assert_eq!(errors("const y = x as i32 | 1;"), vec![msg]);
+    assert_eq!(errors("const y = x as number | -0.5;"), vec![msg]);
+    let none: Vec<String> = vec![];
+    assert_eq!(
+        errors("const y = (x as i32) | 1;\nconst z = x as (i32 | 1);"),
+        none
+    );
+    assert_eq!(errors("const y = x as \"a\" | \"b\";"), none);
+}
+
+#[test]
 fn function_expressions_are_arrows() {
     let e = expr("x = async function name<T>(a: T, b) { return a; }");
     let ExprKind::Assign { value, .. } = &e.kind else {

@@ -226,7 +226,7 @@ impl Ctx<'_> {
         }
     }
 
-    fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
+    pub(crate) fn bad_key(&mut self, name: &str, inner: &str, span: Span) -> String {
         self.error(
             Diagnostic::error(
                 format!("`{name}` is not a member name the compiler knows: `{inner}` must be a module constant holding a symbol or a string"),

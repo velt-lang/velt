@@ -94,6 +94,9 @@ function main() {
   implementation is. Methods overload the same way, `static` ones too, and a subclass's
   override of the implementation is what the signatures call; `override` on the signatures
   overrides the base class's.
+- A signature ends at its `;` or, as TypeScript's automatic semicolon insertion has it, at a
+  line break (`function f(x: number): number` on a line of its own), as does a
+  `declare function`.
 - `import { f }`, a re-export and an export list (`export { f }`) bring the signatures along.
   Where a function type is expected (`const h: (s: string) => string = describe`, a callback
   argument), an overloaded function is the first signature that fits it; elsewhere

@@ -66,7 +66,9 @@ hidden classes and no runtime shape checks.
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. A subclass without a constructor of its own inherits its
-  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  base's. Redefining a base method requires `override`, except a method of a standard-library
+  class (`toString()` in a subclass of `Error`), which TypeScript code redefines without it;
+  `super.m()` calls the base version.
   There are no abstract classes.
 - **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
   the base class has no constructor (`super();`). Statements may come before it as long as they
@@ -541,6 +543,37 @@ function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
 const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
 console.log(JSON.stringify(u), idOf(u));
 ```
+
+### Declaration merging
+
+As in TypeScript, an interface declared again in the same module is one interface with the
+members of every declaration: the first declaration's members first, then each later one's.
+`declare module "spec" { interface X { … } }` adds members to the interface `X` that module
+declares (also when it re-exports it from another module), wherever the augmentation is: the
+interface has the same members in every module. `declare global { interface X { … } }` merges
+into an interface `X` of its own module, or declares one there.
+
+```ts
+interface Point {
+  x: number;
+}
+interface Point {
+  y: number;
+}
+
+const p: Point = { x: 1, y: 2 };
+console.log(p.x + p.y); // 3
+```
+
+- The declarations' type parameters must have the same names (TypeScript's TS2428), all of
+  them are exported or none (TS2395), and their `extends` lists are joined.
+- A member declared in two declarations is an error. TypeScript allows a repeated field of the
+  same type, and makes a repeated method an overload.
+- An interface merges only with interfaces, not with a class, function or enum of its name.
+- Not supported yet: other declarations in `declare global` and `declare module` blocks
+  (`var`, functions, namespaces), declaring a new interface in another module with
+  `declare module`, a `declare global` interface visible in other modules, and a shorthand
+  `declare module "spec";`.
 
 ## Generics
 

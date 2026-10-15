@@ -173,6 +173,32 @@ fn field_defaults(
     out
 }
 
+/// `AdtDef::inherited_inits` of class `d`: its base classes' (with the base's type args), then
+/// its own (`AdtInfo::redefined`).
+fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
+    let a = cx.adt(d).expect("ICE: adt");
+    let (base, own) = (a.base, a.redefined.clone());
+    let (mut out, depth) = match base.and_then(|b| cx.class_of(b)) {
+        Some((bd, bargs)) => {
+            let (mut inits, depth) = inherited_inits(cx, bd);
+            for i in &mut inits {
+                crate::visit::map_expr_types(&mut i.init, &mut |t| cx.subst(t, &bargs));
+            }
+            (inits, depth + 1)
+        }
+        None => (vec![], 0),
+    };
+    out.extend(own.into_iter().filter_map(|r| {
+        Some(hir::FieldInit {
+            field: r.field as u32,
+            depth,
+            at: r.at as u32,
+            init: r.init?,
+        })
+    }));
+    (out, depth)
+}
+
 fn adt_def(
     cx: &mut Ctx,
     d: DefId,
@@ -180,13 +206,17 @@ fn adt_def(
     assigned: bool,
 ) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
+    let inherited_inits = inherited_inits(cx, d).0;
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
-    let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
-    let opaque = a
+    let private_fields = a
         .fields
         .iter()
-        .any(|f| f.private_to.is_some_and(|o| cx.declared_in_std(o)));
+        .any(|f| f.private_to.is_some() && !cx.plain_private(f.private_to, &f.name));
+    let opaque = a.fields.iter().any(|f| {
+        f.private_to.is_some_and(|o| cx.declared_in_std(o))
+            && !cx.plain_private(f.private_to, &f.name)
+    });
     let fields = a
         .fields
         .iter()
@@ -227,6 +257,7 @@ fn adt_def(
         opaque,
         assigned,
         base,
+        inherited_inits,
         ctor,
         dispose,
         to_string,

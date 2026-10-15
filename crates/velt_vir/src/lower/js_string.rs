@@ -2,17 +2,15 @@
 //! `toString()` (sema calls it where it knows the class; here it is the `to_string` hook, for
 //! generic code), else `Object.prototype.toString`'s `[object Object]`, or `[object Name]` for
 //! std's classes, as Node's built-ins write their `Symbol.toStringTag` (`[object Map]`,
-//! `[object Headers]`). Errors keep the `console.log` form until `Error` has a `name`, and
-//! everything else (unions, enums, `JsonValue`) is written by the format glue.
+//! `[object Headers]`). An error is a class with a `toString()` (the prelude `Error`'s,
+//! `name: message`), and everything else (unions, enums, `JsonValue`) is written by the
+//! format glue.
 
-use velt_sema::hir::{self, AdtKind, TyId, TyKind};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::hooks::Hook;
 use super::FnLower;
 use crate::vir::{Operand, Place};
-
-/// The prelude's `Error`, whose subclasses keep their `console.log` form in a template.
-const ERROR: &str = "std/prelude/error::Error";
 
 impl FnLower<'_, '_> {
     /// Append JS's `String(x)` of the object (or `null`) at `place` (of type `ty`) to the
@@ -69,7 +67,7 @@ impl FnLower<'_, '_> {
 
     /// Append the class object at `place` (of type `ty`) through its `toString()` (the
     /// `to_string` hook, dispatched through the vtable); false (nothing written) if `ty` has no
-    /// such hook or is an error.
+    /// such hook.
     pub(super) fn push_to_string(&mut self, buf: &Operand, place: &Place, ty: TyId) -> bool {
         if !self.js_object(ty) {
             return false;
@@ -85,15 +83,12 @@ impl FnLower<'_, '_> {
     }
 
     /// Is `ty` a class, struct or object type that `String(x)` writes as JS does (not a
-    /// `JsonValue` or an error)?
+    /// `JsonValue`)?
     fn js_object(&mut self, ty: TyId) -> bool {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return false;
         };
-        if !matches!(self.cx.hir.def(d), hir::Def::Adt(_)) || self.cx.is_json_value(ty) {
-            return false;
-        }
-        !(self.cx.adt_def(d).kind == AdtKind::Class && self.is_error(ty))
+        matches!(self.cx.hir.def(d), hir::Def::Adt(_)) && !self.cx.is_json_value(ty)
     }
 
     /// Does union `ty` have a member [`js_object`](Self::js_object) writes?
@@ -112,22 +107,5 @@ impl FnLower<'_, '_> {
             let p = self.cx.subst(p, &args);
             self.js_object(p)
         })
-    }
-
-    /// Is class type `ty` the prelude's `Error` or a subclass of it?
-    fn is_error(&mut self, ty: TyId) -> bool {
-        let mut cur = Some(ty);
-        for _ in 0..64 {
-            let Some(t) = cur else { return false };
-            let TyKind::Adt(d, args) = self.cx.kind(t) else {
-                return false;
-            };
-            let a = self.cx.adt_def(d);
-            if a.name == ERROR {
-                return true;
-            }
-            cur = a.base.map(|b| self.cx.subst(b, &args));
-        }
-        false
     }
 }

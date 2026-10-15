@@ -28,6 +28,7 @@
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
+mod fields;
 mod intrinsic;
 mod nothing;
 mod numeric;
@@ -36,6 +37,7 @@ use std::collections::HashMap;
 
 use velt_common::Span;
 
+pub use fields::{FieldDef, FieldInit};
 pub use intrinsic::Intrinsic;
 pub use nothing::Nothing;
 pub use numeric::{FloatTy, IntTy, SimdTy};
@@ -310,26 +312,6 @@ pub enum AdtKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct FieldDef {
-    pub name: String,
-    pub ty: TyId,
-    /// Default initializer (class field `= expr`, or `null` for optional fields).
-    pub default: Option<Expr>,
-    /// Declared optional (`x?: T`): it may be absent. JSON and printing leave an absent
-    /// (`null`) one out, as JavaScript leaves out a missing key, whereas a `T | null` field
-    /// holding `null` is written; a spread copies it only while present.
-    pub optional: bool,
-    /// Declared `private` (in this type or the base class that declares it), or an ES private
-    /// field (`#x`). Interface fields are never private.
-    pub private: bool,
-    /// An optional field whose declared type is nullable (`a?: T | null`) in a struct or object
-    /// type: it keeps "absent" apart from a present `null` with a presence flag, which lowering
-    /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
-    /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
-    pub presence: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct AdtDef {
     pub name: String,
     pub kind: AdtKind,
@@ -352,6 +334,12 @@ pub struct AdtDef {
     pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
+    /// Classes: initializers this class and its base classes give fields they inherit, base
+    /// classes' first, each class's in declaration order (inherited ones with the base's type
+    /// arguments substituted, as `FieldDef::default`). The field's own `default` stays the
+    /// declaring class's; a constructor or `new` runs these where `at` says, as the
+    /// assignment `this.<field> = init` there would.
+    pub inherited_inits: Vec<FieldInit>,
     /// Classes: constructor `Def::Fn` (None: every field has a default).
     pub ctor: Option<DefId>,
     /// Drop hook: the type's `[Symbol.dispose]()` method (modifies `this`, no params, void). Drop glue calls it

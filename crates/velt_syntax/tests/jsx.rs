@@ -331,10 +331,12 @@ fn keywords_as_member_names_before_type_arguments() {
     assert_eq!(j("x.delete<T>(k)"), "(call (. x delete)<T> [k])");
     assert_eq!(j("x.return < y"), "(< (. x return) y)");
     for name in ["as", "get", "set", "type", "from", "of", "new", "in"] {
-        parse_ok(&format!(
-            "class C {{ {name}<T>(x: T): T {{ return x; }} }}\n\
-             interface I {{ {name}<T>(x: T): T; }}"
-        ));
+        parse_ok(&format!("class C {{ {name}<T>(x: T): T {{ return x; }} }}"));
+        if name == "new" {
+            // In an interface, `new<T>(…)` is a construct signature (reported), as in TypeScript.
+            continue;
+        }
+        parse_ok(&format!("interface I {{ {name}<T>(x: T): T; }}"));
     }
 }
 

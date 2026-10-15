@@ -1,0 +1,10 @@
+// `x as T | 1` is a union type in TypeScript, and was a bitwise or of the cast value in Velt:
+// rather than change such a program's value silently, a number literal member after `|` in an
+// `as` type is an error that shows both spellings.
+const x: i32 = 6;
+console.log(x as i32 | 1);
+const y = 200 as u8;
+console.log(y as u8 | 0x0f);
+const n = 7.5;
+console.log(n as number | 0);
+console.log((x as i32) | 1, x as (i32 | 1));

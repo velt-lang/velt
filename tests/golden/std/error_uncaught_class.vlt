@@ -1,0 +1,10 @@
+// An uncaught error whose `name` ends in `Error` but is not its class's name is reported with
+// the class in front, as Node does: `E [TypeError]: boom`.
+class E extends TypeError {}
+
+function fail(): void {
+  throw new E("boom");
+}
+
+console.log("before");
+fail();

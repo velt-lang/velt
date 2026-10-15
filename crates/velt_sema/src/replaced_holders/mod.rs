@@ -530,7 +530,12 @@ pub(crate) fn check(cx: &mut Ctx) {
     for (i, d) in cx.info.iter().enumerate() {
         let inits: Vec<&Expr> = match d {
             DefInfo::Global(g) => g.init.iter().collect(),
-            DefInfo::Adt(a) => a.fields.iter().filter_map(|f| f.default.as_ref()).collect(),
+            DefInfo::Adt(a) => a
+                .fields
+                .iter()
+                .filter_map(|f| f.default.as_ref())
+                .chain(a.redefined.iter().filter_map(|r| r.init.as_ref()))
+                .collect(),
             _ => continue,
         };
         if inits.is_empty() {

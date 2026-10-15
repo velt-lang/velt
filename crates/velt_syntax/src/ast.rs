@@ -28,6 +28,8 @@ pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
 /// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
 
+pub use crate::ast_names::{COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_FIELDS};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: String,
@@ -85,6 +87,18 @@ pub enum ItemKind {
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI).
     ExternFn(FnSig),
+    /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
+    /// global scope or another module (TypeScript's augmentation; interfaces merge into the
+    /// declaration of the same name).
+    Augment(Augment),
+}
+
+#[derive(Clone, Debug)]
+pub struct Augment {
+    /// `declare module "spec"`: the module specifier (resolved like an import's) and its span;
+    /// `None` for `declare global`.
+    pub module: Option<(String, Span)>,
+    pub items: Vec<Item>,
 }
 
 #[derive(Clone, Debug)]
