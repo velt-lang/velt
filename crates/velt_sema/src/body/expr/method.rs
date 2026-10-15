@@ -58,6 +58,27 @@ pub(crate) enum Resolved {
 impl FnCx<'_, '_> {
     pub(crate) fn resolve_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         if let Some(r) = self.own_method(recv, name) {
+            // A subclass's static of the name doesn't hide an inherited `extend` instance
+            // method, as it doesn't hide an inherited instance method.
+            if matches!(
+                r,
+                Resolved::Def {
+                    is_static: true,
+                    ..
+                }
+            ) {
+                if let Some(e) = self.inherited_extension_method(recv, name) {
+                    if !matches!(
+                        e,
+                        Resolved::Def {
+                            is_static: true,
+                            ..
+                        }
+                    ) {
+                        return Some(e);
+                    }
+                }
+            }
             return Some(r);
         }
         if let Some(r) = self.iface_method(recv, name) {

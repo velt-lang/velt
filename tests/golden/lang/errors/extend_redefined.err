@@ -1,3 +1,9 @@
-extend_redefined.vlt:6:3
+extend_redefined.vlt:12:3
 error: `kind` is an `extend` method of `Shape` and cannot be redefined in a subclass yet
-extend_redefined.vlt:20:3
+extend_redefined.vlt:18:3
+extend_redefined.vlt:22:22
+error: `label` is an `extend` method of `Shape` and cannot be redefined in a subclass yet
+extend_redefined.vlt:28:7
+extend_redefined.vlt:44:3
+extend_redefined.vlt:50:3
+error: `name` is a member of `Shape`: an `extend` block of a subclass cannot redefine it yet
