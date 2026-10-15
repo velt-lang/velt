@@ -69,6 +69,12 @@ impl FnCx<'_, '_> {
         if prop.name == crate::collect::DISPOSE && !getter {
             return self.explicit_dispose(recv, args, span);
         }
+        if !getter
+            && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
+            && super::promise_then::is_promise_callback_method(&prop.name)
+        {
+            return self.promise_callback_call(recv, prop, args, span);
+        }
         let recv = match self.cx.has_overloads && !getter {
             true => match self.overloaded_method_call(recv, prop, type_args, args, exp, span) {
                 Ok(h) => return h,
@@ -289,12 +295,6 @@ impl FnCx<'_, '_> {
             d = d.with_note(note);
         } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
-        } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
-            && matches!(prop.name.as_str(), "then" | "catch" | "finally")
-        {
-            d = d.with_note(
-                "promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error",
-            );
         } else if let Some(n) = self.cx.ty.nothing_of(recv.ty) {
             d = d.with_note(format!(
                 "the value may be {}: use `?.{}(...)` or check `!= null` first",

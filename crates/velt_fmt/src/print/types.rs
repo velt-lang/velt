@@ -5,7 +5,9 @@
 //! sits inside (each comment stays with its field, as in a class body).
 
 use velt_common::Span;
-use velt_syntax::ast::{Ident, IndexKey, Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
+use velt_syntax::ast::{
+    Ident, IndexKey, Lit, MappedModifier, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind,
+};
 
 use super::decls::braced;
 use super::Printer;
@@ -99,6 +101,48 @@ impl<'a> Printer<'a> {
                 text(format!("typeof {}", path.join(".")))
             }
             TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
+            TypeExprKind::Conditional(c) => {
+                let check = self.ty_cond_operand(&c.check);
+                let extends = self.ty_cond_operand(&c.extends);
+                let then = self.ty(&c.then);
+                let else_ = self.ty(&c.else_);
+                cat![check, " extends ", extends, " ? ", then, " : ", else_]
+            }
+            TypeExprKind::Infer(name) => cat!["infer ", name.name.clone()],
+            TypeExprKind::Mapped(m) => {
+                let sign = |m: MappedModifier, word: &'static str| match m {
+                    MappedModifier::Keep => "",
+                    MappedModifier::Add => word,
+                    MappedModifier::Remove => match word {
+                        "readonly " => "-readonly ",
+                        _ => "-?",
+                    },
+                };
+                let readonly = sign(m.readonly, "readonly ");
+                let optional = sign(m.optional, "?");
+                let name = match &m.name {
+                    Some(n) => cat![" as ", self.ty(n)],
+                    None => nil(),
+                };
+                let source = self.ty(&m.source);
+                let value = self.ty(&m.value);
+                cat![
+                    "{ ",
+                    readonly,
+                    "[",
+                    m.param.name.clone(),
+                    " in ",
+                    source,
+                    name,
+                    "]",
+                    optional,
+                    ": ",
+                    value,
+                    " }"
+                ]
+            }
+            // Kept as written: the quasis' escapes are in the source only.
+            TypeExprKind::TemplateLiteral { .. } => text(slice(self.src, t.span).to_string()),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
@@ -233,10 +277,23 @@ impl<'a> Printer<'a> {
         join(&text(" | "), docs)
     }
 
+    /// The check or `extends` type of a conditional type: a conditional or function type there
+    /// needs parentheses.
+    fn ty_cond_operand(&mut self, t: &TypeExpr) -> Doc {
+        match t.kind {
+            TypeExprKind::Conditional(_) | TypeExprKind::Function { .. } => {
+                cat!["(", self.ty(t), ")"]
+            }
+            _ => self.ty(t),
+        }
+    }
+
     /// A type where a bare union would not parse (`extends`, `implements`, bounds, targets).
     pub(super) fn ty_no_union(&mut self, t: &TypeExpr) -> Doc {
         match t.kind {
-            TypeExprKind::Union(_) | TypeExprKind::Intersection(_) => cat!["(", self.ty(t), ")"],
+            TypeExprKind::Union(_)
+            | TypeExprKind::Intersection(_)
+            | TypeExprKind::Conditional(_) => cat!["(", self.ty(t), ")"],
             _ => self.ty(t),
         }
     }
@@ -262,6 +319,8 @@ impl<'a> Printer<'a> {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
             | TypeExprKind::KeyOf(_)
+            | TypeExprKind::Conditional(_)
+            | TypeExprKind::Infer(_)
             | TypeExprKind::Function { .. } => cat!["(", self.ty(t), ")"],
             // `(readonly T[])[]`
             TypeExprKind::Named { .. } | TypeExprKind::Tuple(_)

@@ -259,6 +259,15 @@ fn not_declared_before<'a>(
             .chain([&key.ty, &**value])
             .find_map(|a| not_declared_before(a, rest)),
         K::KeyOf(t) => not_declared_before(t, rest),
+        K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
+            .into_iter()
+            .find_map(|a| not_declared_before(a, rest)),
+        K::Mapped(m) => std::iter::once(&m.source)
+            .chain(m.name.as_ref())
+            .chain(std::iter::once(&m.value))
+            .find_map(|a| not_declared_before(a, rest)),
+        K::TemplateLiteral { types, .. } => types.iter().find_map(|a| not_declared_before(a, rest)),
+        K::Infer(_) => None,
         K::Predicate { ty, .. } => ty.as_deref().and_then(|a| not_declared_before(a, rest)),
         K::Literal(_) | K::Null | K::Undefined | K::Void | K::Query(_) => None,
     }

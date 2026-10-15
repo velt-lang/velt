@@ -8,10 +8,12 @@
 use velt_common::Span;
 
 mod jsx;
-mod type_fields;
+mod type_level;
+mod type_parts;
 
 pub use jsx::*;
-pub use type_fields::*;
+pub use type_level::*;
+pub use type_parts::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
@@ -363,6 +365,17 @@ pub enum TypeExprKind {
     Query(Vec<Ident>),
     /// `keyof T`: the union of `T`'s keys.
     KeyOf(Box<TypeExpr>),
+    /// `C extends E ? T : F`: a conditional type (issue #934). `E` may hold `infer X`.
+    Conditional(Box<ConditionalType>),
+    /// `infer X` in the `extends` clause of a conditional type.
+    Infer(Ident),
+    /// `{ readonly [K in S as N]?: V }`: a mapped type (issue #934).
+    Mapped(Box<MappedType>),
+    /// `` `on${K}` ``: a template literal type; `quasis` has one more element than `types`.
+    TemplateLiteral {
+        quasis: Vec<String>,
+        types: Vec<TypeExpr>,
+    },
     /// `null` in type position.
     Null,
     /// `undefined` in type position (issue #930).

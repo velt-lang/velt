@@ -116,6 +116,14 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
     })
 }
 
+/// `await` one microtask: completes (unit result) once the executor's microtask queue reached
+/// it, after the microtasks queued before it; at once outside `block_on`.
+#[no_mangle]
+pub extern "C" fn velt_rt_microtask() -> *mut VeltFut {
+    let mut slot = None;
+    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_microtask(&mut slot, cx))
+}
+
 /// `sleep(ms)`: a timer whose deadline is fixed now (negative = 0). Result: none.
 #[no_mangle]
 pub extern "C" fn velt_rt_sleep(ms: i64) -> *mut VeltFut {

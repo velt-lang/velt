@@ -179,7 +179,11 @@ impl Printer<'_> {
             TypeExprKind::Indexed { object, key } => {
                 format!("{}[{}]", self.ty_operand(object), self.ty(key))
             }
-            TypeExprKind::Literal(_) => self.flat(t.span),
+            TypeExprKind::Literal(_)
+            | TypeExprKind::Conditional(_)
+            | TypeExprKind::Infer(_)
+            | TypeExprKind::Mapped(_)
+            | TypeExprKind::TemplateLiteral { .. } => self.flat(t.span),
             TypeExprKind::Object(fields) => {
                 if fields.is_empty() {
                     return "{}".into();

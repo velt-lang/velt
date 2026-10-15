@@ -84,6 +84,47 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             let path: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
             format!("typeof {}", path.join("."))
         }
+        T::Conditional(c) => format!(
+            "{} extends {} ? {} : {}",
+            written(&c.check),
+            written(&c.extends),
+            written(&c.then),
+            written(&c.else_)
+        ),
+        T::Infer(n) => format!("infer {}", n.name),
+        T::Mapped(m) => {
+            let ro = match m.readonly {
+                ast::MappedModifier::Keep => "",
+                ast::MappedModifier::Add => "readonly ",
+                ast::MappedModifier::Remove => "-readonly ",
+            };
+            let opt = match m.optional {
+                ast::MappedModifier::Keep => "",
+                ast::MappedModifier::Add => "?",
+                ast::MappedModifier::Remove => "-?",
+            };
+            let name = m
+                .name
+                .as_ref()
+                .map_or(String::new(), |n| format!(" as {}", written(n)));
+            format!(
+                "{{ {ro}[{} in {}{name}]{opt}: {} }}",
+                m.param.name,
+                written(&m.source),
+                written(&m.value)
+            )
+        }
+        T::TemplateLiteral { quasis, types } => {
+            let mut out = String::from("`");
+            for (i, q) in quasis.iter().enumerate() {
+                out.push_str(q);
+                if let Some(t) = types.get(i) {
+                    out.push_str(&format!("${{{}}}", written(t)));
+                }
+            }
+            out.push('`');
+            out
+        }
         T::KeyOf(t) => match t.kind {
             T::Union(_) | T::Intersection(_) | T::Function { .. } => {
                 format!("keyof ({})", written(t))

@@ -1,7 +1,9 @@
-//! The members of object types: named fields and index signature keys.
+//! Parts of type expressions (part of the `ast` contract): index signature keys and object type
+//! fields.
+
+use velt_common::Span;
 
 use super::{Ident, TypeExpr};
-use velt_common::Span;
 
 /// The key of an index signature, `[name: ty]` (the name is documentation only).
 #[derive(Clone, Debug)]

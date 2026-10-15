@@ -43,6 +43,21 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             walk_type(value, v);
         }
         T::KeyOf(inner) => walk_type(inner, v),
+        T::Conditional(c) => {
+            walk_type(&c.check, v);
+            walk_type(&c.extends, v);
+            walk_type(&c.then, v);
+            walk_type(&c.else_, v);
+        }
+        T::Mapped(m) => {
+            walk_type(&m.source, v);
+            if let Some(n) = &m.name {
+                walk_type(n, v);
+            }
+            walk_type(&m.value, v);
+        }
+        T::TemplateLiteral { types, .. } => types.iter().for_each(|t| walk_type(t, v)),
+        T::Infer(_) => {}
         T::Predicate { ty, .. } => {
             if let Some(t) = ty {
                 walk_type(t, v);

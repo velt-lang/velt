@@ -23,6 +23,14 @@ pub(crate) struct TyEnv {
     /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
     /// everything else resolves `params` to type parameters and is substituted afterwards.
     pub args: Vec<TyId>,
+    /// Names a type binds, innermost last: a mapped type's key, what `infer X` found, the
+    /// member a distributive conditional type is at (`crate::type_level`).
+    pub locals: Vec<(String, TyId)>,
+    /// `infer X` names that found nothing (TypeScript's `unknown`).
+    pub unknowns: Vec<String>,
+    /// Inside a conditional or mapped type: `T[K]` of an optional field is `F | undefined`, as
+    /// TypeScript reads it.
+    pub ts_optional: bool,
     /// In a class's instance method (its signature and body): the class type, which the
     /// polymorphic `this` type resolves to (`m(): this`).
     pub this_ty: Option<TyId>,
@@ -34,6 +42,9 @@ impl TyEnv {
             module,
             params: params.to_vec(),
             args: vec![],
+            locals: vec![],
+            unknowns: vec![],
+            ts_optional: false,
             this_ty: None,
         }
     }
@@ -110,6 +121,23 @@ impl Ctx<'_> {
             } => self.resolve_index_sig(fields, &key.ty, value, env),
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
+            ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
+            ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
+            ast::TypeExprKind::TemplateLiteral { quasis, types } => {
+                self.resolve_template(t, quasis, types, env)
+            }
+            ast::TypeExprKind::Infer(n) => {
+                match env.locals.iter().rev().find(|(l, _)| *l == n.name) {
+                    Some((_, b)) => *b,
+                    None => {
+                        self.err(
+                            "`infer` declarations are only permitted in the `extends` clause of a conditional type",
+                            t.span,
+                        );
+                        self.ty.error
+                    }
+                }
+            }
             ast::TypeExprKind::Null => {
                 self.err("`null` alone is not a type; write `T | null`", t.span);
                 self.ty.error
@@ -191,6 +219,10 @@ impl Ctx<'_> {
         }
         let t = self.anon_type_with(&out, env.module);
         self.declare_anon_fields(t, &spans);
+        let str_ = self.ty.str_;
+        for f in &out {
+            self.record_key_kind(t, &f.name, str_);
+        }
         t
     }
 
@@ -234,6 +266,24 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let name = path[0].name.as_str();
+        if let Some((_, b)) = env.locals.iter().rev().find(|(l, _)| l == name) {
+            if !args.is_empty() {
+                self.err(
+                    format!("type parameter `{name}` does not take type arguments"),
+                    t.span,
+                );
+            }
+            return *b;
+        }
+        if env.unknowns.iter().any(|u| u == name) {
+            self.err(
+                format!(
+                    "`{name}` is inferred as `unknown` here, which is not supported yet (#934)"
+                ),
+                t.span,
+            );
+            return self.ty.error;
+        }
         if name == "this" {
             return self.resolve_this_type(t, args, env);
         }
@@ -350,6 +400,19 @@ impl Ctx<'_> {
             },
             None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
         };
+        // Inside an alias expanded at known arguments, an alias used with the parameters gets
+        // the arguments themselves, so a conditional or mapped type in it can be evaluated
+        // (`type A<T> = B<T>`; `crate::type_level`).
+        let args = match item {
+            Item::Alias(_) if !env.args.is_empty() => {
+                let known: Vec<TyId> = args.iter().map(|a| self.subst(*a, &env.args)).collect();
+                match known.iter().any(|a| self.has_type_params(*a)) {
+                    true => args,
+                    false => known,
+                }
+            }
+            _ => args,
+        };
         self.item_type_args(item, name, args, t)
     }
 
@@ -388,6 +451,8 @@ impl Ctx<'_> {
             n if crate::utility_types::OPERATORS.contains(&n) => {
                 return Some(self.resolve_utility(t, name, args, env))
             }
+            "NonNullable" | "Exclude" | "Extract" | "Uppercase" | "Lowercase" | "Capitalize"
+            | "Uncapitalize" => return self.resolve_type_level_builtin(t, name, args, env),
             _ => return None,
         };
         let written = args;
@@ -519,7 +584,14 @@ impl Ctx<'_> {
         self.aliases[a as usize].expanding = true;
         let mut env = TyEnv::new(module, &names);
         env.args = args.clone();
+        let outermost = self.type_level.alias_site.is_none();
+        if outermost {
+            self.type_level.alias_site = Some(t.span);
+        }
         let body = self.resolve_type(&decl.ty, &env);
+        if outermost {
+            self.type_level.alias_site = None;
+        }
         self.aliases[a as usize].expanding = false;
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.

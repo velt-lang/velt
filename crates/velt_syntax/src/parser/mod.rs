@@ -33,6 +33,7 @@ mod symbol_keys;
 mod tuple_types;
 mod type_assertion;
 mod type_decls;
+mod type_level;
 mod type_members;
 mod types;
 mod undefined;

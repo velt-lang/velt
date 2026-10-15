@@ -8,24 +8,22 @@ use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
 impl<'a> Parser<'a> {
-    /// Full type including unions: `A | B | null` (a leading `|` is allowed), whose members may
-    /// be intersections (`A & B | C` is `(A & B) | C`).
-    pub(super) fn parse_type(&mut self) -> PResult<TypeExpr> {
-        self.guarded(|p| {
-            let lo = p.cur_lo();
-            p.eat(Tok::Pipe);
-            let first = p.parse_intersection()?;
-            if !p.at(Tok::Pipe) {
-                return Ok(first);
-            }
-            let mut members = vec![first];
-            while p.eat(Tok::Pipe) {
-                members.push(p.parse_intersection()?);
-            }
-            Ok(TypeExpr {
-                kind: TypeExprKind::Union(members),
-                span: p.span_from(lo),
-            })
+    /// A union type (no conditional type at the top level). Unguarded: its callers are
+    /// `parse_type`, which counts the nesting depth once for both.
+    pub(super) fn parse_union_type(&mut self) -> PResult<TypeExpr> {
+        let lo = self.cur_lo();
+        self.eat(Tok::Pipe);
+        let first = self.parse_intersection()?;
+        if !self.at(Tok::Pipe) {
+            return Ok(first);
+        }
+        let mut members = vec![first];
+        while self.eat(Tok::Pipe) {
+            members.push(self.parse_intersection()?);
+        }
+        Ok(TypeExpr {
+            kind: TypeExprKind::Union(members),
+            span: self.span_from(lo),
         })
     }
 
@@ -76,7 +74,9 @@ impl<'a> Parser<'a> {
         lo: u32,
         mut ty: TypeExpr,
     ) -> PResult<TypeExpr> {
-        while self.at(Tok::LBracket) && matches!(self.nth(1), Tok::Str(_)) {
+        // `T["k"]`, `T[K]`, `T[number]`: an indexed access. As in TypeScript, the `[` must be on
+        // the same line as the type (`x: T` and a statement starting with `[`).
+        while self.at(Tok::LBracket) && self.nth(1) != Tok::RBracket && !self.line_break_before() {
             self.bump();
             let key = self.parse_type()?;
             self.expect(Tok::RBracket)?;
@@ -213,6 +213,10 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            Tok::Template(..) => self.parse_template_type(),
+            Tok::Ident if self.at_word("infer") && Self::is_ident_like(self.nth(1)) => {
+                self.parse_infer_type(lo)
+            }
             // The polymorphic `this` type (`m(): this`): the type named `this`, which sema
             // resolves to the class of the method.
             Tok::Kw(Kw::This) => {
@@ -354,6 +358,9 @@ impl<'a> Parser<'a> {
     fn parse_object_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
+        if self.at_mapped_type() {
+            return self.parse_mapped_type(lo);
+        }
         let mut fields = Vec::new();
         let mut index: Option<IndexSignature> = None;
         while !self.at(Tok::RBrace) {

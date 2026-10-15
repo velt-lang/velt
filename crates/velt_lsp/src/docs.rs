@@ -284,6 +284,20 @@ impl FileDocs {
                 self.type_fields(value);
             }
             ast::TypeExprKind::KeyOf(t) => self.type_fields(t),
+            ast::TypeExprKind::Conditional(c) => {
+                [&c.check, &c.extends, &c.then, &c.else_]
+                    .into_iter()
+                    .for_each(|t| self.type_fields(t));
+            }
+            ast::TypeExprKind::Mapped(m) => {
+                self.type_fields(&m.source);
+                m.name.iter().for_each(|t| self.type_fields(t));
+                self.type_fields(&m.value);
+            }
+            ast::TypeExprKind::TemplateLiteral { types, .. } => {
+                types.iter().for_each(|t| self.type_fields(t))
+            }
+            ast::TypeExprKind::Infer(_) => {}
             ast::TypeExprKind::Predicate { ty, .. } => {
                 ty.iter().for_each(|t| self.type_fields(t));
             }
