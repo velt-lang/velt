@@ -42,7 +42,7 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let (id, st) = adopt(f, result_drop);
     let w = executor::waker(id);
     // The creator goes on after this first run: its `await`s take their steps.
-    executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
+    let _ = executor::sync_run(|| drive(f, &st, &mut Context::from_waker(&w)));
 }
 
 /// The owner hands promise `f` to another task: its result is transferred with `transfer` as

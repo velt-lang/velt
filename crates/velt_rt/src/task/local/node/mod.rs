@@ -266,10 +266,13 @@ pub(super) unsafe fn poll_first(f: *mut VeltFut) -> bool {
     let w =
         std::mem::ManuallyDrop::new(Waker::from_raw(RawWaker::new(f as *const (), &NODE_WAKER)));
     let h = head(f);
-    let first = std::future::poll_fn(|cx| match (h.poll)(state(f), crate::task::raw_cx(cx).ptr()) {
-        READY => Poll::Ready(()),
-        _ => Poll::Pending,
-    });
+    let first =
+        std::future::poll_fn(
+            |cx| match (h.poll)(state(f), crate::task::raw_cx(cx).ptr()) {
+                READY => Poll::Ready(()),
+                _ => Poll::Pending,
+            },
+        );
     let mut first = std::pin::pin!(tokio::task::unconstrained(first));
     first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
 }

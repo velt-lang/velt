@@ -91,14 +91,16 @@ fn disjoint_suspension_locals_share_state_bytes() {
     let p = sequential_program();
     let v = lower_ok(&p);
     let child = state_size(&v, "delayed");
-    // result + tag, `a`, and ONE child state: the two awaited children never coexist.
+    // result + tag, `a`, ONE child state (the two awaited children never coexist), and the
+    // ticket of an `await` step (rt_abi_async.md §1).
     let seq = state_size(&v, "seq");
     assert!(
-        seq <= 16 + 8 + child,
+        seq <= 16 + 8 + child + 8,
         "seq state {seq} bytes, child {child}\n{v}"
     );
-    // tag + one string + one sleep future: `x` and `y` live in disjoint blocks.
-    assert!(state_size(&v, "phases") <= 8 + 24 + 8, "{v}");
+    // tag + one string + one sleep future + an `await` step's ticket: `x` and `y` live in
+    // disjoint blocks.
+    assert!(state_size(&v, "phases") <= 8 + 24 + 8 + 8, "{v}");
     let out = run(&p);
     assert_eq!(out.stdout, "42\nab\ncd\n");
     for polls in [0, 1, 2, 3] {

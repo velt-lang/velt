@@ -142,6 +142,12 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let Some(w) = e.waker else {
             continue;
         };
+        // A root that yielded during this poll waits for the task's next poll (an entry queued
+        // for it before it handed the promise on cannot resume it early).
+        if t.yielded.get() && w.will_wake(d.task) {
+            w.wake();
+            continue;
+        }
         t.credit.set(e.credit);
         set::resume(d, w);
         t.credit.set(false);

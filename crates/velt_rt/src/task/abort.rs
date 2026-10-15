@@ -371,10 +371,11 @@ mod tests {
                 let wait = velt_rt_signal_wait(t);
                 // A waiter holds the signal too: freeing the handle keeps the timer.
                 velt_rt_signal_free(t);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
+                let done =
+                    std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
+                        READY => Poll::Ready(()),
+                        _ => Poll::Pending,
+                    });
                 let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
                 velt_rt_fut_drop(wait);
                 assert!(waited.is_ok(), "the timeout never fired");
@@ -396,10 +397,11 @@ mod tests {
                 // source alive. The limit only turns a hang (a source dropped too early) into a
                 // failure; it is not a timing window.
                 let wait = velt_rt_signal_wait(any);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
-                    READY => Poll::Ready(()),
-                    _ => Poll::Pending,
-                });
+                let done =
+                    std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
+                        READY => Poll::Ready(()),
+                        _ => Poll::Pending,
+                    });
                 let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
                 velt_rt_fut_drop(wait);
                 assert!(waited.is_ok(), "the timeout source never fired");
