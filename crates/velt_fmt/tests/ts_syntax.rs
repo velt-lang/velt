@@ -203,3 +203,32 @@ fn members_without_semicolons_parse() {
     let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
     round_trips(&got);
 }
+
+#[test]
+fn var_declarations_keep_var() {
+    round_trips("function f(n: number) {\n  var hi = n / 16;\n  var lo = n % 16;\n  let s = 1;\n  return hi + lo + s;\n}\n");
+    let got = format_source(
+        "function f() {\n  var a = 1, b = 2;\n  let c = 3, d = 4;\n  return a + b + c + d;\n}\n",
+    )
+    .unwrap();
+    assert_eq!(got, "function f() {\n  var a = 1;\n  var b = 2;\n  let c = 3;\n  let d = 4;\n  return a + b + c + d;\n}\n");
+}
+
+#[test]
+fn optional_parameters_in_function_types() {
+    round_trips("type F = (app: App, options?: Options) => void;\n");
+    round_trips("type F = (x?: string | null) => string;\n");
+}
+
+#[test]
+fn optional_and_rest_tuple_elements() {
+    round_trips("type A = [x?: number, ...rest: string[]];\n");
+    round_trips("type B = [string, number?];\n");
+    round_trips("type C = readonly [Ref, ...A];\n");
+}
+
+#[test]
+fn generic_method_signatures_in_object_types() {
+    round_trips("type S = { run<T>(fn: () => T): T | undefined; stop(): void };\n");
+    round_trips("interface I {\n  wrap?<A>(a: A): A;\n  name: string;\n}\n");
+}

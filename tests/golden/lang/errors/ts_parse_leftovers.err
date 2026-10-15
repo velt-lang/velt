@@ -1,0 +1,7 @@
+ts_parse_leftovers.vlt:3:23: error: a required parameter cannot follow an optional parameter
+ts_parse_leftovers.vlt:4:15: error: a rest parameter cannot be optional
+ts_parse_leftovers.vlt:5:23: error: a required element cannot follow an optional element
+ts_parse_leftovers.vlt:6:24: error: an optional element cannot follow a rest element
+ts_parse_leftovers.vlt:7:11: error: a tuple member cannot be both optional and rest
+ts_parse_leftovers.vlt:11:9: error: `var` in a nested block, a loop or a `switch` is not supported yet
+ts_parse_leftovers.vlt:17:10: error: `var` in the head of a `for` loop is not supported yet
