@@ -23,7 +23,7 @@ mod unhandled;
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
 pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
-pub(crate) use micro::settled;
+pub(crate) use micro::{settled, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use timers::TimerLeaf;
 pub use unhandled::velt_rt_unhandled_defer;

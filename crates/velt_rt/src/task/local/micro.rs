@@ -159,11 +159,13 @@ fn take_credit(t: &TaskCx) -> bool {
 
 /// Waiter `w` of a promise settled now by `resolve` / `reject` (latch.rs): when it belongs to the
 /// task being polled (one of its local promises, or its root), it is queued now with credit
-/// (Node queues the reactions inside `resolve`); otherwise it is woken.
-pub(crate) fn settled(w: Waker) {
+/// (Node queues the reactions inside `resolve`) and the entry's ticket is returned: the wait
+/// completes only once the queue reached it ([`ticket_pending`]), even when it is polled
+/// earlier. Otherwise it is woken (0).
+pub(crate) fn settled(w: Waker) -> u64 {
     let Some(t) = tcx() else {
         w.wake();
-        return;
+        return 0;
     };
     // SAFETY: the set of the task being polled, used only by this task's polls.
     let set = unsafe { super::current_set().as_mut() };
@@ -171,10 +173,27 @@ pub(crate) fn settled(w: Waker) {
     let local = w.will_wake(unsafe { &*t.waker })
         || set.is_some_and(|s| unsafe { super::node::local_awaiter(&w, &s.shared) }.is_some());
     match queue_or_new() {
-        Some(q) if local => {
-            push(t, q, w, true);
+        Some(q) if local => push(t, q, w, true),
+        _ => {
+            w.wake();
+            0
         }
-        _ => w.wake(),
+    }
+}
+
+/// Is the entry of `ticket` (from [`settled`]) still waiting in the queue of the task being
+/// polled? Then whoever polls with `w` now is resumed when it is reached.
+pub(crate) fn ticket_pending(ticket: u64, w: &Waker) -> bool {
+    // SAFETY: the set of the task being polled, used only by this task's polls.
+    let q = unsafe { super::current_set().as_mut() }.map(|s| &mut s.micro);
+    match q.and_then(|q| q.waiting(ticket)) {
+        Some(e) => {
+            if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
+                e.waker = Some(w.clone());
+            }
+            true
+        }
+        None => false,
     }
 }
 

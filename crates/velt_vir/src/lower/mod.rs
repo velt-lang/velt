@@ -141,7 +141,9 @@ pub(crate) fn lower_program(
                 eprintln!("velt: weak-capable types: {}", cx.weak_names().join(", "));
             }
             let diags = cx.nothing_clash_diagnostics();
-            return (cx.finish(), diags);
+            let mut program = cx.finish();
+            async_fn::await_order::prune(&mut program);
+            return (program, diags);
         }
         types = cx.types;
         counted = next;

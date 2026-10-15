@@ -12,6 +12,7 @@ use std::task::{Context, Poll, Waker};
 use parking_lot::Mutex;
 
 use super::leaf::new_leaf;
+use super::local::ticket_pending;
 use super::VeltFut;
 use crate::handle::Handle;
 
@@ -20,7 +21,16 @@ use crate::handle::Handle;
 pub struct Latch {
     open: AtomicBool,
     /// Who waits, by the id of their wait.
-    waiters: Mutex<Vec<(u64, Waker)>>,
+    waiters: Mutex<Vec<Waiter>>,
+}
+
+/// One wait of a latch.
+struct Waiter {
+    id: u64,
+    /// Whom to resume when the latch opens (taken then).
+    waker: Option<Waker>,
+    /// Once opened: the microtask the waiter was queued as on its own task (0: woken).
+    ticket: u64,
 }
 
 /// Ids of waits.
@@ -43,7 +53,8 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 
 /// Opens the latch and resumes every waiter; opening an open latch does nothing. A waiter on the
 /// task that opens it is queued in its microtask queue now, as Node queues a promise's reactions
-/// inside `resolve` (local/micro.rs `settled`); others are woken.
+/// inside `resolve`, and its wait completes when the queue reaches it (local/micro.rs
+/// `settled`); others are woken.
 ///
 /// # Safety
 /// `h` must be a live latch handle.
@@ -51,11 +62,18 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
     crate::io::publish_before_handoff();
-    if !l.open.swap(true, Ordering::AcqRel) {
-        let waiters = std::mem::take(&mut *l.waiters.lock());
-        for (_, w) in waiters {
-            super::local::settled(w);
+    if l.open.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let mut waiters = std::mem::take(&mut *l.waiters.lock());
+    for w in &mut waiters {
+        if let Some(k) = w.waker.take() {
+            w.ticket = super::local::settled(k);
         }
+    }
+    waiters.retain(|w| w.ticket != 0);
+    if !waiters.is_empty() {
+        l.waiters.lock().extend(waiters);
     }
 }
 
@@ -70,24 +88,38 @@ impl Future for Wait {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.latch.open.load(Ordering::Acquire) {
-            return Poll::Ready(());
-        }
         let latch = self.latch.clone();
-        let mut ws = latch.waiters.lock();
-        if latch.open.load(Ordering::Acquire) {
+        let id = self.id;
+        if latch.open.load(Ordering::Acquire) && id == 0 {
             return Poll::Ready(());
         }
-        let id = self.id;
-        match ws.iter_mut().find(|(i, _)| *i == id && id != 0) {
-            Some((_, w)) => {
-                if !w.will_wake(cx.waker()) {
-                    *w = cx.waker().clone();
+        let mut ws = latch.waiters.lock();
+        let mine = ws.iter().position(|w| w.id == id && id != 0);
+        if latch.open.load(Ordering::Acquire) {
+            // Queued on this task when it opened: done once the queue got there.
+            if let Some(i) = mine {
+                if ticket_pending(ws[i].ticket, cx.waker()) {
+                    return Poll::Pending;
+                }
+                ws.swap_remove(i);
+            }
+            self.id = 0;
+            return Poll::Ready(());
+        }
+        match mine {
+            Some(i) => {
+                let w = &mut ws[i].waker;
+                if !w.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
+                    *w = Some(cx.waker().clone());
                 }
             }
             None => {
                 let id = WAITS.fetch_add(1, Ordering::Relaxed);
-                ws.push((id, cx.waker().clone()));
+                ws.push(Waiter {
+                    id,
+                    waker: Some(cx.waker().clone()),
+                    ticket: 0,
+                });
                 self.id = id;
             }
         }
@@ -99,7 +131,7 @@ impl Drop for Wait {
     fn drop(&mut self) {
         if self.id != 0 {
             let id = self.id;
-            self.latch.waiters.lock().retain(|(i, _)| *i != id);
+            self.latch.waiters.lock().retain(|w| w.id != id);
         }
     }
 }
