@@ -57,10 +57,11 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
     let h = head(f);
     if fl & ADOPTED == 0 {
         h.flags.fetch_or(ADOPTED, Ordering::Relaxed);
+        // Whoever resumes it from an older registration (a waker taken while it ran on its
+        // own) resumes the owner instead (set.rs `resume`); an owner that is adopted in turn
+        // is resumed through its own owner.
+        h.awaiter.register(context(cx).waker());
     }
-    // Whoever resumes it from an older registration (a waker taken while it ran on its own)
-    // resumes the owner instead (set.rs `resume`).
-    h.awaiter.register(context(cx).waker());
     (*set).adopting += 1;
     let r = super::super::set::polling(set, f, || (h.poll)(state(f), cx));
     (*set).adopting -= 1;

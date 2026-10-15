@@ -214,8 +214,8 @@ impl SetPtr {
             });
         }
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
-        if unhandled::pending() {
-            unhandled::flush();
+        if !self.0.is_null() && !(*self.0).unhandled.is_empty() {
+            unhandled::flush(self.0);
         }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
         if let Some(g) = &self.4 {

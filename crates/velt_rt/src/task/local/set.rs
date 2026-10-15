@@ -112,6 +112,9 @@ pub(crate) struct LocalSet {
     /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
     /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
     pub(super) adopting: u32,
+    /// Rejected promises nobody handles, reported once the microtask queue is drained
+    /// (unhandled.rs; each holds a reference).
+    pub(super) unhandled: Vec<*mut VeltFut>,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -129,6 +132,7 @@ impl LocalSet {
             running: std::ptr::null(),
             micro: super::micro::Queue::new(),
             adopting: 0,
+            unhandled: Vec::new(),
         })
     }
 
@@ -331,6 +335,10 @@ impl Drop for LocalSet {
             let _g = self.shared.closing.lock();
             // SAFETY: the set is closed: this is the queue's last consumer.
             unsafe { self.shared.release_queued() };
+        }
+        for f in self.unhandled.drain(..) {
+            // SAFETY: a deferred rejection holds a reference (unhandled.rs).
+            unsafe { node::release(f) };
         }
         for SendPtr(f) in self.pending.drain(..) {
             // SAFETY: the queue held a reference.

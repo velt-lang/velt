@@ -8,16 +8,15 @@
 //! ([`drop_result`]), that keeps the promise and answers 1: the function returns without
 //! reporting, and [`flush`] calls it again after the queue was drained, when it reports.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 use super::node;
+use super::set::LocalSet;
 use crate::task::VeltFut;
 
 thread_local! {
     /// The started promise whose result is being dropped right now (null: none).
     static DROPPING: Cell<*mut VeltFut> = const { Cell::new(std::ptr::null_mut()) };
-    /// Rejected promises to report once the queue is drained (each holds a reference).
-    static DEFERRED: RefCell<Vec<*mut VeltFut>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Drop the unclaimed result of started node `f` with `d` (its `result_drop`), letting an
@@ -38,34 +37,29 @@ pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C" fn(*mut u
 #[no_mangle]
 pub extern "C" fn velt_rt_unhandled_defer() -> u8 {
     let f = DROPPING.with(|c| c.replace(std::ptr::null_mut()));
-    if f.is_null() {
+    let set = super::current_set();
+    if f.is_null() || set.is_null() {
         return 0;
     }
-    // SAFETY: the live node whose result is being dropped.
-    unsafe { node::retain(f) };
-    DEFERRED.with(|d| d.borrow_mut().push(f));
+    // SAFETY: the live node whose result is being dropped, and the set of the task being
+    // polled.
+    unsafe {
+        node::retain(f);
+        (*set).unhandled.push(f);
+    }
     1
 }
 
-/// The task's microtask queue was drained: report the rejections that waited for it (the first
-/// one ends the process).
-pub(super) fn flush() {
-    loop {
-        let Some(f) = DEFERRED.with(|d| {
-            let mut d = d.borrow_mut();
-            (!d.is_empty()).then(|| d.remove(0))
-        }) else {
-            return;
-        };
-        // SAFETY: the deferred node holds a reference; its result is still in the slot.
-        unsafe {
-            node::drop_result_now(f);
-            node::release(f);
-        }
+/// The microtask queue of the task owning `set` was drained: report the rejections that waited
+/// for it (the first one ends the process).
+///
+/// # Safety
+/// `set` is the live set of the task being polled.
+pub(super) unsafe fn flush(set: *mut LocalSet) {
+    while !(*set).unhandled.is_empty() {
+        let f = (*set).unhandled.remove(0);
+        // The deferred node holds a reference; its result is still in the slot.
+        node::drop_result_now(f);
+        node::release(f);
     }
-}
-
-/// Are rejections waiting for the queue?
-pub(super) fn pending() -> bool {
-    DEFERRED.with(|d| !d.borrow().is_empty())
 }

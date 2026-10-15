@@ -55,8 +55,8 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         set::resume(d, w);
     }
     // Rejections nobody handles, reported now that the queue is empty (unhandled.rs).
-    if super::unhandled::pending() {
-        super::unhandled::flush();
+    if !(*d.set).unhandled.is_empty() {
+        super::unhandled::flush(d.set);
     }
 }
 
