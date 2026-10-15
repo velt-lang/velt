@@ -17,7 +17,8 @@
 //! line and imports what it adds (`import "velt:fetch/typed";`, `extend` blocks that give
 //! `Response` its `bytes()`). It is loaded once the program has loaded std module `<module>`
 //! (`std/fetch/response`) and a non-std module mentions one of the words (`bytes`): a method
-//! whose result type lives in modules that most users of the class never need.
+//! whose result type lives in modules that most users of the class never need. A word written
+//! `.name` matches only a property access (`res.body`, not `{ body: … }`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -153,6 +154,19 @@ fn has_regex(module: &ast::Module) -> bool {
     find.0
 }
 
+/// Whether `src` mentions a conditional global's word: `name` as a whole identifier, or for
+/// `.name` a property access (`.name` not followed by an identifier character).
+pub(super) fn mentions_word(src: &str, word: &str) -> bool {
+    let Some(prop) = word.strip_prefix('.') else {
+        return mentions(src, word);
+    };
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    src.match_indices(word).any(|(at, _)| {
+        let after = src[at + 1 + prop.len()..].chars().next();
+        !after.is_some_and(ident)
+    })
+}
+
 /// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
 /// characters are ASCII letters, digits, `_` and `$`, as the lexer reads them).
 pub(super) fn mentions(src: &str, name: &str) -> bool {
@@ -180,6 +194,15 @@ mod tests {
         // Identifiers are ASCII (as the lexer reads them): any other character ends one.
         assert!(mentions("Responseé", "Response"));
         assert!(!mentions("Response_x", "Response"));
+    }
+
+    #[test]
+    fn a_dot_word_is_a_property_access() {
+        assert!(mentions_word("const b = res.body;", ".body"));
+        assert!(mentions_word("for await (const c of req.body) {}", ".body"));
+        assert!(!mentions_word("fetch(u, { body: s });", ".body"));
+        assert!(!mentions_word("res.bodyUsed", ".body"));
+        assert!(mentions_word("const body = 1;", "body"));
     }
 
     #[test]

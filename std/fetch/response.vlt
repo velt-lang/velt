@@ -15,15 +15,12 @@
 import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortError, AbortSignal } from "velt:task";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import { ReadableStream } from "velt:streams";
-import { Uint8Array } from "velt:typed_array/uint8_array";
 import {
   BodyInit,
   BodyStream,
   JSON_TYPE,
   TEXT_TYPE,
   bodyParts,
-  bodyStream,
   collect,
   impliedType,
 } from "velt:fetch/body";
@@ -313,17 +310,8 @@ export class Response {
     return this.#remote != null ? "basic" : "default";
   }
 
-  /**
-   * The body as it arrives, a `ReadableStream` of `Uint8Array`s: `getReader()`, or
-   * `for await (const chunk of res.body)`. Null for a status that has no body (101, 103, 204,
-   * 205, 304), for a `HEAD` request's response and for a response made without one.
-   */
-  get body(): ReadableStream<Uint8Array> | null {
-    if (!this.streams()) {
-      return null;
-    }
-    return bodyStream(this.chunks(), this.#used);
-  }
+  // `body` is in velt:fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
 
   // Whether the response has a body to stream (`body` is not null).
   private streams(): bool {
@@ -537,7 +525,8 @@ export class Response {
       status: this.status,
       statusText: this.statusText,
       headers: this.headers,
-      body: this.body,
+      // As Node shows a body stream (printed without loading velt:streams).
+      body: this.streams() ? BodyStream.adopt(this.chunks(), this.#used) : null,
       bodyUsed: this.bodyUsed,
       ok: this.ok,
       redirected: this.redirected,

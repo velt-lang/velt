@@ -92,29 +92,6 @@ async function* streamBytes(s: ReadableStream<Uint8Array>): AsyncGenerator<u8[],
   }
 }
 
-/**
- * A `body` getter's stream (std only: `Response.body`, `Request.body`): the chunks of `chunks`
- * as `Uint8Array`s (not copied), read only when the stream is read.
- */
-export function bodyStream(
-  chunks: AsyncIterator<u8[], IoError | AbortError>,
-  used: bool,
-): ReadableStream<Uint8Array> {
-  return ReadableStream.body<Uint8Array>(byteChunks(chunks), used);
-}
-
-async function* byteChunks(
-  chunks: AsyncIterator<u8[], IoError | AbortError>,
-): AsyncGenerator<Uint8Array, Error> {
-  for (;;) {
-    const r = await chunks.next();
-    if (r.done) {
-      return;
-    }
-    yield Uint8Array.wrap(r.value);
-  }
-}
-
 /** The bytes of a stream, in one array. */
 export async function collect(stream: BodyStream): Promise<u8[], IoError | AbortError> {
   let out: u8[] = [];

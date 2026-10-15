@@ -1,0 +1,59 @@
+// velt:fetch/streams: `Response.body` and `Request.body`, the body as a `ReadableStream` of
+// `Uint8Array`s. `extend` blocks of their own, loaded (with velt:streams and the typed arrays)
+// only by programs that read `.body` or name `ReadableStream`
+// (std/prelude/global/fetch_body.vlt), so other fetch and http programs don't compile them.
+
+import { AbortError } from "velt:task";
+import { IoError } from "velt:io";
+import { Request } from "velt:fetch/request";
+import { Response } from "velt:fetch/response";
+import { ReadableStream } from "velt:streams";
+import { Uint8Array } from "velt:typed_array/uint8_array";
+
+extend Response {
+  /**
+   * The body as it arrives, a `ReadableStream` of `Uint8Array`s: `getReader()`, or
+   * `for await (const chunk of res.body)`. Null for a status that has no body (101, 103, 204,
+   * 205, 304), for a `HEAD` request's response and for a response made without one.
+   */
+  get body(): ReadableStream<Uint8Array> | null {
+    if (!this.streams()) {
+      return null;
+    }
+    return bodyStream(this.chunks(), this.bodyUsed);
+  }
+}
+
+extend Request {
+  /**
+   * The body as a `ReadableStream` of `Uint8Array`s; null without a body. Reading it uses the
+   * body up, as `text()` does.
+   */
+  get body(): ReadableStream<Uint8Array> | null {
+    if (!this.hasBody()) {
+      return null;
+    }
+    return bodyStream(this.chunks(), false);
+  }
+}
+
+// A `body` getter's stream: the chunks of `chunks` as `Uint8Array`s (not copied), read only
+// when the stream is read.
+function bodyStream(
+  chunks: AsyncIterator<u8[], IoError | AbortError>,
+  used: bool,
+): ReadableStream<Uint8Array> {
+  return ReadableStream.body<Uint8Array>(byteChunks(chunks), used);
+}
+
+async function* byteChunks(
+  chunks: AsyncIterator<u8[], IoError | AbortError>,
+): AsyncGenerator<Uint8Array, Error> {
+  for (;;) {
+    const r = await chunks.next();
+    if (r.done) {
+      return;
+    }
+    yield Uint8Array.wrap(r.value);
+  }
+}

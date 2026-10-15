@@ -14,17 +14,7 @@ import { IoError, IoResult, unwrapIo } from "velt:io";
 import { AbortController, AbortError, AbortSignal } from "velt:task";
 import { URL } from "velt:url";
 import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
-import {
-  BodyInit,
-  BodyParts,
-  BodyStream,
-  bodyParts,
-  bodyStream,
-  collect,
-  impliedType,
-} from "velt:fetch/body";
-import { ReadableStream } from "velt:streams";
-import { Uint8Array } from "velt:typed_array/uint8_array";
+import { BodyInit, BodyParts, BodyStream, bodyParts, collect, impliedType } from "velt:fetch/body";
 import { Headers, HeadersInit } from "velt:fetch/headers";
 
 declare function velt_rt_http_req_method(r: u64): string;
@@ -258,16 +248,8 @@ export class Request {
     return s == null ? null : s.signal;
   }
 
-  /**
-   * The body as a `ReadableStream` of `Uint8Array`s; null without a body. Reading it uses the
-   * body up, as `text()` does.
-   */
-  get body(): ReadableStream<Uint8Array> | null {
-    if (!this.hasBody()) {
-      return null;
-    }
-    return bodyStream(this.chunks(), false);
-  }
+  // `body` is in velt:fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.vlt).
 
   get bodyUsed(): bool {
     const e = this.#extra;
