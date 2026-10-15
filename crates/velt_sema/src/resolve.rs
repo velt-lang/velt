@@ -564,13 +564,13 @@ impl Ctx<'_> {
         self.aliases[a as usize].expanding = true;
         let mut env = TyEnv::new(module, &names);
         env.args = args.clone();
-        let outermost = self.alias_site.is_none();
+        let outermost = self.type_level.alias_site.is_none();
         if outermost {
-            self.alias_site = Some(t.span);
+            self.type_level.alias_site = Some(t.span);
         }
         let body = self.resolve_type(&decl.ty, &env);
         if outermost {
-            self.alias_site = None;
+            self.type_level.alias_site = None;
         }
         self.aliases[a as usize].expanding = false;
         if names.is_empty() && self.is_structural(body) {

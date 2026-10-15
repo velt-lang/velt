@@ -40,7 +40,11 @@ impl Ctx<'_> {
             TyKind::Literal(LitValue::Int(..) | LitValue::Float(..)) => KeyKind::Number(key),
             _ => KeyKind::Str,
         };
-        let slot = self.key_kinds.entry((d, name.to_string())).or_insert(kind);
+        let slot = self
+            .type_level
+            .key_kinds
+            .entry((d, name.to_string()))
+            .or_insert(kind);
         *slot = match (*slot, kind) {
             (KeyKind::Number(a), KeyKind::Number(_)) => KeyKind::Number(a),
             (KeyKind::Str, KeyKind::Str) => KeyKind::Str,
@@ -52,7 +56,12 @@ impl Ctx<'_> {
     /// literal, or the number literal it was named by. `Err` (reported at `span`) when that
     /// depends on how the type was written.
     pub(crate) fn key_literal(&mut self, d: DefId, name: &str, span: Span) -> Result<TyId, ()> {
-        match self.key_kinds.get(&(d, name.to_string())).copied() {
+        match self
+            .type_level
+            .key_kinds
+            .get(&(d, name.to_string()))
+            .copied()
+        {
             Some(KeyKind::Number(t)) => Ok(t),
             Some(KeyKind::Both) => {
                 self.err(

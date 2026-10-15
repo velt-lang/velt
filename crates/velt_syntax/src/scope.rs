@@ -223,7 +223,20 @@ impl<'a> Walker<'a, '_> {
                 self.ty(value);
             }
             T::Predicate { ty, .. } => ty.iter().for_each(|x| self.ty(x)),
-            T::Literal(_) | T::Null | T::Undefined | T::Void => {}
+            // `infer X` and a mapped type's key bind type names, not values: the sub-types are
+            // walked for type queries as everywhere else.
+            T::Conditional(c) => {
+                for x in [&c.check, &c.extends, &c.then, &c.else_] {
+                    self.ty(x);
+                }
+            }
+            T::Mapped(m) => {
+                self.ty(&m.source);
+                m.name.iter().for_each(|x| self.ty(x));
+                self.ty(&m.value);
+            }
+            T::TemplateLiteral { types, .. } => types.iter().for_each(|x| self.ty(x)),
+            T::Infer(_) | T::Literal(_) | T::Null | T::Undefined | T::Void => {}
         }
     }
 
@@ -571,6 +584,24 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(6)]);
+    }
+
+    #[test]
+    fn type_queries_in_type_level_forms_are_found() {
+        // Conditional, mapped and template literal types (#934): `infer X` and a mapped type's
+        // key bind type names, not values.
+        let src = "type A<T> = T extends typeof __DEV__ ? T : never;
+                   type B<T> = T extends { v: infer X } ? [X, typeof __DEV__] : typeof __DEV__;
+                   type C = { [K in \"a\" as `p${K}`]: typeof __DEV__ };
+                   type D = `x${typeof __DEV__}`;
+";
+        let lo = |n: usize| {
+            src.match_indices("__DEV__")
+                .nth(n)
+                .map(|(i, _)| i as u32)
+                .unwrap()
+        };
+        assert_eq!(free(src), [lo(0), lo(1), lo(2), lo(3), lo(4)]);
     }
 
     #[test]

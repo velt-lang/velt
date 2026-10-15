@@ -43,6 +43,17 @@ pub(super) const UNKNOWN: u32 = INFER_BASE - 2;
 /// The most members a template literal type may expand to (TypeScript stops at 100 000).
 pub(super) const MAX_TEMPLATE_MEMBERS: usize = 10_000;
 
+/// The state of type-level evaluation, kept in `Ctx`.
+#[derive(Default)]
+pub(crate) struct State {
+    /// While an alias is expanded: the outermost use of an alias, as written, where a
+    /// type-level form that can't be evaluated is reported.
+    pub(crate) alias_site: Option<Span>,
+    /// How object types' properties whose names spell numbers were named (`key_kinds`).
+    pub(crate) key_kinds:
+        std::collections::HashMap<(crate::hir::DefId, String), key_kinds::KeyKind>,
+}
+
 /// What a conditional type tests: a type, or `null` / `undefined` (which are not types alone).
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Subject {
@@ -73,7 +84,7 @@ impl Ctx<'_> {
         }
         if !self.checking_unused_aliases {
             // At the use of the alias whose body has the form, where the type parameter is.
-            let span = self.alias_site.unwrap_or(span);
+            let span = self.type_level.alias_site.unwrap_or(span);
             let msg = format!("{what} over a type parameter is not supported yet");
             self.error(
                 Diagnostic::error(msg, span)
