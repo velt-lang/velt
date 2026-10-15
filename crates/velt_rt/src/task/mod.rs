@@ -8,7 +8,8 @@
 //!   futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
 //!   offset 16. Awaiting one is `velt_rt_fut_poll(f, cx)` then reading the slot, then
 //!   `velt_rt_fut_drop(f)`.
-//! * `cx` is always the Rust `&mut Context` passed through as an opaque pointer.
+//! * `cx` is a [`RawCx`]: the Rust `&mut Context` and the task's await word (local/micro.rs),
+//!   passed through as an opaque pointer.
 
 pub mod abort;
 pub mod all;
@@ -64,17 +65,40 @@ unsafe impl<T> Send for SendPtr<T> {}
 // SAFETY: shared read-only use (e.g. the HTTP handler environment) is the contract of the ABI.
 unsafe impl<T> Sync for SendPtr<T> {}
 
+/// What generated code gets as `cx` (rt_abi_async.md §1): the task's await word first (generated
+/// code reads it at every `await`: 0 = no other job could observe a microtask step, go on), then
+/// the Rust `Context`.
+#[repr(C)]
+pub(crate) struct RawCx<'a, 'b> {
+    word: *const u32,
+    cx: *mut Context<'b>,
+    _life: std::marker::PhantomData<&'a mut Context<'b>>,
+}
+
+impl RawCx<'_, '_> {
+    /// The opaque pointer (valid while this value lives: pass `raw_cx(cx).ptr().ptr()` as an argument,
+    /// the temporary lives until the end of the statement).
+    pub(crate) fn ptr(&self) -> *mut c_void {
+        self as *const Self as *mut c_void
+    }
+}
+
 /// Recover the Rust `Context` from the opaque `cx` pointer generated code passes through.
 ///
 /// # Safety
 /// `cx` must be the pointer the runtime passed into the enclosing poll call.
 pub(crate) unsafe fn context<'a>(cx: *mut c_void) -> &'a mut Context<'a> {
-    &mut *(cx as *mut Context<'a>)
+    &mut *((*(cx as *mut RawCx<'_, 'a>)).cx)
 }
 
-/// Opaque `cx` pointer for handing a Rust `Context` to generated code.
-pub(crate) fn raw_cx(cx: &mut Context<'_>) -> *mut c_void {
-    cx as *mut Context<'_> as *mut c_void
+/// `cx` for handing a Rust `Context` to generated code, with the await word of the task being
+/// polled (`.ptr()` is the opaque pointer).
+pub(crate) fn raw_cx<'a, 'b>(cx: &'a mut Context<'b>) -> RawCx<'a, 'b> {
+    RawCx {
+        word: local::await_word(),
+        cx,
+        _life: std::marker::PhantomData,
+    }
 }
 
 /// Poll a heap future: `(f->poll)(f, cx)`.

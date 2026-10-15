@@ -290,7 +290,7 @@ mod tests {
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
                 let wait = velt_rt_signal_wait(t);
                 // A waiter holds the signal too: freeing the handle keeps the timer.
                 velt_rt_signal_free(t);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx)) {
+                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
                     READY => Poll::Ready(()),
                     _ => Poll::Pending,
                 });
@@ -396,7 +396,7 @@ mod tests {
                 // source alive. The limit only turns a hang (a source dropped too early) into a
                 // failure; it is not a timing window.
                 let wait = velt_rt_signal_wait(any);
-                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx)) {
+                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx).ptr()) {
                     READY => Poll::Ready(()),
                     _ => Poll::Pending,
                 });

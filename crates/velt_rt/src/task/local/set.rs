@@ -220,6 +220,8 @@ pub(super) unsafe fn run_now(set: *mut LocalSet, task: &Waker, f: *mut VeltFut) 
         return;
     }
     let mut root = || task.wake_by_ref();
+    // The poll that runs it goes on afterwards: its `await`s take their steps (micro.rs).
+    super::micro::sync_enter();
     run(
         &mut Driver {
             set,
@@ -229,6 +231,7 @@ pub(super) unsafe fn run_now(set: *mut LocalSet, task: &Waker, f: *mut VeltFut) 
         },
         f,
     );
+    super::micro::sync_exit();
 }
 
 /// Poll the state of started node `f` once. When it finishes, whoever awaits it resumes right

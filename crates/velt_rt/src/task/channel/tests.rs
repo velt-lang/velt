@@ -18,7 +18,7 @@ impl<const N: usize> Future for Await<N> {
         let f = self.0 .0;
         // SAFETY: an owned, live channel future; freed once READY.
         unsafe {
-            if velt_rt_fut_poll(f, raw_cx(cx)) == PENDING {
+            if velt_rt_fut_poll(f, raw_cx(cx).ptr()) == PENDING {
                 return Poll::Pending;
             }
             let mut out = [0u8; N];
