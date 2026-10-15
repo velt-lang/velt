@@ -223,6 +223,65 @@ fn micro_first(w: Waker) -> Result<(), Waker> {
     })
 }
 
+/// The await word on the one thread: 1 while tasks run (every `await` asks [`await_tick`]),
+/// 0 outside `block_on`.
+static mut AWAIT_WORD: u32 = 0;
+
+/// Synchronous runs under way (a started promise's first run, a promise run from inside
+/// another poll): their `await`s take a step even when the queue is empty.
+static SYNC_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn await_word() -> *const u32 {
+    std::ptr::addr_of!(AWAIT_WORD)
+}
+
+fn set_running_word(on: bool) {
+    // SAFETY: one thread; generated code only reads the word.
+    unsafe { AWAIT_WORD = on as u32 };
+}
+
+/// Run `f` as synchronous code that goes on afterwards (see [`SYNC_DEPTH`]).
+pub fn sync_run<R>(f: impl FnOnce() -> R) -> R {
+    use std::sync::atomic::Ordering::Relaxed;
+    SYNC_DEPTH.fetch_add(1, Relaxed);
+    let r = f();
+    SYNC_DEPTH.fetch_sub(1, Relaxed);
+    r
+}
+
+/// The step of an `await`: 0 to go on (nothing else could run first), else a ticket (an owned
+/// queue entry) for [`await_ready`].
+pub fn await_tick(cx: &mut Context<'_>) -> u64 {
+    if !running() {
+        return 0;
+    }
+    let idle = SYNC_DEPTH.load(std::sync::atomic::Ordering::Relaxed) == 0
+        && with_exec(|e| e.micro.is_empty());
+    if idle {
+        return 0;
+    }
+    let s = Rc::new(MicroSlot {
+        fired: Cell::new(false),
+        waker: RefCell::new(Some(cx.waker().clone())),
+    });
+    with_exec(|e| e.micro.push_back(s.clone()));
+    Rc::into_raw(s) as usize as u64
+}
+
+/// Has the queue reached `ticket` (from [`await_tick`])? Its entry is released once it has.
+pub fn await_ready(ticket: u64, cx: &mut Context<'_>) -> bool {
+    let p = ticket as usize as *const MicroSlot;
+    // SAFETY: the ticket owns one reference until this returns true.
+    let s = unsafe { &*p };
+    if s.fired.get() {
+        // SAFETY: as above; the reference is given back now.
+        drop(unsafe { Rc::from_raw(p) });
+        return true;
+    }
+    *s.waker.borrow_mut() = Some(cx.waker().clone());
+    false
+}
+
 /// `velt_rt_microtask`: ready once the queue reached it (at once outside `block_on`).
 pub fn poll_microtask(slot: &mut Option<Rc<MicroSlot>>, cx: &mut Context<'_>) -> Poll<()> {
     match slot {
@@ -424,7 +483,7 @@ unsafe fn run_task(id: usize) {
     let w = waker(id);
     let mut cx = Context::from_waker(&w);
     begin_poll(id);
-    let r = ((*fut).poll.0)(fut, raw_cx(&mut cx));
+    let r = ((*fut).poll.0)(fut, raw_cx(&mut cx).ptr());
     end_poll();
     if r != READY {
         return;
@@ -542,6 +601,7 @@ fn wait_for_timers() -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
+    set_running_word(true);
     schedule(ROOT);
     let mut root_done = false;
     loop {
@@ -550,6 +610,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         }
         if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
             with_exec(|e| e.running = false);
+            set_running_word(false);
             return;
         }
         fire_due_now();
@@ -575,7 +636,7 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         let w = waker(ROOT);
         let mut cx = Context::from_waker(&w);
         begin_poll(ROOT);
-        root_done = poll(state, raw_cx(&mut cx)) == READY;
+        root_done = poll(state, raw_cx(&mut cx).ptr()) == READY;
         end_poll();
     }
 }
@@ -600,7 +661,7 @@ mod tests {
                 B_WAKER.with(|w| *w.borrow_mut() = Some(cx.waker().clone()));
             }
             // SAFETY: `f` is a live sleep owned by this task until it completes.
-            if unsafe { velt_rt_fut_poll(f, raw_cx(cx)) } == PENDING {
+            if unsafe { velt_rt_fut_poll(f, raw_cx(cx).ptr()) } == PENDING {
                 return Poll::Pending;
             }
             // SAFETY: as above; not used again.

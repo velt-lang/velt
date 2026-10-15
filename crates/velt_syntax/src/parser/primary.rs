@@ -409,7 +409,9 @@ impl<'a> Parser<'a> {
             return Ok(Some(ObjectProp::KeyValue(name, self.mk_expr(call, span))));
         }
         let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
-            || (self.at_kw(Kw::Async) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::LParen);
+            || (self.at_kw(Kw::Async)
+                && Self::is_name(self.nth(1))
+                && matches!(self.nth(2), Tok::LParen | Tok::Lt));
         let off = usize::from(is_async);
         let is_generator = self.nth(off) == Tok::Star;
         let at_name = |p: &mut Self, k: usize| {
@@ -419,6 +421,8 @@ impl<'a> Parser<'a> {
                     && p.nth(k + 2) == Tok::RBracket
                     && p.nth(k + 3) == Tok::LParen)
                 || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::LParen)
+                // `name<T>(…) { … }`: a generic method.
+                || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::Lt)
         };
         if !is_generator && !at_name(self, off) {
             return Ok(None);
@@ -439,7 +443,7 @@ impl<'a> Parser<'a> {
         }
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         Ok(Some(ObjectProp::Method(Box::new(FnDecl {
             sig,
             body,
@@ -486,7 +490,7 @@ impl<'a> Parser<'a> {
         };
         let mut sig = self.parse_sig_rest(lo, anonymous, is_async)?;
         sig.is_generator = true;
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         self.reject_this_in_method(&name, &body);
         let span = self.span_from(lo);
         let f = FnDecl {
@@ -538,7 +542,7 @@ impl<'a> Parser<'a> {
         } else {
             (None, None)
         };
-        let body = self.parse_block()?;
+        let body = self.parse_fn_body()?;
         self.reject_this_in_method(&name, &body);
         let span = self.span_from(lo);
         let arrow = self.mk_expr(

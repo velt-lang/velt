@@ -402,13 +402,13 @@ mod tests {
         let waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
         // SAFETY: a live future; `cx` outlives the call.
-        unsafe { native_poll(f, crate::task::raw_cx(&mut cx)) }
+        unsafe { native_poll(f, crate::task::raw_cx(&mut cx).ptr()) }
     }
 
     async fn await_fut(f: *mut VeltFut) -> u64 {
         let f = crate::task::SendPtr(f);
         std::future::poll_fn(move |cx| {
-            match unsafe { native_poll(f.0, crate::task::raw_cx(cx)) } {
+            match unsafe { native_poll(f.0, crate::task::raw_cx(cx).ptr()) } {
                 READY => Poll::Ready(()),
                 _ => Poll::Pending,
             }

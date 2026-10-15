@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 use super::{Interp, FUNC_BASE};
 
-/// Opaque `cx` passed to poll functions (never dereferenced).
-pub(super) const CX: u64 = 0xC0DE;
+/// `cx` passed to poll functions: the address of a pointer to the await word (rt_abi_async.md
+/// §1), which stays 0 (`Interp::new` lays them out in the reserved start of the heap).
+pub(super) const CX: u64 = 8;
 const MAX_ROUNDS: u32 = 1_000_000;
 
 /// What a heap future does when polled.
