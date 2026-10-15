@@ -138,7 +138,7 @@ pub(super) unsafe fn run_here(f: *mut VeltFut) {
         node::queue(f);
         return;
     }
-    set::run_now(set, &*(*tcx).waker, f);
+    set::run_now(set, &*tcx, f);
 }
 
 /// Run `f` with the gate of the task being polled, created on first use (with the task's set,
@@ -209,6 +209,7 @@ impl SetPtr {
                 task: &*waker,
                 root,
                 timers,
+                word: tcx.word.as_ptr(),
             });
         }
         root();
@@ -219,6 +220,7 @@ impl SetPtr {
                 task: &*waker,
                 root,
                 timers: None,
+                word: tcx.word.as_ptr(),
             });
         }
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
@@ -363,9 +365,10 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     node::mark_started(f, &(*set).shared, result_drop);
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
-    micro::sync_enter();
-    let finished = node::poll_first(f);
-    micro::sync_exit();
+    let t = &*tcx;
+    micro::sync_enter(t);
+    let finished = node::poll_first(f, t.word.as_ptr());
+    micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
         node::finish_first(f);

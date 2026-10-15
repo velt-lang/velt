@@ -116,18 +116,15 @@ fn push(t: &TaskCx, q: &mut Queue, waker: Waker, credit: bool) -> u64 {
     q.push(waker, credit)
 }
 
-/// Synchronous code waits to go on until [`sync_exit`]: a step taken meanwhile is queued.
-pub(super) fn sync_enter() {
-    if let Some(t) = tcx() {
-        t.word.set(t.word.get() + 1);
-    }
+/// Synchronous code of task `t` waits to go on until [`sync_exit`]: a step taken meanwhile is
+/// queued.
+pub(super) fn sync_enter(t: &TaskCx) {
+    t.word.set(t.word.get() + 1);
 }
 
 /// See [`sync_enter`].
-pub(super) fn sync_exit() {
-    if let Some(t) = tcx() {
-        t.word.set(t.word.get() - 1);
-    }
+pub(super) fn sync_exit(t: &TaskCx) {
+    t.word.set(t.word.get() - 1);
 }
 
 /// Run the queued microtasks of the task polling `d` (with its set), in order, until the queue

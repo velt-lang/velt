@@ -76,7 +76,7 @@ pub(crate) struct RawCx<'a, 'b> {
 }
 
 impl RawCx<'_, '_> {
-    /// The opaque pointer (valid while this value lives: pass `raw_cx(cx).ptr().ptr()` as an argument,
+    /// The opaque pointer (valid while this value lives: pass `raw_cx(cx).ptr()` as an argument,
     /// the temporary lives until the end of the statement).
     pub(crate) fn ptr(&self) -> *mut c_void {
         self as *const Self as *mut c_void
@@ -94,8 +94,14 @@ pub(crate) unsafe fn context<'a>(cx: *mut c_void) -> &'a mut Context<'a> {
 /// `cx` for handing a Rust `Context` to generated code, with the await word of the task being
 /// polled (`.ptr()` is the opaque pointer).
 pub(crate) fn raw_cx<'a, 'b>(cx: &'a mut Context<'b>) -> RawCx<'a, 'b> {
+    raw_cx_with(cx, local::await_word())
+}
+
+/// [`raw_cx`] with the await word the caller holds already (the task being polled: no
+/// thread-local read).
+pub(crate) fn raw_cx_with<'a, 'b>(cx: &'a mut Context<'b>, word: *const u32) -> RawCx<'a, 'b> {
     RawCx {
-        word: local::await_word(),
+        word,
         cx,
         _life: std::marker::PhantomData,
     }
