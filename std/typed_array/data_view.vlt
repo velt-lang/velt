@@ -22,7 +22,7 @@ import {
   toUint32,
   toUint8,
 } from "velt:typed_array/buffer";
-import { BufferView } from "velt:typed_array/core";
+import { BufferView, NativeInspect } from "velt:typed_array/core";
 
 /**
  * A view of a byte range of an `ArrayBuffer` for numbers of any size at any offset (JS
@@ -183,8 +183,10 @@ export class DataView extends BufferView {
   }
 
   /** How `console.log` shows the view, like Node (its length, offset and buffer). */
-  __inspect(): string {
+  __inspect(): NativeInspect {
     const buf = inspectBuffer(this.buf.bytes, 2);
-    return `DataView {\n  [byteLength]: ${this.len},\n  [byteOffset]: ${this.off},\n  [buffer]: ${buf}\n}`;
+    return {
+      text: `DataView {\n  [byteLength]: ${this.len},\n  [byteOffset]: ${this.off},\n  [buffer]: ${buf}\n}`,
+    };
   }
 }
